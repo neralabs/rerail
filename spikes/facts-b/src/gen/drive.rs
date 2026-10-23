@@ -12,6 +12,7 @@ use super::lower::{self, Refusals, Source, T};
 use super::norm;
 use super::real::{self, Real};
 use super::tags::{self, W, BASE};
+use super::col;
 use super::val::{self, Row};
 use super::vectors;
 use crate::derive::World;
@@ -117,7 +118,7 @@ fn show(r: &Row) -> String {
 struct Facts {
     world: Rc<RefCell<World>>,
     real: Option<Rc<Real>>,
-    rows: FxHashMap<(u32, Sym, Cid), Rc<[Row]>>,
+    rows: FxHashMap<(u32, Sym, Cid), Rc<col::Flat>>,
     /// Exported row count per (path, content), for the membership model's weights.
     counts: FxHashMap<(Sym, Cid), u64>,
     exports: Vec<u32>,
@@ -142,11 +143,11 @@ impl Facts {
             }
         }
     }
-    fn get(&mut self, e: u32, p: Sym, c: Cid) -> Rc<[Row]> {
+    fn get(&mut self, e: u32, p: Sym, c: Cid) -> Rc<col::Flat> {
         if let Some(r) = self.rows.get(&(e, p, c)) {
             return r.clone();
         }
-        let r: Rc<[Row]> = self.compute(e, p, c).into();
+        let r: Rc<col::Flat> = Rc::new(self.compute(e, p, c).into());
         if self.cache {
             self.rows.insert((e, p, c), r.clone());
         }
@@ -178,7 +179,13 @@ impl Facts {
         }
     }
     fn bytes(&self) -> usize {
-        self.rows.values().map(|r| r.iter().map(|x| std::mem::size_of::<Row>() + x.heap_bytes()).sum::<usize>() + 16).sum()
+        self.rows.values().map(|r| r.bytes() + 16).sum()
+    }
+    /// Marks the symbols and numbers the cached rows hold.
+    fn mark(&self, syms: &mut Vec<u64>, nums: &mut Vec<u64>) {
+        for r in self.rows.values() {
+            val::mark(r.words(), syms, nums);
+        }
     }
 }
 
@@ -252,6 +259,9 @@ pub fn run(run_dir: &Path, opts: Opts) {
         if !refusals_static.is_empty() {
             eprintln!("refused at compile time: {}", serde_json::to_string(&refusals_static).unwrap());
         }
+        // x2-compact: everything interned so far (the store, the plans' constants) is pinned;
+        // strings computed from here on are evicted by `gc` once nothing holds them.
+        val::pin_all();
         let exports: Vec<u32> = {
             let mut s = BTreeSet::new();
             for (_, g) in &graphs {
@@ -296,7 +306,74 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let probe = timely::dataflow::operators::probe::Handle::new();
         let sizes = crate::flow::register_logging(worker);
         let t_dataflow = Instant::now();
-        let mut built = lower::build(worker, graphs.clone(), src.clone(), &probe, opts.track);
+        let mut built = col::registering(|| lower::build(worker, graphs.clone(), src.clone(), &probe, opts.track));
+        // The interner's sweep: marks what every registered arrangement, the exported-row cache
+        // and the outputs hold, then frees every unpinned symbol and number nothing marked. Runs
+        // when the symbols created since the last sweep exceed live / `FACTS_SWEEP_RATIO` (default
+        // 4; 0 drops the term) and `FACTS_SWEEP_MIN` (default 250K; 1 with ratio 0 sweeps after
+        // every event that interned a string: the exactness runs' stress setting), outside the
+        // timed window; each pause is reported.
+        let sweep_on = std::env::var("FACTS_SWEEP").map_or(true, |v| v != "0");
+        let sweep_min: usize = std::env::var("FACTS_SWEEP_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(250_000);
+        let sweep_ratio: usize = std::env::var("FACTS_SWEEP_RATIO").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+        let mut gc_log: Vec<serde_json::Value> = Vec::new();
+        let gc = |built: &lower::Built, force: bool, at: &str, log: &mut Vec<serde_json::Value>| {
+            if !sweep_on {
+                return;
+            }
+            let created = val::syms_created();
+            let (live, _) = val::syms_footprint();
+            if !force && created < sweep_min.max(live.checked_div(sweep_ratio).unwrap_or(0)) {
+                return;
+            }
+            let t = Instant::now();
+            let (mut syms, mut nums) = (Vec::new(), Vec::new());
+            col::census(Some((&mut syms, &mut nums)));
+            facts.borrow().mark(&mut syms, &mut nums);
+            for (_, o) in built.outputs.iter().chain(built.refusals.iter()) {
+                for (_, r) in o.borrow().keys() {
+                    val::mark(r, &mut syms, &mut nums);
+                }
+            }
+            let mark_s = t.elapsed().as_secs_f64();
+            let (fs, fnum) = val::sweep(&syms, &nums);
+            let (after, bytes) = val::syms_footprint();
+            log.push(json!({"at": at, "created": created, "live_before": live, "freed_syms": fs, "freed_nums": fnum, "live_after": after, "interner_bytes": bytes, "mark_ms": mark_s * 1e3, "pause_ms": t.elapsed().as_secs_f64() * 1e3}));
+        };
+        let census_json = |detail: bool| {
+            let cs = col::census(None);
+            let mut t = col::Census::default();
+            for (_, c) in &cs {
+                t.records += c.records;
+                t.keys += c.keys;
+                t.vals += c.vals;
+                t.bytes += c.bytes;
+                t.key_bytes += c.key_bytes;
+                t.row_bytes += c.row_bytes;
+                t.tag_bytes += c.tag_bytes;
+                t.off_bytes += c.off_bytes;
+                t.upd_bytes += c.upd_bytes;
+                t.batches += c.batches;
+            }
+            let per = |b: usize| b as f64 / t.records.max(1) as f64;
+            let mut j = json!({"arrangements": cs.len(), "batches": t.batches, "records": t.records, "keys": t.keys, "vals": t.vals, "column_bytes": t.bytes, "bytes_per_record": per(t.bytes),
+                "per_record": {"key": per(t.key_bytes), "row": per(t.row_bytes), "tag": per(t.tag_bytes), "offsets": per(t.off_bytes), "times_diffs": per(t.upd_bytes)}});
+            if detail {
+                let mut top: Vec<&(String, col::Census)> = cs.iter().collect();
+                top.sort_by_key(|(_, c)| std::cmp::Reverse(c.bytes));
+                j["top"] = json!(top.iter().take(60).map(|(n, c)| json!([n, c.records, c.keys, c.vals, c.bytes, c.key_width, c.row_width, c.batches])).collect::<Vec<_>>());
+                // Bytes by value-row width (keyed arrangements): where the payload is.
+                let mut by_w: BTreeMap<u32, (usize, usize, usize)> = BTreeMap::new();
+                for (_, c) in &cs {
+                    let e = by_w.entry(c.row_width).or_default();
+                    e.0 += c.records;
+                    e.1 += c.bytes;
+                    e.2 += c.row_bytes;
+                }
+                j["by_row_width"] = json!(by_w.iter().map(|(w, (r, b, rb))| json!([w, r, b, rb])).collect::<Vec<_>>());
+            }
+            j
+        };
         let dataflow_s = t_dataflow.elapsed().as_secs_f64();
         eprintln!("dataflow built: {:.2}s, {} plan nodes", dataflow_s, graphs.iter().map(|(_, g)| g.nodes.len()).sum::<usize>());
         let mut resident = Resident::default();
@@ -340,6 +417,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 facts.borrow_mut().evict(p, c);
             }
             per_level_ms.push(json!([t, t0.elapsed().as_secs_f64() * 1e3]));
+            gc(&built, false, &format!("level {t}"), &mut gc_log);
         }
         let mut divergence = Vec::new();
         for (w, m) in &members {
@@ -359,10 +437,13 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 facts.borrow_mut().evict(p, c);
             }
             per_level_ms.push(json!([w, t0.elapsed().as_secs_f64() * 1e3]));
+            gc(&built, false, &format!("load {w}"), &mut gc_log);
         }
         let load_s = t_build.elapsed().as_secs_f64();
+        let census_loaded = census_json(true);
+        gc(&built, true, "loaded", &mut gc_log);
         let rss_loaded = rss();
-        eprintln!("loaded: {:.2}s, rss {:.1} MB, resident (path, content) {}", load_s, mb(rss_loaded.0), resident.held());
+        eprintln!("loaded: {:.2}s, rss {:.1} MB, resident (path, content) {}, census {}", load_s, mb(rss_loaded.0), resident.held(), census_loaded);
 
         // ---- checks: the dataflow's view of worktree w against a from-scratch evaluation.
         let mut checks = 0usize;
@@ -583,12 +664,15 @@ pub fn run(run_dir: &Path, opts: Opts) {
                     stopped = true;
                 }
             }
+            gc(&built, false, &format!("event {}", ev.seq), &mut gc_log);
             if ev.group == "edit" && edits_done % 100 == 0 {
                 let r = rss();
                 let arranged: isize = sizes.borrow().records.values().sum();
-                rss_samples.push(json!({"at": format!("edit {edits_done}"), "rss_mb": mb(r.0), "footprint_mb": mb(r.1), "resident_pairs": resident.held(), "resident_contents": resident.contents(), "arranged": arranged}));
+                let (ns, nb) = val::syms_footprint();
+                rss_samples.push(json!({"at": format!("edit {edits_done}"), "rss_mb": mb(r.0), "footprint_mb": mb(r.1), "resident_pairs": resident.held(), "resident_contents": resident.contents(), "arranged": arranged, "census": census_json(false), "interned": ns, "interned_bytes": nb, "exported_row_bytes": facts.borrow().bytes()}));
             }
         }
+        let census_end = census_json(true);
         let rss_end = rss();
         rss_samples.push(json!({"at": "end", "rss_mb": mb(rss_end.0), "footprint_mb": mb(rss_end.1)}));
         let mut lat_summary = serde_json::Map::new();
@@ -660,6 +744,15 @@ pub fn run(run_dir: &Path, opts: Opts) {
             "fact_load_seconds_total": fact_load_s,
             "rss": rss_samples,
             "resident": {"pairs": resident.held(), "contents": resident.contents(), "exported_row_bytes": facts.borrow().bytes(), "interned": nsyms, "interned_bytes": sym_bytes},
+            "x2": {
+                "census_loaded": census_loaded,
+                "census_end": census_end,
+                "numbers": {"live": val::nums_footprint().0, "bytes": val::nums_footprint().1},
+                "sweeps": gc_log.iter().filter(|g| g["at"].as_str().is_some_and(|a| a.starts_with("event"))).count(),
+                "sweep_pause_ms_max": gc_log.iter().filter(|g| g["at"].as_str().is_some_and(|a| a.starts_with("event"))).map(|g| g["pause_ms"].as_f64().unwrap()).fold(0.0, f64::max),
+                "sweep_seconds_replay": gc_log.iter().filter(|g| g["at"].as_str().is_some_and(|a| a.starts_with("event"))).map(|g| g["pause_ms"].as_f64().unwrap()).sum::<f64>() / 1e3,
+                "gc_log": gc_log,
+            },
             "exactness": {"checks": checks, "worktree_checks": worktree_checks, "differences": differences.len(), "first_differences": differences.iter().take(20).collect::<Vec<_>>(), "oracle_seconds": oracle_s, "stopped_early": stopped, "scratch": if opts.reference_scratch { "reference" } else { "engine" }, "scratch_dataflows": scratch_runs, "scratch_seconds": scratch_s, "check_every": opts.check_every, "sweep": opts.sweep},
             "initial_findings_per_worktree": initial,
             "state": state,

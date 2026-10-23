@@ -3,6 +3,7 @@
 //! one differential dataflow over the membership model's tagged records (`lower`). No plan-specific
 //! delta code exists; Spike B's hand expansions (`crate::flow`) are the generator's test vectors
 //! (`vectors`).
+pub mod col;
 pub mod drive;
 pub mod lower;
 pub mod norm;

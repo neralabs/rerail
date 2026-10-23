@@ -16,14 +16,14 @@
 //! - fixpoint: differential `iterate` (semi-naive) in delta mode: the body is the same base +
 //!   delta expansion at the iteration's timestamp, each round's distinct the count-based presence;
 //!   a base load is a plain semi-naive evaluation, a worktree iterates only its differences.
+use super::col::{self, TR};
 use super::norm::{Graph, Key, KeyMode, NodeId, Op, X};
 use super::tags::{self, W, BASE};
 use super::val::{self, Kind, Row, Val};
 use differential_dataflow::input::{Input, InputSession};
-use differential_dataflow::operators::arrange::{Arranged, TraceAgent};
+use differential_dataflow::operators::arrange::{Arrange, Arranged, TraceAgent};
 use differential_dataflow::trace::wrappers::enter::TraceEnter;
 use differential_dataflow::operators::iterate::Iterate;
-use differential_dataflow::trace::implementations::{ValBuilder, ValSpine};
 use differential_dataflow::{AsCollection, VecCollection};
 use rerail_facts::ir::{AggCall, AggFn, RepoSource, WindowKind};
 use rerail_facts::sql::value::{self as sv, V};
@@ -45,10 +45,13 @@ pub type Sym = u32;
 pub type Cid = u32;
 
 type C<'s, Tm> = VecCollection<'s, Tm, (W, Row), R>;
-type Arr<'s, Tm, V2> = Arranged<'s, TraceAgent<ValSpine<Row, (W, V2), Tm, R>>>;
+/// Keyed tagged rows, columnar (`gen::col`).
+type Arr<'s, Tm> = Arranged<'s, TraceAgent<col::RowSpine<Tm>>>;
+/// Count-based presence, columnar keys.
+type PArr<'s, Tm> = Arranged<'s, TraceAgent<col::PresSpine<Tm>>>;
 
-/// Exported rows of one (path, content): `rows(export, path, content)`.
-pub type Source = Rc<dyn Fn(u32, Sym, Cid) -> Rc<[Row]>>;
+/// Exported rows of one (path, content): `rows(export, path, content)`, flat.
+pub type Source = Rc<dyn Fn(u32, Sym, Cid) -> Rc<col::Flat>>;
 
 /// Runtime refusals (exact-or-refuse at run time): an order a construct observes was not total,
 /// a bare value was ambiguous, or a scalar raised. Counted per construct (every occurrence, for
@@ -214,12 +217,127 @@ fn key_of(row: &[Val], key: &Key, vrow: &mut Option<Vec<V>>) -> Option<Row> {
         .collect()
 }
 
-fn keyed<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(c: C<'s, Tm>, key: Key, name: &str) -> Arr<'s, Tm, Row> {
-    c.flat_map(move |(w, row)| {
-        let mut vr = None;
-        key_of(&row, &key, &mut vr).map(|k| (k, (w, row)))
-    })
-    .arrange_by_key_named(name)
+/// Arranges `(key, (tag, row))` records columnar, registered for the census and the sweep.
+fn arrange_rows<'s, Tm: col::Packed>(c: VecCollection<'s, Tm, (Row, (W, Row)), R>, name: &str) -> Arr<'s, Tm> {
+    let a = c.arrange_named::<col::RowBatcher<Tm>, col::RowBuilder<Tm>, col::RowSpine<Tm>>(name);
+    col::register_rows(name, a.trace.clone());
+    a
+}
+
+fn arrange_pres<'s, Tm: col::Packed>(c: VecCollection<'s, Tm, (Row, (W, ())), R>, name: &str) -> PArr<'s, Tm> {
+    let a = c.arrange_named::<col::PresBatcher<Tm>, col::PresBuilder<Tm>, col::PresSpine<Tm>>(name);
+    col::register_pres(name, a.trace.clone());
+    a
+}
+
+/// How a keyed arrangement stores a node's rows (x2-compact): the columns a key reads bare
+/// (`Col` under `Group` or affinity-free `Eq`: the key holds the value itself, canonicalised) are
+/// left out of the stored row and read back from the key. A record whose column differs from its
+/// key value (an integral REAL, canonicalised to INTEGER in the key) is stored whole; the stored
+/// width tells the two apart (`width - elided` vs `width`), and at least one column is kept so no
+/// elided row is empty (a keyless group's sentinel is).
+#[derive(Clone)]
+struct Splice {
+    width: usize,
+    /// (column, key index), by column.
+    pos: Rc<[(usize, usize)]>,
+}
+
+impl Splice {
+    fn none() -> Splice {
+        Splice { width: 0, pos: Rc::from(Vec::new()) }
+    }
+
+    fn of(key: &Key, width: usize) -> Splice {
+        let mut pos: Vec<(usize, usize)> = Vec::new();
+        for (i, (x, mode)) in key.iter().enumerate() {
+            if let (rerail_facts::ir::Expr::Col { depth: 0, col }, KeyMode::Group | KeyMode::Eq(rerail_facts::ir::Aff::None)) = (x, mode) {
+                if !pos.iter().any(|(c, _)| *c == *col as usize) {
+                    pos.push((*col as usize, i));
+                }
+            }
+        }
+        if pos.len() >= width {
+            pos.pop();
+        }
+        pos.sort();
+        Splice { width, pos: pos.into() }
+    }
+
+    /// The row as stored under key `k`.
+    fn elide(&self, k: &[Val], row: Row) -> Row {
+        if self.pos.is_empty() || row.len() != self.width || self.pos.iter().any(|(c, i)| row[*c] != k[*i]) {
+            return row;
+        }
+        let mut p = self.pos.iter().peekable();
+        let mut out = Vec::with_capacity(self.width - self.pos.len());
+        for (c, v) in row.iter().enumerate() {
+            if p.peek().is_some_and(|(pc, _)| *pc == c) {
+                p.next();
+            } else {
+                out.push(*v);
+            }
+        }
+        Row::from(out)
+    }
+
+    /// Appends the full row of stored row `a` under key `k` to `out`.
+    fn extend(&self, k: &[Val], a: &[Val], out: &mut Vec<Val>) {
+        if self.pos.is_empty() || a.len() != self.width - self.pos.len() {
+            out.extend_from_slice(a);
+            return;
+        }
+        let mut p = self.pos.iter().peekable();
+        let mut j = 0;
+        for c in 0..self.width {
+            match p.peek() {
+                Some((pc, i)) if *pc == c => {
+                    out.push(k[*i]);
+                    p.next();
+                }
+                _ => {
+                    out.push(a[j]);
+                    j += 1;
+                }
+            }
+        }
+    }
+
+    fn row(&self, k: &[Val], a: &[Val]) -> Row {
+        if self.pos.is_empty() {
+            return Row::new(a);
+        }
+        let mut out = Vec::with_capacity(self.width);
+        self.extend(k, a, &mut out);
+        Row::from(out)
+    }
+
+    /// The concatenation of two stored rows (a join's output), each under its own splice.
+    fn concat(&self, k: &[Val], a: &[Val], other: &Splice, b: &[Val]) -> Row {
+        if self.pos.is_empty() && other.pos.is_empty() {
+            return Row::concat(a, b);
+        }
+        let mut out = Vec::with_capacity(self.width + other.width);
+        self.extend(k, a, &mut out);
+        other.extend(k, b, &mut out);
+        Row::from(out)
+    }
+}
+
+fn keyed<'s, Tm: col::Packed>(c: C<'s, Tm>, key: Key, width: usize, name: &str) -> (Arr<'s, Tm>, Splice) {
+    let sp = Splice::of(&key, width);
+    let s2 = sp.clone();
+    let a = arrange_rows(
+        c.flat_map(move |(w, row)| {
+            let mut vr = None;
+            key_of(&row, &key, &mut vr).map(|k| {
+                let r = s2.elide(&k, row);
+                (k, (w, r))
+            })
+        }),
+        name,
+    );
+    (a, sp)
 }
 
 fn flip(before: R, after: R) -> R {
@@ -228,23 +346,24 @@ fn flip(before: R, after: R) -> R {
 }
 
 /// Per key: the count of each tag's records (vals sorted by tag).
-fn per_tag<V2>(vals: &[(&(W, V2), R)]) -> Vec<(W, R)> {
+fn per_tag(vals: &[(col::TU, R)]) -> Vec<(W, R)> {
     let mut per: Vec<(W, R)> = Vec::new();
-    for ((w, _), d) in vals {
-        let d = if crate::mutant::on(5) { (*d).max(0) } else { *d };
+    for &(col::TU(w), d) in vals {
+        let d = if crate::mutant::on(5) { d.max(0) } else { d };
         match per.last_mut() {
-            Some((lw, ld)) if lw == w => *ld += d,
-            _ => per.push((*w, d)),
+            Some((lw, ld)) if *lw == w => *ld += d,
+            _ => per.push((w, d)),
         }
     }
     per
 }
 
 /// Presence of keys (count-based): `key -> (tag, ())` with ±1 deltas.
-fn presence<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(keys: VecCollection<'s, Tm, (Row, (W, ())), R>, name: &str) -> Arr<'s, Tm, ()> {
-    keys.arrange_by_key_named(&format!("{name}:presence-in")).reduce_abelian::<_, ValBuilder<Row, (W, ()), Tm, R>, ValSpine<Row, (W, ()), Tm, R>, _, _>(
-        &format!("{name}:presence-out"),
-        |_k, vals: &[(&(W, ()), R)], out: &mut Vec<((W, ()), R)>| {
+fn presence<'s, Tm: col::Packed>(keys: VecCollection<'s, Tm, (Row, (W, ())), R>, name: &str) -> PArr<'s, Tm> {
+    let out_name = format!("{name}:presence-out");
+    let out = arrange_pres(keys, &format!("{name}:presence-in")).reduce_abelian::<_, col::PresBuilder<Tm>, col::PresSpine<Tm>, _, _>(
+        &out_name,
+        |_k, vals: &[(col::TU, R)], out: &mut Vec<((W, ()), R)>| {
             let per = per_tag(vals);
             let at = |t: W| per.iter().find(|(w, _)| *w == t).map(|(_, c)| *c).unwrap_or(0);
             if at(BASE) > 0 {
@@ -264,39 +383,45 @@ fn presence<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice
         },
         |vec, key, upds| {
             vec.clear();
-            vec.extend(upds.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
+            vec.extend(upds.drain(..).map(|(v, t, r)| ((Row::new(key), v), t, r)));
         },
-    )
+    );
+    col::register_pres(&out_name, out.trace.clone());
+    out
 }
 
 /// Group recompute: per key, logic over each tag's view, emitted as differences. Returns the
 /// output and the refusal records (`(t, [construct])`, differences like the output's): a group
 /// whose logic refuses in view t yields no rows there and one live refusal.
-fn group<'s>(input: Arr<'s, T, Row>, logic: Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>>, sentinel: bool, name: &str) -> (C<'s, T>, C<'s, T>) {
+fn group<'s>(input: Arr<'s, T>, sp: Splice, logic: Rc<dyn Fn(&[Val], &[(&[Val], R)]) -> Vec<(Row, R)>>, sentinel: bool, name: &str) -> (C<'s, T>, C<'s, T>) {
     let at = name.to_owned();
-    let all = input
-        .reduce_abelian::<_, ValBuilder<Row, (W, Row), T, R>, ValSpine<Row, (W, Row), T, R>, _, _>(
-            &format!("{name}:group-out"),
-            move |k, vals: &[(&(W, Row), R)], out: &mut Vec<((W, Row), R)>| {
+    let out_name = format!("{name}:group-out");
+    let arr = input
+        .reduce_abelian::<_, col::RowBuilder<T>, col::RowSpine<T>, _, _>(
+            &out_name,
+            move |k, vals: &[(TR<'_>, R)], out: &mut Vec<((W, Row), R)>| {
                 let mut tags_at: Vec<W> = Vec::new();
-                for ((w, _), _) in vals {
-                    if tags_at.last() != Some(w) {
-                        tags_at.push(*w);
+                for &(TR(w, _), _) in vals {
+                    if tags_at.last() != Some(&w) {
+                        tags_at.push(w);
                     }
                 }
-                let view = |t: W| -> Vec<(&Row, R)> {
+                // Members' full rows (the key's columns read back when the arrangement elides them).
+                let full: Vec<Row> = if sp.pos.is_empty() { Vec::new() } else { vals.iter().map(|(TR(_, r), _)| sp.row(k, r)).collect() };
+                let row_at = |i: usize| -> &[Val] { if full.is_empty() { vals[i].0 .1 } else { &full[i] } };
+                let view = |t: W| -> Vec<(&[Val], R)> {
                     let ch = tags::chain(t);
-                    let mut m: BTreeMap<&Row, R> = BTreeMap::new();
-                    for ((w, r), d) in vals {
-                        if ch.contains(w) {
-                            let d = if crate::mutant::on(5) { (*d).max(0) } else { *d };
-                            *m.entry(r).or_default() += d;
+                    let mut m: BTreeMap<&[Val], R> = BTreeMap::new();
+                    for (i, &(TR(w, _), d)) in vals.iter().enumerate() {
+                        if ch.contains(&w) {
+                            let d = if crate::mutant::on(5) { d.max(0) } else { d };
+                            *m.entry(row_at(i)).or_default() += d;
                         }
                     }
                     m.into_iter().filter(|(r, c)| *c != 0 && !(sentinel && r.is_empty())).collect()
                 };
                 // A view's output rows followed by its refusal records (tag bit REFUSED).
-                let eval = |members: Vec<(&Row, R)>| -> Vec<(Row, R, bool)> {
+                let eval = |members: Vec<(&[Val], R)>| -> Vec<(Row, R, bool)> {
                     if members.is_empty() && !sentinel {
                         return Vec::new();
                     }
@@ -334,10 +459,11 @@ fn group<'s>(input: Arr<'s, T, Row>, logic: Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec
             },
             |vec, key, upds| {
                 vec.clear();
-                vec.extend(upds.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
+                vec.extend(upds.drain(..).map(|(v, t, r)| ((Row::new(key), v), t, r)));
             },
-        )
-        .as_collection(|_k, (w, r)| (*w, r.clone()));
+        );
+    col::register_rows(&out_name, arr.trace.clone());
+    let all = arr.as_collection(|_k, TR(w, r)| (w, Row::new(r)));
     split_refusals(all)
 }
 
@@ -351,7 +477,7 @@ fn split_refusals<'s>(all: C<'s, T>) -> (C<'s, T>, C<'s, T>) {
 // --------------------------------------------------------------------------------------------
 // Group logics
 
-fn vals_of(members: &[(&Row, R)]) -> Vec<(Vec<V>, R)> {
+fn vals_of(members: &[(&[Val], R)]) -> Vec<(Vec<V>, R)> {
     members.iter().map(|(r, c)| (val::row_to_v(r), *c)).collect()
 }
 
@@ -359,7 +485,7 @@ fn vals_of(members: &[(&Row, R)]) -> Vec<(Vec<V>, R)> {
 /// group's rows in `order` (stable over equal rows) through the reference evaluator's own fold;
 /// a tie between distinct rows on equal order keys is a runtime refusal (the reference raises
 /// `tie:` on the same groups), never broken by representation order.
-fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize, order: Vec<(X, bool)>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize, order: Vec<(X, bool)>) -> Rc<dyn Fn(&[Val], &[(&[Val], R)]) -> Vec<(Row, R)>> {
     let key_cols: Vec<usize> = keys.iter().filter_map(|(k, _)| if let rerail_facts::ir::Expr::Col { depth: 0, col } = k { Some(*col as usize) } else { None }).collect();
     let ordered = aggs.iter().any(|a| matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray));
     let desc: Vec<bool> = order.iter().map(|x| x.1).collect();
@@ -519,7 +645,7 @@ fn order_cmp(a: &[V], b: &[V], desc: &[bool]) -> Ordering {
     Ordering::Equal
 }
 
-fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn Fn(&[Val], &[(&[Val], R)]) -> Vec<(Row, R)>> {
     Rc::new(move |_k, members| {
         let rows = vals_of(members);
         match &kind {
@@ -583,14 +709,14 @@ fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn F
     })
 }
 
-fn distinct_prefix_logic(prefix: usize) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+fn distinct_prefix_logic(prefix: usize) -> Rc<dyn Fn(&[Val], &[(&[Val], R)]) -> Vec<(Row, R)>> {
     Rc::new(move |_k, members| {
         let first = members[0].0;
         if members.iter().any(|(r, _)| r[prefix..] != first[prefix..] || r[..prefix] != first[..prefix]) {
             refuse("DISTINCT on a prefix whose trailing (ORDER BY) columns differ (first-occurrence dependent)");
             return Vec::new();
         }
-        vec![(first.clone(), 1)]
+        vec![(Row::new(first), 1)]
     })
 }
 
@@ -626,8 +752,8 @@ struct Lower<'s> {
     /// `Some(graph offset)`: count every operator output's live records per tag.
     track: Option<usize>,
     /// Arrangements and presences by (node, key), shared by every operator that reads them.
-    arrs: FxHashMap<(NodeId, String), Arr<'s, T, Row>>,
-    press: FxHashMap<(NodeId, String), Arr<'s, T, ()>>,
+    arrs: FxHashMap<(NodeId, String), (Arr<'s, T>, Splice)>,
+    press: FxHashMap<(NodeId, String), PArr<'s, T>>,
     /// Refusal records raised by the plan's operators (tag, [construct]).
     refused: Vec<C<'s, T>>,
 }
@@ -774,7 +900,7 @@ impl<'s> Lower<'s> {
                 let (id, src) = (*id, self.src.clone());
                 self.files.clone().flat_map(move |(w, (p, c))| {
                     let rows = src(id, p, c);
-                    (0..rows.len()).map(move |i| (w, rows[i].clone()))
+                    (0..rows.len()).map(move |i| (w, Row::new(rows.get(i))))
                 })
             }
             Op::Const(rows) => {
@@ -816,22 +942,20 @@ impl<'s> Lower<'s> {
                 self.node(*input).map(move |(w, row)| (w, affinity(&row, &affs)))
             }
             Op::Join { l, r, lk, rk } => {
-                let la = self.arr(*l, lk);
-                let ra = self.arr(*r, rk);
-                la.join_core(ra, |_k, (w1, a), (w2, b)| {
-                    tags::product(*w1, *w2).map(|w| (w, Row::concat(a, b)))
-                })
+                let (la, sl) = self.arr(*l, lk);
+                let (ra, sr) = self.arr(*r, rk);
+                la.join_core(ra, pair(sl, sr))
             }
             Op::Semi { l, r, lk, rk, anti } => {
                 let left = self.node(*l);
-                let la = self.arr(*l, lk);
+                let (la, sl) = self.arr(*l, lk);
                 let pres = self.pres(*r, rk);
-                let hit = la.join_core(pres, |_k, (w1, a), (w2, ())| tags::product(*w1, *w2).map(|w| (w, a.clone())));
+                let hit = la.join_core(pres, hit_of(sl));
                 if *anti { left.concat(hit.negate()) } else { hit }
             }
             Op::Distinct { input } => {
                 let keys = self.node(*input).map(|(w, row)| (row, (w, ())));
-                presence(keys, &format!("n{n}:distinct")).as_collection(|k, (w, ())| (*w, k.clone()))
+                presence(keys, &format!("n{n}:distinct")).as_collection(|k, col::TU(w)| (w, Row::new(k)))
             }
             Op::Concat { inputs } => {
                 let mut it = inputs.clone().into_iter();
@@ -846,30 +970,29 @@ impl<'s> Lower<'s> {
                     c = c.concat(s.to_stream(self.scope).as_collection());
                 }
                 let kk = keys.clone();
-                let arr = c
-                    .flat_map(move |(w, row)| {
-                        if row.is_empty() {
-                            return Some((Row::default(), (w, row)));
-                        }
-                        let mut vr = None;
-                        key_of(&row, &kk, &mut vr).map(|k| (k, (w, row)))
-                    })
-                    .arrange_by_key_named(&format!("n{n}:group-in"));
-                let (data, refused) = group(arr, agg_logic(keys.clone(), aggs.clone(), *width, order.clone()), *keyless, &format!("n{n}"));
+                let rows = c.flat_map(move |(w, row)| {
+                    if row.is_empty() {
+                        return Some((Row::default(), (w, row)));
+                    }
+                    let mut vr = None;
+                    key_of(&row, &kk, &mut vr).map(|k| (k, (w, row)))
+                });
+                let arr = arrange_rows(rows, &format!("n{n}:group-in"));
+                let (data, refused) = group(arr, Splice::none(), agg_logic(keys.clone(), aggs.clone(), *width, order.clone()), *keyless, &format!("n{n}"));
                 self.refused.push(refused);
                 data
             }
             Op::Window { input, part, order, kind } => {
-                let arr = self.arr(*input, part);
-                let (data, refused) = group(arr, window_logic(order.clone(), kind.clone()), false, &format!("n{n}"));
+                let (arr, sp) = self.arr(*input, part);
+                let (data, refused) = group(arr, sp, window_logic(order.clone(), kind.clone()), false, &format!("n{n}"));
                 self.refused.push(refused);
                 data
             }
             Op::DistinctPrefix { input, prefix } => {
                 let p = *prefix;
                 let key: Key = (0..p).map(|c| (super::norm::col(c), KeyMode::Group)).collect();
-                let arr = self.arr(*input, &key);
-                let (data, refused) = group(arr, distinct_prefix_logic(p), false, &format!("n{n}"));
+                let (arr, sp) = self.arr(*input, &key);
+                let (data, refused) = group(arr, sp, distinct_prefix_logic(p), false, &format!("n{n}"));
                 self.refused.push(refused);
                 data
             }
@@ -885,18 +1008,18 @@ impl<'s> Lower<'s> {
 
     /// The arrangement of node `n`'s records by `key`, one per (node, key) and shared by every
     /// operator that needs it (joins, semijoins, windows, and the fixpoints' boundary joins).
-    fn arr(&mut self, n: NodeId, key: &Key) -> Arr<'s, T, Row> {
+    fn arr(&mut self, n: NodeId, key: &Key) -> (Arr<'s, T>, Splice) {
         let k = (n, format!("{key:?}"));
         if let Some(a) = self.arrs.get(&k) {
             return a.clone();
         }
-        let a = keyed(self.node(n), key.clone(), &format!("n{n}:by{}", self.arrs.len()));
+        let a = keyed(self.node(n), key.clone(), self.g.widths[n], &format!("n{n}:by{}", self.arrs.len()));
         self.arrs.insert(k, a.clone());
         a
     }
 
     /// Count-based presence of node `n`'s keys under `key`, one per (node, key).
-    fn pres(&mut self, n: NodeId, key: &Key) -> Arr<'s, T, ()> {
+    fn pres(&mut self, n: NodeId, key: &Key) -> PArr<'s, T> {
         let k = (n, format!("{key:?}"));
         if let Some(a) = self.press.get(&k) {
             return a.clone();
@@ -913,7 +1036,7 @@ impl<'s> Lower<'s> {
 
     /// The delta-mode arrangements a fixpoint body joins with (view × delta), built here and
     /// entered into the iteration, so the body shares them with the operators outside it.
-    fn boundary_arrs(&mut self, rd: &[bool], n: NodeId, arrs: &mut Vec<((NodeId, String), Arr<'s, T, Row>)>, press: &mut Vec<((NodeId, String), Arr<'s, T, ()>)>, seen: &mut Vec<bool>) {
+    fn boundary_arrs(&mut self, rd: &[bool], n: NodeId, arrs: &mut Vec<((NodeId, String), (Arr<'s, T>, Splice))>, press: &mut Vec<((NodeId, String), PArr<'s, T>)>, seen: &mut Vec<bool>) {
         let g = self.g.clone();
         if !rd[n] || seen[n] {
             return;
@@ -993,7 +1116,7 @@ impl<'s> Lower<'s> {
             for (b, c) in &bnd_cols {
                 env.insert(*b, c.clone().enter(inner));
             }
-            let earrs = outer_arrs.iter().map(|(k, a)| (k.clone(), a.clone().enter(inner))).collect();
+            let earrs = outer_arrs.iter().map(|(k, (a, sp))| (k.clone(), (a.clone().enter(inner), sp.clone()))).collect();
             let epress = outer_press.iter().map(|(k, a)| (k.clone(), a.clone().enter(inner))).collect();
             let mut vl = IterLower { g: g2.clone(), gname: gname.clone(), rd: rd.clone(), rec: rec.clone(), env, earrs, epress, done: FxHashMap::default() };
             let mut out = seeds.clone().enter(inner);
@@ -1009,7 +1132,7 @@ impl<'s> Lower<'s> {
                 }
                 out = out.concat(d);
             }
-            let out = presence(out.map(|(w, row)| (row, (w, ()))), &format!("fix{var}:iterate-distinct")).as_collection(|row, (w, ())| (*w, row.clone()));
+            let out = presence(out.map(|(w, row)| (row, (w, ()))), &format!("fix{var}:iterate-distinct")).as_collection(|row, col::TU(w)| (w, Row::new(row)));
             if super::prof::on() {
                 let fl = fix_label.clone();
                 out.clone().inspect(move |(_, t, r)| super::prof::iter(&fl, "distinct", t.inner, *r as i64));
@@ -1020,7 +1143,18 @@ impl<'s> Lower<'s> {
     }
 }
 
-type EArr<'i, V2> = Arranged<'i, TraceEnter<TraceAgent<ValSpine<Row, (W, V2), T, R>>, IT>>;
+type EArr<'i> = Arranged<'i, TraceEnter<TraceAgent<col::RowSpine<T>>, IT>>;
+type EPArr<'i> = Arranged<'i, TraceEnter<TraceAgent<col::PresSpine<T>>, IT>>;
+
+/// A join's pair (t1, t2) yields `product(t1, t2)` (the bilinear expansion), over full rows.
+fn pair(sl: Splice, sr: Splice) -> impl Fn(&[Val], TR<'_>, TR<'_>) -> Option<(W, Row)> + 'static {
+    move |k, TR(w1, a), TR(w2, b)| tags::product(w1, w2).map(|w| (w, sl.concat(k, a, &sr, b)))
+}
+
+/// A semijoin's hit: the left record (full row) where the right key is present.
+fn hit_of(sl: Splice) -> impl Fn(&[Val], TR<'_>, col::TU) -> Option<(W, Row)> + 'static {
+    move |k, TR(w1, a), col::TU(w2)| tags::product(w1, w2).map(|w| (w, sl.row(k, a)))
+}
 
 /// Delta-mode lowering inside a fixpoint: records `(t, row)` are signed differences of view t
 /// from its parent's, as outside; the operators are the same expansions at the iteration's time.
@@ -1033,8 +1167,8 @@ struct IterLower<'i> {
     /// Delta-mode boundary collections, entered.
     env: FxHashMap<NodeId, C<'i, IT>>,
     /// Delta-mode boundary arrangements (by node and key) and presences, entered.
-    earrs: FxHashMap<(NodeId, String), EArr<'i, Row>>,
-    epress: FxHashMap<(NodeId, String), EArr<'i, ()>>,
+    earrs: FxHashMap<(NodeId, String), (EArr<'i>, Splice)>,
+    epress: FxHashMap<(NodeId, String), EPArr<'i>>,
     done: FxHashMap<NodeId, C<'i, IT>>,
 }
 
@@ -1089,27 +1223,26 @@ impl<'i> IterLower<'i> {
             }
             Op::Distinct { input } => {
                 let keys = self.node(*input).map(|(w, row)| (row, (w, ())));
-                presence(keys, &format!("n{n}:iter-distinct")).as_collection(|k, (w, ())| (*w, k.clone()))
+                presence(keys, &format!("n{n}:iter-distinct")).as_collection(|k, col::TU(w)| (w, Row::new(k)))
             }
             Op::Join { l, r, lk, rk } => {
                 let (lv, rv) = (self.is_view(*l), self.is_view(*r));
                 // The bilinear expansion, as outside: a pair (t1, t2) yields product(t1, t2).
-                let pair = |_k: &Row, (w1, a): &(W, Row), (w2, b): &(W, Row)| tags::product(*w1, *w2).map(|w| (w, Row::concat(a, b)));
                 match (lv, rv) {
                     (true, true) => {
-                        let la = keyed(self.node(*l), lk.clone(), &format!("n{n}:iter-join-l"));
-                        let ra = keyed(self.node(*r), rk.clone(), &format!("n{n}:iter-join-r"));
-                        la.join_core(ra, pair)
+                        let (la, sl) = keyed(self.node(*l), lk.clone(), g.widths[*l], &format!("n{n}:iter-join-l"));
+                        let (ra, sr) = keyed(self.node(*r), rk.clone(), g.widths[*r], &format!("n{n}:iter-join-r"));
+                        la.join_core(ra, pair(sl, sr))
                     }
                     (true, false) => {
-                        let la = keyed(self.node(*l), lk.clone(), &format!("n{n}:iter-join-l"));
-                        let ra = self.earrs[&(*r, format!("{rk:?}"))].clone();
-                        la.join_core(ra, pair)
+                        let (la, sl) = keyed(self.node(*l), lk.clone(), g.widths[*l], &format!("n{n}:iter-join-l"));
+                        let (ra, sr) = self.earrs[&(*r, format!("{rk:?}"))].clone();
+                        la.join_core(ra, pair(sl, sr))
                     }
                     (false, true) => {
-                        let la = self.earrs[&(*l, format!("{lk:?}"))].clone();
-                        let ra = keyed(self.node(*r), rk.clone(), &format!("n{n}:iter-join-r"));
-                        la.join_core(ra, pair)
+                        let (la, sl) = self.earrs[&(*l, format!("{lk:?}"))].clone();
+                        let (ra, sr) = keyed(self.node(*r), rk.clone(), g.widths[*r], &format!("n{n}:iter-join-r"));
+                        la.join_core(ra, pair(sl, sr))
                     }
                     (false, false) => unreachable!("join of two non-recursive relations inside the recursion"),
                 }
@@ -1122,7 +1255,6 @@ impl<'i> IterLower<'i> {
                     return self.rec.clone().filter(|_| false);
                 }
                 let left = self.node(*l);
-                let hit_of = |_k: &Row, (w1, a): &(W, Row), (w2, ()): &(W, ())| tags::product(*w1, *w2).map(|w| (w, a.clone()));
                 // The right side's count-based presence: built here over the recursive relation,
                 // or the delta-mode one shared with the operators outside, entered.
                 let hit = match (lv, rv) {
@@ -1133,11 +1265,13 @@ impl<'i> IterLower<'i> {
                             key_of(&row, &rk, &mut vr).map(|k| (k, (w, ())))
                         });
                         let pres = presence(keys, &format!("n{n}:iter-semi-r"));
-                        keyed(left.clone(), lk.clone(), &format!("n{n}:iter-semi-l")).join_core(pres, hit_of)
+                        let (la, sl) = keyed(left.clone(), lk.clone(), g.widths[*l], &format!("n{n}:iter-semi-l"));
+                        la.join_core(pres, hit_of(sl))
                     }
                     (true, false) => {
                         let pres = self.epress[&(*r, format!("{rk:?}"))].clone();
-                        keyed(left.clone(), lk.clone(), &format!("n{n}:iter-semi-l")).join_core(pres, hit_of)
+                        let (la, sl) = keyed(left.clone(), lk.clone(), g.widths[*l], &format!("n{n}:iter-semi-l"));
+                        la.join_core(pres, hit_of(sl))
                     }
                     (false, true) => {
                         let rk = rk.clone();
@@ -1146,7 +1280,8 @@ impl<'i> IterLower<'i> {
                             key_of(&row, &rk, &mut vr).map(|k| (k, (w, ())))
                         });
                         let pres = presence(keys, &format!("n{n}:iter-semi-r"));
-                        self.earrs[&(*l, format!("{lk:?}"))].clone().join_core(pres, hit_of)
+                        let (la, sl) = self.earrs[&(*l, format!("{lk:?}"))].clone();
+                        la.join_core(pres, hit_of(sl))
                     }
                     (false, false) => unreachable!("semijoin of two non-recursive relations inside the recursion"),
                 };
@@ -1169,9 +1304,14 @@ impl<'i> IterLower<'i> {
 
 /// Maintains a collection's consolidated contents in an `Out` map.
 fn capture<'s>(c: C<'s, T>, probe: &Handle<T>) -> Out {
+    thread_local! {
+        static CAPTURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
     let out: Out = Rc::default();
     let o = out.clone();
-    c.consolidate()
+    let name = format!("capture{}", CAPTURES.with(|c| c.replace(c.get() + 1)));
+    arrange_pres(c.map(|(w, row)| (row, (w, ()))), &name)
+        .as_collection(|k, col::TU(w)| (w, Row::new(k)))
         .inspect(move |(k, _t, d)| {
             let mut o = o.borrow_mut();
             let e = o.entry(k.clone()).or_default();

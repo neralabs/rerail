@@ -2001,7 +2001,7 @@ mod tests {
     /// live runtime refusals.
     fn generated(r: &Rl, t: &Tables) -> Result<BTreeMapRows, String> {
         let g = std::rc::Rc::new(super::plan(&plan(r.clone()), &[]).map_err(|e| format!("normalise: {e:?}"))?);
-        let rows: Vec<std::rc::Rc<[Row]>> = t.iter().map(|x| x.iter().map(|r| r.iter().map(val::from_v).collect::<Row>()).collect::<Vec<_>>().into()).collect();
+        let rows: Vec<std::rc::Rc<super::super::col::Flat>> = t.iter().map(|x| std::rc::Rc::new(x.iter().map(|r| r.iter().map(val::from_v).collect::<Row>()).collect::<Vec<_>>().into())).collect();
         // A worker on this thread (as `timely::execute_directly`, whose closure must be Send).
         let alloc = timely::communication::Allocator::Thread(timely::communication::allocator::thread::Thread::default());
         let mut worker = timely::worker::Worker::new(timely::WorkerConfig::default(), alloc, Some(std::time::Instant::now()));

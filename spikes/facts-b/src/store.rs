@@ -9,13 +9,26 @@ pub type Cid = u32; // content id (index into Store::contents)
 
 /// String interner over one owned arena: each string's bytes are stored once; the map goes from
 /// the string's hash to its symbol (colliding hashes spill to `overflow`).
+///
+/// Evicting (x2-compact): a string interned by the store (`intern`) is pinned; one computed by the
+/// dataflow (`intern_computed`) is not, and `sweep` frees it once no holder marks it. A freed
+/// symbol goes on a free list and is reused; the arena is compacted when half of it is dead.
 #[derive(Default)]
 pub struct Interner {
     arena: String,
     spans: Vec<(u32, u32)>,
     map: FxHashMap<u64, Sym>,
     overflow: FxHashMap<u64, Vec<Sym>>,
+    /// Pinned symbols (bitset), and every symbol below `pinned_below`.
+    pinned: Vec<u64>,
+    pinned_below: u32,
+    free: Vec<Sym>,
+    dead_bytes: usize,
+    /// Symbols created since the last sweep (the sweep policy reads it).
+    pub created: usize,
 }
+
+const FREED: u32 = u32::MAX;
 
 fn hash_str(s: &str) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -24,15 +37,40 @@ fn hash_str(s: &str) -> u64 {
     h.finish()
 }
 
+fn bit(bits: &[u64], i: u32) -> bool {
+    bits.get((i >> 6) as usize).is_some_and(|w| (w >> (i & 63)) & 1 == 1)
+}
+
 impl Interner {
+    /// A pinned symbol (the store's strings: paths, names; never evicted).
     pub fn intern(&mut self, s: &str) -> Sym {
+        let i = self.intern_computed(s);
+        let w = (i >> 6) as usize;
+        if self.pinned.len() <= w {
+            self.pinned.resize(w + 1, 0);
+        }
+        self.pinned[w] |= 1 << (i & 63);
+        i
+    }
+    /// A symbol the next `sweep` frees unless a holder marks it.
+    pub fn intern_computed(&mut self, s: &str) -> Sym {
         let h = hash_str(s);
         if let Some(i) = self.find(h, s) {
             return i;
         }
-        let i = self.spans.len() as Sym;
-        self.spans.push((self.arena.len() as u32, s.len() as u32));
+        self.created += 1;
+        let span = (self.arena.len() as u32, s.len() as u32);
         self.arena.push_str(s);
+        let i = match self.free.pop() {
+            Some(i) => {
+                self.spans[i as usize] = span;
+                i
+            }
+            None => {
+                self.spans.push(span);
+                (self.spans.len() - 1) as Sym
+            }
+        };
         if self.map.contains_key(&h) {
             self.overflow.entry(h).or_default().push(i);
         } else {
@@ -52,14 +90,74 @@ impl Interner {
     }
     pub fn str(&self, i: Sym) -> &str {
         let (o, l) = self.spans[i as usize];
+        debug_assert!(l != FREED, "symbol {i} was evicted");
         &self.arena[o as usize..(o + l) as usize]
     }
+    /// Live symbols.
     pub fn len(&self) -> usize {
-        self.spans.len()
+        self.spans.len() - self.free.len()
     }
-    /// Arena + spans (8 B per entry) + map (capacity x 16 B).
+    /// Arena + spans (8 B per entry) + map (capacity x 16 B) + pins and free list.
     pub fn bytes(&self) -> usize {
-        self.arena.capacity() + self.spans.capacity() * 8 + self.map.capacity() * 16
+        self.arena.capacity() + self.spans.capacity() * 8 + self.map.capacity() * 16 + self.overflow.capacity() * 32 + self.pinned.capacity() * 8 + self.free.capacity() * 4
+    }
+    /// Pins every symbol interned so far (the store's facts, plan constants).
+    pub fn pin_all(&mut self) {
+        self.pinned_below = self.spans.len() as u32;
+    }
+    fn is_pinned(&self, i: Sym) -> bool {
+        i < self.pinned_below || bit(&self.pinned, i)
+    }
+    /// Frees every unpinned symbol `live` does not hold; compacts the arena when half of it is
+    /// dead. Returns the symbols freed.
+    pub fn sweep(&mut self, live: &[u64]) -> usize {
+        let mut freed = 0;
+        for i in self.pinned_below..self.spans.len() as u32 {
+            let (o, l) = self.spans[i as usize];
+            if l == FREED || bit(live, i) || self.is_pinned(i) {
+                continue;
+            }
+            let s = &self.arena[o as usize..(o + l) as usize];
+            let h = hash_str(s);
+            if self.map.get(&h) == Some(&i) {
+                match self.overflow.get_mut(&h) {
+                    Some(v) => {
+                        let next = v.pop().unwrap();
+                        if v.is_empty() {
+                            self.overflow.remove(&h);
+                        }
+                        self.map.insert(h, next);
+                    }
+                    None => {
+                        self.map.remove(&h);
+                    }
+                }
+            } else if let Some(v) = self.overflow.get_mut(&h) {
+                v.retain(|x| *x != i);
+                if v.is_empty() {
+                    self.overflow.remove(&h);
+                }
+            }
+            self.dead_bytes += l as usize;
+            self.spans[i as usize] = (0, FREED);
+            self.free.push(i);
+            freed += 1;
+        }
+        if self.dead_bytes * 2 > self.arena.len() {
+            let mut arena = String::with_capacity(self.arena.len() - self.dead_bytes);
+            for sp in self.spans.iter_mut() {
+                if sp.1 != FREED {
+                    let o = arena.len() as u32;
+                    arena.push_str(&self.arena[sp.0 as usize..(sp.0 + sp.1) as usize]);
+                    sp.0 = o;
+                }
+            }
+            self.arena = arena;
+            self.dead_bytes = 0;
+        }
+        self.map.shrink_to_fit();
+        self.created = 0;
+        freed
     }
 }
 

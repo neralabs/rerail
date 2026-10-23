@@ -13,14 +13,15 @@ use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::rc::Rc;
 
-/// A stored value in one word: the low 2 bits a tag, the rest the payload. NULL is 0; an INTEGER
-/// in [-2^61, 2^61) is inline; TEXT is a store symbol; any other INTEGER and every REAL (by its
-/// bits) is an index into the process's number table. Every value has exactly one encoding, so
-/// the derived equality and hash are the representational ones the dataflow keys on (as the
-/// enum's were). The derived order is representational too and carries no SQL meaning: no
+/// A stored value in one 32-bit word (x2-compact): the low 2 bits a tag, the rest the payload.
+/// NULL is 0; an INTEGER in [-2^29, 2^29) is inline; TEXT is a symbol of the one interner; any
+/// other INTEGER and every REAL (by its bits) is an index into the process's number table. Every
+/// value has exactly one encoding, so the derived equality and hash are the representational ones
+/// the dataflow keys on. The derived order is representational too and carries no SQL meaning: no
 /// operator reads it beyond grouping equal values (SQL comparison goes through `V`).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
-pub struct Val(u64);
+#[repr(transparent)]
+pub struct Val(u32);
 
 /// A value unpacked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,11 +33,11 @@ pub enum Kind {
     Text(u32),
 }
 
-const TAG_INT: u64 = 1;
-const TAG_TEXT: u64 = 2;
-const TAG_NUM: u64 = 3;
-const INLINE_MIN: i64 = -(1 << 61);
-const INLINE_MAX: i64 = (1 << 61) - 1;
+const TAG_INT: u32 = 1;
+const TAG_TEXT: u32 = 2;
+const TAG_NUM: u32 = 3;
+const INLINE_MIN: i64 = -(1 << 29);
+const INLINE_MAX: i64 = (1 << 29) - 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Num {
@@ -44,10 +45,14 @@ enum Num {
     Real(u64),
 }
 
+/// The number table: boxed numbers by id, with a free list (ids of numbers no record holds,
+/// reclaimed by `sweep`).
 #[derive(Default)]
 struct Nums {
     vals: Vec<Num>,
     index: FxHashMap<Num, u32>,
+    free: Vec<u32>,
+    pinned: usize,
 }
 
 thread_local! {
@@ -61,12 +66,20 @@ fn boxed(n: Num) -> Val {
         if let Some(&i) = t.index.get(&n) {
             return i;
         }
-        let i = t.vals.len() as u32;
-        t.vals.push(n);
+        let i = match t.free.pop() {
+            Some(i) => {
+                t.vals[i as usize] = n;
+                i
+            }
+            None => {
+                t.vals.push(n);
+                (t.vals.len() - 1) as u32
+            }
+        };
         t.index.insert(n, i);
         i
     });
-    Val(((i as u64) << 2) | TAG_NUM)
+    Val((i << 2) | TAG_NUM)
 }
 
 impl Val {
@@ -74,7 +87,7 @@ impl Val {
 
     pub fn int(i: i64) -> Val {
         if (INLINE_MIN..=INLINE_MAX).contains(&i) {
-            Val(((i as u64) << 2) | TAG_INT)
+            Val(((i as i32 as u32) << 2) | TAG_INT)
         } else {
             boxed(Num::Int(i))
         }
@@ -85,7 +98,8 @@ impl Val {
     }
 
     pub fn text(sym: u32) -> Val {
-        Val(((sym as u64) << 2) | TAG_TEXT)
+        assert!(sym < 1 << 30, "symbol {sym} does not fit a 32-bit value word");
+        Val((sym << 2) | TAG_TEXT)
     }
 
     pub fn is_null(self) -> bool {
@@ -95,12 +109,74 @@ impl Val {
     pub fn kind(self) -> Kind {
         match self.0 & 3 {
             0 => Kind::Null,
-            TAG_INT => Kind::Int((self.0 as i64) >> 2),
-            TAG_TEXT => Kind::Text((self.0 >> 2) as u32),
+            TAG_INT => Kind::Int(((self.0 as i32) >> 2) as i64),
+            TAG_TEXT => Kind::Text(self.0 >> 2),
             _ => match NUMS.with(|t| t.borrow().vals[(self.0 >> 2) as usize]) {
                 Num::Int(i) => Kind::Int(i),
                 Num::Real(b) => Kind::Real(b),
             },
+        }
+    }
+}
+
+/// Number table: (live numbers, bytes).
+pub fn nums_footprint() -> (usize, usize) {
+    NUMS.with(|t| {
+        let t = t.borrow();
+        (t.vals.len() - t.free.len(), t.vals.capacity() * std::mem::size_of::<Num>() + t.index.capacity() * 24 + t.free.capacity() * 4)
+    })
+}
+
+/// Every number boxed so far is kept forever (plan constants, the store's facts).
+pub fn pin_nums() {
+    NUMS.with(|t| {
+        let mut t = t.borrow_mut();
+        t.pinned = t.vals.len();
+    })
+}
+
+/// Frees every unpinned number whose id `live` does not hold; returns how many were freed.
+pub fn sweep_nums(live: &[u64]) -> usize {
+    NUMS.with(|t| {
+        let mut t = t.borrow_mut();
+        let mut free = vec![0u64; 0];
+        for &i in &t.free {
+            set_bit(&mut free, i);
+        }
+        let mut freed = 0;
+        for i in t.pinned..t.vals.len() {
+            let i = i as u32;
+            if bit(&free, i) || bit(live, i) {
+                continue;
+            }
+            let n = t.vals[i as usize];
+            t.index.remove(&n);
+            t.free.push(i);
+            freed += 1;
+        }
+        freed
+    })
+}
+
+pub fn bit(bits: &[u64], i: u32) -> bool {
+    bits.get((i >> 6) as usize).is_some_and(|w| (w >> (i & 63)) & 1 == 1)
+}
+
+pub fn set_bit(bits: &mut Vec<u64>, i: u32) {
+    let w = (i >> 6) as usize;
+    if bits.len() <= w {
+        bits.resize(w + 1, 0);
+    }
+    bits[w] |= 1 << (i & 63);
+}
+
+/// Marks the symbols and numbers `vals` hold.
+pub fn mark(vals: &[Val], syms: &mut Vec<u64>, nums: &mut Vec<u64>) {
+    for v in vals {
+        match v.0 & 3 {
+            TAG_TEXT => set_bit(syms, v.0 >> 2),
+            TAG_NUM => set_bit(nums, v.0 >> 2),
+            _ => {}
         }
     }
 }
@@ -111,12 +187,11 @@ impl fmt::Debug for Val {
     }
 }
 
-/// Inline capacity of a row (values). Measured on the R1+R3 vectors (locked, edit 1,000): 2 keeps
-/// the 1–2-column keys inline in a 24-byte row and boxes the 3–11-column rows exactly sized; 3
-/// (32 B) and 4 (40 B) inline more rows but cost more than they save.
-const INLINE: usize = 2;
+/// Inline capacity of a row (values) outside arrangements (collections in flight, outputs): 4
+/// 32-bit values fit the 24-byte row; arranged rows are columnar (`gen::col`), never a `Row`.
+const INLINE: usize = 4;
 
-const _: () = assert!(std::mem::size_of::<Val>() == 8 && std::mem::size_of::<Row>() == 24);
+const _: () = assert!(std::mem::size_of::<Val>() == 4 && std::mem::size_of::<Row>() == 24);
 
 /// A row: up to `INLINE` values inline, longer rows boxed (no capacity word). Equality, order and
 /// hash are the slice's, as `Vec<Val>`'s were.
@@ -264,8 +339,26 @@ fn world<X>(f: impl FnOnce(&RefCell<World>) -> X) -> X {
     WORLD.with(|x| f(x.borrow().as_ref().expect("string table not installed (gen::val::install)")))
 }
 
+/// A text value's symbol: computed strings are evictable (`store::Interner::intern_computed`);
+/// a string the store pinned keeps its symbol.
 pub fn sym(s: &str) -> u32 {
-    world(|w| w.borrow_mut().store.syms.intern(s))
+    world(|w| w.borrow_mut().store.syms.intern_computed(s))
+}
+
+/// Pins every symbol and number made so far (plans' constants, the store's facts).
+pub fn pin_all() {
+    world(|w| w.borrow_mut().store.syms.pin_all());
+    pin_nums();
+}
+
+/// Symbols created since the last sweep.
+pub fn syms_created() -> usize {
+    world(|w| w.borrow().store.syms.created)
+}
+
+/// Frees every unpinned symbol and number the marks do not hold: (symbols, numbers) freed.
+pub fn sweep(syms: &[u64], nums: &[u64]) -> (usize, usize) {
+    (world(|w| w.borrow_mut().store.syms.sweep(syms)), sweep_nums(nums))
 }
 
 fn string(i: u32) -> Rc<str> {
