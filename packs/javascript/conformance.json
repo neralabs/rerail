@@ -967,7 +967,7 @@
         "tool": "eslint",
         "rule": "dot-notation"
       },
-      "policy": "candidates/rules/eslint-dot-notation.json",
+      "policy": "rules/eslint-dot-notation.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1302,7 +1302,7 @@
         "tool": "eslint",
         "rule": "no-duplicate-imports"
       },
-      "policy": "candidates/rules/eslint-no-duplicate-imports.json",
+      "policy": "rules/eslint-no-duplicate-imports.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1350,7 +1350,7 @@
         "tool": "eslint",
         "rule": "no-extra-label"
       },
-      "policy": "candidates/rules/eslint-no-extra-label.json",
+      "policy": "rules/eslint-no-extra-label.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -1403,7 +1403,7 @@
         "tool": "eslint",
         "rule": "no-lonely-if"
       },
-      "policy": "candidates/rules/eslint-no-lonely-if.json",
+      "policy": "rules/eslint-no-lonely-if.json",
       "capabilities": [
         "syntax",
         "suppression"

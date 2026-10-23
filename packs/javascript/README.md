@@ -1,7 +1,7 @@
 # Rerail rule pack: JavaScript and TypeScript (ESLint core)
 
-71 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
-24 start on; 47 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
+75 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
+24 start on; 51 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
 Each shipped rule is scored against ESLint's own findings on ESLint's test cases, through the engine's production
 workspace path, with every disagreement declared in `divergences.json` (none today).
 

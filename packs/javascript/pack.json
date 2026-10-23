@@ -98,6 +98,13 @@
       "on": false
     },
     {
+      "id": "eslint-dot-notation",
+      "document": "rules/eslint-dot-notation.json",
+      "title": "ESLint dot-notation: Enforce dot notation whenever possible",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-eqeqeq",
       "document": "rules/eslint-eqeqeq.json",
       "title": "ESLint eqeqeq: Require the use of === and !==",
@@ -196,6 +203,13 @@
       "group": "ESLint"
     },
     {
+      "id": "eslint-no-duplicate-imports",
+      "document": "rules/eslint-no-duplicate-imports.json",
+      "title": "ESLint no-duplicate-imports: Disallow duplicate module imports",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-empty",
       "document": "rules/eslint-no-empty.json",
       "title": "ESLint no-empty: Disallow empty block statements",
@@ -228,6 +242,13 @@
       "on": false
     },
     {
+      "id": "eslint-no-extra-label",
+      "document": "rules/eslint-no-extra-label.json",
+      "title": "ESLint no-extra-label: Disallow unnecessary labels",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-inline-comments",
       "document": "rules/eslint-no-inline-comments.json",
       "title": "ESLint no-inline-comments: Disallow inline comments after code",
@@ -245,6 +266,13 @@
       "id": "eslint-no-labels",
       "document": "rules/eslint-no-labels.json",
       "title": "ESLint no-labels: Disallow labeled statements",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-lonely-if",
+      "document": "rules/eslint-no-lonely-if.json",
+      "title": "ESLint no-lonely-if: Disallow `if` statements as the only statement in `else` blocks",
       "group": "ESLint",
       "on": false
     },
