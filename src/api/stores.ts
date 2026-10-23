@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import type { z } from "zod";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { databaseInstalledAt, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
@@ -38,6 +38,8 @@ export class DatabaseApiStores implements RerailApiStores {
   #checkouts: ((workspace: string) => CheckoutContext | undefined) | undefined;
   /** Writes through this instance; `PRAGMA data_version` only counts other connections' commits. */
   #localRevision = 0;
+  /** {@link installedAt} once known; it never changes. */
+  #installedAt: number | null = null;
 
   constructor(path: string, options: DatabaseApiStoresOptions) {
     this.#path = path;
@@ -98,6 +100,13 @@ export class DatabaseApiStores implements RerailApiStores {
 
   historyVersion(): string | undefined {
     return existsSync(this.#path) ? this.dataVersion() : undefined;
+  }
+
+  /** When Rerail was installed on this machine; null before the database exists, without creating it. */
+  installedAt(): number | null {
+    if (this.#installedAt !== null || !existsSync(this.#path)) return this.#installedAt;
+    this.#installedAt = databaseInstalledAt(this.database());
+    return this.#installedAt;
   }
 
   markChanged(): void {

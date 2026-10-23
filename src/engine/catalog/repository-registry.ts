@@ -309,6 +309,15 @@ export function listRepositories(db: Reader): RepositoryListing[] {
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.repositoryKey.localeCompare(right.repositoryKey));
 }
 
+/**
+ * Every repository id a repository's sessions may be recorded under: its key, its aliases, and its checkouts' clone
+ * ids (rows recorded before sessions carried the repository key). History reads, `rerail reset` and the dashboard's
+ * reset all use exactly these.
+ */
+export function repositoryHistoryIds(repository: RepositoryListing): string[] {
+  return [...new Set([repository.repositoryKey, ...repository.aliases, ...repository.checkouts.map(row => row.cloneId)])];
+}
+
 /** Whether git still lists `checkoutPath` as a worktree of its clone; true where git can't say (outside git, no git). */
 function listedByGit(checkoutPath: string): boolean {
   let listed;

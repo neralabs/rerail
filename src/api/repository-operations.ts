@@ -10,7 +10,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { z, ZodError } from "zod";
-import type { RerailDatabase } from "../engine/storage/database.js";
+import { resetRepositoryHistoryIn, type RerailDatabase } from "../engine/storage/database.js";
 import { CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import {
   normalizeFolder,
@@ -27,7 +27,7 @@ import {
   type RuleSuppressions,
 } from "../engine/catalog/repository-model.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
-import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, type RepositoryListing } from "../engine/catalog/repository-registry.js";
+import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, repositoryHistoryIds, type RepositoryListing } from "../engine/catalog/repository-registry.js";
 import { setCheckoutStarted, setRepositoryStarted } from "../runtime/repository-start.js";
 import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
 import {
@@ -57,6 +57,8 @@ import {
   repositoryContextSchema,
   repositoryRulesSchema,
   repositorySummarySchema,
+  resetBodySchema,
+  resetResultSchema,
   rerailRuleSchema,
   ruleSettingRecordSchema,
   settingsSetBodySchema,
@@ -199,17 +201,37 @@ export function repositorySummary(repository: RepositoryListing): z.infer<typeof
 }
 
 /**
- * The session `repository_id`s of a repository's history: its key, its aliases, and the clone ids of its checkouts
- * (rows recorded before sessions carried the repository key). An unknown key matches only itself.
+ * The session `repository_id`s of a repository's history (see {@link repositoryHistoryIds}). An unknown key matches
+ * only itself.
  */
 export function historyRepositoryIds(stores: RerailApiStores, key: string): string[] {
   const repository = findRepository(stores.database(), key);
-  if (repository === undefined) return [key];
-  return [...new Set([repository.repositoryKey, ...repository.aliases, ...repository.checkouts.map(checkout => checkout.cloneId)])];
+  return repository === undefined ? [key] : repositoryHistoryIds(repository);
 }
 
-function effectiveRuleRecord(rule: EffectiveRule): z.infer<typeof repositoryRulesSchema>["rules"][number] {
+/** When each effective rule was added here and, for a rule created by you, last edited. */
+interface RuleDates {
+  /** `created_at` by attachment: `sourceKind\0sourceId\0folder`. */
+  readonly added: ReadonlyMap<string, number>;
+  /** `updated_at` by library rule id. */
+  readonly updated: ReadonlyMap<string, number>;
+}
+
+function ruleDatesOf(db: RerailDatabase, repositoryKey: string): RuleDates {
+  const attachments = db.select({
+    sourceKind: ruleAttachments.sourceKind, sourceId: ruleAttachments.sourceId, folder: ruleAttachments.folder, createdAt: ruleAttachments.createdAt,
+  }).from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all();
+  const library = db.select({ ruleId: libraryRules.ruleId, updatedAt: libraryRules.updatedAt }).from(libraryRules).all();
+  return {
+    added: new Map(attachments.map(row => [`${row.sourceKind}\0${row.sourceId}\0${row.folder}`, row.createdAt])),
+    updated: new Map(library.map(row => [row.ruleId, row.updatedAt])),
+  };
+}
+
+function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typeof repositoryRulesSchema>["rules"][number] {
   const shared = {
+    addedAt: dates.added.get(`${rule.source.kind}\0${rule.source.id}\0${rule.attachmentFolder}`) ?? null,
+    updatedAt: rule.source.kind === "library_rule" ? dates.updated.get(rule.source.id) ?? null : null,
     source: { ...rule.source },
     folder: rule.attachmentFolder,
     on: rule.on,
@@ -426,11 +448,12 @@ export const repositoryOperations: readonly Operation[] = [
         checkoutPath: target.checkout.checkoutPath,
         parentCheckoutPaths: parentCheckouts(db, target.checkout).map(parent => parent.checkoutPath),
       });
+      const dates = ruleDatesOf(db, target.repository.repositoryKey);
       return {
         repositoryKey: target.repository.repositoryKey,
         checkoutPath: target.checkout?.checkoutPath ?? null,
         setUp: target.repository.configuredAt !== null,
-        rules: view.rules.map(effectiveRuleRecord),
+        rules: view.rules.map(rule => effectiveRuleRecord(rule, dates)),
         unavailable: view.unavailable.map(reference => ({ ...reference })),
       };
     },
@@ -518,6 +541,22 @@ export const repositoryOperations: readonly Operation[] = [
     body: startBodySchema,
     output: startResultSchema,
     handler: (stores, input, caller) => startOrStop(stores, input, caller, false),
+  }),
+  defineOperation({
+    id: "repository_reset",
+    method: "POST",
+    path: "/api/repository/reset",
+    summary: "Clear a repository's execution history across all its checkouts, as `rerail reset` does: sessions recorded under its key, aliases and clone ids, with their events, work links, audits and violations. Ended sessions are removed; running ones keep recording. Rules, settings and other repositories are unchanged. People only.",
+    body: resetBodySchema,
+    output: resetResultSchema,
+    handler: (stores, input, caller) => {
+      if (caller.kind === "agent") throw new ApiError(403, "agent-not-permitted", "only a person can clear a repository's history, in the dashboard or the CLI");
+      const target = resolveTarget(stores, input, caller, true);
+      return {
+        repositoryKey: target.repository.repositoryKey,
+        ...resetRepositoryHistoryIn(stores.database(), repositoryHistoryIds(target.repository)),
+      };
+    },
   }),
   defineOperation({
     id: "repository_follow_gitignore_set",

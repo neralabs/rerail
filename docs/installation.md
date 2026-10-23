@@ -116,8 +116,8 @@ person says yes.
    a no-op.
 6. **Summary** — the rule packs added (by name, "TSLint in web" when added in
    one folder), the rules on, the other repositories Rerail is on in, the
-   coding agents connected, and the dashboard link (`#rules`, scoped to the
-   repository and checkout). The daemon used is the active install's, which
+   coding agents connected, and the dashboard link (`#rules`, its Overview,
+   scoped to the repository and checkout). The daemon used is the active install's, which
    serves every repository; one from another version or on another port is
    replaced (`--port` picks the port). The browser opens unless
    `BROWSER=none`, the session is over SSH, or Linux has no display.
@@ -319,7 +319,7 @@ rerail stop              # stop Rerail in this checkout; the daemon keeps servin
 rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
 rerail daemon stop       # stop the background daemon
 rerail status            # whether Rerail is started here, otherwise daemon/database/kernel
-rerail manage            # opens the rules page (--print only prints the URL)
+rerail manage            # opens the dashboard's Overview (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
 rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
 rerail settings --session ID --mode log             # save this workspace's default

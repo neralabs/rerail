@@ -526,6 +526,8 @@ export const operations: readonly Operation[] = [
     output: z.object({
       sessions: z.array(sessionSummarySchema.extend({
         violationCount: z.number().int().nonnegative().describe("Violations in the session's history, as `violations_list` with its `sessionId` counts them."),
+        steeredViolations: z.number().int().nonnegative().describe("Of violationCount, those no audit recorded in Log mode (steered, or blocked)."),
+        lastEventAt: z.number().int().nullable().describe("Epoch milliseconds the session's newest event was observed; null when it has none."),
       })),
       total: z.number().int().nonnegative(),
       nextCursor: nextCursorSchema,
