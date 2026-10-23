@@ -206,7 +206,7 @@ function verdicts(reports: GatesReport[], conformance: ConformanceReport | null)
 
 /** Why no port readiness gate ran on a port the conformance job judged: no entry maps it, or its linter has no gates.yaml. */
 function unjudgedPortStep(rule: ConformanceReport["rules"][number]): Failure {
-  if (rule.upstream === null) return { stoppedAt: "mapping", check: "conformance-entry", why: "no conformance.json entry maps it to an upstream rule, so no port readiness gate can run: add its entry" };
+  if (rule.upstream === null) return { stoppedAt: "mapping", check: "conformance-entry", why: "no `conformance.json` entry says which upstream rule it ports, and nothing records why" };
   return { stoppedAt: "set-up", check: "gates-yaml", why: `${rule.upstream.tool} has no packs/${rule.pack}/upstream/${rule.upstream.tool}/gates.yaml yet, so no port readiness gate can run on its ports` };
 }
 

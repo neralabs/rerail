@@ -230,14 +230,20 @@ On a pull request, CI posts the results as one comment. It says only what a merg
 1. **The heading:** ✅ or ❌, how many shipped rules pass the gates they must (conformance, and port readiness for a
    port), and how many candidates are ready to promote. Under it, one line on each stage.
 2. **Shipped Rule Summary:** each blocker first, one line per shipped rule that fails (the pack and upstream rule it
-   comes from, the stage and gate it stopped at, and why), with any blocking failure no rule owns (a known parser gap
+   comes from, what failed, the detail, and the fix), with any blocking failure no rule owns (a known parser gap
    that does not hold or excuses nothing, a pack check, a missing report). Then one collapsed block per pack, `python:
    136`, holding its shipped rules by origin (the upstream linter, `original`, or `not declared`): passing, failing,
    total. A pack with a blocker opens by default.
 3. **Candidate Rule Summary:** each candidate ready to promote first, the signal to move it into `rules/` (a reviewer
    still decides), with whether upstream recommends a port on by default. Then one collapsed block per pack, the same
-   shape: its candidates by origin (ready, failing conformance, failing port readiness, total), and the gates they fail
-   at, one row per gate and one column per origin.
+   shape: its candidates by origin (ready, failing conformance, failing port readiness, total), and why they fail, one
+   row per failure and one column per origin. Under it, the candidates no port readiness gate could judge: each one no
+   `conformance.json` entry maps, with the reason its pack records, and each linter not set up yet. A collapsed "How to
+   fix each failure" ends the section.
+
+A failure is named by the check that failed, in plain words, not by the gate or check id: "Conformance: Flags code its
+test fixtures say is fine", "Port readiness: Doesn't check every file type upstream checks"
+(`conformance/port-readiness/failure-points.ts`, with each failure's fix).
 
 No table is wider than its origins, so nothing scrolls sideways. A new run collapses the earlier comments as outdated,
 so the pull request keeps its history. The comment stays under GitHub's size limit by capping its lists; the job

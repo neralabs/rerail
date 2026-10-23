@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 
 import { COMMENT_LIMIT, COMMENT_MARKER, renderComment, renderJobSummary } from "../../../conformance/port-readiness/comment.js";
+import { failureLabel, failurePoint } from "../../../conformance/port-readiness/failure-points.js";
 import { SUMMARY_FORMAT, type OtherFailure, type RuleVerdict, type StepId, type Summary } from "../../../conformance/port-readiness/summary.js";
+
+/** The check a rule stopping at each step fails in these tests. */
+const CHECKS: Partial<Record<StepId, string>> = { compact: "no-combinatorial-expansion", "passes-conformance": "catches-something", mapping: "conformance-entry", "not-overfit": "no-fixture-only-names", "matches-upstream-tests": "identical-results" };
 
 /** A port of `tool` unless `tool` is null: a complexity rule, not a port, or with `undeclared` a port no entry maps. */
 function verdict(id: string, location: RuleVerdict["location"], stoppedAt: StepId | null, tool: string | null = "ruff", pack = tool === null ? "complexity" : "python", undeclared = false): RuleVerdict {
@@ -10,7 +14,7 @@ function verdict(id: string, location: RuleVerdict["location"], stoppedAt: StepI
   return {
     id, file: `packs/${pack}/${location === "shipped" ? "rules" : "candidates/rules"}/${id}.json`, pack, location, port,
     upstream: tool === null ? null : { tool, rule: id.toUpperCase() }, stoppedAt,
-    check: stoppedAt === null ? "" : "identical-results", why: stoppedAt === null ? "" : `1 upstream test file differs ${"x".repeat(400)}`,
+    check: stoppedAt === null ? "" : CHECKS[stoppedAt]!, why: stoppedAt === null ? "" : stoppedAt === "mapping" ? "the fixtures are GPL-derived" : `1 upstream test file differs ${"x".repeat(400)}`,
     ...(tool === null ? {} : { onByDefault: true }),
   };
 }
@@ -66,7 +70,7 @@ test("the comment starts with the marker CI finds earlier comments by, and leads
 test("the shipped rule summary lists each blocker, then each pack's shipped rules by origin; a pack with a blocker opens", () => {
   const text = renderComment(summary(sample()));
   const section = text.slice(text.indexOf("### ❌ Shipped Rule Summary: 6/7 pass, 1 blocking"), text.indexOf("### Candidate Rule Summary"));
-  assert.match(section, /^- ❌ `ruff-c` \(python, from ruff RUFF-C\): \*\*Conformance > Compact \(no written-out expansion\)\*\*: 1 upstream test file differs x+\.\.\.$/mu);
+  assert.match(section, /^- ❌ `ruff-c` \(python, from ruff RUFF-C\): \*\*Conformance: Lists cases one by one instead of expressing the logic\.\*\* 1 upstream test file differs x+\.\.\. \*\*Fix:\*\* rewrite the repeated clauses as one general clause\.$/mu);
   assert.match(section, /<details open>\n<summary>python: 5<\/summary>/u);
   assert.match(section, /<details>\n<summary>complexity: 2<\/summary>/u);
   assert.match(block(section, "python: 5"), /^\| Origin \| ✅ Pass \| ❌ Fail \| Total \|\n\| --- \| --- \| --- \| --- \|\n\| bandit \| 2 \| 0 \| 2 \|\n\| ruff \| 2 \| 1 \| 3 \|\n\| \*\*Total\*\* \| \*\*4\*\* \| \*\*1\*\* \| \*\*5\*\* \|$/mu);
@@ -90,10 +94,16 @@ test("the candidate rule summary lists the candidates ready to promote, then eac
   const python = block(section, "python: 5");
   assert.match(python, /^\| Origin \| 🟢 Ready \| ❌ Conformance \| ❌ Port readiness \| Total \|$/mu);
   assert.match(python, /^\| bandit \| 0 \| 0 \| 1 \| 1 \|\n\| ruff \| 1 \| 1 \| 1 \| 3 \|\n\| not declared \| 0 \| 0 \| 1 \| 1 \|\n\| \*\*Total\*\* \| \*\*1\*\* \| \*\*1\*\* \| \*\*3\*\* \| \*\*5\*\* \|$/mu);
-  assert.match(python, /^\| Fails at \| bandit \| ruff \| not declared \|$/mu);
-  assert.match(python, /^\| Conformance > Passes the pack's conformance check \|  \| 1 \|  \|\n\| Port readiness > Mapped to an upstream rule \|  \|  \| 1 \|\n\| Port readiness > Not overfit to upstream's tests \| 1 \|  \|  \|\n\| Port readiness > Matches upstream on its own tests \|  \| 1 \|  \|$/mu);
-  // Every candidate of complexity is ready: no gate table.
-  assert.doesNotMatch(block(section, "complexity: 1"), /Fails at/u);
+  assert.match(python, /^\| Fails because \| bandit \| ruff \| not declared \|$/mu);
+  assert.match(python, /^\| Conformance: Flags nothing in its test fixtures \|  \| 1 \|  \|\n\| Port readiness: Not declared: no `conformance\.json` entry says which upstream rule it ports \|  \|  \| 1 \|\n\| Port readiness: Hardcodes names that only appear in upstream's tests \| 1 \|  \|  \|\n\| Port readiness: Reports different findings than upstream on upstream's own tests \|  \| 1 \|  \|$/mu);
+  // The candidates no port readiness gate could judge are named, with why.
+  assert.match(python, /^Not judged against upstream:\n\n- `ruff-g`: the fixtures are GPL-derived$/mu);
+  // Every candidate of complexity is ready: no failure table.
+  assert.doesNotMatch(block(section, "complexity: 1"), /Fails because/u);
+  // Each failure that occurs, with its fix, once.
+  const fixes = block(section, "How to fix each failure");
+  assert.match(fixes, /^- \*\*Conformance: Flags nothing in its test fixtures:\*\* add a fixture it should flag, or `examples` in `pack\.json`\.$/mu);
+  assert.equal(fixes.match(/^- /gmu)?.length, 4);
   // The comment names no failing candidate; the job summary does.
   assert.doesNotMatch(text, /Each failing/u);
 });
@@ -102,7 +112,7 @@ test("the job summary is the comment's page in full, with each failing candidate
   const text = renderJobSummary(summary(sample()));
   assert.ok(!text.startsWith(COMMENT_MARKER));
   const python = block(text, "Each failing python candidate (4)");
-  assert.match(python, /^\*\*Port readiness > Not overfit to upstream's tests\*\*\n\n- `bandit-c` \(python, from bandit BANDIT-C\): 1 upstream test file differs x{400}$/mu);
+  assert.match(python, /^\*\*Port readiness: Hardcodes names that only appear in upstream's tests\*\*\n\n- `bandit-c` \(python, from bandit BANDIT-C\): 1 upstream test file differs x{400}$/mu);
   assert.match(python, /^- `ruff-g` \(python, not declared\): /mu);
 });
 
@@ -121,4 +131,11 @@ test("a pull request that re-ran only some upstream linters says which it left o
   const text = renderComment({ ...summary(sample()), notJudged: ["python/bandit", "javascript/eslint"] });
   assert.match(text, /^Not re-run on this change, since nothing their ports read changed: python\/bandit, javascript\/eslint\. Main's results stand for them, and the counts leave them out\.$/mu);
   assert.doesNotMatch(renderComment(summary(sample())), /Not re-run/u);
+});
+
+test("a failure is named by the check that failed, in plain words with its fix; an unnamed check falls back to its step", () => {
+  assert.deepEqual(failurePoint("in-scope", "in-scope"), { what: "Doesn't check every file type upstream checks", fix: "widen its scope, or narrow `rerail.in_scope` in `gates.yaml`" });
+  assert.equal(failureLabel("passes-conformance", "no-unexplained-false-positives"), "Conformance: Flags code its test fixtures say is fine");
+  assert.equal(failureLabel("licence", "license-allowed"), "Port readiness: Upstream's licence isn't on Rerail's licence allowlist");
+  assert.deepEqual(failurePoint("not-overfit", "a-new-check"), { what: "Not overfit to upstream's tests (a-new-check)", fix: "see the detail" });
 });
