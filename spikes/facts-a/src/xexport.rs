@@ -10,8 +10,12 @@
 //! through `cgnative`) go through the reference evaluator (`rerail_facts::reference`). Pattern
 //! inputs come from the leaf executor (`eval::Input::rows` over facts). `--check-below BYTES`
 //! (default 4096): on contents up to that size the reference also evaluates the stages, and an
-//! export that differs fails the content (the reference stays the checker). Output: one JSON line
-//! per job, `{"path", "hash", "exports": {"<id>": [[v, …], …]}, "failure"}`.
+//! export that differs fails the content (the reference stays the checker). Every relation the
+//! exporter hands on (leaf inputs, engine stages, summaries, exports) is built from its IR schema
+//! (`InputDef.schema`, `Stage.schema`, `ExportedRelation.schema`), columns matched by name, and
+//! checked: a row whose width or values do not fit the schema's columns and affinities fails the
+//! content. Output: one JSON line per job, `{"path", "hash", "exports": {"<id>": [[v, …], …]},
+//! "failure"}`.
 use crate::cgnative::{self, Variant};
 use crate::eval;
 use crate::facts;
@@ -60,14 +64,63 @@ fn v_json(v: &V) -> Json {
     }
 }
 
+/// The positions in `have` (a producer's column names) of `want`'s columns, matched by name (the
+/// k-th column of a name to the k-th of that name), never by position. A column the producer
+/// lacks is an error.
+fn column_map(rel: &str, want: &[ir::Column], have: &[String]) -> Result<Vec<usize>, String> {
+    let mut used = vec![false; have.len()];
+    want.iter()
+        .map(|c| {
+            let i = (0..have.len()).find(|&i| !used[i] && have[i].eq_ignore_ascii_case(&c.name)).ok_or_else(|| format!("{rel}: column {} not produced (producer columns {have:?})", c.name))?;
+            used[i] = true;
+            Ok(i)
+        })
+        .collect()
+}
+
+/// A table's rows over the columns `map` selects, in the IR's column order.
+fn table_rows(t: &crate::sql::engine::Table, map: &[usize]) -> Vec<Vec<V>> {
+    (0..t.len()).map(|r| map.iter().map(|&c| t.value(r, c)).collect()).collect()
+}
+
+/// The same SQLite value: storage class and value (reals bitwise).
+fn same(a: &V, b: &V) -> bool {
+    match (a, b) {
+        (V::Null, V::Null) => true,
+        (V::Int(x), V::Int(y)) => x == y,
+        (V::Real(x), V::Real(y)) => x.to_bits() == y.to_bits(),
+        (V::Text(x), V::Text(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Every row of `rel` has `schema`'s width and holds each value as a column of that affinity
+/// stores it (`apply_affinity` leaves it unchanged). Leaves are built that way, stages are stored
+/// with their columns' affinities (CTAS), and an expression's affinity comes from those columns
+/// or a `CAST`; so a row that does not conform is misbuilt and fails the content, never a row.
+fn conform(rel: &str, schema: &[ir::Column], rows: &[Vec<V>]) -> Result<(), String> {
+    for row in rows {
+        if row.len() != schema.len() {
+            return Err(format!("{rel}: row of {} values against {} columns", row.len(), schema.len()));
+        }
+        for (v, c) in row.iter().zip(schema) {
+            if !same(&rerail_facts::sql::value::apply_affinity(v.clone(), c.aff), v) {
+                return Err(format!("{rel}: column {} ({:?}) holds {v:?}", c.name, c.aff));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// One worker's compiled state: the program, the leaf inputs it needs, Spike A's inputs for them.
 struct Exporter {
     program: ir::Program,
     /// (export id, producer plan index, relation)
     exports: Vec<(u32, usize)>,
     rule: eval::Rule,
-    /// IR input id -> (Spike A input index, schema)
-    inputs: BTreeMap<u32, (usize, crate::sql::engine::Schema)>,
+    /// IR input id -> (Spike A input index, Spike A's schema for it, the positions of the IR
+    /// input's columns (`InputDef.schema`) in Spike A's table)
+    inputs: BTreeMap<u32, (usize, crate::sql::engine::Schema, Vec<usize>)>,
     /// The rule as `repo` compiles it: its repository clauses' relational plans run the producers'
     /// stages (`--stages engine`); `None`: the reference evaluator runs them.
     engine: Option<eval::Rule>,
@@ -126,7 +179,9 @@ fn compile(doc: &Json, config: &Map<String, Json>, clauses: &[String], engine: b
         let eval::Kind::Relational(plan) = &cl.kind else { unreachable!() };
         for (k, (name, idx)) in plan.inputs.iter().enumerate() {
             let id: u32 = name[1..].parse().unwrap();
-            inputs.insert(id, (*idx, plan.input_schemas[k].clone()));
+            let d = &program.inputs[id as usize];
+            let map = column_map(&format!("input {}", d.name), &d.schema, &plan.input_schemas[k].cols)?;
+            inputs.insert(id, (*idx, plan.input_schemas[k].clone(), map));
         }
     }
     let engine = if engine { Some(eval::Rule::compile(doc, config, None, &facts::GRAMMAR).map_err(|e| format!("engine: {e}"))?) } else { None };
@@ -193,27 +248,37 @@ impl Exporter {
                     out.push(x);
                 }
             }
+            conform(rel.name(), &rel.schema(), &out)?;
             Ok(out)
         };
         let text: std::rc::Rc<str> = std::rc::Rc::from(source.as_str());
         let mut rows: BTreeMap<u32, Vec<Vec<V>>> = BTreeMap::new();
         let memo = crate::ast::FileMemo::default();
-        for (id, (idx, schema)) in &self.inputs {
-            let Some(f) = &f else {
+        for (id, (idx, schema, map)) in &self.inputs {
+            let inp = &self.rule.inputs[*idx];
+            // `evidence.paths`: outside it the input has no rows (as `eval_file` reads it).
+            let (Some(f), true) = (&f, inp.paths.as_ref().is_none_or(|p| p.matches(path))) else {
                 rows.insert(*id, Vec::new());
                 continue;
             };
             let ctx = eval::FileCtx { f, path, source: &source };
-            let r = self.rule.inputs[*idx].rows(&ctx, schema, &memo, &text);
+            let r = inp.rows(&ctx, schema, &memo, &text);
             if let Some(u) = r.unsupported {
                 return Err(format!("input {id}: {u}"));
             }
-            rows.insert(*id, (0..r.table.len()).map(|i| r.table.row(i)).collect());
+            let d = &self.program.inputs[*id as usize];
+            let got = table_rows(&r.table, map);
+            conform(&format!("input {}", d.name), &d.schema, &got)?;
+            rows.insert(*id, got);
         }
         let scan = |s: &FileSource| -> Result<Vec<Vec<V>>, String> {
             match s {
                 FileSource::Input(i) => rows.get(i).cloned().ok_or_else(|| format!("input {i} not computed")),
-                FileSource::Core(ir::CoreRel::File) => Ok(vec![vec![V::text(path)]]),
+                FileSource::Core(ir::CoreRel::File) => {
+                    let r = vec![vec![V::text(path)]];
+                    conform("file", &ir::CoreRel::File.schema(), &r)?;
+                    Ok(r)
+                }
                 FileSource::Summary { rel, links } => summary_rows(*rel, links),
                 other => Err(format!("{other:?} not wired in xexport")),
             }
@@ -250,6 +315,8 @@ impl Exporter {
                     FileSource::Stage(i) => st.get(*i as usize).map(|r| (**r).clone()).ok_or_else(|| format!("stage {i} not computed")),
                     other => scan(other),
                 })?;
+                let def = self.program.exported.iter().find(|e| e.id == *eid).ok_or_else(|| format!("export {eid} without a definition"))?;
+                conform(&def.name, &def.schema, &r)?;
                 out.insert(*eid, r);
             }
             Ok(out)
@@ -279,16 +346,17 @@ impl Exporter {
         let eval::Kind::Relational(rp) = &cl.kind else { return Err(format!("engine: clause {} is not relational", plan.clause)) };
         let mut inputs = Vec::new();
         for (k, (_, idx)) in rp.inputs.iter().enumerate() {
+            let inp = &e.inputs[*idx];
             inputs.push(match f {
-                Some(f) => {
+                Some(f) if inp.paths.as_ref().is_none_or(|p| p.matches(path)) => {
                     let ctx = eval::FileCtx { f, path, source: source.as_str() };
-                    let r = e.inputs[*idx].rows(&ctx, &rp.input_schemas[k], memo, text);
+                    let r = inp.rows(&ctx, &rp.input_schemas[k], memo, text);
                     if let Some(u) = r.unsupported {
                         return Err(format!("engine input {k}: {u}"));
                     }
                     r.table
                 }
-                None => Rc::new(crate::sql::engine::Table::empty(rp.input_schemas[k].clone())),
+                _ => Rc::new(crate::sql::engine::Table::empty(rp.input_schemas[k].clone())),
             });
         }
         let traced: Rc<std::cell::RefCell<Option<crate::rel::Traced>>> = Rc::default();
@@ -302,7 +370,9 @@ impl Exporter {
             .map(|st| {
                 let name = st.name.to_ascii_lowercase();
                 let t = tables.iter().find(|(n, _)| *n == name).map(|(_, t)| t).ok_or_else(|| format!("engine: stage {} not stored ({})", st.name, r.failure.as_deref().unwrap_or("not in the clause")))?;
-                Ok(Rc::new((0..t.len()).map(|i| t.row(i)).collect()))
+                let rows = table_rows(t, &column_map(&format!("engine stage {}", st.name), &st.schema, &t.schema.cols)?);
+                conform(&format!("engine stage {}", st.name), &st.schema, &rows)?;
+                Ok(Rc::new(rows))
             })
             .collect()
     }
@@ -392,4 +462,53 @@ pub fn main(args: &[String]) {
     sum["check_below_bytes"] = json!(check_below);
     sum["seconds"] = json!(t0.elapsed().as_secs_f64());
     std::fs::write(format!("{out_path}.summary.json"), serde_json::to_string_pretty(&sum).unwrap()).unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rerail_facts::ir::{Aff, Column};
+
+    /// The dead-code `imports` defect (S3 wave 6): an input projecting a same-node regex's named
+    /// groups (`capture.BASE`), evaluated outside `eval_file` as the exporter does, read NULL and
+    /// '' because the group names were bound per thread by `eval_file` only. The input now carries
+    /// them.
+    #[test]
+    fn regex_groups_read_outside_eval_file() {
+        let doc = json!({"id": "t", "clauses": [{"id": "c", "relational": {
+            "inputs": {"raw_imports": {"evidence": {"as": "row", "query": {"ast": {"language": "python", "syntax": "valid", "rule": {"all": [
+                {"any": [{"kind": "import_from_statement"}, {"kind": "import_statement"}]},
+                {"regex": "(?s)^(?:from\\s+(?P<BASE>[^\\s]+)\\s+)?import\\s+(?P<ITEMS>.*)$"}]}}},
+                "project": {"base": "capture.BASE", "items": "capture.ITEMS"}}}},
+            "query": "SELECT __path AS path, __start AS start_byte, __end AS end_byte FROM raw_imports"},
+            "violation": {"code": "x", "anchor": "witness.span"}}]});
+        let rule = eval::Rule::compile(&doc, &Map::new(), None, &facts::GRAMMAR).unwrap();
+        let eval::Kind::Relational(plan) = &rule.clauses[0].kind else { panic!("relational") };
+        let src = "from a.b import c, d\nimport e\n";
+        let source = Arc::new(src.to_owned());
+        let Ok(facts::Built::Facts(f)) = facts::build("t.py", source.clone()) else { panic!("facts") };
+        let ctx = eval::FileCtx { f: &f, path: "t.py", source: &source };
+        let r = rule.inputs[plan.inputs[0].1].rows(&ctx, &plan.input_schemas[0], &crate::ast::FileMemo::default(), &Rc::from(src));
+        let rows: Vec<Vec<V>> = (0..r.table.len()).map(|i| r.table.row(i)).collect();
+        assert_eq!(format!("{rows:?}"), format!("{:?}", vec![vec![V::text("t.py"), V::Int(0), V::Int(20), V::text("a.b"), V::text("c, d")], vec![V::text("t.py"), V::Int(21), V::Int(29), V::Null, V::text("e")]]));
+    }
+
+    /// Columns are matched by name, never by position; a missing column is an error.
+    #[test]
+    fn columns_by_name() {
+        let want = [Column::new("__path", Aff::Text), Column::new("top", Aff::None), Column::new("base", Aff::None)];
+        let have: Vec<String> = ["__path", "base", "top", "extra"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(column_map("r", &want, &have).unwrap(), vec![0, 2, 1]);
+        assert!(column_map("r", &[Column::new("items", Aff::None)], &have).is_err());
+    }
+
+    /// A row of the wrong width, or a value its column's affinity would store differently, fails.
+    #[test]
+    fn rows_conform_to_the_schema() {
+        let s = [Column::new("__path", Aff::Text), Column::new("__start", Aff::Integer), Column::new("x", Aff::None)];
+        assert!(conform("r", &s, &[vec![V::text("p"), V::Int(3), V::text("4")]]).is_ok());
+        assert!(conform("r", &s, &[vec![V::text("p"), V::Int(3)]]).is_err());
+        assert!(conform("r", &s, &[vec![V::text("p"), V::text("3"), V::Null]]).is_err());
+        assert!(conform("r", &s, &[vec![V::Int(1), V::Int(3), V::Null]]).is_err());
+    }
 }
