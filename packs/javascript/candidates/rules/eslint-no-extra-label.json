@@ -12,6 +12,82 @@
   },
   "clauses": [
     {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "loop": {
+            "any": [
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "do_statement"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "for_in_statement"
+              },
+              {
+                "kind": "switch_statement"
+              }
+            ]
+          },
+          "redundant-label": {
+            "all": [
+              {
+                "has": {
+                  "kind": "statement_identifier",
+                  "pattern": "$L"
+                }
+              },
+              {
+                "inside": {
+                  "matches": "loop",
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$M",
+                      "compare": {
+                        "left": "M",
+                        "op": "eq",
+                        "right": "L"
+                      }
+                    }
+                  },
+                  "stopBy": {
+                    "matches": "loop"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "labeled_statement",
+                    "has": {
+                      "kind": "statement_identifier",
+                      "pattern": "$L"
+                    },
+                    "not": {
+                      "has": {
+                        "matches": "loop"
+                      }
+                    },
+                    "stopBy": {
+                      "matches": "loop"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "id": "extra-label-break",
       "forbid": {
         "ast": {
@@ -38,113 +114,7 @@
                 }
               },
               {
-                "has": {
-                  "kind": "statement_identifier",
-                  "pattern": "$L"
-                }
-              },
-              {
-                "inside": {
-                  "any": [
-                    {
-                      "kind": "while_statement"
-                    },
-                    {
-                      "kind": "do_statement"
-                    },
-                    {
-                      "kind": "for_statement"
-                    },
-                    {
-                      "kind": "for_in_statement"
-                    },
-                    {
-                      "kind": "switch_statement"
-                    }
-                  ],
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$M",
-                      "compare": {
-                        "left": "M",
-                        "op": "eq",
-                        "right": "L"
-                      }
-                    }
-                  },
-                  "stopBy": {
-                    "any": [
-                      {
-                        "kind": "while_statement"
-                      },
-                      {
-                        "kind": "do_statement"
-                      },
-                      {
-                        "kind": "for_statement"
-                      },
-                      {
-                        "kind": "for_in_statement"
-                      },
-                      {
-                        "kind": "switch_statement"
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "not": {
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$L"
-                    },
-                    "not": {
-                      "has": {
-                        "any": [
-                          {
-                            "kind": "while_statement"
-                          },
-                          {
-                            "kind": "do_statement"
-                          },
-                          {
-                            "kind": "for_statement"
-                          },
-                          {
-                            "kind": "for_in_statement"
-                          },
-                          {
-                            "kind": "switch_statement"
-                          }
-                        ]
-                      }
-                    },
-                    "stopBy": {
-                      "any": [
-                        {
-                          "kind": "while_statement"
-                        },
-                        {
-                          "kind": "do_statement"
-                        },
-                        {
-                          "kind": "for_statement"
-                        },
-                        {
-                          "kind": "for_in_statement"
-                        },
-                        {
-                          "kind": "switch_statement"
-                        }
-                      ]
-                    }
-                  }
-                }
+                "matches": "redundant-label"
               }
             ]
           }
@@ -203,113 +173,7 @@
                 }
               },
               {
-                "has": {
-                  "kind": "statement_identifier",
-                  "pattern": "$L"
-                }
-              },
-              {
-                "inside": {
-                  "any": [
-                    {
-                      "kind": "while_statement"
-                    },
-                    {
-                      "kind": "do_statement"
-                    },
-                    {
-                      "kind": "for_statement"
-                    },
-                    {
-                      "kind": "for_in_statement"
-                    },
-                    {
-                      "kind": "switch_statement"
-                    }
-                  ],
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$M",
-                      "compare": {
-                        "left": "M",
-                        "op": "eq",
-                        "right": "L"
-                      }
-                    }
-                  },
-                  "stopBy": {
-                    "any": [
-                      {
-                        "kind": "while_statement"
-                      },
-                      {
-                        "kind": "do_statement"
-                      },
-                      {
-                        "kind": "for_statement"
-                      },
-                      {
-                        "kind": "for_in_statement"
-                      },
-                      {
-                        "kind": "switch_statement"
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "not": {
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$L"
-                    },
-                    "not": {
-                      "has": {
-                        "any": [
-                          {
-                            "kind": "while_statement"
-                          },
-                          {
-                            "kind": "do_statement"
-                          },
-                          {
-                            "kind": "for_statement"
-                          },
-                          {
-                            "kind": "for_in_statement"
-                          },
-                          {
-                            "kind": "switch_statement"
-                          }
-                        ]
-                      }
-                    },
-                    "stopBy": {
-                      "any": [
-                        {
-                          "kind": "while_statement"
-                        },
-                        {
-                          "kind": "do_statement"
-                        },
-                        {
-                          "kind": "for_statement"
-                        },
-                        {
-                          "kind": "for_in_statement"
-                        },
-                        {
-                          "kind": "switch_statement"
-                        }
-                      ]
-                    }
-                  }
-                }
+                "matches": "redundant-label"
               }
             ]
           }
@@ -366,113 +230,7 @@
                 }
               },
               {
-                "has": {
-                  "kind": "statement_identifier",
-                  "pattern": "$L"
-                }
-              },
-              {
-                "inside": {
-                  "any": [
-                    {
-                      "kind": "while_statement"
-                    },
-                    {
-                      "kind": "do_statement"
-                    },
-                    {
-                      "kind": "for_statement"
-                    },
-                    {
-                      "kind": "for_in_statement"
-                    },
-                    {
-                      "kind": "switch_statement"
-                    }
-                  ],
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$M",
-                      "compare": {
-                        "left": "M",
-                        "op": "eq",
-                        "right": "L"
-                      }
-                    }
-                  },
-                  "stopBy": {
-                    "any": [
-                      {
-                        "kind": "while_statement"
-                      },
-                      {
-                        "kind": "do_statement"
-                      },
-                      {
-                        "kind": "for_statement"
-                      },
-                      {
-                        "kind": "for_in_statement"
-                      },
-                      {
-                        "kind": "switch_statement"
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "not": {
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$L"
-                    },
-                    "not": {
-                      "has": {
-                        "any": [
-                          {
-                            "kind": "while_statement"
-                          },
-                          {
-                            "kind": "do_statement"
-                          },
-                          {
-                            "kind": "for_statement"
-                          },
-                          {
-                            "kind": "for_in_statement"
-                          },
-                          {
-                            "kind": "switch_statement"
-                          }
-                        ]
-                      }
-                    },
-                    "stopBy": {
-                      "any": [
-                        {
-                          "kind": "while_statement"
-                        },
-                        {
-                          "kind": "do_statement"
-                        },
-                        {
-                          "kind": "for_statement"
-                        },
-                        {
-                          "kind": "for_in_statement"
-                        },
-                        {
-                          "kind": "switch_statement"
-                        }
-                      ]
-                    }
-                  }
-                }
+                "matches": "redundant-label"
               }
             ]
           }
@@ -531,113 +289,7 @@
                 }
               },
               {
-                "has": {
-                  "kind": "statement_identifier",
-                  "pattern": "$L"
-                }
-              },
-              {
-                "inside": {
-                  "any": [
-                    {
-                      "kind": "while_statement"
-                    },
-                    {
-                      "kind": "do_statement"
-                    },
-                    {
-                      "kind": "for_statement"
-                    },
-                    {
-                      "kind": "for_in_statement"
-                    },
-                    {
-                      "kind": "switch_statement"
-                    }
-                  ],
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$M",
-                      "compare": {
-                        "left": "M",
-                        "op": "eq",
-                        "right": "L"
-                      }
-                    }
-                  },
-                  "stopBy": {
-                    "any": [
-                      {
-                        "kind": "while_statement"
-                      },
-                      {
-                        "kind": "do_statement"
-                      },
-                      {
-                        "kind": "for_statement"
-                      },
-                      {
-                        "kind": "for_in_statement"
-                      },
-                      {
-                        "kind": "switch_statement"
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "not": {
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$L"
-                    },
-                    "not": {
-                      "has": {
-                        "any": [
-                          {
-                            "kind": "while_statement"
-                          },
-                          {
-                            "kind": "do_statement"
-                          },
-                          {
-                            "kind": "for_statement"
-                          },
-                          {
-                            "kind": "for_in_statement"
-                          },
-                          {
-                            "kind": "switch_statement"
-                          }
-                        ]
-                      }
-                    },
-                    "stopBy": {
-                      "any": [
-                        {
-                          "kind": "while_statement"
-                        },
-                        {
-                          "kind": "do_statement"
-                        },
-                        {
-                          "kind": "for_statement"
-                        },
-                        {
-                          "kind": "for_in_statement"
-                        },
-                        {
-                          "kind": "switch_statement"
-                        }
-                      ]
-                    }
-                  }
-                }
+                "matches": "redundant-label"
               }
             ]
           }
@@ -690,113 +342,7 @@
                 }
               },
               {
-                "has": {
-                  "kind": "statement_identifier",
-                  "pattern": "$L"
-                }
-              },
-              {
-                "inside": {
-                  "any": [
-                    {
-                      "kind": "while_statement"
-                    },
-                    {
-                      "kind": "do_statement"
-                    },
-                    {
-                      "kind": "for_statement"
-                    },
-                    {
-                      "kind": "for_in_statement"
-                    },
-                    {
-                      "kind": "switch_statement"
-                    }
-                  ],
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$M",
-                      "compare": {
-                        "left": "M",
-                        "op": "eq",
-                        "right": "L"
-                      }
-                    }
-                  },
-                  "stopBy": {
-                    "any": [
-                      {
-                        "kind": "while_statement"
-                      },
-                      {
-                        "kind": "do_statement"
-                      },
-                      {
-                        "kind": "for_statement"
-                      },
-                      {
-                        "kind": "for_in_statement"
-                      },
-                      {
-                        "kind": "switch_statement"
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "not": {
-                  "inside": {
-                    "kind": "labeled_statement",
-                    "has": {
-                      "kind": "statement_identifier",
-                      "pattern": "$L"
-                    },
-                    "not": {
-                      "has": {
-                        "any": [
-                          {
-                            "kind": "while_statement"
-                          },
-                          {
-                            "kind": "do_statement"
-                          },
-                          {
-                            "kind": "for_statement"
-                          },
-                          {
-                            "kind": "for_in_statement"
-                          },
-                          {
-                            "kind": "switch_statement"
-                          }
-                        ]
-                      }
-                    },
-                    "stopBy": {
-                      "any": [
-                        {
-                          "kind": "while_statement"
-                        },
-                        {
-                          "kind": "do_statement"
-                        },
-                        {
-                          "kind": "for_statement"
-                        },
-                        {
-                          "kind": "for_in_statement"
-                        },
-                        {
-                          "kind": "switch_statement"
-                        }
-                      ]
-                    }
-                  }
-                }
+                "matches": "redundant-label"
               }
             ]
           }
