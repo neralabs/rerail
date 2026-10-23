@@ -118,7 +118,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `document` is the rule's document, `rules/<id>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 
-`test/engine/catalog/packs.test.ts` holds every pack under `packs/` to the [validation contract](pack-format.md#validation-contract), and `test/engine/catalog/rule-packs.test.ts` holds what a pack's match and examples promise: every rule starts in its document's mode, and every example is caught or passes as it says.
+`test/engine/catalog/packs.test.ts` holds every pack under `packs/` to the [validation contract](pack-format.md#the-validation-contract), and `test/engine/catalog/rule-packs.test.ts` holds what a pack's match and examples promise: every rule starts in its document's mode, and every example is caught or passes as it says.
 
 ## Matching
 
