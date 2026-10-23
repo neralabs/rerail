@@ -169,20 +169,21 @@ pub(in crate::code_rule_dsl::sql) fn measure(
             let explain=db.prepare(&format!("EXPLAIN QUERY PLAN {}",compiled.sql)).unwrap().query_map([],|r|Ok(json!({"id":r.get::<_,i64>(0)?,"parent":r.get::<_,i64>(1)?,"detail":r.get::<_,String>(3)?}))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
             let prefix = compiled
                 .sql
-                .rsplit_once(
-                    "SELECT file,origin,atom,witness,ancestor,distance FROM capture_demand",
-                )
+                .rsplit_once("SELECT file,node,atom,witness,ancestor,distance FROM capture_demand")
                 .unwrap()
                 .0;
             let roots = compiled.profile["roots"].as_u64().unwrap();
-            let names = vec![
-                format!("r{}", compiled.profile["origins"]),
+            let names = [
+                if compiled.sql.contains(&format!("search{roots}(")) {
+                    format!("search{roots}")
+                } else {
+                    format!("r{}", compiled.profile["origins"])
+                },
                 format!("walk{roots}"),
                 format!("pairs{roots}"),
                 format!("r{roots}"),
                 format!("regions{roots}"),
                 "binding_seeds".into(),
-                "binding_walk".into(),
                 "binding_choices".into(),
                 "capture_demand".into(),
             ];

@@ -1,0 +1,2301 @@
+{
+  "clauses": [
+    {
+      "ast": true,
+      "clause": "assert-used",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 172,
+            "sqlSha256": "a333fc357423da81bf6edde7b427360efc94bde8bb0db446312fbd26cb788374"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b101-assert-used.json",
+      "policySha256": "0008185fb9cc9ad277c2c45fa81c864b0653636a93b2599c031feb52b2a38ef2"
+    },
+    {
+      "ast": true,
+      "clause": "exec-call",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b102-exec-used.json",
+      "policySha256": "b59c293b3cf83676d3d744b15b933e60dffcae6e5d9d8edbb181b04652880874"
+    },
+    {
+      "ast": true,
+      "clause": "try-except-pass",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b110-try-except-pass.json",
+      "policySha256": "d2adf9097b345ffe5243531ad0940c05ad627ffb1ca17a21fe76b8e3396b3373"
+    },
+    {
+      "ast": true,
+      "clause": "try-except-continue",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b112-try-except-continue.json",
+      "policySha256": "6f602a77362ba5589f78b4d31445a83557a6eba85f604c6e0c4e6c1a094004ee"
+    },
+    {
+      "ast": true,
+      "clause": "request-without-timeout",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b113-request-without-timeout.json",
+      "policySha256": "e97152836def60337b39f76e046af8b44b8ededbb958c0097b7ecb10e44174e4"
+    },
+    {
+      "ast": true,
+      "clause": "unsafe-deserialization",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b301-pickle.json",
+      "policySha256": "446173448d101b2a4ee57e8fd3c67b7b569aded1317ad278deee6301fd25279b"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B302",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b302-marshal.json",
+      "policySha256": "0ce6555b456897c7f91ae208ee5d4600b7416bffdaa6680b71095a8b534ed085"
+    },
+    {
+      "ast": true,
+      "clause": "weak-hash",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b303-md5.json",
+      "policySha256": "15378785ddb3c419e8c24f1d9a998b80e6a7ac74b925d42c27f8eabe7a68f699"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B305",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b305-cipher-modes.json",
+      "policySha256": "761395d8cb75b1bec95d9cf5f1cd933016db51d6bdbeec38903c05fefe48a4af"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B306",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b306-mktemp-q.json",
+      "policySha256": "7c4c3a0054ed4240d76e645956ef4e115346e9020d4f9a17f2652b10886a0159"
+    },
+    {
+      "ast": true,
+      "clause": "eval-call",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b307-eval.json",
+      "policySha256": "aac53f6d16257b7dd2d4c5206349518df572e26530ff9016f0f08806503547fa"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B308",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b308-mark-safe.json",
+      "policySha256": "c919b334505f1f8cdb4e6815c3e5d61e247901354f53468b09fa8218a8a5b6dd"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B310",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b310-urllib-urlopen.json",
+      "policySha256": "b31a789573b9b055c234d2b4f076045356a7e485edd96c25d23c8116ac26f006"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B311",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b311-random.json",
+      "policySha256": "c5831ba3e085bdd66752f34c444e5b27316111ffbc5c62c3e8ac1e1770fab029"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B312",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b312-telnetlib.json",
+      "policySha256": "f6abf733517af5f8aa30780bfc0497676f9042f8b9f1558b7f3b8f1b55bddf78"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B313",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b313-xml-bad-celementtree.json",
+      "policySha256": "0016f9eef0ada4472ab7d7c594a0a0228950af46f0fc4023989c6ffe28464905"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B314",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b314-xml-bad-elementtree.json",
+      "policySha256": "85934e8352375cd3726041e55b7d9348ff9eca56cc524beca640410d668aea59"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B315",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b315-xml-bad-expatreader.json",
+      "policySha256": "332f33e61797d517df6b29cd3773d09f283acb8c59ecf59012b114c21ba71b9e"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B316",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b316-xml-bad-expatbuilder.json",
+      "policySha256": "8bce87eb48f7efdcb8f4cd579d67d694301f2a16c42acc4f1ec76190e2ae38a3"
+    },
+    {
+      "ast": true,
+      "clause": "bandit:B317",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b317-xml-bad-sax.json",
+      "policySha256": "708293570c887e0a59814f01dfe034fa185db92858764546f8551592cf69d713"
+    },
+    {
+      "ast": true,
+      "clause": "B318",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b318-xml-bad-minidom.json",
+      "policySha256": "5c8d39bfa6cfced842f7bea9310f8a7b0200aa2868e5e5dad9bf35f2b3243f00"
+    },
+    {
+      "ast": true,
+      "clause": "B319",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b319-xml-bad-pulldom.json",
+      "policySha256": "4c51250f215f99f231d773d5ee6239a862b25f57a74e2ff7e4e306dbf211030c"
+    },
+    {
+      "ast": true,
+      "clause": "B321",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b321-ftplib.json",
+      "policySha256": "cd6f26a7fa5afdcff58c5b1eb8b292938b82f738d1dbdb73c7312b0c4e34e590"
+    },
+    {
+      "ast": true,
+      "clause": "B323",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b323-unverified-context.json",
+      "policySha256": "576c4cf9b25e8373392cb3c4c76c9779ef99f28eac156f9b9ef050e824ffe702"
+    },
+    {
+      "ast": true,
+      "clause": "B401",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b401-import-telnetlib.json",
+      "policySha256": "9b8a0661c8c7f16a5d038d1a2b05b7a5d6bb510aac4b742b23aa445f1839a751"
+    },
+    {
+      "ast": true,
+      "clause": "B402",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b402-import-ftplib.json",
+      "policySha256": "f4090ec70597bd06d0d3122be286db74a8a0f6d0da6e8edd90600a9765e74146"
+    },
+    {
+      "ast": true,
+      "clause": "B405",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b405-import-xml-etree.json",
+      "policySha256": "18ca1fc8ac273fcc0a173b7d1ce1c227c6ee0e91dccc322060023d3f0889312b"
+    },
+    {
+      "ast": true,
+      "clause": "B406",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: negative value probe requires a bound input capture"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b406-import-xml-sax.json",
+      "policySha256": "98f54f833a47f7abf163447b22b39e8030157aed185a52740dffeeace39ee4cf"
+    },
+    {
+      "ast": true,
+      "clause": "B407",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b407-import-xml-expat.json",
+      "policySha256": "af117b4944741b2bbb633882375c105eebebc579ef962225a30a8e0aaa64bbcf"
+    },
+    {
+      "ast": true,
+      "clause": "B408",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b408-import-xml-minidom.json",
+      "policySha256": "1e16681ddd0d74f30b78e23e28a859b6ea5b8b7ad871b0bf14faa64c0799a8e0"
+    },
+    {
+      "ast": true,
+      "clause": "B409",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b409-import-xml-pulldom.json",
+      "policySha256": "949008f290dabfe78638f6e049a0d377296921f1e1fc21410fe160d5796f3fcd"
+    },
+    {
+      "ast": true,
+      "clause": "B411",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b411-import-xmlrpclib.json",
+      "policySha256": "82520423fc6b908bea01e1a0debbc2db5c5eca231515a92bce50fbef1cd42442"
+    },
+    {
+      "ast": true,
+      "clause": "B413",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b413-import-pycrypto.json",
+      "policySha256": "99d1cebc27d01778e19eaa883ad547b4386072f79e97143d9c6b546d6b0bc3a5"
+    },
+    {
+      "ast": true,
+      "clause": "B415",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b415-import-pyghmi.json",
+      "policySha256": "7069c6498f45cbe5ab676598dcfb6386ac9809c52ec8b5d8d9edd0b043081678"
+    },
+    {
+      "ast": true,
+      "clause": "B502",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b502-ssl-with-bad-version.json",
+      "policySha256": "38e541291a1c98366a519cad2e1d1ee1301bb49aeb18c7af340c04e8dca9ba24"
+    },
+    {
+      "ast": true,
+      "clause": "weak-cryptographic-key",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b505-weak-cryptographic-key.json",
+      "policySha256": "b24e23134e1f31e254c35df756099d70b2834ff2f85d77fcf6dea227ee0fcd05"
+    },
+    {
+      "ast": true,
+      "clause": "b507",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b507-ssh-no-host-key-verification.json",
+      "policySha256": "2a9fb0672c4b5cb7a57997641a6974413824680cfb2370cdb0a32769a2199310"
+    },
+    {
+      "ast": true,
+      "clause": "bandit-b606",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b606-start-process-with-no-shell.json",
+      "policySha256": "1ed4f808f0483f432e05a2394b827162eacda72cdc3f756c64f744b97b0b3190"
+    },
+    {
+      "ast": true,
+      "clause": "django-extra-used",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b610-django-extra-used.json",
+      "policySha256": "e1bc70f8337050b10568d81c6ebcd93608b2190a61a593e7aace97f8306a9287"
+    },
+    {
+      "ast": true,
+      "clause": "b615",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/bandit-b615-huggingface-unsafe-download.json",
+      "policySha256": "1c062718e4080cf67223025291ee9eb74e77201ee1754aeb087818b9618b6474"
+    },
+    {
+      "ast": true,
+      "clause": "cancel-scope-no-checkpoint",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async100-cancel-scope-no-checkpoint.json",
+      "policySha256": "42c47dfda106afa42d1c11d9439260770335b3ac3c1e2b309804ba8c38d7ed26"
+    },
+    {
+      "ast": true,
+      "clause": "trio-sync-call",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async105-trio-sync-call.json",
+      "policySha256": "3ae1d0d2662806f266ff50cec80d4f99dd223b2efcee5fbe53ab8f5e5d0129d2"
+    },
+    {
+      "ast": true,
+      "clause": "trio-sleep",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async115-async-zero-sleep.json",
+      "policySha256": "99ce91697d6d06be5ee7edaae6e8306412028b37430530658eef2b904203b2bd"
+    },
+    {
+      "ast": true,
+      "clause": "anyio-sleep",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async115-async-zero-sleep.json",
+      "policySha256": "99ce91697d6d06be5ee7edaae6e8306412028b37430530658eef2b904203b2bd"
+    },
+    {
+      "ast": true,
+      "clause": "trio-sleep",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async116-long-sleep-not-forever.json",
+      "policySha256": "ac83c4140c30e4fea182a3605c02b1aff5ff47f18949fd4d3aa7f7ccb96cfbab"
+    },
+    {
+      "ast": true,
+      "clause": "anyio-sleep",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async116-long-sleep-not-forever.json",
+      "policySha256": "ac83c4140c30e4fea182a3605c02b1aff5ff47f18949fd4d3aa7f7ccb96cfbab"
+    },
+    {
+      "ast": true,
+      "clause": "blocking-http-call",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async210-blocking-http-call-in-async-function.json",
+      "policySha256": "b60ad380463cbe4e8c21cbc734653dd9d35f8e25d8887d04f06f2bd5ebab2328"
+    },
+    {
+      "ast": true,
+      "clause": "run-process",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: recursive outcomes need a component contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async221-run-process-in-async-function.json",
+      "policySha256": "fa70a47536d8a7ae3b540270d72b7c18907682a00116993d80f3d1cab572f6b6"
+    },
+    {
+      "ast": true,
+      "clause": "wait-for-process",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async222-wait-for-process-in-async-function.json",
+      "policySha256": "a01cfec9f96a9a8be2992836d17326e584a97c9dbea0278c6190536c60d60ff9"
+    },
+    {
+      "ast": true,
+      "clause": "blocking-open",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async230-blocking-open-call-in-async-function.json",
+      "policySha256": "5f4b5d362ab8ac2947fb7b391376657c58d0dc6f3d59f957c092288fbe59cdcf"
+    },
+    {
+      "ast": true,
+      "clause": "blocking-input",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async250-blocking-input-in-async-function.json",
+      "policySha256": "09233b72499aedb1e626a4d0ed9ac689a099045182e8b384d9cf8ef8670b0dc3"
+    },
+    {
+      "ast": true,
+      "clause": "blocking-sleep",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-async251-blocking-sleep-in-async-function.json",
+      "policySha256": "289bb07a85c46c79dcc3d6df91bee3bde7a8b12a7aa4ae73fc52b9922d255686"
+    },
+    {
+      "ast": true,
+      "clause": "unary-prefix-increment",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 726,
+            "sqlSha256": "4ba8807fd12cee9466dd36d4cd52010087dc66b32091c7ba1da2d093677a3806"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b002-unary-prefix-increment-decrement.json",
+      "policySha256": "08679e12649a5cde0de309fe3f1da0bb91f19d37c27fc8d04c7142fe5c9b66e0"
+    },
+    {
+      "ast": true,
+      "clause": "unary-prefix-decrement",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 726,
+            "sqlSha256": "4ba8807fd12cee9466dd36d4cd52010087dc66b32091c7ba1da2d093677a3806"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b002-unary-prefix-increment-decrement.json",
+      "policySha256": "08679e12649a5cde0de309fe3f1da0bb91f19d37c27fc8d04c7142fe5c9b66e0"
+    },
+    {
+      "ast": true,
+      "clause": "assignment-to-os-environ",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 1781,
+            "sqlSha256": "3667e1676b32e59fd852d463c6abed0dedd44c8d12bf9111f6693257baf9017c"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b003-assignment-to-os-environ.json",
+      "policySha256": "75a8ad8af589cdbb51342492b2f4d0099f770c0582779b7f10a2ac472a7e7dd6"
+    },
+    {
+      "ast": true,
+      "clause": "unreliable-callable-check",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b004-unreliable-callable-check.json",
+      "policySha256": "d1ca00e3989c6bf968e414411d4740421f00927c00f4114e07d8c72513ee32c5"
+    },
+    {
+      "ast": true,
+      "clause": "strip-with-multi-characters",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: recursive outcomes need a component contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b005-strip-with-multi-characters.json",
+      "policySha256": "c3a000c3f921c71f81ea2f56f99a030842f9a69c4fdecbc4834ac1dd4bc400a5"
+    },
+    {
+      "ast": true,
+      "clause": "unused-loop-control-variable",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b007-unused-loop-control-variable.json",
+      "policySha256": "b2eb3237d4f09664f13cbe54843554410fedc4403b477bb7467ea00d79c508b0"
+    },
+    {
+      "ast": true,
+      "clause": "unused-loop-control-variable-uncertain",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b007-unused-loop-control-variable.json",
+      "policySha256": "b2eb3237d4f09664f13cbe54843554410fedc4403b477bb7467ea00d79c508b0"
+    },
+    {
+      "ast": true,
+      "clause": "getattr-with-constant",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b009-get-attr-with-constant.json",
+      "policySha256": "1e2cd05f9f8865284968100c53c05fbf6d43d3cc60a0981d4af9268a8fc7c61d"
+    },
+    {
+      "ast": true,
+      "clause": "set-attr-with-constant",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b010-set-attr-with-constant.json",
+      "policySha256": "99e956e85ec7d55a789fb129a6be55270f10b736ba821972ced866b4a09ceb32"
+    },
+    {
+      "ast": true,
+      "clause": "assert-false",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 749,
+            "sqlSha256": "b1c105f3cad3ee7ee2ca31a9d8948f8aa4f6f51d78f99f366bee13466e86d10e"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b011-assert-false.json",
+      "policySha256": "ee0c918071592a81539e8e68c965ffcd2a377ca50fbb24e006c8a7feacb7ff39"
+    },
+    {
+      "ast": true,
+      "clause": "redundant-tuple-in-exception-handler",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b013-redundant-tuple-in-exception-handler.json",
+      "policySha256": "ac3ad3f1b37ce0197ba7599a1c3229aeb9f06bb33c467c73e52ff5dd59f99aac"
+    },
+    {
+      "ast": true,
+      "clause": "duplicate-handler-exception",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b014-duplicate-handler-exception.json",
+      "policySha256": "2b381ef49b04a0feaebeb6abd856e8146fb0280813dedb3e421bab8156d0afb7"
+    },
+    {
+      "ast": true,
+      "clause": "raise-literal",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 2377,
+            "sqlSha256": "2429d7a9d4aa25609aeea3cee122c3534d275801b44be6d4c20aff72e0ce5d23"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b016-raise-literal.json",
+      "policySha256": "e2ffb49951d8681d24497efee35c80e47c20aa77a388bf7ad9a293d7cb24d1b8"
+    },
+    {
+      "ast": true,
+      "clause": "loop-variable-overrides-iterator",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b020-loop-variable-overrides-iterator.json",
+      "policySha256": "172aa99ea3b434dcc4e149c7c193c84e7140e7b2649e46c94797e272bb2de0ac"
+    },
+    {
+      "ast": true,
+      "clause": "f-string-docstring",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b021-f-string-docstring.json",
+      "policySha256": "4eda3e1076530d35231536a208d4e139ea419e0d1719bc6940f7fa079252aeaf"
+    },
+    {
+      "ast": true,
+      "clause": "useless-contextlib-suppress",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b022-useless-contextlib-suppress.json",
+      "policySha256": "d264c1d62a61da2767e324a5e20c1bff598d490d94204ad7c779e898d72ec8cc"
+    },
+    {
+      "ast": true,
+      "clause": "function-uses-loop-variable",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 10232,
+            "sqlSha256": "901be08c5be6ca7782a1fe5df76a4efcd7a13cad743ae16dd828f3544ab7a6e7"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b023-function-uses-loop-variable.json",
+      "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff"
+    },
+    {
+      "ast": true,
+      "clause": "duplicate-try-block-exception",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b025-duplicate-try-block-exception.json",
+      "policySha256": "e68f5f97d5800876a3a0ff7f505d9d7e6f80207de7e056493aaa7c7df71dc2d0"
+    },
+    {
+      "ast": true,
+      "clause": "star-arg-unpacking-after-keyword-arg",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b026-star-arg-unpacking-after-keyword-arg.json",
+      "policySha256": "4ac4d681906ab65ad3c11c22e64ace7b4b1bf79ee130ad429fb4136a7248d97d"
+    },
+    {
+      "ast": true,
+      "clause": "no-explicit-stacklevel",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b028-no-explicit-stacklevel.json",
+      "policySha256": "31a7c0ffdb2015124a5bed8f43c568cc1e054fe15c8bcdb5f6e3a012d38d1f05"
+    },
+    {
+      "ast": true,
+      "clause": "except-with-empty-tuple",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 2162,
+            "sqlSha256": "07d7a34fe72ea3873dd62dcc3d71e0d48f463a9b5f80583f0774a29a82688249"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b029-except-with-empty-tuple.json",
+      "policySha256": "eaa7c67e56f12bf8daf8e338fa25836bd1ab8738fdacf4483e3ba0ed5fd34e7f"
+    },
+    {
+      "ast": true,
+      "clause": "unintentional-type-annotation",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 2927,
+            "sqlSha256": "32eafd81601333697fcc077487ba4a56524a86bde04db932f1fa69466d6a85b6"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b032-unintentional-type-annotation.json",
+      "policySha256": "29ed649a3c63fa6d5429d3b12ecd6cf63d4ad1cec8afdf2aea8874da4ebc22a2"
+    },
+    {
+      "ast": true,
+      "clause": "duplicate-value",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: recursive outcomes need a component contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b033-duplicate-value.json",
+      "policySha256": "d1f1b3cf5a0e1222748958f755c75a8b322e5e439f3dc122a08e490744db2119"
+    },
+    {
+      "ast": true,
+      "clause": "re-sub-positional-args",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b034-re-sub-positional-args.json",
+      "policySha256": "d031f3cf590ce31b2dbd2adf212adb137c51e1ecff8c001cff3b34f4dd78b24f"
+    },
+    {
+      "ast": true,
+      "clause": "mutable-contextvar-default",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b039-mutable-contextvar-default.json",
+      "policySha256": "78c6c5b5822b18e31e01f8e3eedfc8d054341b0d895f1953b79f0842012fa5bc"
+    },
+    {
+      "ast": true,
+      "clause": "raise-without-from-inside-except",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: negative value probe requires a bound input capture"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b904-raise-without-from-inside-except.json",
+      "policySha256": "4b3e59d820f045a4e3c6842269bfc09c494d36d01d7e84f280bab8d8d0582a42"
+    },
+    {
+      "ast": true,
+      "clause": "zip-without-explicit-strict",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-b905-zip-without-explicit-strict.json",
+      "policySha256": "d5386a34f8f4f07294fff9e8e6529e146f2af6351d48d5f02fceaba4c6924678"
+    },
+    {
+      "ast": true,
+      "clause": "none-comparison",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "recursive negation or region dependency needs an outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-e711-none-comparison.json",
+      "policySha256": "b6523a3203ebee6f084518d094eba0f525cc4eee592dea9b58a12d15a097975d"
+    },
+    {
+      "ast": true,
+      "clause": "type-comparison",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: negative value probe requires a bound input capture"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-e721-type-comparison.json",
+      "policySha256": "bff20973880921f0fa3bf26f365d250857be368ed30eb5eee9d6f42706c7844e"
+    },
+    {
+      "ast": true,
+      "clause": "bare-except",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 663,
+            "sqlSha256": "cd6e83fb5f70e0151a8b2a68503476ff9bbbb59270ee611da175815489ef1030"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-e722-bare-except.json",
+      "policySha256": "1bc8f7cd461ca608ebe61e610035feadd4f82c3152a430eb2958ab2e8a7852c5"
+    },
+    {
+      "ast": true,
+      "clause": "ambiguous-class-name",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 405,
+            "sqlSha256": "2acc30d4344fd9ee7da1b33ad852faf1d7d3337fe3d1b9175cf35d6500ea119c"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-e742-ambiguous-class-name.json",
+      "policySha256": "857088945710da336e0ff7d9368a13fdd625019cd7a071f7e4ffb44166c573ad"
+    },
+    {
+      "ast": true,
+      "clause": "ambiguous-function-name",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 405,
+            "sqlSha256": "286d6dd5b05449cab3ad0168cb834c21dbe0daae7a3f689b2c0f28501cdc91e1"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-e743-ambiguous-function-name.json",
+      "policySha256": "9065b6365a6a0a863f3698969456d90c366961ac4bc69639c0eb9897441d73f2"
+    },
+    {
+      "ast": true,
+      "clause": "undefined-local-with-import-star",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f403-undefined-local-with-import-star.json",
+      "policySha256": "ec4d53056eed9628b2750327a332ebf2c05d98505ade92297f529b63c235e618"
+    },
+    {
+      "ast": true,
+      "clause": "undefined-local-with-import-star-usage",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f405-undefined-local-with-import-star-usage.json",
+      "policySha256": "8395814a86f904a3603031969da066f03b6ffe0219cf34a4e0b43b680206ceec"
+    },
+    {
+      "ast": true,
+      "clause": "undefined-local-with-nested-import-star-usage",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f406-undefined-local-with-nested-import-star-usage.json",
+      "policySha256": "d22ff8fb34f64f9158fc802526d48a3d94d7bb8505bc916b527cfacad6351e75"
+    },
+    {
+      "ast": true,
+      "clause": "future-feature-not-defined",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f407-future-feature-not-defined.json",
+      "policySha256": "b4e95518c42bfd8411f0ec96de862912083fceb65745a74436de0e93cd1675e8"
+    },
+    {
+      "ast": true,
+      "clause": "percent-format-invalid-format",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f501-percent-format-invalid-format.json",
+      "policySha256": "36a17888dfa42ac62395e74398b73f396ad876e0d1e94ca734356f3af83fff22"
+    },
+    {
+      "ast": true,
+      "clause": "percent-format-expected-mapping",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f502-percent-format-expected-mapping.json",
+      "policySha256": "931368b1041df97833e7fe6b5760f6f9b489f56b2315e70ea4bf46ecf9887c85"
+    },
+    {
+      "ast": true,
+      "clause": "percent-format-expected-sequence",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f503-percent-format-expected-sequence.json",
+      "policySha256": "4d5108d13694cb82904c432027e154343717f20f9508299a09714ef4fe39b555"
+    },
+    {
+      "ast": true,
+      "clause": "percent-format-extra-named-arguments",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: pattern captures require witness relations"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f504-percent-format-extra-named-arguments.json",
+      "policySha256": "6778967aa61dacfd1c63e937bb4a358b770634282761818d3bab22e112a6a257"
+    },
+    {
+      "ast": true,
+      "clause": "percent-format-missing-argument",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: pattern captures require witness relations"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f505-percent-format-missing-argument.json",
+      "policySha256": "d824f7a86873f2a84f674e77c95f8e91c6ab9e4ab25fbf33c1c9aa6bc01144ca"
+    },
+    {
+      "ast": true,
+      "clause": "percent-format-mixed-positional-and-named",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f506-percent-format-mixed-positional-and-named.json",
+      "policySha256": "dfd44058be0259f39866605ed1186c4a206bc0d0ca571fe0902567bb6d71846d"
+    },
+    {
+      "ast": true,
+      "clause": "percent-format-positional-count-mismatch",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: pattern captures require witness relations"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f507-percent-format-positional-count-mismatch.json",
+      "policySha256": "23d8edc9d28110bfafbde4dfa0470c3a17cd2693c63ae8bedb9ec0eb77775fee"
+    },
+    {
+      "ast": true,
+      "clause": "percent-format-star-requires-sequence",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f508-percent-format-star-requires-sequence.json",
+      "policySha256": "0e49944898eca7eab7e7a4178eabede3830397a3b4ac99ae217196f5e32210f7"
+    },
+    {
+      "ast": true,
+      "clause": "percent-format-unsupported-format-character",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f509-percent-format-unsupported-format-character.json",
+      "policySha256": "7800b0b8e6b6bb172bd69507d01a9337ccbe4e0f519b254a3c5ce967724d9a54"
+    },
+    {
+      "ast": true,
+      "clause": "string-dot-format-invalid-format",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f521-string-dot-format-invalid-format.json",
+      "policySha256": "6ebd167146f1f5d65c64231fb03ef8be35df5d868d04cd995515a05f048a9125"
+    },
+    {
+      "ast": true,
+      "clause": "string-dot-format-extra-named-arguments",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: pattern captures require witness relations"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f522-string-dot-format-extra-named-arguments.json",
+      "policySha256": "df228bbbd07e25eb35a5b8f3e2e5d12520376f6146af1a9b9b8ada76f0721290"
+    },
+    {
+      "ast": true,
+      "clause": "string-dot-format-extra-positional-arguments",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: pattern captures require witness relations"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f523-string-dot-format-extra-positional-arguments.json",
+      "policySha256": "af3dcfec80a2b33aec543c6086fba3adb550525837a1ae3d8acb228378a320a3"
+    },
+    {
+      "ast": true,
+      "clause": "string-dot-format-missing-arguments",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: pattern captures require witness relations"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f524-string-dot-format-missing-arguments.json",
+      "policySha256": "a5bc58ba24a484a7dc14bc1715d37c7f6bc092721a2d74d170b8825a6eacce92"
+    },
+    {
+      "ast": true,
+      "clause": "string-dot-format-mixing-automatic",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f525-string-dot-format-mixing-automatic.json",
+      "policySha256": "3d9a7b657ebb6a0223a08d35384121ab030ed912cde69cab1eb48a8b428a0641"
+    },
+    {
+      "ast": true,
+      "clause": "f-string-missing-placeholders",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 900,
+            "sqlSha256": "236af8f6825253f371452205df6bfb4080cf3357f3ab7922d39e575a7c968a28"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f541-f-string-missing-placeholders.json",
+      "policySha256": "60cf5c70449126b8ed06a343809a08b0c1eed2a50c0510a23c1b0b183b790106"
+    },
+    {
+      "ast": true,
+      "clause": "multi-value-repeated-key-literal",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: recursive outcomes need a component contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f601-multi-value-repeated-key-literal.json",
+      "policySha256": "178c7da56d2cdb0786cf26b12c8a1bc893e26c3f745a9d97511ba5f9b312f351"
+    },
+    {
+      "ast": true,
+      "clause": "multi-value-repeated-key-variable",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f602-multi-value-repeated-key-variable.json",
+      "policySha256": "2c60dd8f8171f219d7b3c8450b4b057406fb3d0b1ead3714c3752e7e6de99bb1"
+    },
+    {
+      "ast": true,
+      "clause": "multiple-starred-expressions",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f622-multiple-starred-expressions.json",
+      "policySha256": "35c8f575db6d445ff37600889e90badf488d73f80888559f7685d7e30bbd10db"
+    },
+    {
+      "ast": true,
+      "clause": "is-literal",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: recursive outcomes need a component contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f632-is-literal.json",
+      "policySha256": "d529772f2fe156ba1e70f10720f19a8ddd912576fa21d4e5736f1761817182e7"
+    },
+    {
+      "ast": true,
+      "clause": "invalid-print-syntax",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f633-invalid-print-syntax.json",
+      "policySha256": "81200cd072eea8c33968d6d90d606f511384413454250ee0d535fa35ff3d0551"
+    },
+    {
+      "ast": true,
+      "clause": "break-outside-loop",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f701-break-outside-loop.json",
+      "policySha256": "acb0afd3f904a3711cd63c12b6c2bd8f7b28ea84176ee6647f91df99901c3c0e"
+    },
+    {
+      "ast": true,
+      "clause": "continue-outside-loop",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f702-continue-outside-loop.json",
+      "policySha256": "b41c948f44b237ce344d1f2e5a6ec0c7f789e633819f7e404d26f4ae961d731e"
+    },
+    {
+      "ast": true,
+      "clause": "return-outside-function",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f706-return-outside-function.json",
+      "policySha256": "d4ec62d43f3259d82b98faaae44646c2d7de013faeb44765c91ad450d3ee867f"
+    },
+    {
+      "ast": true,
+      "clause": "default-except-not-last",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f707-default-except-not-last.json",
+      "policySha256": "8fd86c659faa4b68ed2a9b79758aff28416469cce5812e0411564ce442c14e49"
+    },
+    {
+      "ast": true,
+      "clause": "forward-annotation-syntax-error",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f722-forward-annotation-syntax-error.json",
+      "policySha256": "fd3887ffea9892c71dc4603ec2dd35255eff343824c1297a8ffb702f0c4ccfab"
+    },
+    {
+      "ast": true,
+      "clause": "forward-annotation-semantic-syntax-error",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f722-forward-annotation-syntax-error.json",
+      "policySha256": "fd3887ffea9892c71dc4603ec2dd35255eff343824c1297a8ffb702f0c4ccfab"
+    },
+    {
+      "ast": true,
+      "clause": "forward-annotation-await-outside-function",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f722-forward-annotation-syntax-error.json",
+      "policySha256": "fd3887ffea9892c71dc4603ec2dd35255eff343824c1297a8ffb702f0c4ccfab"
+    },
+    {
+      "ast": true,
+      "clause": "undefined-export",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f822-undefined-export.json",
+      "policySha256": "0fef0211d20c8786e1727ba70cf4b3019ec6a19baf7908ddf15fb56bf7fdd42f"
+    },
+    {
+      "ast": true,
+      "clause": "undefined-local",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f823-undefined-local.json",
+      "policySha256": "2ee11eef62b3c0cf3abc17e9120ff9a258dccab32f5ed93b2ad8e78b9e445223"
+    },
+    {
+      "ast": true,
+      "clause": "unused-annotation",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f842-unused-annotation.json",
+      "policySha256": "2f2fe225a3234171f0ec30c979c24b91bf3bb3dd2c40b71c1dd9c1da469f9b70"
+    },
+    {
+      "ast": true,
+      "clause": "raise-not-implemented",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 1657,
+            "sqlSha256": "bf0c63baf6c4b5b5778ed6e3cfb6bb967f1c20c3ec4d92a59f0953c6f2fd97f9"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-f901-raise-not-implemented.json",
+      "policySha256": "06b21a2b616e236a88eb3eeee0a835bfa6acddf551154c02a58f4a35be49f586"
+    },
+    {
+      "ast": true,
+      "clause": "duplicate-class-field-definition",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-pie794-duplicate-class-field-definition.json",
+      "policySha256": "80ffd0698f63bbce8b7f210c7069812ebfc18a7e414acb2bcda2dbec5690b9e9"
+    },
+    {
+      "ast": true,
+      "clause": "non-unique-enums",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-pie796-non-unique-enums.json",
+      "policySha256": "75760dcaffae5173d312f93f46feef3d70d0ce1392a4dc65fbfc5f155cfbe900"
+    },
+    {
+      "ast": true,
+      "clause": "non-unique-enums-stub",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-pie796-non-unique-enums.json",
+      "policySha256": "75760dcaffae5173d312f93f46feef3d70d0ce1392a4dc65fbfc5f155cfbe900"
+    },
+    {
+      "ast": true,
+      "clause": "unnecessary-spread",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 739,
+            "sqlSha256": "54e8002c793843669596f9d845a4d524e669a5326eb2c657be5acc3ca5c90ccc"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-pie800-unnecessary-spread.json",
+      "policySha256": "635415c5d80e0e89e4e0c169546f167af9ee12c7a2f3ba20bcc5f6f91a7fdb26"
+    },
+    {
+      "ast": true,
+      "clause": "unnecessary-dict-kwargs",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: recursive outcomes need a component contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-pie804-unnecessary-dict-kwargs.json",
+      "policySha256": "e4659dc4ded6544e39bb137ba8998f31657a984bffaca8bff75cc0314795d73a"
+    },
+    {
+      "ast": true,
+      "clause": "reimplemented-container-builtin",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 1044,
+            "sqlSha256": "e6ae5b206a944d3adf0c8c1950f329fe40186f633a6ca85872cd20dc79cf13d7"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-pie807-reimplemented-container-builtin.json",
+      "policySha256": "e498ecfd252a1594fafcd406255f11b317cf0942e6aa30e9decf6772af033759"
+    },
+    {
+      "ast": true,
+      "clause": "multiple-starts-ends-with",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-pie810-multiple-starts-ends-with.json",
+      "policySha256": "16fb2c732d889f32a93f8f20787a3131fab458c41f2e8067e2efd63ad213723d"
+    },
+    {
+      "ast": true,
+      "clause": "unnecessary-return-none",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-ret501-unnecessary-return-none.json",
+      "policySha256": "0efd934ca656c5f36449477ed30ff81ad4d7892887ff83937e5db4d3c58370f9"
+    },
+    {
+      "ast": true,
+      "clause": "implicit-return-value",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-ret502-implicit-return-value.json",
+      "policySha256": "556c24c59afa8a3e1a9313267317934ccc0f5206a6d817aeed190cb6d26b6d9d"
+    },
+    {
+      "ast": true,
+      "clause": "superfluous-else-return",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-ret505-superfluous-else-return.json",
+      "policySha256": "b51b148205d0d0ed56bb80f18effebea960120148eeed883c94e62e3fe6b63b5"
+    },
+    {
+      "ast": true,
+      "clause": "superfluous-else-raise",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-ret506-superfluous-else-raise.json",
+      "policySha256": "d5b467d8021db632d9fbd1eefef9dce6fdab4044d00cbf9960e958c95bc3b50e"
+    },
+    {
+      "ast": true,
+      "clause": "superfluous-else-continue",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-ret507-superfluous-else-continue.json",
+      "policySha256": "80abc141b63165e982293c5ab4063866d7a5d9311e5d41703e50936109df3d4d"
+    },
+    {
+      "ast": true,
+      "clause": "superfluous-else-break",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-ret508-superfluous-else-break.json",
+      "policySha256": "233c2d883a5c736ca784a53ebfc1b3dc4eea35f3b095cc05e9f0e209176614e1"
+    },
+    {
+      "ast": true,
+      "clause": "duplicate-isinstance-call",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim101-duplicate-isinstance-call.json",
+      "policySha256": "1e93714a1d8394dcf999344d4fbf277f95660c20fef3c9e951d6f699a41a639d"
+    },
+    {
+      "ast": true,
+      "clause": "return-in-try-except-finally",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim107-return-in-try-except-finally.json",
+      "policySha256": "6d72093a0c2cee8d8dcb11718bb797d5018efbd25d9df519a839d5a9b8daae75"
+    },
+    {
+      "ast": true,
+      "clause": "compare-with-tuple",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim109-compare-with-tuple.json",
+      "policySha256": "945e659fdadb378003884b6e92bb7c481ec2a1b1ae0a7f9586b836746985d90c"
+    },
+    {
+      "ast": true,
+      "clause": "uncapitalized-environment-variables",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim112-uncapitalized-environment-variables.json",
+      "policySha256": "dca913d473d1dccc784accc3d12e068ebcea7a2bf590ec8de3d9386c5999453c"
+    },
+    {
+      "ast": true,
+      "clause": "enumerate-for-loop",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim113-enumerate-for-loop.json",
+      "policySha256": "4f6f74ac406dadc877698f700cd79615a24d3c6ff85af8ea0c0baa62e5cb25c4"
+    },
+    {
+      "ast": true,
+      "clause": "double-negation",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 654,
+            "sqlSha256": "43d8dc90b3df68cf9ec98749ed4762edbcd1dc85b43d00e85bda2a199f3275ca"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim208-double-negation.json",
+      "policySha256": "f7cb9072e34b023d9ca3f1110e653204c030366430d09eb262ec8ba22675af42"
+    },
+    {
+      "ast": true,
+      "clause": "if-expr-with-true-false",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 1339,
+            "sqlSha256": "ad6dd11dc7b4c025d66b658224afb5003a544f248076ffad8cb3232dec2f1dbf"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim210-if-expr-with-true-false.json",
+      "policySha256": "f526a30c3594a12c90a39b5b9826904781ac905b8d05cd08bec0f9baf220cf03"
+    },
+    {
+      "ast": true,
+      "clause": "if-expr-with-false-true",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": true,
+            "sqlBytes": 1339,
+            "sqlSha256": "2a0d92e5c345a28cccfa1743d42ee9433cbbb1c742486d0e32e69c18ec58d9d8"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim211-if-expr-with-false-true.json",
+      "policySha256": "0a912e039409717e29fb39d3b16a7baa57f045e870dee155065fc02f9ae248d9"
+    },
+    {
+      "ast": true,
+      "clause": "if-expr-with-twisted-arms",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim212-if-expr-with-twisted-arms.json",
+      "policySha256": "fc23de3f066b2393074f7178e4d4d72acde632ec277001c6e1d8b65194da1e27"
+    },
+    {
+      "ast": true,
+      "clause": "yoda-conditions",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim300-yoda-conditions.json",
+      "policySha256": "7b85205b8554c64f8ac69858ee5743336baec792492b8a107a3768721f117fea"
+    },
+    {
+      "ast": true,
+      "clause": "split-static-string",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "outcome relations: recursive outcomes need a component contract"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim905-split-static-string.json",
+      "policySha256": "bf92c4f9484878c6f44041bd6879f52dc18ece82cdb1ca9008318bfad286f008"
+    },
+    {
+      "ast": true,
+      "clause": "dict-get-with-none-default",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-sim910-dict-get-with-none-default.json",
+      "policySha256": "3c522503a898d57cb890288b3c05f1b546e11d256eab388eede3f1cb9d374110"
+    },
+    {
+      "ast": true,
+      "clause": "debugger-import",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-t100-debugger.json",
+      "policySha256": "ec42c0207b064de49a545b0222cdee766175dd324a2bd58a49a31823fa7403f0"
+    },
+    {
+      "ast": true,
+      "clause": "debugger-call",
+      "grammars": [
+        {
+          "grammar": 0,
+          "result": {
+            "admitted": false,
+            "reason": "relational compiler: operator outside the total neighbor-set subset"
+          }
+        }
+      ],
+      "policy": "packs/python/rules/ruff-t100-debugger.json",
+      "policySha256": "ec42c0207b064de49a545b0222cdee766175dd324a2bd58a49a31823fa7403f0"
+    }
+  ],
+  "scope": "Compilation admission only. This ledger does not certify execution parity, resource limits, or complete-job batching.",
+  "baseRevision": "160a007664bb7bfff750d4acc47cbcdda6539e65",
+  "sourceHashes": {
+    "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
+    "native/src/code_rule_dsl/sql/relational/answers.rs": "7a0f51f1f409b8c8ac9c655bb8a23a1f38980af2f6c4bf598c7869d273f30b62",
+    "native/src/code_rule_dsl/sql/relational/bound.rs": "6e0661e316527ad78e34564b11bd0312522a3c95168c85e286ce1707c0a642f2",
+    "native/src/code_rule_dsl/sql/relational/budget_leaf.rs": "c25bcba41902ed2485d2e3f52722c75211a9e06199479e14e1e49930188efeca",
+    "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "674ea77221b549759fe23e11cbd0a337f77c5eeeeebf4211bf8b1c02c9af2677",
+    "native/src/code_rule_dsl/sql/relational/demand.rs": "0d5b9fbf3c75890c9f1620c7340936d01bf314b6de37380e355416350eedb8fe",
+    "native/src/code_rule_dsl/sql/relational/emit.rs": "c4e713817a65f14140a36bf547527dcbc549fa6c0d9bb99a0c2e0548bd4312b3",
+    "native/src/code_rule_dsl/sql/relational/failure.rs": "e658b85c5432925c195a0b731edac6c86705d3c6c0da76537370be784b2b0c0b",
+    "native/src/code_rule_dsl/sql/relational/ir.rs": "8a05029eab9021b06e15b2eb133133ba0b7cdb06a7f199f426ee893b47c77192",
+    "native/src/code_rule_dsl/sql/relational/leaves.rs": "393665342e77cd244a90563733a052b6e620bf0ab00845f3997901be34923563",
+    "native/src/code_rule_dsl/sql/relational/lower.rs": "0e6850c582d02112ffecfb830485961ddd6dc3c79fc89488b89dd92828c4a6ae",
+    "native/src/code_rule_dsl/sql/relational/memo_store.rs": "92f62671b266e47bf74e1d8264b29216d24a5526956a0e71d3176e7711d1530d",
+    "native/src/code_rule_dsl/sql/relational/mod.rs": "85c561d8ce3c618ff420b89b1a73fb88fc6161906eed7062263a72a832d71081",
+    "native/src/code_rule_dsl/sql/relational/outcomes/atomic_predicate_tests.rs": "7219e006eb5795ae394dc7ab6fe04dcb863938b5cac871ab6efd92f3c5e9978f",
+    "native/src/code_rule_dsl/sql/relational/outcomes/budget_tests.rs": "4ede5a91daf54e017bcce56aa395fe4cc73112c2d8ddef601ec6aff2bddc99f3",
+    "native/src/code_rule_dsl/sql/relational/outcomes/candidate.rs": "03553707b4e17df0afaf12e24f82e106b2eeb6ebce91b9a52486c40d5c94814d",
+    "native/src/code_rule_dsl/sql/relational/outcomes/capture_walk_tests.rs": "6f6a8a778013373f65b85fc066a88ff0bb9769ac428f2045a1833ba14b0f301c",
+    "native/src/code_rule_dsl/sql/relational/outcomes/composition_budget_tests.rs": "5109d57ee18432afb223778b1be52f52af32e3dc888d03768565fb6667969097",
+    "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "6ce9551f25a64a005efc34505af4ad6e9690729c20eba0b1a754f3ce58217bfe",
+    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "37ad70b2a7db85aa5cae82e8dbe13da236c2551cd19246a7223c36665baf8c5e",
+    "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "caeec483ce58787a69c75684e05ff17c608243f9bb5848d117275b58c09c2f13",
+    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "996b11f478c742350d5b2969e5b26b9cc94c21f89cdd977c6b2b946dad2d1e7c",
+    "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "6caa51cf5c191813ceffd12fec16b47e207d9f3c7daf595e52b2f1a5ca624384",
+    "native/src/code_rule_dsl/sql/relational/outcomes/memo_tests.rs": "656b044ea22b7c64df8c83726f1ef3db4ac3efda7f40d515fd24da672f3dacc8",
+    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "918927d78aa0d5187868c920f3ddaa1fba86ea22658873764ee4fb26d50f6498",
+    "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "50ae8445ba96b70ed698e8d471beb5133d194e6af7a21aa64ef1ede5b61d4651",
+    "native/src/code_rule_dsl/sql/relational/outcomes/nested_memo_tests.rs": "9b6469e2a8c5e0f09a348712a74630b063e8c57ef63318cdea5ddf796fe48e60",
+    "native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs": "102ac57bf18624266acc71b2699b5c33cae5048013b35fe6d2948d084de9c352",
+    "native/src/code_rule_dsl/sql/relational/outcomes/nested_utility.rs": "4d5ed316d73ac237a2584c9ab622a1eb3d42a69443cfed6331ac02fbd2696599",
+    "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "d1c621958d2078a31dec9759c6aec35b7df9cb9134839343fc0aac700153bb30",
+    "native/src/code_rule_dsl/sql/relational/outcomes/predicate.rs": "619e4b241f18b225118eb7ba6c5eba0f2c02a02e64f69d3226c5f5729c44b90f",
+    "native/src/code_rule_dsl/sql/relational/outcomes/predicate_run_tests.rs": "ecd39811347caf44e0e09762a8dea821a6c5e3485227ec6e6935d27d75bd43f4",
+    "native/src/code_rule_dsl/sql/relational/outcomes/pruning_tests.rs": "c709ad80c7811b3a01133e8cee0d983626096d5fc725751f545c50c5a934e76c",
+    "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "b81871d1eacde994d91a2181aa2edae71b3478638d91c4becc4852c597982f12",
+    "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "fedb4df137b10f0b4037da86fbba10a3055135530c731cfd6e814889fb7f55af",
+    "native/src/code_rule_dsl/sql/relational/outcomes/reached_tests.rs": "f74745bd64929de932b64f5e1ed0ef9c0e05291c2c12787243f47ce40810a41e",
+    "native/src/code_rule_dsl/sql/relational/outcomes/repeat_any_tests.rs": "a7ac8fa45456a7cb3db96b447a0627201d9e1bbd0583abf6fd62c4c7a7b292d7",
+    "native/src/code_rule_dsl/sql/relational/outcomes/repeat_cost.rs": "0206e638a769a4bed989b3e2261561da75dacbc669311b8b506060a39611121b",
+    "native/src/code_rule_dsl/sql/relational/outcomes/repeat_utility_tests.rs": "529c5f5f0ba42b1140d50853e4d58c57fedf251eaed9691f9f585cea17c13bef",
+    "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk.rs": "3264b890d8ff7d7a3ffbda72f803a769bca58b40ff03f02fd50b9145999970a2",
+    "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk_tests.rs": "995f2a7ac2f8948e3d64a70527602f9b7fc1e66210a8f1a1817c90fe92928ded",
+    "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "b1834961975881ae2a10277e9859e608d4b4edcbc0e944cf36d8aec6a9aa026c",
+    "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo_tests.rs": "7a0535434942416c3f98bab36a16d5cfb0f0e38dfd89468a4d749f3ce8b3750c",
+    "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "fbfb3456f23ac7cabb97e01c6554fb169d936cf4657100e607fb828c827f255d",
+    "native/src/code_rule_dsl/sql/relational/outcomes/traversal_memo_tests.rs": "09641c0fef3064f5a8cecc5e89c20b8bee8a391c58e2835a4e9c55f86a59f478",
+    "native/src/code_rule_dsl/sql/relational/outcomes/utility_plan_tests.rs": "90af79df152a8ef182c6861c283b507f717c8283e6d814c49bd8dcbc4111bf58",
+    "native/src/code_rule_dsl/sql/relational/physical.rs": "b937aefe75bd55913196f384ecaf01c18e41cac0c8a692bc35d9952080d35398",
+    "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
+    "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
+    "native/src/code_rule_dsl/sql/relational/row.rs": "16542ce6165763307338de09a262a2b5dc4fd251215038411bae8ea7b822b32b",
+    "native/src/code_rule_dsl/sql/relational/tests.rs": "365ae3c156663c2dbfc7c4f6ddeb2d2ba756d0a2b31db1d2810ddf013bfd1c19",
+    "native/src/code_rule_dsl/sql/relational/witness.rs": "e8a31188818ce97cc2c9dbf458560b7a3c16b74cca3adc492104c2a667317159",
+    "native/src/code_rule_dsl/sql/relational/witness_tests.rs": "3061b1d7f745204695b2806b435cb9fd3b2776d34473488af921c5263e55a59a",
+    "native/src/code_rule_dsl/matcher/mod.rs": "7dadaa9f0d65073e2f91f231bf12df6486e50cc4297ffb4897f1b504c19fbcba",
+    "native/src/code_rule_dsl/matcher/value.rs": "7c323eeeb044b02ae384b7a4ba4989cb14a400c3721b381e96b0eee0643db27e",
+    "native/src/code_rule_dsl/matcher/value_probe.rs": "f37e6879d32bed17faaa77f414894a2a1ee8181ad2b406043e57646cd52ef62e",
+    "native/src/code_rule_dsl/sql/terminals/mod.rs": "2e7b9efbbadb23ebbce4562bb9235df8b17370030d30a96614b5192241d94329",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs": "35dcfe22f012b26e6df359407f70df4b5c91bd4ec67a72206b34315372ec5c40",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/b023.sql": "cc8df01875dc99d3afc75b2efceb4cbe47732647267d973ec85be2f410784eba",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/run.rs": "81e71c024ca779afdd247e1d038a33adc4444fd3a03a2d39050b840d7fe20685",
+    "native/src/code_rule_dsl/sql/mod.rs": "abdaa15b5c97a7351091a3b924d886d092d2457cf507b3e04d9d9a3a31efaceb",
+    "packs/python/rules/ruff-b023-function-uses-loop-variable.json": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
+    "benchmark/relational-candidate-demand.py": "8bf72d0d6704f8850657640f4cb7c375dd0533e748c6af3540df57f88f37e34c"
+  },
+  "executableSha256": "0944b0d65bbc371cf33d65a56ade43117cad6154d16599c7dd3175ce897ffef8",
+  "summary": {
+    "policies": 138,
+    "clauses": 146,
+    "grammars": 146,
+    "admitted": 19,
+    "rejected": 127,
+    "exclusions": 0,
+    "catalogAdmissionGatePassed": false,
+    "rejectionReasons": {
+      "relational compiler: operator outside the total neighbor-set subset": 31,
+      "outcome relations: leaf or operator lacks a total, effect-free outcome contract": 33,
+      "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect": 23,
+      "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier": 14,
+      "relational compiler: capture-bearing rules: ordered answers: negative value probe requires a bound input capture": 3,
+      "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted": 9,
+      "outcome relations: recursive outcomes need a component contract": 7,
+      "recursive negation or region dependency needs an outcome contract": 1,
+      "relational compiler: pattern captures require witness relations": 6
+    }
+  }
+}

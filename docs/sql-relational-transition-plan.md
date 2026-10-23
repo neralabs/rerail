@@ -855,3 +855,53 @@ Five rejected size candidates and both passing full qualifications remain record
 The remaining three materialization sites do not justify another cycle of removing isolated SQL wrappers.
 Use these structural and prepared-execution gates for subsequent compiler changes.
 The implementation remains test-only; production integration, general recursive outcomes, native limits, and the complete-job budget remain open.
+
+
+## Current action — selective demand, then compiler replacement
+
+Matching the reference shape left excessive candidate work.
+The next change restricts origin seeds before ancestor traversal and removes unused values before capture choice.
+Assignment witnesses use subtree ranges with an indexed test for intervening stop nodes.
+Materialized binding keys prevent repeated AST lookups after SQLite flattens joins.
+The compiler removes unused relation definitions through typed dependencies.
+
+The new frozen-workload VM limit is 250,000. All preceding structural and prepared CPU limits remain unchanged.
+The final query passes at 246,364 VM instructions and 10,232 SQL bytes, preserving exact native results.
+Median prepared CPU is 4.264 ms generated versus 30.218 ms reference.
+This is a 9.3-fold VM reduction against the preceding test compiler, with one matching statement and zero frame publications.
+Two scaling checks cover sizes 32, 128, and 512:
+
+- Unrelated functions must add no SQL VM work.
+- Unused binding names must leave one capture-demand row for the one used value.
+
+These checks do not exclude parsing or native index construction from total job cost.
+Loop instrumentation is separate from prepared execution timing and ordinary-build VM qualification.
+The experiment artifact retains the baseline failures, three rejected candidates, source patches, executable hashes, SQL, and loop measurements.
+
+The catalog audit exposes the next transition gap.
+Across all 138 Python policies, only 19 of 146 AST grammars compile through the replacement compiler.
+The audit has no exclusions. Compilation admission does not certify runtime semantics or resource limits.
+The remaining 127 grammars fail for these reasons:
+
+| Missing contract | Grammars |
+| --- | ---: |
+| Outcome leaf or operator contract | 33 |
+| Operators outside the total neighbor-set subset | 31 |
+| Input capture effects | 23 |
+| Ordered capture frontier | 14 |
+| Recursive outward captures | 9 |
+| Recursive outcomes | 7 |
+| Pattern capture witnesses | 6 |
+| Negative value probes without bound input captures | 3 |
+| Recursive negation or region dependencies | 1 |
+
+The next phase targets this ledger, rather than another isolated B023 optimization.
+For each rejected family, add typed lowering and native differential execution on its real policies.
+A grammar passes only after preparation, exact outputs, captures, failures, and resource limits agree.
+Admitted grammars need the same execution checks; compilation success alone cannot qualify them.
+Keep the full catalog visible alongside the existing frozen job and its unchanged exclusions.
+
+Then replace the production compiler and scheduler in one cutover, using prepared relation plans and a shared job graph.
+Remove the old frame compiler from production reachability. Do not add per-clause fallback or runtime selection between SQL compilers.
+The complete-job gate still requires at most 100 actual executions and measured VM reduction against a fresh main-engine baseline.
+The current admission audit fails that replacement readiness gate; this phase does not replace the main compiler.

@@ -19,13 +19,14 @@ pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, S
 }
 
 pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Vec<String>, String> {
-    definitions_for(program, plan, true)
+    definitions_for(program, plan, true, &[])
 }
 
 fn definitions_for(
     program: &Program,
     plan: &[RelationPlan],
     project_root: bool,
+    inline_outputs: &[usize],
 ) -> Result<Vec<String>, String> {
     let mut emitter = Emitter {
         domains: program
@@ -37,7 +38,7 @@ fn definitions_for(
         ..Emitter::default()
     };
     let mut relations = Vec::new();
-    let active = super::ir::reachable(program);
+    let active = emitted_relations(program, project_root, inline_outputs);
     let mut regions = std::collections::BTreeSet::new();
     fn domains(set: &Set, out: &mut std::collections::BTreeSet<usize>) {
         match set {
@@ -129,8 +130,41 @@ fn definitions_for(
             stop,
         } = planned
         {
-            let stopped=stop.map_or(String::new(),|stop|format!(" AND NOT EXISTS (SELECT 1 FROM r{stop} s WHERE s.file=w.file AND s.node=w.node)"));
-            relations.push(format!("walk{id}(file,origin,node,distance) AS (SELECT n.file,k.node,n.parent,1 FROM r{origins} k CROSS JOIN node n ON n.file=k.file AND n.id=k.node WHERE n.parent IS NOT NULL UNION ALL SELECT w.file,w.origin,n.parent,w.distance+1 FROM walk{id} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped}),\npairs{id}(file,origin,node,distance) AS MATERIALIZED (SELECT w.* FROM walk{id} w JOIN r{filter} f ON f.file=w.file AND f.node=w.node),\nr{id}(file,node) AS MATERIALIZED (SELECT DISTINCT file,node FROM pairs{id})"));
+            let source = if let Some(kinds) =
+                super::demand::kinds(&Set::Reference(*origins), program, &mut Default::default())
+            {
+                let kinds = kinds
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let predicate = condition(
+                    &super::demand::inline(&Set::Reference(*origins), program),
+                    "n",
+                )?;
+                // Every successful origin has a strict matching ancestor. Restrict seed
+                // production by indexed subtree ranges; retain the exact stopped walk.
+                let ancestor = condition(
+                    &super::demand::inline(&Set::Reference(*filter), program),
+                    "a",
+                )?;
+                relations.push(format!("search{id}(file,node) AS MATERIALIZED (SELECT DISTINCT n.file,n.id FROM node a CROSS JOIN node n ON n.file=a.file AND n.id>a.id AND n.id<=a.\"last\" WHERE {ancestor} AND n.kind IN ({kinds}) AND {predicate})"));
+                format!("search{id}")
+            } else {
+                format!("r{origins}")
+            };
+            let stopped = stop
+                .map(|stop| {
+                    condition(&super::demand::inline(&Set::Reference(stop), program), "n")
+                        .map(|p| format!(" AND NOT ({p})"))
+                })
+                .transpose()?
+                .unwrap_or_default();
+            let predicate = condition(
+                &super::demand::inline(&Set::Reference(*filter), program),
+                "f",
+            )?;
+            relations.push(format!("walk{id}(file,origin,node,distance) AS (SELECT n.file,k.node,n.parent,1 FROM {source} k CROSS JOIN node n ON n.file=k.file AND n.id=k.node WHERE n.parent IS NOT NULL UNION ALL SELECT w.file,w.origin,n.parent,w.distance+1 FROM walk{id} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped}),\npairs{id}(file,origin,node,distance) AS MATERIALIZED (SELECT w.* FROM walk{id} w CROSS JOIN node f ON f.file=w.file AND f.id=w.node WHERE {predicate}),\nr{id}(file,node) AS MATERIALIZED (SELECT DISTINCT file,node FROM pairs{id})"));
             continue;
         }
         let RelationPlan::Joins(arms) = planned else {
@@ -199,6 +233,61 @@ fn definitions_for(
         ));
     }
     Ok(relations)
+}
+
+/// Track dependencies of the selected physical shapes. Inlined predicates do
+/// not require a stored answer set. Other consumers still retain that set.
+fn emitted_relations(
+    program: &Program,
+    project_root: bool,
+    inline_outputs: &[usize],
+) -> std::collections::BTreeSet<usize> {
+    fn refs(program: &Program, id: usize, todo: &mut Vec<usize>) {
+        super::ir::references(&super::demand::inline(&Set::Reference(id), program), todo);
+    }
+    let mut todo = Vec::new();
+    if project_root {
+        todo.push(0);
+    } else {
+        let mut outputs = Vec::new();
+        super::ir::references(&program.relations[0].expression, &mut outputs);
+        for id in outputs {
+            if inline_outputs.contains(&id) {
+                refs(program, id, &mut todo);
+            } else {
+                todo.push(id);
+            }
+        }
+    }
+    let mut active = std::collections::BTreeSet::new();
+    while let Some(id) = todo.pop() {
+        if !active.insert(id) {
+            continue;
+        }
+        let relation = &program.relations[id];
+        if let Set::SearchRoots {
+            origins,
+            filter,
+            stop,
+        } = &relation.expression
+        {
+            if super::demand::kinds(&Set::Reference(*origins), program, &mut Default::default())
+                .is_some()
+            {
+                refs(program, *origins, &mut todo);
+            } else {
+                todo.push(*origins);
+            }
+            refs(program, *filter, &mut todo);
+            if let Some(stop) = stop {
+                refs(program, *stop, &mut todo);
+            }
+        } else {
+            super::ir::references(&relation.expression, &mut todo);
+        }
+        todo.extend(relation.domain);
+    }
+    active
 }
 
 /// A demanded seed set has one root source. Compose its alternatives around that
@@ -276,10 +365,16 @@ fn compact_seeds(
         set
     };
     let condition = bound.condition(&set, "seed")?;
+    // The enclosing UNION already deduplicates seeds when other arms remain.
+    let distinct = if indexes.len() == arms.len() {
+        "DISTINCT "
+    } else {
+        ""
+    };
     Ok(Some((
         indexes,
         format!(
-            "SELECT DISTINCT seed.file,seed.id FROM {source}{} WHERE {guard} AND {condition}",
+            "SELECT {distinct}seed.file,seed.id FROM {source}{} WHERE {guard} AND {condition}",
             bound.joins.join("")
         ),
     )))
@@ -557,9 +652,9 @@ pub(super) fn capture_demand(
     plan: &[RelationPlan],
     demand: &super::ir::CaptureDemand,
 ) -> Result<String, String> {
-    let definitions = capture_definitions(program, plan, demand)?;
+    let definitions = capture_definitions(program, plan, demand, None)?;
     Ok(format!(
-        "WITH RECURSIVE\n{}\nSELECT file,origin,atom,witness,ancestor,distance FROM capture_demand ORDER BY file,origin,atom",
+        "WITH RECURSIVE\n{}\nSELECT file,node,atom,witness,ancestor,distance FROM capture_demand ORDER BY file,node,atom",
         definitions.join(",\n")
     ))
 }
@@ -590,19 +685,44 @@ pub(super) fn capture_definitions(
     program: &Program,
     plan: &[RelationPlan],
     demand: &super::ir::CaptureDemand,
+    used_kinds: Option<&[u16]>,
 ) -> Result<Vec<String>, String> {
     let (roots, targets, leaf_stop) = (demand.roots, demand.targets, demand.leaf_stop);
-    let mut definitions = definitions_for(program, plan, false)?;
+    let mut definitions = definitions_for(
+        program,
+        plan,
+        false,
+        &leaf_stop.into_iter().collect::<Vec<_>>(),
+    )?;
     let named = if demand.named { " AND n.named" } else { "" };
-    definitions.push(format!("binding_seeds(file,node,atom) AS (SELECT n.file,n.id,relation_leaf_atom(n.file,n.id,n.atom) FROM r{targets} t CROSS JOIN node n ON n.file=t.file AND n.id=t.node WHERE 1{named})"));
-    let stopped = leaf_stop.map_or(String::new(), |id| {
-        format!(" AND NOT EXISTS (SELECT 1 FROM r{id} s WHERE s.file=w.file AND s.node=w.node)")
-    });
-    definitions.push(format!("binding_walk(file,atom,witness,node) AS (SELECT n.file,t.atom,t.node,n.parent FROM binding_seeds t CROSS JOIN node n ON n.file=t.file AND n.id=t.node WHERE n.parent IS NOT NULL UNION ALL SELECT w.file,w.atom,w.witness,n.parent FROM binding_walk w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped})"));
-    // AST tape ordinals are preorder keys, which is precisely this admitted `has` traversal order.
-    definitions.push(format!("binding_choices(file,node,atom,witness) AS MATERIALIZED (SELECT w.file,w.node,w.atom,MIN(w.witness) FROM binding_walk w JOIN r{roots} k ON k.file=w.file AND k.node=w.node GROUP BY w.file,w.node,w.atom)"));
-    definitions.push(format!("origin_choices AS (SELECT p.file,p.origin,b.atom,b.witness,p.node AS ancestor,p.distance,ROW_NUMBER() OVER (PARTITION BY p.file,p.origin,b.atom ORDER BY p.distance) AS choice FROM pairs{roots} p JOIN binding_choices b ON b.file=p.file AND b.node=p.node)"));
-    definitions.push("capture_demand AS MATERIALIZED (SELECT file,origin,atom,witness,ancestor,distance FROM origin_choices WHERE choice=1)".into());
+    definitions.push(format!("binding_seeds(file,node,atom) AS MATERIALIZED (SELECT t.file,t.node,relation_leaf_atom(n.file,n.id,n.atom) FROM r{targets} t CROSS JOIN node n ON n.file=t.file AND n.id=t.node WHERE 1{named})"));
+    let stopped = leaf_stop.map(|id| {
+        condition(&super::demand::inline(&Set::Reference(id), program), "s").map(|predicate|
+            format!(" WHERE NOT EXISTS (SELECT 1 FROM node s WHERE s.file=t.file AND s.id>a.id AND s.id<t.node AND s.\"last\">=t.node AND {predicate})"))
+    }).transpose()?.unwrap_or_default();
+    // A stopped descendant search accepts exactly the targets with no stopping
+    // proper ancestor between target and root. The virtual table seeks ancestor
+    // postings, and MIN retains the first successful preorder witness.
+    definitions.push(format!("binding_choices(file,node,atom,witness) AS MATERIALIZED (SELECT k.file,k.node,t.atom,MIN(t.node) FROM r{roots} k CROSS JOIN node a ON a.file=k.file AND a.id=k.node CROSS JOIN binding_seeds t ON t.file=k.file AND t.node>a.id AND t.node<=a.\"last\"{stopped} GROUP BY k.file,k.node,t.atom)"));
+    let choice_source = if let Some(kinds) = used_kinds {
+        let kinds = kinds
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        // Output nodes only move down from the frontier. A same-root binding
+        // therefore needs this value somewhere in that origin's inclusive subtree.
+        // This necessary test is independent of ancestor and assignment witness choice.
+        // Read the atom directly: this superset must not call fallible equality leaves.
+        definitions.push(format!("used_values(file,origin,atom) AS MATERIALIZED (SELECT DISTINCT p.file,p.origin,n.atom FROM (SELECT DISTINCT file,origin FROM pairs{roots}) p CROSS JOIN node o ON o.file=p.file AND o.id=p.origin CROSS JOIN node n ON n.file=o.file AND n.id>=o.id AND n.id<=o.\"last\" WHERE n.kind IN ({kinds}) AND n.named)"));
+        format!(
+            "used_values u CROSS JOIN pairs{roots} p ON p.file=u.file AND p.origin=u.origin CROSS JOIN binding_choices b ON b.file=p.file AND b.node=p.node AND b.atom=u.atom"
+        )
+    } else {
+        format!("pairs{roots} p JOIN binding_choices b ON b.file=p.file AND b.node=p.node")
+    };
+    definitions.push(format!("origin_choices AS (SELECT p.file,p.origin,b.atom,b.witness,p.node AS ancestor,p.distance,ROW_NUMBER() OVER (PARTITION BY p.file,p.origin,b.atom ORDER BY p.distance) AS choice FROM {choice_source})"));
+    definitions.push("capture_demand AS MATERIALIZED (SELECT file,origin AS node,atom,witness,ancestor,distance FROM origin_choices WHERE choice=1)".into());
     Ok(definitions)
 }
 

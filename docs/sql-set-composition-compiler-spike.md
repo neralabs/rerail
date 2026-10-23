@@ -5268,3 +5268,110 @@ Artifacts:
 - `benchmark/sql-relational-reference-shape-rejected.json`: five rejected fixture queries and their measured size failures.
 
 This qualifies the test-only B023 compiler shape, not production integration or the complete-job 100-execution gate.
+
+### 2026-10-23 — Restrict origin and value demand before traversal
+
+The user authorized the next candidate-production changes before the main compiler replacement.
+The baseline is commit `160a0076`, with 2,294,480 VM instructions for frozen B023.
+The current query walks broad origin sets and carries unused capture values through later stages.
+Reference parity alone does not qualify the amount of work.
+
+The first change adds SQLite loop measurements to diagnostic execution.
+Prepared timing disables these measurements and retains separate preparation timing.
+The baseline profile and new scaling failures must be saved before compiler changes.
+
+Acceptance requires exact native roots and captures, one matching execution, and zero frame publications.
+The initial frozen-workload target is at most 250,000 VM instructions, approximately nine times less than baseline.
+This is an engineering target, not a predicted result.
+Unrelated functions must add no VM work in the scaling fixture.
+Unused assignment names must not increase capture-demand rows beyond the single used value.
+The scaling sizes are 32, 128, and 512.
+Existing semantic and prepared CPU gates remain required.
+All failed candidates remain recorded.
+
+The implementation must retain ancestor stops, inclusive stops, first assignment choice, and nearest successful ancestor choice.
+Demand filtering cannot select a different witness after a later predicate fails.
+Main compiler replacement remains the subsequent task and needs explicit admission and resource-limit coverage.
+
+The instrumented baseline confirms the scaling failures.
+Unrelated functions increase VM work from 5,001 to 51,081 across sizes 32 to 512.
+Unused bindings increase capture-demand rows from 33 to 513.
+The baseline profile records 23,208 ancestor-walk rows and an 8,513-row boundary index.
+Scan instrumentation adds VM instructions, so the absolute budget uses ordinary prepared execution.
+
+Candidate 1 restricts origin seeds and builds used-value keys before capture choice.
+It preserves fixture and adversarial native results.
+Prepared VM work decreases to 552,182, but misses the 250,000 target.
+Its 10,992-byte query also misses the preceding SQL-size limit.
+The origin walk produces 280 rows, and capture demand decreases to 34 rows.
+Unused-binding scaling retains one capture-demand row at every size.
+Unrelated-function scaling still fails because the binding walk materializes all function boundaries.
+
+Candidate 2 removes that boundary set from the physical plan.
+It uses subtree ranges and an indexed test for intervening stop nodes to select assignment witnesses.
+The first successful witness still uses the minimum preorder node ID.
+It also evaluates ancestor predicates on reached nodes and removes unused relation definitions through typed dependency tracking.
+Both scaling gates pass, but prepared execution still uses 318,817 VM instructions.
+Its query uses 10,300 bytes, so both the VM and SQL-size gates fail.
+Loop measurements expose 5,776 AST point lookups for 361 binding nodes.
+SQLite flattens the binding source and repeats those lookups across 16 relevant loops.
+
+Candidate 3 materializes the narrow binding keys once and starts capture choice from used values.
+It also removes an answer projection by giving capture demand the standard answer key.
+Prepared VM work decreases to 246,385, within the 250,000 target.
+Its 10,259-byte SQL still fails the unchanged 10,245-byte size limit.
+Both scaling gates and native fixture comparisons pass.
+
+Candidate 4 removes seed DISTINCT operations where an enclosing UNION already removes duplicates.
+This changes the emitted relational operations, rather than shortening aliases or removing diagnostic comments.
+It passes the frozen workload with 246,364 VM instructions and 10,232 SQL bytes.
+The VM reduction is 89.3%, or 9.3 times less work, against the 2,294,480-instruction baseline.
+All nine prepared executions report the same VM count and zero automatic re-preparations.
+Generated median prepared CPU is 4.264 ms, versus 30.218 ms for the unchanged reference.
+Preparation and installation remain outside this execution comparison.
+
+All five structural gates pass without changing their limits.
+The generated plan has 2,195 static instructions, 22 materialization sites, nine correlated subqueries, and ten temporary B-tree sites.
+Exact native results remain two matches across 138 files, with one matching statement and zero frame publications.
+
+The loop profile attributes the reduction to smaller input relations:
+
+| Operation | Before | After |
+| --- | ---: | ---: |
+| Origin ancestor-walk rows | 23,208 | 280 |
+| Capture-demand rows | 1,029 | 34 |
+| AST point lookups for binding keys, candidate 2 versus candidate 4 | 5,776 | 361 |
+| AST node advances | 79,812 | 11,421 |
+| AST node filters | 54,038 | 10,957 |
+
+The query still scans 3,637 loop candidates through kind postings.
+No claim of minimal remaining work is made.
+Unrelated-function scaling uses 1,894 VM instructions at all three sizes.
+Unused-binding scaling retains one capture-demand row at all three sizes, but input processing still grows linearly.
+
+The scan-enabled build retains complete loop records and hardware-cycle measurements.
+Prepared handles disable scan instrumentation before preparation; the final qualification also uses an ordinary build.
+The final query and prepared VM count agree across both builds.
+Loop cycle values can include child operations and lazy native index construction. Do not add them as independent CPU totals.
+Parsing and native index construction remain dependent on input size, even when SQL VM work stays constant.
+
+The cutover audit compiles every AST grammar in all 138 Python policies, with no exclusions.
+Only 19 of 146 grammars are admitted; 127 fail with recorded reasons.
+The audit test passes because it records coverage. The complete-catalog admission gate fails.
+Admission is not execution parity or resource-limit qualification.
+The transition plan now names these missing contracts before the main compiler replacement.
+The historical full-engine VM count is not improved by this test-only change.
+
+All 173 unique qualification tests pass, including the admission audit that records the failed readiness gate.
+The separate diagnostic profile test also passes.
+All 54 focused profiles and 231 preceding controls retain identical SQL hashes and VM counts.
+The focused suite retains 882 native comparison jobs. Formatting and both Clippy configurations pass.
+A Clippy failure for a test-only temporary vector was corrected before final qualification.
+
+Artifacts:
+
+- `benchmark/relational-candidate-demand.py`: unchanged structural and CPU gates, plus the 250,000-VM and scaling gates.
+- `benchmark/sql-relational-candidate-demand-b023.sql`: the exact qualified query.
+- `benchmark/sql-relational-candidate-demand-evidence.json`: final qualification, source and binary pins, and preceding controls.
+- `benchmark/sql-relational-candidate-experiments.json`: the baseline and all four candidates, including rejected gates, exact source patches, SQL, and loop profiles.
+- `benchmark/sql-relational-cutover-admission.json`: policy hashes, each grammar's admission result, and missing-contract counts.

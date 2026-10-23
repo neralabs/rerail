@@ -293,6 +293,7 @@ pub(super) struct PreparedQuery<'a> {
 }
 impl<'a> PreparedQuery<'a> {
     pub fn new(connection: &'a Connection, sql: &str) -> Result<Self> {
+        super::scan::configure(connection, false)?;
         let start = Started::now();
         let statement = connection.prepare(sql)?;
         Ok(Self {

@@ -399,11 +399,7 @@ impl Sql<'_> {
     }
     fn uncached(&mut self, answer: &Answer) -> Result<String, String> {
         match answer {
-            Answer::Frontier => {
-                let name = self.name();
-                self.definitions.push(format!("{name}(file,node,atom,witness) AS (SELECT file,origin,atom,witness FROM capture_demand)"));
-                Ok(name)
-            }
+            Answer::Frontier => Ok("capture_demand".into()),
             Answer::Filter(child, filters, bind, overwrite, probes) => {
                 if let Answer::Filter(
                     inner,
@@ -1131,7 +1127,7 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
             .collect(),
     );
     physical::plan(&builder.lower.program)?;
-    builder.lower.program.relations[0].expression = frontier_outputs;
+    builder.lower.program.relations[0].expression = frontier_outputs.clone();
     demand::apply(&mut builder.lower.program);
     rewrite(
         &mut answer,
@@ -1139,13 +1135,61 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
         frontier.roots,
         &mut HashMap::new(),
     );
-    let program = builder.lower.program;
+    let mut program = builder.lower.program;
     prune_domains(&mut answer, &program, &frontier, origins);
     answer = normalize_answer(answer);
+    fn dependencies(answer: &Answer, out: &mut Vec<usize>) {
+        match answer {
+            Answer::Frontier => {}
+            Answer::Filter(child, filters, _, _, probes) => {
+                dependencies(child, out);
+                for set in filters {
+                    ir::references(set, out);
+                }
+                for probe in probes {
+                    for path in probe.states.iter().flatten() {
+                        for set in &path.filters {
+                            ir::references(set, out);
+                        }
+                    }
+                }
+            }
+            Answer::Any(items) => {
+                for item in items {
+                    dependencies(item, out);
+                }
+            }
+            Answer::Expand(_, child) => dependencies(child, out),
+        }
+    }
+    let mut required = Vec::new();
+    ir::references(&frontier_outputs, &mut required);
+    dependencies(&answer, &mut required);
+    required.sort_unstable();
+    required.dedup();
+    program.relations[0].expression =
+        Set::Union(required.into_iter().map(Set::Reference).collect());
     let planned = physical::plan(&program)?;
+    // Only a binding on the final root proves that its value must occur in the
+    // origin subtree. Bindings below an expansion refer to a different node.
+    let used_kinds = if let Answer::Filter(_, filters, true, _, _) = &answer {
+        demand::kinds(
+            &Set::Intersect(filters.clone()),
+            &program,
+            &mut Default::default(),
+        )
+        .map(|k| k.into_iter().collect::<Vec<_>>())
+    } else {
+        None
+    };
     let mut sql = Sql {
         program: &program,
-        definitions: emit::capture_definitions(&program, &planned, &frontier)?,
+        definitions: emit::capture_definitions(
+            &program,
+            &planned,
+            &frontier,
+            used_kinds.as_deref(),
+        )?,
         next: 0,
         shared: vec![],
         probes: vec![],
@@ -1158,7 +1202,7 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
             sql.definitions.join(",\n")
         ),
         terminals: program.terminals,
-        relations: serde_json::json!({"scope":"Complete ordered single-leaf answer plan","capture":search.capture,"output":output,"roots":frontier.roots,"demandDecisions":program.demand_decisions,"nativeComposition":false,"limitations":["Native work and stack/depth budgets remain outside this test-only kernel.","One bound frontier; positive recursive capture components and composite equality keys are not admitted."]}),
+        relations: serde_json::json!({"scope":"Complete ordered single-leaf answer plan","capture":search.capture,"output":output,"usedValueKinds":used_kinds,"roots":frontier.roots,"demandDecisions":program.demand_decisions,"nativeComposition":false,"limitations":["Native work and stack/depth budgets remain outside this test-only kernel.","One bound frontier; positive recursive capture components and composite equality keys are not admitted."]}),
     })
 }
 
@@ -1186,9 +1230,7 @@ fn reference_shape_inclusive_descent_preserves_overlapping_branch_priority() {
         let program = ir::Program::default();
         let mut sql = Sql {
             program: &program,
-            definitions: vec![
-                "capture_demand(file,origin,atom,witness) AS (VALUES(0,1,7,9))".into(),
-            ],
+            definitions: vec!["capture_demand(file,node,atom,witness) AS (VALUES(0,1,7,9))".into()],
             next: 0,
             shared: vec![],
             probes: vec![],

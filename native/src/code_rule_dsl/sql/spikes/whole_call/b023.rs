@@ -650,7 +650,7 @@ fn check_query(
                 frames,
                 &Graph::default(),
                 std::slice::from_ref(&sql),
-                false,
+                diagnostic,
             )
         };
         let (result, count) = if diagnostic {
@@ -971,6 +971,118 @@ fn b023_compiler_complete_corpus() {
         serde_json::to_vec_pretty(&result).unwrap(),
     )
     .unwrap();
+}
+
+#[test]
+#[ignore = "set RERAIL_B023_CONFIG and RERAIL_CANDIDATE_PROFILE"]
+fn b023_candidate_profile() {
+    let config: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("RERAIL_B023_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let sources = config["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let name = p.as_str().unwrap();
+            (
+                name.to_owned(),
+                std::fs::read_to_string(Path::new(config["corpus"].as_str().unwrap()).join(name))
+                    .unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut report = check_query(&sources, None, true, true);
+    report["sql"] = json!(
+        sql::relational::compile(&grammar_matchers(&policy())[0])
+            .unwrap()
+            .sql
+    );
+    std::fs::write(
+        std::env::var("RERAIL_CANDIDATE_PROFILE").unwrap(),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn b023_candidate_scaling() {
+    let p = policy();
+    let grammar = &grammar_matchers(&p)[0];
+    let mut reports = Vec::new();
+    for family in ["outside-functions", "unused-bindings"] {
+        for size in [32, 128, 512] {
+            let source = if family == "outside-functions" {
+                format!(
+                    "{}for x in xs:\n def f():\n  return x\n",
+                    (0..size)
+                        .map(|i| format!("def noise_{i}():\n return {i}\n"))
+                        .collect::<String>()
+                )
+            } else {
+                format!(
+                    "for x in xs:\n{} def f():\n  return x\n",
+                    (0..size)
+                        .map(|i| format!(" unused_{i}={i}\n"))
+                        .collect::<String>()
+                )
+            };
+            let mut report = sql::relational::tests::measure(
+                grammar,
+                &[(format!("{family}-{size}.py"), source)],
+            );
+            assert_eq!(report["matches"], 1);
+            report["family"] = json!(family);
+            report["size"] = json!(size);
+            reports.push(report);
+        }
+    }
+    if let Ok(path) = std::env::var("RERAIL_CANDIDATE_SCALING") {
+        std::fs::write(path, serde_json::to_vec_pretty(&reports).unwrap()).unwrap();
+    }
+    // Persist all observations before reporting the initially failing budgets.
+    let outside: Vec<_> = reports
+        .iter()
+        .filter(|r| r["family"] == "outside-functions")
+        .collect();
+    assert_eq!(
+        outside[0]["vmSteps"], outside[2]["vmSteps"],
+        "unrelated functions must not add query work"
+    );
+    for report in reports.iter().filter(|r| r["family"] == "unused-bindings") {
+        let demand = report["diagnosticRelationRows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["relation"] == "capture_demand")
+            .unwrap();
+        assert_eq!(
+            demand["rows"], 1,
+            "unused names must not enter capture demand"
+        );
+    }
+}
+
+#[test]
+fn b023_candidate_preserves_stops_and_value_witnesses() {
+    let sources = [
+        "for x in xs:\n x=1\n x=2\n unused=3\n def f():\n  return x+x\n",
+        "for x in xs:\n for y in ys:\n  x=2\n  def f():\n   return x\n",
+        "for x in xs:\n def stopped():\n  def nested():\n   return x\n",
+        "for x in xs:\n def stopped():\n  for y in ys:\n   def nested():\n    return x,y\n",
+        "for x in xs:\n f=lambda: x\n g=map(lambda: x,xs)\n h=sorted(xs,key=lambda: x)\n",
+        "for x in xs:\n f=lambda x=x: x\n def g():\n  return obj.x\n",
+        "for x in xs:\n def f():\n  consume(x)\n  x=1\n def g():\n  def h():\n   x=2\n  return x\n",
+        "for café in xs:\n unused=1\n f=lambda: café\n",
+        "for x in xs:\n def f():\n  return y\nfor y in ys:\n def g():\n  return x\n",
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, s)| (format!("candidate-{i}.py"), s.to_owned()))
+    .collect::<Vec<_>>();
+    let result = sql::relational::tests::measure(&grammar_matchers(&policy())[0], &sources);
+    assert_eq!(result["parity"], true);
 }
 
 #[test]

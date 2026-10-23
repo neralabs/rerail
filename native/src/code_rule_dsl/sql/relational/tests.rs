@@ -164,7 +164,14 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                     .sql
                     .lines()
                     .filter_map(|line| line.split_once("(file,").map(|(name, _)| name))
-                    .filter(|name| name.starts_with("answer"))
+                    .filter(|name| {
+                        name.starts_with("answer")
+                            || name.starts_with("search")
+                            || name.starts_with("walk")
+                            || name.starts_with("pairs")
+                            || name.starts_with("binding_")
+                            || *name == "used_values"
+                    })
                     .chain(std::iter::once("capture_demand"))
                     .collect();
                 for name in &names {

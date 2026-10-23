@@ -4,6 +4,7 @@ mod analysis;
 mod answers;
 mod bound;
 mod budget_leaf;
+mod cutover_tests;
 mod demand;
 mod emit;
 mod failure;
