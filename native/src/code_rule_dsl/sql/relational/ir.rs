@@ -28,6 +28,7 @@ pub(super) enum Set {
     Empty,
     Kinds(Vec<u16>),
     Regex(usize),
+    Nonempty,
     Pattern(usize),
     Intersect(Vec<Set>),
     Union(Vec<Set>),

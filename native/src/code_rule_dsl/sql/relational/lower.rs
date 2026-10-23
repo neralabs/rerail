@@ -43,7 +43,37 @@ impl Lowerer {
     }
 
     pub(super) fn relation(&mut self, expression: Set, source: &str) -> usize {
+        fn singleton(set: Set) -> Set {
+            match set {
+                Set::Intersect(mut items) => {
+                    items.retain(|s| *s != Set::AllNodes);
+                    if items.len() == 1 {
+                        singleton(items.remove(0))
+                    } else {
+                        Set::Intersect(items)
+                    }
+                }
+                Set::Union(mut items) if items.len() == 1 => singleton(items.remove(0)),
+                other => other,
+            }
+        }
+        let expression = singleton(expression);
         if let Set::Reference(id) = expression {
+            return id;
+        }
+        if expression != Set::Empty
+            && let Some((id, _)) =
+                self.program
+                    .relations
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .find(|(_, relation)| {
+                        relation.domain.is_none()
+                            && relation.keys.is_none()
+                            && relation.expression == expression
+                    })
+        {
             return id;
         }
         let id = self.program.relations.len();
@@ -85,7 +115,11 @@ impl Lowerer {
                         self.program.terminals.push(Terminal::Regex(regex.clone()));
                         id
                     });
-                Set::Regex(id)
+                if regex.as_str() == "(?s)." {
+                    Set::Nonempty
+                } else {
+                    Set::Regex(id)
+                }
             }
             AstMatcher::Never => Set::Empty,
             AstMatcher::All(items) => {

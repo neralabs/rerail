@@ -280,6 +280,60 @@ fn execute_statement(
     let prepared = Started::now();
     let mut statement = connection.prepare(sql)?;
     let prepare = prepared.elapsed();
+    execute_prepared(connection, &mut statement, sql.len(), prepare, profile)
+}
+
+/// One installed query can execute repeatedly without parsing or planning again.
+pub(super) struct PreparedQuery<'a> {
+    connection: &'a Connection,
+    statement: rusqlite::Statement<'a>,
+    sql_bytes: usize,
+    profile: Arc<Profile>,
+    pub preparation: crate::code_rule_dsl::sql::timing::Timing,
+}
+impl<'a> PreparedQuery<'a> {
+    pub fn new(connection: &'a Connection, sql: &str) -> Result<Self> {
+        let start = Started::now();
+        let statement = connection.prepare(sql)?;
+        Ok(Self {
+            connection,
+            statement,
+            sql_bytes: sql.len(),
+            profile: Profile::new(false),
+            preparation: start.elapsed(),
+        })
+    }
+    pub fn execute(&mut self) -> Result<Execution> {
+        let (execution, error) = execute_prepared(
+            self.connection,
+            &mut self.statement,
+            self.sql_bytes,
+            crate::code_rule_dsl::sql::timing::Timing::ZERO,
+            &self.profile,
+        )?;
+        if let Some(error) = error {
+            return Err(error);
+        }
+        Ok(execution)
+    }
+}
+
+fn execute_prepared(
+    connection: &Connection,
+    statement: &mut rusqlite::Statement<'_>,
+    sql_bytes: usize,
+    prepare: crate::code_rule_dsl::sql::timing::Timing,
+    profile: &Arc<Profile>,
+) -> Result<(Execution, Option<rusqlite::Error>)> {
+    for status in [
+        StatementStatus::VmStep,
+        StatementStatus::AutoIndex,
+        StatementStatus::FullscanStep,
+        StatementStatus::Sort,
+        StatementStatus::RePrepare,
+    ] {
+        statement.reset_status(status);
+    }
     let count = Trace {
         count: AtomicUsize::new(0),
         statement: AtomicUsize::new(0),
@@ -351,7 +405,7 @@ fn execute_statement(
     };
     let metrics = json!({"interruption":interruption,"scans":scan,"sqlExecutions":executions,"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"cpuNs":elapsed.cpu,"wallNs":elapsed.wall,
         "vmSteps":statement.get_status(StatementStatus::VmStep),"fullscanSteps":statement.get_status(StatementStatus::FullscanStep),"sorts":statement.get_status(StatementStatus::Sort),
-        "automaticIndexRows":statement.get_status(StatementStatus::AutoIndex),"sqlBytes":sql.len()});
+        "automaticIndexRows":statement.get_status(StatementStatus::AutoIndex),"reprepares":statement.get_status(StatementStatus::RePrepare),"sqlBytes":sql_bytes});
     Ok(match result {
         Ok(hits) => (Execution { hits, metrics }, None),
         Err(e) => (

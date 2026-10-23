@@ -681,6 +681,18 @@ fn check_query(
         if diagnostic {
             report["explain"] = super::profile::explain(connection, &sql);
         }
+        // Matching performance uses repeated executions of this same prepared handle.
+        // Installation CPU is retained separately and excluded from each sample.
+        let mut prepared = run::PreparedQuery::new(connection, &sql).unwrap();
+        let installation = prepared.preparation;
+        let mut samples = Vec::new();
+        for _ in 0..3 {
+            let execution = prepared.execute().unwrap();
+            assert_eq!(execution.hits, result.hits);
+            assert_eq!(execution.metrics["prepareCpuNs"], 0);
+            samples.push(execution.metrics);
+        }
+        report["prepared"] = json!({"preparationCount":1,"executionCount":3,"installationCpuNs":installation.cpu,"samples":samples});
         if diagnostic && !generated {
             let prefix = sql
                 .rsplit_once("SELECT 0,file,id,json_array(capture)")
@@ -1045,4 +1057,46 @@ fn b023_compiler_complete_rejects_zero_distance_recursion() {
         error.contains("cyclic dependency") || error.contains("strictly down"),
         "{error}"
     );
+}
+
+#[test]
+fn b023_compiler_reference_shape_preserves_direct_body_priority() {
+    let template: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root().join("packs/python/rules/ruff-b023-function-uses-loop-variable.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let sources = vec![
+        (
+            "nested.py".into(),
+            "for x in xs:\n f=lambda: x\n def g():\n  for x in ys:\n   h=lambda: x\n  return x\n"
+                .into(),
+        ),
+        (
+            "shadow.py".into(),
+            "for x in xs:\n f=lambda x=x: x\n g=lambda: consume(x)\n def h():\n  x=0\n  return x\n"
+                .into(),
+        ),
+        ("empty.py".into(), String::new()),
+    ];
+    for reverse in [false, true] {
+        let mut document = template.clone();
+        if reverse {
+            document["clauses"][0]["forbid"]["ast"]["rule"]["all"][2]["any"]
+                .as_array_mut()
+                .unwrap()
+                .reverse();
+        }
+        let policy =
+            CodeRuleDslRuntime::compile(document.to_string(), "json".into(), CAPABILITIES.into())
+                .unwrap();
+        let measured = sql::relational::tests::measure(&grammar_matchers(&policy)[0], &sources);
+        assert_eq!(measured["parity"], true);
+        assert_eq!(
+            measured["sql"].as_str().unwrap().contains("n.id>=b.id"),
+            !reverse
+        );
+    }
 }

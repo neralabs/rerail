@@ -773,7 +773,7 @@ This phase leaves 33 materialization sites, 54,156 automatic-index rows, and 35,
 Correlated subquery sites rise from 34 to 60 because Boolean alternatives now expose separate witness queries.
 Constant-row scans fall from 58 to 46. Fewer wrappers do not establish that the remaining SQL work is efficient.
 
-## Next implementation action — preparation cost first
+## Prior audit — preparation cost (superseded by the user on 2026-10-23)
 
 The validation audit found a priority error in the preceding plan.
 For frozen B023, median preparation CPU is 47.613 ms for generated SQL and 3.245 ms for the reference.
@@ -803,3 +803,55 @@ Do not use an arbitrary one-instruction improvement to claim that the bottleneck
 After preparation is addressed, use producer diagnostics to locate the remaining execution gap.
 
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.
+
+## Current action — reference-shaped SQL and prepared execution
+
+The user directed us to prepare queries once and exclude that cost from repeated execution.
+This supersedes the preceding preparation-first priority and its cold preparation gate.
+The audit evidence remains valid; its preparation gate is no longer the acceptance criterion.
+
+The compiler must produce plans comparable to the reference in structure and size.
+Before qualification, the new driver fixed these limits against frozen B023:
+
+| Measure | Limit |
+| --- | --- |
+| SQL bytes | 1.25 times reference |
+| Static bytecode instructions | 1.5 times reference |
+| Materialization sites | Reference plus 4 |
+| Correlated scalar subqueries | Reference plus 4 |
+| Temporary B-tree sites | Reference plus 3 |
+| Median prepared execution CPU | 1.25 times reference |
+| Executed VM instructions | At most 2,804,023 |
+
+Each query is prepared once and executes three times on that statement handle.
+Three paired corpus samples supply nine executions for each query.
+Preparation CPU is reported separately. Exact native parity, one matching statement, and zero frame publications remain required.
+The structural and runtime gates must all pass. A small VM reduction alone cannot qualify the change.
+
+The compiler changes share functional AST joins, combine demanded seed alternatives, and remove redundant region tests.
+They combine equivalent child branches and eliminate ranking where a unique parent determines the witness.
+Negative descendant probes use shared leaf sets and value/range anti-joins.
+Recursive probes combine equivalent transitions instead of repeating full join arms.
+The frozen B023 qualification passes all gates on the final source:
+
+| Measure | Previous compiler | Current compiler | Reference |
+| --- | ---: | ---: | ---: |
+| SQL bytes | 21,882 | 10,231 | 8,196 |
+| Static bytecode instructions | 4,760 | 2,203 | 1,947 |
+| Materialization sites | 33 | 23 | 20 |
+| Correlated scalar subqueries | 60 | 9 | 18 |
+| Temporary B-tree sites | 27 | 8 | 9 |
+| Executed VM instructions | 2,804,023 | 2,294,480 | 2,324,796 |
+
+Final median prepared CPU is 29.422 ms generated versus 32.633 ms reference.
+An earlier passing qualification measured 32.514 ms versus 31.997 ms with the same B023 SQL.
+These runs establish comparable speed. They do not establish a stable generated-query speed advantage.
+The final run preserves exact native results across 138 files and reports zero automatic re-preparations.
+
+Review also tightened the inclusive-descent proof to preserve branch order when two branches publish different witnesses.
+The regression test checks both orders and their distinct results.
+Five rejected size candidates and both passing full qualifications remain recorded.
+
+The remaining three materialization sites do not justify another cycle of removing isolated SQL wrappers.
+Use these structural and prepared-execution gates for subsequent compiler changes.
+The implementation remains test-only; production integration, general recursive outcomes, native limits, and the complete-job budget remain open.

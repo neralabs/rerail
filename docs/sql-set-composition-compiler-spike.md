@@ -5177,3 +5177,94 @@ The audit command exits unsuccessfully as intended. No benchmark rerun replaces 
 The transition plan now starts with preparation-only profiling and controlled query-shape experiments.
 Execution counters and full semantic comparisons remain regression gates.
 This diagnosis covers frozen B023, not the original 818-clause workload or the complete-job 100-execution requirement.
+
+### 2026-10-23 — Match reference structure; measure prepared execution
+
+The user clarified that preparation is an installation cost and must not count toward repeated matching performance.
+This supersedes the preceding preparation-performance target.
+The benchmark now installs one prepared handle and executes it three times, with separate installation timing.
+Each sample must execute one statement, preserve exact results, and report zero preparation CPU.
+
+The structural baseline is 21,882 SQL bytes versus 8,196 reference bytes.
+EXPLAIN reports 4,760 versus 1,947 static opcodes, 33 versus 20 materializations, and 60 versus 18 correlated subqueries.
+Temporary B-tree sites total 27 versus nine. These are explicit failures before the compiler changes.
+
+The acceptance gates are declared before measuring the implementation:
+SQL bytes at most 1.25× reference, static opcodes at most 1.5× reference, materializations and correlated subqueries at most reference plus four, and temporary B-trees at most reference plus three.
+Prepared execution median CPU must be at most 1.25× reference, with VM work no higher than 2,804,023.
+The full native semantic suite and preceding profile controls remain required.
+The benchmark records every gate before asserting failure.
+
+The implementation shares functional parent/previous/next paths, retains independent child witnesses, and applies large root predicates after branch choice.
+It removes empty branches and child-expansion ranking where key uniqueness already proves one result.
+Demanded seed alternatives share their root source and functional witnesses.
+No rule IDs, kind numbers, or B023-specific compiler recognition are used.
+
+Five fixture candidates failed the SQL-size gate before full qualification.
+Their sizes were 15,240, 12,784, 12,403, 10,899, and 10,269 bytes; the limit is 10,245.
+The rejected-candidate artifact retains their exact SQL, hashes, native parity, and fixture VM counts.
+Intermediate source and executable pins were not retained for these five builds.
+
+The sixth candidate passed the full corpus gates with 10,231 SQL bytes.
+It used 2,203 static instructions, 23 materialization sites, nine correlated subqueries, and eight temporary B-tree sites.
+The reference uses 1,947 static instructions, 20 materialization sites, 18 correlated subqueries, and nine temporary B-tree sites.
+Prepared execution medians were 32.514 ms and 31.997 ms, respectively.
+All 18 prepared executions preserved results; each query handle executed three times after one preparation.
+The generated query used 2,294,480 VM instructions, versus 2,324,796 for the reference and 2,804,023 for the preceding compiler.
+
+The emitted stages now correspond directly to the reference:
+
+| Reference stage | Compiler stage | Structural change |
+| --- | --- | --- |
+| `functions`, `safe_lambda` | `r1`, `r11`, `needed11` | One demanded seed source with shared parent and sibling joins |
+| `function_loops`, `demand` | `pairs5`, `capture_demand` | Shared ancestor and binding choices; no unused frontier projection |
+| `target_slot`, `store_slot` | `r12`, `r13` | One seed predicate per recursive relation; direct reuse of the target set |
+| `stores`, `unbound` | `answer2`, `answer1` | One leaf/value set and range anti-joins; no function-by-store expansion |
+| `parameter_walk`, `parameters` | `answer3_walk`, `answer3` | Shared transitions and an inlined acyclic entry state |
+| `bodies`, `loads` | `answer4`, `answer5` | Combined child alternatives and one inclusive descendant choice |
+
+These are compiler transformations over set and answer operators. The reference SQL is not substituted into execution.
+Pure parent and sibling predicates share functional joins. Child predicates retain independent existential witnesses.
+The exact nonempty-text regex lowers to a byte-span test; tests cover empty, Unicode, and multiline input.
+Materialization remains at shared set and capture-choice boundaries.
+The compiler retains three more materialization sites than the reference; matching the reference does not require identical SQL text.
+
+Code review found an ordering gap in the inclusive-descent proof.
+Two direct branches can match the same root but publish different witnesses.
+The optimization now requires their order to equal the admitted descendant-source order.
+A SQL regression test checks both orders and their different expected witnesses.
+A separate native comparison reverses the original policy's direct-body and descendant branches.
+These changes preserve the measured B023 SQL exactly.
+
+SQLite automatic re-preparation is now instrumented and must remain zero for every repeated execution.
+The final source passes the full qualification after this correctness change.
+The first passing qualification remains in the evidence; this is not a retry of a failed CPU gate.
+
+The final run reports 29.422 ms generated and 32.633 ms reference median prepared CPU.
+Both runs support comparable speed; their variation does not establish a stable generated-query speedup.
+All 18 final executions report zero automatic re-preparations and one matching statement.
+Each generated execution uses exactly 2,294,480 VM instructions: 18.2% below the preceding compiler and 1.3% below reference.
+SQL size falls 53.2%, static instruction count falls 53.7%, and all five structural gates pass.
+The frozen workload retains 138 files, two matches, exact native captures, and zero frame publications.
+
+Preparation remains visible as installation timing and is excluded from the execution gate.
+Final median installation CPU is 2.927 ms generated and 2.510 ms reference.
+The direct diagnostic runs and prepared runs use different instrumentation; their timings are not an improvement comparison.
+All 170 unique scoped tests pass, including 157 relational tests, ten compiler fixtures, adversarial coverage, the frozen corpus, and workspace failure publication.
+The 54 focused profiles and 231 preceding controls retain identical SQL hashes and VM counts.
+The focused run retains 882 native comparison jobs. Formatting and both Clippy configurations pass.
+
+The remaining counters are mixed and are retained in the evidence.
+Automatic-index rows fall from 54,156 to 21,781, while full-scan steps rise from 35,379 to 42,264.
+Regex requests fall from 3,090 to 2,452; pattern requests rise from nine to 142.
+The shared Boolean predicates change which pure leaf probes SQLite evaluates.
+Total VM work and prepared CPU pass their gates; this does not establish that every individual access path improved.
+
+Artifacts:
+
+- `benchmark/relational-reference-shape.py`: prepared-execution and structural gate driver.
+- `benchmark/sql-relational-reference-shape-b023.sql`: exact qualified generated query.
+- `benchmark/sql-relational-reference-shape-evidence.json`: source, executable, query, and corpus hashes; both full qualifications; EXPLAIN; controls.
+- `benchmark/sql-relational-reference-shape-rejected.json`: five rejected fixture queries and their measured size failures.
+
+This qualifies the test-only B023 compiler shape, not production integration or the complete-job 100-execution gate.

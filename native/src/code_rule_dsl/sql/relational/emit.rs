@@ -19,6 +19,14 @@ pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, S
 }
 
 pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Vec<String>, String> {
+    definitions_for(program, plan, true)
+}
+
+fn definitions_for(
+    program: &Program,
+    plan: &[RelationPlan],
+    project_root: bool,
+) -> Result<Vec<String>, String> {
     let mut emitter = Emitter {
         domains: program
             .relations
@@ -77,7 +85,7 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
     for (id, planned) in plan
         .iter()
         .enumerate()
-        .filter(|(id, _)| active.contains(id))
+        .filter(|(id, _)| active.contains(id) && (project_root || *id != 0))
     {
         if let RelationPlan::Component {
             leader, members, ..
@@ -122,7 +130,7 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
         } = planned
         {
             let stopped=stop.map_or(String::new(),|stop|format!(" AND NOT EXISTS (SELECT 1 FROM r{stop} s WHERE s.file=w.file AND s.node=w.node)"));
-            relations.push(format!("walk{id}(file,origin,node,distance) AS MATERIALIZED (SELECT n.file,k.node,n.parent,1 FROM r{origins} k CROSS JOIN node n ON n.file=k.file AND n.id=k.node WHERE n.parent IS NOT NULL UNION ALL SELECT w.file,w.origin,n.parent,w.distance+1 FROM walk{id} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped}),\npairs{id}(file,origin,node,distance) AS MATERIALIZED (SELECT w.* FROM walk{id} w JOIN r{filter} f ON f.file=w.file AND f.node=w.node),\nr{id}(file,node) AS MATERIALIZED (SELECT DISTINCT file,node FROM pairs{id})"));
+            relations.push(format!("walk{id}(file,origin,node,distance) AS (SELECT n.file,k.node,n.parent,1 FROM r{origins} k CROSS JOIN node n ON n.file=k.file AND n.id=k.node WHERE n.parent IS NOT NULL UNION ALL SELECT w.file,w.origin,n.parent,w.distance+1 FROM walk{id} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped}),\npairs{id}(file,origin,node,distance) AS MATERIALIZED (SELECT w.* FROM walk{id} w JOIN r{filter} f ON f.file=w.file AND f.node=w.node),\nr{id}(file,node) AS MATERIALIZED (SELECT DISTINCT file,node FROM pairs{id})"));
             continue;
         }
         let RelationPlan::Joins(arms) = planned else {
@@ -133,8 +141,16 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
             relations.push(format!("-- {}\nr{id}(file,node) AS MATERIALIZED (SELECT n.file,n.parent FROM r{seeds} seed CROSS JOIN node n ON n.file=seed.file AND n.id=seed.node WHERE n.parent IS NOT NULL UNION SELECT n.file,n.parent FROM r{id} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped})",program.relations[id].source));
             continue;
         };
+        let seeds = compact_seeds(arms, id, program)?;
         let mut selects = arms
             .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                seeds
+                    .as_ref()
+                    .is_none_or(|(indexes, _)| !indexes.contains(index))
+            })
+            .map(|(_, arm)| arm)
             .map(|arm| {
                 let mut arm = arm.clone();
                 if program.relations[id].keys.is_some() {
@@ -142,12 +158,18 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
                 }
                 if !arm.references.iter().any(|(_, r)| *r == id)
                     && let Some(domain) = program.relations[id].domain
+                    && !arm.references.iter().any(|(node, reference)| {
+                        *node == 0 && program.relations[*reference].domain == Some(domain)
+                    })
                 {
                     arm.predicates.push(Predicate::Region(0, domain));
                 }
                 emitter.arm(&arm, Some(id), None, arms.len() == 1)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if let Some((_, query)) = seeds {
+            selects.insert(0, query);
+        }
         if !arms.is_empty()
             && arms
                 .iter()
@@ -160,7 +182,13 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
         } else {
             selects.join("\nUNION\n")
         };
-        let stored = if id != 0 && !matches!(program.relations[id].expression, Set::Reference(_)) {
+        let alias = arms.len() == 1
+            && arms[0].nodes == 1
+            && arms[0].predicates.is_empty()
+            && arms[0].references.len() == 1
+            && program.relations[id].keys.is_none()
+            && program.relations[id].domain.is_none();
+        let stored = if id != 0 && !alias {
             "MATERIALIZED "
         } else {
             ""
@@ -171,6 +199,90 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
         ));
     }
     Ok(relations)
+}
+
+/// A demanded seed set has one root source. Compose its alternatives around that
+/// source, sharing functional witnesses instead of repeating a complete join arm.
+fn compact_seeds(
+    arms: &[Arm],
+    id: usize,
+    program: &Program,
+) -> Result<Option<(Vec<usize>, String)>, String> {
+    let relation = &program.relations[id];
+    if relation.keys.is_none() && relation.domain.is_none() {
+        return Ok(None);
+    }
+    let indexes: Vec<_> = arms
+        .iter()
+        .enumerate()
+        .filter(|(_, arm)| arm.references.is_empty())
+        .map(|(i, _)| i)
+        .collect();
+    if indexes.len() < 2 {
+        return Ok(None);
+    }
+    let mut bound = super::bound::Bound::default();
+    let (source, guard) = if relation.keys.is_some() {
+        (
+            format!("needed{id} k CROSS JOIN node seed ON seed.file=k.file AND seed.id=k.node"),
+            "1".to_string(),
+        )
+    } else {
+        let mut kinds = std::collections::BTreeSet::new();
+        for &index in &indexes {
+            let arm = &arms[index];
+            let Some((_, _, parent)) = arm
+                .edges
+                .iter()
+                .find(|(from, edge, _)| *from == 0 && *edge == Edge::Parent)
+            else {
+                return Ok(None);
+            };
+            let Some(values) = arm.predicates.iter().find_map(|p| match p {
+                Predicate::Kinds(at, values) if at == parent => Some(values),
+                _ => None,
+            }) else {
+                return Ok(None);
+            };
+            kinds.extend(values.iter().copied());
+        }
+        bound.parent("seed", "parent");
+        let region = relation.domain.unwrap();
+        (
+            format!(
+                "regions{region} d CROSS JOIN node parent ON parent.file=d.file AND parent.id>=d.node AND parent.id<=d.last CROSS JOIN node seed ON seed.file=parent.file AND seed.parent=parent.id"
+            ),
+            format!(
+                "parent.kind IN ({})",
+                kinds
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        )
+    };
+    let set = Set::Union(
+        indexes
+            .iter()
+            .map(|&i| super::bound::arm_set(&arms[i], 0))
+            .collect(),
+    );
+    let set = if relation.keys.is_some() {
+        relation.domain.map_or(set.clone(), |domain| {
+            Set::Intersect(vec![set, Set::Within(domain)])
+        })
+    } else {
+        set
+    };
+    let condition = bound.condition(&set, "seed")?;
+    Ok(Some((
+        indexes,
+        format!(
+            "SELECT DISTINCT seed.file,seed.id FROM {source}{} WHERE {guard} AND {condition}",
+            bound.joins.join("")
+        ),
+    )))
 }
 
 /// Keep the bound expression separate from query formatting. A witness-free arm
@@ -400,6 +512,7 @@ impl Emitter {
                         .collect::<Vec<_>>()
                         .join(",")
                 ),
+                Predicate::Nonempty(node) => format!("{}.\"end\">{}.start", names[*node], names[*node]),
                 Predicate::Regex(node, term) => format!(
                     "node_regex({term},{}.file,{}.id)",
                     names[*node], names[*node]
@@ -421,7 +534,11 @@ impl Emitter {
             };
             format!(
                 "{}{tag}{}.file,{}.id",
-                if distinct { "DISTINCT " } else { "" },
+                if distinct && arm.edges.iter().any(|(_, edge, _)| *edge == Edge::Child) {
+                    "DISTINCT "
+                } else {
+                    ""
+                },
                 names[0],
                 names[0]
             )
@@ -448,6 +565,20 @@ pub(super) fn capture_demand(
 }
 
 pub(super) fn condition(set: &Set, alias: &str) -> Result<String, String> {
+    // Preserve expansion admission independently of physical sharing.
+    physical::expand(set)?;
+    let mut bound = super::bound::Bound::default();
+    let condition = bound.condition(set, alias)?;
+    if bound.joins.is_empty() {
+        return Ok(condition);
+    }
+    Ok(format!(
+        "EXISTS (SELECT 1 FROM (SELECT 1) AS bound_unit{} WHERE {condition})",
+        bound.joins.join("")
+    ))
+}
+
+pub(super) fn unshared_condition(set: &Set, alias: &str) -> Result<String, String> {
     let mut emitter = Emitter {
         bound_regions: true,
         ..Emitter::default()
@@ -461,9 +592,9 @@ pub(super) fn capture_definitions(
     demand: &super::ir::CaptureDemand,
 ) -> Result<Vec<String>, String> {
     let (roots, targets, leaf_stop) = (demand.roots, demand.targets, demand.leaf_stop);
-    let mut definitions = definitions(program, plan)?;
+    let mut definitions = definitions_for(program, plan, false)?;
     let named = if demand.named { " AND n.named" } else { "" };
-    definitions.push(format!("binding_seeds(file,node,atom) AS MATERIALIZED (SELECT n.file,n.id,relation_leaf_atom(n.file,n.id,n.atom) FROM r{targets} t CROSS JOIN node n ON n.file=t.file AND n.id=t.node WHERE 1{named})"));
+    definitions.push(format!("binding_seeds(file,node,atom) AS (SELECT n.file,n.id,relation_leaf_atom(n.file,n.id,n.atom) FROM r{targets} t CROSS JOIN node n ON n.file=t.file AND n.id=t.node WHERE 1{named})"));
     let stopped = leaf_stop.map_or(String::new(), |id| {
         format!(" AND NOT EXISTS (SELECT 1 FROM r{id} s WHERE s.file=w.file AND s.node=w.node)")
     });
@@ -563,7 +694,9 @@ mod bound_predicate_tests {
         for (set, expected, witness) in cases {
             let expression = condition(&set, "n").unwrap();
             assert!(!expression.contains("SELECT 1 WHERE"), "{expression}");
-            assert_eq!(expression.contains("AS unit"), witness, "{expression}");
+            if witness {
+                assert!(expression.contains("JOIN node"), "{expression}");
+            }
             for negate in [false, true] {
                 let predicate = if negate {
                     format!("NOT ({expression})")

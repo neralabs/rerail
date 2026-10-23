@@ -8,6 +8,7 @@ const MAX_NODES: usize = 32;
 pub(super) enum Predicate {
     Kinds(usize, Vec<u16>),
     Regex(usize, usize),
+    Nonempty(usize),
     Pattern(usize, usize),
     Region(usize, usize),
     Keys(usize, usize),
@@ -44,6 +45,11 @@ fn extend(set: &Set, node: usize, mut arms: Vec<Arm>) -> Result<Vec<Arm>, String
         Set::Kinds(kinds) => {
             for arm in &mut arms {
                 arm.predicates.push(Predicate::Kinds(node, kinds.clone()));
+            }
+        }
+        Set::Nonempty => {
+            for arm in &mut arms {
+                arm.predicates.push(Predicate::Nonempty(node));
             }
         }
         Set::Regex(term) => {
