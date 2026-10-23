@@ -1,100 +1,16 @@
--- Native's Python reference graph (`reference_edges`, refs mode) as SQL stages.
--- Inputs: member(path, hash) and the cgn export's `as_references` relations per content
--- (cgn_<rel>(hash, variant, stub, ...), every variant). Native paths below are relative to
--- native/src/code_rule_dsl/. Each stage is one statement; `-- index:` lines are speed hints.
-
--- ===================================================================== scope
--- stage scope_glob
--- The dead-code rule's `scope` (packs/data-layer/candidates/rules/data-layer-internal-dead-code.json)
--- as regexes: globset with literal_separator (compile/mod.rs:251): `**/` any directories, `/**`
--- anything below, `*` within one segment.
-SELECT g.kind, g.glob,
-       '^' || replace(replace(replace(replace(replace(replace(g.glob, '.', '\.'), '**/', '%DIRS%'), '/**', '%BELOW%'),
-                      '*', '[^/]*'), '%DIRS%', '(?:.*/)?'), '%BELOW%', '/.*') || '$' AS re
-FROM (SELECT 'include' AS kind, value AS glob FROM json_each('["api/**/*.py","impl/**/*.py","data_layer/**/*.py","_internal/**/*.py","l1000_cache/**/*.py","l1000_schema/**/*.py","l1050_model_registry/**/*.py","l1050_polymorphism/**/*.py","l1100_exceptions/**/*.py","l1200_capabilities/**/*.py","l1200_content_hash/**/*.py","l1200_json/**/*.py","l1200_versioned_ids/**/*.py","l1250_security/**/*.py","l1300_session/**/*.py","l1350_foundational_types/**/*.py","l1400_config/**/*.py","l1400_types/**/*.py","l1450_index_policy_contracts/**/*.py","l1450_keys/**/*.py","l1470_matching_contracts/**/*.py","l1500_llm/**/*.py","l1900_retry/**/*.py","l2000_connection/**/*.py","l2050_transaction/**/*.py","l2055_lazy_result/**/*.py","l2060_query_builder/**/*.py","l2070_batching/**/*.py","l2080_lazy_orm/**/*.py","l2090_byte_tracking/**/*.py","l2090_response/**/*.py","l2091_rtt_tracking/**/*.py","l2092_timing_tracking/**/*.py","l2100_include/**/*.py","l2110_limits/**/*.py","l2150_prepared_cache/**/*.py","l2200_notification/**/*.py","l2500_binary_diff/**/*.py","l3000_schema_builder/**/*.py","l3100_schema_introspector/**/*.py","l3150_schema_diff/**/*.py","l3200_metadata/**/*.py","l3250_migrations/**/*.py","l3260_startup/**/*.py","l3500_bulk_ops/**/*.py","l4000_permissions/**/*.py","l4050_background_reaper/**/*.py","l4100_queue/**/*.py","l4150_scheduler/**/*.py","l4170_inbound_bridge/**/*.py","l4200_event_pipeline/**/*.py","l4250_timers/**/*.py","l4300_ipc/**/*.py","l4300_timers/**/*.py","l4350_timer_driver/**/*.py","l4400_scheduler/**/*.py","l4500_trust/**/*.py","l5000_search_index_policy/**/*.py","l5000_subscriptions/**/*.py","l5100_fts/**/*.py","l5100_llm_router/**/*.py","l5175_chunking/**/*.py","l5195_embedding_compute_tables/**/*.py","l5200_vector_index/**/*.py","l5250_matching/**/*.py","l5300_config_compatibility/**/*.py","l6000_log_table/**/*.py","l6300_config/**/*.py","l6500_evidence/**/*.py","l6510_credentials/**/*.py","l6520_auth/**/*.py","l6530_managed_secrets/**/*.py","l6600_cleanup/**/*.py","l7000_versioned_schema/**/*.py","l7100_versioned_operations/**/*.py","l7200_versioned_transactions/**/*.py","l7250_versioned_operations/**/*.py","l7350_versioned_timer_driver/**/*.py","l7390_versioned_diff_entrypoint/**/*.py","l7400_versioned_diff/**/*.py","l7450_versioned_revert/**/*.py","l7500_commit_triggers/**/*.py","l7800_versioned_merge/**/*.py","l7900_versioned_rebase/**/*.py","l8000_admin/**/*.py","l8100_ops_analytics/**/*.py","l9600_graphs/**/*.py","l9700_graph_query/**/*.py","l9710_graph_algorithms/**/*.py","l9720_sparql/**/*.py","l9750_graphql/**/*.py","l9800_rippling/**/*.py","l9850_workflow/**/*.py","l9875_mcp/**/*.py","l9900_auto_api/**/*.py"]')
-      UNION ALL
-      SELECT 'exclude', value FROM json_each('["**/.git/**","**/.venv/**","**/tmp/**","**/__pycache__/**","**/tests/**"]')) g
-
--- stage in_scope
--- The workspace's files: a workspace holds (and so links) only files some installed rule's scope
--- matches (workspace/ingest.rs:279-292 file_needs_update); with the dead-code rule that is its
--- scope, which also filters the edges by source path (relational.rs:639,658).
-SELECT m.path, m.hash FROM member m
-WHERE EXISTS (SELECT 1 FROM scope_glob g WHERE g.kind = 'include' AND rx_matches(m.path, g.re))
-  AND NOT EXISTS (SELECT 1 FROM scope_glob g WHERE g.kind = 'exclude' AND rx_matches(m.path, g.re))
--- index: path
-
--- ===================================================================== module paths
--- stage package_dir
--- model.rs:847 package_marker_directory: `pkg/__init__.py` marks `pkg`; a root `__init__.py` marks ''.
-SELECT DISTINCT CASE WHEN path = '__init__.py' THEN '' ELSE substr(path, 1, length(path) - 12) END AS dir
-FROM in_scope WHERE path = '__init__.py' OR substr(path, -12) = '/__init__.py'
--- index: dir
-
--- stage file_name
--- A member's directory (`Path::parent`, '' at the top) and file name.
-SELECT path, coalesce(rx_extract(path, '^(.*)/[^/]*$', 1), '') AS dir, rx_extract(path, '[^/]*$', 0) AS file,
-       -- file_stem (module_path.rs:13; model.rs:825): the last extension off unless the dot leads.
-       coalesce(rx_extract(rx_extract(path, '[^/]*$', 0), '^(.+)\.[^.]*$', 1), rx_extract(path, '[^/]*$', 0)) AS stem
-FROM in_scope
--- index: path
-
--- stage package_climb
--- model.rs:811-818: from the file's directory, climb while each directory holds an `__init__.py`.
-WITH RECURSIVE climb(path, dir) AS (
-  SELECT f.path, f.dir FROM file_name f JOIN package_dir p ON p.dir = f.dir
-  UNION
-  SELECT c.path, coalesce(rx_extract(c.dir, '^(.*)/[^/]*$', 1), '')
-  FROM climb c JOIN package_dir p ON p.dir = coalesce(rx_extract(c.dir, '^(.*)/[^/]*$', 1), '')
-  WHERE c.dir <> ''
-)
-SELECT path, dir FROM climb
--- index: path
-
--- stage module_rel
--- model.rs:819-824: names from the package root's parent down; root '' has no parent (None).
-SELECT f.path, f.stem,
-       CASE WHEN r.dir IS NULL OR r.dir = '' THEN NULL
-            WHEN instr(r.dir, '/') = 0 THEN f.path
-            ELSE substr(f.path, length(rx_extract(r.dir, '^(.*)/[^/]*$', 1)) + 2) END AS rel
-FROM file_name f
-LEFT JOIN package_climb r ON r.path = f.path
-  AND NOT EXISTS (SELECT 1 FROM package_climb o WHERE o.path = r.path AND length(o.dir) < length(r.dir))
--- index: path
-
--- stage module_name_part
--- model.rs:820-829: the relative path's components, the last one by its stem.
-WITH RECURSIVE part(path, i, name, rest) AS (
-  SELECT path, 0, CASE WHEN instr(rel, '/') > 0 THEN substr(rel, 1, instr(rel, '/') - 1) ELSE stem END,
-         CASE WHEN instr(rel, '/') > 0 THEN substr(rel, instr(rel, '/') + 1) END
-  FROM module_rel WHERE rel IS NOT NULL
-  UNION
-  SELECT p.path, p.i + 1,
-         CASE WHEN instr(p.rest, '/') > 0 THEN substr(p.rest, 1, instr(p.rest, '/') - 1) ELSE r.stem END,
-         CASE WHEN instr(p.rest, '/') > 0 THEN substr(p.rest, instr(p.rest, '/') + 1) END
-  FROM part p JOIN module_rel r ON r.path = p.path WHERE p.rest IS NOT NULL
-)
-SELECT path, i, name FROM part
--- index: path, i
-
--- stage module_path
--- The file's ModulePath (model.rs:806-838 then FileInput::new model.rs:761-771): its package
--- names when every name is non-empty, else Ruff's stem fallback (module_path.rs `stem`).
-SELECT r.path, 1 AS package, (SELECT count(*) FROM module_name_part p WHERE p.path = r.path) AS n
-FROM module_rel r
-WHERE r.rel IS NOT NULL AND NOT EXISTS (SELECT 1 FROM module_name_part p WHERE p.path = r.path AND p.name = '')
-UNION ALL
-SELECT r.path, 0, 1 FROM module_rel r
-WHERE (r.rel IS NULL OR EXISTS (SELECT 1 FROM module_name_part p WHERE p.path = r.path AND p.name = ''))
-  AND r.stem <> ''
--- index: path
-
--- stage module_segment
--- ModulePath.segments.
-SELECT p.path, p.i, p.name FROM module_name_part p JOIN module_path m ON m.path = p.path AND m.package = 1
-UNION ALL
-SELECT m.path, 0, f.stem FROM module_path m JOIN file_name f ON f.path = m.path WHERE m.package = 0
--- index: path, i
+-- Native's Python reference graph (`reference_edges`, refs mode) as SQL stages: the definition
+-- of the relation `reference_edges` that a relational clause declaring `references` reads
+-- (front/rule.rs compiles these stages ahead of the clause's own, after module_path.sql's;
+-- INVARIANTS I2).
+-- Inputs: module_path.sql's stages (`in_scope`, `module_path`, `module_segment`, `file_name`)
+-- and, per content (SCHEMA § 3.4), each row carrying the content's `__path`:
+--   cgn_<rel>(__path, variant, ...)   native's call summary of the content under each symbolic
+--                                     variant, after `as_references` with the clause's links,
+--                                     in the reading the path selects (`.pyi`: stub); empty for
+--                                     contents outside the rule's scope
+-- Everything else is membership-dependent.
+-- Native paths below are relative to native/src/code_rule_dsl/. Each stage is one statement;
+-- `-- index:` lines are speed hints for the SQLite harness (linker_check.py) only.
 
 -- stage module_prefix
 -- module_path.rs `qualified(count)`: the first `count` segments, directories by their stem,
@@ -115,15 +31,15 @@ SELECT path, count, text FROM q
 
 -- stage file_variant
 -- The export's symbolic variant the real module selects (cgnative.rs:73 `Variant::of`).
-SELECT mb.path, mb.hash, m.n,
+SELECT mb.path, m.n,
        CASE WHEN m.package = 0 THEN 'unpackaged'
-            WHEN m.n > 1 AND (SELECT s.name FROM module_segment s WHERE s.path = m.path AND s.i = m.n - 1) = '__init__' THEN 'init'
+            WHEN m.n > 1 AND l.name = '__init__' THEN 'init'
             ELSE 'module' END AS variant,
-       CASE WHEN m.package = 0 THEN 1 ELSE 17 END AS symlen,
-       CASE WHEN substr(mb.path, -4) = '.pyi' THEN '1' ELSE '0' END AS stub
+       CASE WHEN m.package = 0 THEN 1 ELSE 17 END AS symlen
 FROM in_scope mb JOIN module_path m ON m.path = mb.path
+LEFT JOIN module_segment l ON l.path = m.path AND l.i = m.n - 1
 -- index: path
--- index: hash, variant, stub
+-- index: path, variant
 
 -- ===================================================================== refusals: paths
 -- stage path_refusal
@@ -145,15 +61,15 @@ SELECT path, 'path_module: non-ASCII path' FROM in_scope WHERE rx_matches(path, 
 -- stage raw_name
 -- Every exported string of a member's variant holding a sentinel token.
 SELECT DISTINCT v.path, x.raw FROM file_variant v JOIN (
-  SELECT hash, variant, stub, name AS raw FROM cgn_def
-  UNION ALL SELECT hash, variant, stub, name FROM cgn_edge
-  UNION ALL SELECT hash, variant, stub, "key" FROM cgn_alias
-  UNION ALL SELECT hash, variant, stub, target FROM cgn_alias
-  UNION ALL SELECT hash, variant, stub, name FROM cgn_opaque
-  UNION ALL SELECT hash, variant, stub, name FROM cgn_module
-  UNION ALL SELECT hash, variant, stub, "key" FROM cgn_reference_alias WHERE instr("key", '.<base-slot>.') > 0
-  UNION ALL SELECT hash, variant, stub, target FROM cgn_reference_alias WHERE instr("key", '.<base-slot>.') > 0
-) x ON x.hash = v.hash AND x.variant = v.variant AND x.stub = v.stub
+  SELECT __path, variant, name AS raw FROM cgn_def
+  UNION ALL SELECT __path, variant, name FROM cgn_edge
+  UNION ALL SELECT __path, variant, "key" FROM cgn_alias
+  UNION ALL SELECT __path, variant, target FROM cgn_alias
+  UNION ALL SELECT __path, variant, name FROM cgn_opaque
+  UNION ALL SELECT __path, variant, name FROM cgn_module
+  UNION ALL SELECT __path, variant, "key" FROM cgn_reference_alias WHERE instr("key", '.<base-slot>.') > 0
+  UNION ALL SELECT __path, variant, target FROM cgn_reference_alias WHERE instr("key", '.<base-slot>.') > 0
+) x ON x.__path = v.path AND x.variant = v.variant
 WHERE rx_matches(x.raw, '\x01')
   AND NOT EXISTS (SELECT 1 FROM path_refusal r WHERE r.path = v.path)
 
@@ -188,10 +104,10 @@ UNION SELECT DISTINCT path, bad FROM name_sub WHERE bad IS NOT NULL
 
 -- stage linked_file
 -- The files linked: members with a variant and an exact substitution.
-SELECT v.path, v.hash, v.variant, v.stub FROM file_variant v
+SELECT v.path, v.variant FROM file_variant v
 WHERE NOT EXISTS (SELECT 1 FROM refused_path r WHERE r.path = v.path)
 -- index: path
--- index: hash, variant, stub
+-- index: path, variant
 
 -- ===================================================================== substituted summaries
 -- stage s_def
@@ -199,7 +115,7 @@ WHERE NOT EXISTS (SELECT 1 FROM refused_path r WHERE r.path = v.path)
 -- the last def of a qualname) — as exported.
 SELECT f.path, CAST(d.idx AS INTEGER) AS idx, coalesce(n.name, d.name) AS name,
        CAST(d.start AS INTEGER) AS start, CAST(d."end" AS INTEGER) AS stop, CAST(d.flags AS INTEGER) AS flags
-FROM linked_file f JOIN cgn_def d ON d.hash = f.hash AND d.variant = f.variant AND d.stub = f.stub
+FROM linked_file f JOIN cgn_def d ON d.__path = f.path AND d.variant = f.variant
 LEFT JOIN name_sub n ON n.path = f.path AND n.raw = d.name
 -- index: path, idx
 -- index: path, start
@@ -208,7 +124,7 @@ LEFT JOIN name_sub n ON n.path = f.path AND n.raw = d.name
 -- stage s_edge
 -- summary.edges in refs mode: references plus siblingLinks rows (summary.rs:128, 182-199).
 SELECT DISTINCT f.path, CAST(e."def" AS INTEGER) AS idx, coalesce(n.name, e.name) AS name
-FROM linked_file f JOIN cgn_edge e ON e.hash = f.hash AND e.variant = f.variant AND e.stub = f.stub
+FROM linked_file f JOIN cgn_edge e ON e.__path = f.path AND e.variant = f.variant
 LEFT JOIN name_sub n ON n.path = f.path AND n.raw = e.name
 -- index: name
 -- index: path, idx
@@ -216,36 +132,43 @@ LEFT JOIN name_sub n ON n.path = f.path AND n.raw = e.name
 -- stage s_alias
 -- summary.aliases in refs mode (rebuilt from reference_aliases, summary.rs:161-180).
 SELECT DISTINCT f.path, coalesce(k.name, a."key") AS key, coalesce(t.name, a.target) AS target
-FROM linked_file f JOIN cgn_alias a ON a.hash = f.hash AND a.variant = f.variant AND a.stub = f.stub
+FROM linked_file f JOIN cgn_alias a ON a.__path = f.path AND a.variant = f.variant
 LEFT JOIN name_sub k ON k.path = f.path AND k.raw = a."key"
 LEFT JOIN name_sub t ON t.path = f.path AND t.raw = a.target
 -- index: path, key
 
 -- stage s_opaque
 SELECT DISTINCT f.path, coalesce(n.name, o.name) AS name
-FROM linked_file f JOIN cgn_opaque o ON o.hash = f.hash AND o.variant = f.variant AND o.stub = f.stub
+FROM linked_file f JOIN cgn_opaque o ON o.__path = f.path AND o.variant = f.variant
 LEFT JOIN name_sub n ON n.path = f.path AND n.raw = o.name
 
 -- stage s_module
 -- summary.module: ModulePath::import_name (module_path.rs).
 SELECT f.path, coalesce(n.name, m.name) AS name
-FROM linked_file f JOIN cgn_module m ON m.hash = f.hash AND m.variant = f.variant AND m.stub = f.stub
+FROM linked_file f JOIN cgn_module m ON m.__path = f.path AND m.variant = f.variant
 LEFT JOIN name_sub n ON n.path = f.path AND n.raw = m.name
 -- index: path
 
 -- stage s_open
 SELECT f.path, CAST(o."open" AS INTEGER) AS open
-FROM linked_file f JOIN cgn_open o ON o.hash = f.hash AND o.variant = f.variant AND o.stub = f.stub
+FROM linked_file f JOIN cgn_open o ON o.__path = f.path AND o.variant = f.variant
 
 -- stage s_base_slot
 -- `{class}.<base-slot>.{classStart}:{ordinal}` → `{module}.<base>.{short}` (summary.rs:1087-1095):
 -- the ordinal is the zero-padded position among the file's reference aliases, so it orders a
 -- class's bases as declared.
 SELECT DISTINCT f.path, coalesce(k.name, a."key") AS key, coalesce(t.name, a.target) AS target
-FROM linked_file f JOIN cgn_reference_alias a ON a.hash = f.hash AND a.variant = f.variant AND a.stub = f.stub
+FROM linked_file f JOIN cgn_reference_alias a ON a.__path = f.path AND a.variant = f.variant
 LEFT JOIN name_sub k ON k.path = f.path AND k.raw = a."key"
 LEFT JOIN name_sub t ON t.path = f.path AND t.raw = a.target
 WHERE instr(a."key", '.<base-slot>.') > 0
+
+-- stage last_class_def
+-- The last class def of each name per file (summary.rs:139-144 `class_starts`).
+SELECT d.path, d.name, d.start FROM s_def d
+JOIN (SELECT path, name, max(idx) AS idx FROM s_def WHERE (flags / 2) % 2 = 1 GROUP BY path, name) l
+  ON l.path = d.path AND l.name = d.name AND l.idx = d.idx
+-- index: path, name
 
 -- stage s_super
 -- as_references (summary.rs:139-144, 171-176): a base slot whose class start is the start of the
@@ -253,13 +176,10 @@ WHERE instr(a."key", '.<base-slot>.') > 0
 SELECT b.path, substr(b.key, 1, instr(b.key, '.<base-slot>.') - 1) AS cls, b.target,
        substr(b.key, instr(b.key, '.<base-slot>.') + 13 + instr(substr(b.key, instr(b.key, '.<base-slot>.') + 13), ':')) AS ord
 FROM s_base_slot b
+JOIN last_class_def c ON c.path = b.path AND c.name = substr(b.key, 1, instr(b.key, '.<base-slot>.') - 1)
 WHERE instr(substr(b.key, instr(b.key, '.<base-slot>.') + 13), ':') > 0
   AND CAST(substr(b.key, instr(b.key, '.<base-slot>.') + 13,
-                  instr(substr(b.key, instr(b.key, '.<base-slot>.') + 13), ':') - 1) AS INTEGER)
-      = (SELECT d.start FROM s_def d WHERE d.path = b.path AND (d.flags / 2) % 2 = 1
-           AND d.name = substr(b.key, 1, instr(b.key, '.<base-slot>.') - 1)
-           AND NOT EXISTS (SELECT 1 FROM s_def l WHERE l.path = d.path AND l.name = d.name
-                             AND (l.flags / 2) % 2 = 1 AND l.idx > d.idx))
+                  instr(substr(b.key, instr(b.key, '.<base-slot>.') + 13), ':') - 1) AS INTEGER) = c.start
 
 -- ===================================================================== name tables
 -- stage path_alt
@@ -330,9 +250,9 @@ SELECT key, path, idx FROM by_name WHERE (flags / 2) % 2 = 0
 -- stage reference_class
 -- Graph.reference_classes (closure.rs:773-798): every class def of every file by its last segment;
 -- class_of uses a short name with exactly one entry.
-SELECT rx_extract(d.name, '[^.]*$', 0) AS short, min(d.name) AS name
-FROM s_def d WHERE (d.flags / 2) % 2 = 1
-GROUP BY rx_extract(d.name, '[^.]*$', 0) HAVING count(*) = 1
+SELECT short, min(name) AS name
+FROM (SELECT rx_extract(d.name, '[^.]*$', 0) AS short, d.name FROM s_def d WHERE (d.flags / 2) % 2 = 1)
+GROUP BY short HAVING count(*) = 1
 -- index: short
 
 -- stage own_name
@@ -358,14 +278,14 @@ JOIN class_key c ON c.key = a.target
 -- stage base_class
 -- The resolved base (Mro::Workspace) of each `<base>` target; `several` > 1 is a first-of-several
 -- choice native makes by alias entry order (refused).
-SELECT t.target,
-       CASE WHEN EXISTS (SELECT 1 FROM base_target b WHERE b.target = t.target)
-            THEN (SELECT min(b.cls) FROM base_target b WHERE b.target = t.target
-                    AND b.rank = (SELECT min(rank) FROM base_target x WHERE x.target = t.target))
-            ELSE (SELECT r.name FROM reference_class r WHERE r.short = substr(t.target, instr(t.target, '.<base>.') + 8)) END AS cls,
-       (SELECT count(DISTINCT b.cls) FROM base_target b WHERE b.target = t.target
-          AND b.rank = (SELECT min(rank) FROM base_target x WHERE x.target = t.target)) AS several
+SELECT t.target, CASE WHEN m.target IS NOT NULL THEN m.cls ELSE r.name END AS cls, coalesce(m.several, 0) AS several
 FROM (SELECT DISTINCT target FROM supers WHERE instr(target, '.<base>.') > 0) t
+LEFT JOIN (SELECT b.target, min(b.cls) AS cls, count(DISTINCT b.cls) AS several
+           FROM base_target b JOIN (SELECT target, min(rank) AS rank FROM base_target GROUP BY target) x
+             ON x.target = b.target AND x.rank = b.rank
+           GROUP BY b.target) m ON m.target = t.target
+-- reference_class has one row per short name (grouped by it).
+LEFT JOIN reference_class r ON r.short = substr(t.target, instr(t.target, '.<base>.') + 8)
 -- index: target
 
 -- stage bases
@@ -453,10 +373,17 @@ GROUP BY a.key
 SELECT key, cls, k FROM type_key WHERE several = 1
 -- index: key
 
--- stage digit
--- Positions 1..2048 (prefix enumeration); longer names are refused (`linker_refusal`).
-WITH RECURSIVE n(i) AS (SELECT 1 UNION SELECT i + 1 FROM n WHERE i < 2048) SELECT i FROM n
--- index: i
+-- stage uniform_alias
+-- Alias keys all of whose entries agree, with their target.
+SELECT a.key, min(a.target) AS target FROM aliases a GROUP BY a.key HAVING count(DISTINCT a.target) = 1
+-- index: key
+
+-- stage named_prefix
+-- Names a prefix scan stops at (closure.rs:2321-2335): an alias all of whose entries agree on
+-- another name, a definition, an opaque binding, a module.
+SELECT key FROM uniform_alias WHERE target <> key
+UNION SELECT key FROM by_name UNION SELECT key FROM opaque UNION SELECT name FROM modules
+-- index: key
 
 -- stage field_alias
 -- Aliases a constructor field may read: `{base}.<init-parameter>.{param}` and `{base}.{field}`
@@ -467,35 +394,38 @@ WHERE instr(a.key, '.<init-parameter>.') > 0
 -- index: key
 
 -- stage class_of_walk
--- class_of / class_noting for a field alias's target (closure.rs:2272-2362), one hop per row.
-WITH RECURSIVE w(start, cur, k) AS (
-  SELECT DISTINCT target, target, 0 FROM field_alias WHERE substr(target, 1, 13) <> '<annotation>.'
+-- class_of / class_noting for a field alias's target (closure.rs:2272-2362), one hop per row
+-- (`p` NULL). A prefix scan is rows with `p`, the prefixes of `cur` at its dots, longest first:
+-- `rx_extract(…, '^(.*)\.')` takes the text before the last dot. A dot that ends `cur` is no
+-- split point; the scan goes on past a prefix no table names and stops at the first one that is.
+WITH RECURSIVE w(start, cur, k, p) AS (
+  SELECT DISTINCT target, target, 0, NULL FROM field_alias WHERE substr(target, 1, 13) <> '<annotation>.'
   UNION
-  SELECT w.start, x.next, w.k + 1 FROM w JOIN (
-    -- an alias of the name itself, if all its entries agree
-    SELECT a.key AS cur, min(a.target) AS next FROM aliases a GROUP BY a.key HAVING count(DISTINCT a.target) = 1
-  ) x ON x.cur = w.cur
-  WHERE w.k < 17 AND instr(w.cur, '.<base>.') = 0
+  SELECT w.start, x.target, w.k + 1, NULL FROM w JOIN uniform_alias x ON x.key = w.cur
+  -- an alias of the name itself, if all its entries agree
+  WHERE w.p IS NULL AND w.k < 17 AND instr(w.cur, '.<base>.') = 0
     AND NOT EXISTS (SELECT 1 FROM by_name b WHERE b.key = w.cur)
     AND NOT EXISTS (SELECT 1 FROM opaque o WHERE o.key = w.cur)
   UNION
   -- else the longest prefix any table names, when that is an alias all of whose entries agree
-  SELECT w.start, x.target || substr(w.cur, d.i), w.k + 1
-  FROM w JOIN digit d ON d.i < length(w.cur) AND substr(w.cur, d.i, 1) = '.'
-  JOIN (SELECT a.key, min(a.target) AS target FROM aliases a GROUP BY a.key HAVING count(DISTINCT a.target) = 1) x
-    ON x.key = substr(w.cur, 1, d.i - 1) AND x.target <> x.key
-  WHERE w.k < 17 AND instr(w.cur, '.<base>.') = 0
+  SELECT w.start, w.cur, w.k, rx_extract(w.cur, '(?s)^(.*)\.[^.]*$', 1) FROM w
+  WHERE w.p IS NULL AND w.k < 17 AND instr(w.cur, '.<base>.') = 0 AND instr(w.cur, '.') > 0
     AND NOT EXISTS (SELECT 1 FROM by_name b WHERE b.key = w.cur)
     AND NOT EXISTS (SELECT 1 FROM opaque o WHERE o.key = w.cur)
     AND NOT EXISTS (SELECT 1 FROM aliases a WHERE a.key = w.cur)
-    AND NOT EXISTS (SELECT 1 FROM digit e WHERE e.i > d.i AND e.i < length(w.cur) AND substr(w.cur, e.i, 1) = '.'
-                      AND (EXISTS (SELECT 1 FROM aliases a WHERE a.key = substr(w.cur, 1, e.i - 1)
-                                     GROUP BY a.key HAVING count(DISTINCT a.target) = 1 AND min(a.target) <> a.key)
-                           OR EXISTS (SELECT 1 FROM by_name b WHERE b.key = substr(w.cur, 1, e.i - 1))
-                           OR EXISTS (SELECT 1 FROM opaque o WHERE o.key = substr(w.cur, 1, e.i - 1))
-                           OR EXISTS (SELECT 1 FROM modules m WHERE m.name = substr(w.cur, 1, e.i - 1))))
+  UNION
+  SELECT w.start, w.cur, w.k, rx_extract(w.p, '(?s)^(.*)\.[^.]*$', 1) FROM w
+  WHERE w.p IS NOT NULL AND instr(w.p, '.') > 0 AND length(w.p) + 1 >= length(w.cur)
+  UNION
+  SELECT w.start, w.cur, w.k, rx_extract(w.p, '(?s)^(.*)\.[^.]*$', 1) FROM w
+  WHERE w.p IS NOT NULL AND instr(w.p, '.') > 0
+    AND NOT EXISTS (SELECT 1 FROM named_prefix n WHERE n.key = w.p)
+  UNION
+  SELECT w.start, x.target || substr(w.cur, length(w.p) + 1), w.k + 1, NULL
+  FROM w JOIN uniform_alias x ON x.key = w.p AND x.target <> x.key
+  WHERE w.p IS NOT NULL AND length(w.p) + 1 < length(w.cur)
 )
-SELECT start, cur, k FROM w
+SELECT start, cur, k FROM w WHERE p IS NULL
 -- index: cur
 
 -- stage class_of
@@ -509,96 +439,113 @@ WHERE instr(w.cur, '.<base>.') = 0
 -- index: start
 
 -- ===================================================================== link closure
+-- stage field_key_form
+-- The three alias keys a constructor field `F` of class `C` is read under (closure.rs:1890-1926):
+-- 0 `C.<init-parameter>.F`, 1 `C.<init-parameter>.{F without leading _}`, 2 `C.F`.
+SELECT 0 AS v UNION ALL SELECT 1 UNION ALL SELECT 2
+
+-- stage type_key_form
+-- reference_type's two lookups (closure.rs:2248-2268): `<imported>` then `<class>`.
+SELECT '.<imported>.' AS kind UNION ALL SELECT '.<class>.'
+
 -- stage link_reach
 -- Every name a link may read, from the summaries' edge names: a superset of link_python's
 -- recursion (closure.rs:1685-1887), each step with its least hop cost; names past 19 hops in
--- cannot yield a definition (MAX_HOPS 16 plus at most three unchecked hops).
-WITH RECURSIVE r(name, d) AS (
-  SELECT DISTINCT name, 0 FROM s_edge
+-- cannot yield a definition (MAX_HOPS 16 plus at most three unchecked hops). Name rows have `p`
+-- NULL; rows with `p` are the name's prefixes at its dots (the text before the last dot of the
+-- name, then of the prefix), which the prefix arms read.
+WITH RECURSIVE r(name, d, p) AS (
+  SELECT DISTINCT name, 0, NULL FROM s_edge
   UNION
   -- `<bare>` / `<unqualified>` fallbacks (closure.rs:1736-1742, 1755-1761)
-  SELECT substr(r.name, instr(r.name, '.<bare>.') + 8 + instr(substr(r.name, instr(r.name, '.<bare>.') + 8), '=>') + 1), r.d + 1
-  FROM r WHERE r.d < 19 AND instr(r.name, '.<bare>.') > 0 AND instr(substr(r.name, instr(r.name, '.<bare>.') + 8), '=>') > 0
+  SELECT substr(r.name, instr(r.name, '.<bare>.') + 8 + instr(substr(r.name, instr(r.name, '.<bare>.') + 8), '=>') + 1), r.d + 1, NULL
+  FROM r WHERE r.p IS NULL AND r.d < 19 AND instr(r.name, '.<bare>.') > 0 AND instr(substr(r.name, instr(r.name, '.<bare>.') + 8), '=>') > 0
   UNION
-  SELECT substr(r.name, instr(r.name, '.<unqualified>.') + 15 + instr(substr(r.name, instr(r.name, '.<unqualified>.') + 15), '=>') + 1), r.d + 1
-  FROM r WHERE r.d < 19 AND instr(r.name, '.<unqualified>.') > 0 AND instr(substr(r.name, instr(r.name, '.<unqualified>.') + 15), '=>') > 0
+  SELECT substr(r.name, instr(r.name, '.<unqualified>.') + 15 + instr(substr(r.name, instr(r.name, '.<unqualified>.') + 15), '=>') + 1), r.d + 1, NULL
+  FROM r WHERE r.p IS NULL AND r.d < 19 AND instr(r.name, '.<unqualified>.') > 0 AND instr(substr(r.name, instr(r.name, '.<unqualified>.') + 15), '=>') > 0
   UNION
   -- late `^` (closure.rs:1794-1798)
-  SELECT rtrim(rtrim(r.name, '^'), '.'), r.d + 1 FROM r WHERE r.d < 19 AND substr(r.name, -1) = '^'
+  SELECT rtrim(rtrim(r.name, '^'), '.'), r.d + 1, NULL FROM r WHERE r.p IS NULL AND r.d < 19 AND substr(r.name, -1) = '^'
   UNION
   -- aliases of the name itself (member, closure.rs:1987-1990)
-  SELECT a.target, r.d + 1 FROM r JOIN aliases a ON a.key = r.name WHERE r.d < 19
+  SELECT a.target, r.d + 1, NULL FROM r JOIN aliases a ON a.key = r.name WHERE r.p IS NULL AND r.d < 19
   UNION
   -- `<declared>` / `<imported>` of a `<bare>` name (closure.rs:1718-1735)
-  SELECT a.target, r.d + 2 FROM r JOIN aliases a
-    ON a.key IN (substr(r.name, 1, instr(r.name, '.<bare>.') - 1) || '.<declared>.' || substr(substr(r.name, instr(r.name, '.<bare>.') + 8), 1, instr(substr(r.name, instr(r.name, '.<bare>.') + 8), '=>') - 1),
-                 substr(r.name, 1, instr(r.name, '.<bare>.') - 1) || '.<imported>.' || substr(substr(r.name, instr(r.name, '.<bare>.') + 8), 1, instr(substr(r.name, instr(r.name, '.<bare>.') + 8), '=>') - 1))
-  WHERE r.d < 18 AND instr(r.name, '.<bare>.') > 0 AND instr(substr(r.name, instr(r.name, '.<bare>.') + 8), '=>') > 0
+  SELECT a.target, r.d + 2, NULL FROM r JOIN (SELECT '.<declared>.' AS kind UNION ALL SELECT '.<imported>.') k
+  JOIN aliases a
+    ON a.key = substr(r.name, 1, instr(r.name, '.<bare>.') - 1) || k.kind || substr(substr(r.name, instr(r.name, '.<bare>.') + 8), 1, instr(substr(r.name, instr(r.name, '.<bare>.') + 8), '=>') - 1)
+  WHERE r.p IS NULL AND r.d < 18 AND instr(r.name, '.<bare>.') > 0 AND instr(substr(r.name, instr(r.name, '.<bare>.') + 8), '=>') > 0
   UNION
   -- the own member of an `<unqualified>` name (closure.rs:1748-1754)
-  SELECT a.target, r.d + 2 FROM r JOIN aliases a
+  SELECT a.target, r.d + 2, NULL FROM r JOIN aliases a
     ON a.key = substr(r.name, 1, instr(r.name, '.<unqualified>.') - 1) || '.' || substr(substr(r.name, instr(r.name, '.<unqualified>.') + 15), 1, instr(substr(r.name, instr(r.name, '.<unqualified>.') + 15), '=>') - 1)
-  WHERE r.d < 18 AND instr(r.name, '.<unqualified>.') > 0 AND instr(substr(r.name, instr(r.name, '.<unqualified>.') + 15), '=>') > 0
+  WHERE r.p IS NULL AND r.d < 18 AND instr(r.name, '.<unqualified>.') > 0 AND instr(substr(r.name, instr(r.name, '.<unqualified>.') + 15), '=>') > 0
   UNION
   -- the declared-import hop (closure.rs:1814-1824)
-  SELECT a.target, r.d + 2 FROM r JOIN aliases a
+  SELECT a.target, r.d + 2, NULL FROM r JOIN aliases a
     ON a.key = rx_extract(r.name, '^(.*)\.[^.]*$', 1) || '.<imported>.' || rx_extract(r.name, '[^.]*$', 0)
-  WHERE r.d < 18 AND instr(r.name, '.') > 0
+  WHERE r.p IS NULL AND r.d < 18 AND instr(r.name, '.') > 0
+  UNION
+  -- the prefixes of a name at its dots, longest first
+  SELECT r.name, r.d, rx_extract(coalesce(r.p, r.name), '(?s)^(.*)\.[^.]*$', 1) FROM r
+  WHERE r.d < 19 AND instr(coalesce(r.p, r.name), '.') > 0
   UNION
   -- prefix aliases (closure.rs:1831-1851)
-  SELECT a.target || substr(r.name, d.i), r.d + 1
-  FROM r JOIN digit d ON d.i < length(r.name) AND substr(r.name, d.i, 1) = '.'
-  JOIN aliases a ON a.key = substr(r.name, 1, d.i - 1)
-  WHERE r.d < 19
+  SELECT a.target || substr(r.name, length(r.p) + 1), r.d + 1, NULL
+  FROM r JOIN aliases a ON a.key = r.p
+  WHERE r.p IS NOT NULL AND length(r.p) + 1 < length(r.name) AND r.d < 19
   UNION
   -- constructor fields of a `<field>` name (closure.rs:1701-1712, 1890-1956)
-  SELECT x.cls || '.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') + 1), r.d + 3
+  SELECT x.cls || '.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') + 1), r.d + 3, NULL
   FROM r JOIN reference_order o ON o.root = substr(r.name, 1, instr(r.name, '.<field>.') - 1)
-  JOIN field_alias a ON a.key IN (
-      o.cls || '.<init-parameter>.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1),
-      o.cls || '.<init-parameter>.' || ltrim(substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1), '_'),
-      o.cls || '.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1))
+  JOIN field_key_form k
+  JOIN field_alias a ON a.key = o.cls || CASE k.v
+      WHEN 0 THEN '.<init-parameter>.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1)
+      WHEN 1 THEN '.<init-parameter>.' || ltrim(substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1), '_')
+      ELSE '.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1) END
   JOIN class_of x ON x.start = a.target
-  WHERE r.d < 17 AND instr(r.name, '.<field>.') > 0 AND instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') > 0
+  WHERE r.p IS NULL AND r.d < 17 AND instr(r.name, '.<field>.') > 0 AND instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') > 0
   UNION
   -- ... and of an annotated target (`<annotation>.X`, reference_type of the caller's parent)
-  SELECT t.cls || '.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') + 1), r.d + 3
+  SELECT t.cls || '.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') + 1), r.d + 3, NULL
   FROM r JOIN reference_order o ON o.root = substr(r.name, 1, instr(r.name, '.<field>.') - 1)
-  JOIN field_alias a ON a.key IN (
-      o.cls || '.<init-parameter>.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1),
-      o.cls || '.<init-parameter>.' || ltrim(substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1), '_'),
-      o.cls || '.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1))
-  JOIN type_key t ON substr(a.target, 1, 13) = '<annotation>.'
-       AND t.key IN (rx_extract(substr(r.name, 1, instr(r.name, '.<field>.') - 1), '^(.*)\.[^.]*$', 1) || '.<imported>.' || substr(a.target, 14),
-                     rx_extract(substr(r.name, 1, instr(r.name, '.<field>.') - 1), '^(.*)\.[^.]*$', 1) || '.<class>.' || substr(a.target, 14))
-  WHERE r.d < 17 AND instr(r.name, '.<field>.') > 0 AND instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') > 0
+  JOIN field_key_form k
+  JOIN field_alias a ON a.key = o.cls || CASE k.v
+      WHEN 0 THEN '.<init-parameter>.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1)
+      WHEN 1 THEN '.<init-parameter>.' || ltrim(substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1), '_')
+      ELSE '.' || substr(substr(r.name, instr(r.name, '.<field>.') + 9), 1, instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') - 1) END
+  JOIN type_key_form tk
+  JOIN type_key t ON t.key = rx_extract(substr(r.name, 1, instr(r.name, '.<field>.') - 1), '^(.*)\.[^.]*$', 1) || tk.kind || substr(a.target, 14)
+  WHERE r.p IS NULL AND r.d < 17 AND instr(r.name, '.<field>.') > 0 AND instr(substr(r.name, instr(r.name, '.<field>.') + 9), '.') > 0
+    AND substr(a.target, 1, 13) = '<annotation>.'
   UNION
-  -- constructor fields after a class prefix (closure.rs:1852-1859)
-  SELECT x.cls || '.' || substr(r.name, instr(substr(r.name, d.i + 1), '.') + d.i + 1), r.d + 3
-  FROM r JOIN digit d ON d.i < length(r.name) AND substr(r.name, d.i, 1) = '.'
-  JOIN class_key c ON c.key = substr(r.name, 1, d.i - 1)
+  -- constructor fields after a class prefix (closure.rs:1852-1859); the prefix's dot is at
+  -- length(p) + 1
+  SELECT x.cls || '.' || substr(r.name, instr(substr(r.name, length(r.p) + 2), '.') + length(r.p) + 2), r.d + 3, NULL
+  FROM r JOIN class_key c ON c.key = r.p
   JOIN reference_order o ON o.root = c.key
-  JOIN field_alias a ON a.key IN (
-      o.cls || '.<init-parameter>.' || substr(r.name, d.i + 1, instr(substr(r.name, d.i + 1), '.') - 1),
-      o.cls || '.<init-parameter>.' || ltrim(substr(r.name, d.i + 1, instr(substr(r.name, d.i + 1), '.') - 1), '_'),
-      o.cls || '.' || substr(r.name, d.i + 1, instr(substr(r.name, d.i + 1), '.') - 1))
+  JOIN field_key_form k
+  JOIN field_alias a ON a.key = o.cls || CASE k.v
+      WHEN 0 THEN '.<init-parameter>.' || substr(r.name, length(r.p) + 2, instr(substr(r.name, length(r.p) + 2), '.') - 1)
+      WHEN 1 THEN '.<init-parameter>.' || ltrim(substr(r.name, length(r.p) + 2, instr(substr(r.name, length(r.p) + 2), '.') - 1), '_')
+      ELSE '.' || substr(r.name, length(r.p) + 2, instr(substr(r.name, length(r.p) + 2), '.') - 1) END
   JOIN class_of x ON x.start = a.target
-  WHERE r.d < 17 AND instr(substr(r.name, d.i + 1), '.') > 0
+  WHERE r.p IS NOT NULL AND r.d < 17 AND length(r.p) + 1 < length(r.name) AND instr(substr(r.name, length(r.p) + 2), '.') > 0
   UNION
-  SELECT t.cls || '.' || substr(r.name, instr(substr(r.name, d.i + 1), '.') + d.i + 1), r.d + 3
-  FROM r JOIN digit d ON d.i < length(r.name) AND substr(r.name, d.i, 1) = '.'
-  JOIN class_key c ON c.key = substr(r.name, 1, d.i - 1)
+  SELECT t.cls || '.' || substr(r.name, instr(substr(r.name, length(r.p) + 2), '.') + length(r.p) + 2), r.d + 3, NULL
+  FROM r JOIN class_key c ON c.key = r.p
   JOIN reference_order o ON o.root = c.key
-  JOIN field_alias a ON a.key IN (
-      o.cls || '.<init-parameter>.' || substr(r.name, d.i + 1, instr(substr(r.name, d.i + 1), '.') - 1),
-      o.cls || '.<init-parameter>.' || ltrim(substr(r.name, d.i + 1, instr(substr(r.name, d.i + 1), '.') - 1), '_'),
-      o.cls || '.' || substr(r.name, d.i + 1, instr(substr(r.name, d.i + 1), '.') - 1))
-  JOIN type_key t ON substr(a.target, 1, 13) = '<annotation>.'
-       AND t.key IN (rx_extract(c.key, '^(.*)\.[^.]*$', 1) || '.<imported>.' || substr(a.target, 14),
-                     rx_extract(c.key, '^(.*)\.[^.]*$', 1) || '.<class>.' || substr(a.target, 14))
-  WHERE r.d < 17 AND instr(substr(r.name, d.i + 1), '.') > 0
+  JOIN field_key_form k
+  JOIN field_alias a ON a.key = o.cls || CASE k.v
+      WHEN 0 THEN '.<init-parameter>.' || substr(r.name, length(r.p) + 2, instr(substr(r.name, length(r.p) + 2), '.') - 1)
+      WHEN 1 THEN '.<init-parameter>.' || ltrim(substr(r.name, length(r.p) + 2, instr(substr(r.name, length(r.p) + 2), '.') - 1), '_')
+      ELSE '.' || substr(r.name, length(r.p) + 2, instr(substr(r.name, length(r.p) + 2), '.') - 1) END
+  JOIN type_key_form tk
+  JOIN type_key t ON t.key = rx_extract(c.key, '^(.*)\.[^.]*$', 1) || tk.kind || substr(a.target, 14)
+  WHERE r.p IS NOT NULL AND r.d < 17 AND length(r.p) + 1 < length(r.name) AND instr(substr(r.name, length(r.p) + 2), '.') > 0
+    AND substr(a.target, 1, 13) = '<annotation>.'
 )
-SELECT DISTINCT name FROM r
+SELECT DISTINCT name FROM r WHERE p IS NULL
 -- index: name
 
 -- ===================================================================== link_python, exact
@@ -650,20 +597,34 @@ FROM link_form f WHERE f.form = 8
 -- index: name
 -- index: step
 
+-- stage prefix_alias
+-- Alias keys a prefix scan stops at (closure.rs:1831-1851): an alias whose target is not the
+-- prefix itself nor a workspace module without a definition of that name.
+SELECT DISTINCT a.key FROM aliases a WHERE a.target <> a.key
+  AND (NOT EXISTS (SELECT 1 FROM modules m WHERE m.name = a.target) OR EXISTS (SELECT 1 FROM by_name b WHERE b.key = a.target))
+-- index: key
+
+-- stage plain_prefix
+-- The proper prefixes of each scanned name at its dots (`lineage().skip(1)`), the dot at `i`
+-- (not the name's last character): the text before the last dot, then before the prefix's.
+WITH RECURSIVE q(name, p) AS (
+  SELECT name, rx_extract(name, '(?s)^(.*)\.[^.]*$', 1) FROM link_plain WHERE step = 11 AND instr(name, '.') > 0
+  UNION
+  SELECT name, rx_extract(p, '(?s)^(.*)\.[^.]*$', 1) FROM q WHERE instr(p, '.') > 0
+)
+SELECT name, p, length(p) + 1 AS i FROM q WHERE length(p) + 1 < length(name)
+-- index: name
+
 -- stage prefix_match
--- closure.rs:1829-1885: each proper prefix (`lineage().skip(1)`) that ends the scan: aliases with a
--- target that is not the prefix itself nor a workspace module without a definition of that name,
--- a definition, an opaque binding, a module.
+-- closure.rs:1829-1885: each proper prefix that ends the scan: a stopping alias, a definition, an
+-- opaque binding, a module.
 SELECT x.name, x.i, x.p, x.rest, x.kind FROM (
-  SELECT l.name, d.i, substr(l.name, 1, d.i - 1) AS p, substr(l.name, d.i) AS rest,
-         CASE WHEN EXISTS (SELECT 1 FROM aliases a WHERE a.key = substr(l.name, 1, d.i - 1) AND a.target <> a.key
-                             AND (NOT EXISTS (SELECT 1 FROM modules m WHERE m.name = a.target)
-                                  OR EXISTS (SELECT 1 FROM by_name b WHERE b.key = a.target))) THEN 'alias'
-              WHEN EXISTS (SELECT 1 FROM by_name b WHERE b.key = substr(l.name, 1, d.i - 1)) THEN 'def'
-              WHEN EXISTS (SELECT 1 FROM opaque o WHERE o.key = substr(l.name, 1, d.i - 1)) THEN 'opaque'
-              WHEN EXISTS (SELECT 1 FROM modules m WHERE m.name = substr(l.name, 1, d.i - 1)) THEN 'module' END AS kind
-  FROM link_plain l JOIN digit d ON d.i < length(l.name) AND substr(l.name, d.i, 1) = '.'
-  WHERE l.step = 11) x
+  SELECT q.name, q.i, q.p, substr(q.name, q.i) AS rest,
+         CASE WHEN EXISTS (SELECT 1 FROM prefix_alias a WHERE a.key = q.p) THEN 'alias'
+              WHEN EXISTS (SELECT 1 FROM by_name b WHERE b.key = q.p) THEN 'def'
+              WHEN EXISTS (SELECT 1 FROM opaque o WHERE o.key = q.p) THEN 'opaque'
+              WHEN EXISTS (SELECT 1 FROM modules m WHERE m.name = q.p) THEN 'module' END AS kind
+  FROM plain_prefix q) x
 WHERE x.kind IS NOT NULL
 -- index: name, i
 
@@ -671,7 +632,7 @@ WHERE x.kind IS NOT NULL
 -- The longest such prefix.
 SELECT m.name, m.p, m.rest, m.kind,
        CASE WHEN m.kind = 'def' AND EXISTS (SELECT 1 FROM class_key c WHERE c.key = m.p) THEN 1 ELSE 0 END AS class
-FROM prefix_match m WHERE NOT EXISTS (SELECT 1 FROM prefix_match o WHERE o.name = m.name AND o.i > m.i)
+FROM prefix_match m JOIN (SELECT name, max(i) AS i FROM prefix_match GROUP BY name) l ON l.name = m.name AND l.i = m.i
 -- index: name
 
 -- stage field_demand
@@ -704,9 +665,11 @@ FROM (SELECT DISTINCT cls, field FROM field_demand) d JOIN reference_order o ON 
 -- stage field_hit
 -- The first base in order with a key.
 SELECT c.cls, rx_extract(c.cls, '^(.*)\.[^.]*$', 1) AS parent, c.field, c.hit FROM field_candidate c
-WHERE c.hit IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM field_candidate o WHERE o.cls = c.cls AND o.field = c.field AND o.hit IS NOT NULL
-    AND (o.dist < c.dist OR (o.dist = c.dist AND o.seq < c.seq)))
+JOIN (SELECT cls, field, min(dist) AS dist FROM field_candidate WHERE hit IS NOT NULL GROUP BY cls, field) d
+  ON d.cls = c.cls AND d.field = c.field AND d.dist = c.dist
+JOIN (SELECT cls, field, dist, min(seq) AS seq FROM field_candidate WHERE hit IS NOT NULL GROUP BY cls, field, dist) s
+  ON s.cls = c.cls AND s.field = c.field AND s.dist = c.dist AND s.seq = c.seq
+WHERE c.hit IS NOT NULL
 -- index: cls, field
 
 -- stage field_class
@@ -760,8 +723,10 @@ WHERE EXISTS (SELECT 1 FROM method_def m WHERE m.key = o.cls || '.' || d.attr)
 -- stage method_first
 -- The first class in BFS order (dist, seq) with a function `{class}.{attr}`.
 SELECT c.root, c.attr, c.skip, c.cls FROM method_candidate c
-WHERE NOT EXISTS (SELECT 1 FROM method_candidate o WHERE o.root = c.root AND o.attr = c.attr AND o.skip = c.skip
-                    AND (o.dist < c.dist OR (o.dist = c.dist AND o.seq < c.seq)))
+JOIN (SELECT root, attr, skip, min(dist) AS dist FROM method_candidate GROUP BY root, attr, skip) d
+  ON d.root = c.root AND d.attr = c.attr AND d.skip = c.skip AND d.dist = c.dist
+JOIN (SELECT root, attr, skip, dist, min(seq) AS seq FROM method_candidate GROUP BY root, attr, skip, dist) s
+  ON s.root = c.root AND s.attr = c.attr AND s.skip = c.skip AND s.dist = c.dist AND s.seq = c.seq
 -- index: root, attr, skip
 
 -- stage compose_candidate
@@ -777,10 +742,12 @@ WHERE f.form = 5
 -- index: name
 
 -- stage compose_first
-SELECT c.name, c.cls FROM compose_candidate c
-WHERE NOT EXISTS (SELECT 1 FROM compose_candidate o WHERE o.name = c.name
-                    AND (o.child < c.child OR (o.child = c.child AND (o.ord < c.ord OR (o.ord = c.ord
-                         AND (o.dist < c.dist OR (o.dist = c.dist AND o.seq < c.seq)))))))
+-- The least (child, ord, dist, seq), one key at a time.
+WITH c1 AS (SELECT c.* FROM compose_candidate c
+            JOIN (SELECT name, min(child) AS child FROM compose_candidate GROUP BY name) m ON m.name = c.name AND m.child = c.child),
+     c2 AS (SELECT c.* FROM c1 c JOIN (SELECT name, min(ord) AS ord FROM c1 GROUP BY name) m ON m.name = c.name AND m.ord = c.ord),
+     c3 AS (SELECT c.* FROM c2 c JOIN (SELECT name, min(dist) AS dist FROM c2 GROUP BY name) m ON m.name = c.name AND m.dist = c.dist)
+SELECT c.name, c.cls FROM c3 c JOIN (SELECT name, min(seq) AS seq FROM c3 GROUP BY name) m ON m.name = c.name AND m.seq = c.seq
 
 -- stage link_term
 -- Definitions a name links to directly, for its hops h in [lo, hi].
@@ -890,12 +857,12 @@ SELECT DISTINCT name, path, idx FROM res WHERE lo = 0
 -- ===================================================================== output
 -- stage reference_graph_incomplete
 -- relational.rs:636-643: an open summary (syntax error, no scope table, budget) of an in-scope
--- file fails the clause; one row then, and no edges.
+-- file fails the clause: one row then, refused by `reference_edges` below.
 SELECT 'The native reference graph is incomplete' AS reason, count(*) AS open_files
 FROM s_open o JOIN in_scope s ON s.path = o.path WHERE o.open <> 0
 HAVING count(*) > 0
 
--- stage reference_edges
+-- stage linked_edges
 -- resolve_edges (closure.rs:1064-1078) and reference_rows (closure.rs:548-583) as the relational
 -- table (relational.rs:633-678): each (owner, target) pair once, by source path in scope.
 SELECT DISTINCT e.path AS __path, sd.start AS __start, sd.stop AS __end,
@@ -928,7 +895,15 @@ FROM type_key t JOIN aliases a ON a.key = t.key WHERE t.several > 1
 UNION
 SELECT s.path, 'reference_order: class hierarchy deeper than 64' FROM order_dist d JOIN supers s ON s.cls = d.root WHERE d.dist >= 64
 UNION
-SELECT e.path, 'link: name longer than 2048 characters' FROM s_edge e WHERE length(e.name) > 2048
-UNION
 SELECT e.path, 'reference_order: root not among class_root' FROM s_edge e JOIN link_form f ON f.name = e.name
 WHERE f.form IN (2, 5, 6) AND NOT EXISTS (SELECT 1 FROM class_root c WHERE c.cls = f.a)
+
+-- ===================================================================== output
+-- stage reference_edges
+-- The edges, or a named refusal (`rerail_refuse` raises its argument, INVARIANTS I9) when any
+-- refusal relation holds a row: an incomplete graph fails the clause as native's does.
+SELECT __path, __start, __end, target_path, target_start, target_end, source_name, target_name, target_class
+FROM linked_edges
+UNION ALL
+SELECT rerail_refuse('reference graph: ' || construct), NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+FROM (SELECT construct FROM linker_refusal UNION SELECT reason FROM reference_graph_incomplete)

@@ -34,8 +34,8 @@ pub fn file_source(src: AnySource, input_cross: &[Option<String>]) -> Result<Fil
         },
         AnySource::Syntax(t) => Ok(FileSource::Syntax(t)),
         AnySource::Stage(s) => Ok(FileSource::Stage(s)),
-        AnySource::ReferenceEdges if crate::mutant::on(7) => Ok(FileSource::Stage(u32::MAX)),
-        AnySource::ReferenceEdges => Err("cross-file read in a per-file plan: `reference_edges` (the reference graph)".into()),
+        AnySource::Core(c) => Ok(FileSource::Core(c)),
+        AnySource::Summary { rel, links } => Ok(FileSource::Summary { rel, links }),
     }
 }
 
@@ -178,9 +178,9 @@ impl Env<'_> {
         match r {
             Rel::Scan { src, .. } => match src {
                 AnySource::Input(i) if self.cross[*i as usize].is_some() => Loc::Global,
-                AnySource::Input(_) | AnySource::Syntax(_) => Loc::Local(vec![0]),
+                AnySource::Input(_) | AnySource::Syntax(_) | AnySource::Summary { .. } | AnySource::Core(crate::ir::CoreRel::File) => Loc::Local(vec![0]),
                 AnySource::Stage(s) => self.stages[*s as usize].clone(),
-                AnySource::ReferenceEdges => Loc::Global,
+                AnySource::Core(_) => Loc::Local(vec![]),
             },
             Rel::Local { id, .. } => self.locals.get(id).cloned().unwrap_or(Loc::Global),
             Rel::Unit => Loc::Const,
@@ -546,6 +546,7 @@ impl KeySource for FileSource {
                 };
                 key.iter().filter_map(|k| col(k)).map(|c| BTreeSet::from([c])).collect()
             }
+            FileSource::Summary { .. } => vec![],
         }
     }
 }
@@ -869,12 +870,8 @@ impl Cut<'_> {
                     });
                     Rel::Unit
                 }
-                AnySource::Syntax(_) => {
-                    self.refusals.push("syntax table read with an outer correlation from a repository plan".into());
-                    Rel::Unit
-                }
-                AnySource::ReferenceEdges => {
-                    self.refusals.push("`reference_edges` (the native reference graph) has no definition over exported facts".into());
+                AnySource::Syntax(_) | AnySource::Core(_) | AnySource::Summary { .. } => {
+                    self.refusals.push("per-content fact relation read with an outer correlation from a repository plan".into());
                     Rel::Unit
                 }
             },

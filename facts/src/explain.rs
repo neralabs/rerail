@@ -14,6 +14,7 @@ impl SourceName for FileSource {
             FileSource::Syntax(t) => format!("syntax:{t:?}"),
             FileSource::Stage(s) => format!("stage:{s}"),
             FileSource::Core(c) => format!("core:{}", c.name()),
+            FileSource::Summary { rel, .. } => format!("summary:{}", rel.name()),
         }
     }
 }

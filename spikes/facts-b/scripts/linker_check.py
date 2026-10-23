@@ -94,15 +94,40 @@ def stages(path):
     return out
 
 
-def load_inputs(db, members_path, export_path):
+def glob_re(glob):
+    """globset with literal_separator (compile/mod.rs:251): `**/` any directories, `/**` anything
+    below, `*` within one segment."""
+    out = glob.replace(".", "\\.").replace("**/", "%DIRS%").replace("/**", "%BELOW%").replace("*", "[^/]*")
+    return re.compile("^" + out.replace("%DIRS%", "(?:.*/)?").replace("%BELOW%", "/.*") + "$")
+
+
+def in_scope(rule_path):
+    scope = json.load(open(rule_path, encoding="utf-8"))["scope"]
+    include = [glob_re(g) for g in scope.get("include", [])]
+    exclude = [glob_re(g) for g in scope.get("exclude", [])]
+    return lambda p: any(r.search(p) for r in include) and not any(r.search(p) for r in exclude)
+
+
+def load_inputs(db, members_path, export_path, rule_path):
+    """The stages' inputs as the per-file producer exports them: `member(__path)` for every
+    content, `cgn_<rel>(__path, variant, ...)` for those the rule's scope admits, in the reading
+    the path selects, and `rule_scope(kind, glob)` from the rule."""
     # `path \t hash [\t ...]`: the corpus jobs TSV (oracle-b6-jobs.tsv) or a recording's file list.
+    admit = in_scope(rule_path)
     members = [line.rstrip("\n").split("\t")[:2] for line in open(members_path, encoding="utf-8") if line.strip()]
-    db.execute("CREATE TABLE member(path TEXT, hash TEXT)")
-    db.executemany("INSERT INTO member VALUES (?, ?)", members)
-    hashes = {h for _, h in members}
+    db.execute("CREATE TABLE member(__path TEXT)")
+    db.executemany("INSERT INTO member VALUES (?)", [(p,) for p, _ in members])
+    scope = json.load(open(rule_path, encoding="utf-8"))["scope"]
+    db.execute("CREATE TABLE rule_scope(kind TEXT, glob TEXT)")
+    db.executemany("INSERT INTO rule_scope VALUES (?, ?)", [(k, g) for k in ("include", "exclude") for g in scope.get(k, [])])
+    by_reading = {}
+    for p, h in members:
+        if admit(p):
+            by_reading.setdefault((h, p.endswith(".pyi")), []).append(p)
+    hashes = {h for h, _ in by_reading}
     for rel, cols in RELATIONS.items():
         quoted = ", ".join(f'"{c}"' for c in cols)
-        db.execute(f"CREATE TABLE {rel}(hash TEXT, variant TEXT, stub TEXT, {quoted})")
+        db.execute(f"CREATE TABLE {rel}(__path TEXT, variant TEXT, {quoted})")
     rows = {rel: [] for rel in RELATIONS}
     seen = set()
     proc = subprocess.Popen(["zstd", "-dc", export_path], stdout=subprocess.PIPE)
@@ -111,20 +136,26 @@ def load_inputs(db, members_path, export_path):
         if at < 0 or raw[at + 8:at + 72].decode() not in hashes:
             continue
         line = json.loads(raw)
-        seen.add(line["hash"])
-        stub = "1" if line["stub"] else "0"
+        paths = by_reading.get((line["hash"], bool(line["stub"])), [])
+        if paths:
+            seen.add(line["hash"])
         refs = line["as_references"][LINKS_KEY]
         for rel in RELATIONS:
             for row in refs.get(rel, []):
-                rows[rel].append((line["hash"], line["variant"], stub, *row))
+                for p in paths:
+                    rows[rel].append((p, line["variant"], *row))
     if proc.wait() != 0:
         raise SystemExit("zstd failed")
     for rel, cols in RELATIONS.items():
-        db.executemany(f"INSERT INTO {rel} VALUES ({', '.join('?' * (len(cols) + 3))})", rows[rel])
-        db.execute(f"CREATE INDEX {rel}_hv ON {rel}(hash, variant, stub)")
+        db.executemany(f"INSERT INTO {rel} VALUES ({', '.join('?' * (len(cols) + 2))})", rows[rel])
+        db.execute(f"CREATE INDEX {rel}_pv ON {rel}(__path, variant)")
     db.commit()
     return {"members": len(members), "distinct_hashes": len(hashes), "hashes_exported": len(seen),
             "rows": {rel: len(r) for rel, r in rows.items()}}
+
+
+def rerail_refuse(construct):
+    raise ValueError(f"refused: {construct}")
 
 
 def main():
@@ -134,7 +165,10 @@ def main():
                         help="path<TAB>hash[<TAB>...] per worktree file (default: the 2b1504adc corpus)")
     parser.add_argument("--native", default=f"{BENCH}/s3-crossfile/linker/native-ground-truth/reference_edges.tsv")
     parser.add_argument("--export", default=f"{BENCH}/s4-schema/cgn-export.jsonl.zst")
-    parser.add_argument("--sql", default=os.path.join(HERE, "..", "linker", "reference_edges.sql"))
+    parser.add_argument("--rule", default=os.path.join(HERE, "../../../packs/data-layer/candidates/rules/data-layer-internal-dead-code.json"),
+                        help="the rule whose scope selects the members")
+    parser.add_argument("--sql", nargs="+", default=[os.path.join(HERE, "../../../facts/src/front", f) for f in ("module_path.sql", "reference_edges.sql")],
+                        help="view files, run in order (front/rule.rs compiles them the same way)")
     parser.add_argument("--out-root", default=f"{BENCH}/s3-crossfile/linker")
     parser.add_argument("--inputs-db", help="cache of the loaded inputs (created when missing)")
     parser.add_argument("--keep-db", action="store_true", help="keep the run's SQLite database in the run dir")
@@ -150,6 +184,7 @@ def main():
     db.create_function("rx_matches", 2, rx_matches, deterministic=True)
     db.create_function("rx_extract", 3, rx_extract, deterministic=True)
     db.create_function("rx_replace", 3, rx_replace, deterministic=True)
+    db.create_function("rerail_refuse", 1, rerail_refuse, deterministic=True)
 
     started = time.time()
     if args.inputs_db and os.path.exists(args.inputs_db):
@@ -158,7 +193,7 @@ def main():
         source.close()
         loaded = json.loads(db.execute("SELECT value FROM linker_inputs_meta").fetchone()[0])
     else:
-        loaded = load_inputs(db, args.members, args.export)
+        loaded = load_inputs(db, args.members, args.export, args.rule)
         db.execute("CREATE TABLE linker_inputs_meta(value TEXT)")
         db.execute("INSERT INTO linker_inputs_meta VALUES (?)", (json.dumps(loaded),))
         db.commit()
@@ -170,7 +205,7 @@ def main():
     print(json.dumps({"inputs": loaded, "load_s": round(load_s, 1)}), flush=True)
 
     timings = []
-    for stage in stages(args.sql):
+    for stage in [s for path in args.sql for s in stages(path)]:
         t = time.time()
         db.execute(f"DROP TABLE IF EXISTS {stage['name']}")
         db.execute(f"CREATE TABLE {stage['name']} AS {stage['sql']}")
@@ -206,7 +241,7 @@ def main():
 
     result = {
         "label": args.label, "run_dir": run_dir, "members": args.members, "native_dump": args.native,
-        "export": args.export, "sql": os.path.abspath(args.sql), "inputs": loaded, "load_s": round(load_s, 1),
+        "export": args.export, "sql": [os.path.abspath(p) for p in args.sql], "inputs": loaded, "load_s": round(load_s, 1),
         "stages": timings, "native_edges": len(native), "sql_edges": len(sql),
         "only_native": len(only_native), "only_sql": len(only_sql),
         "differences": len(only_native) + len(only_sql),

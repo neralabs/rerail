@@ -235,6 +235,7 @@ fn scalar_func(name: &str) -> Option<Func> {
         "rx_extract" => Func::RxExtract,
         "rx_replace" => Func::RxReplace,
         "source_text" => Func::SourceText,
+        "rerail_refuse" => Func::Refuse,
         _ => return None,
     })
 }

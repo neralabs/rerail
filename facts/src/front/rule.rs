@@ -3,7 +3,7 @@
 //! (`InputKind::Pattern`), compiled by the leaf executor through [`LeafCheck`]; SQL is lowered by
 //! `front::sql`. Every refused construct is collected, named, with where it occurs.
 use super::sql::{self, Catalog};
-use crate::ir::{Anchor, AnySource, ClosureStage, Column, Expr, Graph, InputDef, InputId, InputKind, LocalId, Partition, Projection, Refusal, Rel, Stage, StageDef, SyntaxSpec, SyntaxTable, Violation};
+use crate::ir::{Anchor, AnySource, ClosureStage, Column, CoreRel, Expr, Graph, InputDef, InputId, InputKind, LocalId, Partition, Projection, Refusal, Rel, Stage, StageDef, SummaryRel, SyntaxSpec, SyntaxTable, Violation};
 use crate::policy;
 use crate::sql::parse;
 use crate::sql::value::Aff;
@@ -270,11 +270,121 @@ fn reference_edges_schema() -> Vec<Column> {
     s
 }
 
+/// Python module paths of the member files (`file.module`, `file.package`, and the reference
+/// graph's module substitution) as SQL stages over the member path set (I2: a derived relation
+/// is a view; membership-dependent by construction).
+const MODULE_PATH_SQL: &str = include_str!("module_path.sql");
+/// `reference_edges` (native's reference graph, refs mode) as SQL stages over per-content
+/// summaries and the module stages.
+const REFERENCE_EDGES_SQL: &str = include_str!("reference_edges.sql");
+
+/// `-- stage <name>` blocks of a view's SQL, in order.
+fn view_stages(sql: &'static str) -> Vec<(&'static str, String)> {
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    for line in sql.lines() {
+        if let Some(name) = line.strip_prefix("-- stage ") {
+            out.push((name.trim(), String::new()));
+        } else if let Some((_, text)) = out.last_mut() {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    out
+}
+
+/// The view stages one clause compiles ahead of its own (named `views/<stage>`), in their own
+/// namespace: a clause's stage names never shadow them.
+struct Views {
+    catalog: Catalog,
+    /// `module_of` once the module stages are lowered.
+    module_of: Option<u32>,
+}
+
+impl Views {
+    fn new() -> Views {
+        let mut catalog = Catalog::default();
+        catalog.insert("member", AnySource::Core(CoreRel::File), vec![Column::new("__path", Aff::Text)]);
+        Views { catalog, module_of: None }
+    }
+
+    /// Lowers `sql`'s stages into `stages`; the id of its last stage.
+    fn lower(&mut self, sql: &'static str, stages: &mut Vec<Stage<AnySource>>, next_local: &mut LocalId) -> Result<(&'static str, u32), String> {
+        let mut last = Err("empty view".to_string());
+        for (name, text) in view_stages(sql) {
+            let (rel, schema) = lower_sql(&text, &self.catalog, next_local).map_err(|e| format!("views/{name}: {e}"))?;
+            let id = stages.len() as u32;
+            self.catalog.insert(name, AnySource::Stage(id), schema.clone());
+            stages.push(Stage { name: format!("views/{name}"), schema, def: StageDef::Query { rel } });
+            last = Ok((name, id));
+        }
+        last
+    }
+
+    /// The module stages (once per clause), with the rule's scope as the constant
+    /// `rule_scope(kind, glob)`.
+    fn modules(&mut self, scope: &Json, stages: &mut Vec<Stage<AnySource>>, next_local: &mut LocalId) -> Result<u32, String> {
+        if let Some(id) = self.module_of {
+            return Ok(id);
+        }
+        let globs = |k: &str| -> Result<String, String> {
+            let list = scope.get(k).cloned().unwrap_or(Json::Array(vec![]));
+            if !list.as_array().is_some_and(|a| a.iter().all(Json::is_string)) {
+                return Err(format!("scope.{k} must be a list of globs"));
+            }
+            Ok(list.to_string().replace('\'', "''"))
+        };
+        let scope_sql = format!("SELECT 'include' AS kind, value AS glob FROM json_each('{}') UNION ALL SELECT 'exclude', value FROM json_each('{}')", globs("include")?, globs("exclude")?);
+        let (rel, schema) = lower_sql(&scope_sql, &self.catalog, next_local).map_err(|e| format!("views/rule_scope: {e}"))?;
+        self.catalog.insert("rule_scope", AnySource::Stage(stages.len() as u32), schema.clone());
+        stages.push(Stage { name: "views/rule_scope".into(), schema, def: StageDef::Query { rel } });
+        let ("module_of", id) = self.lower(MODULE_PATH_SQL, stages, next_local)? else { return Err("module_path.sql must end with the stage module_of".into()) };
+        self.module_of = Some(id);
+        Ok(id)
+    }
+
+    /// The stages defining `reference_edges` for a clause's `references` declaration; the id of
+    /// the stage that is `reference_edges`. Its leaves are the per-content summaries under the
+    /// declaration's links and the module stages; the classifier cuts it like any clause.
+    fn reference_edges(&mut self, refs: &Json, scope: &Json, stages: &mut Vec<Stage<AnySource>>, next_local: &mut LocalId) -> Result<u32, String> {
+        let o = obj(refs, "references")?;
+        check_keys(o, &["language", "siblingLinks", "constructorFields"], "references")?;
+        match o.get("language").and_then(Json::as_str) {
+            Some("python") => {}
+            other => return Err(format!("references: language {other:?} (the reference graph is Python's)")),
+        }
+        // As native compiles links (`calls::contracts::compile(siblingLinks, constructorFields)`):
+        // the canonical JSON of the two keys is the summary's links (cgnative.rs `links`).
+        let mut links = Map::new();
+        for k in ["siblingLinks", "constructorFields"] {
+            if let Some(v) = o.get(k) {
+                links.insert(k.to_owned(), v.clone());
+            }
+        }
+        let links: Box<str> = Json::Object(links).to_string().into();
+        self.modules(scope, stages, next_local)?;
+        for rel in SummaryRel::ALL {
+            self.catalog.insert(rel.name(), AnySource::Summary { rel, links: links.clone() }, rel.schema());
+        }
+        let ("reference_edges", id) = self.lower(REFERENCE_EDGES_SQL, stages, next_local)? else { return Err("reference_edges.sql must end with the stage reference_edges".into()) };
+        // Native's table declares its columns' affinities (relational.rs:640-679).
+        let schema = reference_edges_schema();
+        if stages[id as usize].schema.iter().map(|c| &c.name).ne(schema.iter().map(|c| &c.name)) {
+            return Err("reference_edges.sql: the last stage's columns differ from native's table".into());
+        }
+        let exprs = (0..schema.len() as u16).map(|col| Expr::Col { depth: 0, col }).collect();
+        let scan = Rel::Scan { src: AnySource::Stage(id), schema: stages[id as usize].schema.clone() };
+        stages.push(Stage { name: "views/reference_edges".into(), schema: schema.clone(), def: StageDef::Query { rel: Rel::Project { input: Box::new(scan), exprs, schema } } });
+        Ok(stages.len() as u32 - 1)
+    }
+}
+
 struct Ctx<'a> {
     utils: BTreeMap<String, Json>,
     options: BTreeMap<String, Json>,
     leaves: &'a mut dyn LeafCheck,
     keys: BTreeMap<String, InputId>,
+    /// The rule's `scope` (`include`/`exclude` globs), for views that read it.
+    scope: Json,
 }
 
 impl Front {
@@ -448,7 +558,7 @@ pub fn front(document: &Json, config: &Map<String, Json>, leaves: &mut dyn LeafC
         }
     }
     let mut f = Front { rule, inputs: vec![], input_cross: vec![], clauses: vec![], disabled: vec![], report_when, refusals: vec![], runtime_refusals: vec![], next_local: 0 };
-    let mut ctx = Ctx { utils, options, leaves, keys: BTreeMap::new() };
+    let mut ctx = Ctx { utils, options, leaves, keys: BTreeMap::new(), scope: doc.get("scope").cloned().unwrap_or(Json::Null) };
     for c in doc["clauses"].as_array().unwrap() {
         if c.get("define").is_some() {
             continue;
@@ -508,6 +618,82 @@ pub fn front(document: &Json, config: &Map<String, Json>, leaves: &mut dyn LeafC
     Ok(f)
 }
 
+/// A relational input projecting `file.module`/`file.package` (bare or through a regex): the
+/// module path depends on the other members' package markers, so the input is the leaf without
+/// those fields, joined by path with the `module_of` view (membership side); the stage holding
+/// the join replaces the input under its name, with the input's schema. `Ok(None)`: no such
+/// field.
+#[allow(clippy::too_many_arguments)]
+fn module_input(f: &mut Front, ctx: &mut Ctx<'_>, views: &mut Views, stages: &mut Vec<Stage<AnySource>>, clause: &str, at: &str, name: &str, ev: &Json) -> Result<Option<(InputId, u32)>, ()> {
+    let Some(project) = ev.get("project").and_then(Json::as_object) else { return Ok(None) };
+    let mut fields: Vec<(String, Projection)> = Vec::new();
+    for (k, p) in project {
+        match projection(p) {
+            Ok(p) => fields.push((k.clone(), p)),
+            Err(_) => return Ok(None), // `f.input` names it
+        }
+    }
+    fields.sort_by(|a, b| a.0.cmp(&b.0));
+    fn module_source(p: &Projection) -> Option<(bool, Option<(&str, u32)>)> {
+        match p {
+            Projection::Module => Some((true, None)),
+            Projection::Package => Some((false, None)),
+            Projection::Regex { source, regex, group } => match **source {
+                Projection::Module => Some((true, Some((regex, *group)))),
+                Projection::Package => Some((false, Some((regex, *group)))),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    if !fields.iter().any(|(_, p)| module_source(p).is_some()) {
+        return Ok(None);
+    }
+    let mut reduced = ev.clone();
+    let kept = reduced["project"].as_object_mut().unwrap();
+    kept.retain(|k, _| fields.iter().any(|(f, p)| f == k && module_source(p).is_none()));
+    let i = f.input(ctx, clause, at, name, &reduced)?;
+    let mid = match views.modules(&ctx.scope, stages, &mut f.next_local) {
+        Ok(m) => m,
+        Err(e) => {
+            f.refuse(clause, at, e);
+            return Err(());
+        }
+    };
+    let left_schema = f.inputs[i as usize].schema.clone();
+    let wl = left_schema.len() as u16;
+    let right_schema = stages[mid as usize].schema.clone();
+    let col = |c: u16| Expr::Col { depth: 0, col: c };
+    let on = Expr::Cmp(crate::ir::CmpOp::Eq, Box::new(col(0)), Box::new(col(wl)), (Aff::Text, Aff::None));
+    let join = Rel::Join { kind: crate::ir::JoinKind::Left, left: Box::new(Rel::Scan { src: AnySource::Input(i), schema: left_schema.clone() }), right: Box::new(Rel::Scan { src: AnySource::Stage(mid), schema: right_schema }), on: Some(on) };
+    // The input's columns: `__path, __start, __end`, then the fields in name order.
+    let mut exprs = vec![col(0), col(1), col(2)];
+    let mut next_kept = 3u16;
+    for (_, p) in &fields {
+        exprs.push(match module_source(p) {
+            None => {
+                next_kept += 1;
+                col(next_kept - 1)
+            }
+            Some((module, extract)) => {
+                let v = col(wl + if module { 1 } else { 2 });
+                match extract {
+                    None => v,
+                    // Native extracts from a string only (eval/evidence.rs:187-197): NULL stays NULL.
+                    Some((regex, group)) => Expr::Case {
+                        operand: None,
+                        whens: vec![(Expr::IsNull { e: Box::new(v.clone()), negated: false }, Expr::Lit(crate::ir::Lit::Null), (Aff::None, Aff::None))],
+                        else_: Some(Box::new(Expr::Func(crate::ir::Func::RxExtract, vec![v, Expr::Lit(crate::ir::Lit::Text(regex.into())), Expr::Lit(crate::ir::Lit::Int(group as i64))]))),
+                    },
+                }
+            }
+        });
+    }
+    let schema = input_schema(&fields);
+    stages.push(Stage { name: format!("inputs/{name}"), schema: schema.clone(), def: StageDef::Query { rel: Rel::Project { input: Box::new(join), exprs, schema } } });
+    Ok(Some((i, stages.len() as u32 - 1)))
+}
+
 fn budget(f: &mut Front, ctx: &mut Ctx<'_>, id: &str, b: &Json, viol: Violation) -> Option<ClauseBody> {
     let r: Result<_, String> = (|| {
         let o = obj(b, "budget")?;
@@ -557,6 +743,8 @@ fn relational(f: &mut Front, ctx: &mut Ctx<'_>, id: &str, r: &Json, viol: Violat
         }
     };
     let mut catalog = Catalog::default();
+    let mut stages: Vec<Stage<AnySource>> = Vec::new();
+    let mut views = Views::new();
     let mut named: Vec<(&String, &Json)> = o.get("inputs").and_then(Json::as_object).map(|m| m.iter().collect()).unwrap_or_default();
     named.sort_by(|a, b| a.0.cmp(b.0));
     let mut input_ids = BTreeMap::new();
@@ -570,9 +758,18 @@ fn relational(f: &mut Front, ctx: &mut Ctx<'_>, id: &str, r: &Json, viol: Violat
             f.refuse(id, &at, "evidence where/closure on a relational input");
             continue;
         }
-        if let Ok(i) = f.input(ctx, id, &at, name, ev) {
-            catalog.insert(name, AnySource::Input(i), f.inputs[i as usize].schema.clone());
-            input_ids.insert(name.clone(), i);
+        match module_input(f, ctx, &mut views, &mut stages, id, &at, name, ev) {
+            Ok(Some((i, stage))) => {
+                catalog.insert(name, AnySource::Stage(stage), stages[stage as usize].schema.clone());
+                input_ids.insert(name.clone(), i);
+            }
+            Ok(None) => {
+                if let Ok(i) = f.input(ctx, id, &at, name, ev) {
+                    catalog.insert(name, AnySource::Input(i), f.inputs[i as usize].schema.clone());
+                    input_ids.insert(name.clone(), i);
+                }
+            }
+            Err(()) => {}
         }
     }
     let mut syntax = None;
@@ -601,10 +798,14 @@ fn relational(f: &mut Front, ctx: &mut Ctx<'_>, id: &str, r: &Json, viol: Violat
         }
     }
     if let Some(refs) = o.get("references") {
-        let _ = refs;
-        catalog.insert("reference_edges", AnySource::ReferenceEdges, reference_edges_schema());
+        match views.reference_edges(refs, &ctx.scope, &mut stages, &mut f.next_local) {
+            Ok(id) => catalog.insert("reference_edges", AnySource::Stage(id), stages[id as usize].schema.clone()),
+            Err(e) => {
+                f.refuse(id, "references", e);
+                return (Some(declared), None);
+            }
+        }
     }
-    let mut stages: Vec<Stage<AnySource>> = Vec::new();
     for st in o.get("stages").and_then(Json::as_array).into_iter().flatten() {
         let name = st.get("name").and_then(Json::as_str).unwrap_or("").to_owned();
         let at = format!("stages/{name}");

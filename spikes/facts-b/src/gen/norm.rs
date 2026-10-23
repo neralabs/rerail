@@ -754,7 +754,30 @@ impl<'a> Ctx<'a> {
                 *n = c;
                 col(self.width(c) - 1)
             }
-            Expr::InRel { .. } | Expr::Exists { .. } => return refuse(&self.at, "EXISTS/IN under OR, NOT or CASE, or in a select list"),
+            // EXISTS below OR/NOT/CASE or in a select list: `(SELECT count(*) FROM body) > 0`,
+            // the count maintained per correlation key like any scalar aggregate (0 for a row
+            // with no correlated rows). EXISTS is never NULL, as the comparison of a count.
+            Expr::Exists { rel, negated } => {
+                let mut body = &**rel;
+                loop {
+                    match body {
+                        Rel::Project { input, exprs, .. } => {
+                            if exprs.iter().any(|e| expr_free(e, 1)) {
+                                return refuse(&self.at, "correlated subquery projecting an outer column");
+                            }
+                            body = input;
+                        }
+                        Rel::Distinct { input, .. } => body = input,
+                        _ => break,
+                    }
+                }
+                let count = Rel::Aggregate { input: Box::new(body.clone()), keys: vec![], aggs: vec![AggCall { f: ir::AggFn::CountStar, arg: None, sep: None, distinct: false, total: ir::Total::Proven }] };
+                let c = self.scalar(*n, &count)?;
+                *n = c;
+                let op = if *negated { CmpOp::Eq } else { CmpOp::Gt };
+                Expr::Cmp(op, Box::new(col(self.width(c) - 1)), Box::new(Expr::Lit(ir::Lit::Int(0))), (Aff::None, Aff::None))
+            }
+            Expr::InRel { .. } => return refuse(&self.at, "IN (subquery) under OR, NOT or CASE, or in a select list"),
             Expr::Lit(_) | Expr::Col { .. } => e.clone(),
             Expr::Not(x) => Expr::Not(b(self, n, x)?),
             Expr::Neg(x) => Expr::Neg(b(self, n, x)?),
@@ -947,7 +970,10 @@ pub fn plan(p: &ir::Plan<RepoSource>, exported: &[ir::ExportedRelation]) -> Resu
             Ok(n) => ctx.stages.push(n),
             Err(e) => {
                 refused.push(e);
-                ctx.stages.push(usize::MAX);
+                // The plan is refused; an empty stand-in of the stage's width lets the later
+                // stages be normalised, so every refused construct is named, not only the first.
+                let n = ctx.add(Op::Const(Vec::new()), st.schema.len(), Vec::new());
+                ctx.stages.push(n);
             }
         }
     }
