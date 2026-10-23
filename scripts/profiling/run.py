@@ -199,8 +199,17 @@ def main():
     if not command:
         parser.error("Supply --recording or a command after --")
     git_env = {key: value for key, value in os.environ.items() if key not in {"GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE"}}
-    source = {"commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, env=git_env, text=True, timeout=2).strip(),
-              "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, env=git_env, text=True, timeout=2).strip())}
+    # Metadata consumes the same overall deadline. A busy filesystem must not prevent
+    # the workload from starting or silently turn an unknown tree into a clean tree.
+    git_env["GIT_OPTIONAL_LOCKS"] = "0"
+    source = {"commit": None, "dirty": None}
+    for key, arguments in (("commit", ["rev-parse", "HEAD"]), ("dirty", ["status", "--porcelain"])):
+        try:
+            value = subprocess.check_output(["git", *arguments], cwd=ROOT, env=git_env, text=True,
+                                            timeout=min(8, max(0.1, started + args.deadline - time.monotonic())))
+            source[key] = bool(value.strip()) if key == "dirty" else value.strip()
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+            source.setdefault("metadataErrors", {})[key] = str(error)
     engine = os.environ.get("RERAIL_ENGINE_PATH")
     if engine:
         source["nativePath"] = str(Path(engine).resolve())

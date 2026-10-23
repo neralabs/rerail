@@ -152,6 +152,10 @@ function metrics(queries, measuredCpuNs) {
 export function actionableSummary(report) {
   const queries = report.queries;
   const measuredCpuNs = total(queries, "selfCpuNs");
+  const applyCpuMs = report.workload?.results?.sql?.apply?.cpuMs ?? null;
+  // TRACE_PROFILE ends when a cursor finishes, not when each sqlite3_step returns.
+  // Suspended internal cursors can therefore include other statements' CPU lifetimes.
+  const unreconciledCpu = applyCpuMs !== null && measuredCpuNs / 1e6 > Math.max(2 * applyCpuMs, applyCpuMs + 50);
   const sqlQueries = queries.filter(query => query.kind === "sql");
   const sqlExecutions = total(sqlQueries, "runs");
   const roots = sqlQueries.filter(query => rootInsert(query.sql));
@@ -182,12 +186,14 @@ export function actionableSummary(report) {
     version: 1,
     status: parity === true ? "parity-passed" : parity === false ? "parity-failed" : "parity-unavailable",
     nextStep: parity === false ? "Resolve the output mismatch or workload failure before accepting a performance change."
+      : unreconciledCpu ? "Recorded statement lifetimes exceed the apply CPU budget. Use API boundary timers before ranking CPU costs; suspended cursors or setup outside apply can overlap these lifetimes."
       : measuredCpuNs === 0 ? "No thread CPU time was captured. Inspect the wall-time trace before assigning CPU priorities."
       : "Start with the highest-cost action. Confirm improvements with an unprofiled run and native output parity.",
     budget: {
       cpuTimingAvailable: measuredCpuNs > 0, measuredCpuMs: ms(measuredCpuNs), sqlExecutionCpuMs: ms(total(sqlQueries, "selfCpuNs")),
       operatorExclusiveCpuMs: ms(total(queries.filter(query => query.kind === "operator"), "selfCpuNs")),
-      profiledApplyCpuMs: report.workload?.results?.sql?.apply?.cpuMs ?? null,
+      profiledApplyCpuMs: applyCpuMs,
+      cpuCostsReconciled: !unreconciledCpu,
       nativeApplyCpuMs: report.workload?.results?.native?.apply?.cpuMs ?? null,
       frameIndexCpuMs: total(sqlQueries, "frameIndexTimedBuilds") ? ms(total(sqlQueries, "frameIndexCpuNs")) : null,
       frameIndexBuilds: total(sqlQueries, "frameIndexBuilds"), frameIndexTimedBuilds: total(sqlQueries, "frameIndexTimedBuilds"),
@@ -205,11 +211,12 @@ export function actionableSummary(report) {
         ? "Expose selected root slices as a virtual input relation. Preserve clause/file isolation, uniqueness, and the distinction between all roots and an empty selection."
         : "Root loading is below the action threshold in this capture. Use a larger representative capture before changing this path." },
     quality: { expectedSetupExplainFailures: expectedSetupFailures.length,
+      unreconciledCpu,
       unexpectedExplainFailures: explanationFailures.length - expectedSetupFailures.length,
       incompleteOperations: total(queries, "incomplete") },
     costBreakdown: [...costBuckets].map(([label, queries]) => ({ label, ...metrics(queries, measuredCpuNs) })).sort((a, b) => b.cpuMs - a.cpuMs),
-    actions: ranked.slice(0, 5).map((action, index) => ({ rank: index + 1, ...action })),
-    omittedActionGroups: Math.max(0, ranked.length - 5), minimumActionCpuPercent: minimumShare, minimumActionCpuMs: minimumCpuMs,
+    actions: (unreconciledCpu ? [] : ranked.slice(0, 5)).map((action, index) => ({ rank: index + 1, ...action })),
+    omittedActionGroups: unreconciledCpu ? ranked.length : Math.max(0, ranked.length - 5), minimumActionCpuPercent: minimumShare, minimumActionCpuMs: minimumCpuMs,
     hotShapes: [...shapes.values()].map(({ queries, ...shape }) => ({ ...shape, ...metrics(queries, measuredCpuNs) }))
       .sort((a, b) => b.cpuMs - a.cpuMs).slice(0, 5),
     interpretation: "Action costs describe disjoint sets of queries to investigate, not time caused by a flag or guaranteed savings. Structural shape grouping does not establish semantic equivalence. Flag counts do not determine priority.",
@@ -229,7 +236,9 @@ export function summaryMarkdown(report) {
     ? summary.budget.frameIndexBuilds ? "Frame index construction was not timed in this capture. Re-run with the current profiler to isolate this cost." : "No lazy frame index builds were observed inside SQL. Prepared structural indexes and SQL CREATE INDEX statements have separate attribution."
     : `Frame index construction: **${fmt(summary.budget.frameIndexCpuMs)} ms** across ${fmt(summary.budget.frameIndexTimedBuilds)} timed builds (${fmt(summary.budget.frameIndexBuilds)} total). This subcost includes scan-order preparation on lookup cache misses and is already included in SQL CPU.`);
   lines.push("", "## Priority actions", "", summary.interpretation);
-  if (!summary.actions.length) lines.push("", "No action group reaches both 10 ms and 1% of recorded CPU. Use a larger representative capture before drawing a conclusion.");
+  if (!summary.actions.length) lines.push("", summary.quality.unreconciledCpu
+    ? "CPU priorities are withheld because statement lifetimes exceed the apply CPU budget. Use API boundary timers."
+    : "No action group reaches both 10 ms and 1% of recorded CPU. Use a larger representative capture before drawing a conclusion.");
   for (const action of summary.actions) {
     lines.push("", `### ${action.rank}. ${action.title}`, "",
       `**${fmt(action.cpuMs)} ms (${fmt(action.measuredCpuPercent)}% of recorded CPU)** across ${fmt(action.executions)} executions.`, "",

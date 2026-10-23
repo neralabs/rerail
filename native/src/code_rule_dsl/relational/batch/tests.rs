@@ -1,7 +1,7 @@
 use super::*;
 use crate::code_rule_dsl::{
-    CodeRuleDslRuntime, CompiledCodeRuleDsl, eval,
-    model::{ClauseKind, FileInput, Metrics, Snapshot},
+    CodeRuleDslRuntime, CompiledCodeRuleDsl,
+    model::{FileInput, Snapshot},
 };
 use serde_json::json;
 use std::sync::{Arc, atomic::AtomicBool};
@@ -32,9 +32,7 @@ fn files(count: usize) -> Vec<FileInput> {
 fn jobs<'a>(rule: &'a CompiledCodeRuleDsl, files: Vec<FileInput>) -> Vec<Job<'a>> {
     let code_rule = &rule.inner;
     let clause = code_rule.clauses.iter().find(|c| c.id == "nodes").unwrap();
-    let ClauseKind::Relational(plan) = &clause.kind else {
-        panic!("relational clause");
-    };
+
     files
         .into_iter()
         .map(|file| {
@@ -42,15 +40,15 @@ fn jobs<'a>(rule: &'a CompiledCodeRuleDsl, files: Vec<FileInput>) -> Vec<Job<'a>
                 revision: 1,
                 files: vec![file],
             };
-            let rows =
-                eval::relational_rows(code_rule, clause, plan, &snapshot, &mut Metrics::default())
-                    .unwrap();
             Job {
                 code_rule,
                 clause,
-                rows,
-                snapshot,
-                facts: Vec::new(),
+                inputs: Inputs {
+                    file_local: false,
+                    rows: None,
+                    snapshot,
+                    facts: Vec::new(),
+                },
                 budget: Context::work(&Arc::new(AtomicBool::new(false)), 1_000_000),
             }
         })
@@ -126,4 +124,164 @@ fn capacity_partitions_share_the_original_stage_allowance() {
                 .iter()
                 .any(|f| f["message"] == "producer stage limit")
     }));
+}
+
+#[test]
+fn pending_consumers_do_not_construct_any_inputs_and_failed_preparation_is_local() {
+    use std::cell::Cell;
+    let rule = rule();
+    let pending = jobs(&rule, files(8));
+    assert!(
+        pending
+            .iter()
+            .all(|j| j.inputs.rows.is_none() && j.inputs.facts.is_empty())
+    );
+    let called = Cell::new(0);
+    let (results, stats) =
+        run_prepared(pending, producer::MAX_RESIDENT_BYTES, 1, |inputs, _, _| {
+            assert!(inputs.rows.is_none());
+            assert_eq!(inputs.snapshot.files.len(), 1);
+            let n = called.get();
+            called.set(n + 1);
+            if inputs.snapshot.files[0].path == "f003.py" {
+                return Err(super::super::invalid("preparation interrupted"));
+            }
+            Ok(())
+        });
+    assert_eq!(called.get(), 8);
+    assert_eq!(stats.peak_sessions, 1);
+    assert_eq!(results[3].failures.len(), 1);
+    assert!(results[3].violations.is_empty());
+    for (n, result) in results.iter().enumerate().filter(|(n, _)| *n != 3) {
+        assert!(result.failures.is_empty(), "consumer {n}");
+        assert_eq!(result.violations.len(), 1);
+    }
+}
+
+#[test]
+fn projection_demand_includes_nested_predicates_and_wildcards_but_not_counted_row_values() {
+    use crate::code_rule_dsl::model::ClauseKind;
+    fn compile(query: &str, stages: serde_json::Value) -> Vec<String> {
+        let document = json!({"format":"rerail.policy/v1","id":"columns","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"kind":"module"}}},"project":{"used":"file.path","unused":"file.name"}}}},"stages":stages,"query":query},"violation":{"code":"COLUMNS","message":"columns","anchor":"witness.span"}}]});
+        let rule = CodeRuleDslRuntime::compile(
+            document.to_string(),
+            "json".into(),
+            include_str!("../../capabilities.json").into(),
+        )
+        .unwrap();
+        let ClauseKind::Relational(plan) = &rule.inner.clauses[0].kind else {
+            panic!("relational");
+        };
+        plan.inputs[0]
+            .1
+            .project
+            .iter()
+            .map(|p| p.field.clone())
+            .collect()
+    }
+    assert_eq!(
+        compile(
+            "SELECT __path path,__start start_byte,__end end_byte,used FROM facts",
+            json!([])
+        ),
+        vec!["used"]
+    );
+    assert_eq!(
+        compile(
+            "SELECT f.__path path,f.__start start_byte,f.__end end_byte FROM facts f WHERE EXISTS(SELECT 1 FROM facts g WHERE g.unused=f.used)",
+            json!([])
+        ),
+        vec!["unused", "used"]
+    );
+    assert!(compile("SELECT __path path,min(__start) start_byte,max(__end) end_byte,count(*) amount FROM facts GROUP BY __path",json!([])).is_empty());
+    assert_eq!(
+        compile(
+            "SELECT __path path,__start start_byte,__end end_byte,used FROM all_fields",
+            json!([{"name":"all_fields","query":"SELECT * FROM facts"}])
+        ),
+        vec!["unused", "used"]
+    );
+}
+
+#[test]
+fn narrowing_a_consumer_keeps_the_shared_ast_and_unmodified_schemas() {
+    use crate::code_rule_dsl::model::{ClauseKind, Projection, ProjectionSource};
+    let rule = rule();
+    let ClauseKind::Relational(plan) = &rule.inner.clauses[0].kind else {
+        panic!("relational");
+    };
+    let mut full = plan.inputs[0].1.clone();
+    full.project = vec![
+        Projection {
+            field: "a".into(),
+            source: ProjectionSource::Path,
+            extract: None,
+        },
+        Projection {
+            field: "b".into(),
+            source: ProjectionSource::Name,
+            extract: None,
+        },
+    ]
+    .into();
+    let mut narrow = full.clone();
+    narrow.retain_projected_fields(Some(&["a".to_owned()].into_iter().collect()));
+    assert!(
+        Arc::ptr_eq(&full.ast, &narrow.ast),
+        "column demand must never clone matcher trees"
+    );
+    assert_eq!(full.project.len(), 2);
+    assert_eq!(narrow.project.len(), 1);
+    let schema = Arc::clone(&full.project);
+    full.retain_projected_fields(Some(
+        &["a".to_owned(), "b".to_owned()].into_iter().collect(),
+    ));
+    assert!(Arc::ptr_eq(&full.project, &schema));
+}
+
+#[test]
+fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
+    use crate::code_rule_dsl::{
+        eval,
+        model::{Anchor, ClauseKind, Metrics},
+        violations::anchored_span,
+    };
+    let rule=CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"input-payload","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"all":[{"kind":"function_definition"},{"has":{"field":"name","pattern":"$NAME"}},{"has":{"field":"parameters","pattern":"$PARAMS"}}]}}},"project":{"name":"capture.NAME"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name FROM facts"},"violation":{"code":"INPUT","message":"unused input message","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../../capabilities.json").into()).unwrap();
+    let code_rule = &rule.inner;
+    let clause = &code_rule.clauses[0];
+    let ClauseKind::Relational(plan) = &clause.kind else {
+        panic!("relational");
+    };
+    let snapshot = Snapshot {
+        revision: 1,
+        files: files(1),
+    };
+    let rows =
+        eval::relational_rows(code_rule, clause, plan, &snapshot, &mut Metrics::default()).unwrap();
+    let witness = &rows[0].witnesses[0];
+    assert_eq!(
+        witness.captures.projection().unwrap().json(),
+        json!({"name":"f"})
+    );
+    assert!(witness.captures.get("NAME").is_none());
+    assert!(witness.captures.get("PARAMS").is_none());
+    assert!(witness.message.is_none());
+    assert!(witness.fix.is_none());
+    let mut input = plan.inputs[0].1.clone();
+    input.anchor = Anchor::Capture("NAME".into());
+    let rows = eval::stateless_rows(
+        code_rule,
+        clause,
+        (&input, eval::evidence::Side::Counted),
+        &snapshot,
+        &mut Metrics::default(),
+    )
+    .unwrap();
+    let witness = &rows.witnesses[0];
+    assert!(witness.captures.get("NAME").is_some());
+    assert!(witness.captures.get("PARAMS").is_none());
+    let (anchor, fallback) = anchored_span(&input.anchor, witness);
+    assert_eq!((anchor.start_byte, anchor.end_byte), (4, 5));
+    assert!(!fallback);
+    assert!(anchored_span(&Anchor::Capture("ABSENT".into()), witness).1);
 }

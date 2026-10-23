@@ -1,6 +1,9 @@
 //! Benchmark-only attribution for the existing workspace evaluator.
 //! Disabled in production builds. Reports worker CPU separately from wall time.
 
+mod clock;
+pub(super) mod memory;
+pub(super) use clock::thread_cpu_ns;
 pub(super) mod navigation;
 mod semantic;
 pub(super) mod sql;
@@ -148,7 +151,21 @@ struct Profile {
     other_ns: u128,
     visited_nodes: usize,
     indexed_files: usize,
+    anchor_index_views: usize,
+    anchor_batches: usize,
+    anchor_sql_data_statements: usize,
+    anchor_sql_materializations: usize,
+    anchor_batch_files: usize,
+    anchor_batch_plans: usize,
+    anchor_batch_failures: usize,
+    anchor_cache_misses: usize,
+    peak_candidate_bytes: usize,
+    anchor_index_view_nodes: usize,
+    sql_index_writes: usize,
+    sql_index_written_nodes: usize,
+    sql_index_reuses: usize,
     incomplete_indexes: usize,
+    anchor_plan_broadenings: usize,
     indexed_nodes: usize,
     peak_index_bytes: usize,
     active_line_bytes: usize,
@@ -307,11 +324,50 @@ pub(super) fn record_nodes(count: usize) {
     with_profile(|profile| profile.visited_nodes += count);
 }
 
+pub(super) fn record_anchor_batch(files: usize, plans: usize, materializations: usize) {
+    with_profile(|profile| {
+        profile.anchor_batches += 1;
+        profile.anchor_sql_data_statements += materializations + 1;
+        profile.anchor_sql_materializations += materializations;
+        profile.anchor_batch_files += files;
+        profile.anchor_batch_plans += plans;
+    });
+}
+
+pub(super) fn record_anchor_batch_failure() {
+    with_profile(|p| p.anchor_batch_failures += 1);
+}
+
+pub(super) fn record_anchor_statements(statements: usize) {
+    with_profile(|p| p.anchor_sql_data_statements += statements);
+}
+
+pub(super) fn record_anchor_cache_miss() {
+    with_profile(|p| p.anchor_cache_misses += 1);
+}
+
+pub(super) fn record_candidate_bytes(bytes: usize) {
+    with_profile(|p| p.peak_candidate_bytes = p.peak_candidate_bytes.max(bytes));
+}
+
+pub(super) fn record_sql_index_write(nodes: usize) {
+    with_profile(|profile| {
+        profile.sql_index_writes += 1;
+        profile.sql_index_written_nodes += nodes;
+        profile.indexed_files += 1;
+        profile.indexed_nodes += nodes;
+    });
+}
+
+pub(super) fn record_sql_index_reuse() {
+    with_profile(|profile| profile.sql_index_reuses += 1);
+}
+
 pub(super) fn record_index(nodes: usize, bytes: usize, complete: bool) {
     with_profile(|profile| {
-        profile.indexed_files += 1;
+        profile.anchor_index_views += 1;
+        profile.anchor_index_view_nodes += nodes;
         profile.incomplete_indexes += usize::from(!complete);
-        profile.indexed_nodes += nodes;
         profile.peak_index_bytes = profile.peak_index_bytes.max(bytes);
         let active = profile.active_navigation_line_bytes + bytes;
         profile.peak_transient_bytes = Some(profile.peak_transient_bytes.unwrap_or(0).max(active));
@@ -325,6 +381,10 @@ pub(super) fn record_selection(roots: usize, fallback: bool) {
         profile.selected_root_pairs += roots;
         profile.fallback_rule_files += usize::from(fallback);
     });
+}
+
+pub(super) fn record_anchor_plan_broadening() {
+    with_profile(|profile| profile.anchor_plan_broadenings += 1);
 }
 
 pub(super) struct LineOwner;
@@ -403,24 +463,6 @@ pub(super) struct ApplyProfile {
     cpu_started: Option<u128>,
 }
 
-#[cfg(unix)]
-pub(super) fn thread_cpu_ns() -> Option<u128> {
-    let mut time = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: the pointer is valid writable storage; the clock belongs to this thread.
-    if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) } != 0 {
-        return None;
-    }
-    Some(u128::try_from(time.tv_sec).ok()? * 1_000_000_000 + u128::try_from(time.tv_nsec).ok()?)
-}
-
-#[cfg(not(unix))]
-pub(super) fn thread_cpu_ns() -> Option<u128> {
-    None
-}
-
 impl ApplyProfile {
     pub(super) fn start(revision: u32, cpu_started: Option<u128>) -> Self {
         navigation::reset();
@@ -481,40 +523,59 @@ impl Drop for ApplyProfile {
                 + profile.serialization_ns
                 + profile.other_ns;
             let named_worker_cpu_ns = total_worker_cpu_ns.saturating_sub(profile.other_ns);
-            trace::emit(
-                "RERAIL_CODE_RULE_PROFILE",
+            let mut report = serde_json::json!({
+                "revision": profile.revision,
+                "fieldLookups": profile.field_lookups,
+                "applyNs": elapsed,
+                "workerCpuNs": worker_cpu_ns,
+                "totalWorkerCpuNs": total_worker_cpu_ns,
+                "namedWorkerCpuNs": named_worker_cpu_ns,
+                "namedWorkerCpuPercent": if total_worker_cpu_ns == 0 { 0.0 } else { named_worker_cpu_ns as f64 * 100.0 / total_worker_cpu_ns as f64 },
+                "storageReadNs": profile.store_read_ns,
+                "storageWritePublicationNs": profile.store_write_ns,
+                "manifestCandidateLookupNs": profile.manifest_ns,
+                "regexNs": profile.regex_ns,
+                "parseNs": profile.parse_ns,
+                "tapeEncodeNs": profile.tape_encode_ns,
+                "tapeDecodeRestoreNs": profile.tape_decode_ns,
+                "anchorIndexNs": profile.index_ns,
+                "anchorSelectionNs": profile.selection_ns,
+                "astMatchNs": profile.dispatch_ns,
+                "serializationNs": profile.serialization_ns,
+                "otherNs": profile.other_ns,
+                "peakTransientNavigationLineIndexBytesEstimate": profile.peak_transient_bytes,
+                "visitedNodes": profile.visited_nodes,
+                "indexedFiles": profile.indexed_files,
+                "anchorIndexViews": profile.anchor_index_views,
+                "anchorIndexViewNodes": profile.anchor_index_view_nodes,
+                "sqlIndexWrites": profile.sql_index_writes,
+                "sqlIndexWrittenNodes": profile.sql_index_written_nodes,
+                "sqlIndexReuses": profile.sql_index_reuses,
+                "incompleteIndexes": profile.incomplete_indexes,
+                "anchorPlanBroadenings": profile.anchor_plan_broadenings,
+                "indexedNodes": profile.indexed_nodes,
+                "peakIndexBytesEstimate": profile.peak_index_bytes,
+                "ruleFiles": profile.rule_files,
+                "rejectedRuleFiles": profile.rejected_rule_files,
+                "selectedRootPairs": profile.selected_root_pairs,
+                "fallbackRuleFiles": profile.fallback_rule_files,
+            });
+            report.as_object_mut().expect("profile object").extend(
                 serde_json::json!({
-                    "revision": profile.revision,
-                    "fieldLookups": profile.field_lookups,
-                    "applyNs": elapsed,
-                    "workerCpuNs": worker_cpu_ns,
-                    "totalWorkerCpuNs": total_worker_cpu_ns,
-                    "namedWorkerCpuNs": named_worker_cpu_ns,
-                    "namedWorkerCpuPercent": if total_worker_cpu_ns == 0 { 0.0 } else { named_worker_cpu_ns as f64 * 100.0 / total_worker_cpu_ns as f64 },
-                    "storageReadNs": profile.store_read_ns,
-                    "storageWritePublicationNs": profile.store_write_ns,
-                    "manifestCandidateLookupNs": profile.manifest_ns,
-                    "regexNs": profile.regex_ns,
-                    "parseNs": profile.parse_ns,
-                    "tapeEncodeNs": profile.tape_encode_ns,
-                    "tapeDecodeRestoreNs": profile.tape_decode_ns,
-                    "anchorIndexNs": profile.index_ns,
-                    "anchorSelectionNs": profile.selection_ns,
-                    "astMatchNs": profile.dispatch_ns,
-                    "serializationNs": profile.serialization_ns,
-                    "otherNs": profile.other_ns,
-                    "peakTransientNavigationLineIndexBytesEstimate": profile.peak_transient_bytes,
-                    "visitedNodes": profile.visited_nodes,
-                    "indexedFiles": profile.indexed_files,
-                    "incompleteIndexes": profile.incomplete_indexes,
-                    "indexedNodes": profile.indexed_nodes,
-                    "peakIndexBytesEstimate": profile.peak_index_bytes,
-                    "ruleFiles": profile.rule_files,
-                    "rejectedRuleFiles": profile.rejected_rule_files,
-                    "selectedRootPairs": profile.selected_root_pairs,
-                    "fallbackRuleFiles": profile.fallback_rule_files,
-                }),
+                    "anchorBatches": profile.anchor_batches,
+                    "anchorSqlDataStatements": profile.anchor_sql_data_statements,
+                    "anchorSqlMaterializations": profile.anchor_sql_materializations,
+                    "anchorBatchFiles": profile.anchor_batch_files,
+                    "anchorBatchPlans": profile.anchor_batch_plans,
+                    "anchorBatchFailures": profile.anchor_batch_failures,
+                    "anchorCacheMisses": profile.anchor_cache_misses,
+                    "peakPreparedCandidateBytes": profile.peak_candidate_bytes,
+                })
+                .as_object()
+                .expect("batch counters")
+                .clone(),
             );
+            trace::emit("RERAIL_CODE_RULE_PROFILE", report);
         }
     }
 }

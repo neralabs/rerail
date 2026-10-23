@@ -12,7 +12,7 @@ use crate::code_rule_dsl::violations::{self, NodeGroup, Witness};
 use ast_grep_core::Doc;
 use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::replacer::Content;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 /// A producer's witnesses across its domain, and the files whose witnesses are unknown.
@@ -46,7 +46,8 @@ pub(crate) fn producer_violation(
     side: Side,
 ) -> ViolationSpec {
     let mut violation = clause.violation.clone();
-    violation.project = relation.ast.project.clone();
+    violation.input_only = matches!(clause.kind, ClauseKind::Relational(_));
+    violation.project = relation.project.to_vec();
     violation.fix = None;
     violation.fix_range = None;
     violation.each = relation.each.clone();
@@ -71,13 +72,15 @@ pub(crate) fn producer_violation(
     violation
 }
 
-/// The fields `project` names for one match in `file`.
+/// Project directly into typed columns; capture text retains a shared source slice.
 pub(super) fn project<D: Doc>(
     project: &[Projection],
     file: &FileInput,
     matched: &NodeMatch<'_, D>,
     groups: &[NodeGroup],
-) -> Value {
+) -> violations::projection::Row {
+    use std::{borrow::Cow, sync::Arc};
+    use violations::projection::{self, Input};
     let env = matched.get_env();
     let capture_range = |capture: &str| {
         env.get_match(capture)
@@ -91,90 +94,97 @@ pub(super) fn project<D: Doc>(
                 groups
                     .iter()
                     .find(|(name, _, _)| name == capture)
-                    .map(|(_, _, range)| range.clone())
+                    .map(|(_, _, r)| r.clone())
             })
     };
     let (directory, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
-    let module = file.module.as_deref();
-    let fields = project
-        .iter()
-        .map(
-            |Projection {
-                 field,
-                 source,
-                 extract,
-             }| {
-                let value = match source {
-                    ProjectionSource::Capture(capture) => {
-                        let range = capture_range(capture);
-                        range
-                            .and_then(|range| file.source.get(range))
-                            .map_or(Value::Null, |text| Value::String(text.to_owned()))
-                    }
-                    ProjectionSource::CaptureLine(capture) => capture_range(capture)
-                        .map(|span| {
+    let source = |range: Option<std::ops::Range<usize>>| {
+        range
+            .filter(|r| file.source.get(r.clone()).is_some())
+            .map_or(Input::Null, |r| Input::Source(&file.source, r))
+    };
+    let values = project.iter().map(
+        |Projection {
+             source: from,
+             extract,
+             ..
+         }| {
+            let value = match from {
+                ProjectionSource::Capture(capture) => source(capture_range(capture)),
+                ProjectionSource::CaptureLine(capture) => {
+                    capture_range(capture).map_or(Input::Null, |r| {
+                        Input::Integer(
                             crate::code_rule_dsl::matcher::file_lines(
                                 &file.source,
                                 crate::code_rule_dsl::lines::Terminators::Newlines,
                             )
-                            .span(span.start, span.end)
-                            .start_line
-                        })
-                        .map_or(Value::Null, |line| json!(line)),
-                    ProjectionSource::CaptureText(capture) => exported_text(env, capture)
-                        .or_else(|| {
-                            env.get_transformed(capture).map(|bytes| {
-                                <D::Source as Content>::encode_bytes(bytes).into_owned()
-                            })
-                        })
-                        .or_else(|| env.get_match(capture).map(|node| node.text().into_owned()))
-                        .or_else(|| {
-                            capture_range(capture)
-                                .and_then(|range| file.source.get(range).map(str::to_owned))
-                        })
-                        .map_or(Value::Null, Value::String),
-                    ProjectionSource::CaptureStart(capture) => {
-                        capture_range(capture).map_or(Value::Null, |span| json!(span.start))
+                            .span(r.start, r.end)
+                            .start_line as i64,
+                        )
+                    })
+                }
+                ProjectionSource::CaptureStart(capture) => {
+                    capture_range(capture).map_or(Input::Null, |r| Input::Integer(r.start as i64))
+                }
+                ProjectionSource::CaptureEnd(capture) => {
+                    capture_range(capture).map_or(Input::Null, |r| Input::Integer(r.end as i64))
+                }
+                ProjectionSource::CaptureText(capture) => {
+                    if let Some(text) = exported_text(env, capture).or_else(|| {
+                        env.get_transformed(capture)
+                            .map(|bytes| <D::Source as Content>::encode_bytes(bytes).into_owned())
+                    }) {
+                        Input::Text(Cow::Owned(text))
+                    } else if let Some(node) = env.get_match(capture) {
+                        let range = node.range();
+                        let text = node.text();
+                        if file.source.get(range.clone()) == Some(text.as_ref()) {
+                            source(Some(range))
+                        } else {
+                            Input::Text(Cow::Owned(text.into_owned()))
+                        }
+                    } else {
+                        source(capture_range(capture))
                     }
-                    ProjectionSource::CaptureEnd(capture) => {
-                        capture_range(capture).map_or(Value::Null, |span| json!(span.end))
-                    }
-                    ProjectionSource::CaptureKind(capture) => env
-                        .get_match(capture)
-                        .map_or(Value::Null, |node| Value::String(node.kind().into_owned())),
-                    ProjectionSource::Path => Value::String(file.path.clone()),
-                    ProjectionSource::Directory => Value::String(directory.to_owned()),
-                    ProjectionSource::Name => Value::String(name.to_owned()),
-                    ProjectionSource::Stem => Value::String(
-                        name.split_once('.')
-                            .map_or(name, |(stem, _)| stem)
-                            .to_owned(),
-                    ),
-                    ProjectionSource::Module => module
-                        .map(|module| Value::String(module.text()))
-                        .unwrap_or(Value::Null),
-                    ProjectionSource::Package => module
-                        .map(|module| Value::String(module.package_text()))
-                        .unwrap_or(Value::Null),
-                };
-                let value = if let Some((regex, group)) = extract {
-                    value
-                        .as_str()
-                        .and_then(|text| regex.captures(text))
-                        .and_then(|matched| {
-                            matched
-                                .get(*group)
-                                .map(|part| Value::String(part.as_str().to_owned()))
-                        })
-                        .unwrap_or(Value::Null)
-                } else {
-                    value
-                };
-                (field.clone(), value)
-            },
-        )
-        .collect::<Map<_, _>>();
-    Value::Object(fields)
+                }
+                ProjectionSource::CaptureKind(capture) => env
+                    .get_match(capture)
+                    .map_or(Input::Null, |n| Input::Text(n.kind())),
+                ProjectionSource::Path => Input::Text(Cow::Borrowed(&file.path)),
+                ProjectionSource::Directory => Input::Text(Cow::Borrowed(directory)),
+                ProjectionSource::Name => Input::Text(Cow::Borrowed(name)),
+                ProjectionSource::Stem => Input::Text(Cow::Borrowed(
+                    name.split_once('.').map_or(name, |(stem, _)| stem),
+                )),
+                ProjectionSource::Module => file
+                    .module
+                    .as_deref()
+                    .map_or(Input::Null, |m| Input::Text(Cow::Owned(m.text()))),
+                ProjectionSource::Package => file
+                    .module
+                    .as_deref()
+                    .map_or(Input::Null, |m| Input::Text(Cow::Owned(m.package_text()))),
+            };
+            if let Some((regex, group)) = extract {
+                let range = value
+                    .text()
+                    .and_then(|text| regex.captures(text))
+                    .and_then(|c| c.get(*group).map(|m| m.range()));
+                range.map_or(Input::Null, |range| value.slice(range))
+            } else {
+                value
+            }
+        },
+    );
+    projection::append(
+        (
+            project.as_ptr() as usize,
+            Arc::as_ptr(&file.source) as usize,
+            file.path.as_ptr() as usize,
+        ),
+        || project.iter().map(|p| p.field.clone()).collect(),
+        values,
+    )
 }
 
 fn relation(rows: &Rows) -> Relation {
@@ -186,8 +196,7 @@ fn relation(rows: &Rows) -> Relation {
                 witness
                     .captures
                     .projection()
-                    .and_then(Value::as_object)
-                    .cloned()
+                    .map(violations::projection::Row::object)
                     .unwrap_or_default()
             })
             .collect(),

@@ -18,12 +18,14 @@ use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use napi::Result;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 pub(crate) enum WitnessError {
     TransformLimit,
 }
+
+pub(crate) type Output<'a> = RefCell<&'a mut dyn FnMut(Witness) -> Witness>;
 
 type WitnessResult<T> = std::result::Result<T, WitnessError>;
 
@@ -53,6 +55,16 @@ pub(crate) fn witness_from_match<D: Doc>(
     violation: Option<&ViolationSpec>,
     span: impl Fn(usize, usize) -> Span,
 ) -> WitnessResult<Witness> {
+    witness_from_match_to(file, matched, language, violation, span, None)
+}
+fn witness_from_match_to<D: Doc>(
+    file: &FileInput,
+    matched: &NodeMatch<'_, D>,
+    language: GrammarDialect,
+    violation: Option<&ViolationSpec>,
+    span: impl Fn(usize, usize) -> Span,
+    output: Option<&Output<'_>>,
+) -> WitnessResult<Witness> {
     let groups = violation.map_or_else(Vec::new, |violation| {
         violations::node_groups(violation, language, matched.get_node())
     });
@@ -60,7 +72,12 @@ pub(crate) fn witness_from_match<D: Doc>(
     let env = regrouped(matched, violation, sets, || false)?
         .pop()
         .flatten();
-    witness_with_groups(file, matched, language, violation, &groups, env, span)
+    witness_with_groups(file, matched, language, violation, &groups, env, span).map(
+        |w| match output {
+            Some(out) => (out.borrow_mut())(w),
+            None => w,
+        },
+    )
 }
 
 /// The witnesses one match reports under `violation.each`: one, or one per match of a regex group
@@ -77,7 +94,23 @@ pub(crate) fn witnesses_from_match<D: Doc>(
     room: usize,
     cancelled: impl Fn() -> bool,
     span: impl Fn(usize, usize) -> Span,
+    keep: impl FnMut(&mut Witness) -> bool,
+) -> WitnessResult<Vec<Witness>> {
+    witnesses_from_match_to(
+        file, matched, language, violation, room, cancelled, span, keep, None,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn witnesses_from_match_to<D: Doc>(
+    file: &FileInput,
+    matched: &NodeMatch<'_, D>,
+    language: GrammarDialect,
+    violation: &ViolationSpec,
+    room: usize,
+    cancelled: impl Fn() -> bool,
+    span: impl Fn(usize, usize) -> Span,
     mut keep: impl FnMut(&mut Witness) -> bool,
+    output: Option<&Output<'_>>,
 ) -> WitnessResult<Vec<Witness>> {
     let mut kept = Vec::new();
     // The sets are transformed and built a batch at a time, each batch as large as the room
@@ -88,6 +121,9 @@ pub(crate) fn witnesses_from_match<D: Doc>(
             let mut witness =
                 witness_with_groups(file, matched, language, Some(violation), groups, env, &span)?;
             if keep(&mut witness) {
+                if let Some(output) = output {
+                    witness = (output.borrow_mut())(witness);
+                }
                 kept.push(witness);
             }
         }
@@ -230,10 +266,24 @@ fn witness_with_groups<'t, D: Doc>(
     span: impl Fn(usize, usize) -> Span,
 ) -> WitnessResult<Witness> {
     let mut captures = BTreeMap::new();
-    let mut variables = matched
-        .get_env()
-        .get_matched_variables()
-        .collect::<Vec<_>>();
+    let input_only = violation.is_some_and(|v| v.input_only);
+    let anchor = violation.and_then(|v| match &v.anchor {
+        crate::code_rule_dsl::model::Anchor::Capture(name) => Some(name.as_str()),
+        _ => None,
+    });
+    let wanted = |name: &str| !input_only || anchor == Some(name);
+    let mut variables = if !input_only || anchor.is_some() {
+        matched
+            .get_env()
+            .get_matched_variables()
+            .filter(|v| match v {
+                MetaVariable::Capture(name, _) | MetaVariable::MultiCapture(name) => wanted(name),
+                _ => !input_only,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     variables.sort_by_key(meta_name);
     for variable in variables {
         match variable {
@@ -260,24 +310,26 @@ fn witness_with_groups<'t, D: Doc>(
         }
     }
     let node = matched.get_node();
-    for (name, _, range) in groups {
+    for (name, _, range) in groups.iter().filter(|(name, _, _)| wanted(name)) {
         captures
             .entry(name.clone())
             .or_insert_with(|| vec![span(range.start, range.end)]);
     }
     let regrouped = regrouped.map(|env| NodeMatch::new(node.clone(), env));
     let matched = regrouped.as_ref().unwrap_or(matched);
-    let (message, fix) = violation.map_or((None, None), |violation| {
-        violations::ast_output(violation, language, matched, groups, &span)
-    });
+    let (message, fix) = violation
+        .filter(|v| !v.input_only)
+        .map_or((None, None), |violation| {
+            violations::ast_output(violation, language, matched, groups, &span)
+        });
     let mut captures = Captures::from_spans(captures);
     if let Some(violation) = violation.filter(|violation| !violation.project.is_empty()) {
-        captures.set_projection(Some(super::evidence::project(
+        captures.set_typed_projection(super::evidence::project(
             &violation.project,
             file,
             matched,
             groups,
-        )));
+        ));
     }
     Ok(Witness {
         path: file.path.clone(),
@@ -312,6 +364,29 @@ pub(crate) fn evaluate_query(
     violation: Option<&ViolationSpec>,
     util_limit: &mut Option<(String, UtilLimit)>,
 ) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
+    evaluate_query_to(
+        query, snapshot, _bindings, scope, metrics, limits, decision, partial, violation,
+        util_limit, None,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) fn evaluate_query_to(
+    query: &Query,
+    snapshot: &Snapshot,
+    _bindings: &BTreeMap<String, &Map<String, Value>>,
+    scope: &CodeRuleScope,
+    metrics: &mut Metrics,
+    limits: &Limits,
+    decision: bool,
+    partial: &mut BTreeMap<String, String>,
+    violation: Option<&ViolationSpec>,
+    util_limit: &mut Option<(String, UtilLimit)>,
+    output: Option<&Output<'_>>,
+) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
+    if output.is_some() && !matches!(query, Query::Ast { .. }) {
+        return Err(invalid("streamed relational inputs require an AST query"));
+    }
+    let _projections = crate::code_rule_dsl::violations::projection::Scope::enter();
     let leaf = Leaf {
         snapshot,
         scope,
@@ -322,7 +397,9 @@ pub(crate) fn evaluate_query(
     }
     let mut witnesses = Vec::new();
     for file in &snapshot.files {
-        match leaf.file(query, file, metrics, decision, violation, util_limit)? {
+        match leaf.file_to(
+            query, file, metrics, decision, violation, util_limit, output,
+        )? {
             FileStep::Skipped => {}
             FileStep::Failed(unread) => {
                 return Ok(Err(Incomplete {
@@ -383,6 +460,19 @@ impl<'a> Leaf<'a> {
         decision: bool,
         violation: Option<&ViolationSpec>,
         util_limit: &mut Option<(String, UtilLimit)>,
+    ) -> Result<FileStep> {
+        self.file_to(query, file, metrics, decision, violation, util_limit, None)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn file_to(
+        self,
+        query: &Query,
+        file: &FileInput,
+        metrics: &mut Metrics,
+        decision: bool,
+        violation: Option<&ViolationSpec>,
+        util_limit: &mut Option<(String, UtilLimit)>,
+        output: Option<&Output<'_>>,
     ) -> Result<FileStep> {
         if !self.scope.matches(&file.path) {
             return Ok(FileStep::Skipped);
@@ -529,6 +619,7 @@ impl<'a> Leaf<'a> {
                     self.scope.honours_suppressions_at(&file.path),
                     &mut util_work,
                     &mut witnesses,
+                    output,
                 )? {
                     FileOutcome::Continue | FileOutcome::Stopped => false,
                     FileOutcome::Decided => true,
@@ -724,9 +815,6 @@ struct CachedTape {
 struct TapeCache {
     active: bool,
     entry: Option<CachedTape>,
-    /// Selections share one index build across a file's relational inputs. The cache lasts only
-    /// as long as this evaluation's current source, and stores ordinals rather than witnesses.
-    anchors: HashMap<usize, Option<Arc<[u32]>>>,
 }
 
 thread_local! {
@@ -802,11 +890,6 @@ fn cache_tape(
     EVALUATION_TAPE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.active {
-            if cache.entry.as_ref().is_none_or(|cached| {
-                cached.language != language || !Arc::ptr_eq(&cached.source, &file.source)
-            }) {
-                cache.anchors.clear();
-            }
             cache.entry = Some(CachedTape {
                 language,
                 source: Arc::clone(&file.source),
@@ -815,60 +898,6 @@ fn cache_tape(
             });
         }
     });
-}
-
-/// Builds kind, value, and requested field postings once for all inputs of a file partition.
-/// SQL admission still receives the same projected rows and retains all policy decisions.
-pub(super) fn prepare_anchors(
-    file: &FileInput,
-    grammars: &[&GrammarMatcher],
-    bound: usize,
-) -> Result<()> {
-    let grammars: Vec<_> = grammars
-        .iter()
-        .copied()
-        .filter(|grammar| grammar.anchors.needs_index())
-        .collect();
-    let Some(first) = grammars.first() else {
-        return Ok(());
-    };
-    let (doc, _) = file_tape(first.language, file)?;
-    let target = ast_grep_core::AstGrep::doc(doc);
-    let plans: Vec<_> = grammars
-        .iter()
-        .map(|grammar| grammar.anchors.as_ref())
-        .collect();
-    use crate::code_rule_dsl::matcher::FileAnchorIndex;
-    #[cfg(feature = "code-rule-profile")]
-    let timer = crate::code_rule_dsl::profile::PhaseTimer::start(
-        crate::code_rule_dsl::profile::Phase::Index,
-    );
-    let index = FileAnchorIndex::build(
-        &target,
-        &plans,
-        bound,
-        crate::code_rule_dsl::budget::matcher_budget_exhausted,
-    );
-    #[cfg(feature = "code-rule-profile")]
-    {
-        drop(timer);
-        crate::code_rule_dsl::profile::record_index(
-            index.len(),
-            index.estimated_bytes(),
-            index.complete(),
-        );
-    }
-    for grammar in grammars {
-        let selected = selected_roots(&index, grammar);
-        EVALUATION_TAPE.with_borrow_mut(|cache| {
-            if cache.active {
-                cache
-                    .anchors
-                    .insert(Arc::as_ptr(&grammar.anchors) as usize, selected);
-            }
-        });
-    }
-    Ok(())
 }
 
 fn restore_file_tape(
@@ -894,41 +923,27 @@ fn restore_file_tape(
 }
 
 /// Selects candidate ordinals through the same postings used by workspace ingestion. Incomplete
-/// indexes retain the existing bounded root walk; kind-only queries already have kind postings.
+/// indexes retain the existing bounded root walk. Kind-only queries also use SQL postings.
 fn anchor_roots(
     target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
     grammar: &GrammarMatcher,
     bound: usize,
+    path: &str,
 ) -> Option<Arc<[u32]>> {
     use crate::code_rule_dsl::matcher::FileAnchorIndex;
     if !grammar.anchors.needs_index() {
         return None;
     }
-    if let Some(cached) = EVALUATION_TAPE.with_borrow(|cache| {
-        cache
-            .entry
-            .as_ref()
-            .filter(|entry| {
-                std::ptr::eq(entry.doc.get_source(), target.root().get_doc().get_source())
-            })
-            .and_then(|_| {
-                cache
-                    .anchors
-                    .get(&(Arc::as_ptr(&grammar.anchors) as usize))
-                    .cloned()
-            })
-    }) {
-        return cached;
-    }
     #[cfg(feature = "code-rule-profile")]
     let timer = crate::code_rule_dsl::profile::PhaseTimer::start(
         crate::code_rule_dsl::profile::Phase::Index,
     );
-    let index = FileAnchorIndex::build(
+    let index = FileAnchorIndex::build_at(
         target,
         &[&grammar.anchors],
         bound,
         crate::code_rule_dsl::budget::matcher_budget_exhausted,
+        path,
     );
     #[cfg(feature = "code-rule-profile")]
     {
@@ -946,30 +961,11 @@ fn selected_roots(
     index: &crate::code_rule_dsl::matcher::FileAnchorIndex<'_, crate::code_rule_dsl::tape::TapeDoc>,
     grammar: &GrammarMatcher,
 ) -> Option<Arc<[u32]>> {
-    use crate::code_rule_dsl::matcher::Selection;
     #[cfg(feature = "code-rule-profile")]
     let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
         crate::code_rule_dsl::profile::Phase::Selection,
     );
-    let selection = index.select(&grammar.anchors);
-    #[cfg(feature = "code-rule-profile")]
-    crate::code_rule_dsl::profile::record_selection(
-        match &selection {
-            Selection::All => index.len(),
-            Selection::Roots(roots) => roots.len(),
-        },
-        matches!(selection, Selection::All),
-    );
-    match selection {
-        Selection::All => None,
-        Selection::Roots(roots) => Some(
-            roots
-                .iter()
-                .map(|&ordinal| index.node(ordinal).node_id() as u32)
-                .collect::<Vec<_>>()
-                .into(),
-        ),
-    }
+    index.selected(&grammar.anchors)
 }
 
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
@@ -990,6 +986,7 @@ fn evaluate_file_clause(
     honour_suppressions: bool,
     util_work: &mut usize,
     witnesses: &mut Vec<Witness>,
+    output: Option<&Output<'_>>,
 ) -> Result<FileOutcome> {
     use crate::code_rule_dsl::json::invalid;
     use crate::code_rule_dsl::matcher::{Stopped, enumerate, node_at, run_clause, with_file_memo};
@@ -999,6 +996,7 @@ fn evaluate_file_clause(
         &target,
         grammar,
         limits.max_visited_nodes.saturating_sub(visited),
+        &file.path,
     );
     let each = violation.and_then(|violation| violation.each.as_deref());
     let mut outcome = FileOutcome::Continue;
@@ -1047,7 +1045,7 @@ fn evaluate_file_clause(
                     };
                     let span = |start, end| lines.span(start, end);
                     let found = match violation.filter(|_| each.is_some()) {
-                        Some(violation) => witnesses_from_match(
+                        Some(violation) => witnesses_from_match_to(
                             file,
                             &matched,
                             grammar.language,
@@ -1056,17 +1054,23 @@ fn evaluate_file_clause(
                             || false,
                             span,
                             keep,
+                            output,
                         ),
-                        None => {
-                            witness_from_match(file, &matched, grammar.language, violation, span)
-                                .map(|mut witness| {
-                                    if keep(&mut witness) {
-                                        vec![witness]
-                                    } else {
-                                        Vec::new()
-                                    }
-                                })
-                        }
+                        None => witness_from_match_to(
+                            file,
+                            &matched,
+                            grammar.language,
+                            violation,
+                            span,
+                            output,
+                        )
+                        .map(|mut witness| {
+                            if keep(&mut witness) {
+                                vec![witness]
+                            } else {
+                                Vec::new()
+                            }
+                        }),
                     };
                     let found = match found {
                         Ok(found) => found,

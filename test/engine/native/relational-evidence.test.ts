@@ -78,12 +78,19 @@ it("counts shared projected evidence once and releases its census on edits and r
   try {
     workspace.addCodeRule(compile(document));
     await apply(1, "x".repeat(2048));
-    expect(memory()).toMatchObject({ witnesses: 2, projectionReferences: 2, uniqueProjections: 1,
-      projection: { objectEntries: 1, stringBytes: 2048 } });
+    const long = memory();
+    expect(long).toMatchObject({ witnesses: 2, projectionReferences: 2, uniqueProjections: 1,
+      typedProjectionBatches: 1, typedProjectionFields: 1, projection: { objectEntries: 0, stringBytes: 0 } });
+    expect(long.typedProjectionBytes).toBeGreaterThan(0);
+    expect(long.sharedSourceBytesReferenced).toBeGreaterThanOrEqual(2048);
     await apply(2, "short");
-    expect(memory()).toMatchObject({ projectionReferences: 2, uniqueProjections: 1, projection: { stringBytes: 5 } });
+    const edited = memory();
+    expect(edited).toMatchObject({ projectionReferences: 2, uniqueProjections: 1,
+      typedProjectionBatches: 1, typedProjectionFields: 1, projection: { objectEntries: 0, stringBytes: 0 } });
+    expect(edited.sharedSourceBytesReferenced).toBeLessThan(long.sharedSourceBytesReferenced);
     await apply(3);
-    expect(memory()).toMatchObject({ witnesses: 0, uniqueProjections: 0, projection: { stringBytes: 0 } });
+    expect(memory()).toMatchObject({ witnesses: 0, uniqueProjections: 0,
+      typedProjectionBytes: 0, typedProjectionBatches: 0, sharedSourceBytesReferenced: 0 });
     workspace.close();
     expect(memory().uniqueProjections).toBe(0);
   } finally { workspace.close(); }

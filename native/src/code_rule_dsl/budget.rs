@@ -58,16 +58,10 @@ pub(super) fn set_shortcuts_off(off: bool) {
     SHORTCUTS_OFF.set(off);
 }
 
-/// Whether the work-skipping shortcuts run: always, outside tests.
+/// Whether the test oracle's work-skipping shortcuts run.
+#[cfg(test)]
 pub(super) fn shortcuts_on() -> bool {
-    #[cfg(test)]
-    {
-        !SHORTCUTS_OFF.get()
-    }
-    #[cfg(not(test))]
-    {
-        true
-    }
+    !SHORTCUTS_OFF.get()
 }
 
 /// Whether this thread's budget is exhausted (never, without one). Callers that poll in a loop
@@ -317,6 +311,14 @@ impl MatchBudget {
     /// A budget of `units` polls: the same work runs out at the same poll, on any machine and load.
     pub(super) fn work(closed: &Arc<AtomicBool>, units: u64) -> Self {
         Self::install(MatchDeadline::new(closed, Limit::Work(units)))
+    }
+
+    pub(super) fn resume(context: Context) -> Self {
+        let deadline = context.deadline.expect("prepared file budget");
+        MATCH_BUDGET.set(Some(deadline.clone()));
+        BUDGET_COUNTDOWN.set(context.matcher);
+        STEP_COUNTDOWN.set(context.steps);
+        Self { deadline }
     }
 
     /// A wall-clock budget, for a fast path whose miss only falls back.

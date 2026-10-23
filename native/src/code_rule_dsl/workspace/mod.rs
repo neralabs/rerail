@@ -273,6 +273,7 @@ struct Candidates {
 }
 
 struct FileState {
+    prepared: Option<Box<evaluate::PreparedAst>>,
     input: FileInput,
     source_digest: [u8; 32],
     source_revision: u32,
@@ -395,6 +396,7 @@ impl std::ops::DerefMut for Witnesses {
 
 #[derive(Default)]
 struct WorkspaceState {
+    anchor_corpus: Arc<crate::code_rule_dsl::matcher::Corpus>,
     code_rules: Vec<Arc<CompiledCodeRule>>,
     candidate_sets: CandidateSets,
     globals: BTreeMap<usize, Vec<CompiledClause>>,

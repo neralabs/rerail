@@ -1,7 +1,8 @@
 //! Admit SQL consumers by resident capacity, then run broad structural waves.
-use super::{Evaluation, Job, Session, failure, producer, sql_error};
+use super::{Evaluation, Inputs, Job, Session, failure, producer, sql_error};
+use crate::code_rule_dsl::model::{CompiledCodeRule, Metrics};
 use crate::code_rule_dsl::{budget::Context, model::CompiledClause};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 #[cfg(test)]
 mod tests;
 
@@ -69,7 +70,27 @@ fn advance(
 pub(super) fn evaluate(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
     run(jobs, producer::MAX_RESIDENT_BYTES, SQL_RESIDENT_BYTES).0
 }
+pub(super) fn evaluate_prepared(
+    jobs: Vec<Job<'_>>,
+    prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause) -> super::Result<()>,
+) -> Vec<Evaluation> {
+    run_prepared(
+        jobs,
+        producer::MAX_RESIDENT_BYTES,
+        SQL_RESIDENT_BYTES,
+        prepare,
+    )
+    .0
+}
 fn run(jobs: Vec<Job<'_>>, input_limit: usize, sql_limit: usize) -> (Vec<Evaluation>, Stats) {
+    run_prepared(jobs, input_limit, sql_limit, |_, _, _| Ok(()))
+}
+fn run_prepared(
+    jobs: Vec<Job<'_>>,
+    input_limit: usize,
+    sql_limit: usize,
+    mut prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause) -> super::Result<()>,
+) -> (Vec<Evaluation>, Stats) {
     #[cfg(feature = "code-rule-profile")]
     let mut trace = crate::code_rule_dsl::profile::trace::Span::start(
         "relational-batch",
@@ -79,15 +100,16 @@ fn run(jobs: Vec<Job<'_>>, input_limit: usize, sql_limit: usize) -> (Vec<Evaluat
     // Locality changes admission order, never relation identities or output order.
     let mut jobs: Vec<_> = jobs.into_iter().enumerate().collect();
     jobs.sort_by(|a, b| {
-        a.1.snapshot
+        a.1.inputs
+            .snapshot
             .files
             .first()
             .map(|f| &f.path)
-            .cmp(&b.1.snapshot.files.first().map(|f| &f.path))
+            .cmp(&b.1.inputs.snapshot.files.first().map(|f| &f.path))
     });
     let mut jobs: VecDeque<_> = jobs.into();
     let mut deferred = None;
-    let mut prepared = HashMap::new();
+    let _syntax = super::syntax::Pool::install();
     let mut allowance = producer::Allowance::default();
     let mut stats = Stats::default();
     while deferred.is_some() || !jobs.is_empty() {
@@ -102,28 +124,25 @@ fn run(jobs: Vec<Job<'_>>, input_limit: usize, sql_limit: usize) -> (Vec<Evaluat
                 let Some((index, mut job)) = jobs.pop_front() else {
                     break;
                 };
+                let mut extraction = Metrics::default();
                 let session = job.budget.run(|| {
                     #[cfg(feature = "code-rule-profile")]
                     let _context = crate::code_rule_dsl::profile::trace::Context::enter(
                         &job.code_rule.id,
                         &job.clause.id,
-                        (job.snapshot.files.len() == 1)
-                            .then(|| job.snapshot.files[0].path.as_str()),
+                        (job.inputs.snapshot.files.len() == 1)
+                            .then(|| job.inputs.snapshot.files[0].path.as_str()),
                     );
                     #[cfg(feature = "code-rule-profile")]
                     let _prepare = crate::code_rule_dsl::profile::trace::Span::start(
                         "producer-prepare",
                         "admitted-session",
                     );
-                    Session::new(
-                        job.code_rule,
-                        job.clause,
-                        job.rows,
-                        &job.snapshot,
-                        job.facts,
-                        &mut prepared,
-                    )
+                    let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
+                    prepare(&mut job.inputs, job.code_rule, job.clause)?;
+                    Session::new(job.code_rule, job.clause, job.inputs, &mut extraction)
                 });
+                results[index].metrics.merge(extraction);
                 let mut session = match session {
                     Ok(s) => s,
                     Err(e) => {

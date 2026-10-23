@@ -231,3 +231,15 @@ test("completed schema operations have expected explanation failures", () => {
   assert.equal(summary.quality.expectedSetupExplainFailures, 4);
   assert.equal(summary.quality.unexpectedExplainFailures, 1);
 });
+
+// An FTS vocabulary cursor can stay open while many outer statements run.
+test("overlapping cursor lifetimes cannot become CPU priorities", () => {
+  const summary = actionableSummary({ workload: { results: { parity: true, sql: { apply: { cpuMs: 1000 } } } }, queries: [
+    query({ id: 1, sql: "SELECT * FROM postings", selfCpuNs: 5_000_000_000 }),
+    query({ id: 2, sql: "SELECT * FROM selected", selfCpuNs: 800_000_000 }),
+  ] });
+  assert.equal(summary.quality.unreconciledCpu, true);
+  assert.equal(summary.budget.cpuCostsReconciled, false);
+  assert.match(summary.nextStep, /API boundary timers/);
+  assert.deepEqual(summary.actions, []);
+});

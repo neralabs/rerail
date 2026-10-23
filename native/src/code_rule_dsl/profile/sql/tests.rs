@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn incremental_explanations_survive_input_release_and_only_visit_new_queries() {
+    let directory = tempfile::tempdir().unwrap();
+    let connection = Connection::open_in_memory().unwrap();
+    // SAFETY: this profiler drops before its connection.
+    let profiler = unsafe { Profiler::new(&connection, directory.path()) }.unwrap();
+    connection.execute_batch("CREATE TEMP TABLE seed(x); INSERT INTO seed VALUES(1); CREATE TEMP TABLE result AS SELECT * FROM seed").unwrap();
+    profiler.explain_pending(&connection);
+    let first = profiler.state.borrow().explained;
+    connection
+        .execute_batch("DROP TABLE seed; SELECT * FROM result")
+        .unwrap();
+    profiler.explain_pending(&connection);
+    assert!(profiler.state.borrow().explained > first);
+    connection.execute_batch("DROP TABLE result").unwrap();
+    profiler.checkpoint(&connection).unwrap();
+    let state = profiler.state.borrow();
+    assert_eq!(state.explained, state.queries.len());
+    for query in &state.queries {
+        if query["sql"]
+            .as_str()
+            .unwrap()
+            .contains("SELECT * FROM seed")
+            || query["sql"] == "SELECT * FROM result"
+        {
+            assert!(query["plan"].is_array(), "{query}");
+        }
+    }
+}
+
+#[test]
 fn captures_helpers_cached_parameters_and_explains_without_executing() {
     let directory = std::env::temp_dir().join(format!(
         "rerail-profile-test-{}-{}",

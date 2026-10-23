@@ -10,6 +10,7 @@ pub(in crate::code_rule_dsl) struct Reachability {
     pub(in crate::code_rule_dsl) batch_size: usize,
     pub(in crate::code_rule_dsl) forest: bool,
     pub(in crate::code_rule_dsl) syntax: Option<String>,
+    pub(in crate::code_rule_dsl) expand: bool,
 }
 
 pub(super) fn create(
@@ -29,13 +30,18 @@ pub(super) fn create(
         name("batch"),
         name("pairs"),
     );
+    let expansion = if spec.expand {
+        "CASE WHEN expand THEN 1 ELSE 0 END"
+    } else {
+        "1"
+    };
     #[cfg(feature = "code-rule-profile")]
     let span = super::super::profile::trace::Span::start("sql-reach-prepare", &stage.name);
     // Unary plus preserves each scalar value and removes declared affinity from
     // CTAS identity columns. Otherwise INTEGER source columns force a numeric
     // comparison against the untyped key catalog and disable its key index term.
     db.execute_batch(&format!(
-        "CREATE TEMP TABLE {roots} AS SELECT DISTINCT __path,+id AS id FROM ({root_query}) WHERE __path IS NOT NULL AND id IS NOT NULL;
+        "CREATE TEMP TABLE {roots} AS SELECT __path,+id AS id,max({expansion}) AS expand FROM ({root_query}) WHERE __path IS NOT NULL AND id IS NOT NULL GROUP BY __path,+id;
          CREATE TEMP TABLE {edges} AS SELECT DISTINCT __path,+src AS src,+dst AS dst FROM ({edge_query}) WHERE __path IS NOT NULL AND src IS NOT NULL AND dst IS NOT NULL;
          CREATE TEMP TABLE {keys}(__path TEXT NOT NULL,key,compact INTEGER PRIMARY KEY);
          INSERT INTO {keys}(__path,key)
@@ -44,10 +50,10 @@ pub(super) fn create(
          CREATE TEMP TABLE {compact} AS SELECT a.compact AS src,b.compact AS dst FROM {edges} e
            JOIN {keys} a ON a.__path=e.__path AND a.key=e.src JOIN {keys} b ON b.__path=e.__path AND b.key=e.dst;
          CREATE INDEX {forward} ON {compact}(src,dst);
-         CREATE TEMP TABLE {requests}(root INTEGER PRIMARY KEY);
-         INSERT INTO {requests} SELECT k.compact FROM {roots} r JOIN {keys} k ON k.__path=r.__path AND k.key=r.id;
+         CREATE TEMP TABLE {requests}(root INTEGER PRIMARY KEY,expand INTEGER NOT NULL);
+         INSERT INTO {requests} SELECT k.compact,r.expand FROM {roots} r JOIN {keys} k ON k.__path=r.__path AND k.key=r.id;
          DROP TABLE {roots}; DROP TABLE {edges};
-         CREATE TEMP TABLE {batch}(root INTEGER PRIMARY KEY);
+         CREATE TEMP TABLE {batch}(root INTEGER PRIMARY KEY,expand INTEGER NOT NULL);
          CREATE TEMP TABLE {pairs}(root INTEGER,node INTEGER,PRIMARY KEY(root,node)) WITHOUT ROWID;
          ANALYZE temp.{keys}; ANALYZE temp.{compact}; ANALYZE temp.{requests};",
         root_query = spec.roots, edge_query = spec.edges,
@@ -68,12 +74,12 @@ pub(super) fn create(
     } else {
         let mut fill = db
         .prepare(&format!(
-            "INSERT INTO {batch} SELECT root FROM {requests} WHERE root>?1 ORDER BY root LIMIT ?2"
+            "INSERT INTO {batch} SELECT root,expand FROM {requests} WHERE root>?1 ORDER BY root LIMIT ?2"
         ))
         .map_err(sql_error)?;
         let mut walk = db.prepare(&format!(
-        "WITH RECURSIVE walk(root,node) AS (
-           SELECT root,root FROM {batch} UNION SELECT w.root,e.dst FROM walk w JOIN {compact} e ON e.src=w.node)
+        "WITH RECURSIVE walk(root,node,expand) AS (
+           SELECT root,root,expand FROM {batch} UNION SELECT w.root,e.dst,w.expand FROM walk w JOIN {compact} e ON e.src=w.node WHERE w.expand)
          INSERT INTO {pairs} SELECT root,node FROM walk"
     )).map_err(sql_error)?;
         let mut last = 0_i64;
@@ -105,13 +111,27 @@ pub(super) fn create(
     let _ = (batches, requested);
     #[cfg(feature = "code-rule-profile")]
     let _span = super::super::profile::trace::Span::start("sql-reach-index", &stage.name);
+    if !spec.forest {
+        db.execute_batch(&format!(
+            "CREATE INDEX {} ON {pairs}(node,root); ANALYZE temp.{pairs}",
+            name("reverse")
+        ))
+        .map_err(sql_error)?;
+    }
+    let source = if spec.forest {
+        format!(
+            "(SELECT r.root,p.node FROM {} r JOIN {} p ON p.ordinal>=r.lo AND p.ordinal<r.hi)",
+            name("ranges"),
+            name("positions")
+        )
+    } else {
+        pairs.clone()
+    };
     db.execute_batch(&format!(
-        "CREATE INDEX {reverse} ON {pairs}(node,root);
-         ANALYZE temp.{pairs};
-         CREATE TEMP VIEW {output} AS SELECT a.__path,a.key AS root,b.key AS node FROM {pairs} p
+        "CREATE TEMP VIEW {output} AS SELECT a.__path,a.key AS root,b.key AS node FROM {source} p
            JOIN {keys} a ON a.compact=p.root JOIN {keys} b ON b.compact=p.node AND b.__path=a.__path;
          DROP TABLE {batch}; DROP TABLE {requests}; DROP TABLE {compact};",
-        reverse = name("reverse"), output = quote(&stage.name),
+        output = quote(&stage.name),
     )).map_err(sql_error)?;
     Ok(())
 }

@@ -10,7 +10,7 @@ import unittest
 PROFILING = Path(__file__).resolve().parents[2] / "scripts" / "profiling"
 sys.path.insert(0, str(PROFILING))
 
-from report import aggregate, chrome_trace, phase_overlap
+from report import aggregate, chrome_trace, phase_overlap, summary
 from run import recording_from_source, select_recording
 from sample import bottom_up
 from compare import compare
@@ -20,6 +20,71 @@ from unittest.mock import patch
 
 
 class ProfileTests(unittest.TestCase):
+    def test_summary_accepts_source_replay_counts(self):
+        native, _ = aggregate("")
+        report = {"elapsedSeconds": 1, "exitCode": 0, "timedOut": False, "native": native, "samples": [],
+                  "parity": {"format": "rerail.data-layer-parity/v1", "replayedCalls": 4,
+                             "nativeCalls": 3, "hostGuardCalls": 1, "positiveCalls": 2, "cleanCalls": 2,
+                             "falsePositives": 0, "falseNegatives": 0, "engineFailures": 0,
+                             "executionPathDifferences": 0, "missingCoverage": []}}
+        text = summary(report)
+        self.assertIn("Source replay: calls=4 native=3 host guards=1 positive=2 clean=2", text)
+        self.assertIn("FP=0 FN=0 failures=0 execution differences=0 missing coverage=0", text)
+
+    def test_summary_accepts_incremental_replay(self):
+        native, _ = aggregate("")
+        report = {"elapsedSeconds": 1, "exitCode": 0, "timedOut": False, "native": native, "samples": [],
+                  "parity": {"format": "rerail.data-layer-incremental-parity/v1",
+                             "checks": 10, "transitions": 40, "differences": 0}}
+        self.assertIn("Incremental replay: checks=10 transitions=40 differences=0", summary(report))
+
+    def test_candidate_working_set_keeps_gauges_and_live_storage_separate(self):
+        events=[]
+        for count,free in [(100,0),(20,800),(0,1000)]:
+            events.append("RERAIL_TRACE "+json.dumps({"rule":"r","clause":"c","path":None,"phase":"anchor-working-set","name":"progress",
+                "wallNs":1000,"cpuNs":500,"startUnixUs":0,"thread":"main","detail":{
+                    "liveRelations":count,"tempReservedBytes":1000,"tempFreeBytes":free,
+                    "sqlite":{"cacheBytes":50,"schemaBytes":10,"statementBytes":0},
+                    "process":{"rssBytes":500,"inUseBytes":100,"allocatedBytes":400}}}))
+        native,_=aggregate("\n".join(events))
+        self.assertEqual(len(native["anchorWorkingSets"]),3)
+        self.assertEqual(native["spans"][0]["counters"]["liveRelations"],100)
+        self.assertEqual(native["spans"][0]["counters"]["tempReservedBytes"],1000)
+        text=summary({"elapsedSeconds":1,"exitCode":0,"timedOut":False,"native":native,"samples":[]})
+        self.assertIn("peak sampled 100 live relations",text)
+        self.assertIn("0 live relations; 1000 temporary bytes free",text)
+
+    def test_memory_spans_preserve_boundaries_without_summing_high_water_marks(self):
+        event={"rule":"r","clause":"c","path":"a.py","phase":"sql-materialize","name":"facts",
+               "wallNs":1000,"cpuNs":500,"startUnixUs":0,"thread":"main",
+               "memory":{"before":{"peakRssBytes":100,"allocatedBytes":80,"inUseBytes":60},
+                         "after":{"peakRssBytes":150,"allocatedBytes":90,"inUseBytes":70}}}
+        native,_=aggregate("RERAIL_TRACE "+json.dumps(event))
+        self.assertEqual(native["memorySpans"][0]["before"]["peakRssBytes"],100)
+        self.assertEqual(native["memorySpans"][0]["after"]["peakRssBytes"],150)
+        self.assertNotIn("peakRssBytes",native["spans"][0]["counters"])
+        self.assertIn("peak +50 bytes (150 cumulative)",summary({"elapsedSeconds":1,"exitCode":0,"timedOut":False,"native":native,"samples":[]}))
+
+    def test_stream_buffer_uses_maximum_per_stream_not_sum_of_row_counts(self):
+        event = {"rule":"r","clause":"c","path":"a.py","phase":"input-stream","name":"facts",
+                 "wallNs":1000,"cpuNs":500,"startUnixUs":0,"thread":"main",
+                 "detail":{"rows":600,"peakBufferedRows":256,"columnBatches":3,"retainedProjectionRows":0}}
+        native, _ = aggregate("RERAIL_TRACE " + json.dumps(event))
+        self.assertEqual(native["inputStreams"][0]["peakBufferedRows"],256)
+        text = summary({"elapsedSeconds":1,"exitCode":0,"timedOut":False,"native":native,"samples":[]})
+        self.assertIn("600 rows; peak 256 buffered; 3 column batches; 0 projected rows retained",text)
+
+    def test_typed_input_census_reports_column_bytes_without_inventing_json_fields(self):
+        event = {"rule":"r", "clause":"c", "path":"a.py", "phase":"input-preparation",
+                 "name":"admitted-relational-inputs", "wallNs":1000, "cpuNs":500,
+                 "startUnixUs":0, "thread":"main", "detail":{"jobs":1, "ownership":{
+                     "witnesses":2, "ownedBytesEstimate":24, "typedProjectionFields":6,
+                     "typedProjectionBytes":100, "projection":{"objectEntries":0,"heapBytesEstimate":0}}}}
+        native, _ = aggregate("RERAIL_TRACE " + json.dumps(event))
+        text = summary({"elapsedSeconds":1,"exitCode":0,"timedOut":False,"native":native,"samples":[]})
+        self.assertIn("0 JSON fields; 6 typed fields; 124 referenced bytes", text)
+        self.assertEqual(native["inputQueues"][0]["ownership"]["typedProjectionFields"],6)
+
     def test_cross_runtime_comparison_preserves_missing_files_and_duplicate_findings(self):
         from copy import deepcopy
         rows = [{"path": "a.py", "source": "pass"}]

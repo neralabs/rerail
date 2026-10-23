@@ -1,24 +1,34 @@
 use super::{AstMatcher, StopBy, UtilRef};
+#[cfg(test)]
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 #[cfg(test)]
 use crate::code_rule_dsl::test_support::{Walk, record_walk};
 mod semantic;
+#[cfg(test)]
 use crate::code_rule_dsl::language::GrammarDialect;
+use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Matcher, PatternNode, kind_utils};
+#[cfg(test)]
 use ast_grep_core::source::SgNode;
-use ast_grep_core::{AstGrep, Doc, MatchStrictness, Node};
+#[cfg(test)]
+use ast_grep_core::{AstGrep, Doc, Node};
+#[cfg(test)]
 use foldhash::{HashMap, HashMapExt, HashSet};
 use regex::Regex;
+#[cfg(test)]
 use std::borrow::Cow;
+#[cfg(test)]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 // Keep the cursor at the current CST node. Neither Tree-sitter's Node::parent
 // (which searches down from the root) nor ast-grep's DFS (which eagerly
 // unwinds before yielding) is suitable for a bounded index build.
+#[cfg(test)]
 pub(in crate::code_rule_dsl) trait AnchorCursor<'tree> {
     type Node: Copy;
     fn current(&self) -> Self::Node;
@@ -28,6 +38,7 @@ pub(in crate::code_rule_dsl) trait AnchorCursor<'tree> {
     fn field_id(&self) -> u16;
 }
 
+#[cfg(test)]
 impl<'tree> AnchorCursor<'tree> for tree_sitter::TreeCursor<'tree> {
     type Node = tree_sitter::Node<'tree>;
     fn current(&self) -> Self::Node {
@@ -47,8 +58,10 @@ impl<'tree> AnchorCursor<'tree> for tree_sitter::TreeCursor<'tree> {
     }
 }
 
+#[cfg(test)]
 pub(in crate::code_rule_dsl) struct TapeCursor<'tree>(crate::code_rule_dsl::tape::TapeNode<'tree>);
 
+#[cfg(test)]
 impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {
     type Node = crate::code_rule_dsl::tape::TapeNode<'tree>;
     fn current(&self) -> Self::Node {
@@ -83,6 +96,7 @@ impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {
     }
 }
 
+#[cfg(test)]
 pub(in crate::code_rule_dsl) trait AnchorNode<'tree>:
     SgNode<'tree> + Copy
 {
@@ -91,6 +105,7 @@ pub(in crate::code_rule_dsl) trait AnchorNode<'tree>:
     fn child_count(self) -> usize;
 }
 
+#[cfg(test)]
 impl<'tree> AnchorNode<'tree> for tree_sitter::Node<'tree> {
     type Cursor = tree_sitter::TreeCursor<'tree>;
     fn cursor(self) -> Self::Cursor {
@@ -101,6 +116,7 @@ impl<'tree> AnchorNode<'tree> for tree_sitter::Node<'tree> {
     }
 }
 
+#[cfg(test)]
 impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
     type Cursor = TapeCursor<'tree>;
     fn cursor(self) -> Self::Cursor {
@@ -111,8 +127,12 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
     }
 }
 
+#[cfg(test)]
 mod fields;
+pub(in crate::code_rule_dsl) mod sql;
+#[cfg(test)]
 mod text;
+#[cfg(test)]
 use text::TextProbe;
 
 #[cfg(test)]
@@ -134,6 +154,7 @@ enum Condition {
     Pattern(Vec<Requirement>),
     Text {
         regex: Regex,
+        #[cfg(test)]
         probe: TextProbe,
     },
     All(Vec<AnchorPlan>),
@@ -264,6 +285,7 @@ impl AnchorPlan {
                 root_kinds: None,
                 condition: Condition::Text {
                     regex: regex.clone(),
+                    #[cfg(test)]
                     probe: TextProbe::compile(regex.as_str()),
                 },
                 exact: true,
@@ -405,10 +427,10 @@ impl AnchorPlan {
         self.root_kinds.as_ref()
     }
 
-    /// Kind-only queries already use the tape's kind postings; they need no structural index.
+    /// Positional SQL postings serve kind-only queries as well as structural predicates.
     pub(in crate::code_rule_dsl) fn needs_index(&self) -> bool {
         match &self.condition {
-            Condition::Always => false,
+            Condition::Always => self.root_kinds.is_some(),
             Condition::All(plans) | Condition::Any(plans) => plans.iter().any(Self::needs_index),
             Condition::Utility(plan) => plan.needs_index(),
             _ => true,
@@ -431,6 +453,7 @@ impl AnchorPlan {
     /// Records the value postings selection reads. `domain` holds the root kinds an enclosing
     /// conjunction imposes on a shared utility plan, which `restrict_root` could not push into
     /// it; `utilities` visits each shared plan once per domain.
+    #[cfg(test)]
     fn collect_needs<'plan>(
         &'plan self,
         domain: Option<&BTreeSet<u16>>,
@@ -547,6 +570,7 @@ fn collect_pattern(
     // necessary text/kind, but do not alter the parent depth of concrete goals.
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct Needs<'plan> {
     text: bool,
@@ -554,6 +578,7 @@ struct Needs<'plan> {
     terminals: HashSet<&'plan str>,
 }
 
+#[cfg(test)]
 struct Entry<'tree, D: Doc> {
     node: D::Node<'tree>,
     parent: Option<NonZeroUsize>,
@@ -564,10 +589,14 @@ struct Entry<'tree, D: Doc> {
 
 // Bound vocabulary hashing/comparison to small spans. Large/composite values
 // are NOT absent: the residue remains complete, with one S275 prefix per node.
+#[cfg(test)]
 const MAX_VALUE_BYTES: usize = 256;
+#[cfg(test)]
 const PREFIX_CHARS: usize = 8;
+#[cfg(test)]
 const DIRECT_TEXT_NODES: usize = 8;
 
+#[cfg(test)]
 #[derive(Default)]
 struct Values<'tree> {
     complete: bool,
@@ -578,17 +607,20 @@ struct Values<'tree> {
 
 /// The dictionary of `grouped` (each text's ordinals, ascending): sorting only the distinct
 /// texts, it is built in one pass.
+#[cfg(test)]
 fn postings(grouped: HashMap<&str, Vec<usize>>) -> BTreeMap<&str, Vec<usize>> {
     let mut grouped = grouped.into_iter().collect::<Vec<_>>();
     grouped.sort_unstable_by_key(|&(text, _)| text);
     grouped.into_iter().collect()
 }
 
+#[cfg(test)]
 pub(in crate::code_rule_dsl) enum Selection<'index> {
     All,
     Roots(Cow<'index, [usize]>),
 }
 
+#[cfg(test)]
 impl Selection<'_> {
     fn empty() -> Self {
         Self::Roots(Cow::Borrowed(&[]))
@@ -622,9 +654,11 @@ impl Selection<'_> {
     }
 }
 
+#[cfg(test)]
 type TextCache = HashMap<String, HashMap<u16, Vec<usize>>>;
 
 /// One selection's results for its shared utility plans, keyed by plan address.
+#[cfg(test)]
 #[derive(Default)]
 struct UtilitySelections<'index> {
     estimates: HashMap<usize, usize>,
@@ -634,6 +668,7 @@ struct UtilitySelections<'index> {
     roots: HashMap<BTreeSet<u16>, Selection<'index>>,
 }
 
+#[cfg(test)]
 pub(in crate::code_rule_dsl) struct FileAnchorIndex<'tree, D: Doc> {
     root: &'tree AstGrep<D>,
     source: &'tree str,
@@ -655,6 +690,7 @@ pub(in crate::code_rule_dsl) struct FileAnchorIndex<'tree, D: Doc> {
     by_node_id: RefCell<HashMap<usize, usize>>,
 }
 
+#[cfg(test)]
 impl<'tree, D> FileAnchorIndex<'tree, D>
 where
     D: Doc<Source = String, Lang = GrammarDialect>,
@@ -1650,12 +1686,14 @@ where
 /// end byte up to each child (overlapping siblings' ends can decrease; the first child that ends
 /// after a byte is the first whose running end does), and how many of the children before it are
 /// matched (one count more: the total).
+#[cfg(test)]
 struct SiblingRun {
     ends: Vec<usize>,
     matched_before: Vec<usize>,
 }
 
 /// Whether every root of `inner` is in `outer`.
+#[cfg(test)]
 fn is_subset(inner: &Selection<'_>, outer: &Selection<'_>) -> Result<bool, ()> {
     let (inner, outer) = match (inner, outer) {
         (_, Selection::All) => return Ok(true),
@@ -1676,6 +1714,7 @@ fn is_subset(inner: &Selection<'_>, outer: &Selection<'_>) -> Result<bool, ()> {
     Ok(true)
 }
 
+#[cfg(test)]
 fn copy_selection<'index>(selection: &Selection<'index>) -> Selection<'index> {
     match selection {
         Selection::All => Selection::All,
@@ -1685,6 +1724,7 @@ fn copy_selection<'index>(selection: &Selection<'index>) -> Selection<'index> {
 
 /// Whether the subtree `start..end` holds a node of every posting. The caller polls once per
 /// subtree; the postings are the plan's few requirements.
+#[cfg(test)]
 fn contains_requirements(start: usize, end: usize, postings: &[&[usize]]) -> bool {
     postings.iter().all(|posting| {
         let offset = posting.partition_point(|ordinal| *ordinal < start);
@@ -1694,6 +1734,7 @@ fn contains_requirements(start: usize, end: usize, postings: &[&[usize]]) -> boo
 
 /// One step of a selection loop: polls the budget once per 256 steps of all selection loops
 /// together, so a loop run once per root spends what one loop over every root would.
+#[cfg(test)]
 fn check_budget() -> Result<(), ()> {
     if budget::step_budget_exhausted() {
         Err(())
@@ -1704,9 +1745,11 @@ fn check_budget() -> Result<(), ()> {
 
 /// How many times larger than the other an intersection's side must be for `combine` to search
 /// it for each root of the other rather than merge the two.
+#[cfg(test)]
 const SEARCHED_INTERSECTION: usize = 16;
 
 // Merge sorted, unique ordinal sets; identities preserve borrowed postings.
+#[cfg(test)]
 fn combine<'index>(
     left: Selection<'index>,
     right: Selection<'index>,

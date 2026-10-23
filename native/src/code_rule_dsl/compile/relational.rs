@@ -122,7 +122,6 @@ pub(super) fn compile(
             )));
         }
         let fields = input
-            .ast
             .project
             .iter()
             .map(|project| project.field.clone())
@@ -232,6 +231,7 @@ pub(super) fn compile(
     }).transpose()?;
     let mut stages = Vec::new();
     let mut last_uses = BTreeMap::new();
+    let mut input_fields = relational::FieldReads::new();
     let mut reads_source = syntax.is_some();
     if let Some(value) = spec.get("stages") {
         let values = value
@@ -280,6 +280,7 @@ pub(super) fn compile(
                         }
                     };
                     let mut queries = Vec::new();
+                    let mut expand = false;
                     for (field, required) in [
                         ("roots", vec!["__path", "id"]),
                         ("edges", vec!["__path", "src", "dst"]),
@@ -290,12 +291,15 @@ pub(super) fn compile(
                             &format!("{at}/reachability/{field}"),
                             capabilities.limits.max_ast_pattern_bytes,
                         )?;
-                        let (selected, reads, source) = relational::inspect(&db, &query, &tables)?;
+                        let (selected, reads, source) = relational::inspect_fields(&db, &query, &tables)?;
                         reads_source |= source;
-                        for name in reads {
+                        for (name,fields) in reads {
+                            input_fields.entry(name.clone()).or_default().extend(fields);
                             last_uses.insert(name, index);
                         }
-                        if selected != required {
+                        if field=="roots" && selected==["__path","id","expand"] {
+                            expand=true;
+                        } else if selected != required {
                             return Err(invalid(format!(
                                 "{at}/reachability/{field} must select {} in order",
                                 required.join(",")
@@ -318,6 +322,7 @@ pub(super) fn compile(
                         batch_size,
                         forest,
                         syntax: syntax_source,
+                        expand,
                     })
                 })
                 .transpose()?;
@@ -330,9 +335,10 @@ pub(super) fn compile(
                     capabilities.limits.max_ast_pattern_bytes,
                 )?
             };
-            let (mut columns, reads, source) = relational::inspect(&db, &query, &tables)?;
+            let (mut columns, reads, source) = relational::inspect_fields(&db, &query, &tables)?;
             reads_source |= source;
-            for name in reads {
+            for (name, fields) in reads {
+                input_fields.entry(name.clone()).or_default().extend(fields);
                 last_uses.insert(name, index);
             }
             let mut deferred = BTreeMap::<String, String>::new();
@@ -422,9 +428,10 @@ pub(super) fn compile(
         &format!("{path}/query"),
         capabilities.limits.max_ast_pattern_bytes,
     )?;
-    let (columns, reads, source) = relational::inspect(&db, &query, &tables)?;
+    let (columns, reads, source) = relational::inspect_fields(&db, &query, &tables)?;
     reads_source |= source;
-    for name in reads {
+    for (name, fields) in reads {
+        input_fields.entry(name.clone()).or_default().extend(fields);
         last_uses.insert(name, stages.len());
     }
     for required in ["path", "start_byte", "end_byte"] {
@@ -445,6 +452,12 @@ pub(super) fn compile(
         if !columns.contains(field) {
             return Err(invalid(format!("{path}: unknown output column {field}")));
         }
+    }
+    // SQLite supplies actual column dependencies, including predicates and nested queries.
+    // Keep the original matching/anchor semantics while omitting unconsumed projection work.
+    for (name, input) in &mut inputs {
+        let fields = input_fields.get(name);
+        input.retain_projected_fields(fields);
     }
     Ok(Plan {
         syntax: syntax.map(Arc::new),

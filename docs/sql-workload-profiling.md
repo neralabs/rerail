@@ -21,6 +21,68 @@ Production builds exclude this instrumentation.
 
 The [SQL shape experiments](sql-shape-spikes.md) record isolated changes, CPU results, parity checks, and reproduction commands.
 
+## Candidate preparation captures
+
+The candidate index also supports input-complete SQL captures.
+The [preparation design](sql-preparation-architecture.md) and [spikes](sql-preparation-spikes.md) describe their purpose.
+Each SQL-profile capture writes `candidate-*.json` and matching SQLite snapshots beneath `sql/raw/`.
+Snapshots contain the selected source, packed facts, indexes, and retained property state before candidate execution.
+The JSON files contain generated SQL, typed parameters, logical relation identities, and file identities.
+They do not contain JSON AST rows.
+
+The [shared-work tools](shared-producer-contracts.md#discovery-tools) find repeated generated definitions and diagnose proposed producer names.
+They accept these captures without another engine run.
+Declaration checks explain conflicting definitions and valid differences between bindings.
+Their results support producer extraction, without automatic SQL equivalence claims.
+
+Each request has normal and uncompacted descriptions.
+The uncompacted description preserves the same operators before canonical producer sharing.
+The engine executes only the normal description.
+Artifact capture adds work and storage, so its timings cannot serve as performance controls.
+
+Rank repeated logical construction from a diagnostic capture:
+
+```sh
+python3 scripts/profiling/preparation.py .rerail/profiles/sql-preparation/diagnostic \
+  --output .rerail/profiles/sql-preparation/duplication.json
+```
+
+The report separates repeated construction within one batch from equivalent expressions over different file batches.
+It estimates avoided construction CPU before maintenance and retained-access costs.
+The existing report also includes `anchorPreparations` and `anchorStorage`.
+These fields retain structural preparation CPU, reader counters, reserved pages, WAL bytes, and SQLite residency.
+
+The small replay host compares temporary tables, retained postings, and retained shared node sets.
+It uses the production SQLite functions and captured SQL.
+Captures with equal file revisions and domains form one sequence, so the experiment measures reuse across actual plan batches.
+Each sequence starts from its first snapshot and retains SQL state through its later queries.
+The experiment checks exact candidate row parity for every query.
+Its CPU totals cover candidate replay and cache construction, rather than complete application execution.
+
+Build the [replay host](../scripts/profiling/preparation/README.md), then run each rotated trial through the bounded controller:
+
+```sh
+python3 scripts/profiling/run.py --trace off --deadline 115 \
+  --output .rerail/profiles/sql-preparation/layout-trial-0 -- \
+  scripts/profiling/preparation/target/release/rerail-sql-preparation-lab \
+  .rerail/profiles/sql-preparation/diagnostic/sql/raw 0
+```
+
+Trials 1 and 2 rotate the layout order.
+The experiment writes `retention-results-<trial>.json` beside its captures.
+The host imports the production adapters, codec, storage settings, and CPU clock.
+The layouts remain outside the engine execution path. They add no engine execution setting.
+The native tests also invoke the same replay implementation.
+
+The host also provides [composition kernels](../scripts/profiling/preparation/README.md#composition-kernels).
+These compare tree intervals, selective demand, shared utility SQL, and bounded terminal columns.
+The [design and decisions](sql-composition-opportunities.md) separate kernel evidence from production integration.
+
+Preparation maintenance uses a fixed file-scope schema and bounded batched inserts.
+SQL templates survive file changes, and structural coverage spans the complete requested plan frontier.
+The public workspace API requires rule registration before evaluation.
+Internal corpus tests cover later plan registration without adding public policy hot reload.
+
 Run the pinned five-file workload in a new output directory:
 
 ```sh
@@ -158,3 +220,32 @@ The unchanged phase uses cached results and executes no relational SQL.
 The native addon also passes all 406 native tests, all 200 upstream corpus cases, and the producer execution-shape gate.
 These checks validate the tools and execution behavior; captured timings do not establish a performance improvement.
 Local captures and reports reside under `.rerail/profiles/sql-tools-port/`.
+
+## Typed fact storage and input streaming
+
+Relational AST producers use shared typed column batches. Capture text refers to source slices.
+The SQLite authorizer records all columns read during validation, including nested predicates and wildcard reads.
+The compiler removes unused projected columns without cloning the shared matcher tree.
+
+The scheduler queues consumer descriptions. It restores each source when preparing an admitted session.
+Completed projection batches enter SQLite through bounded INSERT statements. The input path retains only anchor metadata after insertion.
+Existing cached cross-file evidence uses the same typed storage and borrowed SQL bindings.
+JSON remains the public wire format and the representation for policies and JSON-semantic cross-file operations.
+
+Use `--trace on` to record `input-stream` spans. The report exposes these spans as `native.inputStreams`.
+Each record includes input rows, peak buffered rows, column batches, and retained projection rows.
+The normal projection chunk contains at most 256 rows. SQL writes also enforce parameter and byte limits.
+The small replay tests cover Unicode, NULL, duplicate rows, source release, and rollback after a failed batch.
+
+Use `--memory-census` only for diagnostics. Queue census separates typed columns from JSON fields and shared source references.
+Source references can overlap workspace storage. Do not add their byte counts to RSS.
+Run timing controls with tracing, census, SQL capture, and external samplers off.
+The journal records measured CPU and RSS independently from these storage counters.
+
+Selected native spans also record `memory.before` and `memory.after` when tracing is enabled.
+These observations include the process RSS high-water mark and macOS allocator bytes in use and allocated.
+The report preserves them in `native.memorySpans`. High-water marks are cumulative; do not add them across spans.
+Allocator totals cover macOS system-malloc zones. They do not measure exclusive ownership by one rule or thread.
+These totals do not cover allocations owned by a separate allocator, such as production jemalloc.
+The suite driver also records the RSS high-water mark after each apply operation.
+Use these boundaries to distinguish retained storage, temporary allocation, and allocator residency.

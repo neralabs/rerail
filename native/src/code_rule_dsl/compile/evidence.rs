@@ -188,11 +188,8 @@ pub(super) fn compile_relation(
         each,
         anchor,
         predicate,
-        ast: Arc::new(AstRelation {
-            query,
-            project,
-            domain,
-        }),
+        project: project.into(),
+        ast: Arc::new(AstRelation { query, domain }),
     })
 }
 
@@ -371,7 +368,6 @@ pub(super) fn check_operands(
             return Ok(());
         };
         if relation
-            .ast
             .project
             .iter()
             .any(|projection| projection.field == field)

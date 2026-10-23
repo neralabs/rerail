@@ -69,7 +69,7 @@ def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block
     utility=clause['id']+'-selection'
     utils[utility]=selection
     for ast in asts:ast['rule']['all'][-1]={'matches':utility}
-   if quality:batched_reachability(clause,forest=True)
+   if quality or name=='serverplan_state_tripwires':batched_reachability(clause,forest=True)
  definition={'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'all'},**(options or {})}}
  if utils:definition.update(language='python',utils=utils)
  doc={'format':'rerail.policy/v1','id':'data-layer-'+name.replace('_','-'),'revision':1,'mode':mode,

@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 static ENABLED: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROFILE").is_some());
-pub(super) fn enabled() -> bool {
+pub(crate) fn enabled() -> bool {
     *ENABLED
 }
 
@@ -59,6 +59,7 @@ struct ActiveSpan {
     unix_us: u128,
     cpu_ns: Option<u128>,
     detail: Value,
+    memory: Option<super::memory::Sample>,
 }
 impl Span {
     pub(crate) fn start(phase: &'static str, name: &str) -> Self {
@@ -74,6 +75,7 @@ impl Span {
                     .as_micros(),
                 cpu_ns: thread_cpu_ns(),
                 detail: Value::Null,
+                memory: super::memory::sample(phase),
             })
         } else {
             None
@@ -96,6 +98,7 @@ impl Drop for Span {
                     "startUnixUs": span.unix_us, "wallNs": span.started.elapsed().as_nanos(),
                     "cpuNs": span.cpu_ns.zip(thread_cpu_ns()).map(|(start, end)| end.saturating_sub(start)),
                     "thread": format!("{:?}", std::thread::current().id()), "detail": span.detail,
+                    "memory":span.memory.map(|before|json!({"before":before,"after":super::memory::sample(span.phase)})),
                 }),
             );
         }

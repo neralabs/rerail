@@ -116,45 +116,91 @@ pub(super) fn materialize(
     let forest = Forest::build(count, edges, work)?;
     let mut request_query = db
         .prepare(&format!(
-            "SELECT root FROM {} ORDER BY root",
+            "SELECT root,expand FROM {} ORDER BY root",
             name("requests")
         ))
         .map_err(sql_error)?;
     let roots = request_query
-        .query_map([], |r| r.get::<_, u32>(0).map(|v| v as usize))
+        .query_map([], |r| {
+            Ok((r.get::<_, u32>(0)? as usize, r.get::<_, bool>(1)?))
+        })
         .map_err(sql_error)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(sql_error)?;
-    for batch in roots.chunks(batch_size) {
-        let mut output = Vec::new();
-        for &root in batch {
-            steps.spend(1)?;
-            let (start, end) = forest.ranges[root - 1];
-            // Bound the native copy and sort work, separately from SQL INSERT VM work.
-            let length = end - start;
-            steps.spend(length.saturating_mul(length.max(1).ilog2() as usize + 2))?;
-            let mut nodes = forest.preorder[start..end].to_vec();
-            nodes.sort_unstable();
-            for node in nodes {
-                output.push([
-                    Value::Integer(root as i64),
-                    Value::Integer((node + 1) as i64),
-                ]);
-                if output.len() == 256 {
-                    insert::stage_rows(db, &format!("{prefix}_pairs"), 2, output.drain(..), work)?;
-                }
-            }
-        }
-        if !output.is_empty() {
-            insert::stage_rows(db, &format!("{prefix}_pairs"), 2, output, work)?;
-        }
-    }
+    // The selected graph defines these bounds. Raw CST ranges cannot replace a forest
+    // whose selected edges omit an interior node or disconnect a subtree.
+    db.execute_batch(&format!("DROP TABLE {}; CREATE TEMP TABLE {}(ordinal INTEGER PRIMARY KEY,node INTEGER UNIQUE); CREATE TEMP TABLE {}(root INTEGER PRIMARY KEY,lo INTEGER,hi INTEGER)",name("pairs"),name("positions"),name("ranges"))).map_err(sql_error)?;
+    insert::stage_rows(
+        db,
+        &format!("{prefix}_positions"),
+        2,
+        forest
+            .preorder
+            .iter()
+            .enumerate()
+            .map(|(pre, &node)| [Value::Integer(pre as i64), Value::Integer(node as i64 + 1)]),
+        work,
+    )?;
+    insert::stage_rows(
+        db,
+        &format!("{prefix}_ranges"),
+        3,
+        roots.iter().map(|&(root, expand)| {
+            let (lo, hi) = forest.ranges[root - 1];
+            [
+                Value::Integer(root as i64),
+                Value::Integer(lo as i64),
+                Value::Integer(if expand { hi } else { lo + 1 } as i64),
+            ]
+        }),
+        work,
+    )?;
+    steps.spend(forest.preorder.len() + roots.len())?;
+    db.execute_batch(&format!("CREATE INDEX {} ON {}(lo,hi,root); ANALYZE temp.{}; ANALYZE temp.{}; CREATE TEMP VIEW {} AS SELECT r.root,p.node FROM {} r JOIN {} p ON p.ordinal>=r.lo AND p.ordinal<r.hi",name("range_bounds"),name("ranges"),name("positions"),name("ranges"),name("pairs"),name("ranges"),name("positions"))).map_err(sql_error)?;
     Ok((roots.len(), roots.len().div_ceil(batch_size)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn containment_retains_linear_sql_storage_for_all_roots() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TEMP TABLE f_keys(compact INTEGER PRIMARY KEY); CREATE TEMP TABLE f_compact(src INTEGER,dst INTEGER); CREATE TEMP TABLE f_requests(root INTEGER PRIMARY KEY,expand INTEGER); CREATE TEMP TABLE f_pairs(root INTEGER,node INTEGER); WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) INSERT INTO f_keys SELECT i FROM n; INSERT INTO f_requests SELECT compact,1 FROM f_keys; INSERT INTO f_compact SELECT compact,compact+1 FROM f_keys WHERE compact<1000;").unwrap();
+        let work = Arc::new(AtomicUsize::new(100_000));
+        materialize(&db, "f", 256, &work).unwrap();
+        assert_eq!(
+            db.query_row(
+                "SELECT type FROM sqlite_temp_master WHERE name='f_pairs'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "view"
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM f_positions", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1000
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM f_ranges", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1000
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM f_pairs", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            500500
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM f_pairs WHERE root=500", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            501
+        );
+    }
     #[test]
     fn deep_forests_and_interruptions_are_bounded() {
         let work = AtomicUsize::new(1_000_000);

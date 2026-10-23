@@ -11,7 +11,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 /// Compiles a rule with no `utils` in scope.
-fn compile_rule(
+pub(super) fn compile_rule(
     rule: &Value,
     language: GrammarDialect,
     path: &str,
@@ -89,6 +89,8 @@ where
     for<'a> D::Node<'a>: AnchorNode<'a>,
 {
     let index = FileAnchorIndex::build(root, &[plan], max_nodes, interrupted);
+    #[cfg(feature = "code-rule-profile")]
+    let _resident_bytes = index.estimated_bytes();
     let selection = index.select(plan);
     let all = matches!(selection, Selection::All);
     let ordinals = match &selection {
@@ -154,6 +156,17 @@ fn compare_matchers(
             selected(&native, matcher, &plan, usize::MAX, || false);
         let (tape_found, _, tape_visited, tape_complete, _) =
             selected(&tape, matcher, &plan, usize::MAX, || false);
+        let sql_index = sql::FileAnchorIndex::build(&tape, &[&plan], usize::MAX, || false);
+        assert!(sql_index.complete(), "SQL index {language:?} {rule}");
+        let sql_roots = match sql_index.select(&plan) {
+            Selection::Roots(roots) => roots.into_owned(),
+            Selection::All => (0..image.node_count()).collect(),
+        };
+        let sql_found: Vec<_> = sql_roots
+            .iter()
+            .filter_map(|&pre| matched(sql_index.node(pre), matcher))
+            .collect();
+        assert_eq!(sql_found, expected, "SQL selection {language:?} {rule}");
         assert!(native_complete && tape_complete, "{language:?} {rule}");
         assert_eq!(
             native_visited,

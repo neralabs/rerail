@@ -569,7 +569,6 @@ fn compile_clause(
         violation,
         kind,
         synthetic: false,
-        projected_only: false,
         decision: false,
     })
 }
@@ -1471,6 +1470,7 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
         )));
     }
     Ok(ViolationSpec {
+        input_only: false,
         code: required_str(value, "code", path)?.to_owned(),
         message: required_str(value, "message", path)?.to_owned(),
         anchor,

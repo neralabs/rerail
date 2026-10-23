@@ -1,6 +1,6 @@
 [workspace]
 members = ["native"]
-exclude = ["scripts/profiling/reachability"]
+exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation"]
 resolver = "2"
 
 [profile.release]
@@ -9,3 +9,11 @@ codegen-units = 1
 # Never strip through rustc: on Xcode 27 the linker-side strip rewrites LINKEDIT so
 # dyld rejects the cdylib ("mis-aligned LINKEDIT string pool"). Unstripped costs ~1 MB.
 strip = "none"
+
+# Parser generation runs inside the build script. Its debug build can exceed the bounded
+# profiling deadline before Rust compilation starts. This does not change engine optimization.
+[profile.release.package.tree-sitter-generate]
+opt-level = 3
+
+[profile.dev.package.tree-sitter-generate]
+opt-level = 3
