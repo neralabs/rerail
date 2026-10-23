@@ -838,7 +838,7 @@ pub(crate) fn python_module_path(
 }
 
 /// `python_module_path` over the files on disk.
-pub(crate) fn python_module_path_on_disk(file: &std::path::Path) -> Option<Value> {
+pub fn python_module_path_on_disk(file: &std::path::Path) -> Option<Value> {
     python_module_path(file, |directory| directory.join("__init__.py").exists())
 }
 

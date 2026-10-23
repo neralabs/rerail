@@ -5,11 +5,11 @@
 //! runs per file as the term's seed query; the callee's subtree is never walked at query time.
 
 pub(crate) mod closure;
-pub(crate) mod contracts;
+pub mod contracts;
 pub(crate) mod names;
 pub(crate) mod php;
 pub(crate) mod rust;
-pub(crate) mod summary;
+pub mod summary;
 
 #[cfg(test)]
 mod php_tests;
@@ -1245,7 +1245,7 @@ pub(crate) fn calls_document(
 /// budget or `MAX_TABLE_NODES` leaves the summary open. Returns the table it built, for the
 /// file's evaluation to reuse.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn summarize<D: Doc>(
+pub fn summarize<D: Doc>(
     root: Node<'_, D>,
     language: GrammarDialect,
     path: &str,

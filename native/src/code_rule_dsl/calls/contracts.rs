@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
-pub(crate) type Key = u32;
+pub type Key = u32;
 
 struct Link {
     decorator: Regex,
@@ -42,7 +42,7 @@ pub(crate) fn get(key: Key) -> Arc<Contracts> {
     Arc::clone(&REGISTRY.lock().values[key as usize])
 }
 
-pub(crate) fn compile(
+pub fn compile(
     value: Option<&Value>,
     constructor: Option<&Value>,
     path: &str,

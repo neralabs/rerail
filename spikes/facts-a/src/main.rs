@@ -1,4 +1,5 @@
 mod ast;
+mod cgnative;
 mod derived_check;
 mod eval;
 mod facts;
@@ -70,6 +71,7 @@ fn main() {
         Some("store") => factfile::store(&args),
         Some("inspect") => factfile::inspect(&args),
         Some("derived-check") => derived_check::run(&args),
+        Some("cg-native") => cgnative::run(&args),
         Some("factfile-bench") => factfile::bench(&args),
         Some("census") => census(&args),
         Some("xexport") => xexport::main(&args),

@@ -3,8 +3,11 @@
 //! (its `-- view: <name>` lines), so the document is the one definition both this engine and the
 //! Phase 2 compiler run. Views are evaluated per content, in document order.
 use crate::facts::{self, Facts, NONE};
+use crate::pyvalue;
 use crate::sql::engine::{self, Catalog, Db, Schema, Statement, Table};
 use crate::sql::value::{Aff, V};
+use rerail_facts::ir::CoreRel;
+use rerail_facts::reference::Row;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
@@ -35,6 +38,8 @@ pub fn core_catalog() -> Catalog {
     c.insert("field".into(), ints(&["parent", "field", "child", "rank"]));
     c.insert("identifier".into(), ints(&["id", "name"]));
     c.insert("line".into(), ints(&["no", "start", "end", "indent"]));
+    c.insert("string_value".into(), ints(&["id", "value"]));
+    c.insert("string_value_unknown".into(), ints(&["id", "named_escape"]));
     c
 }
 
@@ -56,8 +61,9 @@ impl Views {
     }
 }
 
-/// The core relations of one content as engine tables.
-pub fn core_tables(f: &Facts) -> Vec<(&'static str, Table)> {
+/// The core relations of one content as engine tables; `string_value_ns` receives the time of
+/// the two string-value relations (`string_values`).
+pub fn core_tables(f: &Facts, string_value_ns: &mut u64) -> Vec<(&'static str, Table)> {
     let n = f.len();
     let cat = core_catalog();
     let int = |x: u32| if x == NONE { V::Null } else { V::Int(x as i64) };
@@ -112,8 +118,67 @@ pub fn core_tables(f: &Facts) -> Vec<(&'static str, Table)> {
             vec![V::Int(l as i64 + 1), V::Int(a as i64), V::Int(b as i64), V::Int(indent as i64)].into_boxed_slice()
         })
         .collect();
+    let t0 = std::time::Instant::now();
+    let (string_value, string_value_unknown) = string_values(f);
+    *string_value_ns = t0.elapsed().as_nanos() as u64;
     let t = |name: &'static str, rows: Vec<Box<[V]>>| (name, Table::from_rows(cat[name].clone(), rows));
-    vec![t("node", node), t("child", child), t("field", field), t("identifier", identifier), t("line", line)]
+    vec![
+        t("node", node),
+        t("child", child),
+        t("field", field),
+        t("identifier", identifier),
+        t("line", line),
+        t("string_value", string_value),
+        t("string_value_unknown", string_value_unknown),
+    ]
+}
+
+/// The core relations of one content as `rerail_facts::reference` reads them
+/// (`FileSource::Core`): the tables of `core_tables`, `file(path)` and `syntax_error()`.
+pub fn core_rows(f: &Facts, path: &str) -> std::collections::BTreeMap<CoreRel, Vec<Row>> {
+    let mut ns = 0;
+    let mut m = std::collections::BTreeMap::new();
+    for (name, t) in core_tables(f, &mut ns) {
+        let rel = match name {
+            "node" => CoreRel::Node,
+            "child" => CoreRel::Child,
+            "field" => CoreRel::Field,
+            "identifier" => CoreRel::Identifier,
+            "line" => CoreRel::Line,
+            "string_value" => CoreRel::StringValue,
+            "string_value_unknown" => CoreRel::StringValueUnknown,
+            other => unreachable!("core table {other}"),
+        };
+        m.insert(rel, (0..t.len()).map(|r| t.row(r)).collect());
+    }
+    m.insert(CoreRel::File, vec![vec![V::text(path)]]);
+    m.insert(CoreRel::SyntaxError, if f.syntax_errors { vec![vec![]] } else { vec![] });
+    m
+}
+
+/// `string_value` and `string_value_unknown` (SCHEMA.md § 1.2, § 1.3): every `string` /
+/// `concatenated_string` node decoded by `pyvalue::decode`. `Str` goes to the first, unknown to
+/// the second (with whether a `\N{...}` escape was met), `Bytes` to neither.
+pub fn string_values(f: &Facts) -> (Vec<Box<[V]>>, Vec<Box<[V]>>) {
+    let (mut known, mut unknown) = (Vec::new(), Vec::new());
+    let mut ids: Vec<u32> = ["string", "concatenated_string"]
+        .iter()
+        .filter_map(|k| facts::lookup(k))
+        .flat_map(|k| f.of_kind(k).iter().copied())
+        .collect();
+    ids.sort_unstable();
+    let saved = pyvalue::NAMED_ESCAPES.with(|n| n.replace(0));
+    for id in ids {
+        let value = pyvalue::decode(f, id).expect("string kinds never refuse");
+        let named = pyvalue::NAMED_ESCAPES.with(|n| n.replace(0)) > 0;
+        match value {
+            pyvalue::PyValue::Str(s) => known.push(vec![V::Int(id as i64), V::text(&s)].into_boxed_slice()),
+            pyvalue::PyValue::Unknown => unknown.push(vec![V::Int(id as i64), V::Int(named as i64)].into_boxed_slice()),
+            pyvalue::PyValue::Bytes(_) | pyvalue::PyValue::Other => {}
+        }
+    }
+    pyvalue::NAMED_ESCAPES.with(|n| n.set(saved));
+    (known, unknown)
 }
 
 mod smallvec_ranks {
@@ -144,12 +209,15 @@ pub fn store(t: Table, schema: &Schema) -> Table {
 }
 
 /// Every view of one content: the core tables and the views, by name, in a database whose path
-/// is `""` (content-level, path-free; `source_text('', s, e)` reads the content).
-pub fn evaluate<'s>(views: &Views, f: &'s Facts, ns: &mut Vec<u64>) -> Result<Db<'s>, String> {
+/// is `""` (content-level, path-free; `source_text('', s, e)` reads the content). `ns` receives
+/// each view's time; `core_ns` the core tables' (string values excluded) and the string values'.
+pub fn evaluate<'s>(views: &Views, f: &'s Facts, ns: &mut Vec<u64>, core_ns: &mut [u64; 2]) -> Result<Db<'s>, String> {
     let mut db = Db::new(f.source.as_str(), "");
-    for (name, t) in core_tables(f) {
+    let t0 = std::time::Instant::now();
+    for (name, t) in core_tables(f, &mut core_ns[1]) {
         db.tables.insert(name.to_owned(), Rc::new(t));
     }
+    core_ns[0] = (t0.elapsed().as_nanos() as u64).saturating_sub(core_ns[1]);
     ns.clear();
     for (name, st) in &views.stmts {
         let t0 = std::time::Instant::now();

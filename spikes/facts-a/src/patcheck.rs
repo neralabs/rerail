@@ -13,7 +13,7 @@ use crate::eval::{Anchor as EAnchor, FileCtx, Input, Proj};
 use crate::facts::{self, Facts};
 use crate::sql::engine::Schema;
 use crate::sql::value::{Aff, V};
-use crate::{arg, leaf, pyvalue, views};
+use crate::{arg, leaf, views};
 use rerail_facts::ir::{Anchor, CoreRel, FileSource, InputDef, InputKind, Projection};
 use rerail_facts::reference::{Evaluator, Row};
 use serde_json::{Map, Value as Json};
@@ -97,41 +97,9 @@ fn leaf_input(c: &Case, names: &mut Names) -> Result<Input, String> {
     Ok(Input { query: q, fields: c.def.fields.iter().map(|(f, _)| f.clone()).collect(), projs, each: None, anchor, paths: None, node_regexes: Vec::new() })
 }
 
-/// The content's core relations, as the reference evaluator reads them.
+/// The content's core relations, as the reference evaluator reads them (`views::core_rows`).
 fn core(f: &Facts, path: &str) -> BTreeMap<CoreRel, Vec<Row>> {
-    let mut m = BTreeMap::new();
-    for (name, t) in views::core_tables(f) {
-        let rel = match name {
-            "node" => CoreRel::Node,
-            "child" => CoreRel::Child,
-            "field" => CoreRel::Field,
-            "identifier" => CoreRel::Identifier,
-            "line" => CoreRel::Line,
-            _ => continue,
-        };
-        m.insert(rel, (0..t.len()).map(|r| t.row(r)).collect());
-    }
-    m.insert(CoreRel::File, vec![vec![V::text(path)]]);
-    m.insert(CoreRel::SyntaxError, if f.syntax_errors { vec![vec![]] } else { vec![] });
-    let (mut sv, mut su) = (Vec::new(), Vec::new());
-    for n in 0..f.len() as u32 {
-        let k = facts::name(f.kind[n as usize]);
-        if &*k != "string" && &*k != "concatenated_string" {
-            continue;
-        }
-        let before = pyvalue::NAMED_ESCAPES.with(|c| c.get());
-        let v = pyvalue::decode(f, n);
-        let named = pyvalue::NAMED_ESCAPES.with(|c| c.replace(before)) > before;
-        match v {
-            Ok(pyvalue::PyValue::Str(s)) => sv.push(vec![V::Int(n as i64), V::text(&s)]),
-            Ok(pyvalue::PyValue::Unknown) => su.push(vec![V::Int(n as i64), V::Int(named as i64)]),
-            Ok(pyvalue::PyValue::Bytes(_)) => {}
-            Ok(pyvalue::PyValue::Other) | Err(_) => panic!("{path}: string node {n} decodes to neither str, bytes nor unknown"),
-        }
-    }
-    m.insert(CoreRel::StringValue, sv);
-    m.insert(CoreRel::StringValueUnknown, su);
-    m
+    views::core_rows(f, path)
 }
 
 fn show(v: &V) -> String {

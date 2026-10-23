@@ -7,7 +7,7 @@
 pub struct ModulePath {
     /// The names from the package root's parent as on disk: each directory's, then the file's
     /// stem (`json.d`, `__init__`). Ruff's `to_module_path` reads a directory by its stem.
-    segments: Vec<Box<str>>,
+    pub segments: Vec<Box<str>>,
     /// A module path proper (Ruff's `ModuleSource::Path`, inside a package); otherwise only the
     /// file's stem is known (`ModuleSource::File`), and relative imports do not resolve.
     package: bool,
@@ -26,14 +26,14 @@ fn file_stem(name: &str) -> &str {
 
 impl ModulePath {
     /// A dotted module path such as `pkg.sub.mod` (`pkg.__init__` for a package's `__init__.py`).
-    pub(crate) fn dotted(module: &str) -> Option<Self> {
+    pub fn dotted(module: &str) -> Option<Self> {
         Self::names(&module.split('.').collect::<Vec<_>>())
     }
 
     /// A module path as its names: each directory's from the package root down, as on disk
     /// (`json.d`), then the file's stem (`my.mod`, `__init__`). Names are non-empty path
     /// components, neither `.` nor `..`.
-    pub(crate) fn names(names: &[&str]) -> Option<Self> {
+    pub fn names(names: &[&str]) -> Option<Self> {
         let valid = |name: &&str| {
             !name.is_empty() && !name.contains(['/', '\\']) && !matches!(*name, "." | "..")
         };
@@ -46,7 +46,7 @@ impl ModulePath {
     }
 
     /// A file outside any package: Ruff names its module by the file's stem, dots and all.
-    pub(crate) fn stem(path: &str) -> Option<Self> {
+    pub fn stem(path: &str) -> Option<Self> {
         let stem = file_stem(path.rsplit(['/', '\\']).next()?);
         (!stem.is_empty()).then(|| Self {
             segments: vec![stem.into()],
@@ -65,7 +65,7 @@ impl ModulePath {
     }
 
     /// The last name, the file's stem (`__init__` for a package's `__init__.py`).
-    pub(crate) fn last(&self) -> &str {
+    pub fn last(&self) -> &str {
         self.segments.last().map_or("", |segment| segment.as_ref())
     }
 
@@ -75,14 +75,14 @@ impl ModulePath {
     }
 
     /// Whether the host sent this path (a file inside a package), not the stem fallback.
-    pub(crate) fn in_package(&self) -> bool {
+    pub fn in_package(&self) -> bool {
         self.package
     }
 
     /// The first `count` segments of Ruff's `to_module_path` (directories by their stem), or
     /// `None` when one keeps a dot: Ruff compares qualified names segment by segment, so such a
     /// segment never equals a dotted name.
-    fn qualified(&self, count: usize) -> Option<Vec<&str>> {
+    pub fn qualified(&self, count: usize) -> Option<Vec<&str>> {
         let file = self.segments.len() - 1;
         self.segments[..count]
             .iter()

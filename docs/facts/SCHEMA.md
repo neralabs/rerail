@@ -32,6 +32,8 @@ Derived on read, never stored: the children CSR and the kind postings (`facts::i
 | `field` | `parent, field, child, rank` | every child that hangs under a field; `rank` 0-based among the parent's children under that field |
 | `identifier` | `id, name` | as stored |
 | `line` | `no, start, "end", indent` | `no` 1-based |
+| `string_value` | `id, value` | parser fact (§ 1.3): for each node of kind `string` or `concatenated_string` whose `pyvalue::decode` is a `str`, its decoded value (text) |
+| `string_value_unknown` | `id, named_escape` | parser fact (§ 1.3): each node of kind `string` or `concatenated_string` whose `pyvalue::decode` is unknown; `named_escape` = 1 when decoding met a `\N{...}` escape (no Unicode name table: the leaf executor refuses the clause, I9), else 0 |
 
 All columns are integers or text with no declared affinity. `descendants(x)` is the id range `x < d < subtree_end(x)`, never a relation.
 
@@ -46,6 +48,8 @@ Rewrites may rely on exactly these; each is checked per content in debug builds 
 | `field` | `child` | `child → parent, field, rank`; `(parent, field, rank) → child` | per `(parent, field)`, `rank` ascending = `child` ascending | ≤ `n − 1` |
 | `identifier` | `id` (⊆ `node.id`, `kind = 'identifier'`, named) | `id → name` | `id` ascending | ≤ `n` |
 | `line` | `no` (dense `1..L`) | `no → start, end, indent` | `start` strictly ascending in `no` | `L` = terminators + 1 |
+| `string_value` | `id` (⊆ `node.id`, kind `string`/`concatenated_string`) | `id → value` | `id` ascending | ≤ string nodes; disjoint from `string_value_unknown` |
+| `string_value_unknown` | `id` (same domain) | `id → named_escape` | `id` ascending | ≤ string nodes |
 | `py_node` (`N`) | `id` | as `node`; `(parent, ordinal) → id` | `ordinal` = rank among `N`-siblings in `id` order | ≤ `n` |
 | `py_field` | `(parent, field)` | `(parent, field) → child` | | ≤ `n − 1` |
 | `py_owner`, `py_function`, `py_class`, `py_attribute`, `py_call`, `py_assignment` | `id` | `id → *` | rows in `id` order except `py_owner` (level order of its fixpoint) | ≤ `|N|` |
@@ -54,12 +58,16 @@ Rewrites may rely on exactly these; each is checked per content in debug builds 
 | `py_decorator` | `child` | `child → fn, id, name` | `(fn, id, child)` order | |
 | `py_import_identifier` | `(import, id)`; `id → import` (imports never nest) | | `(import, id)` order | |
 | `py_context` | `fn` | `fn → *` | `fn` order | ≤ functions |
+| `cg_scope` | `id` | `id → kind, name, body, body_end` | `id` order; bodies nest: two rows' `[body, body_end)` intervals are disjoint or nested | ≤ functions + classes |
+| `cg_def` | `node` | `node → kind, local_name, parent_def, start, end` | `node` order; `parent_def < node` | = `cg_scope` |
+| `cg_call` | `node` | `node → start, end, callee_text, caller` | `node` order; `caller < node` | ≤ `call` nodes |
+| `cg_import` | none (a row per imported item; `node` is the statement) | `node → module_text, level, scope` | `(node, item)` order | ≤ import items |
 
 ### 1.3 Facts that need a parser (extracted, per content)
 
 | relation | columns | definition | status |
 |---|---|---|---|
-| decoded string value | per `string`/`concatenated_string` node | Python literal decoding (`pyvalue.rs`, port of native `value/python.rs`) | on demand, not persisted |
+| `string_value`, `string_value_unknown` (§ 1.2) | `id, value`; `id, named_escape` | Python literal decoding (`pyvalue.rs`, port of native `value/python.rs`) of every `string`/`concatenated_string` node: `Str` → `string_value`; unknown (interpolation, a str/bytes mix, over 64 KiB, an undecodable or `\N{...}` escape, a `t` prefix) → `string_value_unknown`; `Bytes` → neither (a known non-`str` value). These kinds never give a refusal at decode time. A pattern `value: {regex}` on such a node holds iff its `string_value` matches, is unknown iff it is in `string_value_unknown`, and is false otherwise; `DECODED` (`replace` with `value: true`) is its `string_value`, `''` when absent. Value tests on other kinds are not covered (the front end refuses them unless a preceding `kind` conjunct fixes the kind) | computed per content from `node` and the source (`views::core_tables`); not persisted (a fact file holds both inputs) |
 | f-string parts | per string node | `fstring.rs` (port of native `literal/python_fstring.rs`) | on demand, not persisted |
 | `string_type_definition` | `host` (the literal's `[start, end)`) → the parsed annotation tree: per node `kind:sym`, host `[start, end)` (native `Origin::of_node(..).primary()`), `text`, `parent` (index), `named` | the string literals Ruff 0.16.9 reads as type definitions (`string_type_definitions`, nested ones in their outer annotation's range space), as native's scope table computes them (`scope/python/typedefs.rs`, `ScopeTable::annotations`), extracted by **calling** native's `ScopeTable::build_in` (visibility-only changes in `native/`), default reading (no stub, no typing settings, `python_minor` 0), unbounded budget. **Per content**: the scope table reads one file and never crosses files. Built with no module path: native qualifies a `Relative`/`Definition` import binding through the module path, and such a binding can resolve to `typing`/`_typeshed`/`typing_extensions` only when the file's module path starts with one of those names (none in the corpus; a binder must refuse otherwise). Computed on first use per content (`Facts::typedefs`); consumed by `parse: {grammar: annotation}` (`ast.rs`). | report § 6 |
 
@@ -215,7 +223,9 @@ A view row's **support** is the set of nodes the stage row needs in the clause's
 
 Their shared texts (state-flow-1, state-flow-project-1) are rule logic over the views above plus three rule-specific **matcher inputs**: `string_values` reads `raw_strings_0..2`, each a pattern query (`string`/`concatenated_string` without interpolation, a prefix regex, and a `value: {regex: <rule's name list>}` over the decoded literal, projected with `transform: DECODED`). Over all of `N`, each is a view: the stage chain `arguments`, `keywords`, `contexts` (= `py_context` rendered), `body_nodes`, `callback_parameters`, `parameter_kinds`, `string_values`, `special_attributes`, `return_kinds` as written, over the views of § 2.2 rendered into the dump vocabulary (§ 2.2 "renders") and the three inputs compiled as algebra over `py_node` and the core parser relation `string_value(id, value)` (§ 1.3, decoded by `pyvalue.rs`). The inputs' compilation is S1's pattern front end (INVARIANTS I3: matcher inputs are algebra over `node`/`child`/`field`); this schema declares the leaf they need (`string_value`) and the composition, and adds no hand translation of a matcher input. Binding note for the rewrite (S1/S2): `runtime(__path,name)` joins `r.name=call.callee` and `string_values` joins `n.text=a.target_text`, i.e. **by name across the node set**, so a row depends on other nodes' membership in the clause's selection; selection sharing by semijoin does not apply to these two stages even under subtree closure, and they run over the clause's subset exactly.
 
-`string_value(id, value)` (core, parser fact, per content): for each `string`/`concatenated_string` node whose literal `pyvalue::decode` decodes to a `str`, its decoded value; nodes it refuses (operators, calls, containers, named escapes) have no row and a refusal the consumer surfaces (I9).
+`string_value(id, value)` and `string_value_unknown(id, named_escape)` are core relations (§ 1.2, § 1.3), the leaf the three inputs read for `value: {regex}` and `DECODED`.
+
+**Runnable (wave 2).** The composition runs in `facts-a derived-check` for `string_values`, `special_attributes`, `return_kinds` and `direct_events` (state-flow-1, state-flow-project-1; `string_values` also state-projection-recovery-2). Each stage text runs as written, and each stage a § 2.2 view stands for is replaced by that view, rendered. The matcher inputs are taken **gate-free**, as the dump's gate is forced `true`: nested `all`s are flattened and the conjuncts that read `matches` or `filePath` are dropped (`derived_check::gate_free`). They come from S1's pattern front end (`Program.inputs[i].algebra`, `rerail_facts::front::pattern`), which `rerail_facts::reference` evaluates over `views::core_rows`. The reference side is the clause's own stages with the leaf executor's inputs. Results: report § W2.
 
 ## 3. Exported relations (per content; Spike B § 5.1, v1)
 
@@ -223,15 +233,113 @@ Schema-level exports from Spike B v0 (`spikes/facts-b/src/facts.rs`), unchanged:
 
 ### 3.1 Requested by S3 (repository plans' leaves), per content, schema-level
 
-The native reference/call graph's per-file `Summary` (`native/src/code_rule_dsl/calls/summary.rs`, extractor v18), with the `siblingLinks`/`constructorFields` configuration `internal-dead-code` and `imperative-private-functions/caller` share. Extracted by **calling** native's summary builder (visibility change only), never re-implemented; symbol-level and distinct: `py_module(name)`, `py_def(qualname:sym, start:u32, end:u32, flags:u32)` (ASYNC, CLASS, OPEN, DECORATED, SHADOWED, …), `py_ref(def:sym, name:sym)` (native `references`, marker forms `.<self>.`, `.<super>.`, `.<field>.`, `.<type>.`, `.<bare>.`, `.<base>.`, `^` verbatim), `py_ref_target` (`reference_targets`), `py_alias(local:sym, target:sym)` (`reference_aliases`), `py_decorator(def:sym, name:sym)` (`reference_decorators`), `py_super(class:sym, base:sym, kind:u8)` (bases and metaclass), `py_star(module:sym)`, `py_open()`, `py_open_site(def:sym)`, and the call graph's `edges(def, callee)`, `targets`, `aliases`, `opaque`. Status: scheduled after § 2 and § 1.3 (report § 7).
+Superseded by § 3.3 (decider, wave 2). The wave-1 plan was to export native's per-file `Summary` (`calls/summary.rs`) by calling it. Its names are qualified by the module path, which depends on the worktree's `__init__.py` set, so its rows are keyed by (content, module path) and change when membership changes. The exports are therefore **unresolved and content-keyed** (§ 3.3), and module names, qualification and linking are membership-dependent algebra in S3's dataflow.
 
 ### 3.2 Plan-level exports (computed by a per-content plan, projected and distinct)
 
 Namespace `x.<rule>.<clause>.<relation>`, stored under the key `(content hash, path, schema version, plan digest)` (INVARIANTS I7; the path is in the key because module names derive from it). S3's list (its report § 5.1) is the interim definition until the compiler emits them from the repository plans' leaves: `quality-project-taxonomy` `cand`; `quality-conditional-1` `class_base`, `canon_sym`, `gated`, `canon_cand`, `ungated`; `required-contracts` `contract_finding`; `state-flow-project-1`/`state-flow-1` `ret_kinds`, `callee`, `project_mode`, `sem_builders`, `helper_sites`; `public-api-triples` `decl_root`, `alias_edge`, `export_cand`, `class_decl`, `base_ref`, `pub_method`, `symbol_traits`, `symbol_family_traits`; `internal-dead-code` `decl`, `base_ref`, `import_sym`, `import_module_prefix`, `export_cand`, `dyn_target`, `annotation_name`, `module_name_use`, `sibling_edge`, `module_init_edge`, `class_member`.
 
+### 3.3 Unresolved call-graph exports (content-keyed; agreed with S3)
+
+These are views over the core, per content, with no module path and no resolution. Ids are this content's node ids, and texts are source slices. S3's dataflow joins them with membership-side relations, so that names resolve against the worktree:
+
+- `module_of(path)` and `package_marker(path)` = the member paths whose file stem is `__init__` (`.py`/`.pyi`), as native's `ModulePath` reads them.
+- `package_marker` is a property of the **path**, not of the content: it is computed in the membership layer from the path set and is never a fact (facts are path-free).
+
+| view | columns | definition | differential |
+|---|---|---|---|
+| `cg_scope` | `id, kind, name, body, body_end` | every `function_definition`/`class_definition` with a `name` field child (rank 0). `body`/`body_end` are its `body` child's id interval (`NULL` without one). Native's walk (`summary.rs::walk`) makes a definition only from such a node and runs only the body in the definition's context: decorators, defaults and bases run in the outer one. | through `cg_def`, `cg_call` |
+| `cg_def` | `node, kind, local_name, parent_def, start, end` | per `cg_scope` row:<br>• `kind` is `'class'`, `'async_function'` (first child `async`) or `'function'`;<br>• `parent_def` is the nearest `cg_scope` row whose body interval holds the node;<br>• `local_name` is native's qualified name without the module prefix, built as `summary.rs::definition` builds it: the parent's `local_name`, then `.` under a class or `.<locals>.` under a function, then the name. | native `Summary::extract(.., module None)`: `defs` (`name`, `start`, `end`, `CLASS`/`ASYNC` flags) |
+| `cg_call` | `node, start, end, callee_text, caller` | every `call` with a `function` field child:<br>• `callee_text` is the source text of that child;<br>• `caller` is the nearest `cg_scope` **function** whose body interval holds the call. This is native's `owner`: a class body keeps the outer function. `NULL` at module level. | independent walk over the facts with native's context rule |
+| `cg_import` | `node, module_text, name, alias, level, scope` | one row per imported item of an `import_statement`, `import_from_statement` or `future_import_statement` (the children under field `name`, plus `wildcard_import`):<br>• `import a.b as c` gives `('a.b', NULL, 'c', 0)`;<br>• `from ..p.q import x as y` gives `('p.q', 'x', 'y', 2)`, and `module_text` is `''` for `from . import x`;<br>• a wildcard has `name = '*'`;<br>• `from __future__ import x` gives `('__future__', 'x', NULL, 0)`;<br>• `level` counts the dots of `import_prefix`;<br>• `scope` is the nearest `cg_scope` (function or class) whose body interval holds the statement, `NULL` at module level. | native `ScopeTable` import bindings (`import`, `import_kind`, `submodule`, `name` range) |
+
+```sql
+-- view: cg_scope
+SELECT n.id, n.kind, nf.child AS name, ab.child AS body, b.subtree_end AS body_end FROM node n JOIN field nf ON nf.parent=n.id AND nf.field='name' AND nf.rank=0 LEFT JOIN field ab ON ab.parent=n.id AND ab.field='body' AND ab.rank=0 LEFT JOIN node b ON b.id=ab.child WHERE n.kind IN ('function_definition','class_definition')
+```
+
+```sql
+-- view: cg_def
+WITH RECURSIVE s(id,kind,name,parent_def) AS (SELECT c.id,c.kind,c.name,(SELECT max(a.id) FROM cg_scope a WHERE a.body<c.id AND c.id<a.body_end) FROM cg_scope c), q(id,local_name) AS (SELECT s.id,source_text('',m.start,m."end") FROM s JOIN node m ON m.id=s.name WHERE s.parent_def IS NULL UNION ALL SELECT c.id,q.local_name||CASE WHEN p.kind='class_definition' THEN '.' ELSE '.<locals>.' END||source_text('',m.start,m."end") FROM q JOIN s p ON p.id=q.id JOIN s c ON c.parent_def=q.id JOIN node m ON m.id=c.name) SELECT s.id AS node,CASE WHEN s.kind='class_definition' THEN 'class' WHEN k.kind='async' THEN 'async_function' ELSE 'function' END AS kind,q.local_name,s.parent_def,n.start,n."end" FROM s JOIN q ON q.id=s.id JOIN node n ON n.id=s.id LEFT JOIN child c0 ON c0.parent=s.id AND c0.idx=0 LEFT JOIN node k ON k.id=c0.child
+```
+
+```sql
+-- view: cg_call
+SELECT n.id AS node,n.start,n."end",source_text('',f.start,f."end") AS callee_text,(SELECT max(a.id) FROM cg_scope a WHERE a.kind='function_definition' AND a.body<n.id AND n.id<a.body_end) AS caller FROM node n JOIN field fc ON fc.parent=n.id AND fc.field='function' AND fc.rank=0 JOIN node f ON f.id=fc.child WHERE n.kind='call'
+```
+
+```sql
+-- view: cg_import
+SELECT s.id AS node,CASE WHEN s.kind='import_statement' THEN source_text('',nm.start,nm."end") WHEN s.kind='future_import_statement' THEN '__future__' WHEN mm.kind='relative_import' THEN coalesce(source_text('',rd.start,rd."end"),'') ELSE source_text('',mm.start,mm."end") END AS module_text,CASE WHEN s.kind='import_statement' THEN NULL WHEN it.kind='wildcard_import' THEN '*' ELSE source_text('',nm.start,nm."end") END AS name,source_text('',al.start,al."end") AS alias,CASE WHEN mm.kind='relative_import' THEN length(source_text('',px.start,px."end"))-length(replace(source_text('',px.start,px."end"),'.','')) ELSE 0 END AS level,(SELECT max(a.id) FROM cg_scope a WHERE a.body<s.id AND s.id<a.body_end) AS scope FROM node s JOIN node it ON it.parent=s.id AND (it.field='name' OR it.kind='wildcard_import') LEFT JOIN field itn ON itn.parent=it.id AND itn.field='name' AND itn.rank=0 AND it.kind='aliased_import' LEFT JOIN node nm ON nm.id=coalesce(itn.child,it.id) LEFT JOIN field ita ON ita.parent=it.id AND ita.field='alias' AND ita.rank=0 AND it.kind='aliased_import' LEFT JOIN node al ON al.id=ita.child LEFT JOIN field mf ON mf.parent=s.id AND mf.field='module_name' AND mf.rank=0 LEFT JOIN node mm ON mm.id=mf.child LEFT JOIN node px ON px.parent=mm.id AND px.kind='import_prefix' AND mm.kind='relative_import' LEFT JOIN node rd ON rd.parent=mm.id AND rd.kind='dotted_name' AND mm.kind='relative_import' WHERE s.kind IN ('import_statement','import_from_statement','future_import_statement')
+```
+
+Texts are source slices. Native normalises names: `python_identifier` applies NFKC, and `scope/python.rs::dotted` joins a dotted name's identifiers with `.`.
+
+- The views equal native's names exactly when a content has no non-ASCII identifier and no dotted name with whitespace or a comment inside.
+- `cg_refusal` lists the nodes that break that condition. A consumer of § 3.3 **refuses the content** when it has a row, naming `construct` (I9); it never uses raw text in their place.
+- On the corpus it has 0 rows: there are no non-ASCII identifiers (report § W2).
+
+```sql
+-- view: cg_refusal
+SELECT i.id AS node,'non-ASCII identifier (native NFKC-normalises names)' AS construct FROM identifier i WHERE rx_matches(i.name,'[^\x00-\x7F]') UNION ALL SELECT d.id,'dotted name with whitespace or a comment (native joins its identifiers)' FROM node d WHERE d.kind='dotted_name' AND d."end"-d.start<>(SELECT sum(x."end"-x.start)+count(*)-1 FROM child c JOIN node x ON x.id=c.child WHERE c.parent=d.id AND x.kind='identifier')
+```
+
+The views resolve no binding. `self.m()`, aliases, star imports and bases are resolved by native's binding analysis (`follow`, `last_bindings`, name forms), which § 3.4 exports as native computes it.
+
+### 3.4 Native call summary per content (`cgn_*`; agreed with S3)
+
+The reference graph's leaf is native's per-file `Summary`. It is **extracted by calling native's `calls::summarize`**, the entry the workspace uses: a scope table bounded by `MAX_TABLE_NODES`, read as a stub for `.pyi`. Native is changed for visibility only. Native qualifies every name through the file's `ModulePath`, so the summary is extracted per content under **symbolic module paths**, and the real module is substituted on the membership side.
+
+**Variants.** A content is summarised under three variants, plus the stub reading for contents seen at a `.pyi` path:
+
+| variant | symbolic `ModulePath` | selected by the real module path |
+|---|---|---|
+| `module` | 16 directory sentinels `\u{1}0` … `\u{1}15`, then the stem `\u{1}S`; a package | in a package, last segment not `__init__` |
+| `init` | the 16 sentinels, then `__init__`; a package | in a package, last segment `__init__`, more than one segment |
+| `unpackaged` | `ModulePath::stem` of `\u{1}S.py` (not a package) | outside any package (Ruff's stem fallback) |
+
+**Relations.** Each is a multiset of rows of texts and integers, with names spelled out:
+
+- `cgn_module(name)`
+- `cgn_def(idx, name, start, end, flags)`
+- `cgn_edge(def, name)`
+- `cgn_reference(def, name)`
+- `cgn_reference_target(name)`
+- `cgn_reference_alias(key, target)`
+- `cgn_reference_decorator(def, name)`
+- `cgn_target(name)`
+- `cgn_alias(key, target)`
+- `cgn_opaque(name)`
+- `cgn_star(name)`
+- `cgn_super(key, target, kind)`
+- `cgn_open(open, open_sites)`
+
+They are exported twice:
+
+- **`summary`**: as extracted. It is rule-independent and keyed by (content, variant, stub).
+- **`as_references[<links digest>]`**: after `Summary::as_references` with a rule's links (`siblingLinks`, `constructorFields`). It is keyed by the links' digest, a plan-level key (INVARIANTS I7). Batch 6 has one links value, shared by `internal-dead-code` and `imperative-private-functions`.
+
+**Names.** Each maximal run of `r` sentinel segments in a name is exported as the single token `\u{1}r`.
+
+**Substitution (membership side, S3).** It is defined by `cgnative::substitute` and checked by the differential.
+
+- With the real `ModulePath` `M` and the variant's symbolic length `s` (17, 17, 1), a token `\u{1}r` becomes `M.qualified(r - s + |M|)`, joined by `.`.
+- An empty prefix takes its following `.` with it.
+- The content is **refused** when:
+  - the count is negative: a relative import above the real package root;
+  - `qualified` is `None`: a real directory or stem keeps a dot after native's `file_stem`;
+  - the relative import level exceeds 17;
+  - the real module's first segment is `abc`, `typing`, `typing_extensions` or `functools`. Native compares qualified names with those modules' constants (`TRANSPARENT`, `functools.wraps`), and a symbolic module never equals them.
+- The variant is selected from the real `M` as in the table above.
+- `closure.rs`'s second spelling by path (`path_module`) is the linker's, and stays on the membership side.
+
+**Exactness.** `facts-a cg-native` compares, per corpus file, native under the real module path with the selected variant compacted and substituted, before and after `as_references` (no links, and batch 6's links). Results are in report § W2.
+
+**Export.** `facts-a cg-native --export F.jsonl.zst` writes zstd-compressed JSON lines, one per (content hash, variant, stub). The fields are `hash`, `variant`, `symbolic_len`, `stub`, `summary` (relation → rows) and `as_references` (links digest → relation → rows).
+
 ## 4. Exactness (the differential)
 
-`facts-a derived-check` evaluates the views per corpus file and, for every clause that holds one of the stage texts of § 2.2, runs the reference: the clause's own `nodes` (dump inputs with the gate and ancestor predicate forced `true`, or its syntax-spec tables) and its stages up to the target, by the SQL engine. Each target stage's rows are compared with the view's rows rendered into the stage's columns (§ 2.2 "renders"): values, types, and order after the § 2.3 reordering. Results and per-file cost: report § 2.
+`facts-a derived-check` evaluates the views per corpus file and, for every clause that holds one of the stage texts of § 2.2, runs the reference: the clause's own `nodes` (dump inputs with the gate and ancestor predicate forced `true`, or its syntax-spec tables) and its stages up to the target, by the SQL engine. Each target stage's rows are compared with the view's rows rendered into the stage's columns (§ 2.2 "renders"): values, types, and order after the § 2.3 reordering. It does the same for the § 2.4 compositions; there the gate-free matcher inputs are compared too (lowered algebra against the leaf executor, rows `input <name>`). With `--cg`, it also checks § 3.3's views against native. § 3.4 has its own differential (`facts-a cg-native`). Results and per-file cost: report § 2 and § W2.
 
 ## 5. Fact files v1
 
