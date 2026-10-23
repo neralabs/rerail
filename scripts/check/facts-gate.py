@@ -93,10 +93,15 @@ BATCH_RECORDINGS = {
         "batch-05-remaining-graph-probes.json", "batch-05-relational-probes.json"],
 }
 SUITES = BENCH / "facts/phase-2/s5-gate/suites"
-# The batch 1-5 checks the gate holds exact through the harness (replay and suite: 0 FP, 0 FN, 0
-# failures, refusals included). A check joins when S6's leaf constructs make it exact, and never
-# leaves: the list is a ratchet. Every other check is measured and reported, not gated.
-GATED: set[str] = set()
+# The batch 1-5 checks the gate holds exact through the harness (replay: 0 FP, 0 FN, 0 failures, at least
+# one positive and one clean call; suite: 0 FP, 0 FN, 0 failures; refusals are failures). A check joins
+# when S6's leaf constructs make it exact, and never leaves: the list is a ratchet. Every other check is
+# measured and reported, not gated.
+GATED: set[str] = {
+    # exact in both at 7d23ab4a7 (run 20261022T204421-gate)
+    "removed_compat_surfaces", "versioned_lifecycle_legacy_surfaces", "no_api_root_imports", "serverplan_grammar_surface",
+    "conn_or_txn_union", "render_fstrings",
+}
 
 # The generic mutants: (number, name, crate, site, what it breaks, the checks that run against it). They
 # target components, not rules: the delta generator (S3), the classifier and the plan audit (S1). Rewrite
@@ -480,17 +485,19 @@ def batch_checks(n: int) -> list[str]:
 
 
 def batch_verdict(n: int, per: dict[str, dict], unattributed: list[str]) -> tuple[bool, str, dict]:
-    """Per-check status (exact / refused / differs) for batch `n`; passes when every gated check of
-    the batch is exact and nothing unattributed failed while one is gated. A failure of any kind
-    (compile error, unsupported construct, panic, Rust source) is a refusal and counts against exactness."""
-    status = {c: ("refused" if v["failures"] else "differs" if v["fp"] or v["fn"] else "exact") for c, v in per.items()}
+    """Per-check status (exact / uncovered / differs / refused) for batch `n`; passes when every gated
+    check of the batch is exact and nothing unattributed failed while one is gated. A failure of any kind
+    (compile error, unsupported construct, panic, Rust source) is a refusal and counts against
+    exactness; a replayed check without both a positive and a clean call is uncovered."""
+    status = {c: ("refused" if v["failures"] else "differs" if v["fp"] or v["fn"] else
+                  "uncovered" if v.get("positive") == 0 or v.get("clean") == 0 else "exact") for c, v in per.items()}
     gated = [c for c in per if c in GATED]
     bad = [c for c in gated if status[c] != "exact"] + (["unattributed failures"] if unattributed and gated else [])
-    by = {s: [c for c in per if status[c] == s] for s in ("exact", "differs", "refused")}
+    by = {s: [c for c in per if status[c] == s] for s in ("exact", "uncovered", "differs", "refused")}
     summary = (f"b{n}: {len(by['exact'])}/{len(per)} checks exact, {sum(v['fp'] for v in per.values())} FP, "
                f"{sum(v['fn'] for v in per.values())} FN, {sum(v['failures'] for v in per.values()) + len(unattributed)} failures; "
                f"gated {len(gated) - len(bad)}/{len(gated)} exact"
-               + "".join(f"; {s}: {','.join(by[s])}" for s in ("differs", "refused") if by[s])
+               + "".join(f"; {s}: {','.join(by[s])}" for s in ("uncovered", "differs", "refused") if by[s])
                + (f"; unattributed failures {len(unattributed)}" if unattributed else "")
                + (f"; GATED NOT EXACT: {', '.join(bad)}" if bad else ""))
     return not bad, summary, {"checks": per, "status": status, "unattributed": unattributed[:20], "gated_failing": bad}
@@ -508,11 +515,13 @@ def check_harness_batch(d: Path, env: dict, n: int) -> tuple[bool, str, dict]:
     if not out.exists():
         return False, f"exit {status}", {}
     r = json.loads(out.read_text())
-    per: dict[str, dict] = {c: {"calls": 0, "exact_calls": 0, "fp": 0, "fn": 0, "failures": 0, "messages": []} for c in batch_checks(n)}
+    blank = {"calls": 0, "exact_calls": 0, "positive": 0, "clean": 0, "fp": 0, "fn": 0, "failures": 0, "messages": []}
+    per: dict[str, dict] = {c: {**blank, "messages": []} for c in batch_checks(n)}
     for row in r["rows"]:
-        v = per.setdefault(row["check"], {"calls": 0, "exact_calls": 0, "fp": 0, "fn": 0, "failures": 0, "messages": []})
+        v = per.setdefault(row["check"], {**blank, "messages": []})
         fails = row["engineFailures"] + row["statelessFailures"]
         v["calls"] += 1
+        v["positive" if row["positive"] else "clean"] += 1
         v["fp"] += len(row["falsePositives"])
         v["fn"] += len(row["falseNegatives"])
         v["failures"] += len(fails)
