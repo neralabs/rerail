@@ -8,6 +8,7 @@ mod facts;
 mod factfile;
 mod fstring;
 mod leaf;
+mod lowered;
 mod patcheck;
 mod physplan;
 mod volume;

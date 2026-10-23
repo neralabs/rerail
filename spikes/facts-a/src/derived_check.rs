@@ -23,6 +23,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+/// The oracle's gate-forced node tables (harness only: Spike A3's dump groups, moved here).
+mod a3dump;
 /// Stage name → view.
 const TARGETS: &[(&str, &str)] = &[
     ("ownership", "py_owner"),
@@ -61,6 +63,8 @@ struct Target {
     /// Per `extra` input: its lowering by the pattern front end (`rerail_facts::front::pattern`),
     /// the view side of a § 2.4 composition (`view_inputs`).
     lowered: Vec<(usize, Result<rerail_facts::ir::Lowered, String>)>,
+    /// The clause's dump group with its gate and ancestor predicate forced `true`.
+    dump: Option<a3dump::DumpGroup>,
 }
 
 /// A matcher input's rule over all of `N`, as the dump's gate is forced `true`: its nested `all`s
@@ -128,8 +132,9 @@ fn compile(policies: &str, shared: &BTreeMap<String, (String, Vec<(String, Strin
     for (ri, check) in BATCH6.iter().enumerate() {
         let doc = policy_doc(policies, check);
         let (config, scope) = call_config(&doc, &event);
+        let resolved_doc = policy::resolve(&doc, &config).unwrap();
         let mut rule = eval::Rule::compile(&doc, &config, scope.as_ref(), &facts::GRAMMAR).unwrap();
-        let mut found = rule_targets(&mut rule, ri, check, shared);
+        let mut found = rule_targets(&mut rule, &resolved_doc, ri, check, shared);
         let extra: BTreeMap<String, Vec<String>> = found
             .iter()
             .filter(|t| !t.extra.is_empty())
@@ -149,7 +154,7 @@ fn compile(policies: &str, shared: &BTreeMap<String, (String, Vec<(String, Strin
                 }
             }
             rule = eval::Rule::compile(&resolved, &config, scope.as_ref(), &facts::GRAMMAR).unwrap();
-            found = rule_targets(&mut rule, ri, check, shared);
+            found = rule_targets(&mut rule, &resolved, ri, check, shared);
             // The same gate-free inputs through the pattern front end (S1), matched by evidence.
             let program = rerail_facts::compile::compile_report(&resolved, &config, &mut crate::leaf::Leaves::new()).map(|c| c.program);
             for t in found.iter_mut() {
@@ -179,13 +184,19 @@ fn compile(policies: &str, shared: &BTreeMap<String, (String, Vec<(String, Strin
     (rules, targets)
 }
 
-fn rule_targets(rule: &mut Rule, ri: usize, check: &str, shared: &BTreeMap<String, (String, Vec<(String, String)>)>) -> Vec<Target> {
+fn rule_targets(rule: &mut Rule, resolved: &Json, ri: usize, check: &str, shared: &BTreeMap<String, (String, Vec<(String, String)>)>) -> Vec<Target> {
+    let mut utils: BTreeMap<String, Json> = BTreeMap::new();
+    for c in resolved["clauses"].as_array().into_iter().flatten() {
+        if let Some(u) = c.get("define").and_then(|d| d.get("utils")).and_then(Json::as_object) {
+            utils.extend(u.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+    }
     let mut targets = Vec::new();
     for ci in 0..rule.clauses.len() {
         let cid = rule.clauses[ci].id.clone();
         let mut stages = Vec::new();
         let mut composite = Vec::new();
-        {
+        let dump = {
             let Kind::Relational(plan) = &rule.clauses[ci].kind else { continue };
             for (si, st) in plan.stages.iter().enumerate() {
                 if let StagePlan::Query { name, .. } = st {
@@ -200,14 +211,21 @@ fn rule_targets(rule: &mut Rule, ri: usize, check: &str, shared: &BTreeMap<Strin
                     }
                 }
             }
-            if (stages.is_empty() && composite.is_empty()) || (plan.dump.is_none() && plan.syntax.is_none()) {
+            if stages.is_empty() && composite.is_empty() {
                 continue;
             }
-        }
+            let clause = resolved["clauses"].as_array().unwrap().iter().find(|c| c["id"] == cid.as_str()).unwrap();
+            let dump = a3dump::plan(&clause["relational"], plan, &rule.inputs, &mut rule.names, &facts::GRAMMAR, &utils).unwrap();
+            if dump.is_none() && plan.syntax.is_none() {
+                continue;
+            }
+            dump
+        };
         let tq = true_query(rule);
         let tq2 = true_query(rule);
-        let Kind::Relational(plan) = &mut rule.clauses[ci].kind else { unreachable!() };
-        if let Some(g) = plan.dump.as_mut() {
+        let Kind::Relational(plan) = &rule.clauses[ci].kind else { unreachable!() };
+        let mut dump = dump;
+        if let Some(g) = dump.as_mut() {
             g.gate = tq;
             if let Some(a) = g.ancestor.as_mut() {
                 a.1 = tq2;
@@ -233,8 +251,8 @@ fn rule_targets(rule: &mut Rule, ri: usize, check: &str, shared: &BTreeMap<Strin
                     if need.insert(j) {
                         work.push(j);
                     }
-                } else if plan.dump.is_some() {
-                    let member = plan.dump.as_ref().unwrap().members.iter().any(|m| plan.inputs[m.plan_input].0.eq_ignore_ascii_case(&r));
+                } else if let Some(g) = &dump {
+                    let member = g.members.iter().any(|m| plan.inputs[m.plan_input].0.eq_ignore_ascii_case(&r));
                     if !member {
                         let pi = plan.inputs.iter().position(|(n, _)| n.eq_ignore_ascii_case(&r)).unwrap_or_else(|| panic!("{cid}: read {r} is neither a stage nor an input"));
                         extra.insert(pi);
@@ -242,7 +260,7 @@ fn rule_targets(rule: &mut Rule, ri: usize, check: &str, shared: &BTreeMap<Strin
                 }
             }
         }
-        targets.push(Target { rule: ri, clause: ci, clause_id: cid, stages, composite, run: need.into_iter().collect(), extra: extra.into_iter().collect(), lowered: Vec::new() });
+        targets.push(Target { rule: ri, clause: ci, clause_id: cid, stages, composite, run: need.into_iter().collect(), extra: extra.into_iter().collect(), lowered: Vec::new(), dump });
     }
     targets
 }
@@ -672,13 +690,12 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
         let rule = &rules[tg.rule];
         let Kind::Relational(plan) = &rule.clauses[tg.clause].kind else { unreachable!() };
         let mut db = Db::new(source, path);
-        let dump = plan.dump.is_some();
+        let dump = tg.dump.is_some();
         let ctx = eval::FileCtx { f, path, source };
         // The tables the stages start from (dump members or syntax-spec tables, matcher inputs).
         let mut base: Vec<(String, Rc<Table>)> = Vec::new();
-        if let Some(g) = &plan.dump {
-            let mut ns = eval::DumpNs::default();
-            let Some((tables, _)) = eval::dump_rows(rule, g, plan, &ctx, &mut ns) else {
+        if let Some(g) = &tg.dump {
+            let Some(tables) = a3dump::rows(rule, g, plan, &ctx) else {
                 out.failures.push(format!("{path}: {}: dump refused", tg.clause_id));
                 continue;
             };
