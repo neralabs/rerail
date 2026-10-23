@@ -63,6 +63,58 @@ pub enum FileSource {
     /// A relation of the content's syntactic core (SCHEMA § 1.2, I2): what the pattern front end
     /// lowers matcher queries over.
     Core(CoreRel),
+    /// Native's call summary of this content (SCHEMA § 3.4, `cgn_*`), rows
+    /// `(__path, variant, …)` under every symbolic variant, after `as_references` with `links`
+    /// (the clause's `siblingLinks`/`constructorFields` as canonical JSON: part of the plan's
+    /// digest, INVARIANTS I7), in the reading the path selects (`.pyi`: stub).
+    Summary { rel: SummaryRel, links: Box<str> },
+}
+
+/// The relations of native's per-content call summary the reference graph reads (SCHEMA § 3.4).
+/// Values are texts as exported (`cgnative::render`); names spell sentinel runs as `\u{1}r`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SummaryRel {
+    Module,
+    Def,
+    Edge,
+    Alias,
+    ReferenceAlias,
+    Opaque,
+    Open,
+}
+
+impl SummaryRel {
+    pub const ALL: [SummaryRel; 7] = [SummaryRel::Module, SummaryRel::Def, SummaryRel::Edge, SummaryRel::Alias, SummaryRel::ReferenceAlias, SummaryRel::Opaque, SummaryRel::Open];
+
+    /// The export's relation name (`cgn_<rel>`).
+    pub fn name(self) -> &'static str {
+        match self {
+            SummaryRel::Module => "cgn_module",
+            SummaryRel::Def => "cgn_def",
+            SummaryRel::Edge => "cgn_edge",
+            SummaryRel::Alias => "cgn_alias",
+            SummaryRel::ReferenceAlias => "cgn_reference_alias",
+            SummaryRel::Opaque => "cgn_opaque",
+            SummaryRel::Open => "cgn_open",
+        }
+    }
+
+    /// The summary's own columns (after `__path, variant`).
+    pub fn columns(self) -> &'static [&'static str] {
+        match self {
+            SummaryRel::Module | SummaryRel::Opaque => &["name"],
+            SummaryRel::Def => &["idx", "name", "start", "end", "flags"],
+            SummaryRel::Edge => &["def", "name"],
+            SummaryRel::Alias | SummaryRel::ReferenceAlias => &["key", "target"],
+            SummaryRel::Open => &["open", "open_sites"],
+        }
+    }
+
+    pub fn schema(self) -> Vec<Column> {
+        let mut s = vec![Column::new("__path", Aff::Text), Column::new("variant", Aff::None)];
+        s.extend(self.columns().iter().map(|c| Column::new(c, Aff::None)));
+        s
+    }
 }
 
 /// The syntactic core and parser facts of one content, as relations (SCHEMA § 1.2/1.3). Rows in
@@ -141,10 +193,10 @@ pub enum AnySource {
     Input(InputId),
     Syntax(SyntaxTable),
     Stage(StageId),
-    /// The native reference graph `reference_edges(__path, __start, __end, target_path,
-    /// target_start, target_end, source_name, target_name, target_class)` (relational
-    /// `references`): cross-file.
-    ReferenceEdges,
+    /// A per-content core relation (`file(path)`: the member path of the content).
+    Core(CoreRel),
+    /// A per-content summary relation ([`FileSource::Summary`]).
+    Summary { rel: SummaryRel, links: Box<str> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,6 +265,9 @@ pub enum Func {
     /// `source_text(path, start, end)`: byte slice of a content's source. In a per-file plan the
     /// only readable path is the plan's own content.
     SourceText,
+    /// `rerail_refuse(construct)`: evaluating it refuses with the construct named (INVARIANTS
+    /// I9); a relation that may hold a row the engine cannot answer exactly computes it there.
+    Refuse,
 }
 
 /// A scalar expression evaluated over one row. `Col { depth: 0 }` reads the row of the operator

@@ -186,7 +186,7 @@ pub fn substitute(name: &str, real: &ModulePath, symbolic_len: usize) -> Result<
     Ok(out)
 }
 
-fn compacted(r: &Rendered) -> Rendered {
+pub fn compacted(r: &Rendered) -> Rendered {
     Rendered { rels: r.rels.iter().map(|(rel, rows)| (*rel, rows.iter().map(|row| row.iter().map(|c| compact(c)).collect()).collect())).collect() }
 }
 
@@ -212,12 +212,18 @@ fn links() -> Vec<(String, contracts::Key)> {
         ],
         "constructorFields": {"fieldToParameter": {"replace": "^_+", "by": ""}}
     });
-    let key = contracts::compile(v.get("siblingLinks"), v.get("constructorFields"), "links", 1 << 20).expect("links");
-    vec![("none".into(), 0), (blake3::hash(v.to_string().as_bytes()).to_hex()[..16].to_owned(), key)]
+    vec![("none".into(), 0), (blake3::hash(v.to_string().as_bytes()).to_hex()[..16].to_owned(), links_key(&v.to_string()).expect("links"))]
+}
+
+/// Native's compiled links for the canonical JSON `{"constructorFields": …, "siblingLinks": …}`
+/// (either key optional), as `calls::contracts::compile` reads a rule's declaration.
+pub fn links_key(links: &str) -> Result<contracts::Key, String> {
+    let v: Json = serde_json::from_str(links).map_err(|e| format!("links: {e}"))?;
+    contracts::compile(v.get("siblingLinks"), v.get("constructorFields"), "links", 1 << 20).map_err(|e| format!("links: {e:?}"))
 }
 
 /// Native's summary of one document under `module` (`calls::summarize`, as the workspace calls it).
-fn summary(doc: &rerail_engine::code_rule_dsl::tape::TapeDoc, path: &str, module: &ModulePath, has_errors: bool, bytes: usize) -> Summary {
+pub fn summary(doc: &rerail_engine::code_rule_dsl::tape::TapeDoc, path: &str, module: &ModulePath, has_errors: bool, bytes: usize) -> Summary {
     let grep = AstGrep::doc(doc.clone());
     summarize(grep.root(), GrammarDialect::Python, path, Some(module), has_errors, bytes, None).0
 }

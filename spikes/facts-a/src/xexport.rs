@@ -2,9 +2,11 @@
 //! relations of a rule's repository clauses, per (path, content). The rule is compiled by
 //! `rerail_facts::compile`; each export's producer (`Program.per_file[producer]`, sink
 //! `Sink::Export`) runs over one content: its pattern inputs through this crate's leaf executor
-//! (`eval::Input::rows` over facts), its stages and export relations through the reference
-//! evaluator (`rerail_facts::reference`). Output: one JSON line per job,
+//! (`eval::Input::rows` over facts), `file(path)` and native's call summaries (`cgn_*`, SCHEMA
+//! § 3.4, through `cgnative`) as fact relations, its stages and export relations through the
+//! reference evaluator (`rerail_facts::reference`). Output: one JSON line per job,
 //! `{"path", "hash", "exports": {"<id>": [[v, …], …]}, "failure"}`.
+use crate::cgnative::{self, Variant};
 use crate::eval;
 use crate::facts;
 use rerail_facts::ir::{self, FileSource, InputKind, Plan, Projection, Sink};
@@ -148,18 +150,48 @@ fn file_inputs(p: &Plan<FileSource>, out: &mut std::collections::BTreeSet<u32>) 
 impl Exporter {
     fn run(&self, path: &str, source: Arc<String>) -> Result<BTreeMap<u32, Vec<Vec<V>>>, String> {
         let mut out = BTreeMap::new();
-        if !self.rule.scope.matches(path) {
-            return Ok(out);
-        }
-        let f = match facts::build(path, source.clone())? {
-            facts::Built::Facts(f) => f,
-            facts::Built::Unparsed => return Err("unparsed".into()),
+        // Outside the rule's scope a content has no inputs and no summary; it is still a member
+        // (`file(path)`), which views over the path set read (module paths, package markers).
+        let in_scope = self.rule.scope.matches(path);
+        let f = if in_scope {
+            match facts::build(path, source.clone())? {
+                facts::Built::Facts(f) => Some(f),
+                facts::Built::Unparsed => return Err("unparsed".into()),
+            }
+        } else {
+            None
         };
-        let ctx = eval::FileCtx { f: &f, path, source: &source };
-        let memo = crate::ast::FileMemo::default();
+        // Native's summaries of this content under each variant, per links, in the path's reading.
+        let summaries: std::cell::RefCell<BTreeMap<Box<str>, Vec<(Variant, cgnative::Rendered)>>> = Default::default();
+        let summary_rows = |rel: ir::SummaryRel, links: &Box<str>| -> Result<Vec<Vec<V>>, String> {
+            let Some(f) = &f else { return Ok(Vec::new()) };
+            let mut cache = summaries.borrow_mut();
+            if !cache.contains_key(links) {
+                let key = cgnative::links_key(links)?;
+                let tape = f.tape.as_ref().ok_or("no tape")?;
+                let reading = if path.ends_with(".pyi") { "x.pyi" } else { "x.py" };
+                let all = Variant::ALL.iter().map(|v| (*v, cgnative::compacted(&cgnative::render(&cgnative::summary(tape, reading, &v.module(), f.syntax_errors, source.len()).as_references(key))))).collect();
+                cache.insert(links.clone(), all);
+            }
+            let mut out = Vec::new();
+            for (v, r) in &cache[links] {
+                for row in r.rels.get(rel.name()).map(Vec::as_slice).unwrap_or_default() {
+                    let mut x = vec![V::text(path), V::text(v.name())];
+                    x.extend(row.iter().map(|c| V::text(c)));
+                    out.push(x);
+                }
+            }
+            Ok(out)
+        };
         let text: std::rc::Rc<str> = std::rc::Rc::from(source.as_str());
         let mut rows: BTreeMap<u32, Vec<Vec<V>>> = BTreeMap::new();
+        let memo = crate::ast::FileMemo::default();
         for (id, (idx, schema)) in &self.inputs {
+            let Some(f) = &f else {
+                rows.insert(*id, Vec::new());
+                continue;
+            };
+            let ctx = eval::FileCtx { f, path, source: &source };
             let r = self.rule.inputs[*idx].rows(&ctx, schema, &memo, &text);
             if let Some(u) = r.unsupported {
                 return Err(format!("input {id}: {u}"));
@@ -182,6 +214,8 @@ impl Exporter {
                 },
                 &|s| match s {
                     FileSource::Input(i) => rows.get(i).cloned().ok_or_else(|| format!("input {i} not computed")),
+                    FileSource::Core(ir::CoreRel::File) => Ok(vec![vec![V::text(path)]]),
+                    FileSource::Summary { rel, links } => summary_rows(*rel, links),
                     other => Err(format!("{other:?} not wired in xexport")),
                 },
             )?;

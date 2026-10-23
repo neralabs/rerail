@@ -1069,6 +1069,7 @@ impl<'a, S> Evaluator<'a, S> {
                     _ => V::Null,
                 }
             }
+            Func::Refuse => return Err(format!("refused: {}", sv::to_text(&a(0)?).map_or_else(|| "NULL".to_owned(), |t| t.to_string()))),
             Func::JsonArray => {
                 let mut items = Vec::with_capacity(args.len());
                 for i in 0..args.len() {
