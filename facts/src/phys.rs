@@ -42,7 +42,9 @@ pub enum Op {
     Sort { keys: Vec<String>, limit: Option<String>, offset: Option<String> },
     Union { all: bool },
     Distinct { prefix: u16 },
-    Fixpoint { seminaive: bool, set: bool },
+    /// `closure`: the executor's closure operator (a set fixpoint whose step joins the previous
+    /// level to one edge relation); otherwise evaluated level by level.
+    Fixpoint { seminaive: bool, set: bool, closure: bool },
     Project { exprs: Vec<String> },
     /// Reserved for rewrite R-tree-interval: descendants of `root_col` as `(id, subtree_end]`.
     IntervalProbe { root_col: u16 },
@@ -94,7 +96,7 @@ fn op_text(op: &Op) -> String {
         Op::Sort { keys, limit, offset } => format!("Sort ({}){}{}", list(keys), limit.as_ref().map(|l| format!(" limit {l}")).unwrap_or_default(), offset.as_ref().map(|o| format!(" offset {o}")).unwrap_or_default()),
         Op::Union { all } => format!("Union{}", if *all { " all" } else { "" }),
         Op::Distinct { prefix } => format!("Distinct prefix {prefix}"),
-        Op::Fixpoint { seminaive, set } => format!("Fixpoint{}{}", if *seminaive { " semi-naive" } else { "" }, if *set { " set" } else { " bag" }),
+        Op::Fixpoint { seminaive, set, closure } => format!("Fixpoint{}{}{}", if *seminaive { " semi-naive" } else { "" }, if *set { " set" } else { " bag" }, if *closure { " closure" } else { " levels" }),
         Op::Project { exprs } => format!("Project ({})", list(exprs)),
         Op::IntervalProbe { root_col } => format!("IntervalProbe root #{root_col}"),
         Op::MemoPredicate { digest } => format!("MemoPredicate {digest}"),

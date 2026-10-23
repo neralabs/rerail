@@ -26,6 +26,9 @@ sqlparser = "0.58"
 globset = "=0.4.20"
 rusqlite = { version = "=0.40.2", features = ["bundled", "functions"] }
 zstd = "=0.14.2"
+# Live and peak heap bytes for FACTS_MEMTRACE (the process allocator is the engine's jemalloc).
+tikv-jemalloc-ctl = { version = "=0.6.1", features = ["stats"] }
+tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
 
 [features]
 # The gate's seeded mutants (src/mutant.rs, FACTS_MUTANT); off in every normal build.

@@ -30,7 +30,6 @@ struct Worker {
     budget: eval::BudgetRows,
     spill_bytes: u64,
     files: Vec<FileStat>,
-    compile_ns: u64,
 }
 
 /// The suite's call configuration for each selected check (default: batch 6): `production_scope`,
@@ -47,7 +46,8 @@ pub(crate) fn compile_checks(policies: &str, checks: &[String]) -> (Vec<eval::Ru
             Err(e) => refused.push(eval::Failure { check: check.clone(), clause: String::new(), path: String::new(), message: format!("compile: {e}") }),
         }
         if std::env::var_os("FACTS_MEMTRACE").is_some() {
-            eprintln!("compiled {check}: rss {} MB", cur_rss() >> 20);
+            let rx = *crate::rx::TRACE.lock();
+            eprintln!("compiled {check}: rss {} MB, heap {} MB; regexes {} holding {} MB", cur_rss() >> 20, heap_in_use() >> 20, rx.0, rx.1 >> 20);
         }
     }
     (rules, refused)
@@ -84,10 +84,7 @@ fn walk_ext(root: &Path, ext: &str) -> Vec<String> {
     out
 }
 
-fn worker(paths: &[String], root: &Path, policies: &str, checks: &[String], next: &AtomicUsize, spill_dir: &Path, wi: usize) -> Worker {
-    let t0 = Instant::now();
-    let (rules, _) = compile_checks(policies, checks);
-    let compile_ns = t0.elapsed().as_nanos() as u64;
+fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsize, spill_dir: &Path, wi: usize) -> Worker {
     let mut out = eval::Output::default();
     let mut repo = crate::spill::Spill::new(spill_dir, wi);
     let mut budget = BTreeMap::new();
@@ -115,7 +112,7 @@ fn worker(paths: &[String], root: &Path, policies: &str, checks: &[String], next
                 stat.fact_bytes = f.bytes() as u64;
                 let t_eval = Instant::now();
                 let ctx = eval::FileCtx { f: &f, path, source: &source };
-                eval::eval_file(&rules, &ctx, &mut out, &mut repo, &mut budget);
+                eval::eval_file(rules, &ctx, &mut out, &mut repo, &mut budget);
                 stat.eval_ns = t_eval.elapsed().as_nanos() as u64;
             }
             Ok(facts::Built::Unparsed) | Err(_) => {
@@ -126,7 +123,7 @@ fn worker(paths: &[String], root: &Path, policies: &str, checks: &[String], next
         stat.extract_ns = ns.extract;
         files.push(stat);
     }
-    Worker { out, budget, spill_bytes: repo.finish(), files, compile_ns }
+    Worker { out, budget, spill_bytes: repo.finish(), files }
 }
 
 /// Nearest-rank percentile of sorted values.
@@ -162,6 +159,25 @@ pub fn cur_rss() -> u64 {
     if n == size { info.pti_resident_size } else { 0 }
 }
 
+/// Live heap bytes (jemalloc's `stats.allocated`, after an epoch advance): unlike RSS, this falls
+/// when memory is freed. Costs a stats merge; for tracing and once-per-run measurements.
+pub fn heap_in_use() -> u64 {
+    let _ = tikv_jemalloc_ctl::epoch::advance();
+    tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) as u64
+}
+
+/// This thread's peak net allocation since `thread_peak_reset` (jemalloc `thread.peak.read`).
+pub fn thread_peak() -> u64 {
+    // SAFETY: `thread.peak.read` is a u64 read-only mallctl.
+    unsafe { tikv_jemalloc_ctl::raw::read::<u64>(b"thread.peak.read\0") }.unwrap_or(0)
+}
+
+/// Restarts `thread_peak` from this thread's current net allocation.
+pub fn thread_peak_reset() {
+    // SAFETY: `thread.peak.reset` takes and returns nothing: every pointer null, length 0.
+    unsafe { tikv_jemalloc_sys::mallctl(c"thread.peak.reset".as_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+}
+
 pub fn repo(args: &[String]) {
     let home = std::env::var("HOME").unwrap();
     let root = arg(args, "--root").unwrap_or(format!("{home}/rerail-bench/nera-data-layer-2b1504ad"));
@@ -177,11 +193,20 @@ pub fn repo(args: &[String]) {
     // Repository-partition rows go to a per-run temporary directory during the file phase.
     let spill_dir = std::env::temp_dir().join(format!("facts-a-spill-{}", std::process::id()));
     std::fs::create_dir_all(&spill_dir).unwrap();
+    // The compiled rules: one immutable object per process, shared by every worker and by the
+    // repository phase.
+    let (rss_before_compile, heap_before_compile) = (cur_rss(), heap_in_use());
+    let t_compile = Instant::now();
+    let (rules, refused) = compile_checks(&policies, &checks);
+    let rules: Arc<[eval::Rule]> = rules.into();
+    let compile_ns = t_compile.elapsed().as_nanos() as u64;
+    let compiled_rss = cur_rss().saturating_sub(rss_before_compile);
+    let compiled_heap = heap_in_use().saturating_sub(heap_before_compile);
     let t_workers = Instant::now();
     let workers: Vec<Worker> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads).map(|wi| {
-            let (paths, policies, checks, next, spill_dir) = (&paths, &policies, &checks, &next, &spill_dir);
-            s.spawn(move || worker(paths, root, policies, checks, next, spill_dir, wi))
+            let (rules, paths, next, spill_dir) = (&*rules, &paths, &next, &spill_dir);
+            s.spawn(move || worker(rules, paths, root, next, spill_dir, wi))
         }).collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
@@ -190,7 +215,7 @@ pub fn repo(args: &[String]) {
     let cur_after_workers = cur_rss();
     // Merge on this thread, then the repository partitions and budgets once.
     let t_merge = Instant::now();
-    let (rules, refused) = compile_checks(&policies, &checks);
+
     let mut out = eval::Output::default();
     out.failures.extend(refused);
     // Files the facts do not cover (`.rs`): regex clauses read their text, as in `facts-a calls`
@@ -203,7 +228,6 @@ pub fn repo(args: &[String]) {
     }
     let mut budget: eval::BudgetRows = BTreeMap::new();
     let mut files = Vec::new();
-    let mut compile_ns = Vec::new();
     let mut spill_bytes = 0u64;
     for w in workers {
         out.merge(w.out);
@@ -211,7 +235,6 @@ pub fn repo(args: &[String]) {
             budget.entry(k).or_default().extend(rows);
         }
         files.extend(w.files);
-        compile_ns.push(w.compile_ns);
         spill_bytes += w.spill_bytes;
     }
     let merge_ns = t_merge.elapsed().as_nanos() as u64;
@@ -272,11 +295,14 @@ pub fn repo(args: &[String]) {
         "phases_ns": {
             "walk": walk_ns,
             "workers_wall": workers_wall_ns,
-            "worker_compile": compile_ns,
-            "merge_and_compile": merge_ns,
+            "compile": compile_ns,
+            "merge": merge_ns,
             "finish": finish_ns,
         },
         "spill_bytes": spill_bytes,
+        // What the compiled rules added: resident bytes, and live heap bytes (the object's size).
+        "compiled_rules_rss_bytes": compiled_rss,
+        "compiled_rules_heap_bytes": compiled_heap,
         "max_rss_bytes": {
             "after_workers": rss_after_workers,
             "after_merge": rss_after_merge,

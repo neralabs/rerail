@@ -39,10 +39,28 @@ pub enum Column {
     /// Concatenation (UNION ALL): each part with its first row, in order, none empty.
     Chain(Vec<(u32, Rc<Column>)>),
     /// Text read from the file: a cell is a byte range of `source` (a node's text, read on
-    /// first use and kept) or a value. Node texts nest, so storing them would cost
-    /// O(nodes × depth) bytes.
-    Text { source: Rc<str>, cells: Vec<TextCell>, cache: Vec<std::cell::OnceCell<Rc<str>>> },
+    /// first use and kept) or, with start `TEXT_VAL`, an index into `vals`. Node texts nest, so
+    /// storing them would cost O(nodes × depth) bytes. 8 bytes a row; the read cache (16 bytes a
+    /// row) exists once a row is read.
+    Text { source: Rc<str>, cells: Vec<(u32, u32)>, vals: Vec<V>, cache: std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<str>>]>> },
+    /// The same value on every row (a file's path).
+    Const(V),
+    /// Integers from fact columns (ids, offsets, lines, ordinals): 4 bytes a row, `U32_NULL` is
+    /// NULL.
+    U32(Vec<u32>),
+    /// Interned names from fact columns (node kinds), `facts::NONE` is NULL.
+    Sym(Vec<u32>),
+    /// Tree reachability as interval membership (I2: the descendants of `id` are the nodes in
+    /// `(id, subtree_end)`): per root `k`, rows `offs[k]..offs[k + 1]` are `eligible[lo[k]..]`,
+    /// the eligible nodes of its subtree in preorder. `node` selects the column: the reached
+    /// node, or the root. O(roots + nodes) bytes for O(roots × depth) rows.
+    Interval { roots: Rc<[u32]>, lo: Rc<[u32]>, offs: Rc<[u32]>, eligible: Rc<[u32]>, node: bool },
 }
+
+/// `Column::U32`'s NULL.
+pub const U32_NULL: u32 = u32::MAX;
+/// A `Column::Text` cell holding a value (`(TEXT_VAL, index into vals)`).
+const TEXT_VAL: u32 = u32::MAX;
 
 #[derive(Debug)]
 pub enum TextCell {
@@ -52,8 +70,18 @@ pub enum TextCell {
 
 impl Column {
     pub fn text(source: Rc<str>, cells: Vec<TextCell>) -> Column {
-        let cache = (0..cells.len()).map(|_| std::cell::OnceCell::new()).collect();
-        Column::Text { source, cells, cache }
+        let mut vals = Vec::new();
+        let cells = cells
+            .into_iter()
+            .map(|c| match c {
+                TextCell::Span(s, e) => (s, e),
+                TextCell::Val(v) => {
+                    vals.push(v);
+                    (TEXT_VAL, vals.len() as u32 - 1)
+                }
+            })
+            .collect();
+        Column::Text { source, cells, vals, cache: std::cell::OnceCell::new() }
     }
 
     pub fn get(&self, r: u32) -> V {
@@ -74,10 +102,26 @@ impl Column {
                 let p = parts.partition_point(|(start, _)| *start <= r) - 1;
                 parts[p].1.get(r - parts[p].0)
             }
-            Column::Text { source, cells, cache } => match &cells[r as usize] {
-                TextCell::Span(s, e) => V::Text(cache[r as usize].get_or_init(|| Rc::from(&source[*s as usize..*e as usize])).clone()),
-                TextCell::Val(v) => v.clone(),
+            Column::Text { source, cells, vals, cache } => match cells[r as usize] {
+                (TEXT_VAL, i) => vals[i as usize].clone(),
+                (s, e) => {
+                    let cache = cache.get_or_init(|| (0..cells.len()).map(|_| std::cell::OnceCell::new()).collect());
+                    V::Text(cache[r as usize].get_or_init(|| Rc::from(&source[s as usize..e as usize])).clone())
+                }
             },
+            Column::Const(v) => v.clone(),
+            Column::U32(v) => match v[r as usize] {
+                U32_NULL => V::Null,
+                x => V::Int(x as i64),
+            },
+            Column::Sym(v) => match v[r as usize] {
+                crate::facts::NONE => V::Null,
+                s => V::Text(crate::facts::name(s)),
+            },
+            Column::Interval { roots, lo, offs, eligible, node } => {
+                let k = offs.partition_point(|&o| o <= r) - 1;
+                V::Int(if *node { eligible[(lo[k] + (r - offs[k])) as usize] } else { roots[k] } as i64)
+            }
         }
     }
 
@@ -99,14 +143,19 @@ impl Column {
             Column::Vals(v) => v.len() * std::mem::size_of::<V>() + v.iter().map(|x| if let V::Text(s) = x { s.len() } else { 0 }).sum::<usize>(),
             Column::Gather { idx, .. } => idx.as_ref().map_or(0, |i| i.len() * 4),
             Column::Chain(p) => p.len() * 24,
-            Column::Text { cells, cache, .. } => cells.len() * (std::mem::size_of::<TextCell>() + 16) + cache.iter().filter_map(|c| c.get()).map(|s| s.len()).sum::<usize>(),
+            Column::Text { cells, vals, cache, .. } => {
+                cells.len() * 8 + vals.len() * std::mem::size_of::<V>() + cache.get().map_or(0, |c| c.len() * 16 + c.iter().filter_map(|c| c.get()).map(|s| s.len()).sum::<usize>())
+            }
+            Column::Const(_) => std::mem::size_of::<V>(),
+            Column::U32(v) | Column::Sym(v) => v.len() * 4,
+            Column::Interval { roots, lo, offs, eligible, .. } => (roots.len() + lo.len() + offs.len() + eligible.len()) * 4,
         }
     }
 
     /// Levels of indirection a read goes through.
     fn depth(&self) -> usize {
         match self {
-            Column::Vals(_) | Column::Text { .. } => 0,
+            Column::Vals(_) | Column::Text { .. } | Column::Const(_) | Column::U32(_) | Column::Sym(_) | Column::Interval { .. } => 0,
             Column::Gather { src, .. } => 1 + src.depth(),
             Column::Chain(p) => 1 + p.iter().map(|(_, c)| c.depth()).max().unwrap_or(0),
         }
@@ -324,9 +373,19 @@ pub enum AggFn {
     Total,
 }
 
+/// A planned literal. Plans are shared by every worker (`Send + Sync`), so a text literal is an
+/// index into its statement's `texts`; each execution materialises it once, on first use.
+#[derive(Clone, Copy, Debug)]
+pub enum Lit {
+    Null,
+    Int(i64),
+    Real(f64),
+    Text(u32),
+}
+
 #[derive(Clone, Debug)]
 pub enum PE {
-    Lit(V),
+    Lit(Lit),
     Col { depth: u16, item: u16, col: u16 },
     Agg(u16),
     Win(u16),
@@ -457,6 +516,8 @@ pub struct Statement {
     pub(crate) subs: Vec<SubPlan>,
     pub(crate) n_slots: usize,
     pub reads: Vec<String>,
+    /// Text literals (`Lit::Text`).
+    pub(crate) texts: Vec<Box<str>>,
 }
 impl Statement {
     pub fn schema(&self) -> &Schema {
@@ -494,6 +555,7 @@ pub struct Planner<'c> {
     n_slots: usize,
     bounds: Vec<SubBound>,
     reads: Vec<String>,
+    texts: Vec<Box<str>>,
 }
 
 fn lc(s: &str) -> String {
@@ -561,21 +623,21 @@ fn probe_eq(c: &PE, i: usize, probe: &mut Probe) -> bool {
 
 pub fn plan(sql: &str, catalog: &Catalog) -> Result<Statement, String> {
     let q = parse::parse_query(sql)?;
-    let mut p = Planner { catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new() };
+    let mut p = Planner { catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new(), texts: Vec::new() };
     let root = p.query(&q)?;
     let mut seen = std::collections::BTreeSet::new();
     let reads = p.reads.into_iter().filter(|r| seen.insert(r.clone())).collect();
-    Ok(Statement { root, subs: p.subs, n_slots: p.n_slots, reads })
+    Ok(Statement { root, subs: p.subs, n_slots: p.n_slots, reads, texts: p.texts })
 }
 
 /// Plans a scalar expression over one table's columns (a `deferred` column).
 pub fn plan_scalar(sql: &str, schema: &Schema) -> Result<(PE, Statement), String> {
     let e = parse::parse_expr(sql)?;
     let catalog = Catalog::new();
-    let mut p = Planner { catalog: &catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new() };
+    let mut p = Planner { catalog: &catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new(), texts: Vec::new() };
     p.scopes.push(Scope { items: vec![ScopeItem { name: "__row".into(), schema: schema.clone() }], aliases: Vec::new(), aggs: Vec::new(), wins: Vec::new(), allow_agg: false });
     let pe = p.expr(&e)?;
-    let stmt = Statement { root: PQuery { ctes: vec![], body: PBody::Compound(Box::new(PBody::Select(Box::new(empty_select()))), SetOp::UnionAll, Box::new(PBody::Select(Box::new(empty_select()))), Schema::default()), order: vec![], order_on_output: false, limit: None, offset: None, out: Schema::default() }, subs: p.subs, n_slots: p.n_slots, reads: p.reads };
+    let stmt = Statement { root: PQuery { ctes: vec![], body: PBody::Compound(Box::new(PBody::Select(Box::new(empty_select()))), SetOp::UnionAll, Box::new(PBody::Select(Box::new(empty_select()))), Schema::default()), order: vec![], order_on_output: false, limit: None, offset: None, out: Schema::default() }, subs: p.subs, n_slots: p.n_slots, reads: p.reads, texts: p.texts };
     Ok((pe, stmt))
 }
 
@@ -587,6 +649,18 @@ impl<'c> Planner<'c> {
     fn new_slot(&mut self) -> usize {
         self.n_slots += 1;
         self.n_slots - 1
+    }
+
+    fn lit(&mut self, v: &V) -> PE {
+        PE::Lit(match v {
+            V::Null => Lit::Null,
+            V::Int(i) => Lit::Int(*i),
+            V::Real(f) => Lit::Real(*f),
+            V::Text(s) => {
+                self.texts.push(Box::from(&**s));
+                Lit::Text(self.texts.len() as u32 - 1)
+            }
+        })
     }
 
     fn query(&mut self, q: &Query) -> Result<PQuery, String> {
@@ -972,7 +1046,7 @@ impl<'c> Planner<'c> {
 
     fn expr(&mut self, e: &Expr) -> Result<PE, String> {
         Ok(match e {
-            Expr::Lit(v) => PE::Lit(v.clone()),
+            Expr::Lit(v) => self.lit(v),
             Expr::Col { table, name } => match self.resolve(table.as_deref(), name) {
                 Ok(pe) => pe,
                 Err(err) => {
@@ -1101,7 +1175,7 @@ impl<'c> Planner<'c> {
                 PE::Case { operand: po.map(Box::new), aff, whens: pw, else_: pe.map(Box::new) }
             }
             Expr::Cast(x, ty) => match (&**x, Aff::of_type(ty)) {
-                (Expr::Blob(text), Aff::Text) => PE::Cast(Box::new(PE::Lit(V::text(text))), Aff::Text),
+                (Expr::Blob(text), Aff::Text) => PE::Cast(Box::new(self.lit(&V::text(text))), Aff::Text),
                 _ => PE::Cast(Box::new(self.expr(x)?), Aff::of_type(ty)),
             },
             Expr::InList { e, list, not } => {
@@ -1305,26 +1379,129 @@ impl<'a> Db<'a> {
     pub fn new(source: &'a str, path: &'a str) -> Self {
         Db { tables: Default::default(), source, path, indexes: Default::default() }
     }
+    /// Drops the stored table `name` (lowercase) and every clause-level index over it, after its
+    /// last reader.
+    pub fn release(&mut self, name: &str) {
+        if let Some(t) = self.tables.remove(name) {
+            self.indexes.get_mut().retain(|_, (it, _)| !Rc::ptr_eq(it, &t));
+        }
+    }
+    /// Bytes held by the stored tables' columns and by the clause-level indexes (`FACTS_MEMTRACE`).
+    pub fn bytes(&self) -> (usize, usize) {
+        (self.tables.values().map(|t| t.bytes()).sum(), self.indexes.borrow().values().map(|(_, ix)| ix.bytes()).sum())
+    }
 }
 
-type Index = FxHashMap<Vec<Key>, Vec<u32>>;
+/// A hash index of `table` on `cols` (each value compared under its affinity): rows grouped by
+/// key, each group's rows ascending and contiguous in `rows`. Keys are not stored: a group is
+/// found by its key's hash and confirmed against its first row, so the index costs 4 bytes a row
+/// plus ~32 bytes a distinct key. A row with a NULL key part equals nothing and is left out.
+struct Index {
+    table: Rc<Table>,
+    cols: Vec<u16>,
+    affs: Vec<Aff>,
+    /// Key hash → first group with that hash.
+    heads: FxHashMap<u64, u32>,
+    groups: Vec<Group>,
+    rows: Vec<u32>,
+}
 
-/// Row numbers of `t` by their key on `cols` (each value compared under its affinity); a row
-/// with a NULL key part equals nothing and is left out.
-fn build_index(t: &Table, cols: &[u16], affs: &[Aff]) -> Index {
-    let mut ix: Index = FxHashMap::default();
-    let cs: Vec<&Column> = cols.iter().map(|&c| &*t.cols[c as usize]).collect();
-    'rows: for ri in 0..t.len() as u32 {
+struct Group {
+    /// A row with the group's key.
+    rep: u32,
+    start: u32,
+    len: u32,
+    /// The next group with the same hash (`u32::MAX`: none).
+    next: u32,
+}
+
+fn key_hash(key: &[Key]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    key.hash(&mut h);
+    h.finish()
+}
+
+impl Index {
+    fn build(table: &Rc<Table>, cols: &[u16], affs: &[Aff]) -> Index {
+        let mut ix = Index { table: table.clone(), cols: cols.to_vec(), affs: affs.to_vec(), heads: FxHashMap::default(), groups: Vec::new(), rows: Vec::new() };
+        // Pass 1: each row's group (`u32::MAX`: a NULL key part).
+        let mut of_row: Vec<u32> = Vec::with_capacity(table.len());
         let mut key = Vec::with_capacity(cols.len());
-        for (c, a) in cs.iter().zip(affs) {
-            match sv::key(&sv::compare_affinity(&c.get(ri), *a)) {
-                Some(kk) => key.push(kk),
-                None => continue 'rows,
+        for ri in 0..table.len() as u32 {
+            if !ix.row_key(ri, &mut key) {
+                of_row.push(u32::MAX);
+                continue;
+            }
+            let h = key_hash(&key);
+            let g = match ix.find(h, &key) {
+                Some(g) => g,
+                None => {
+                    let g = ix.groups.len() as u32;
+                    let next = ix.heads.insert(h, g).unwrap_or(u32::MAX);
+                    ix.groups.push(Group { rep: ri, start: 0, len: 0, next });
+                    g
+                }
+            };
+            ix.groups[g as usize].len += 1;
+            of_row.push(g);
+        }
+        // Pass 2: counting sort by group, rows ascending within a group.
+        let mut at = 0u32;
+        for g in ix.groups.iter_mut() {
+            g.start = at;
+            at += g.len;
+            g.len = 0;
+        }
+        ix.rows = vec![0; at as usize];
+        for (ri, &g) in of_row.iter().enumerate() {
+            if g != u32::MAX {
+                let g = &mut ix.groups[g as usize];
+                ix.rows[(g.start + g.len) as usize] = ri as u32;
+                g.len += 1;
             }
         }
-        ix.entry(key).or_default().push(ri);
+        ix
     }
-    ix
+
+    /// Row `r`'s key into `out`; false when a part is NULL.
+    fn row_key(&self, r: u32, out: &mut Vec<Key>) -> bool {
+        out.clear();
+        for (&c, &a) in self.cols.iter().zip(&self.affs) {
+            match sv::key(&sv::compare_affinity(&self.table.cols[c as usize].get(r), a)) {
+                Some(k) => out.push(k),
+                None => return false,
+            }
+        }
+        true
+    }
+
+    /// Whether row `r`'s key equals `key`.
+    fn row_is(&self, r: u32, key: &[Key]) -> bool {
+        self.cols.iter().zip(&self.affs).zip(key).all(|((&c, &a), k)| sv::key(&sv::compare_affinity(&self.table.cols[c as usize].get(r), a)).as_ref() == Some(k))
+    }
+
+    fn find(&self, h: u64, key: &[Key]) -> Option<u32> {
+        let mut g = *self.heads.get(&h)?;
+        while g != u32::MAX {
+            let grp = &self.groups[g as usize];
+            if self.row_is(grp.rep, key) {
+                return Some(g);
+            }
+            g = grp.next;
+        }
+        None
+    }
+
+    /// The rows whose key equals `key`, ascending.
+    fn get(&self, key: &[Key]) -> Option<&[u32]> {
+        let g = &self.groups[self.find(key_hash(key), key)? as usize];
+        Some(&self.rows[g.start as usize..(g.start + g.len) as usize])
+    }
+
+    fn bytes(&self) -> usize {
+        self.rows.len() * 4 + self.groups.len() * (std::mem::size_of::<Group>() + 16)
+    }
 }
 
 /// A join's hash indexes per item: the plain equality probe's, and each OR branch's.
@@ -1343,6 +1520,8 @@ pub struct Exec<'d, 'a> {
     derived: RefCell<FxHashMap<usize, Rc<Table>>>,
     keep: RefCell<Vec<Rc<Table>>>,
     pub error: RefCell<Option<String>>,
+    /// The statement's text literals as values, materialised on first use.
+    texts: Vec<std::cell::OnceCell<V>>,
 }
 
 enum SubResult {
@@ -1392,18 +1571,19 @@ impl Kept {
 }
 
 /// A select's output under construction: per output column, either the (item, column) it reads
-/// — recorded as one row index per binding per item, shared by every column of that item — or
-/// the values its expression evaluated to.
+/// — recorded as one row index per binding per item, shared by every column of that item — or a
+/// literal (one value for every row), or the values its expression evaluated to.
 struct Out<'p> {
     exprs: Vec<&'p PE>,
     src: Vec<Option<(usize, usize)>>,
+    konst: Vec<Option<V>>,
     idx: Vec<Option<Vec<u32>>>,
     vals: Vec<Vec<V>>,
     n: usize,
 }
 
 impl<'p> Out<'p> {
-    fn new(s: &'p PSelect) -> Out<'p> {
+    fn new(s: &'p PSelect, ex: &Exec<'_, '_>) -> Out<'p> {
         let exprs: Vec<&PE> = s.proj.iter().chain(&s.order_keys).collect();
         let src: Vec<Option<(usize, usize)>> = exprs
             .iter()
@@ -1412,12 +1592,22 @@ impl<'p> Out<'p> {
                 _ => None,
             })
             .collect();
+        let konst = exprs
+            .iter()
+            .map(|p| match p {
+                PE::Lit(_) => {
+                    let ctx = EvalCtx { frame: Frame { rows: &[], parent: None }, aggs: None, wins: None };
+                    Some(ex.eval(p, &ctx))
+                }
+                _ => None,
+            })
+            .collect();
         let mut idx: Vec<Option<Vec<u32>>> = vec![None; s.items.len()];
         for (item, _) in src.iter().flatten() {
             idx[*item] = Some(Vec::new());
         }
         let vals = exprs.iter().map(|_| Vec::new()).collect();
-        Out { exprs, src, idx, vals, n: 0 }
+        Out { exprs, src, konst, idx, vals, n: 0 }
     }
 
     fn push(&mut self, ex: &Exec<'_, '_>, ctx: &EvalCtx<'_>) {
@@ -1426,8 +1616,8 @@ impl<'p> Out<'p> {
                 ix.push(ctx.frame.rows[item].r);
             }
         }
-        for (j, src) in self.src.iter().enumerate() {
-            if src.is_none() {
+        for (j, (src, k)) in self.src.iter().zip(&self.konst).enumerate() {
+            if src.is_none() && k.is_none() {
                 self.vals[j].push(ex.eval(self.exprs[j], ctx));
             }
         }
@@ -1441,13 +1631,15 @@ impl<'p> Out<'p> {
         let cols = self
             .src
             .iter()
+            .zip(self.konst)
             .zip(self.vals)
-            .map(|(src, vals)| match src {
-                Some((item, col)) => match tables[*item].cols.get(*col) {
+            .map(|((src, k), vals)| match (src, k) {
+                (Some((item, col)), _) => match tables[*item].cols.get(*col) {
                     Some(c) => gather(c, idx[*item].as_ref().unwrap(), &mut memo),
-                    None => Rc::new(Column::Vals(vec![V::Null; n])),
+                    None => Rc::new(Column::Const(V::Null)),
                 },
-                None => Rc::new(Column::Vals(vals)),
+                (None, Some(v)) => Rc::new(Column::Const(v)),
+                (None, None) => Rc::new(Column::Vals(vals)),
             })
             .collect();
         Table { schema, cols, len: n }
@@ -1466,17 +1658,86 @@ struct EvalCtx<'r> {
     wins: Option<&'r [V]>,
 }
 
+/// The plan shape `Exec::closure` evaluates (see there).
+struct ClosureShape<'p> {
+    seed_body: &'p PBody,
+    s: &'p PSelect,
+    probe: &'p Probe,
+    /// The `node` column, and the `e` column that replaces it.
+    nj: usize,
+    dst: usize,
+    /// The `w` columns the probe keys read.
+    from_w: Vec<usize>,
+}
+
+fn closure_shape<'p>(batch: usize, init: &'p [PBody], rec: &'p [PBody], distinct: bool, w: usize) -> Option<ClosureShape<'p>> {
+    let ([seed_body], [PBody::Select(s)], true) = (init, rec, distinct) else { return None };
+    let plain = !s.grouped && s.wins.is_empty() && !s.distinct && s.order_keys.is_empty() && s.konst.is_empty() && s.having.is_none();
+    if !plain || s.items.len() != 2 || s.proj.len() != w || s.post.iter().any(|p| !p.is_empty()) {
+        return None;
+    }
+    let (wi, ei) = (&s.items[0], &s.items[1]);
+    if !matches!(wi.src, Src::Cte(b) if b == batch) || wi.left || wi.lateral || s.probes[0].is_some() || s.or_probes[0].is_some() {
+        return None;
+    }
+    if ei.left || ei.lateral || s.or_probes[1].is_some() || matches!(ei.src, Src::Cte(b) if b == batch) {
+        return None;
+    }
+    let probe = s.probes[1].as_ref()?;
+    // The projection: carried columns in place, and one `e` column as the new node.
+    let mut node = None;
+    for (j, p) in s.proj.iter().enumerate() {
+        match p {
+            PE::Col { depth: 0, item: 0, col } if *col as usize == j => {}
+            PE::Col { depth: 0, item: 1, col } if node.is_none() => node = Some((j, *col as usize)),
+            _ => return None,
+        }
+    }
+    let (nj, dst) = node?;
+    // The probe: `e` columns equal to `w` columns; exactly one of them is `w.node`.
+    let mut from_w = Vec::new();
+    for e in &probe.exprs {
+        let PE::Col { depth: 0, item: 0, col } = e else { return None };
+        from_w.push(*col as usize);
+    }
+    if from_w.iter().filter(|&&c| c == nj).count() != 1 {
+        return None;
+    }
+    // Filters may not read `w.node` (so they are functions of the seed and the edge) and
+    // hold no subquery.
+    if s.level[0].iter().chain(&s.level[1]).any(|c| reads_col(c, 0, nj) || has_sub(c)) {
+        return None;
+    }
+    Some(ClosureShape { seed_body, s, probe, nj, dst, from_w })
+}
+
+/// Whether a recursive CTE runs as the closure operator (`Fixpoint{closure}`) rather than
+/// level by level; decided by the plan alone, identical for every file.
+pub(crate) fn closure_applies(cte: &PCte) -> bool {
+    match cte {
+        PCte::Recursive { batch, init, rec, distinct, schema, .. } => closure_shape(*batch, init, rec, *distinct, schema.cols.len()).is_some(),
+        PCte::Plain { .. } => false,
+    }
+}
+
+impl<'d, 'a> Exec<'d, 'a> {
+    fn new(db: &'d Db<'a>, stmt: &'d Statement) -> Self {
+        Exec {
+            db,
+            stmt,
+            slots: RefCell::new(vec![None; stmt.n_slots]),
+            indexes: Default::default(),
+            sub_cache: Default::default(),
+            derived: Default::default(),
+            keep: Default::default(),
+            error: RefCell::new(None),
+            texts: (0..stmt.texts.len()).map(|_| std::cell::OnceCell::new()).collect(),
+        }
+    }
+}
+
 pub fn execute(db: &Db<'_>, stmt: &Statement) -> Result<Table, String> {
-    let ex = Exec {
-        db,
-        stmt,
-        slots: RefCell::new(vec![None; stmt.n_slots]),
-        indexes: Default::default(),
-        sub_cache: Default::default(),
-        derived: Default::default(),
-        keep: Default::default(),
-        error: RefCell::new(None),
-    };
+    let ex = Exec::new(db, stmt);
     let t = ex.query(&stmt.root, None);
     if let Some(e) = ex.error.borrow_mut().take() {
         return Err(e);
@@ -1484,25 +1745,19 @@ pub fn execute(db: &Db<'_>, stmt: &Statement) -> Result<Table, String> {
     Ok(t)
 }
 
-/// Evaluates a planned scalar expression (deferred column) over row `r` of `t`.
-pub fn eval_scalar(db: &Db<'_>, stmt: &Statement, pe: &PE, t: &Table, r: usize) -> Result<V, String> {
-    let ex = Exec {
-        db,
-        stmt,
-        slots: RefCell::new(vec![None; stmt.n_slots]),
-        indexes: Default::default(),
-        sub_cache: Default::default(),
-        derived: Default::default(),
-        keep: Default::default(),
-        error: RefCell::new(None),
-    };
-    let rows = [RowRef { t: Some(t), r: r as u32 }];
-    let ctx = EvalCtx { frame: Frame { rows: &rows, parent: None }, aggs: None, wins: None };
-    let v = ex.eval(pe, &ctx);
-    if let Some(e) = ex.error.borrow_mut().take() {
-        return Err(e);
+/// Evaluates a planned scalar expression (deferred column) over every row of `t`.
+pub fn eval_scalar_rows(db: &Db<'_>, stmt: &Statement, pe: &PE, t: &Table) -> Result<Vec<V>, String> {
+    let ex = Exec::new(db, stmt);
+    let mut out = Vec::with_capacity(t.len());
+    for r in 0..t.len() {
+        let rows = [RowRef { t: Some(t), r: r as u32 }];
+        let ctx = EvalCtx { frame: Frame { rows: &rows, parent: None }, aggs: None, wins: None };
+        out.push(ex.eval(pe, &ctx));
+        if let Some(e) = ex.error.borrow_mut().take() {
+            return Err(e);
+        }
     }
-    Ok(v)
+    Ok(out)
 }
 
 impl<'d, 'a> Exec<'d, 'a> {
@@ -1601,44 +1856,9 @@ impl<'d, 'a> Exec<'d, 'a> {
     /// node source), carried values are the seed's, and the result columns are gathers.
     /// `None` when the plan is not of that shape.
     fn closure(&self, batch: usize, init: &[PBody], rec: &[PBody], distinct: bool, schema: &Schema, outer: Option<&Frame<'_>>) -> Option<Table> {
-        let ([seed_body], [PBody::Select(s)], true) = (init, rec, distinct) else { return None };
         let w = schema.cols.len();
-        let plain = !s.grouped && s.wins.is_empty() && !s.distinct && s.order_keys.is_empty() && s.konst.is_empty() && s.having.is_none();
-        if !plain || s.items.len() != 2 || s.proj.len() != w || s.post.iter().any(|p| !p.is_empty()) {
-            return None;
-        }
-        let (wi, ei) = (&s.items[0], &s.items[1]);
-        if !matches!(wi.src, Src::Cte(b) if b == batch) || wi.left || wi.lateral || s.probes[0].is_some() || s.or_probes[0].is_some() {
-            return None;
-        }
-        if ei.left || ei.lateral || s.or_probes[1].is_some() || matches!(ei.src, Src::Cte(b) if b == batch) {
-            return None;
-        }
-        let probe = s.probes[1].as_ref()?;
-        // The projection: carried columns in place, and one `e` column as the new node.
-        let mut node = None;
-        for (j, p) in s.proj.iter().enumerate() {
-            match p {
-                PE::Col { depth: 0, item: 0, col } if *col as usize == j => {}
-                PE::Col { depth: 0, item: 1, col } if node.is_none() => node = Some((j, *col as usize)),
-                _ => return None,
-            }
-        }
-        let (nj, dst) = node?;
-        // The probe: `e` columns equal to `w` columns; exactly one of them is `w.node`.
-        let mut from_w = Vec::new();
-        for e in &probe.exprs {
-            let PE::Col { depth: 0, item: 0, col } = e else { return None };
-            from_w.push(*col as usize);
-        }
-        if from_w.iter().filter(|&&c| c == nj).count() != 1 {
-            return None;
-        }
-        // Filters may not read `w.node` (so they are functions of the seed and the edge) and
-        // hold no subquery.
-        if s.level[0].iter().chain(&s.level[1]).any(|c| reads_col(c, 0, nj) || has_sub(c)) {
-            return None;
-        }
+        let ClosureShape { seed_body, s, probe, nj, dst, from_w } = closure_shape(batch, init, rec, distinct, w)?;
+        let ei = &s.items[1];
         // Seeds: the initial select, set semantics.
         let seeds = self.body(seed_body, outer);
         if self.failed() {
@@ -1861,7 +2081,7 @@ impl<'d, 'a> Exec<'d, 'a> {
         let dk = (k.0, p.cols.clone(), p.col_affs.clone());
         let shared = if global { self.db.indexes.borrow().get(&dk).map(|(_, ix)| ix.clone()) } else { None };
         let ix = shared.unwrap_or_else(|| {
-            let ix = Rc::new(build_index(t, &p.cols, &p.col_affs));
+            let ix = Rc::new(Index::build(t, &p.cols, &p.col_affs));
             if global {
                 self.db.indexes.borrow_mut().insert(dk, (t.clone(), ix.clone()));
             } else {
@@ -2003,7 +2223,7 @@ impl<'d, 'a> Exec<'d, 'a> {
     /// column of a (non-lateral) FROM item is a gather view of that item's column.
     fn select_rows(&self, s: &PSelect, outer: Option<&Frame<'_>>) -> Table {
         let Some(tables) = self.item_tables(s, outer) else { return Table::empty(s.out.clone()) };
-        let mut out = Out::new(s);
+        let mut out = Out::new(s, self);
         if s.grouped {
             // Groups in first-seen order: key -> (agg states, representative binding).
             let mut groups: FxHashMap<Vec<DKey>, usize> = FxHashMap::default();
@@ -2179,7 +2399,12 @@ impl<'d, 'a> Exec<'d, 'a> {
 
     fn eval(&self, pe: &PE, ctx: &EvalCtx<'_>) -> V {
         match pe {
-            PE::Lit(v) => v.clone(),
+            PE::Lit(l) => match *l {
+                Lit::Null => V::Null,
+                Lit::Int(i) => V::Int(i),
+                Lit::Real(f) => V::Real(f),
+                Lit::Text(i) => self.texts[i as usize].get_or_init(|| V::text(&self.stmt.texts[i as usize])).clone(),
+            },
             PE::Col { depth, item, col } => self.col(ctx, *depth, *item, *col),
             PE::Agg(i) => ctx.aggs.and_then(|a| a.get(*i as usize)).cloned().unwrap_or(V::Null),
             PE::Win(i) => ctx.wins.and_then(|a| a.get(*i as usize)).cloned().unwrap_or(V::Null),

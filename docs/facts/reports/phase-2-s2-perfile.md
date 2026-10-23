@@ -83,8 +83,54 @@ See § 4 for the physical layer. Physical node set agreed with S1 (`facts/src/ph
 - The clause-level index cache raises the repository partition's peak in `finish` (A3 path 5.86 → 6.93 GB): indexes over large repository tables live until the clause ends. Needs a per-table last-reader drop before the next timing.
 - Every timing run of this session ran at load 12–43; all CPU numbers need a re-run on an idle machine.
 
+## Wave 2
+
+Base: integration `caceb656f`, merged forward to `8960a5db7` (S6's leaf constructs; my `ast.rs`/`eval.rs` conflicts resolved to upstream, memo hunks re-applied). Machine load during every timing pair 17–71 (six agents): **all CPU numbers untrusted**; memory numbers are deterministic up to allocator noise. Frozen binaries in `~/rerail-bench/facts/phase-2/s2-perfile/bin/`: `facts-a-w2base` (= `caceb656f`), `facts-a-w2s1` (index lifetime), `facts-a-w2s2` (+ shared rules), `facts-a-w2s3` (+ G2.5 items), `facts-a-w2s3m` (merged with `8960a5db7`).
+
+### Gate rows
+
+| Id | Target | Measured | Pass/fail | Run dir (`~/rerail-bench/facts/phase-2/s2-perfile/runs/…`) |
+|---|---|---|---|---|
+| Overall peak, repository run, A3 path | ≤ 5.9 GB | 6,945 → 5,820 MB (step 1 pair); 6,925 → 5,844 MB (w2base vs w2s3) | **pass** | `20261022T203610-repo` / `…203656-repo`; `…213502-repo` / `…214937-repo` |
+| Overall peak, generic path (`FACTS_A3_OFF=1`) | (≤ 5.9 GB) | 4,697 → 3,034 MB | pass | `…215036-repo-generic` / `…215146-repo-generic` |
+| G2.5 compiled rules: one immutable object per process, ≤ 32 MB | ≤ 32 MB, shared | one `Arc<[Rule]>` (`Rule: Send + Sync`, static assertion in `eval.rs`), shared by every worker and `finish`; live heap 29–31 MB on the generic path (jemalloc `stats.allocated` delta around compile), 55–57 MB with A3's dump groups/kernels compiled in; RSS on `tiny` 90 / 256 MB (1 / 4 workers, w2s1) → 73 / 73 MB | **pass** (generic path; A3 path 57 MB, retires with `subst.rs`) | `results.json` `compiled_rules_heap_bytes` of `…215146-repo-generic`, `…215844-largest-w2s3m-A3_` |
+| G2.5 per-worker peak, largest file (`--threads 1`, includes the rules) | ≤ 256 MB | generic path 607 → **230 MB** (merged tree); A3 path 637 → 494 MB (its kernels build `Box<[V]>` rows) | **pass** on the generic path; A3 path fails and is to be deleted | `…204756-largest-memtrace-w2s2-generic` (before), `…215844-largest-w2s3m-A3_`, `…215849-largest-w2s3m-Y=1` |
+| G2.5 end of per-file phase, 4 workers | ≤ 300 MB | A3 157 MB, generic 119 MB (rules now resident once for the whole run) | **pass** | `…214937-repo`, `…215146-repo-generic` |
+| Per-file phase peak, 4 workers | (wave 1: 1.46 / 1.31 GB) | A3 1,686 → 1,058 MB; generic 1,451 → 515 MB | improved | same pairs |
+| G2.3 CPU, A3 path | ≤ 90 s | 175.7 → 163.1 s (load 17–71) | **fail**, untrusted | `…213502-repo` / `…214937-repo` |
+| G2.3 CPU, generic path | ≤ 90 s; ≤ A3 to delete `subst.rs` | 212.6 → 207.3 s (load 34–68) | **fail**, untrusted; `subst.rs` not deleted | `…215036-repo-generic` / `…215146-repo-generic` |
+| Parity | unchanged | 173/173, 0 FP, 0 FN, 0 failures on all four runs; gate on the merged tree: see resume notes | pass | `parity.json` in each run |
+
+### Per-step table (largest file, `--threads 1`; peak RSS / live heap at the traced maximum)
+
+| Step | What | Generic peak RSS | A3 peak RSS | Run dir |
+|---|---|--:|--:|---|
+| base (`w2s2`) | shared rules, index lifetime | 607 MB (heap max 559) | 637 MB | `…204756-largest-memtrace-w2s2-generic`, `…204745-largest-memtrace-w2s2` |
+| 3a | syntax-spec tables and matcher inputs as compact fact columns (`Column::{U32,Sym,Const}`, span `Text` at 8 B/row with a lazily allocated read cache) | 465 MB | | `…210843-largest-memtrace-compact-generic` |
+| 3b | hash indexes without stored keys (rows grouped by key hash, confirmed against a representative row; 4 B/row + ~32 B/key) | 369 MB | | `…211141-largest-memtrace-index-generic` |
+| 3c | literal projections (`NULL AS x`, `'k' AS y`) as `Column::Const` | 289 MB | | `…211332-largest-memtrace-const-generic` |
+| 3d | syntax `reachability` as interval membership (`Column::Interval`: per root `eligible[lo..]` over `(id, subtree_end)`, O(roots + nodes) bytes) | 263 MB | 500 MB | `…212127…`, interval runs `…2131*` |
+| 3e | per-file memo: dense per-utility verdicts and `RelMemo` vectors as 2-bit cells (`trits.rs`); state_tripwires memo 71 → 17 MB | 227 MB | 496 MB | `…213403-largest-w2s3-A3_`, `…213411-largest-w2s3-X=1` |
+| merged | `8960a5db7` + the above | 230 MB | 494 MB | `…215844-largest-w2s3m-A3_`, `…215849-largest-w2s3m-Y=1` |
+
+Attribution method: `FACTS_MEMTRACE=1` now prints per stage the clause's stored-table and index bytes, RSS, jemalloc live heap and this thread's heap peak since the previous trace (`thread.peak`); per input set, per clause, and per rule the memo and input-cache bytes (`=2` lists every column ≥ 1 MB). The 530 MB of wave 1 was, in order: syntax-spec node tables as `Box<[V]>` rows (~200 MB retained, 341 MB transient), hash indexes with `Vec<Key>` keys (~100 MB), the per-file utility/relation memo (71 MB), materialised syntax `descendants` (75 MB), `NULL AS x` columns (~70 MB), matcher inputs (~50 MB per clause). Recursive-CTE batches and spill buffers were not material. Remaining at 230 MB: compiled rules 31, facts and source ~18, the clause's `nodes` stage (string ids built by the rule's SQL, 29 MB), clause-level indexes (≤ 35 MB), the generic closure's `Distinct` transient for `descendants` over the SQL-built edge relation (56–68 MB transient).
+
+### Interface changes
+
+- `sql::engine`: `PE::Lit(Lit)` with `Lit::{Null,Int,Real,Text(u32)}` (texts per statement, materialised once per execution) — plans hold no `V`; `Column::{Const,U32,Sym,Interval}` and `U32_NULL`; `Column::Text` is `(start,end)` cells + side `vals`; `Index` is a grouped hash index; `Db::release(name)`, `Db::bytes()`; `eval_scalar_rows` replaces per-row `eval_scalar`; `closure_applies(&PCte)` for S1's EXPLAIN.
+- `rel::RelPlan::release` + `schedule_releases()` (tables and their clause-level indexes dropped after the last reader, kernels' reads included); `SyntaxSpec::tables` columnar.
+- `repo`: rules compiled once (`Arc<[eval::Rule]>`), workers borrow them; `phases_ns.{compile,merge}` replace `worker_compile`/`merge_and_compile`; `compiled_rules_{rss,heap}_bytes`; `heap_in_use()`, `thread_peak()`/`thread_peak_reset()` (jemalloc; `tikv-jemalloc-{ctl,sys}` added to facts-a).
+- `ast.rs` (S6's file, memo only): `MemoSet.util: Vec<Trits>`, `RelMemo` vectors are `Trits`; `query.utils` etc. `Arc` (S6 did the same upstream). `eval::Operand::Literal(Literal)` (S6's budget `where`) holds no `V`.
+
+### Not done this wave (steps 4–6)
+
+- Step 4 (`subst.rs` deletion): not started beyond measurement. Wave-1 per-stage A3-vs-generic gap (runs `…153525-repo` vs `…153804-repo-generic`): matcher inputs 7.6 vs 61.2 s (A3's one-pass dump groups vs one AST evaluation per input), `descendants` 9.2 vs 17.9 s, `ownership` 5.1 vs 11.8 s, `nodes` 9.7 vs 13.2 s; later stages ~1.3× slower over gather views. This wave's pair keeps the same shape (inputs 9.8 s A3 vs 60.9 s generic in `…214937-repo` / `…215146-repo-generic`). The deciding lever is a one-pass evaluation of a clause's union of input selections (S1's R7 `fuse_union` physical side); S1's R9/R11 do not fire on the pack's dump-built `nodes`/`edges` (their roots are not core `node` per S1).
+- Step 5 (S4's views): S4Schema-2 is timing each view columnar vs the row interpreter (`facts-a-base`) and will send run dirs; nothing bound.
+- Step 6 (memo keys behind S1's `Plan`): not started.
+
 ## 7. Resume notes
 
-- Commits on `Moti-Velz/facts-engine-s2-perfile`: `4b14dfe7e` step 0 (regex cache, `FACTS_MEMTRACE`, `run-repo.sh` `FACTS_RUNS`/`FACTS_BIN`); `0230e4ec3` step 1 (columnar layer, shared utility table and memo, index cache, input lifetimes); the closure-operator commit after it (`git log`). Not yet merged: `Moti-Velz/facts-engine` (`2b111331b`: S1's move of `sql/{parse,value}.rs`, `policy.rs`), S4's `ast.rs` annotation arm (`275b016d1`, `Eval::parse` only).
-- Runner: `FACTS_RUNS=~/rerail-bench/facts/phase-2/s2-perfile/runs FACTS_BIN=<frozen copy> [FACTS_A3_OFF=1] spikes/facts-a/tools/run-repo.sh`; `python3 ~/rerail-bench/facts/phase-2/s2-perfile/summ.py <run dirs>` summarises CPU, peaks, parity, load.
-- Next, in order: (1) merge integration; 3 + 3 timing runs on an idle machine. (2) Drop clause-level indexes after a table's last reader (fixes the `finish` peak). (3) Interval membership for closures over a runtime-verified forest (no materialised `descendants`; rows ordered by (level, seed, preorder) to stay exact) — the G2.5 per-worker lever together with the dump inputs (~60 MB per clause on the largest file). (4) Compiled rules `Send + Sync`, one `Arc` per process. (5) Lower S1's `Plan` (`rerail_facts::compile`) onto this executor; emit `phys::Node` per statement (node set agreed with S1). (6) Delete `subst.rs` / `FACTS_A3_*` once generic ≤ 152.6 s. S5's mutants 1–2 sit in `subst.rs` (re-seed in `gather`/the closure operator when it goes); mutant 3 (`has_end_memo`) is unchanged in place.
+- Commits on `Moti-Velz/facts-engine-s2-perfile`: wave 1 `4b14dfe7e`, `0230e4ec3`, closure operator; wave 2 one WIP commit (`s2-perfile: wave 2 WIP …`, after the merge of integration `8960a5db7`) carrying everything in § Wave 2. Gate run on the merged tree: `~/rerail-bench/facts/phase-2/s2-perfile/runs/*-gate-w2s3m`.
+- Messages owed: S5Gate-2 gets the replacement switch names when `subst.rs` goes (none yet). S6's ast.rs rewrite is merged; my memo hunks (MemoSet/RelMemo/`util()`/`verdict_at`/`*_end_memo`) are on top.
+- Runner: `FACTS_RUNS=~/rerail-bench/facts/phase-2/s2-perfile/runs FACTS_BIN=<frozen copy> [FACTS_A3_OFF=1] spikes/facts-a/tools/run-repo.sh` (generic runs need `facts-a repo-compare` by hand for `parity.json`); `python3 ~/rerail-bench/facts/phase-2/s2-perfile/summ.py <run dirs>`. Per-worker peak: `/usr/bin/time -l facts-a repo --threads 1 --root ~/rerail-bench/facts/phase-2/s2-perfile/largest --out-dir <dir>`, with `FACTS_MEMTRACE=1|2` for attribution.
+- Next, in order: (1) re-run the two A/B pairs on a quiet machine (CPU untrusted). (2) Step 4: physical one-pass union of input selections (generic counterpart of A3's dump groups: ~51 s of the generic path's gap), then the closure `Distinct` as `(carried-id, node-id)` u64 keys (halves the `descendants` transient), then per clause A3 vs generic; delete `subst.rs` + `FACTS_A3_*` when generic ≤ A3 with `a3-check` equal, re-seed S5's mutants 1–2. (3) Step 5 with S4's numbers. (4) Step 6 memo keys behind S1's `Plan`. (5) S1's audit (`f1edf7edc`) flags two inner scans (`block_results`, `function_symbols`): probe keys for depth-2 correlated predicates.

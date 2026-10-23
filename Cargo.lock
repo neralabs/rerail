@@ -752,6 +752,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlparser",
+ "tikv-jemalloc-ctl",
+ "tikv-jemalloc-sys",
  "zstd",
 ]
 

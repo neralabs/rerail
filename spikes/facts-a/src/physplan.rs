@@ -10,16 +10,19 @@
 //! prints, per file, `== file <path>` then for each clause in scope `clause <check>/<clause>`
 //! and each stage's plan. `--audit` adds the audit's findings under each stage (`! …`).
 use crate::rel::{RelPlan, StagePlan};
-use crate::sql::engine::{PBody, PCte, PE, PItem, PQuery, PSelect, Src, Statement};
+use crate::sql::engine::{closure_applies, Lit, PBody, PCte, PE, PItem, PQuery, PSelect, Src, Statement};
 use crate::sql::parse::SetOp;
 use crate::{arg, eval};
 use rerail_facts::phys::{self, Item, Node, Op, PipelineItem};
 use std::fmt::Write;
 
-fn pe(e: &PE) -> String {
-    let b = |x: &PE| pe(x);
+/// An expression's text; text literals are resolved through their statement's `texts` and print
+/// as `Text("…")`.
+fn pe(st: &Statement, e: &PE) -> String {
+    let b = |x: &PE| pe(st, x);
     match e {
-        PE::Lit(v) => format!("{v:?}"),
+        PE::Lit(Lit::Text(i)) => format!("Text({:?})", &*st.texts[*i as usize]),
+        PE::Lit(l) => format!("{l:?}"),
         PE::Col { depth, item, col } => format!("{}i{item}.{col}", "^".repeat(*depth as usize)),
         PE::Agg(i) => format!("agg{i}"),
         PE::Win(i) => format!("win{i}"),
@@ -30,15 +33,15 @@ fn pe(e: &PE) -> String {
         PE::Concat(l, r) => format!("({} || {})", b(l), b(r)),
         PE::And(l, r) => format!("({} AND {})", b(l), b(r)),
         PE::Or(l, r) => format!("({} OR {})", b(l), b(r)),
-        PE::Func(f, a) => format!("{f:?}({})", a.iter().map(pe).collect::<Vec<_>>().join(", ")),
+        PE::Func(f, a) => format!("{f:?}({})", a.iter().map(b).collect::<Vec<_>>().join(", ")),
         PE::Case { operand, whens, else_, .. } => format!(
             "CASE{} {}{} END",
             operand.as_ref().map(|o| format!(" {}", b(o))).unwrap_or_default(),
-            whens.iter().map(|(w, t)| format!("WHEN {} THEN {}", pe(w), pe(t))).collect::<Vec<_>>().join(" "),
+            whens.iter().map(|(w, t)| format!("WHEN {} THEN {}", b(w), b(t))).collect::<Vec<_>>().join(" "),
             else_.as_ref().map(|x| format!(" ELSE {}", b(x))).unwrap_or_default()
         ),
         PE::Cast(x, a) => format!("CAST({} AS {a:?})", b(x)),
-        PE::InList { e, list, not } => format!("{} {}IN ({})", b(e), if *not { "NOT " } else { "" }, list.iter().map(|(x, _)| pe(x)).collect::<Vec<_>>().join(", ")),
+        PE::InList { e, list, not } => format!("{} {}IN ({})", b(e), if *not { "NOT " } else { "" }, list.iter().map(|(x, _)| b(x)).collect::<Vec<_>>().join(", ")),
         PE::InSub { e, sub, not, .. } => format!("{} {}IN $sub{sub}", b(e), if *not { "NOT " } else { "" }),
         PE::Exists { sub, not } => format!("{}EXISTS $sub{sub}", if *not { "NOT " } else { "" }),
         PE::Scalar(sub) => format!("$sub{sub}"),
@@ -105,11 +108,15 @@ struct Ctx<'s> {
 }
 
 impl Ctx<'_> {
+    fn pe(&self, e: &PE) -> String {
+        pe(self.st, e)
+    }
+
     fn query(&self, q: &PQuery) -> Node {
         let mut n = self.body(&q.body);
         if !q.order.is_empty() || q.limit.is_some() || q.offset.is_some() {
             n = node(
-                Op::Sort { keys: q.order.iter().map(|(c, d)| format!("#{c}{}", if *d { " DESC" } else { "" })).collect(), limit: q.limit.as_ref().map(pe), offset: q.offset.as_ref().map(pe) },
+                Op::Sort { keys: q.order.iter().map(|(c, d)| format!("#{c}{}", if *d { " DESC" } else { "" })).collect(), limit: q.limit.as_ref().map(|e| self.pe(e)), offset: q.offset.as_ref().map(|e| self.pe(e)) },
                 vec![n],
             );
         }
@@ -121,7 +128,9 @@ impl Ctx<'_> {
             .iter()
             .map(|c| match c {
                 PCte::Plain { q, .. } => self.query(q),
-                PCte::Recursive { init, rec, distinct, .. } => node(Op::Fixpoint { seminaive: true, set: *distinct }, init.iter().chain(rec).map(|b| self.body(b)).collect()),
+                PCte::Recursive { init, rec, distinct, .. } => {
+                    node(Op::Fixpoint { seminaive: true, set: *distinct, closure: closure_applies(c) }, init.iter().chain(rec).map(|b| self.body(b)).collect())
+                }
             })
             .collect();
         children.push(n);
@@ -149,10 +158,10 @@ impl Ctx<'_> {
                 }
                 Src::JsonEach(_) => String::new(),
             };
-            let preds: Vec<String> = s.level.get(k).map(|v| v.iter().map(pe).collect()).unwrap_or_default();
+            let preds: Vec<String> = s.level.get(k).map(|v| v.iter().map(|e| self.pe(e)).collect()).unwrap_or_default();
             let item = match (src, s.probes.get(k).and_then(Option::as_ref), s.or_probes.get(k).and_then(Option::as_ref)) {
-                (Src::JsonEach(arg), _, _) if *lateral || k > 0 => Item::LateralJsonEach { arg: pe(arg) },
-                (Src::JsonEach(arg), _, _) => Item::Constant { rel: format!("json_each({})", pe(arg)) },
+                (Src::JsonEach(arg), _, _) if *lateral || k > 0 => Item::LateralJsonEach { arg: self.pe(arg) },
+                (Src::JsonEach(arg), _, _) => Item::Constant { rel: format!("json_each({})", self.pe(arg)) },
                 // A probe at item 0: a correlated subquery's lookup on its correlation.
                 (_, Some(p), _) => Item::IndexNestedLoop { rel, key_cols: p.cols.clone(), key_affs: p.col_affs.iter().map(|a| format!("{a:?}")).collect(), residual: preds },
                 (_, _, Some(ps)) => Item::OrIndexProbe { rel, branches: ps.iter().map(|p| p.cols.clone()).collect(), residual: preds },
@@ -177,12 +186,12 @@ impl Ctx<'_> {
         }
         let mut n = node(Op::Pipeline { items }, children);
         if s.grouped || !s.aggs.is_empty() {
-            n = node(Op::Group { keys: s.group_by.iter().map(pe).collect(), aggs: s.aggs.iter().map(|a| format!("{:?}({}{})", a.f, if a.distinct { "DISTINCT " } else { "" }, a.arg.as_ref().map(pe).unwrap_or_default())).collect() }, vec![n]);
+            n = node(Op::Group { keys: s.group_by.iter().map(|e| self.pe(e)).collect(), aggs: s.aggs.iter().map(|a| format!("{:?}({}{})", a.f, if a.distinct { "DISTINCT " } else { "" }, a.arg.as_ref().map(|e| self.pe(e)).unwrap_or_default())).collect() }, vec![n]);
         }
         for w in &s.wins {
-            n = node(Op::Window { partition: w.partition.iter().map(pe).collect(), order: w.order.iter().map(|(e, d)| format!("{}{}", pe(e), if *d { " DESC" } else { "" })).collect() }, vec![n]);
+            n = node(Op::Window { partition: w.partition.iter().map(|e| self.pe(e)).collect(), order: w.order.iter().map(|(e, d)| format!("{}{}", self.pe(e), if *d { " DESC" } else { "" })).collect() }, vec![n]);
         }
-        n = node(Op::Project { exprs: s.proj.iter().map(pe).collect() }, vec![n]);
+        n = node(Op::Project { exprs: s.proj.iter().map(|e| self.pe(e)).collect() }, vec![n]);
         if s.distinct {
             n = node(Op::Distinct { prefix: s.out.cols.len() as u16 }, vec![n]);
         }
@@ -217,7 +226,8 @@ pub fn clause(plan: &RelPlan) -> Vec<(String, Node)> {
                 if let Some(e) = edges {
                     ch.push(statement(e));
                 }
-                let op = if *syntax { Op::IntervalProbe { root_col: 1 } } else { Op::Fixpoint { seminaive: true, set: true } };
+                // A reachability stage runs its own fixpoint, not the executor's closure operator.
+                let op = if *syntax { Op::IntervalProbe { root_col: 1 } } else { Op::Fixpoint { seminaive: true, set: true, closure: false } };
                 let _ = forest;
                 out.push((name.clone(), node(op, ch)));
             }

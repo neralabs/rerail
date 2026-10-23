@@ -3,7 +3,7 @@ use crate::ast::{self, Bound, Compiler, Env, Name, Names, Query};
 use crate::facts::Facts;
 use crate::policy::{self, Scope};
 use crate::rel::{self, RelPlan};
-use crate::sql::engine::{Column, Schema, Table, TextCell};
+use crate::sql::engine::{Column, Schema, Table, TextCell, U32_NULL};
 use crate::sql::value::V;
 use regex::Regex;
 use serde_json::{Map, Value as Json};
@@ -89,7 +89,16 @@ pub enum Where {
 /// array or object literal is refused: projected fields hold none of them).
 pub enum Operand {
     Field(usize),
-    Literal(V),
+    /// A literal; compiled rules are shared across workers, so it holds no `V` (`Rc`) and is
+    /// read as one per comparison.
+    Literal(Literal),
+}
+
+pub enum Literal {
+    Null,
+    Int(i64),
+    Real(f64),
+    Text(Box<str>),
 }
 
 impl Where {
@@ -101,10 +110,10 @@ impl Where {
                 return column(t).map(Operand::Field).ok_or_else(|| format!("`{t}` names no projected field"));
             }
             Ok(Operand::Literal(match v {
-                Json::Null => V::Null,
-                Json::String(s) => V::text(s),
-                Json::Number(n) if n.is_i64() => V::Int(n.as_i64().unwrap()),
-                Json::Number(n) if n.is_f64() => V::Real(n.as_f64().unwrap()),
+                Json::Null => Literal::Null,
+                Json::String(s) => Literal::Text(s.as_str().into()),
+                Json::Number(n) if n.is_i64() => Literal::Int(n.as_i64().unwrap()),
+                Json::Number(n) if n.is_f64() => Literal::Real(n.as_f64().unwrap()),
                 _ => return Err(format!("literal {v} unsupported")),
             }))
         };
@@ -137,7 +146,12 @@ impl Where {
     fn holds(&self, t: &Table, r: usize) -> bool {
         let read = |o: &Operand| match o {
             Operand::Field(c) => t.value(r, *c),
-            Operand::Literal(v) => v.clone(),
+            Operand::Literal(l) => match l {
+                Literal::Null => V::Null,
+                Literal::Int(i) => V::Int(*i),
+                Literal::Real(f) => V::Real(*f),
+                Literal::Text(s) => V::text(s),
+            },
         };
         match self {
             Where::Constant(b) => *b,
@@ -179,6 +193,12 @@ pub struct Rule {
     /// Per input, the last clause that reads it: its rows are dropped after that clause.
     pub last_use: Vec<usize>,
 }
+
+/// Compiled rules are one immutable object per process, shared by every worker (G2.5).
+const _: () = {
+    const fn shared<T: Send + Sync>() {}
+    shared::<Rule>();
+};
 
 fn proj_parse(s: &Json, names: &mut Names) -> Result<Proj, String> {
     if let Some(o) = s.as_object() {
@@ -359,6 +379,7 @@ impl Rule {
                 }
                 let mut plan = RelPlan::compile(r, ins, grammar).map_err(|e| format!("{cid}: {e}"))?;
                 crate::subst::plan_clause(r, &mut plan, &inputs, &mut names, grammar, &utils).map_err(|e| format!("{cid}: {e}"))?;
+                plan.schedule_releases();
                 Kind::Relational(Box::new(plan))
             } else {
                 return Err(format!("{cid}: clause kind"));
@@ -400,17 +421,28 @@ impl Input {
     pub fn rows(&self, ctx: &FileCtx<'_>, schema: &Schema, memo: &ast::FileMemo, source: &Rc<str>) -> Rows {
         let mut out = Rows { table: Rc::new(Table::empty(schema.clone())), anchors: Vec::new(), witnesses: Vec::new(), unsupported: None };
         // Columns: path, start, end, then the projections; a capture's text is its node's byte
-        // range of the source (`Column::Text`), read when a stage reads it.
+        // range of the source (`Column::Text`), read when a stage reads it; offsets and lines are
+        // 4 bytes a row, kinds symbols, file-level values stored once.
         enum Col {
             Vals(Vec<V>),
             Text(Vec<TextCell>),
+            U32(Vec<u32>),
+            Sym(Vec<u32>),
+            File,
         }
         let is_text = |p: &Proj| match p {
             Proj::Capture(_) => true,
             Proj::Text(n) => !self.query.decoded.iter().any(|(t, _)| t == n),
             _ => false,
         };
-        let mut cols: Vec<Col> = (0..3).map(|_| Col::Vals(Vec::new())).chain(self.projs.iter().map(|p| if is_text(p) { Col::Text(Vec::new()) } else { Col::Vals(Vec::new()) })).collect();
+        let col_of = |p: &Proj| match p {
+            _ if is_text(p) => Col::Text(Vec::new()),
+            Proj::Path | Proj::Directory | Proj::Name | Proj::Stem => Col::File,
+            Proj::Start(_) | Proj::End(_) | Proj::Line(_) => Col::U32(Vec::new()),
+            Proj::Kind(_) => Col::Sym(Vec::new()),
+            _ => Col::Vals(Vec::new()),
+        };
+        let mut cols: Vec<Col> = [Col::File, Col::U32(Vec::new()), Col::U32(Vec::new())].into_iter().chain(self.projs.iter().map(col_of)).collect();
         let f = ctx.f;
         match self.query.syntax {
             ast::SyntaxMode::Valid if f.syntax_errors => return out,
@@ -433,9 +465,8 @@ impl Input {
                     Anchor::FileStart => (0, 0),
                     Anchor::Capture(n) => capture_range(&ev, &env, groups, *n).unwrap_or(witness),
                 };
-                let fixed = [V::Text(path.clone()), V::Int(span.0 as i64), V::Int(span.1 as i64)];
-                for (c, v) in cols.iter_mut().zip(fixed) {
-                    if let Col::Vals(c) = c {
+                for (c, v) in cols[1..3].iter_mut().zip([span.0, span.1]) {
+                    if let Col::U32(c) = c {
                         c.push(v);
                     }
                 }
@@ -448,6 +479,18 @@ impl Input {
                             },
                             _ => TextCell::Val(project(p, &ev, &env, groups, ctx, &self.query)),
                         }),
+                        Col::U32(c) => c.push(match project(p, &ev, &env, groups, ctx, &self.query) {
+                            V::Int(x) => u32::try_from(x).expect("offsets and lines fit in u32"),
+                            _ => U32_NULL,
+                        }),
+                        Col::Sym(c) => {
+                            let Proj::Kind(n) = p else { unreachable!("only kind projections are symbols") };
+                            c.push(match env.get(*n) {
+                                Some(Bound::Node(x)) => f.kind[x as usize],
+                                _ => crate::facts::NONE,
+                            });
+                        }
+                        Col::File => {}
                         Col::Vals(c) => c.push(project(p, &ev, &env, groups, ctx, &self.query)),
                     }
                 }
@@ -525,12 +568,17 @@ impl Input {
             out.unsupported = Some("`\\N{...}` escape (needs the Unicode name table)".into());
         }
         let n = out.witnesses.len();
+        let file_value = |i: usize| if i == 0 { V::Text(path.clone()) } else { project(&self.projs[i - 3], &ev, &Env::default(), &[], ctx, &self.query) };
         let cols = cols
             .into_iter()
-            .map(|c| {
+            .enumerate()
+            .map(|(i, c)| {
                 Rc::new(match c {
                     Col::Vals(v) => Column::Vals(v),
                     Col::Text(t) => Column::text(source.clone(), t),
+                    Col::U32(v) => Column::U32(v),
+                    Col::Sym(v) => Column::Sym(v),
+                    Col::File => Column::Const(file_value(i)),
                 })
             })
             .collect();
@@ -910,6 +958,9 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
         };
         for (ci, clause) in rule.clauses.iter().enumerate() {
             let t0 = Instant::now();
+            if std::env::var_os("FACTS_MEMTRACE").is_some() {
+                crate::repo::thread_peak_reset();
+            }
             let fail = |out: &mut Output, msg: String| {
                 out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: ctx.path.to_owned(), message: msg });
             };
@@ -1036,6 +1087,11 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                             None => tables.push(Rc::new(Table::empty(plan.input_schemas[k].clone()))),
                         }
                     }
+                    if std::env::var_os("FACTS_MEMTRACE").is_some() {
+                        let bytes: usize = tables.iter().map(|t| t.bytes()).sum();
+                        eprintln!("memtrace inputs of {}: {} tables ~{} MB, heap {} MB, peak since clause start {} MB", clause.id, tables.len(), bytes >> 20, crate::repo::heap_in_use() >> 20, crate::repo::thread_peak() >> 20);
+                        crate::repo::thread_peak_reset();
+                    }
                     if let Some(u) = unsupported {
                         fail(out, format!("unsupported: {u}"));
                     } else if plan.per_file {
@@ -1060,6 +1116,17 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
             e.1 += ns;
             out.clause_samples.push(((ri as u16, ci as u16), ns));
             cache.borrow_mut().retain(|i, _| rule.last_use[*i] > ci);
+            if std::env::var_os("FACTS_MEMTRACE").is_some() {
+                eprintln!("memtrace clause {}: rss {} MB, heap {} MB, peak since last trace {} MB", clause.id, crate::repo::cur_rss() >> 20, crate::repo::heap_in_use() >> 20, crate::repo::thread_peak() >> 20);
+            }
+        }
+        if std::env::var_os("FACTS_MEMTRACE").is_some() {
+            let h0 = crate::repo::heap_in_use();
+            drop(cache);
+            let h1 = crate::repo::heap_in_use();
+            drop(memo);
+            let h2 = crate::repo::heap_in_use();
+            eprintln!("memtrace rule {} done: input cache {} MB, memo {} MB, rss {} MB, heap {} MB", rule.check, (h0 - h1) >> 20, (h1 - h2) >> 20, crate::repo::cur_rss() >> 20, h2 >> 20);
         }
     }
 }

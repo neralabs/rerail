@@ -17,14 +17,24 @@ thread_local! {
     static LOCAL: RefCell<FxHashMap<String, Rc<Regex>>> = RefCell::default();
 }
 
+/// `FACTS_MEMTRACE`: compiled patterns and the live heap bytes their compilation added.
+pub static TRACE: Mutex<(usize, u64)> = Mutex::new((0, 0));
+
 /// The process's compiled regex for `pattern`.
 pub fn get(pattern: &str) -> Result<Regex, regex::Error> {
     let mut g = GLOBAL.lock();
     if let Some(r) = g.get(pattern) {
         return Ok(r.clone());
     }
+    let trace = std::env::var_os("FACTS_MEMTRACE").is_some();
+    let before = if trace { crate::repo::heap_in_use() } else { 0 };
     let r = Regex::new(pattern)?;
     g.insert(pattern.to_owned(), r.clone());
+    if trace {
+        let mut t = TRACE.lock();
+        t.0 += 1;
+        t.1 += crate::repo::heap_in_use().saturating_sub(before);
+    }
     Ok(r)
 }
 
