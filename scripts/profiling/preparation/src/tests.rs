@@ -47,3 +47,59 @@ fn replay_preserves_rows_empty_results_and_cross_query_reuse() {
     assert_eq!(cached["reusedConstructions"], 2);
     assert_eq!(cached["retainedRows"], 1);
 }
+
+#[test]
+fn cache_budget_replay_preserves_bags_and_requested_file_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("input.sqlite")).unwrap();
+    db.execute_batch(include_str!(
+        "../../../../native/src/code_rule_dsl/matcher/anchors/sql/schema.sql"
+    ))
+    .unwrap();
+    db.execute_batch("INSERT INTO ftsk(rowid,k) VALUES(1,'k1'),(2,'k1')")
+        .unwrap();
+    drop(db);
+    let capture = dir.path().join("candidate.json");
+    let data = serde_json::json!({
+        "database":"input.sqlite", "files":[1], "fileScope":true,
+        "parameters":[{"kind":"text","value":"k1"}],
+        "stages":[
+            {"name":"hits","sql":"CREATE TEMP TABLE hits AS SELECT CAST(i.doc AS INTEGER) fid,CAST(i.offset AS INTEGER) pre FROM ftsk_inst i JOIN request_file q ON q.fid=i.doc WHERE i.term=?1","temporary":true,"index":"fid,pre"},
+            {"name":"twice","sql":"CREATE TEMP TABLE twice AS SELECT fid,pre FROM hits UNION ALL SELECT fid,pre FROM hits","temporary":true,"index":null}
+        ],
+        "queries":["SELECT 0,fid,pre FROM hits","SELECT 1,fid,pre FROM twice"]
+    });
+    std::fs::write(&capture, serde_json::to_vec(&data).unwrap()).unwrap();
+    let mut control_counters = None;
+    for (name, main, temp) in [("control", 1024, 512), ("larger", 65536, 16384)] {
+        let output = dir.path().join(format!("{name}.json"));
+        residency::run_cache(&capture, main, temp, &output).unwrap();
+        let rows: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(output.with_extension("rows.json")).unwrap())
+                .unwrap();
+        assert_eq!(rows, serde_json::json!([[0, 1, 0], [1, 1, 0], [1, 1, 0]]));
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+        if let Some(control) = &control_counters {
+            assert_eq!(&report["statementCounters"], control);
+        } else {
+            control_counters = Some(report["statementCounters"].clone());
+        }
+        assert!(report["statementCounters"]["vmSteps"].as_u64().unwrap() > 0);
+        assert_eq!(report["observation"], "cache-counters");
+        assert_eq!(
+            report["cacheBudgetKiB"],
+            serde_json::json!({"main":main,"temp":temp})
+        );
+        let last = report["snapshots"].as_array().unwrap().last().unwrap();
+        for field in [
+            "cacheHits",
+            "cacheMisses",
+            "cacheWrites",
+            "cacheSpills",
+            "cacheBytes",
+        ] {
+            assert!(last["sample"]["sqlite"][field].as_i64().unwrap() >= 0);
+        }
+    }
+}

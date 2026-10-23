@@ -14,12 +14,29 @@ from report import aggregate, chrome_trace, phase_overlap, summary
 from run import recording_from_source, select_recording
 from sample import bottom_up
 from compare import compare
-from process import cpu_seconds, parse_ps, ProcessMonitor
+from process import cpu_seconds, parse_ps, ProcessMonitor, vmmap_summary
 from oracle import compare_snapshot, workload_digest
 from unittest.mock import patch
 
 
 class ProfileTests(unittest.TestCase):
+    def test_vmmap_keeps_residency_and_allocator_views_separate(self):
+        result = vmmap_summary("""Physical footprint:         1.5G
+Physical footprint (peak):  2G
+MALLOC_SMALL                       2G     1G     512M     1G       0K       0K       0K        2
+MALLOC_SMALL (empty)              128M     64M     32M       0K       0K       0K       0K        1
+MALLOC ZONE                         SIZE       SIZE       SIZE       SIZE      COUNT  ALLOCATED
+DefaultMallocZone_0x123              2G       1G       512M       1G   1234       1.5G         0K      0%    2
+""")
+        self.assertTrue(result["recognized"])
+        self.assertTrue(result["roundedValues"])
+        self.assertEqual(result["physicalFootprintBytesApprox"], int(1.5 * 2**30))
+        self.assertEqual(result["peakPhysicalFootprintBytesApprox"], 2 * 2**30)
+        self.assertEqual(result["regions"]["MALLOC_SMALL"]["swappedBytesApprox"], 2**30)
+        self.assertEqual(result["regions"]["MALLOC_SMALL (empty)"]["residentBytesApprox"], 64 * 2**20)
+        self.assertEqual(result["allocatorZones"][0]["allocationCount"], 1234)
+        self.assertFalse(vmmap_summary("vmmap could not inspect this process")["recognized"])
+
     def test_summary_accepts_source_replay_counts(self):
         native, _ = aggregate("")
         report = {"elapsedSeconds": 1, "exitCode": 0, "timedOut": False, "native": native, "samples": [],
@@ -191,6 +208,26 @@ Total number in stack (recursive counted multiple, when >=5):
         self.assertEqual((row["runPhase"], row["path"], row["calls"], row["wallMs"], row["cpuMeasuredCalls"]), ("cold", "a.py", 2, 6, 0))
         self.assertEqual(row["counters"]["vmSteps"], 100)
         self.assertEqual(len(events), 2)
+
+    def test_bottom_up_marks_selected_io_without_claiming_cpu_time(self):
+        result = bottom_up("""Call graph:
+    8 Thread_1
+    + 8 sqlite3_step (in rerail_engine.node) + 1
+    +   8 pwrite (in libsystem_kernel.dylib) + 2
+    4 Thread_2
+    + 4 unrelated (in other.node) + 1
+    +   4 pread (in libsystem_kernel.dylib) + 2
+    10 Thread_3
+    + 10 root (in rerail_engine.node) + 1
+    +   10 __psynch_cvwait (in kernel) + 2
+Total number in stack (recursive counted multiple, when >=5):
+""")
+        self.assertEqual(result["activeNativeSamples"], 8)
+        self.assertEqual(result["ioSyscallSamples"], 8)
+        self.assertEqual(result["ioSyscallSymbols"], {"pwrite (libsystem_kernel.dylib)": 8})
+        self.assertEqual(result["otherActiveSamples"], 4)
+        self.assertEqual(result["parkedThreadSamples"], 10)
+        self.assertIn("not CPU-time shares", result["samplingBasis"])
 
     def test_bottom_up_can_profile_standalone_sql_and_reachability(self):
         source = """Call graph:

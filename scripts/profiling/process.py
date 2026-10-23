@@ -1,5 +1,6 @@
 """Bounded process-tree CPU and residency sampling. No target instrumentation required."""
 import json
+import re
 import subprocess
 import time
 
@@ -63,6 +64,41 @@ class ProcessMonitor:
                 "note": "Sampled CPU is a lower bound: short-lived workers and final intervals can be missed. Summed RSS counts shared pages in each process. Use driver phase CPU and resource high-water RSS for exact single-process totals."}
 
 
+def vmmap_summary(source):
+    """Preserve separate rounded region and allocator views; neither is an owner census."""
+    def size(value):
+        match = re.fullmatch(r"(\d+(?:\.\d+)?)([KMGT]?)(?:B)?", value)
+        if not match:
+            raise ValueError(value)
+        number, unit = match.groups()
+        return int(float(number) * 1024 ** (" KMGT".index(unit) if unit else 0))
+
+    result = {"roundedValues": True, "regions": {}, "allocatorZones": []}
+    zones = False
+    for line in source.splitlines():
+        match = re.match(r"Physical footprint( \(peak\))?:\s+(\S+)", line)
+        if match:
+            key = "peakPhysicalFootprintBytesApprox" if match[1] else "physicalFootprintBytesApprox"
+            result[key] = size(match[2])
+        parts = re.split(r"\s{2,}", line.strip())
+        if line.lstrip().startswith("MALLOC ZONE"):
+            zones = True
+        try:
+            if not zones and parts[0].startswith("MALLOC") and len(parts) >= 5:
+                result["regions"][parts[0]] = dict(zip(
+                    ("virtualBytesApprox", "residentBytesApprox", "dirtyBytesApprox", "swappedBytesApprox"),
+                    map(size, parts[1:5])))
+            elif zones and len(parts) >= 7:
+                result["allocatorZones"].append({"name": parts[0], "virtualBytesApprox": size(parts[1]),
+                    "residentBytesApprox": size(parts[2]), "dirtyBytesApprox": size(parts[3]),
+                    "swappedBytesApprox": size(parts[4]), "allocationCount": int(parts[5]),
+                    "allocatedBytesApprox": size(parts[6])})
+        except ValueError:
+            continue
+    result["recognized"] = "physicalFootprintBytesApprox" in result or bool(result["regions"])
+    return result
+
+
 def memory_snapshot(pid, tool, path, remaining):
     command = ["/usr/bin/vmmap", "-summary", str(pid)] if tool == "vmmap" else ["/usr/bin/heap", "-s", "--noContent", str(pid)]
     started = time.time()
@@ -70,8 +106,11 @@ def memory_snapshot(pid, tool, path, remaining):
         with path.open("w") as stream:
             result = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT,
                                     timeout=min(8, remaining - 3), check=False)
-        return {"tool": tool, "file": path.name, "startUnixUs": int(started * 1e6),
-                "wallSeconds": time.time() - started, "exitCode": result.returncode}
+        report = {"tool": tool, "file": path.name, "startUnixUs": int(started * 1e6),
+                  "wallSeconds": time.time() - started, "exitCode": result.returncode}
+        if tool == "vmmap" and result.returncode == 0:
+            report["summary"] = vmmap_summary(path.read_text(errors="replace"))
+        return report
     except (subprocess.SubprocessError, OSError) as error:
         return {"tool": tool, "file": path.name, "startUnixUs": int(started * 1e6),
                 "wallSeconds": time.time() - started, "error": str(error)}

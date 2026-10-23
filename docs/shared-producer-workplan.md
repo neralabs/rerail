@@ -2,6 +2,9 @@
 
 Status: implementation plan. Runtime work has not started.
 The [contract design](shared-producer-contracts.md), [execution stages](sql-execution-stages.md), and [ownership invariant](sql-materialization-shape.md) define the target.
+WP1 will use this worktree after the [aggregate checkpoint](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23).
+That checkpoint records a 19.93-fold first-50 cold CPU regression and failed full-repository 60-rule execution.
+Source-corpus parity passes, but it does not replace the failed repository gate.
 
 The first useful result is shared span preparation across actual rule consumers and result packets.
 That result precedes a complete controller replacement or pack-library migration.
@@ -116,6 +119,11 @@ This step does not restore the rejected expanded-posting or generic row caches.
 Acceptance covers property-fill and result-consumer sharing, absent children, NULL values, and source-predicate fences.
 File-batch changes must preserve bindings, findings, and successful build counts for unchanged required coverage.
 Profiles must separate saved decoding from saved selector construction and reduced inline materialization.
+They must also separate those gains from changes in SQLite cache capacity.
+The aggregate checkpoint observes pager pressure and statement-journal writes with 1 MiB main and 512 KiB temporary cache targets.
+Controlled replay must record cache hits, misses, writes, spills, CPU, and memory before attributing improvements to shared producers.
+Cache capacity belongs to physical resource admission; it does not change a producer's semantic binding identity.
+Publication experiments must preserve rollback guarantees while testing whether coalesced writes reduce journal traffic.
 
 ## WP4: compile the complete frontier controller
 

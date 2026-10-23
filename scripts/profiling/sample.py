@@ -5,6 +5,7 @@ import re
 FRAME = re.compile(r"^([ +!|:]*)\s*(\d+) (.+)$")
 SYMBOL = re.compile(r"^(.+?)\s+\(in ([^)]+)\)(?:.*)$")
 WAIT = re.compile(r"^(?:__psynch_cvwait|__psynch_mutexwait|_pthread_cond_wait|kevent|semaphore_wait_trap|__workq_kernreturn|mach_msg2_trap)$")
+IO = re.compile(r"^(?:pread|pwrite|preadv|pwritev|read|write|fsync|fdatasync)(?:_nocancel)?$")
 
 
 def bottom_up(source, modules=("rerail_engine",)):
@@ -58,6 +59,7 @@ def bottom_up(source, modules=("rerail_engine",)):
     self_counts, inclusive, callers = collections.Counter(), collections.Counter(), collections.Counter()
     active = parked = other = 0
     waits = collections.Counter()
+    io = collections.Counter()
     threads = collections.Counter()
     subsystems = collections.Counter()
     for count, frames, owner in leaves:
@@ -69,6 +71,8 @@ def bottom_up(source, modules=("rerail_engine",)):
             other += count
             continue
         active += count
+        if IO.match(frames[-1].split(" (")[0]):
+            io[frames[-1]] += count
         threads[owner] += count
         # Assign each native sample once, using its full caller chain. Allocator
         # and comparison leaves belong to SQLite when SQLite called them.
@@ -92,6 +96,8 @@ def bottom_up(source, modules=("rerail_engine",)):
         callers[tuple(reversed(frames[-7:]))] += count
     rows = lambda counter: [{"symbol": key, "samples": count, "percent": round(100 * count / active, 2) if active else 0} for key, count in counter.most_common()]
     return {"sampleModules":list(modules), "activeNativeSamples": active, "parkedThreadSamples": parked, "otherActiveSamples": other,
+            "samplingBasis": "Wall-time stack observations; I/O syscall frames may be executing or blocked. Percentages are not CPU-time shares.",
+            "ioSyscallSamples": sum(io.values()), "ioSyscallSymbols": dict(io),
             "waitSymbols": dict(waits),
             "self": rows(self_counts), "inclusive": rows(inclusive),
             "bottomUpStacks": [{"frames": list(key), "samples": count} for key, count in callers.most_common()],
