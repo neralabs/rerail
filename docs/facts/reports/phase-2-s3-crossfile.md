@@ -102,8 +102,64 @@ Compile status per repository clause (S1 `e2aece9c0`, suite options `{}` unless 
 - 7 (path, content) pairs of the replay set have no retained source (Spike B's edit script); their exports are absent and counted as runtime refusals (`no exports for …`) in `exactness-real`, on both sides of the comparison.
 - Module paths (S4's finding, decider's design): native's summaries qualify names by module path, which depends on the worktree's `__init__.py` set. Exports must stay unresolved and content-keyed; `module_of(path)` becomes a membership-dependent relation computed in the dataflow (algebra over the path set: a path's package chain = its ancestor directories holding an `__init__.py` member), and qualified names a join `module_of ⋈ def`.
 
+## 8. Wave 2 (S3CrossFile-2)
+
+Status: **partial**.
+
+- NARROWINGS.md is done and committed. The decider ruled on order constructs: runtime-checked order, retractable runtime refusals and mutant 9. That ruling is implemented and exact on the vectors.
+- Generator memory improved from 539 to 354 MB, but that is still 1.76× the hand-written version. The 1.5× target is not met.
+- Call-graph exports (S4) have landed, and the port of the native linker to SQL is in progress (a subagent).
+- The state-flow clauses under `scan_project_sources` have no oracle: native itself exceeds its budget on them.
+- The G2.4 rows were not re-run under the 3-run protocol.
+
+Runs are in `~/rerail-bench/facts/phase-2/s3-crossfile/{runs,narrowings}/`.
+
+### 8.1 Results
+
+| Gate / item | Target | Measured | Result | Run directory |
+|---|---|---|---|---|
+| NARROWINGS.md committed | doc + evidence | `docs/facts/NARROWINGS.md`, `spikes/facts-b/scripts/narrow.py` (`324da60e3`). Through native SQLite with the narrowed text: `unreachable-internal-symbols` 4,931 = 4,931 (0 FP, 0 FN, 0 failures); `exported-families` 0 = 0; `quality-conditional-1` 0 = 0; `serverplan_state_tripwires` 0 = 0. All 15 edited stages are identical to the originals (0 rows differ). Ties under the original order: 11, all in `slots`. Ties under the narrowed order: 0 | done | `narrowings/20261022-211541-b5-final`, `…-205531-b5-traits`, `…-205542-b6-diag`, `…-210545-b6-trip-diag` |
+| Order constructs (decider: option B) | named and retractable, never guessed | Classifier marks `Proven`/`Checked` (S1 `0ea181a84`, merged). Generator: every refusal raised inside an operator is a dataflow record `(t \| REFUSED, [construct])`, maintained per view like the findings, captured per (plan, worktree), and withholds that plan's findings. Constructed-tie vector `rt`: 280 of 280 expected refusals refused, 0 missing, 0 differences, 201 checks (r1, r3 and rt, 200 events). Mutant 9 disables tie detection. The reference side (`tie:` errors) is S5 `c176eefc7` | implemented (the replay does not exercise retraction: the corpus ties `rt` in every worktree) | `runs/20261022-212907-exact-vec-r1r3rt` |
+| Generator memory: R1+R3 vectors vs hand-written | ≤ 1.5× hand | Generator **354.4 MB** RSS at edit 1,000 vs hand-written (`replay --clusters`, R1–R3) **201.0 MB**: **1.76×**. Both runs locked and back to back; load 15.7 and 14.1. Before wave 2: 539 MB (no row cache), 669 MB (row cache). Arranged records: 3.19M → 1.66M (hand: 3.13M) | **fail (open)** | `runs/20261022-213008-mem-vec-r1r3-final`, `runs/20261022-213022-mem-hand-clusters-final` |
+| Exactness after the memory changes | 0 differences | 0 differences over 201 checks / 280 worktree checks (r1, r3, rt; 200 events), with and without the row cache | pass | `runs/20261022-210546-exact-vec-shared`, `…-210634-exact-vec-shared-nocache`, `…-212907-exact-vec-r1r3rt` |
+| `state-flow-1`, `state-projection-recovery-2` under `entryPoint=scan_project_sources` | run if feasible | Native itself fails all three repository variants on the 9,010-file corpus: relational work budget exceeded in `state-flow-1`, `state-flow-project-1` and `state-projection-recovery-2`, so no oracle exists. `state-flow-1` also stays refused by S1 for bag recursion until the narrowing is applied. Not run on the engine | blocked (no oracle) | `narrowings/20261022-211324-b6-trip-orig-sps` |
+| G2.4 rows, 3× locked | rows with run dirs | Not re-run in wave 2. The rows of § 2 (wave 1, unlocked) still stand | open | — |
+| Call graph as algebra | `reference_edges` and `calls` compile | Native's references-mode graph is written as 79 SQL stages (`spikes/facts-b/linker/reference_edges.sql`, each mirroring a native `file:line`). They read S4's content-only exports of native's summary (`cgn_*`, `145cd8f96`) and the member path set: `module_of` via the ancestor `__init__.py` chain, module substitution, `link_python` branches 1–12 with first-match precedence, MAX_HOPS as a hop range, base-class BFS order from the `<base-slot>` ordinals, then `resolve_edges`. On `2b1504adc` (Python sqlite3 harness `linker_check.py`) native has **145,431 edges and the SQL 145,431, with 0 differences**. `reference_graph_incomplete` has 0 rows and every refusal relation is empty. The refusals are row-producing relations for the slot-order cases (first of several alias targets, bases from several files, `own_name`), module and substitution cases, and stage bounds; none occurs on the corpus, so they are untested. Native links only the files in the installed rules' scope (3,110 for the dead-code rule); the stage `in_scope` models one rule and must become the union with several. **Not yet** compiled through S1's front end or run on the generator: several recursive arms in one `WITH RECURSIVE` (`link_reach`, `class_of_walk`) may exceed the engine's subset | SQL exact; IR/generator pending | `linker/20261022T215523-corpus-2b1504adc` (native dump: `linker/native-ground-truth/`) |
+
+### 8.2 Where the memory goes (attribution)
+
+Arrangement records come from differential's logging, per named arrangement (`results.json` → `arrangements`).
+
+Removed:
+
+- **Per-view `touched` threshold over full boundary rows**: 908K records. Touched views are now the tags with file deltas. That is a superset, and exact, because R_v − R_pv = 0 for an untouched view.
+- **Duplicate arrangements**: 686K records. The fixpoint body now joins the delta-mode arrangements (entered), shared by (node, key), and hash-consed nodes share collections and arrangements.
+- **The row cache of exported rows**: 107–191 MB (`FACTS_ROW_CACHE=0`; rows are recomputed on retraction).
+
+Remaining: generator 1.66M records at ~150 B per record, against 40 B per record for the hand-written version. The levers, in size order:
+
+1. `Val` packed to 8 bytes, and rows as inline small vectors (`Vec<Val>` costs about 24 + 16·k + allocator overhead per row, against u32 tuples by hand).
+2. A second string interner duplicating the v0 store's symbols (23.6 MB).
+3. RSS growth during edits (285 → 354 MB, against 197 → 201 for the hand version), probably allocator retention in batch merges.
+
+### 8.3 Interface changes
+
+- `lower::Built.refusals: Vec<(plan, Out)>`; `lower::REFUSED`.
+- `results.json` gains `runtime_refusals_live`, `runtime_refusals_seen`, `expected_refusals` and `missing_expected_refusals`, as agreed with S5. Mutant 9 is tie detection off.
+- `greplay --plans rt` runs the constructed-tie vector.
+- `norm.rs`: hash-consing (`Ctx.seen`). `group_eq` no longer patches nodes in place. `NOT IN` keeps a row with a NULL operand when the correlated set is empty.
+
 ## 7. Resume notes
 
-- Commits: `ed0c9add9` (generator, membership, mutants, vectors, greplay), `bf3685133` (real plans, CTAS affinity, xexport, parity, tracking), plus the scalar-subquery fix and this report (last commit on the branch).
-- Next, in order: (1) 3 locked timing runs of `greplay --plans none --real exports/spec-replay.json --no-oracle` for the G2.4 memory/latency rows; (2) memory levers above, then the vectors' 195 MB comparison; (3) `module_of` as IR over a path-set relation + the unresolved call-graph exports from S4's successor — needed per content: `def(local_name, kind, node, start, end, flags)`, `call(def_node, callee_text)`, `ref(def_node, name_text)` (with native's name-form markers), `import(module_text, name, alias, level)`, `star_import(module_text)`, `base(class_node, base_text)`, `decorator(def_node, name)`, `is_package_marker` (content is an `__init__.py` with its path), `open` (syntax/scope failure); the linker's resolution rules then as IR plans; (4) state-flow clauses under `scan_project_sources` once S2 executes per-file IR plans (replace `xexport`); (5) narrowed variants of the refused clauses once Jeremy agrees.
-- Generator code map: `gen/norm.rs` (IR → delta operators, decorrelation, refusals), `gen/lower.rs` (delta expansions, fixpoint per touched view, runtime refusals, tracking), `gen/tags.rs` (tag tree), `membership.rs` (per-path base, DP cluster bases, attach, resident refcounts), `gen/real.rs` (compile + exports reader), `gen/vectors.rs` (R1/R3 as IR), `gen/drive.rs` (greplay).
+- Commits:
+  - wave 1: `ed0c9add9`, `bf3685133`.
+  - wave 2: `324da60e3` (NARROWINGS), `806231a84` (shared arrangements, hash-consing, touched from files, NOT IN NULL, named arrangements), `7be88047a` (merge of S1 `0ea181a84`), `e7d1e5c70` (retractable refusals, mutant 9, `rt`), `5d0bf0e18` (report), `3eb776377` (merge of integration `8960a5db7`), `c0ef939fb` (linker SQL + harness), plus this update.
+- `just facts-gate` was **not** run on wave 2's engine changes. Run it, and `--mutants` with S5's mutant-9 entry, before merging.
+- Next, in order:
+  1. Memory to ≤ 1.5× the hand-written version: pack `Val` to 8 bytes (low two tag bits; out-of-range ints and reals interned) and make `Row` an inline small vector; reuse the v0 store's symbols for the vectors. Then measure locked against `replay --clusters`.
+  2. G2.4 rows, 3× under `bench-lock`, for the compiled plans (`greplay --plans none --real exports/spec-replay.json --no-oracle --track`), plus the oracle-mode exactness run.
+  3. Run the linker on the generator: compile `spikes/facts-b/linker/reference_edges.sql` through S1's front end as a repository plan over the `cgn_*` exports and a member-path export (split multi-arm recursions if the subset refuses them), run it on greplay, and compare with `linker/native-ground-truth/reference_edges.tsv`. Then `reach_edges` and the `calls` atom read it (the atom is the reflexive backward closure over non-class defs, spec § 5).
+  4. Ordered `group_concat`/`json_group_array` in the generator: the order comes from the Sort below, through Project and Filter, with tie = refusal, matching S5's reference. `exported-families` needs it.
+  5. Narrowed clauses on the engine once S6's `precedes`/`binds` leaves exist.
+  6. Switch `norm.rs` decorrelation to S1's `ir::semi_join`/`equi_keys`, as S1 asked.
+- Generator code map: `gen/norm.rs` (IR → delta operators, decorrelation, refusals, hash-consing), `gen/lower.rs` (delta expansions, shared arrangements, fixpoint per touched view with entered boundary arrangements, retractable refusals), `gen/tags.rs`, `membership.rs`, `gen/real.rs`, `gen/vectors.rs` (R1, R3, RT as IR), `gen/drive.rs` (greplay).
