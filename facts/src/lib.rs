@@ -12,6 +12,7 @@ pub mod mutant;
 pub mod phys;
 pub mod policy;
 pub mod reference;
+pub mod rewrite;
 pub mod sql;
 #[cfg(test)]
 pub mod testkit;
