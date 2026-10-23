@@ -72,7 +72,7 @@ ast-grep-language = { version = "=0.50.0", default-features = false, features = 
 rusqlite = { version = "=0.40.2", features = ["bundled", "limits", "hooks"] }
 
 [build-dependencies]
-cc = "=1.8.0"
+cc = "=1.9.0"
 napi-build = "2.2"
 sha2 = "0.10"
 # Reads and validates the language registry (`languages/*.json`) the build generates tables from.
