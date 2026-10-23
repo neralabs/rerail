@@ -18,7 +18,7 @@
 //!   R_v − R_parent-view.
 use super::norm::{Graph, Key, KeyMode, NodeId, Op, X};
 use super::tags::{self, W, BASE};
-use super::val::{self, Row, Val};
+use super::val::{self, Kind, Row, Val};
 use differential_dataflow::input::{Input, InputSession};
 use differential_dataflow::operators::arrange::{Arranged, TraceAgent};
 use differential_dataflow::trace::wrappers::enter::TraceEnter;
@@ -92,7 +92,7 @@ fn captured<X>(f: impl FnOnce() -> X) -> (X, Vec<String>) {
 }
 
 fn refusal_row(at: &str, what: &str) -> Row {
-    vec![Val::Text(val::sym(&format!("{at}: {what}")))]
+    Row::from([Val::text(val::sym(&format!("{at}: {what}")))])
 }
 
 /// A refusal raised outside the operators (a per-file producer's failure for a content).
@@ -127,7 +127,7 @@ fn track<'s>(c: C<'s, T>, node: usize) -> C<'s, T> {
         let mut h = rustc_hash::FxHasher::default();
         row.hash(&mut h);
         let k = (node, *w, h.finish());
-        let size = (std::mem::size_of::<((W, Row), T, R)>() + row.capacity() * std::mem::size_of::<Val>()) as u32;
+        let size = (std::mem::size_of::<((W, Row), T, R)>() + row.heap_bytes()) as u32;
         TRACK.with(|t| {
             let mut t = t.borrow_mut();
             let e = t.entry(k).or_insert((0, size));
@@ -152,40 +152,57 @@ fn ev(e: &X, row: &[V]) -> Option<V> {
     }
 }
 
-fn canon(v: Val) -> Val {
-    match v {
-        Val::Real(b) => {
-            let f = f64::from_bits(b);
-            if f.fract() == 0.0 && f.abs() < 9.2e18 { Val::Int(f as i64) } else { v }
+/// A map's output row into `out` (false: a scalar refused). Bare columns are copied; the row is
+/// converted to `V` only when an expression needs it.
+fn map_row(exprs: &[X], row: &[Val], out: &mut Vec<Val>) -> bool {
+    out.clear();
+    let mut vr: Option<Vec<V>> = None;
+    for e in exprs {
+        if let rerail_facts::ir::Expr::Col { depth: 0, col } = e {
+            out.push(row[*col as usize]);
+            continue;
         }
-        x => x,
+        match ev(e, vr.get_or_insert_with(|| val::row_to_v(row))) {
+            Some(v) => out.push(val::from_v(&v)),
+            None => return false,
+        }
+    }
+    true
+}
+
+fn canon(v: Val) -> Val {
+    match v.kind() {
+        Kind::Real(b) => {
+            let f = f64::from_bits(b);
+            if f.fract() == 0.0 && f.abs() < 9.2e18 { Val::int(f as i64) } else { v }
+        }
+        _ => v,
     }
 }
 
 /// A row's key under `key`; `None` when an equality key is NULL (it matches nothing).
 fn key_of(row: &[Val], key: &Key, vrow: &mut Option<Vec<V>>) -> Option<Row> {
-    let mut k = Vec::with_capacity(key.len());
-    for (x, mode) in key {
-        let fast = match x {
-            rerail_facts::ir::Expr::Col { depth: 0, col } => Some(row[*col as usize]),
-            _ => None,
-        };
-        let v = match (fast, mode) {
-            (Some(v), KeyMode::Group) => canon(v),
-            (Some(Val::Null), KeyMode::Eq(_)) => return None,
-            (Some(v), KeyMode::Eq(rerail_facts::ir::Aff::None)) => canon(v),
-            _ => {
-                let r = vrow.get_or_insert_with(|| val::row_to_v(row));
-                let v = ev(x, r)?;
-                match mode {
-                    KeyMode::Group => val::group_key(&v),
-                    KeyMode::Eq(aff) => val::eq_key(&sv::compare_affinity(&v, *aff))?,
+    key.iter()
+        .map(|(x, mode)| {
+            let fast = match x {
+                rerail_facts::ir::Expr::Col { depth: 0, col } => Some(row[*col as usize]),
+                _ => None,
+            };
+            Some(match (fast, mode) {
+                (Some(v), KeyMode::Group) => canon(v),
+                (Some(v), KeyMode::Eq(_)) if v.is_null() => return None,
+                (Some(v), KeyMode::Eq(rerail_facts::ir::Aff::None)) => canon(v),
+                _ => {
+                    let r = vrow.get_or_insert_with(|| val::row_to_v(row));
+                    let v = ev(x, r)?;
+                    match mode {
+                        KeyMode::Group => val::group_key(&v),
+                        KeyMode::Eq(aff) => val::eq_key(&sv::compare_affinity(&v, *aff))?,
+                    }
                 }
-            }
-        };
-        k.push(v);
-    }
-    Some(k)
+            })
+        })
+        .collect()
 }
 
 fn keyed<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(c: C<'s, Tm>, key: Key, name: &str) -> Arr<'s, Tm, Row> {
@@ -333,9 +350,9 @@ fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize) -> Rc<dyn 
     let key_cols: Vec<usize> = keys.iter().filter_map(|(k, _)| if let rerail_facts::ir::Expr::Col { depth: 0, col } = k { Some(*col as usize) } else { None }).collect();
     Rc::new(move |_k, members| {
         let rows = vals_of(members);
-        let mut out: Row = vec![Val::Null; width];
+        let mut out: Vec<Val> = vec![Val::NULL; width];
         for &c in &key_cols {
-            let first = members.first().map(|(r, _)| r[c]).unwrap_or(Val::Null);
+            let first = members.first().map(|(r, _)| r[c]).unwrap_or(Val::NULL);
             if members.iter().any(|(r, _)| r[c] != first) {
                 refuse("GROUP BY key with several representations in one group (1 vs 1.0)");
                 return Vec::new();
@@ -423,7 +440,7 @@ fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize) -> Rc<dyn 
             };
             out.push(val::from_v(&v));
         }
-        vec![(out, 1)]
+        vec![(Row::from(out), 1)]
     })
 }
 
@@ -467,9 +484,7 @@ fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn F
                 for (_, i) in keyed {
                     for _ in 0..members[i].1 {
                         n += 1;
-                        let mut r = members[i].0.clone();
-                        r.push(Val::Int(n));
-                        out.push((r, 1));
+                        out.push((Row::with(members[i].0, Val::int(n)), 1));
                     }
                 }
                 out
@@ -496,15 +511,8 @@ fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn F
                         best = Some(v);
                     }
                 }
-                let b = best.as_ref().map(val::from_v).unwrap_or(Val::Null);
-                members
-                    .iter()
-                    .map(|(r, c)| {
-                        let mut r = (*r).clone();
-                        r.push(b);
-                        (r, *c)
-                    })
-                    .collect()
+                let b = best.as_ref().map(val::from_v).unwrap_or(Val::NULL);
+                members.iter().map(|(r, c)| (Row::with(r, b), *c)).collect()
             }
         }
     })
@@ -612,25 +620,12 @@ impl<'s> Lower<'s> {
             Op::Map { input, exprs } => {
                 let exprs = exprs.clone();
                 let at = format!("n{n}");
+                let mut out = Vec::with_capacity(exprs.len());
                 let all = self.node(*input).flat_map(move |(w, row)| {
-                    let vr = val::row_to_v(&row);
-                    let mut out = Vec::with_capacity(exprs.len());
-                    let (ok, refused) = captured(|| {
-                        for e in &exprs {
-                            if let rerail_facts::ir::Expr::Col { depth: 0, col } = e {
-                                out.push(row[*col as usize]);
-                                continue;
-                            }
-                            match ev(e, &vr) {
-                                Some(v) => out.push(val::from_v(&v)),
-                                None => return false,
-                            }
-                        }
-                        true
-                    });
+                    let (ok, refused) = captured(|| map_row(&exprs, &row, &mut out));
                     match refused.first() {
                         Some(r) => Some((w | REFUSED, refusal_row(&at, r))),
-                        None => ok.then_some((w, out)),
+                        None => ok.then(|| (w, Row::new(&out))),
                     }
                 });
                 let (data, refused) = split_refusals(all);
@@ -659,11 +654,7 @@ impl<'s> Lower<'s> {
                 let la = self.arr(*l, lk);
                 let ra = self.arr(*r, rk);
                 la.join_core(ra, |_k, (w1, a), (w2, b)| {
-                    tags::product(*w1, *w2).map(|w| {
-                        let mut r = a.clone();
-                        r.extend_from_slice(b);
-                        (w, r)
-                    })
+                    tags::product(*w1, *w2).map(|w| (w, Row::concat(a, b)))
                 })
             }
             Op::Semi { l, r, lk, rk, anti } => {
@@ -686,14 +677,14 @@ impl<'s> Lower<'s> {
                 let mut c = self.node(*input);
                 if *keyless {
                     // One group even over no rows: a sentinel member under the base.
-                    let s: Vec<((W, Row), T, R)> = vec![((BASE, Vec::new()), 0, 1)];
+                    let s: Vec<((W, Row), T, R)> = vec![((BASE, Row::default()), 0, 1)];
                     c = c.concat(s.to_stream(self.scope).as_collection());
                 }
                 let kk = keys.clone();
                 let arr = c
                     .flat_map(move |(w, row)| {
                         if row.is_empty() {
-                            return Some((Vec::new(), (w, row)));
+                            return Some((Row::default(), (w, row)));
                         }
                         let mut vr = None;
                         key_of(&row, &kk, &mut vr).map(|k| (k, (w, row)))
@@ -825,13 +816,13 @@ impl<'s> Lower<'s> {
             .threshold_named(&format!("fix{var}:touched-2"), |_, c| if *c > 0 { 1 } else { 0 });
         // View seeds: the base view reads base records; a touched view v reads its chain.
         let base_seed = init_d.clone().filter(|(w, _)| *w == BASE);
-        let chain_pairs = touched.clone().flat_map(|v| tags::chain(v).into_iter().map(move |t| (vec![Val::Int(t as i64)], (BASE, Val::Int(v as i64)))));
-        let by_tag = init_d.clone().map(|(w, row)| (vec![Val::Int(w as i64)], (BASE, row))).arrange_by_key_named(&format!("fix{var}:init-by-tag"));
+        let chain_pairs = touched.clone().flat_map(|v| tags::chain(v).into_iter().map(move |t| (Row::from([Val::int(t as i64)]), (BASE, Val::int(v as i64)))));
+        let by_tag = init_d.clone().map(|(w, row)| (Row::from([Val::int(w as i64)]), (BASE, row))).arrange_by_key_named(&format!("fix{var}:init-by-tag"));
         let view_seed = chain_pairs
-            .map(|(k, (b, v))| (k, (b, vec![v])))
+            .map(|(k, (b, v))| (k, (b, Row::from([v]))))
             .arrange_by_key_named(&format!("fix{var}:chain"))
-            .join_core(by_tag, |_t, (_, v), (_, row)| match v[0] {
-                Val::Int(v) => Some((v as W, row.clone())),
+            .join_core(by_tag, |_t, (_, v), (_, row)| match v[0].kind() {
+                Kind::Int(v) => Some((v as W, row.clone())),
                 _ => None,
             });
         let seeds = base_seed.concat(view_seed);
@@ -857,15 +848,15 @@ impl<'s> Lower<'s> {
         });
         // Back to delta mode: base view under 0; a touched view v: R_v − R_pv, pv its parent view
         // if touched, else the base view.
-        let par = touched.clone().map(|v| (vec![Val::Int(tags::parent(v) as i64)], (BASE, vec![Val::Int(v as i64)])));
-        let tset = touched.clone().map(|v| (vec![Val::Int(v as i64)], (BASE, ()))).arrange_by_key_named(&format!("fix{var}:tset"));
+        let par = touched.clone().map(|v| (Row::from([Val::int(tags::parent(v) as i64)]), (BASE, Row::from([Val::int(v as i64)]))));
+        let tset = touched.clone().map(|v| (Row::from([Val::int(v as i64)]), (BASE, ()))).arrange_by_key_named(&format!("fix{var}:tset"));
         let par_arr = par.clone().arrange_by_key_named(&format!("fix{var}:parent"));
         let with_parent = par_arr.join_core(tset, |p, (_, v), _| Some((p.clone(), v.clone())));
-        let without = par.concat(with_parent.clone().map(|(p, v)| (p, (BASE, v))).negate()).map(|(_, (_, v))| (vec![Val::Int(0)], v));
+        let without = par.concat(with_parent.clone().map(|(p, v)| (p, (BASE, v))).negate()).map(|(_, (_, v))| (Row::from([Val::int(0)]), v));
         let pv_pairs = with_parent.concat(without).map(|(pv, v)| (pv, (BASE, v))).arrange_by_key_named(&format!("fix{var}:pv-pairs"));
-        let res_by_view = result.clone().map(|(v, row)| (vec![Val::Int(v as i64)], (BASE, row))).arrange_by_key_named(&format!("fix{var}:result-by-view"));
-        let minus = res_by_view.join_core(pv_pairs, |_pv, (_, row), (_, v)| match v[0] {
-            Val::Int(v) => Some((v as W, row.clone())),
+        let res_by_view = result.clone().map(|(v, row)| (Row::from([Val::int(v as i64)]), (BASE, row))).arrange_by_key_named(&format!("fix{var}:result-by-view"));
+        let minus = res_by_view.join_core(pv_pairs, |_pv, (_, row), (_, v)| match v[0].kind() {
+            Kind::Int(v) => Some((v as W, row.clone())),
             _ => None,
         });
         result.concat(minus.negate())
@@ -904,16 +895,12 @@ impl<'i> ViewLower<'i> {
             Op::Var(_) => self.rec.clone(),
             Op::Map { input, exprs } => {
                 let exprs = exprs.clone();
+                let mut out = Vec::with_capacity(exprs.len());
                 self.node(*input).flat_map(move |(w, row)| {
-                    let vr = val::row_to_v(&row);
-                    let mut out = Vec::with_capacity(exprs.len());
-                    for e in &exprs {
-                        match ev(e, &vr) {
-                            Some(v) => out.push(val::from_v(&v)),
-                            None => return None,
-                        }
+                    if !map_row(&exprs, &row, &mut out) {
+                        return None;
                     }
-                    Some((w, out))
+                    Some((w, Row::new(&out)))
                 })
             }
             Op::Filter { input, pred } => {
@@ -943,9 +930,7 @@ impl<'i> ViewLower<'i> {
                     if lv && rv && *w1 == *w2 && *w1 != BASE && crate::mutant::on(4) {
                         return None;
                     }
-                    let mut r = a.clone();
-                    r.extend_from_slice(b);
-                    Some((w, r))
+                    Some((w, Row::concat(a, b)))
                 };
                 match (lv, rv) {
                     (true, true) => {

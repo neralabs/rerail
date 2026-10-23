@@ -64,14 +64,14 @@ fn index(p: &Path) -> ExportFile {
 
 fn json_val(v: &Json) -> Val {
     match v {
-        Json::Null => Val::Null,
+        Json::Null => Val::NULL,
         Json::Number(n) => match n.as_i64() {
-            Some(i) => Val::Int(i),
-            None => Val::Real(n.as_f64().unwrap().to_bits()),
+            Some(i) => Val::int(i),
+            None => Val::real(n.as_f64().unwrap().to_bits()),
         },
-        Json::String(s) => Val::Text(val::sym(s)),
-        Json::Bool(b) => Val::Int(*b as i64),
-        other => Val::Text(val::sym(&other.to_string())),
+        Json::String(s) => Val::text(val::sym(s)),
+        Json::Bool(b) => Val::int(*b as i64),
+        other => Val::text(val::sym(&other.to_string())),
     }
 }
 

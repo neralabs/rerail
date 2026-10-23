@@ -9,7 +9,7 @@ use super::lower::{self, Refusals, Source, T};
 use super::norm;
 use super::real::{self, Real};
 use super::tags::{self, W, BASE};
-use super::val::{self, Row, Val};
+use super::val::{self, Row};
 use super::vectors;
 use crate::derive::World;
 use crate::membership::{self, Members, Resident};
@@ -126,7 +126,7 @@ impl Facts {
         }
     }
     fn bytes(&self) -> usize {
-        self.rows.values().map(|r| r.iter().map(|x| 24 + x.capacity() * std::mem::size_of::<Val>()).sum::<usize>() + 16).sum()
+        self.rows.values().map(|r| r.iter().map(|x| std::mem::size_of::<Row>() + x.heap_bytes()).sum::<usize>() + 16).sum()
     }
 }
 
@@ -177,6 +177,8 @@ pub fn run(run_dir: &Path, opts: Opts) {
 
     timely::execute_directly(move |worker| {
         let world = Rc::new(RefCell::new(World::new(st)));
+        // One string table: the store's interner holds every text value of the dataflow.
+        val::install(world.clone());
         // Plans: IR repository plans, normalised by the generator.
         let mut graphs = Vec::new();
         let mut refusals_static = Vec::new();
@@ -355,7 +357,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
                         (false, rows) => Ok(rows.into_iter().map(|r| (r, 1)).collect()),
                     }
                 } else {
-                    Ok(vectors::oracle_rows(&world.borrow(), vf.as_ref().unwrap(), plan).into_iter().map(|r| (r, 1)).collect())
+                    Ok(vectors::oracle_rows(vf.as_ref().unwrap(), plan).into_iter().map(|r| (r, 1)).collect())
                 };
                 let tie = matches!(&want, Err(e) if e.starts_with("tie"));
                 if tie {
@@ -485,7 +487,8 @@ pub fn run(run_dir: &Path, opts: Opts) {
             }
             if ev.group == "edit" && edits_done % 100 == 0 {
                 let r = rss();
-                rss_samples.push(json!({"at": format!("edit {edits_done}"), "rss_mb": mb(r.0), "footprint_mb": mb(r.1), "resident_pairs": resident.held(), "resident_contents": resident.contents()}));
+                let arranged: isize = sizes.borrow().records.values().sum();
+                rss_samples.push(json!({"at": format!("edit {edits_done}"), "rss_mb": mb(r.0), "footprint_mb": mb(r.1), "resident_pairs": resident.held(), "resident_contents": resident.contents(), "arranged": arranged}));
             }
         }
         let rss_end = rss();
