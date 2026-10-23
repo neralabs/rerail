@@ -1263,3 +1263,72 @@ pub fn rows(plan: &Plan, preds: &Preds, st: &mut FileState<'_>, schema: &Schema,
     out.table = Rc::new(Table::new(schema.clone(), cols, k));
     Some(out)
 }
+
+/// R12/R13 on synthetic files: the physical plan's rows equal the leaf executor's (the truth) for
+/// inputs that exercise each seeded mutant's site, where the corpus barely reaches it (mutant 1
+/// survives all 9,010 files, mutant 3 shows on one row). Each test also asserts the input plans,
+/// so a refusal cannot pass it vacuously.
+#[cfg(test)]
+mod tests {
+    use crate::ast::{Compiler, FileMemo, Names};
+    use crate::eval::{Anchor, FileCtx, Input, Rows};
+    use crate::facts;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    /// The roots `rule` matches in `src`, as rows `[path, start, end]`: (leaf executor, physical).
+    fn both(src: &str, rule: serde_json::Value) -> (Vec<String>, Vec<String>) {
+        let ast = serde_json::json!({ "language": "python", "syntax": "valid", "rule": rule });
+        let ev = serde_json::json!({ "as": "row", "query": { "ast": ast } });
+        let utils = BTreeMap::new();
+        let mut names = Names::default();
+        let query = Compiler::new(&mut names, &facts::GRAMMAR, &utils).query(&ast).unwrap();
+        let mut preds = super::Preds::default();
+        let plan = super::lower_and_plan(&ev, &ast, &[], &utils, &facts::GRAMMAR, &mut preds).expect("the input plans");
+        let input = Input { query, fields: vec![], projs: vec![], each: None, anchor: Anchor::Span, paths: None, node_regexes: vec![], phys: Err("leaf".into()) };
+        let source = Arc::new(src.to_owned());
+        let Ok(facts::Built::Facts(f)) = facts::build("t.py", source.clone()) else { panic!("facts") };
+        let ctx = FileCtx { f: &f, path: "t.py", source: &source };
+        let rc: Rc<str> = Rc::from(src);
+        let schema = crate::rel::input_schema(&[]);
+        let show = |r: &Rows| (0..r.table.len()).map(|i| format!("{:?}", r.table.row(i))).collect::<Vec<_>>();
+        let leaf = input.rows(&ctx, &schema, &FileMemo::default(), &rc);
+        let mut st = super::FileState::new(&f, "t.py");
+        let phys = super::rows(&plan, &preds, &mut st, &schema, &rc).expect("the physical plan runs");
+        assert!(leaf.unsupported.is_none() && phys.unsupported.is_none());
+        (show(&leaf), show(&phys))
+    }
+
+    /// `inside` with a stop rule: the walk up stops at a function, so the method's names are not
+    /// inside the class. Kills mutant 1 (stop rule dropped).
+    #[test]
+    fn stop_rule_bounds_the_walk() {
+        let src = "class A:\n    x = 1\n    def f(self):\n        y = 2\n";
+        let rule = serde_json::json!({ "all": [{ "kind": "identifier" }, { "inside": { "kind": "class_definition", "stopBy": { "kind": "function_definition" } } }] });
+        let (leaf, phys) = both(src, rule);
+        assert_eq!(leaf.len(), 2, "{leaf:?}");
+        assert_eq!(leaf, phys);
+    }
+
+    /// An `any` whose last disjunct alone selects some roots. Kills mutant 2 (lost union arm).
+    #[test]
+    fn every_disjunct_selects() {
+        let src = "a = 1\nb = 'x'\n";
+        let rule = serde_json::json!({ "any": [{ "kind": "integer" }, { "all": [{ "kind": "identifier" }, { "regex": "^b$" }] }] });
+        let (leaf, phys) = both(src, rule);
+        assert_eq!(leaf.len(), 2, "{leaf:?}");
+        assert_eq!(leaf, phys);
+    }
+
+    /// `has … stopBy: end` whose only witness is the root's first descendant (`f` of `f()`).
+    /// Kills mutant 3 (descendant interval from `id + 2`).
+    #[test]
+    fn first_descendant_is_a_descendant() {
+        let src = "f()\n";
+        let rule = serde_json::json!({ "all": [{ "kind": "call" }, { "has": { "kind": "identifier", "stopBy": "end" } }] });
+        let (leaf, phys) = both(src, rule);
+        assert_eq!(leaf.len(), 1, "{leaf:?}");
+        assert_eq!(leaf, phys);
+    }
+}
