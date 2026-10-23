@@ -259,9 +259,10 @@ describe("rerail scan and settings CLI", () => {
     execFileSync("git", ["add", "api"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "generated"], { cwd: root });
     let output = "";
-    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
+    const scanCode = await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
       home, stdout: { write: text => { output += text; return true; } },
-    })).toBe(0);
+    });
+    expect(scanCode, output).toBe(0);
     const request = auditRequestSchema.parse(JSON.parse(output));
     expect(request).toMatchObject({ status: "completed", error: null });
     const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();

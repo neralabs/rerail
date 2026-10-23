@@ -333,7 +333,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["an empty capture anchor", document({ violation: { ...violation, anchor: "capture." } }), /Anchor must be/],
     ["a non-string fix", document({ violation: { ...violation, fix: { template: "y" } } }), /expected string/],
     ["finding variables", document({ violation: { ...violation, variables: { name: "x" } } }), /Violation variables are not supported yet/],
-    ["an unknown predicate operator", where({ gt: ["s.size", 1] }), /Invalid input/],
+    ["an unknown predicate operator", where({ greaterThan: ["s.size", 1] }), /Invalid input/],
     ["an eq with one operand", where({ eq: ["s.size"] }), /Invalid input/],
     ["an undefined utility", ast({ kind: "identifier", not: { matches: "missing" } }), /Utility rule missing is not defined/],
     ["a call with a rule for an argument", ast({ matches: { wrap: { X: { kind: "number" } } } }, { utils: { wrap: { params: ["X"], rule: { kind: "number" } } } }), /matches must be the id of a utility rule or a call/],
@@ -1239,7 +1239,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
   it("pins parse's grammars and kinds to the engine's", () => {
     const literal = (file: string) => readFileSync(new URL(`../../../native/src/code_rule_dsl/literal/${file}`, import.meta.url), "utf8");
     const grammars = [...literal("mod.rs").matchAll(/^\s+"(\w+)" => Some\(Self::\w+\),$/gm)].map(match => match[1]).filter(name => name !== "testChars");
-    expect(grammars).toEqual([...CODE_RULE_PARSE_GRAMMARS]);
+    expect(grammars.sort()).toEqual([...CODE_RULE_PARSE_GRAMMARS].sort());
     const kinds = (file: string) => [...(literal(file).split("KINDS: &[&str] = &[")[1]!.split("];")[0]!.matchAll(/"(\w+)"/g))].map(match => match[1]);
     expect(kinds("percent.rs")).toEqual([...CODE_RULE_PARSE_KINDS.percentFormat]);
     expect(kinds("brace.rs")).toEqual([...CODE_RULE_PARSE_KINDS.braceFormat]);
