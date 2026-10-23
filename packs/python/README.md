@@ -1,10 +1,10 @@
 # Rerail rule pack: Python
 
-485 code rules for Python, ported from Ruff 0.16.9 (447 rules) and Bandit 1.9.4 (38 tests). Each is scored against the
+235 code rules for Python, ported from Ruff 0.16.9 (197 rules) and Bandit 1.9.4 (38 tests). Each is scored against the
 tool's own findings on the tool's test fixtures, through the engine's production workspace path, with every
 disagreement declared in `divergences.json`. Every port honours its tool's suppression comment, as the tool does:
 Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`); PGH004, which reports `noqa` comments,
-is the one exception, as in Ruff (`suppressionExemptions` in `conformance.json`). The 373 Ruff rules that Ruff's
+is the one exception, as in Ruff (`suppressionExemptions` in `conformance.json`). The 123 Ruff rules that Ruff's
 default selection leaves off ship off (`"on": false` in `pack.json`).
 
 This is the reference pack for the [pack structure and validation contract](../../docs/pack-format.md): it is
@@ -18,7 +18,7 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), the cases Rerail wrote for it (`fixtures/rerail/`, listed in `UPSTREAM.md`: every shipped rule on lines carrying `# noqa` or `# nosec`, as a stub for rules Ruff reports only in stubs, and D104 exempt, since it reports once per package; and probes of inputs the ports once misread or their reviews pinned), its recordings (`fixtures.expected.json`, `corpus-django.expected.json`) and the recorder (`generate.py`, sharing `upstream/common.py`) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
-| `candidates/rules/` | Ports still being evaluated (156 Ruff and Bandit ports): never shipped or listed in `pack.json`. 155 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) is not recorded |
+| `candidates/rules/` | Ports still being evaluated (406 Ruff and Bandit ports): never shipped or listed in `pack.json`. 405 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) is not recorded. 250 Ruff ports pass every port readiness gate but `stays-silent`: Ruff's tests for them have no file where Ruff reports nothing, and no golden gives them one yet |
 
 Re-recording runs offline against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own
 install, on CPython 3.13):
