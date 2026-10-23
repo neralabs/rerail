@@ -21,7 +21,7 @@ use super::val::{self, Row};
 use crate::store::{Cid, Sym};
 use rerail_facts::sql::value as sv;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 type Bag = Rc<Vec<Row>>;
@@ -53,11 +53,14 @@ impl Counts {
     }
 }
 
-/// One plan's result over one worktree: per output its rows (a multiset), and the plan's
-/// refusals (distinct refusal rows; findings are withheld while any is live).
+/// One plan's result over one worktree: its name, per output its rows (a multiset), and the
+/// plan's refusals (distinct refusal rows; findings are withheld while any is live).
+pub type PlanResult = (String, Vec<(String, BTreeMap<Row, R>)>, Vec<Row>);
+
+/// The plans evaluated together over one worktree (those of one graph, `norm::Plans`: a node
+/// several of them read is evaluated once), with the work counts and per-stage profile of the run.
 pub struct Outcome {
-    pub outputs: Vec<(String, BTreeMap<Row, R>)>,
-    pub refusals: Vec<Row>,
+    pub plans: Vec<PlanResult>,
     pub counts: Counts,
     /// Per stage (`clause/stage` of the node's label): exclusive seconds and rows out.
     pub stages: FxHashMap<String, (f64, u64)>,
@@ -68,14 +71,17 @@ fn key(row: &Row, k: &Key) -> Option<Row> {
 }
 
 struct Ev<'a> {
-    name: &'a str,
     g: &'a Graph,
     src: &'a Source,
     files: &'a [(Sym, Cid)],
     done: Vec<Option<Bag>>,
     /// Consumers of each node not yet run (outputs count as one each, never released).
     uses: Vec<u32>,
-    refused: FxHashSet<Row>,
+    /// Refusal records raised by an operator, by node (`n<node>: <construct>`).
+    refused: FxHashSet<(NodeId, Row)>,
+    /// Constructs the recursion cannot evaluate, by fixpoint node; a plan reading the node holds
+    /// `<plan>: <construct>` (the lowering's build refusals).
+    built: FxHashSet<(NodeId, String)>,
     counts: Counts,
     live_rows: u64,
     /// Seconds spent in the current node's inputs (exclusive time per stage).
@@ -83,40 +89,62 @@ struct Ev<'a> {
     stages: FxHashMap<String, (f64, u64)>,
 }
 
-/// Evaluates `g`'s outputs over `files` (one worktree's members).
-pub fn eval(name: &str, g: &Graph, src: &Source, files: &[(Sym, Cid)]) -> Outcome {
+/// Evaluates the outputs `g` assigns to each of `plans` (`Graph::owners`; every output when the
+/// graph has no owners) over `files` (one worktree's members). A refusal belongs to every plan
+/// whose outputs read the node that raised it, as `lower::build` attributes it.
+pub fn eval(plans: &[&str], g: &Graph, src: &Source, files: &[(Sym, Cid)]) -> Outcome {
     let n = g.nodes.len();
-    let mut needed = vec![false; n];
-    let mut stack: Vec<NodeId> = g.outputs.iter().map(|(_, o, _)| *o).collect();
-    while let Some(x) = stack.pop() {
-        if needed[x] {
-            continue;
+    let owned = |name: &str| -> Vec<(String, NodeId)> { g.outputs.iter().enumerate().filter(|(i, _)| g.owners.is_empty() || g.owners[*i] == name).map(|(_, (c, o, _))| (c.clone(), *o)).collect() };
+    let outs: Vec<Vec<(String, NodeId)>> = plans.iter().map(|p| owned(p)).collect();
+    // Per plan, the nodes its outputs read.
+    let mut reads: Vec<Vec<bool>> = Vec::new();
+    for os in &outs {
+        let mut on = vec![false; n];
+        let mut stack: Vec<NodeId> = os.iter().map(|(_, o)| *o).collect();
+        while let Some(x) = stack.pop() {
+            if !on[x] {
+                on[x] = true;
+                stack.extend(lower::op_inputs(&g.nodes[x]));
+            }
         }
-        needed[x] = true;
-        stack.extend(lower::op_inputs(&g.nodes[x]));
+        reads.push(on);
     }
     let mut uses = vec![0u32; n];
-    for x in (0..n).filter(|x| needed[*x]) {
+    for x in (0..n).filter(|x| reads.iter().any(|r| r[*x])) {
         for i in lower::op_inputs(&g.nodes[x]) {
             uses[i] += 1;
         }
     }
-    for (_, o, _) in &g.outputs {
+    for (_, o) in outs.iter().flatten() {
         uses[*o] += 1;
     }
-    let mut ev = Ev { name, g, src, files, done: vec![None; n], uses, refused: FxHashSet::default(), counts: Counts::default(), live_rows: 0, child_secs: 0.0, stages: FxHashMap::default() };
-    let mut outputs = Vec::new();
-    for (clause, o, _) in &g.outputs {
-        let b = ev.node(*o);
-        let mut m: BTreeMap<Row, R> = BTreeMap::new();
-        for r in b.iter() {
-            *m.entry(r.clone()).or_default() += 1;
+    let mut ev = Ev { g, src, files, done: vec![None; n], uses, refused: FxHashSet::default(), built: FxHashSet::default(), counts: Counts::default(), live_rows: 0, child_secs: 0.0, stages: FxHashMap::default() };
+    let mut results = Vec::new();
+    for (pi, name) in plans.iter().enumerate() {
+        let mut outputs = Vec::new();
+        for (clause, o) in &outs[pi] {
+            let b = ev.node(*o);
+            let mut m: BTreeMap<Row, R> = BTreeMap::new();
+            for r in b.iter() {
+                *m.entry(r.clone()).or_default() += 1;
+            }
+            outputs.push((format!("{name}:{clause}"), m));
         }
-        outputs.push((format!("{name}:{clause}"), m));
+        results.push((name.to_string(), outputs));
     }
-    let mut refusals: Vec<Row> = ev.refused.into_iter().collect();
-    refusals.sort();
-    Outcome { outputs, refusals, counts: ev.counts, stages: ev.stages }
+    let plans = results
+        .into_iter()
+        .enumerate()
+        .map(|(pi, (name, outputs))| {
+            let mut refusals: Vec<Row> = ev.refused.iter().filter(|(x, _)| reads[pi][*x]).map(|(_, r)| r.clone()).collect();
+            let built: BTreeSet<&String> = ev.built.iter().filter(|(x, _)| reads[pi][*x]).map(|(_, w)| w).collect();
+            refusals.extend(built.into_iter().map(|w| lower::refusal_row(&name, w)));
+            refusals.sort();
+            refusals.dedup();
+            (name, outputs, refusals)
+        })
+        .collect();
+    Outcome { plans, counts: ev.counts, stages: ev.stages }
 }
 
 impl Ev<'_> {
@@ -181,7 +209,7 @@ impl Ev<'_> {
             let (rows, refused) = lower::captured(|| logic(&kk, &members));
             if !refused.is_empty() {
                 for w in refused {
-                    self.refused.insert(lower::refusal_row(&at, &w));
+                    self.refused.insert((n, lower::refusal_row(&at, &w)));
                 }
                 continue;
             }
@@ -217,7 +245,7 @@ impl Ev<'_> {
                     let (ok, refused) = lower::captured(|| lower::map_row(exprs, row, &mut out));
                     match refused.first() {
                         Some(r) => {
-                            self.refused.insert(lower::refusal_row(&at, r));
+                            self.refused.insert((n, lower::refusal_row(&at, r)));
                         }
                         None if ok => res.push(Row::new(&out)),
                         None => {}
@@ -233,7 +261,7 @@ impl Ev<'_> {
                     let (keep, refused) = lower::captured(|| lower::ev(pred, &val::row_to_v(row)).and_then(|v| sv::truth(&v)) == Some(true));
                     match refused.first() {
                         Some(r) => {
-                            self.refused.insert(lower::refusal_row(&at, r));
+                            self.refused.insert((n, lower::refusal_row(&at, r)));
                         }
                         None if keep => res.push(row.clone()),
                         None => {}
@@ -297,7 +325,7 @@ impl Ev<'_> {
                 let k: Key = (0..*prefix).map(|c| (super::norm::col(c), KeyMode::Group)).collect();
                 self.grouped(n, &inp, &k, lower::distinct_prefix_logic(*prefix), false, false)
             }
-            Op::Fix { var, init, step } => self.fix(*var, init, step),
+            Op::Fix { var, init, step } => self.fix(n, *var, init, step),
         }
     }
 
@@ -310,7 +338,7 @@ impl Ev<'_> {
     /// variable's rows when a round adds none. Every body operator is monotone (the lowering's
     /// refusals exclude the others), so this is the least fixpoint the generator's `iterate`
     /// reaches.
-    fn fix(&mut self, var: u32, init: &[NodeId], step: &[NodeId]) -> Vec<Row> {
+    fn fix(&mut self, node: NodeId, var: u32, init: &[NodeId], step: &[NodeId]) -> Vec<Row> {
         let g = self.g;
         let rd = lower::var_readers(g, var);
         let mut body = vec![false; g.nodes.len()];
@@ -330,7 +358,7 @@ impl Ev<'_> {
                 _ => None,
             };
             if let Some(w) = what {
-                self.refused.insert(lower::refusal_row(self.name, &format!("{}: {w}", g.labels[x])));
+                self.built.insert((node, format!("{}: {w}", g.labels[x])));
                 refused_ops.insert(x);
                 continue;
             }

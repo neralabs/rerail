@@ -165,6 +165,8 @@ MUTANTS = [
      ["facts-b-unit"]),
     (46, "left-join-key-antijoin", "facts-b", "gen: LEFT JOIN on equalities (norm.rs join)", "unmatched left rows found by a semijoin instead of the antijoin on the join's keys",
      ["facts-b-unit"]),
+    (56, "interner-sweep-arrangements", "facts-b", "gen: the interner's epoch sweep (lower.rs walk_rows)", "the sweep does not mark the arrangements' rows, so a symbol only an arrangement holds is reclaimed and its id reused",
+     ["facts-b-unit"]),
 ]
 REWRITES = ROOT / "docs/facts/REWRITES.md"
 # The checks each registry table's mutants run: rerail-facts rewrites (logical) have their unit

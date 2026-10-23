@@ -286,6 +286,24 @@ fn summary(v: &[f64]) -> serde_json::Value {
     json!({"n": v.len(), "p50_ms": pct(v, 0.5), "p95_ms": pct(v, 0.95), "p99_ms": pct(v, 0.99), "max_ms": pct(v, 1.0)})
 }
 
+extern "C" {
+    /// libmalloc: return the free pages of every zone (`zone` NULL) to the system.
+    fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+}
+
+/// The parent's resident size after returning freed pages: (RSS, physical footprint, heap bytes
+/// in use over every malloc zone). Heap in use is the live state; RSS and footprint add the
+/// binary, retained allocator pages and, under memory pressure, lose compressed pages.
+fn resident() -> (u64, u64, u64) {
+    let mut st: libc::malloc_statistics_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
+        libc::malloc_zone_statistics(std::ptr::null_mut(), &mut st);
+    }
+    let (r, f) = rss();
+    (r, f, st.size_in_use as u64)
+}
+
 fn mb(b: u64) -> f64 {
     b as f64 / (1024.0 * 1024.0)
 }
@@ -323,8 +341,9 @@ fn get_row(j: &serde_json::Value) -> Row {
     j.as_array().unwrap().iter().map(get_val).collect()
 }
 
-fn res_of(o: &Outcome) -> Res {
-    Res { outputs: o.outputs.clone(), refusals: o.refusals.clone() }
+/// Each evaluated plan's result, in the order the plans were passed to `batch::eval`.
+fn res_of(o: &Outcome) -> Vec<Res> {
+    o.plans.iter().map(|(_, outputs, refusals)| Res { outputs: outputs.clone(), refusals: refusals.clone() }).collect()
 }
 
 fn put_res(r: &Res) -> serde_json::Value {
@@ -494,7 +513,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let exports = Rc::new(RefCell::new(Exports { read: plans.iter().flat_map(|p| p.reads.iter().copied()).collect(), ..Default::default() }));
         let ex = exports.clone();
         let src: Source = Rc::new(move |e, p, c| ex.borrow().rows(e, p, c));
-        let rss_plans = rss();
+        let rss_plans = resident();
         let path_hash = |p: Sym, c: Cid| -> (String, String) {
             let w = world.borrow();
             (w.store.syms.str(p).to_owned(), crate::facts::hex(&w.store.contents[c as usize].hash))
@@ -513,53 +532,86 @@ pub fn run(run_dir: &Path, opts: Opts) {
         drop(ms);
         let rss_members = rss();
 
-        // Per plan: from-scratch runs (load and recomputes) and their counts.
-        let mut per_plan_ms: Vec<Vec<f64>> = vec![Vec::new(); plans.len()];
-        let mut per_plan_counts: Vec<Counts> = vec![Counts::default(); plans.len()];
+        // Plans normalised into one graph (`norm::Plans`, R37) run together: a node several of
+        // them read is evaluated once. A run is a set of plans of one graph.
+        let mut graph_of: Vec<usize> = Vec::new();
+        let mut graph_ptrs: Vec<Rc<Graph>> = Vec::new();
+        for p in &plans {
+            match graph_ptrs.iter().position(|g| Rc::ptr_eq(g, &p.graph)) {
+                Some(i) => graph_of.push(i),
+                None => {
+                    graph_ptrs.push(p.graph.clone());
+                    graph_of.push(graph_ptrs.len() - 1);
+                }
+            }
+        }
+        let units = |ks: &[usize]| -> Vec<Vec<usize>> {
+            let mut u: Vec<Vec<usize>> = Vec::new();
+            for &k in ks {
+                match u.iter_mut().find(|x| graph_of[x[0]] == graph_of[k]) {
+                    Some(x) => x.push(k),
+                    None => u.push(vec![k]),
+                }
+            }
+            u
+        };
+        let label = |ks: &[usize]| ks.iter().map(|k| plans[*k].name.as_str()).collect::<Vec<_>>().join("+");
         let mut skipped: Vec<usize> = vec![0; plans.len()];
-        // Per plan and stage: exclusive seconds and rows out, over every run.
-        let stage_prof: RefCell<Vec<FxHashMap<String, (f64, u64)>>> = RefCell::new(vec![FxHashMap::default(); plans.len()]);
+        // Per run label (its plans joined by `+`): milliseconds of each run, counts, and per stage
+        // the exclusive seconds and rows out; per plan, the runs it took part in.
+        #[derive(Default)]
+        struct RunStat {
+            ms: Vec<f64>,
+            counts: Counts,
+            stages: FxHashMap<String, (f64, u64)>,
+        }
+        let run_stats: RefCell<BTreeMap<String, RunStat>> = RefCell::new(BTreeMap::new());
+        let plan_runs: RefCell<Vec<usize>> = RefCell::new(vec![0; plans.len()]);
         // Runtime refusals raised in workers (counted per construct), and the workers' peak RSS.
         let worker_refusals: RefCell<BTreeMap<String, u64>> = RefCell::new(BTreeMap::new());
         let worker_peak: RefCell<(u64, Vec<f64>)> = RefCell::new((0, Vec::new()));
-        // A plan run from scratch over `files`, in a worker: the child reports its result, its
+        // A run from scratch over `files`, in a worker: the child reports each plan's result, the
         // counts, per-stage profile, the runtime refusals it raised and its compute time.
-        let eval_spawn = |k: usize, files: &[(Sym, Cid)]| -> Child {
+        let eval_spawn = |ks: &[usize], files: &[(Sym, Cid)]| -> Child {
             spawn(|| {
+                let names: Vec<&str> = ks.iter().map(|k| plans[*k].name.as_str()).collect();
                 let before = lower::refusals().0;
                 let t = Instant::now();
-                let o = batch::eval(&plans[k].name, &plans[k].graph, &src, files);
+                let o = batch::eval(&names, &plans[ks[0]].graph, &src, files);
                 let ms = t.elapsed().as_secs_f64() * 1e3;
                 let inc: BTreeMap<String, u64> = lower::refusals().0.into_iter().filter_map(|(s, n)| (n > before.get(&s).copied().unwrap_or(0)).then(|| (s.clone(), n - before.get(&s).copied().unwrap_or(0)))).collect();
-                serde_json::to_vec(&json!({"res": put_res(&res_of(&o)), "counts": o.counts, "stages": o.stages, "refusals": inc, "ms": ms})).unwrap()
+                serde_json::to_vec(&json!({"res": res_of(&o).iter().map(put_res).collect::<Vec<_>>(), "counts": o.counts, "stages": o.stages, "refusals": inc, "ms": ms})).unwrap()
             })
         };
-        // Its result in the parent, and the run's milliseconds (the child's compute plus the
-        // parent's decoding).
-        let eval_finish = |k: usize, c: Child, per_plan_ms: &mut Vec<Vec<f64>>, per_plan_counts: &mut Vec<Counts>| -> (Res, f64) {
+        // Its results in the parent (in `ks` order), and the run's milliseconds (the child's
+        // compute plus the parent's decoding).
+        let eval_finish = |ks: &[usize], c: Child| -> (Vec<Res>, f64) {
             let (bytes, peak) = collect(c);
             let t = Instant::now();
             let j: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             let c: Counts = serde_json::from_value(j["counts"].clone()).unwrap();
-            per_plan_counts[k].add(&c);
-            let mut sp = stage_prof.borrow_mut();
+            let mut rs = run_stats.borrow_mut();
+            let st = rs.entry(label(ks)).or_default();
+            st.counts.add(&c);
             for (s, v) in j["stages"].as_object().unwrap() {
-                let e = sp[k].entry(s.clone()).or_default();
+                let e = st.stages.entry(s.clone()).or_default();
                 e.0 += v[0].as_f64().unwrap();
                 e.1 += v[1].as_u64().unwrap();
             }
-            drop(sp);
             let mut wr = worker_refusals.borrow_mut();
             for (s, n) in j["refusals"].as_object().unwrap() {
                 *wr.entry(s.clone()).or_default() += n.as_u64().unwrap();
             }
             drop(wr);
-            let r = get_res(&j["res"]);
+            let r: Vec<Res> = j["res"].as_array().unwrap().iter().map(get_res).collect();
             let mut wp = worker_peak.borrow_mut();
             wp.0 = wp.0.max(peak);
             wp.1.push(mb(peak));
             let ms = j["ms"].as_f64().unwrap() + t.elapsed().as_secs_f64() * 1e3;
-            per_plan_ms[k].push(ms);
+            st.ms.push(ms);
+            for k in ks {
+                plan_runs.borrow_mut()[*k] += 1;
+            }
             (r, ms)
         };
         let files_of = |m: &Members| -> Vec<(Sym, Cid)> { m.iter().map(|(p, c)| (*p, *c)).collect() };
@@ -567,15 +619,18 @@ pub fn run(run_dir: &Path, opts: Opts) {
         // ---- load: every worktree's contents resident, every plan run from scratch (up to
         // `--workers` runs in flight).
         let max_workers = opts.workers.max(1);
+        let all: Vec<usize> = (0..plans.len()).collect();
         let t_build = Instant::now();
         let mut results: BTreeMap<W, Vec<Res>> = BTreeMap::new();
         let mut fact_load_s = 0.0;
         let mut wt_ms: BTreeMap<W, f64> = BTreeMap::new();
-        let mut inflight: VecDeque<(W, usize, Child)> = VecDeque::new();
-        let land = |inflight: &mut VecDeque<(W, usize, Child)>, results: &mut BTreeMap<W, Vec<Res>>, per_plan_ms: &mut Vec<Vec<f64>>, per_plan_counts: &mut Vec<Counts>, wt_ms: &mut BTreeMap<W, f64>| {
-            let (w, k, c) = inflight.pop_front().unwrap();
-            let (r, ms) = eval_finish(k, c, per_plan_ms, per_plan_counts);
-            results.get_mut(&w).unwrap()[k] = r;
+        let mut inflight: VecDeque<(W, Vec<usize>, Child)> = VecDeque::new();
+        let land = |inflight: &mut VecDeque<(W, Vec<usize>, Child)>, results: &mut BTreeMap<W, Vec<Res>>, wt_ms: &mut BTreeMap<W, f64>| {
+            let (w, ks, c) = inflight.pop_front().unwrap();
+            let (rs, ms) = eval_finish(&ks, c);
+            for (k, r) in ks.into_iter().zip(rs) {
+                results.get_mut(&w).unwrap()[k] = r;
+            }
             *wt_ms.entry(w).or_default() += ms;
         };
         for (w, m) in &members {
@@ -586,20 +641,21 @@ pub fn run(run_dir: &Path, opts: Opts) {
             fact_load_s += tf.elapsed().as_secs_f64();
             let files = files_of(m);
             results.insert(*w, vec![Res { outputs: Vec::new(), refusals: Vec::new() }; plans.len()]);
-            for k in 0..plans.len() {
-                inflight.push_back((*w, k, eval_spawn(k, &files)));
+            for u in units(&all) {
+                let c = eval_spawn(&u, &files);
+                inflight.push_back((*w, u, c));
                 while inflight.len() >= max_workers {
-                    land(&mut inflight, &mut results, &mut per_plan_ms, &mut per_plan_counts, &mut wt_ms);
+                    land(&mut inflight, &mut results, &mut wt_ms);
                 }
             }
             eprintln!("worktree {w} spawned, rss {:.0} MB", mb(rss().0));
         }
         while !inflight.is_empty() {
-            land(&mut inflight, &mut results, &mut per_plan_ms, &mut per_plan_counts, &mut wt_ms);
+            land(&mut inflight, &mut results, &mut wt_ms);
         }
         let per_worktree_ms: Vec<serde_json::Value> = wt_ms.iter().map(|(w, ms)| json!([w, ms])).collect();
         let load_s = t_build.elapsed().as_secs_f64();
-        let rss_loaded = rss();
+        let rss_loaded = resident();
         let attribution = |members: &BTreeMap<W, Members>, results: &BTreeMap<W, Vec<Res>>| {
             let (blocks, block_bytes, narrow, at) = exports.borrow().footprint();
             let (nsyms, sym_bytes) = val::syms_footprint();
@@ -631,11 +687,14 @@ pub fn run(run_dir: &Path, opts: Opts) {
             // The whole check runs in a worker: its from-scratch relations never reach the parent.
             let (bytes, _) = in_worker(|| {
                 let mut diffs: Vec<serde_json::Value> = Vec::new();
-                for (k, p) in plans.iter().enumerate() {
-                    let fresh = res_of(&batch::eval(&p.name, &p.graph, &src, &files));
-                    let got = &results[&w][k];
-                    if *got != fresh {
-                        diffs.push(json!({"event": at, "worktree": w, "plan": p.name, "kind": "stored vs batch from scratch", "stored": got.rows(), "scratch": fresh.rows()}));
+                for u in units(&all) {
+                    let names: Vec<&str> = u.iter().map(|k| plans[*k].name.as_str()).collect();
+                    let fresh = res_of(&batch::eval(&names, &plans[u[0]].graph, &src, &files));
+                    for (k, fresh) in u.iter().zip(fresh) {
+                        let got = &results[&w][*k];
+                        if *got != fresh {
+                            diffs.push(json!({"event": at, "worktree": w, "plan": plans[*k].name, "kind": "stored vs batch from scratch", "stored": got.rows(), "scratch": fresh.rows()}));
+                        }
                     }
                 }
                 if opts.check == Check::Engine {
@@ -693,16 +752,18 @@ pub fn run(run_dir: &Path, opts: Opts) {
 
         // ---- replay
         let mut evs: Vec<EvAcc> = Vec::new();
-        let mut inflight_ev: VecDeque<(usize, W, usize, Child)> = VecDeque::new();
-        let land_ev = |inflight: &mut VecDeque<(usize, W, usize, Child)>, results: &mut BTreeMap<W, Vec<Res>>, per_plan_ms: &mut Vec<Vec<f64>>, per_plan_counts: &mut Vec<Counts>, evs: &mut Vec<EvAcc>| {
-            let (i, w, k, c) = inflight.pop_front().unwrap();
-            let (r, ms) = eval_finish(k, c, per_plan_ms, per_plan_counts);
-            results.get_mut(&w).unwrap()[k] = r;
+        let mut inflight_ev: VecDeque<(usize, W, Vec<usize>, Child)> = VecDeque::new();
+        let land_ev = |inflight: &mut VecDeque<(usize, W, Vec<usize>, Child)>, results: &mut BTreeMap<W, Vec<Res>>, evs: &mut Vec<EvAcc>| {
+            let (i, w, ks, c) = inflight.pop_front().unwrap();
+            let (rs, ms) = eval_finish(&ks, c);
+            for (k, r) in ks.into_iter().zip(rs) {
+                results.get_mut(&w).unwrap()[k] = r;
+            }
             evs[i].ms += ms;
             evs[i].pending -= 1;
         };
         let mut edits_done = 0usize;
-        let mut rss_samples = vec![json!({"at": "loaded", "rss_mb": mb(rss_loaded.0), "footprint_mb": mb(rss_loaded.1)})];
+        let mut rss_samples = vec![json!({"at": "loaded", "rss_mb": mb(rss_loaded.0), "footprint_mb": mb(rss_loaded.1), "heap_in_use_mb": mb(rss_loaded.2)})];
         let mut stopped = false;
         let mut events_done = 0usize;
         let mut recomputes = 0usize;
@@ -761,13 +822,15 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 ran.push(k);
             }
             let d1_ms = t0.elapsed().as_secs_f64() * 1e3;
-            for &k in &ran {
-                inflight_ev.push_back((i, w, k, eval_spawn(k, &files)));
-                recomputes += 1;
+            let runs = units(&ran);
+            for u in &runs {
+                let c = eval_spawn(u, &files);
+                inflight_ev.push_back((i, w, u.clone(), c));
             }
-            evs.push(EvAcc { seq: ev.seq, group: ev.group.clone(), kind: ev.kind.clone(), w, changes: ev.changes.len(), load_ms, ms: d1_ms, pending: ran.len(), ran });
+            recomputes += ran.len();
+            evs.push(EvAcc { seq: ev.seq, group: ev.group.clone(), kind: ev.kind.clone(), w, changes: ev.changes.len(), load_ms, ms: d1_ms, pending: runs.len(), ran });
             while inflight_ev.len() >= max_workers {
-                land_ev(&mut inflight_ev, &mut results, &mut per_plan_ms, &mut per_plan_counts, &mut evs);
+                land_ev(&mut inflight_ev, &mut results, &mut evs);
             }
             // Old contents no longer held are released after the event (workers in flight hold
             // their own copy of the state they started from).
@@ -785,7 +848,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 let due = events_done % opts.check_every == 0;
                 if due || sample {
                     while !inflight_ev.is_empty() {
-                        land_ev(&mut inflight_ev, &mut results, &mut per_plan_ms, &mut per_plan_counts, &mut evs);
+                        land_ev(&mut inflight_ev, &mut results, &mut evs);
                     }
                 }
                 let before = differences.len();
@@ -807,15 +870,15 @@ pub fn run(run_dir: &Path, opts: Opts) {
             }
             if sample {
                 while !inflight_ev.is_empty() {
-                    land_ev(&mut inflight_ev, &mut results, &mut per_plan_ms, &mut per_plan_counts, &mut evs);
+                    land_ev(&mut inflight_ev, &mut results, &mut evs);
                 }
-                let r = rss();
-                rss_samples.push(json!({"at": format!("edit {edits_done}"), "rss_mb": mb(r.0), "footprint_mb": mb(r.1), "attribution": attribution(&members, &results)}));
+                let r = resident();
+                rss_samples.push(json!({"at": format!("edit {edits_done}"), "rss_mb": mb(r.0), "footprint_mb": mb(r.1), "heap_in_use_mb": mb(r.2), "attribution": attribution(&members, &results)}));
                 eprintln!("edit {edits_done}: rss {:.0} MB", mb(r.0));
             }
         }
         while !inflight_ev.is_empty() {
-            land_ev(&mut inflight_ev, &mut results, &mut per_plan_ms, &mut per_plan_counts, &mut evs);
+            land_ev(&mut inflight_ev, &mut results, &mut evs);
         }
         let mut lat: BTreeMap<String, Vec<f64>> = BTreeMap::new();
         let mut per_event = Vec::new();
@@ -827,8 +890,8 @@ pub fn run(run_dir: &Path, opts: Opts) {
             }
             per_event.push(json!([e.seq, e.group, e.kind, e.w, e.changes, e.ms, e.load_ms, e.ran]));
         }
-        let rss_end = rss();
-        rss_samples.push(json!({"at": "end", "rss_mb": mb(rss_end.0), "footprint_mb": mb(rss_end.1)}));
+        let rss_end = resident();
+        rss_samples.push(json!({"at": "end", "rss_mb": mb(rss_end.0), "footprint_mb": mb(rss_end.1), "heap_in_use_mb": mb(rss_end.2)}));
         let mut lat_summary = serde_json::Map::new();
         for (k, v) in &lat {
             lat_summary.insert(k.clone(), summary(v));
@@ -848,16 +911,17 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let out = json!({
             "model": "M2 hybrid",
             "skip": opts.skip,
-            "plans": plans.iter().enumerate().map(|(k, p)| {
-                let mut top: Vec<(String, (f64, u64))> = stage_prof.borrow()[k].clone().into_iter().collect();
+            "plans": plans.iter().enumerate().map(|(k, p)| json!({"plan": p.name, "graph": graph_of[k], "nodes": p.graph.nodes.len(), "exports_read": p.reads.len(), "runs": plan_runs.borrow()[k], "skipped": skipped[k]})).collect::<Vec<_>>(),
+            "runs": run_stats.borrow().iter().map(|(l, st)| {
+                let mut top: Vec<(&String, &(f64, u64))> = st.stages.iter().collect();
                 top.sort_by(|a, b| b.1 .0.partial_cmp(&a.1 .0).unwrap());
-                json!({"plan": p.name, "nodes": p.graph.nodes.len(), "exports_read": p.reads.len(), "runs": per_plan_ms[k].len(), "skipped": skipped[k], "ms": summary(&per_plan_ms[k]), "counts": per_plan_counts[k], "top_stages_secs_rows": top.iter().map(|(s, (t, r))| json!([s, t, r])).collect::<Vec<_>>()})
+                json!({"run": l, "ms": summary(&st.ms), "counts": st.counts, "stages_secs_rows": top.iter().map(|(s, (t, r))| json!([s, t, r])).collect::<Vec<_>>()})
             }).collect::<Vec<_>>(),
             "refused_static": real.refused,
             "events": events.len(),
             "recomputes": recomputes,
             "load": {"store_seconds": store_s, "seconds": load_s, "fact_load_seconds": fact_load_s, "per_worktree_ms": per_worktree_ms,
-                     "rss_base_mb": mb(rss_base.0), "rss_plans_mb": mb(rss_plans.0), "rss_members_mb": mb(rss_members.0), "rss_loaded_mb": mb(rss_loaded.0), "footprint_loaded_mb": mb(rss_loaded.1)},
+                     "rss_base_mb": mb(rss_base.0), "rss_plans_mb": mb(rss_plans.0), "heap_plans_mb": mb(rss_plans.2), "rss_members_mb": mb(rss_members.0), "rss_loaded_mb": mb(rss_loaded.0), "footprint_loaded_mb": mb(rss_loaded.1), "heap_loaded_mb": mb(rss_loaded.2)},
             "attribution_loaded": attr_loaded,
             "attribution_end": attribution(&members, &results),
             "latency": lat_summary,
