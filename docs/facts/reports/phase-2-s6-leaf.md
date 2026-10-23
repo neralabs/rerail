@@ -14,12 +14,12 @@ Slice: the matcher constructs of Spike A's leaf executor (`spikes/facts-a/src/as
 | Machine | darwin arm64, shared with the other slices. Load 8–31 during the runs (noted per run). No timing row is owned by S6, and nothing below is a time |
 | Corpus | data-layer rules `packs/data-layer/candidates/rules` (60). Replay recordings `fixtures/host/data-layer-port/batch-0N-*.json`, the same recording and probe sets as `/tmp/dl60/replay-all.sh` |
 
-| G2.2 batch 6 stays exact | 0 FP/FN/failures | `facts-gate` 13/13 checks pass on both milestone commits (`39d33188c`: load 20.7, 836 s; `8bdf55063`: load 19.5, 498 s; each in a detached worktree at the commit). Replay b6: 1259/1259 calls exact on every build | **pass** | `20261022T211447-gate-39d33188c`, `20261022T212846-gate-8bdf55063`, `20261022T211917-replay-g4` |
+## 2. Results
 
 | id | target | measured | pass/fail | run dir (`~/rerail-bench/facts/phase-2/s6-leaf/runs/`) |
 |---|---|---|---|---|
 | G2.1 (leaf executor) | ≥ 55/60 clean, or each refusal named | **55/60**. The 5 refused are named in § 2.2; they are the IR-level 5 | **pass** | `20261022T210119-census-g2`, `20261022T211915-census-g4` |
-| G2.2 batch 6 stays exact | 0 FP/FN/failures | `facts-gate`: 13/13 checks pass on the milestone-1 tree. Replay b6: 1259/1259 calls exact on every later build | **pass** | `20261022T210204-gate-m1` (the milestone-1 tree, before `git commit`), `…-gate-39d33188c` (the commit, separate worktree), `20261022T211917-replay-g4` |
+| G2.2 batch 6 stays exact | 0 FP/FN/failures | `facts-gate` 13/13 checks pass on both milestone commits (`39d33188c`: load 20.7, 836 s; `8bdf55063`: load 19.5, 498 s; each in a detached worktree at the commit). Replay b6: 1259/1259 calls exact on every build | **pass** | `20261022T211447-gate-39d33188c`, `20261022T212846-gate-8bdf55063`, `20261022T211917-replay-g4` |
 | Parity b1–b5 (replay) | per-batch table | § 2.1 | b2, b3 exact; b1, b4, b5 open (named) | `20261022T211917-replay-g4` (latest), `20261022T205537-replay-g1b` (first) |
 | Parity b1–b5 (suite) | per-batch table vs the `2b1504adc` oracle | **not run**: `suite.ts --engine facts` runs `facts-a repo`, which compiles only `BATCH6` (`spikes/facts-a/src/repo.rs:38-52`, `compile_batch6`). The oracles exist at `/tmp/dl60/suite-b{1..5}.json` | **blocked** (S2/S5 own `repo.rs` and the harness) | – |
 
