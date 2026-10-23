@@ -5,6 +5,8 @@ mod file_memo;
 pub(super) mod memo;
 #[path = "ordered.rs"]
 mod ordered;
+#[path = "predicate.rs"]
+mod predicate;
 #[path = "publication.rs"]
 mod publication;
 #[path = "repeat_cost.rs"]
@@ -153,7 +155,7 @@ impl Sql {
             Op::Predicate(set) => (
                 format!(
                     "CASE WHEN {} THEN 1 ELSE 0 END",
-                    super::super::emit::condition(set, "n")?
+                    predicate::condition(set, "n")?
                 ),
                 true,
             ),
@@ -255,7 +257,7 @@ impl Sql {
         let body = match &plan.op {
             Op::Predicate(set) => format!(
                 "SELECT d.k,d.work,CASE WHEN {} THEN 1 ELSE 0 END AS truth FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node",
-                super::super::emit::condition(set, "n")?,
+                predicate::condition(set, "n")?,
                 input.name
             ),
             Op::Value(term) => format!(

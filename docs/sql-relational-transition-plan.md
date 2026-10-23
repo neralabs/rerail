@@ -741,26 +741,44 @@ All 162 unique tests pass. The 231 preceding profiles contain 18 improvements an
 The final frozen B023 CPU gate fails at 2.021×, with unchanged SQL and VM counts.
 The journal retains that failure and the initial 1.976× pass. CPU qualification remains open.
 
+## Direct atomic predicates: bounded outcome milestone
+
+Scalar outcomes and ordered Boolean tests now share direct expressions for kinds, regexes, empty sets, and all-node sets.
+The surrounding guards, truth conversion, semantic charges, terminal registration, and generation limits remain unchanged.
+Patterns, references, compound sets, and traversals retain their relational lowering.
+
+All 54 width/repetition profiles preserve native results, charges, reached calls, and typed return cells.
+Their correlated scalar subquery count is four at every width, down from 7, 13, and 37 at widths 2, 8, and 32.
+Constant-row scans fall to two. Materializations remain at 28 and typed return cells remain at 12.
+For 32 true utility calls, VM work falls from 2,237 to 2,111 instructions with eight predicates.
+With 32 predicates, VM work falls from 2,933 to 2,471 instructions.
+All 231 preceding profiles also reduce VM work, with unchanged native results, charges, reached calls, and typed returns.
+All 165 unique tests pass. B023 passes both gates in this run at 1.941× reference CPU time, with unchanged SQL and VM counts.
+The preceding CPU failure remains recorded. The journal does not claim a structural B023 speedup or stable CPU qualification.
+
 ## Next implementation action
 
-Remove constant-row subqueries from atomic predicate expressions.
-The current scalar lowering sends each atomic set through the general existence-query emitter.
-A regex becomes `CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE node_regex(...))) THEN 1 ELSE 0 END`.
-The ordered predicate run preserves that unnecessary wrapper around every regex.
+Remove redundant outer existence layers around bound set predicates.
+The general emitter still builds `SELECT 1 WHERE ...` when the input node already supplies every required source.
+It then wraps that query in `NOT (NOT EXISTS (...))`.
+B023 contains eight such layers around references, region membership, and negated structural tests.
+Its actual witness joins must remain intact.
 
-Start with total atomic kinds, regexes, empty sets, and all-node sets in the outcome scalar path.
-Use direct SQL predicates for these atoms. Retain the existing relational emitter for sets that require joins or traversal.
-Share the atomic expression lowering with ordered Boolean tests. Preserve outer guards, terminal registration, and one evaluation per reached atom.
-Do not change utility work accounting, capture behavior, value tests, or recursive scheduling in this step.
+Refactor bound-arm emission to expose its sources and conditions before SQL formatting.
+When an arm needs no additional source, emit its total Boolean condition directly.
+When an arm needs a witness join, retain an existence query with those joins and correlations.
+Preserve union and intersection semantics, two-valued set membership, aliases, file identity, and recursive relation references.
+Consolidate atomic expression lowering through this representation after the comparison tests pass.
+Do not remove the outer guards for reached value calls or the barriers that publish failures and captures.
 
-The new true-conjunction profiles use 28 materializations at predicate widths 2, 8, and 32.
-Their VM counts are 2,063, 2,237, and 2,933 for 32 utility repetitions across two files.
-EXPLAIN reports 7, 13, and 37 correlated scalar subqueries, respectively.
-The next target is zero constant-row existence subqueries for atomic tests, with unchanged materializations and typed return cells.
-VM work must decrease for the eight- and 32-predicate fixtures. SQL must retain one value-read site.
+First prove that B023 still contains eight redundant outer layers.
+Then require zero such layers, unchanged native results, unchanged terminal registration, and no increase in typed returns or VM work.
+The full B023 VM count must decrease before this change is accepted as a performance improvement.
+Retain the CPU gate even if deterministic shape checks pass.
 
-Use the same 54-profile width/repetition matrix and the preceding 231 controls.
-Check true, false, and unknown surrounding results, early decisive atoms, failures, capture boundaries, and independent clauses and files.
-Retain full SQL, EXPLAIN, generation and preparation time, native traces, and the frozen B023 gates.
+Repeat the 54-profile matrix and all 231 preceding controls.
+Add comparisons for negated relation membership, region membership, empty and overlapping union arms, and structural witness joins.
+Include recursive references, multiple files, unknown boundaries, reached failures, and capture publication.
+Keep full SQL, EXPLAIN, source hashes, and any failed gates in the journal.
 
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

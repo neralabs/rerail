@@ -5011,3 +5011,58 @@ Artifacts for this phase:
 - `benchmark/sql-relational-predicate-run.sql` records the preceding 32-call true conjunction after fusion.
 - `benchmark/sql-relational-predicate-run-unknown.sql` records the preceding 32-call unknown alternative after fusion.
 - `benchmark/relational-direct-replay.py` now accounts for the combined predicate expression when checking the generation budget.
+
+### 2026-10-23 — Direct atomic predicate expressions
+
+The preceding 54-profile matrix uses one correlated existence subquery for each regex and one for its root kind.
+At predicate widths 2, 8, and 32, EXPLAIN reports 7, 13, and 37 correlated scalar subqueries.
+The target is four remaining return/publication subqueries, independent of predicate width.
+Materializations must stay at 28, with 12 typed return cells and one value-read site.
+
+A shared outcome helper now emits direct expressions for kinds, regexes, empty sets, and all-node sets.
+Scalar outcomes and ordered Boolean tests use this helper. The general relational emitter still handles patterns, references, compound sets, and traversals.
+The surrounding guards, integer truth conversion, semantic charges, and generation limits remain unchanged.
+
+The focused run passes eight tests and 882 native-comparison jobs, including the preceding 54-profile matrix.
+Three tests are new: two add 240 native-comparison jobs, and one covers 96 SQL comparisons against the preceding atomic expression lowering.
+The new comparisons cover shared utilities, unknowns, captures, failures, ordered walks, stops, counts, and pattern witnesses.
+The SQL test also verifies that each reached regex executes once, and unreached regexes execute zero times.
+
+All 54 profiles reduce VM work and preserve native results, charges, reached calls, lowered operators, terminals, and typed returns.
+Correlated scalar subqueries fall to four at every predicate width. Constant-row scans fall to two.
+Materialization sites remain at 28, typed return cells remain at 12, and each profile retains one value-read site.
+Across utility repetitions, VM work still differs by at most one constant-register instruction.
+
+| True conjunction, 32 utility calls | SQL bytes, before → after | VM instructions, before → after | Correlated scalar subqueries, before → after |
+| --- | ---: | ---: | ---: |
+| Two predicates | 7,742 → 7,640 | 2,063 → 2,021 | 7 → 4 |
+| Eight predicates | 8,366 → 8,060 | 2,237 → 2,111 | 13 → 4 |
+| 32 predicates | 10,885 → 9,763 | 2,933 → 2,471 | 37 → 4 |
+
+The remaining general set expressions still add outer existence queries around already bound nodes.
+B023 contains eight such layers, including relation membership, region membership, and negated structural tests.
+The next phase targets these layers while preserving the actual witness joins.
+
+All 153 relational tests pass. Each of the 231 preceding profiles reduces VM work.
+Every comparison preserves native results, charges, reached calls, terminal counts, and typed returns.
+Together with the width/repetition matrix, all 285 profiles improve. No VM regression occurs.
+**Frozen B023.** The 138-file corpus retains two matches and exact parity.
+Generated median CPU time is 128,511,125 ns. Reference median CPU time is 66,211,959 ns.
+Both gates pass in this run at 1.941× reference CPU time and 2,812,255 VM instructions.
+The query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+B023 already uses direct atomic tests. This phase provides no structural B023 speedup.
+The preceding 2.021× CPU failure remains recorded. This passing run does not establish stable CPU qualification.
+
+**Final checks.** All 165 unique tests pass: 153 relational tests, nine B023 fixtures, adversarial and corpus tests, and workspace publication.
+The complete relational run records 7,555 publication traces.
+Formatting and both Clippy configurations pass with the existing diagnostic jemalloc shim.
+Source hashes pin the final executable and measured files. The 231 baseline query hashes and VM counts match the preceding committed evidence.
+
+Artifacts:
+
+- `benchmark/relational-atomic-predicate.py` reproduces the focused tests and 54 profiles, and rejects redundant atomic subqueries or VM regressions.
+- `benchmark/sql-relational-atomic-predicate-evidence.json` retains baseline target failures, all comparisons, native traces, EXPLAIN, source hashes, and frozen gates.
+- `benchmark/sql-relational-atomic-predicate.sql` records eight predicates with 32 true utility calls.
+- `benchmark/sql-relational-atomic-predicate-wide.sql` records 32 predicates with 32 true utility calls.
+
+The bounded outcome compiler remains test-only. Production integration and the complete cold-job 100-execution gate remain open.

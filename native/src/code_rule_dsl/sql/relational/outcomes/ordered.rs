@@ -35,17 +35,8 @@ pub(super) fn candidate_filter(rule: &Plan, alias: &str) -> String {
 }
 
 pub(super) fn boolean(plan: &Plan, alias: &str) -> Result<Option<String>, String> {
-    use super::super::super::ir::Set;
     Ok(Some(match &plan.op {
-        Op::Predicate(Set::Kinds(kinds)) => format!(
-            "{alias}.kind IN ({})",
-            kinds
-                .iter()
-                .map(u16::to_string)
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-        Op::Predicate(set) => super::super::super::emit::condition(set, alias)?,
+        Op::Predicate(set) => super::predicate::condition(set, alias)?,
         Op::Not(child) => {
             let Some(test) = boolean(child, alias)? else {
                 return Ok(None);
@@ -83,7 +74,7 @@ pub(super) fn truth(plan: &Plan, depth: usize, alias: &str) -> Result<String, St
     Ok(match &plan.op {
         Op::Predicate(set) => format!(
             "CASE WHEN {} THEN 1 ELSE 0 END",
-            super::super::super::emit::condition(set, alias)?
+            super::predicate::condition(set, alias)?
         ),
         Op::Unknown(term) => {
             format!("CASE WHEN node_regex({term},{alias}.file,{alias}.id) THEN 2 ELSE 1 END")

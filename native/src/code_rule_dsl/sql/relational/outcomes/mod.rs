@@ -1,5 +1,6 @@
 //! Explicit outcomes with sequencing barriers for reached atomic value leaves.
 //! SQL owns composition. Bindings are typed columns; unknown is never SQL NULL.
+mod atomic_predicate_tests;
 mod budget_tests;
 mod capture_walk_tests;
 mod composition_budget_tests;
