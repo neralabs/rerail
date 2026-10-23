@@ -27,7 +27,7 @@ struct FileStat {
 
 struct Worker {
     out: eval::Output,
-    budget: BTreeMap<(usize, usize), Vec<(String, u32)>>,
+    budget: eval::BudgetRows,
     spill_bytes: u64,
     files: Vec<FileStat>,
     compile_ns: u64,
@@ -200,7 +200,7 @@ pub fn repo(args: &[String]) {
             out.failures.push(eval::Failure { check: rule.check.clone(), clause: String::new(), path: path.clone(), message: RUST_REFUSED.into() });
         }
     }
-    let mut budget: BTreeMap<(usize, usize), Vec<(String, u32)>> = BTreeMap::new();
+    let mut budget: eval::BudgetRows = BTreeMap::new();
     let mut files = Vec::new();
     let mut compile_ns = Vec::new();
     let mut spill_bytes = 0u64;

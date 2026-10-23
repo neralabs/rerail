@@ -1,29 +1,30 @@
 //! `parse: { grammar: pythonFString }` (native `literal/python_fstring.rs` + `literal/offsets.rs`):
 //! a JoinedStr's literal parts and opaque interpolation slots, each with its decoded text and the
-//! host bytes it stands for. A derived per-node fact (census category c).
+//! host bytes it stands for. A derived per-node fact (census category c). The decoder
+//! (`Decoded`, `decode_body`) is shared with `identifierWords` (`ast/parse_ext.rs`).
 use crate::facts::{self, Facts};
 use crate::pyvalue::{MAX_STRING_BYTES, Prefix, prefix};
 
 #[derive(Clone, Copy)]
-struct Span {
-    at: u32,
-    start: u32,
-    end: u32,
+pub(crate) struct Span {
+    pub(crate) at: u32,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
 }
 
-struct Decoded {
-    text: String,
-    spans: Vec<Span>,
-    host_end: usize,
-    host_start: usize,
+pub(crate) struct Decoded {
+    pub(crate) text: String,
+    pub(crate) spans: Vec<Span>,
+    /// The literal node's first source byte (native `Decoded::host.start`).
+    pub(crate) host_start: usize,
 }
 
 impl Decoded {
-    fn push(&mut self, c: char, start: usize, end: usize) {
+    pub(crate) fn push(&mut self, c: char, start: usize, end: usize) {
         self.spans.push(Span { at: self.text.len() as u32, start: start as u32, end: end as u32 });
         self.text.push(c);
     }
-    fn host_range(&self, start: usize, end: usize) -> (u32, u32) {
+    pub(crate) fn host_range(&self, start: usize, end: usize) -> (u32, u32) {
         let index = |at: usize| self.spans.partition_point(|s| (s.at as usize) < at);
         let first = index(start);
         let s = match self.spans.get(first) {
@@ -46,7 +47,7 @@ pub struct Piece {
     pub text: String,
 }
 
-fn decode_body(body: &str, base: usize, prefix: &Prefix, d: &mut Decoded) -> Result<bool, String> {
+pub(crate) fn decode_body(body: &str, base: usize, prefix: &Prefix, d: &mut Decoded) -> Result<bool, String> {
     let bytes = body.as_bytes();
     let mut index = 0;
     while index < body.len() {
@@ -155,34 +156,119 @@ pub enum FParse {
     Unknown,
 }
 
-/// The parsed pieces of `n` (a `string` or `concatenated_string`).
-pub fn parse(f: &Facts, n: u32) -> Result<FParse, String> {
-    let kind = facts::name(f.kind[n as usize]);
-    let parts: Vec<u32> = if &*kind == "concatenated_string" {
-        f.children(n).iter().copied().filter(|&c| &*facts::name(f.kind[c as usize]) == "string").collect()
+fn is(f: &Facts, n: u32, kind: &str) -> bool {
+    &*facts::name(f.kind[n as usize]) == kind
+}
+
+/// Native `python_fstring::Builder`.
+struct Builder {
+    d: Decoded,
+    children: Vec<(&'static str, usize, usize)>,
+    literal_start: usize,
+}
+
+impl Builder {
+    fn flush(&mut self) {
+        let end = self.d.text.len();
+        if self.literal_start < end {
+            self.children.push(("literal", self.literal_start, end));
+        }
+        self.literal_start = end;
+    }
+
+    fn literal(&mut self, text: &str, start: usize, prefix: &Prefix) -> Result<bool, String> {
+        Ok(decode_body(text, start, prefix, &mut self.d)? && self.d.text.len() <= MAX_STRING_BYTES)
+    }
+
+    /// An interpolation (or a spec's `format_expression`) as one `marker` slot; false where the
+    /// text would pass 64 KiB (Unknown).
+    fn field(&mut self, f: &Facts, field: u32, marker: &str) -> bool {
+        let (rs, re) = (f.start[field as usize] as usize, f.end[field as usize] as usize);
+        // Debug form `{x=}`: the expression source, '=' and trailing space are literal.
+        if f.children(field).iter().any(|&c| is(f, c, "=")) {
+            let field_end = f
+                .children(field)
+                .iter()
+                .copied()
+                .find(|&c| {
+                    let fname = field_name(f, c);
+                    fname == "type_conversion" || fname == "format_specifier"
+                })
+                .map_or(re - 1, |c| f.start[c as usize] as usize);
+            if let Some(debug) = f.text(field).get(1..field_end - rs) {
+                if self.d.text.len().saturating_add(debug.len()) > MAX_STRING_BYTES {
+                    return false;
+                }
+                for (at, ch) in debug.char_indices() {
+                    self.d.push(ch, rs + 1 + at, rs + 1 + at + ch.len_utf8());
+                }
+            }
+        }
+        self.flush();
+        let s = self.d.text.len();
+        if s.saturating_add(marker.len()) > MAX_STRING_BYTES {
+            return false;
+        }
+        for ch in marker.chars() {
+            self.d.push(ch, rs, re);
+        }
+        self.children.push(("interpolation", s, self.d.text.len()));
+        self.literal_start = self.d.text.len();
+        true
+    }
+}
+
+/// The parsed pieces of `n`, a `string`, `concatenated_string` or `format_specifier` (native
+/// pythonFString host kinds, compile/parse.rs `host_kinds`), each interpolation slot's text
+/// `marker` (the `interpolation` option, default `{}`; matcher/parse.rs `parsed_tree_with`).
+pub fn parse(f: &Facts, n: u32, marker: &str) -> Result<FParse, String> {
+    let parts: Vec<u32> = if is(f, n, "concatenated_string") {
+        f.children(n).iter().copied().filter(|&c| is(f, c, "string")).collect()
     } else {
         vec![n]
     };
-    let mut d = Decoded { text: String::new(), spans: Vec::new(), host_start: f.start[n as usize] as usize, host_end: f.end[n as usize] as usize };
-    let _ = d.host_end;
-    let mut children: Vec<(&'static str, usize, usize)> = Vec::new();
-    let mut literal_start = 0usize;
-    let marker = "{}";
-    let mut formatted = false;
-    let flush = |d: &Decoded, children: &mut Vec<(&'static str, usize, usize)>, literal_start: &mut usize| {
-        let end = d.text.len();
-        if *literal_start < end {
-            children.push(("literal", *literal_start, end));
-        }
-        *literal_start = end;
+    let mut b = Builder {
+        d: Decoded { text: String::new(), spans: Vec::new(), host_start: f.start[n as usize] as usize },
+        children: Vec::new(),
+        literal_start: 0,
     };
+    let mut formatted = is(f, n, "format_specifier");
     for part in parts {
-        let Some(start) = f.children(part).iter().copied().find(|&c| &*facts::name(f.kind[c as usize]) == "string_start") else {
-            return Ok(FParse::NotString);
+        if is(f, part, "format_specifier") {
+            // python_fstring.rs:112-142: the spec's raw slices between format_expression nodes
+            // are literal text; the ':' is not part of the value. Raw iff the enclosing string's
+            // prefix has an `r`.
+            let (ps, text) = (f.start[part as usize] as usize, f.text(part));
+            let mut start = ps + 1;
+            let mut up = f.parent(part);
+            while let Some(a) = up.filter(|&a| !is(f, a, "string")) {
+                up = f.parent(a);
+            }
+            let raw = up
+                .and_then(|s| f.children(s).iter().copied().find(|&c| is(f, c, "string_start")))
+                .is_some_and(|ss| f.text(ss).to_ascii_lowercase().contains('r'));
+            let pref = prefix(if raw { "rf" } else { "f" }).expect("f prefix");
+            for &field in f.children(part).iter().filter(|&&c| is(f, c, "format_expression")) {
+                let fs = f.start[field as usize] as usize;
+                if !b.literal(&text[start - ps..fs - ps], start, &pref)? || !b.field(f, field, marker) {
+                    return Ok(FParse::Unknown);
+                }
+                start = f.end[field as usize] as usize;
+            }
+            if !b.literal(&text[start - ps..], start, &pref)? {
+                return Ok(FParse::Unknown);
+            }
+            continue;
+        }
+        // python_fstring.rs:144-149: a part without `string_start`, quote or known prefix makes
+        // the native parse return `None`, which `parsed_tree_with` (matcher/parse.rs:281-284)
+        // reads as Unknown.
+        let Some(start) = f.children(part).iter().copied().find(|&c| is(f, c, "string_start")) else {
+            return Ok(FParse::Unknown);
         };
         let text = f.text(start);
-        let Some(quote) = text.find(['\'', '"']) else { return Ok(FParse::NotString) };
-        let Some(pref) = prefix(&text[..quote]) else { return Ok(FParse::NotString) };
+        let Some(quote) = text.find(['\'', '"']) else { return Ok(FParse::Unknown) };
+        let Some(pref) = prefix(&text[..quote]) else { return Ok(FParse::Unknown) };
         if pref.bytes || pref.template {
             return Ok(FParse::NotString);
         }
@@ -190,67 +276,37 @@ pub fn parse(f: &Facts, n: u32) -> Result<FParse, String> {
         for &child in f.children(part) {
             match &*facts::name(f.kind[child as usize]) {
                 "string_content" => {
-                    if !decode_body(f.text(child), f.start[child as usize] as usize, &pref, &mut d)? || d.text.len() > MAX_STRING_BYTES {
+                    if !b.literal(f.text(child), f.start[child as usize] as usize, &pref)? {
                         return Ok(FParse::Unknown);
                     }
                 }
                 "interpolation" => {
-                    // Debug form `{x=}`: the expression source, '=' and trailing space are literal.
-                    if f.children(child).iter().any(|&c| &*facts::name(f.kind[c as usize]) == "=") {
-                        let (rs, re) = (f.start[child as usize] as usize, f.end[child as usize] as usize);
-                        let field_end = f
-                            .children(child)
-                            .iter()
-                            .copied()
-                            .find(|&c| {
-                                let fname = field_name(f, c);
-                                fname == "type_conversion" || fname == "format_specifier"
-                            })
-                            .map_or(re - 1, |c| f.start[c as usize] as usize);
-                        let ftext = f.text(child);
-                        if let Some(debug) = ftext.get(1..field_end - rs) {
-                            if d.text.len().saturating_add(debug.len()) > MAX_STRING_BYTES {
-                                return Ok(FParse::Unknown);
-                            }
-                            for (at, ch) in debug.char_indices() {
-                                d.push(ch, rs + 1 + at, rs + 1 + at + ch.len_utf8());
-                            }
-                        }
-                    }
-                    flush(&d, &mut children, &mut literal_start);
-                    let s = d.text.len();
-                    if s.saturating_add(marker.len()) > MAX_STRING_BYTES {
+                    if !b.field(f, child, marker) {
                         return Ok(FParse::Unknown);
                     }
-                    for ch in marker.chars() {
-                        d.push(ch, f.start[child as usize] as usize, f.end[child as usize] as usize);
-                    }
-                    children.push(("interpolation", s, d.text.len()));
-                    literal_start = d.text.len();
                 }
                 _ => {}
             }
         }
-        if d.text.len() > MAX_STRING_BYTES {
+        if b.d.text.len() > MAX_STRING_BYTES {
             return Ok(FParse::Unknown);
         }
     }
     if !formatted {
         return Ok(FParse::NotString);
     }
-    flush(&d, &mut children, &mut literal_start);
+    b.flush();
+    let d = &b.d;
     Ok(FParse::Tree(
-        children
-            .into_iter()
-            .map(|(kind, s, e)| {
+        b.children
+            .iter()
+            .map(|&(kind, s, e)| {
                 let (hs, he) = d.host_range(s, e);
                 Piece { kind, start: hs, end: he, text: d.text[s..e].to_owned() }
             })
             .collect(),
     ))
 }
-
-
 
 fn field_name(f: &Facts, c: u32) -> String {
     let code = f.field[c as usize];
