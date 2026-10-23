@@ -43,9 +43,25 @@ else:
     bpr = a.bytes_per_record
 
 out = {"bytes_per_record": bpr, "greplay": a.greplay, "hreplay": a.hreplay, "plans": []}
-for p in h["plans"]:
-    name, runs = p["plan"], max(p["runs"], 1)
-    stages = {f"{name}:{s}": (t / runs, r / runs) for s, t, r in p["top_stages_secs_rows"]}
+# Per plan: (stage → (seconds per run, rows per run)), runs, p50 ms. An hreplay run either ran
+# plans one at a time (`plans[].top_stages_secs_rows`) or a graph's plans together (`runs[]`, a
+# stage labelled by the clause that first built it, counted once per run that read it).
+per_plan = {}
+if "runs" in h:
+    for r in h["runs"]:
+        n = max(r["ms"]["n"], 1)
+        for s, t, rows in r["stages_secs_rows"]:
+            plan = s.split("/")[0]
+            per_plan.setdefault(plan, {"stages": {}, "p50": r["ms"]["p50_ms"]})
+            st = per_plan[plan]["stages"].setdefault(f"{plan}:{s}", [0.0, 0.0])
+            st[0] += t / n
+            st[1] += rows / n
+else:
+    for p in h["plans"]:
+        runs = max(p["runs"], 1)
+        per_plan[p["plan"]] = {"stages": {f"{p['plan']}:{s}": [t / runs, r / runs] for s, t, r in p["top_stages_secs_rows"]}, "p50": p["ms"]["p50_ms"]}
+for name, pp in per_plan.items():
+    stages = pp["stages"]
     keys = set(stages) | {k for k in arranged if k.split(":")[0] == name}
     rows = []
     for k in sorted(keys):
@@ -57,7 +73,7 @@ for p in h["plans"]:
     cone_ms = sum(r["batch_ms_per_run"] for r in rows if r["membership_cone"])
     out["plans"].append({
         "plan": name,
-        "batch_ms_per_run_p50": p["ms"]["p50_ms"],
+        "batch_ms_per_run_p50": pp["p50"],
         "arranged": tot_arr,
         "M2": {"maintained_records": 0, "recompute_ms": tot_ms},
         "M2L": {"maintained_records": cone_arr, "maintained_mb": cone_arr * bpr / 2**20, "recompute_ms": tot_ms - cone_ms},
