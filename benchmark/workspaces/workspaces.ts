@@ -26,6 +26,7 @@ import {
   REPOSITORY_INDEX_OPTIONS,
   resolveNativeBindingPath,
 } from "../../src/engine/index.js";
+import { runFacts } from "./facts.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rerailRoot = resolve(here, "../..");
@@ -44,19 +45,65 @@ const MIB = 1024 * 1024;
 class UsageError extends Error {}
 
 /**
- * Eight of the 47 nera-data-layer workspaces #2622 measured (each a checkout at the commit given): numbers
- * 1 + round(k × 46 / 7) for k = 0…7, from the largest workspace (01, 5,726 Python files) to the smallest (47, 5,491).
+ * The 47 nera-data-layer workspaces #2622 measured, each a checkout at the commit given, from the largest (01, 5,726
+ * Python files) to the smallest (47, 5,491). `--first <n>` runs 01…n (the facts daemon's end-to-end run takes the first
+ * 40, Spike B's corpus).
  */
-const SUBSET = [
+const ALL = [
   { name: "01", commit: "fce4dc7208c0b892c11a549c8be43fc285580d6b" },
+  { name: "02", commit: "4a21854e7e7b0f126386b7d9ce3556012485e7c7" },
+  { name: "03", commit: "724abdfd95cbe05b7cf9f527ef0df819161ce5c2" },
+  { name: "04", commit: "a4b84ac0297433da27d07a5b34a5e551cfca2e23" },
+  { name: "05", commit: "d717c53f70a75ae3e17bf4aef3764f11ea52a805" },
+  { name: "06", commit: "c63d728edfd6396f3f635ae9c46afbf2bf4348b4" },
+  { name: "07", commit: "00f3bde03ea16201e49fad9a37f8a5d3e0b990f6" },
   { name: "08", commit: "820861353124b50c27f2785143951b37ccbcb7ea" },
+  { name: "09", commit: "2c1a813e444f0c346869b30f7a04cf0ea00bd8b7" },
+  { name: "10", commit: "c3087e4b9542494c662f7343db3fc4753b240846" },
+  { name: "11", commit: "5a07fe5a9ff28dedc5040e2479ba643dbf5fcb61" },
+  { name: "12", commit: "e98ec40b18e798b52c961567bf21049d36d869b7" },
+  { name: "13", commit: "b5dc3c74dc54b87b611522cc2428ef49a74f3517" },
   { name: "14", commit: "5a819aee1513df3fac434175b840fde5bab48b8e" },
+  { name: "15", commit: "bf3ee3a3a5c26aa770cfbc7550f4705a7edb293e" },
+  { name: "16", commit: "53dc387ce16633a8f92c96742aa844137c418074" },
+  { name: "17", commit: "156ee08daf1fa2812cfcb656f0411dfaa92d7858" },
+  { name: "18", commit: "2f645ac31faba894bd8313696ac3cfde34dde2b1" },
+  { name: "19", commit: "6b5a73153326fffd1d1f5ef27a65391efdc9c222" },
+  { name: "20", commit: "e586d32c214b40a8466c5086e427dfee5a6be9b8" },
   { name: "21", commit: "c9016b4b45546a48d95ee5d3b8311f3be27b1fb6" },
+  { name: "22", commit: "0b1ff1c6bf976dc1ef910d0a0fca7787a5638ca2" },
+  { name: "23", commit: "dc59970dc48c660892192f522921999101439e44" },
+  { name: "24", commit: "6fd0200ab0ca69f1ab93846d98aa3c76bc45c0e5" },
+  { name: "25", commit: "19aa820f8e2e5b0471292583e0a8b72c1a470423" },
+  { name: "26", commit: "53cf5e2fc172eac7388e6f63959b3558e1edde8b" },
   { name: "27", commit: "ca6116dbc6cdc066ce8f4ec3e54d8df51e8df1a1" },
+  { name: "28", commit: "362b60f4b940ff50a7425ab24a1725f25d614893" },
+  { name: "29", commit: "fee48a6e0b44b8225762e81033b80745353491de" },
+  { name: "30", commit: "dfe1bf10ac68232377d6552f8708634220936e7e" },
+  { name: "31", commit: "5af6f90158d70bd60b1db26463b45ec396eed9de" },
+  { name: "32", commit: "cb7c2c374cdf13ccd5fc8f408d9fe5d8a15af132" },
+  { name: "33", commit: "fd6dd10e307a89740a022bcdf3873761ca13bd96" },
   { name: "34", commit: "c4f94920613706583b39153a26728e2248839590" },
+  { name: "35", commit: "18e4fa2747697797a33d881d88d1e6f83a8b8323" },
+  { name: "36", commit: "64be61e0c6ad987e6e4530c89fbd075cc22df119" },
+  { name: "37", commit: "f74fc7fccfb832d40cec37f3ccc6cdb47675884d" },
+  { name: "38", commit: "015a15a506c412e685599d8f5bedf70df0ae0c47" },
+  { name: "39", commit: "7630c33380a0d49cd7d974395519f23b99422a40" },
   { name: "40", commit: "17562322111407ccfdcdf148e4a9e09afc6f1730" },
+  { name: "41", commit: "605da4da07f6a888371d367fdf5e83c06d9ccc25" },
+  { name: "42", commit: "5ce2da6a2f68105eb35155d3b759c718d80daeb3" },
+  { name: "43", commit: "f54b0429e81e5747f0308594f2d6511648ff9800" },
+  { name: "44", commit: "695bd65caa5c44019846de7e2265d87eb60c1fea" },
+  { name: "45", commit: "695bd65caa5c44019846de7e2265d87eb60c1fea" },
+  { name: "46", commit: "e6913f57b5fdce8860434efbc9b9cebc839bfa12" },
   { name: "47", commit: "e99ce662f0e90653a777b321138a0182271bf43d" },
 ] as const;
+
+/**
+ * Eight of the 47 (numbers 1 + round(k × 46 / 7) for k = 0…7): the default set, which each engine runs in a minute
+ * and a half with the #2622 rules.
+ */
+const SUBSET = ALL.filter(workspace => ["01", "08", "14", "21", "27", "34", "40", "47"].includes(workspace.name));
 
 /**
  * The production-path loop's workload (`prod-path`): workspace 01 walked as the enforcer walks it without a store, on a
@@ -308,6 +355,8 @@ interface RunOptions {
   sample: number;
   edits: number;
   idleMs: number;
+  /** Where each workspace's findings go as sorted JSON lines (`<name>.scan.json`, `<name>.edits.json`), for `compare-findings`. */
+  findingsOut: string | undefined;
 }
 
 /** Whether `path` is in a `percent` sample: the first four bytes of its sha256, mod 100, below `percent`. */
@@ -336,7 +385,13 @@ async function readResults(workspace: NativeCodeRuleDslWorkspace) {
     cursor = page.cursor;
   }
   const digest = (lines: string[]) => `sha256:${createHash("sha256").update(lines.sort().join("\n")).digest("hex")}`;
-  return { pages, violations: violations.length, failureCodes, violationsSha256: digest(violations), failuresSha256: digest(failures) };
+  return { pages, violations: violations.length, failureCodes, violationsSha256: digest(violations), failuresSha256: digest(failures), lines: { violations, failures } };
+}
+
+/** One result read's violations and failures as JSON, each list sorted (`--findings-out`). */
+function writeFindings(directory: string, file: string, lines: { violations: readonly string[]; failures: readonly string[] }): void {
+  const parsed = (list: readonly string[]) => [...list].sort().map(line => JSON.parse(line) as unknown);
+  writeFileSync(join(directory, file), `${JSON.stringify({ violations: parsed(lines.violations), failures: parsed(lines.failures) })}\n`);
 }
 
 /**
@@ -450,6 +505,7 @@ async function measureWorkspace(
     const indexMs = performance.now() - scanStarted;
     revision += 1;
     const results = await finishScan(workspace, root, revision, options.store, reuse);
+    if (options.findingsOut !== undefined) writeFindings(options.findingsOut, `${name}.scan.json`, results.lines);
     for (const [code, n] of Object.entries(results.failureCodes)) failureCodes[code] = (failureCodes[code] ?? 0) + n;
     const fullScan = {
       wallMs: performance.now() - scanStarted,
@@ -517,6 +573,7 @@ async function measureWorkspace(
     const beforeEvict = memorySnapshot(workspace);
     // The findings after the edits (untimed): each edited file's own, every other file's from the scan.
     const afterEdits = options.edits > 0 ? await readResults(workspace) : undefined;
+    if (options.findingsOut !== undefined && afterEdits !== undefined) writeFindings(options.findingsOut, `${name}.edits.json`, afterEdits.lines);
     workspace.evictInactive();
     await sleep(options.idleMs);
     const afterEvictIdle = memorySnapshot(workspace);
@@ -588,31 +645,57 @@ function count(name: string, value: string | undefined, fallback: number, minimu
   return parsed;
 }
 
-function workspaceRoots(directory: string, only: readonly string[]): Array<{ name: string; root: string }> {
-  const missing = only.filter(name => !SUBSET.some(workspace => workspace.name === name));
-  if (missing.length > 0) throw new UsageError(`--only names no subset workspace: ${missing.join(", ")}`);
-  return SUBSET
-    .filter(workspace => only.length === 0 || only.includes(workspace.name))
-    .map(({ name, commit }) => {
-      const root = resolve(directory, name);
-      if (!existsSync(root)) throw new UsageError(`${root} does not exist: run setup first`);
-      const head = git(root, "rev-parse", "HEAD");
-      if (head !== commit) throw new UsageError(`${root} is at ${head}, not the subset's ${commit}`);
-      if (git(root, "status", "--porcelain", "--untracked-files=no") !== "") throw new UsageError(`${root} has local changes`);
-      return { name, root: realpathSync(root) };
-    });
+/** The workspaces a run or setup takes: `--first <n>` (01…n of the 47), else SUBSET; `--only` narrows either. */
+function selectedWorkspaces(values: Map<string, string[]>): ReadonlyArray<{ name: string; commit: string }> {
+  const first = option(values, "--first");
+  const set = first === undefined ? SUBSET : ALL.slice(0, count("--first", first, ALL.length, 1));
+  const only = (values.get("--only") ?? []).flatMap(names => names.split(","));
+  const missing = only.filter(name => !set.some(workspace => workspace.name === name));
+  if (missing.length > 0) throw new UsageError(`--only names no selected workspace: ${missing.join(", ")}`);
+  return set.filter(workspace => only.length === 0 || only.includes(workspace.name));
+}
+
+function workspaceRoots(directory: string, selected: ReadonlyArray<{ name: string; commit: string }>): Array<{ name: string; root: string; commit: string }> {
+  return selected.map(({ name, commit }) => {
+    const root = resolve(directory, name);
+    if (!existsSync(root)) throw new UsageError(`${root} does not exist: run setup first`);
+    const head = git(root, "rev-parse", "HEAD");
+    if (head !== commit) throw new UsageError(`${root} is at ${head}, not the subset's ${commit}`);
+    if (git(root, "status", "--porcelain", "--untracked-files=no") !== "") throw new UsageError(`${root} has local changes`);
+    return { name, root: realpathSync(root), commit };
+  });
 }
 
 async function run(argv: readonly string[]): Promise<void> {
-  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--sql-batch", "--store", "--store-path", "--passes", "--reapply", "--sample", "--edits", "--idle-ms", "--only"]);
+  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--sql-batch", "--store", "--store-path", "--passes", "--reapply", "--sample", "--edits", "--idle-ms", "--only", "--first", "--findings-out", "--daemon", "--threads", "--cross"]);
   const engine = option(values, "--engine");
-  if (engine !== "native" && engine !== "sql") throw new UsageError("--engine takes native or sql");
+  if (engine !== "native" && engine !== "sql" && engine !== "facts") throw new UsageError("--engine takes native, sql or facts");
   const ruleDirectories = (values.get("--rules") ?? []).map(directory => resolve(directory));
   if (ruleDirectories.length === 0) throw new UsageError("--rules <dir> is required");
   const workspacesDirectory = option(values, "--workspaces");
   if (workspacesDirectory === undefined) throw new UsageError("--workspaces <dir> is required");
   const output = option(values, "--output");
   if (output === undefined) throw new UsageError("--output <file.json> is required");
+  const findingsOut = option(values, "--findings-out");
+  if (findingsOut !== undefined) mkdirSync(resolve(findingsOut), { recursive: true });
+  if (engine === "facts") {
+    const daemon = option(values, "--daemon");
+    if (daemon === undefined) throw new UsageError("--engine facts needs --daemon <facts-a binary>");
+    if (ruleDirectories.length !== 1) throw new UsageError("--engine facts takes one --rules directory (the daemon's policies)");
+    await runFacts({
+      daemon: resolve(daemon),
+      policies: ruleDirectories[0]!,
+      store: option(values, "--store-path") ?? join(mkdtempSync(join(tmpdir(), "rerail-facts-daemon-")), "content.sqlite"),
+      threads: option(values, "--threads") === undefined ? undefined : count("--threads", option(values, "--threads"), 1, 1),
+      cross: option(values, "--cross") ?? "none",
+      roots: workspaceRoots(workspacesDirectory, selectedWorkspaces(values)),
+      edits: count("--edits", option(values, "--edits"), 20, 0),
+      reapply: (option(values, "--reapply") ?? "on") === "on",
+      output: resolve(output),
+      findingsOut: findingsOut === undefined ? undefined : resolve(findingsOut),
+    });
+    return;
+  }
   const sqlBatch = option(values, "--sql-batch");
   if (sqlBatch !== undefined && engine !== "sql") throw new UsageError("--sql-batch needs --engine sql");
   const store = option(values, "--store") ?? "on";
@@ -634,6 +717,7 @@ async function run(argv: readonly string[]): Promise<void> {
     sample,
     edits: count("--edits", option(values, "--edits"), 20, 0),
     idleMs: count("--idle-ms", option(values, "--idle-ms"), 5_000, 0),
+    findingsOut: findingsOut === undefined ? undefined : resolve(findingsOut),
   };
   // The reuse counters (files evaluated, clause results restored) are the profile's.
   process.env.RERAIL_CODE_RULE_PROFILE = "1";
@@ -641,7 +725,7 @@ async function run(argv: readonly string[]): Promise<void> {
   if (addon !== undefined) process.env.RERAIL_ENGINE_PATH = resolve(addon);
   const addonPath = realpathSync(resolveNativeBindingPath());
   process.env.RERAIL_ENGINE_PATH = addonPath;
-  const roots = workspaceRoots(workspacesDirectory, (values.get("--only") ?? []).flatMap(names => names.split(",")));
+  const roots = workspaceRoots(workspacesDirectory, selectedWorkspaces(values));
 
   const sampler = new RssSampler();
   const started = performance.now();
@@ -706,11 +790,11 @@ async function run(argv: readonly string[]): Promise<void> {
 }
 
 function setup(argv: readonly string[]): void {
-  const { values } = parseArguments(argv, ["--data-layer", "--workspaces"]);
+  const { values } = parseArguments(argv, ["--data-layer", "--workspaces", "--first", "--only"]);
   const clone = option(values, "--data-layer");
   const directory = option(values, "--workspaces");
   if (clone === undefined || directory === undefined) throw new UsageError("setup needs --data-layer <clone> --workspaces <dir>");
-  for (const { name, commit } of SUBSET) {
+  for (const { name, commit } of selectedWorkspaces(values)) {
     const root = resolve(directory, name);
     if (existsSync(root)) {
       const head = git(root, "rev-parse", "HEAD");

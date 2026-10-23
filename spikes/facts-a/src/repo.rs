@@ -105,7 +105,7 @@ fn walk_ext(root: &Path, ext: &str) -> Vec<String> {
 }
 
 /// The clauses `rules` evaluate on `path`: every clause of every rule whose scope matches it.
-fn in_scope(rules: &[eval::Rule], path: &str) -> Vec<(usize, usize)> {
+pub(crate) fn in_scope(rules: &[eval::Rule], path: &str) -> Vec<(usize, usize)> {
     rules.iter().enumerate().filter(|(_, r)| r.scope.matches(path)).flat_map(|(ri, r)| (0..r.clauses.len()).map(move |ci| (ri, ci))).collect()
 }
 

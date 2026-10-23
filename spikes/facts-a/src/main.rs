@@ -3,6 +3,7 @@ mod bindings;
 mod cgnative;
 mod closure;
 mod counts;
+mod daemon;
 mod derived_check;
 mod eval;
 mod facts;
@@ -73,6 +74,7 @@ fn main() {
         Some("replay") => replay(&args),
         Some("calls") => calls(&args),
         Some("repo") => repo::repo(&args),
+        Some("daemon") => daemon::main(&args),
         Some("repo-compare") => repo::compare(&args),
         Some("store") => factfile::store(&args),
         Some("inspect") => factfile::inspect(&args),

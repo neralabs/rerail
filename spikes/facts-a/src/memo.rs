@@ -130,19 +130,52 @@ impl Memo {
         self.store.facts_source(*content).unwrap_or_else(|e| panic!("memo: {e}"))
     }
 
-    /// What the store holds for (content, path).
+    /// What the store holds for (content, path); the content is stored on `save` if it is new.
     pub fn file(&self, content: [u8; 32], path: &str) -> FileMemo<'_> {
-        let source = self.source(&content);
-        let held = source.map(|source| self.store.facts_memo(FactsMemoKey { source, fact_schema: crate::facts::SCHEMA_VERSION, path }).unwrap_or_else(|e| panic!("memo: {e}"))).unwrap_or_default();
-        FileMemo { memo: self, content, source, path: path.to_owned(), held, results: Vec::new(), completions: Vec::new() }
+        match self.source(&content) {
+            Some(source) => self.file_at(source, path),
+            None => FileMemo { memo: self, content: Err(content), path: path.to_owned(), held: FactsMemo::default(), results: Vec::new(), completions: Vec::new() },
+        }
     }
+
+    /// What the store holds for (a stored content, path).
+    pub fn file_at(&self, source: SourceId, path: &str) -> FileMemo<'_> {
+        let held = self.store.facts_memo(FactsMemoKey { source, fact_schema: crate::facts::SCHEMA_VERSION, path }).unwrap_or_else(|e| panic!("memo: {e}"));
+        FileMemo { memo: self, content: Ok(source), path: path.to_owned(), held, results: Vec::new(), completions: Vec::new() }
+    }
+
+    /// Clause `(ri, ci)`'s entry encoded for the store at `path` (`Send`, unlike `Entry`, so an
+    /// evaluation thread can hand it over): counts alone for an entry with nothing to report.
+    pub fn encode(&self, ri: usize, ci: usize, e: &Entry, path: &str) -> Encoded {
+        let pure = self.pure(ri, ci);
+        if e.is_empty() {
+            Encoded { empty: true, pure, bytes: serde_json::to_vec(&e.counts).unwrap() }
+        } else {
+            Encoded { empty: false, pure, bytes: serde_json::to_vec(&entry_json(e, pure.then_some(path))).unwrap() }
+        }
+    }
+}
+
+/// An entry as the store holds it (`Memo::encode`).
+pub struct Encoded {
+    empty: bool,
+    pure: bool,
+    bytes: Vec<u8>,
+}
+
+/// An entry's findings and failures alone (the daemon's per-file results), read without building
+/// its repository or budget rows.
+#[derive(serde::Deserialize)]
+struct Reported {
+    findings: Vec<(Option<String>, u32, String, Option<u32>)>,
+    failures: Vec<(Option<String>, String)>,
 }
 
 /// One (content, path)'s stored entries and the entries a fresh evaluation adds.
 pub struct FileMemo<'m> {
     memo: &'m Memo,
-    content: [u8; 32],
-    source: Option<SourceId>,
+    /// The stored source, or the blake3 hash of a content the store does not hold yet.
+    content: Result<SourceId, [u8; 32]>,
     path: String,
     held: FactsMemo,
     results: Vec<FactsResult>,
@@ -162,14 +195,30 @@ impl FileMemo<'_> {
         self.held.completed.get(digest).map(|(_, counts)| Entry { counts: serde_json::from_slice(counts).expect("memo: counts"), ..Entry::default() })
     }
 
+    /// The clause's stored findings and failures (`get` without the rows and counts).
+    pub fn get_reported(&self, digest: &[u8; 32], check: &str, clause: &str, path: &str) -> Option<(Vec<Finding>, Vec<Failure>)> {
+        if let Some(r) = self.held.results.get(digest) {
+            let j: Reported = serde_json::from_slice(&r.entry).expect("memo: entry");
+            let p = |v: Option<String>| v.unwrap_or_else(|| path.to_owned());
+            return Some((
+                j.findings.into_iter().map(|(fp, line, code, column)| Finding { check: check.into(), clause: clause.into(), path: p(fp), line, code, column }).collect(),
+                j.failures.into_iter().map(|(fp, message)| Failure { check: check.into(), clause: clause.into(), path: p(fp), message }).collect(),
+            ));
+        }
+        self.held.completed.contains_key(digest).then(|| (Vec::new(), Vec::new()))
+    }
+
     /// Records clause `(ri, ci)`'s fresh entry (written by `save`).
     pub fn put(&mut self, ri: usize, ci: usize, digest: &[u8; 32], e: &Entry) {
-        let pure = self.memo.pure(ri, ci);
-        if e.is_empty() {
-            self.completions.push(FactsCompletion { ordinal: self.memo.first[ri] + ci as u32, path_dependent: !pure, counts: serde_json::to_vec(&e.counts).unwrap() });
+        let encoded = self.memo.encode(ri, ci, e, &self.path);
+        self.put_encoded(ri, ci, digest, encoded);
+    }
+
+    pub fn put_encoded(&mut self, ri: usize, ci: usize, digest: &[u8; 32], e: Encoded) {
+        if e.empty {
+            self.completions.push(FactsCompletion { ordinal: self.memo.first[ri] + ci as u32, path_dependent: !e.pure, counts: e.bytes });
         } else {
-            let entry = serde_json::to_vec(&entry_json(e, pure.then_some(self.path.as_str()))).unwrap();
-            self.results.push(FactsResult { plan: *digest, path_dependent: !pure, entry });
+            self.results.push(FactsResult { plan: *digest, path_dependent: !e.pure, entry: e.bytes });
         }
     }
 
@@ -179,9 +228,9 @@ impl FileMemo<'_> {
             return;
         }
         let store = &self.memo.store;
-        let source = match self.source {
-            Some(s) => s,
-            None => store.put_facts_source(bytes, self.content, &[]).unwrap_or_else(|e| panic!("memo: {e}")),
+        let source = match self.content {
+            Ok(s) => s,
+            Err(content) => store.put_facts_source(bytes, content, &[]).unwrap_or_else(|e| panic!("memo: {e}")),
         };
         store
             .put_facts_memo(FactsMemoKey { source, fact_schema: crate::facts::SCHEMA_VERSION, path: &self.path }, &self.memo.set, &self.results, &self.completions)
