@@ -338,6 +338,40 @@ jobs:
       - name: Unit tests
         run: npm test -- --shard=${{ matrix.shard }}/2
 
+  # The dashboard in Chromium over seeded scenario databases (e2e/README.md). Each worker runs the daemon from source
+  # (`--dev` serves ui/ as committed), which needs the build's native engine.
+  ui-e2e:
+    name: Dashboard browser tests
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      - name: Install Chromium and its system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Dashboard browser tests
+        run: npm run test:ui:e2e
+
+      - name: Upload the Playwright report and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-e2e-report
+          path: .rerail/e2e/
+          retention-days: 7
+
   integration:
     name: Integration tests
     needs: build

@@ -371,6 +371,22 @@ export class LazyReadonlyRerailDatabase {
   }
 }
 
+/**
+ * When Rerail was installed on this machine (epoch ms): the earliest of the database's own records. A database
+ * created by this build records every migration step at creation, so `schema_migrations` dates it; a file that
+ * predates that table records its steps at its first upgrade instead, so the first repository and checkout Rerail
+ * recorded date it there. Reset never deletes these rows. Null when none exist yet.
+ */
+export function databaseInstalledAt(database: RerailDatabase): number | null {
+  return database.all<{ installedAt: number | null }>(sql`
+    SELECT min(at) AS installedAt FROM (
+      SELECT min(${schema.schemaMigrations.appliedAt}) AS at FROM ${schema.schemaMigrations}
+      UNION ALL SELECT min(${schema.repositories.createdAt}) FROM ${schema.repositories}
+      UNION ALL SELECT min(${schema.checkouts.createdAt}) FROM ${schema.checkouts}
+    )
+  `)[0]?.installedAt ?? null;
+}
+
 export interface HistoryResetReport {
   /** Ended sessions removed together with all of their history. */
   sessions: number;
@@ -379,17 +395,29 @@ export interface HistoryResetReport {
 }
 
 /**
- * `rerail reset`: delete one repository's execution history in ONE write transaction. Events,
- * work links, audits, audit requests, and repository audits of the repository's sessions go;
- * ended sessions go with them. Still-running sessions keep their row and runtime ownership
- * claim so live processes carry on recording. Rules, other repositories' history, audit
- * settings, and presentation preferences are untouched. The file is never unlinked or
- * rebuilt, so every connection holding it open keeps working.
+ * `rerail reset` for one repository id over its own connection; see {@link resetRepositoryHistoryIn}.
  */
 export function resetRepositoryHistory(path: string, repositoryId: string): HistoryResetReport {
   const database = openRerailDatabase(path);
   try {
-    return database.transaction(() => {
+    return resetRepositoryHistoryIn(database, [repositoryId]);
+  } finally {
+    database.$client.close();
+  }
+}
+
+/**
+ * Delete the execution history recorded under `repositoryIds` (one repository's key, aliases and clone ids) in ONE
+ * write transaction. Events, work links, audits, audit requests, and repository audits of those sessions go; ended
+ * sessions go with them. Still-running sessions keep their row and runtime ownership claim so live processes carry on
+ * recording. Rules, other repositories' history, audit settings, and presentation preferences are untouched. The file
+ * is never unlinked or rebuilt, so every connection holding it open keeps working.
+ */
+export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds: readonly string[]): HistoryResetReport {
+  return database.transaction(() => {
+    let sessions = 0;
+    let openSessions = 0;
+    for (const repositoryId of repositoryIds) {
       const counts = database.all<{ ended: number; open: number }>(sql`
         SELECT count(*) FILTER (WHERE ended_at IS NOT NULL) AS ended, count(*) FILTER (WHERE ended_at IS NULL) AS open
         FROM ${schema.sessions} WHERE ${schema.sessions.repositoryId} = ${repositoryId}
@@ -400,9 +428,9 @@ export function resetRepositoryHistory(path: string, repositoryId: string): Hist
       const ended = schema.sessionsOfRepository(repositoryId, { ended: true });
       database.run(sql`DELETE FROM ${schema.policySessionOwners} WHERE ${schema.policySessionOwners.sessionId} IN (${ended})`);
       database.run(sql`DELETE FROM ${schema.sessions} WHERE ${schema.sessions.sessionId} IN (${ended})`);
-      return { sessions: counts.ended, openSessions: counts.open };
-    }, { behavior: "immediate" });
-  } finally {
-    database.$client.close();
-  }
+      sessions += counts.ended;
+      openSessions += counts.open;
+    }
+    return { sessions, openSessions };
+  }, { behavior: "immediate" });
 }

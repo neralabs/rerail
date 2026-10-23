@@ -184,16 +184,22 @@ disabled so authentication failures surface promptly instead of consuming the sm
 
 ### UI
 
-The browser view lives in `ui/` and has no toolchain: `index.html`, `app.css`, and native ES modules (`app.js`,
-`api.js`, `state.js`, `render/*.js`), served as bytes. No React, no Vite, no Tailwind, no TypeScript, not even as dev
-dependencies. Colours come from the committed `ui/tokens.generated.css` (and the terminal brand colour from
-`src/presentation/terminal-brand.generated.ts`); `npm run check:ui-tokens` fails when the UI references a `var(--…)`
-that neither the token sheet nor the page's own CSS declares.
+The browser view lives in `ui/` and has no toolchain: `index.html`, stylesheets under `ui/css/`, and native ES modules
+(`app.js`, `shell.js`, `state.js`, `poll.js`, `frame/`, `views/`, `render/`; [ui/README.md](ui/README.md) maps them),
+served as bytes. No React, no Vite, no Tailwind, no TypeScript, not even as dev dependencies. Colours come from the
+committed `ui/tokens.generated.css` (and the terminal brand colour from `src/presentation/terminal-brand.generated.ts`);
+`npm run check:ui-tokens` fails when the UI references a `var(--…)` that neither the token sheet nor the page's own CSS
+declares.
 
-The dashboard's routes: `#rules` (rules by rule pack), `#rule/<id>` (one rule's panel, the link a steer carries),
-`#activity`, `#sessions` (with `?sessionId=<id>` for one session), `#settings`, `#rule-packs`, and
-`#rule-packs?review=1` (the packs set-up recommended, reviewed before Rerail starts). Every route carries the
-`?repository=<key>&checkout=<path>` scope; without one the dashboard lists the repositories to pick from.
+The dashboard is a sidebar navigator. Its routes: `#overview` (the default: the repository's tiles, Most violations
+logged and Recent sessions), `#pack/<packId>` (one added rule pack's rules, with a switch for the whole pack),
+`#created` (rules created by you), `#packs` (the rule pack catalog), `#packs?review=1` (the packs set-up recommended,
+reviewed before Rerail starts), `#create` (how to create a rule with your coding agent), `#history` (History by rule;
+`?rule=<id>` opens it on one rule), `#sessions` (History by session, with `?sessionId=<id>` for one session),
+`#settings`, and `#rule/<id>` (one rule's sheet over the current view, the link a steer carries). Links written before
+v8 still resolve: `#rules` opens Overview, `#activity` History by rule, `#rule-packs` the catalog and
+`#rule-packs?review=1` the review. Every route carries the `?repository=<key>&checkout=<path>` scope; without one the
+dashboard lists the repositories to pick from.
 
 `npm run build:ui` copies `ui/` to `dist/ui`, which the daemon serves. A daemon started with `--dev`, or with
 `RERAIL_DEV=1` in its environment, serves `ui/` itself instead, so an edit needs only a browser reload; `rerail status`

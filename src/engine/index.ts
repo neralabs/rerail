@@ -40,6 +40,7 @@ export {
 } from "./catalog/repository-model.js";
 export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
 export { exportRulesDump, importRulesDump, type RulesDump } from "./catalog/rule-bootstrap.js";
+export { offerSetupReview } from "./catalog/setup-review.js";
 export {
   addAttachment,
   listRepositoryRules,
@@ -98,11 +99,13 @@ export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-pri
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
 export {
+  databaseInstalledAt,
   defaultRerailDatabasePath,
   openRerailDatabase,
   openSqliteDatabase,
   type RerailDatabase,
   resetRepositoryHistory,
+  resetRepositoryHistoryIn,
 } from "./storage/database.js";
 export { defaultRerailHome } from "./storage/rerail-home.js";
 export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, type Migration } from "./storage/migrations.js";

@@ -78,7 +78,7 @@ async function ensureCacheDirectory(root, parent, name) {
 const root = await realpath(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."));
 const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 if (manifest.devDependencies["@oh-my-pi/pi-coding-agent"] !== version) {
-  throw new Error("Update the pinned OMP host version and release digests with the SDK dependency.");
+  throw new Error("The pinned OMP host is out of step with the SDK dependency: run npm run deps:sync.");
 }
 if (process.argv.length !== 2) throw new Error("Usage: node scripts/host/install-omp-host.mjs");
 const platform = process.platform === "win32" ? "windows" : process.platform;
