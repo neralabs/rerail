@@ -18,7 +18,9 @@ name: Port readiness
 # lock names, and always when the pull request changes the tool-pack's recording.lock against its base: then the
 # test-data job does not fetch the recordings the new lock names and the leg does not restore them, so the rules are
 # judged against what this commit's recorder made from the pinned upstream, never against bytes the pull request (or the
-# bump run that produced it) put in S3. The recorder must write the lock the commit has. Its per-rule summary of what
+# bump run that produced it) put in S3. The leg asks upstream for every answer the goldens need (`port-readiness:record
+# --check`), and the commit's lock must be what a record of them makes: incrementally over the base's archive, or with
+# --full or --prune. Its per-rule summary of what
 # upstream answers differently from the base's recording (recording-<pack>--<tool>.md, against the recordings the
 # test-data job fetched for the base's lock) goes into the pull request comment. The tool-pack's legs upload the two
 # recordings as the artifact recordings-<pack>--<tool>, which a maintainer pushes to S3 before the pull request merges:
@@ -383,11 +385,11 @@ jobs:
           fi
           echo "record=true" >> "$GITHUB_OUTPUT"
 
-      # What a recording made here builds on and is compared with: the pull request's base (its merge commit's first
+      # What the check builds on and its summary compares with: the pull request's base (its merge commit's first
       # parent, from the plan). The checkout keeps no credentials, so it is fetched with the token, as the report job
-      # fetches; the recording summary goes without the comparison when it cannot be fetched. The base lock's recordings
-      # are restored from the cache, where the test-data job put them from S3 for a `rerecord` leg. A base from before the
-      # corpus answers archive names none, and the record starts from no answers.
+      # fetches; the check goes without a base, and the summary without the comparison, when it cannot be fetched. The
+      # base lock's recordings are restored from the cache, where the test-data job put them from S3 for a `rerecord`
+      # leg. A base from before the corpus answers archive names none, and is no base to check against.
       - id: base
         name: Fetch the commit to record against
         if: steps.source.outputs.record == 'true'
@@ -466,16 +468,17 @@ jobs:
           toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
           components: clippy
 
-      # The recorder writes both recordings into the cache the gates read, and the lock and case sources into the tree:
-      # those must be what the commit already has, or the commit's lock names a recording its own recorder does not make.
-      # The comparison is over every file under the tool-pack and the pack's licences, tracked or not: the packs' test
-      # data is gitignored (extracted from the tool-pack's archive), so `git status` would not show a case source the
-      # recorder added. No maintainer's recording run posts a per-rule summary for this commit, so the leg writes one into
-      # its job summary and its report artifact, from which the report job puts it in the pull request comment: against
-      # the recording the base's lock names, put in the commit's lock's place while the recorder runs, or as a first
-      # recording when the base has no lock. With the base's lock in place the record builds on the corpus answers
-      # archive it names, as the maintainer's did; when no cache holds that archive the recorder stops and says to record
-      # with --full. The recorder runs upstream's code and the Composer packages it resolves, so the step gets no token.
+      # The recorder asks upstream for every answer the goldens need and holds the commit's lock to them (`--check`),
+      # writing nothing into the tree. The lock holds when its archive is one a record of those answers makes, which
+      # needs none of its bytes: a `--full` or `--prune` record's, or an incremental record's over the archive the base's
+      # lock names (`--base`, restored above); or else when the archive, from the cache, holds each of them identically,
+      # so answers no golden names never fail it. recording.json and the case sources must be what it made. A check that
+      # holds puts the two recordings the lock names into the cache the gates read below. No maintainer's recording run
+      # posts a per-rule summary for this commit, so the leg writes one into its job summary and its report artifact, from
+      # which the report job puts it in the pull request comment: against the recording the base's lock names, or as a
+      # first recording when the base has no lock. A check that fails leaves the lock and the two recordings a record
+      # makes in the report artifact (`--recorded`), for a maintainer who cannot make them locally (rust/clippy off
+      # Linux). The recorder runs upstream's code and the Composer packages it resolves, so the step gets no token.
       - id: record
         name: Record this tool-pack
         if: steps.source.outputs.record == 'true'
@@ -485,38 +488,32 @@ jobs:
           BASE_SHA: ${{ steps.base.outputs.sha }}
         run: |
           set -euo pipefail
-          written=("packs/$PACK/upstream/$TOOL" "packs/$PACK/licenses")
-          snapshot() { find "${written[@]}" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; }
-          snapshot > "$RUNNER_TEMP/before.sha256"
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          changes="$RUNNER_TEMP/gates/recording-$PACK--$TOOL.md"
+          args=(--pack "$PACK" --tool "$TOOL" --check --changes "$changes" --recorded "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL")
+          # The base's lock, when the base was fetched: no file is a base without one, and a lock from before the corpus
+          # answers archive is none to build on or compare with.
+          base_lock="$RUNNER_TEMP/base-recording.lock"
           if [ -n "$BASE_SHA" ]; then
-            if [ -s "$RUNNER_TEMP/base-recording.lock" ]; then
-              cp "$RUNNER_TEMP/base-recording.lock" "$lock"
+            [ -s "$base_lock" ] || rm -f "$base_lock"
+            if [ -f "$base_lock" ] && [ -z "$(jq -r '.files["corpus.tar.zst"].sha256 // empty' "$base_lock")" ]; then
+              echo "::notice::$BASE_SHA's $lock is from before the corpus answers archive: $PACK/$TOOL is checked without a base"
             else
-              rm "$lock"
+              args+=(--base "$base_lock")
             fi
           fi
-          changes="$RUNNER_TEMP/gates/recording-$PACK--$TOOL.md"
-          npm run port-readiness:record -- --pack "$PACK" --tool "$TOOL" --changes "$changes"
-          cat "$changes" >> "$GITHUB_STEP_SUMMARY"
-          snapshot > "$RUNNER_TEMP/after.sha256"
-          if ! diff -u "$RUNNER_TEMP/before.sha256" "$RUNNER_TEMP/after.sha256" > "$RUNNER_TEMP/written.diff"; then
-            git --no-pager diff -- "${written[@]}" | sed -n '1,200p'
-            # What the recorder made, beside the report, so the difference from the committed lock can be read.
-            mkdir -p "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL"
-            cp "$lock" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
-            recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-            corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
-            cp ".rerail/port-readiness/recordings/$recording.json" ".rerail/port-readiness/recordings/$corpus.tar.zst" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
-            echo "::error::the recorder wrote files this commit does not have; record $PACK/$TOOL again and commit them (the report artifact holds what it recorded). A case source it wrote comes from the tool-pack's test data archive (test-data.lock): a maintainer derives it again and pushes it with npm run fixtures:push -- --from <ref> (CONTRIBUTING.md, \"Pack test data\"), and the pull request commits the lock:"
-            sed -n '1,200p' "$RUNNER_TEMP/written.diff"
-            exit 1
+          status=0
+          npm run port-readiness:record -- "${args[@]}" || status=$?
+          if [ -f "$changes" ]; then cat "$changes" >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::this commit's $lock is not what a record of upstream's answers makes (above): record $PACK/$TOOL again as the check says and commit the lock, or take the lock and the two recordings it made from the report artifact (recorded-$PACK--$TOOL/). A case source it lacks comes from the tool-pack's test data archive (test-data.lock): a maintainer derives it again and pushes it with npm run fixtures:push -- --from <ref> (CONTRIBUTING.md, \"Pack test data\"), and the pull request commits the lock"
+            exit "$status"
           fi
 
       # Only the two recordings (recording.json and the corpus answers archive, not the tree it extracts to), and only
-      # once the recorder made exactly the lock this commit has: what upstream's code left anywhere else under .rerail/
-      # is not saved (the corpus and results saves below skip this leg too). A `rerecord` leg saves nothing: no run
-      # restores the recordings of a lock its pull request changes.
+      # once the check held, so they are the ones this commit's lock names: what upstream's code left anywhere else under
+      # .rerail/ is not saved (the corpus and results saves below skip this leg too). A `rerecord` leg saves nothing: no
+      # run restores the recordings of a lock its pull request changes.
       - name: Save the recordings
         if: steps.source.outputs.record == 'true' && !matrix.rerecord
         uses: actions/cache/save@v6

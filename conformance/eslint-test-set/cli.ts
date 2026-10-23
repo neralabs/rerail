@@ -188,13 +188,14 @@ for (const result of alarmRules) {
   for (const alarm of result.falseAlarms.slice(0, 5)) lines.push(`  ${alarm.file}:${alarm.line}:${alarm.column}${alarm.syntaxErrors ? " [syntax errors]" : ""}`);
   if (result.falseAlarms.length > 5) lines.push(`  … ${result.falseAlarms.length - 5} more`);
 }
-for (const result of results.filter(entry => entry.failures.length > 0)) {
+const failureRules = results.filter(result => result.failures.length > 0);
+for (const result of failureRules) {
   lines.push(`${result.rule}: ${result.failures.length} engine failures`);
   for (const failure of result.failures.slice(0, 3)) lines.push(`  ${failure}`);
 }
 for (const error of errors) lines.push(`error: ${error}`);
-const ok = missedRules.length === 0 && alarmRules.length === 0 && errors.length === 0;
-lines.push("", ok ? "Every ESLint finding caught, and nothing reported on the fixed copies." : `${missedRules.length} rules missed findings; ${alarmRules.length} rules reported on fixed copies.`);
+const ok = missedRules.length === 0 && alarmRules.length === 0 && failureRules.length === 0 && errors.length === 0;
+lines.push("", ok ? "Every ESLint finding caught, nothing reported on the fixed copies, and no engine failures." : `${missedRules.length} rules missed findings; ${alarmRules.length} rules reported on fixed copies; ${failureRules.length} rules had engine failures.`);
 console.log(lines.join("\n"));
 if (values.json !== undefined) writeFileSync(values.json, JSON.stringify({ fixture: FIXTURE, results, errors }, null, 2) + "\n");
 process.exitCode = ok ? 0 : 1;

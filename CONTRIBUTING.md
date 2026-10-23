@@ -227,9 +227,10 @@ scope, since it runs upstream's unreviewed code. A workflow on main (`port-readi
 each leg's result (it runs the bump itself and refuses a patch that differs from its own anywhere but the locks,
 `UPSTREAM.md` and licence files), uploads the archives and recordings, and opens one pull request on
 `auto/bump-upstream` with a commit per tool-pack, each carrying its new pins, `test-data.lock` and `recording.lock`
-together. That pull request's CI derives each changed tool-pack again and records it again, so neither the archives
-nor the answers are taken on the bump run's word. A maintainer reviews and merges it like any pull request; nothing
-merges itself. When one tool-pack's gates fail, merge the others without its commit; closing the pull request unmerged
+together. That pull request's CI derives each changed tool-pack again and checks its recording against every answer
+upstream gives again, so neither the archives nor the answers are taken on the bump run's word. A maintainer reviews
+and merges it like any pull request; nothing merges itself. When one tool-pack's gates fail, merge the others without
+its commit; closing the pull request unmerged
 declines the releases it carried until newer ones appear ([docs/port-readiness.md](docs/port-readiness.md#bump-pull-requests)).
 The port readiness recordings are not pack test data and not in its archives: each is an object of its own in S3,
 written once — recording.json at `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json`, and
@@ -243,11 +244,12 @@ A corpus answer is filed under the upstream configuration and the golden file's 
 corpus or editing `corpus-tasks.json` leaves every other answer valid: `npm run port-readiness:record -- --pack <id>
 --tool <tool> --corpus` asks upstream only for the answers the archive lacks (the gates' `corpus-answers` check names
 them), `--full` records them all from nothing, and `--prune` drops answers no golden names
-([docs/port-readiness.md](docs/port-readiness.md#goldens)). An answer the archive holds is never asked again, so when
+([docs/port-readiness.md](docs/port-readiness.md#goldens)). A pull request's CI asks upstream for every answer the
+goldens need (`--check`) and accepts whichever of these the lock was recorded with: an incremental record over the
+base's archive, `--full` or `--prune`. An answer the archive holds is never asked again by a record, so when
 the nightly `--check` finds upstream now answers otherwise, record as it says: `--corpus --full`, or `--full` when
-recording.json is stale too. Locks from before the archive (v2, with a `corpus.json`)
-are rewritten once, without running upstream, by `npm run port-readiness:record -- --migrate-corpus [--pack <id>
-[--tool <tool>]]`, which reads each locked corpus.json from the cache.
+recording.json is stale too. A lock from before the archive (v2, with a `corpus.json`) is refused: delete it and
+record the tool-pack again.
 
 ## Licence of contributions
 

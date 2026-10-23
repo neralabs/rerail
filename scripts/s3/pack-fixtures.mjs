@@ -573,19 +573,29 @@ export const CORPUS_TREE_MARKER = ".tar-sha256";
 
 /**
  * Whether `directory` is the extracted tree of the archive `lock` (`{ sha256, files, bytes }`) names: its marker names
- * that tar, and it still holds as many regular files and bytes besides the marker (none deleted or cut short since).
+ * that tar, and the canonical tar of the files it holds besides the marker (buildArchive) is that tar, so no file was
+ * added, deleted, renamed, cut short or edited since. Anything but regular files and directories is no such tree.
  */
 export function corpusTreeReady(directory, lock) {
   const marker = join(directory, CORPUS_TREE_MARKER);
   if (!existsSync(marker) || readFileSync(marker, "utf8") !== `${lock.sha256}\n`) return false;
-  let files = 0;
+  const entries = [];
   let bytes = 0;
   for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile() || (entry.parentPath === directory && entry.name === CORPUS_TREE_MARKER)) continue;
-    files += 1;
-    bytes += statSync(join(entry.parentPath, entry.name)).size;
+    if (entry.isDirectory() || (entry.parentPath === directory && entry.name === CORPUS_TREE_MARKER)) continue;
+    if (!entry.isFile()) return false;
+    const absolute = join(entry.parentPath, entry.name);
+    // The sizes first: a tree with other totals is no copy, and is not read.
+    bytes += statSync(absolute).size;
+    entries.push({ path: relative(directory, absolute).split(sep).join("/"), absolute });
   }
-  return files === lock.files && bytes === lock.bytes;
+  if (entries.length !== lock.files || bytes !== lock.bytes) return false;
+  try {
+    return buildArchive(entries.map(({ path, absolute }) => ({ path, bytes: readFileSync(absolute) }))).sha256 === lock.sha256;
+  } catch {
+    // A path no archive can hold (buildArchive refuses it) is no extraction of one.
+    return false;
+  }
 }
 
 /**
@@ -803,8 +813,8 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
  * Puts the recordings each selected tool-pack's recording.lock names into the recording cache (`cache`, by default
  * RECORDING_CACHE), verified, and extracts the corpus answers archive into `<cache>/corpus/<sha256>/`. recording.json
  * is verified against its sha256 and size; the archive as a pull verifies a test data archive (verifiedCorpus), and
- * only then extracted (extractCorpusTree). A valid local copy is kept, and a tree whose marker names the archive needs
- * no archive; anything else is fetched from S3 through a partial file that must verify first (an invalid local copy is
+ * only then extracted (extractCorpusTree). A valid local copy is kept, and a tree whose files are still that archive's
+ * (corpusTreeReady) needs no archive; anything else is fetched from S3 through a partial file that must verify first (an invalid local copy is
  * deleted, except on a dry run, which deletes and writes nothing). A recording S3 does not hold is a note, not a
  * failure: CI records the tool-pack on a cache miss. aws is needed only when something must be fetched.
  */

@@ -245,8 +245,8 @@ jobs:
           key: ${{ steps.recording-lock.outputs.key }}
 
   # The drift check runs the recorder with --check: upstream on its own tests and on the corpus files the goldens name,
-  # never the rest of the corpus. It reports when upstream moved and writes nothing, so the night tells main without
-  # quietly re-recording main behind the maintainers. Read-only, and saving no cache once upstream has run: the
+  # never the rest of the corpus. It reports when upstream moved and writes nothing into the tree, so the night tells
+  # main without quietly re-recording main behind the maintainers. Read-only, and saving no cache once upstream has run: the
   # recorder runs upstream's code and unlocked Composer packages, and a save after that would hand main's scope
   # whatever that code wrote. For the same reason it holds no OIDC token, which any of its steps could use to assume the
   # test data read role: --check compares upstream's case sources with the derived ones the tool-pack's archive holds,

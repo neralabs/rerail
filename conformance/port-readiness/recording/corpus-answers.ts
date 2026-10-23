@@ -23,7 +23,9 @@
  *   it depends on: for Ruff the context files (CONTEXT_FILES) the corpus holds, as the sha256 of their sorted
  *   `<path>\0<sha256>\n` lines; for PHPStan and Psalm (BATCHED_ADAPTERS), which analyse the files they are handed as
  *   one project, the same digest of every corpus file of the task the goldens name, the batch the recorder hands them;
- *   for Clippy, which builds whole crates, the corpus's commit. Anything else: none.
+ *   for Clippy, which builds whole crates, the corpus's commit. Where the answer for one rule depends on the other
+ *   rules asked with it (ASKS_EVERY_RULE: stillat/blade-parser and PHPStan), the digest is also of the sorted rules the
+ *   tool-pack records, so a rule added or removed asks every answer again. Anything else: none.
  * - `<parsers-id>` is the sha256 of the recorded parser list (recording.json `parsers`, canonical JSON) and of the
  *   adapter code's digest, which runs the parsers. A verdict is read at a corpus path as a module, so its name is the
  *   content's sha256 and file type (engine.ts's fileTypeOf).
@@ -206,7 +208,29 @@ export const BATCHED_ADAPTERS: Record<GatesManifest["adapter"], boolean> = {
   clippy: false,
 };
 
-/** What an answer's key reads beyond the file: the other corpus files beside it, and the corpus's commit. */
+/**
+ * Whether an adapter's answer for one rule on a file depends on the other rules asked with it, so that the recorder
+ * asks it every recorded rule about any file it asks about, and the answer is keyed by the rules it records
+ * (KeyContext.rules): stillat/blade-parser leaves a file out for every validator asked when one of them throws on it,
+ * and PHPStan leaves a file out at every level the asked rules need when one level cannot analyse it (and is
+ * BATCHED_ADAPTERS besides). The others answer a rule whatever else is asked: PHP_CodeSniffer and tlint run every
+ * sniff and linter the pack names, and the rest exclude a file only when upstream's parser rejects it.
+ */
+export const ASKS_EVERY_RULE: Record<GatesManifest["adapter"], boolean> = {
+  bandit: false,
+  ruff: false,
+  eslint: false,
+  phpcs: false,
+  tlint: false,
+  "blade-parser": true,
+  phpstan: true,
+  psalm: false,
+  bladestan: false,
+  sqlfluff: false,
+  clippy: false,
+};
+
+/** What an answer's key reads beyond the file: the other corpus files beside it, the corpus's commit, and the recorded rules. */
 export interface KeyContext {
   /** sha256 of the corpus file at `task`/`path`, or undefined when the corpus holds none there. */
   sha256Of(task: string, path: string): string | undefined;
@@ -214,6 +238,8 @@ export interface KeyContext {
   commitOf(task: string): string;
   /** The digest of every fetched corpus file of the task, as places: the batch a BATCHED_ADAPTERS adapter is handed. */
   batchOf(task: string): string;
+  /** The sha256 of the sorted rules the tool-pack records, one per line: what an ASKS_EVERY_RULE answer is asked with. */
+  rules: string;
 }
 
 /** The sha256 of `<path>\0<sha256>\n` lines of corpus files, sorted: the same files name the same digest. */
@@ -223,9 +249,10 @@ function placesDigest(files: Iterable<{ path: string; sha256: string }>): string
 
 /**
  * The key context over the corpus files a run fetched (the goldens' files and the context files beside them), which
- * the gates and the recorder fetch alike: what the keys read of them, and the commits.
+ * the gates and the recorder fetch alike, and the rules the tool-pack records: what the keys read of them, and the
+ * commits.
  */
-export function fetchedContext(files: readonly CorpusPlace[], commitOf: KeyContext["commitOf"]): KeyContext {
+export function fetchedContext(files: readonly CorpusPlace[], commitOf: KeyContext["commitOf"], rules: readonly string[]): KeyContext {
   const byPlace = new Map(files.map((file) => [`${file.task}\0${file.path}`, file]));
   const byTask = new Map<string, CorpusPlace[]>();
   for (const file of byPlace.values()) byTask.set(file.task, [...(byTask.get(file.task) ?? []), file]);
@@ -234,6 +261,7 @@ export function fetchedContext(files: readonly CorpusPlace[], commitOf: KeyConte
     sha256Of: (task, path) => byPlace.get(`${task}\0${path}`)?.sha256,
     commitOf,
     batchOf: (task) => batches.get(task) ?? placesDigest([]),
+    rules: sha256([...new Set(rules)].sort(byText).map((rule) => `${rule}\n`).join("")),
   };
 }
 
@@ -250,7 +278,11 @@ export function corpusCommits(corpora: readonly RerailCorpus[], tasks: readonly 
 /** The key an answer on `file` is filed under (the module comment says what each adapter's depends on). */
 export function answerKey(adapter: GatesManifest["adapter"], file: CorpusPlace, context: KeyContext): string {
   if (adapter === "clippy") return `${file.sha256}+${context.commitOf(file.task).slice(0, CONTEXT_DIGITS)}`;
-  if (BATCHED_ADAPTERS[adapter]) return `${file.sha256}+${context.batchOf(file.task).slice(0, CONTEXT_DIGITS)}`;
+  if (BATCHED_ADAPTERS[adapter]) {
+    const batch = context.batchOf(file.task);
+    return `${file.sha256}+${(ASKS_EVERY_RULE[adapter] ? sha256(`${batch}\0${context.rules}`) : batch).slice(0, CONTEXT_DIGITS)}`;
+  }
+  if (ASKS_EVERY_RULE[adapter]) return `${file.sha256}+${context.rules.slice(0, CONTEXT_DIGITS)}`;
   if (adapter !== "ruff") return file.sha256;
   const present = CONTEXT_FILES.ruff(file.path).flatMap((path) => {
     const digest = context.sha256Of(file.task, path);
@@ -413,8 +445,8 @@ export function cacheCorpusArchive(cacheRoot: string, packed: PackedCorpus): voi
 }
 
 /**
- * The extracted tree of the archive `pin` names: the cached tree when its marker names that archive and it still
- * holds the archive's file count and bytes (pack-fixtures.mjs's corpusTreeReady), else the cached archive verified and
+ * The extracted tree of the archive `pin` names: the cached tree when its marker names that archive and the canonical
+ * tar of its files is that archive's (pack-fixtures.mjs's corpusTreeReady), else the cached archive verified and
  * extracted. Undefined when the cache has neither, or its archive's tar is not the locked one (corrupt, cut short or
  * another archive), which is deleted: fetch it (`pack-fixtures.mjs recordings`). A cached archive whose tar is the
  * locked one but whose files the lock does not describe throws, since fetching the same bytes again changes nothing.

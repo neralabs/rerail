@@ -16,7 +16,7 @@ import { readGoldens, type Golden } from "../../port-readiness/goldens.js";
 import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "../../port-readiness/manifest.js";
 import type { CommandRunner } from "../../port-readiness/process.js";
 import {
-  answerText, BATCHED_ADAPTERS, cachedCorpusTree, cacheCorpusArchive, CONTEXT_FILES, corpusCommits, CORPUS_ARCHIVE, fetchedContext, memoryTree, missingAnswers, neededAnswers, nextTree, packCorpusTree,
+  answerText, ASKS_EVERY_RULE, BATCHED_ADAPTERS, cachedCorpusTree, cacheCorpusArchive, CONTEXT_FILES, corpusCommits, CORPUS_ARCHIVE, fetchedContext, memoryTree, missingAnswers, neededAnswers, nextTree, packCorpusTree,
   treeFiles, verdictText, type NeededAnswer, type NeededAnswers, type PackedCorpus,
 } from "../../port-readiness/recording/corpus-answers.js";
 import {
@@ -25,7 +25,7 @@ import {
 } from "../../port-readiness/recording/schema.js";
 import { diffRecordings, type RecordedPair, type RecordingChanges, type ResolvedRuntime, type UnreadRecording } from "../../port-readiness/recording/diff.js";
 import {
-  buildRecordingLock, readCachedRecording, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
+  buildRecordingLock, readCachedRecording, readRecordingLock, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
 } from "../../port-readiness/recording/store.js";
 import { licenseFiles, rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../port-readiness/recorded-adapter.js";
 import type { PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile } from "../../port-readiness/types.js";
@@ -56,28 +56,6 @@ export const LIVE_ADAPTERS: Record<GatesManifest["adapter"], AdapterFactory> = {
   bladestan: createBladestanAdapter,
   sqlfluff: createSqlfluffAdapter,
   clippy: createClippyAdapter,
-};
-
-/**
- * Whether an adapter's answer for one rule on a file depends on the other rules asked with it, so that the recorder
- * asks it every recorded rule about any file it asks about, and writes every answer on the file again, as a full record
- * does: stillat/blade-parser leaves a file out for every validator asked when one of them throws on it, and PHPStan
- * leaves a file out at every level the asked rules need when one level cannot analyse it (and is BATCHED_ADAPTERS
- * besides). The others answer a rule whatever else is asked: PHP_CodeSniffer and tlint run every sniff and linter the
- * pack names, and the rest exclude a file only when upstream's parser rejects it.
- */
-const ASKS_EVERY_RULE: Record<GatesManifest["adapter"], boolean> = {
-  bandit: false,
-  ruff: false,
-  eslint: false,
-  phpcs: false,
-  tlint: false,
-  "blade-parser": true,
-  phpstan: true,
-  psalm: false,
-  bladestan: false,
-  sqlfluff: false,
-  clippy: false,
 };
 
 const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
@@ -645,7 +623,7 @@ async function lockedRecording(options: RecordOptions, manifest: GatesManifest):
   const { root, pack, tool, cacheRoot } = options;
   const whole = `record the tool-pack whole (npm run port-readiness:record -- --pack ${pack} --tool ${tool})`;
   const lock = readLock(root, pack, tool);
-  if (lock === null) throw new Error(`packs/${pack}/upstream/${tool} has no v3 ${RECORDING_LOCK} to record the corpus answers of: ${whole}`);
+  if (lock === null) throw new Error(`packs/${pack}/upstream/${tool} has no ${RECORDING_LOCK} to record the corpus answers of: ${whole}`);
   let text = readCachedRecording(cacheRoot, lock.files[RECORDING_FILE].sha256);
   let failure: string | undefined;
   if (text === undefined) {
@@ -663,17 +641,14 @@ async function lockedRecording(options: RecordOptions, manifest: GatesManifest):
   return recording;
 }
 
-/** The committed v3 lock, or null when there is none or it is not v3 (a base commit from before the archive). */
+/** The committed lock, or null when there is none; one of another format is refused (readRecordingLock). */
 function readLock(root: string, pack: string, tool: string): RecordingLock | null {
-  const path = join(toolPackDirectory(root, pack, tool), RECORDING_LOCK);
-  if (!existsSync(path)) return null;
-  const lock = recordingLockSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
-  return lock.success ? lock.data : null;
+  return existsSync(join(toolPackDirectory(root, pack, tool), RECORDING_LOCK)) ? readRecordingLock(root, pack, tool) : null;
 }
 
 /**
- * The tree the committed lock names, from the cache or else S3; an empty one when the lock is not v3 (nothing to
- * build on: every needed answer is asked). A v3 lock whose archive is in neither, or that S3 cannot be read for,
+ * The tree the committed lock names, from the cache or else S3; an empty one when there is no lock (nothing to
+ * build on: every needed answer is asked). A lock whose archive is in neither, or that S3 cannot be read for,
  * throws, saying to record from no answers with --full.
  */
 function lockedTree(root: string, cacheRoot: string, pack: string, tool: string): Map<string, Buffer> {
@@ -712,8 +687,8 @@ async function recordCorpus(options: RecordOptions, manifest: GatesManifest, ada
     ? await options.corpusFiles(inCorpus).then((files) => ({ files, goldens: files }))
     : await goldenCorpus(toolPackDirectory(root, pack, tool), cacheRoot, inCorpus, runner, corpora, CONTEXT_FILES[manifest.adapter]);
   const byPlace = new Map(fetched.files.map((file) => [wantedKey(file.task, file.path), file]));
-  const context = fetchedContext([...byPlace.values()], corpusCommits(corpora, readCorpusTasks()));
   const rules = Object.keys(recording.rules).sort(byText);
+  const context = fetchedContext([...byPlace.values()], corpusCommits(corpora, readCorpusTasks()), rules);
   const needed = neededAnswers({ manifest, runtimes: recording.runtimes, parsers: recording.parsers, rules, files: fetched.goldens, context });
   const previous = mode.full === true ? new Map<string, Buffer>() : lockedTree(root, cacheRoot, pack, tool);
   const missing = missingAnswers(memoryTree(previous), needed);
@@ -775,7 +750,7 @@ async function recordCorpus(options: RecordOptions, manifest: GatesManifest, ada
 
 /** What differs between a fresh recording and what the tool-pack's committed `recording.lock` names. */
 export interface RecordingDiff {
-  /** recording.json or corpus.tar.zst when the lock names other answers for it, or no v3 lock is committed. */
+  /** recording.json or corpus.tar.zst when the lock names other answers for it, or no lock is committed. */
   changed: string[];
   /** How the fresh corpus answers compare with the locked archive's: null when the lock names this very archive. */
   corpusNote: string | null;
@@ -798,7 +773,7 @@ export function diffRecording(root: string, pack: string, tool: string, recorded
   if (lock === null || lock.files[RECORDING_FILE].sha256 !== sha256(Buffer.from(canonicalText(recorded.recording), "utf8"))) changed.push(RECORDING_FILE);
   let corpusNote: string | null = null;
   if (lock === null) {
-    corpusNote = `no v3 ${RECORDING_LOCK} names corpus answers`;
+    corpusNote = `no ${RECORDING_LOCK} names corpus answers`;
     changed.push(CORPUS_ARCHIVE);
   } else if (lock.files[CORPUS_ARCHIVE].sha256 !== recorded.corpus.packed.sha256) {
     let locked: Map<string, Buffer> | undefined;
@@ -823,6 +798,69 @@ export function diffRecording(root: string, pack: string, tool: string, recorded
     else if (!readFileSync(path).equals(source.bytes)) conflicting.push(source.file);
   }
   return { changed, corpusNote, missing, conflicting };
+}
+
+/** What `--check` makes of a fresh recording against the committed lock. */
+export interface RecordingCheck extends RecordingDiff {
+  /** What a record of the fresh answers would commit (over the base's tree, when it is given), and the archive it names. */
+  lock: RecordingLock;
+  packed: PackedCorpus;
+  /** The committed archive, when a record of the fresh answers made it: what the cache lacks once the check holds. */
+  committed: PackedCorpus | null;
+  /** The per-rule summary against the base's recording, or the committed lock's when no base is given. */
+  changes: RecordingChanges;
+}
+
+/**
+ * `--check`: a recording that asked every needed answer again (`corpus.full`) against the committed lock. The corpus
+ * answers hold when the committed archive is one a record of these answers makes, which needs none of its bytes: the
+ * fresh tree itself, as a `--full` or `--prune` record leaves it, or the fresh answers over the tree the `base` lock
+ * names, as an incremental record on that lock leaves it (the answers no golden needs kept). Failing both, they hold
+ * when the committed archive, read and verified from the cache or S3, has every fresh answer identically
+ * (diffRecording), so extra answers no golden names never make it stale. `base` is the lock the commit's was recorded
+ * on (a pull request's base's), null when the base has none, and its archive is read from the cache alone.
+ */
+export function checkRecording(root: string, pack: string, tool: string, recorded: Recorded, options: { cacheRoot: string; base?: RecordingLock | null | undefined }): RecordingCheck {
+  const { base, cacheRoot } = options;
+  const diff = diffRecording(root, pack, tool, recorded, cacheRoot);
+  const committed = readLock(root, pack, tool)?.files[CORPUS_ARCHIVE];
+  const label = `the base's packs/${pack}/upstream/${tool}/${CORPUS_ARCHIVE}`;
+  let tree = recorded.corpus.tree;
+  let packed = recorded.corpus.packed;
+  let baseNote: string | null = null;
+  if (base != null) {
+    const pin = base.files[CORPUS_ARCHIVE];
+    let directory: string | undefined;
+    try {
+      directory = cachedCorpusTree(cacheRoot, pin, label);
+    } catch (error) {
+      baseNote = `${label} does not verify (${error instanceof Error ? error.message : String(error)})`;
+    }
+    if (directory !== undefined) {
+      tree = nextTree(treeFiles(directory), recorded.corpus.needed, recorded.corpus.written, false);
+      packed = packCorpusTree(tree);
+    } else {
+      baseNote ??= `${label} (sha256 ${pin.sha256.slice(0, 12)}) is not in the cache to build on`;
+    }
+  }
+  const isCommitted = (candidate: PackedCorpus) => committed !== undefined && candidate.sha256 === committed.sha256 && candidate.files === committed.files && candidate.bytes === committed.bytes;
+  const madeBy = isCommitted(recorded.corpus.packed) ? recorded.corpus.packed : isCommitted(packed) ? packed : null;
+  let changed = diff.changed;
+  let corpusNote = baseNote === null ? diff.corpusNote : `${diff.corpusNote === null ? "" : `${diff.corpusNote}; `}${baseNote}`;
+  if (madeBy !== null && madeBy !== recorded.corpus.packed) {
+    changed = changed.filter((file) => file !== CORPUS_ARCHIVE);
+    corpusNote = `the locked ${CORPUS_ARCHIVE} is the ${recorded.corpus.written.size} answer(s) and verdict(s) just recorded over the base's archive (sha256 ${base!.files[CORPUS_ARCHIVE].sha256.slice(0, 12)}), as an incremental record on it makes them`;
+  }
+  const before = base === undefined ? readLockedPair(root, cacheRoot, pack, tool) : base === null ? null : readPair(cacheRoot, base, label);
+  return {
+    ...diff,
+    changed,
+    corpusNote,
+    lock: buildRecordingLock(tool, recorded.recording.pins, recorded.recording.runtimes, canonicalText(recorded.recording), packed),
+    packed,
+    committed: madeBy,
+    changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: tree }, recorded.resolved),
+  };
 }
 
 /**
@@ -979,7 +1017,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
 /**
  * The recording the committed lock names, read from the cache: null when there is no lock, and why not when the lock
  * is there but its recording.json or corpus answers archive cannot be read (never recorded or fetched here:
- * `pack-fixtures.mjs recordings`, or CI's cache and S3 lacked it; or a lock from before the archive), which is not a
+ * `pack-fixtures.mjs recordings`, or CI's cache and S3 lacked it; or a lock of another format), which is not a
  * first recording. It is what a re-record is summarized against; a maintainer re-recording has usually just run the
  * gates on it.
  */
@@ -988,12 +1026,17 @@ export function readLockedPair(root: string, cacheRoot: string, pack: string, to
   if (!existsSync(lockPath)) return null;
   const lock = recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8")));
   if (!lock.success) return { unavailable: `${RECORDING_LOCK} does not match its schema` };
-  const recordingPin = lock.data.files[RECORDING_FILE];
-  const corpusPin = lock.data.files[CORPUS_ARCHIVE];
+  return readPair(cacheRoot, lock.data, `packs/${pack}/upstream/${tool}/${CORPUS_ARCHIVE}`);
+}
+
+/** The two recordings `lock` names, from the cache alone, or why they cannot be read (readLockedPair). */
+function readPair(cacheRoot: string, lock: RecordingLock, label: string): RecordedPair | UnreadRecording {
+  const recordingPin = lock.files[RECORDING_FILE];
+  const corpusPin = lock.files[CORPUS_ARCHIVE];
   const text = readCachedRecording(cacheRoot, recordingPin.sha256);
   let tree: string | undefined;
   try {
-    tree = cachedCorpusTree(cacheRoot, corpusPin, `packs/${pack}/upstream/${tool}/${CORPUS_ARCHIVE}`);
+    tree = cachedCorpusTree(cacheRoot, corpusPin, label);
   } catch (error) {
     return { unavailable: `the locked ${CORPUS_ARCHIVE} does not verify (${error instanceof Error ? error.message : String(error)})` };
   }

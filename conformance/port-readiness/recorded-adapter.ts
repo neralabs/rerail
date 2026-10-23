@@ -201,7 +201,7 @@ function missingMessage(pack: string, tool: string, file: string): string {
  * tree: `port-readiness:record` puts them in the cache, and `pack-fixtures.mjs recordings` fetches them there from S3
  * (recording/store.ts). recording.json is checked against the lock's sha256 on every read; the archive is checked
  * against the lock's tar sha256, file count and bytes before it is extracted, and its tree is reused only while the
- * marker the extraction wrote names that archive and the tree still holds its file count and bytes (corpus-answers.ts
+ * marker the extraction wrote names that archive and the canonical tar of the tree's files is still that archive (corpus-answers.ts
  * cachedCorpusTree), so a rule is never judged against an archive this commit did not name.
  */
 export async function readRecordedInputs(root: string, cacheRoot: string, pack: string, tool: string, names: string[]): Promise<RecordedInputs> {
@@ -337,7 +337,7 @@ export function toolPackChecks(inputs: RecordedInputs): Check[] {
  * The recorded adapter's inCorpus: whether a path is of a type upstream lints. A path's type is its longest dialect
  * suffix where that is longer than its extension: `.blade.php` is no `.php`.
  */
-export function recordedInCorpus(recording: Pick<GatesRecording, "corpus">): (path: string) => boolean {
+function recordedInCorpus(recording: Pick<GatesRecording, "corpus">): (path: string) => boolean {
   const { caseSensitive, extensions } = recording.corpus;
   const types = new Set(caseSensitive ? extensions : extensions.map((ext) => ext.toLowerCase()));
   return (path) => types.has(caseSensitive ? fileTypeOf(path) : fileTypeOf(path).toLowerCase());
@@ -392,7 +392,7 @@ export function createRecordedAdapter(
       // A golden whose fetched file is not its sha256 fails on its own (the goldens gate); its answer cannot be named.
       const fetched = new Map(files.map((file) => [wantedKey(file.task, file.path), file.sha256]));
       const judged = goldens.filter((golden) => fetched.get(wantedKey(golden.task, golden.path)) === golden.sha256);
-      const needed = neededAnswers({ manifest, runtimes, parsers: recording.parsers, rules: Object.keys(recording.rules), files: judged, context: fetchedContext(files, corpus.commitOf) });
+      const needed = neededAnswers({ manifest, runtimes, parsers: recording.parsers, rules: Object.keys(recording.rules), files: judged, context: fetchedContext(files, corpus.commitOf, Object.keys(recording.rules)) });
       const missing = missingAnswers(corpus.tree, needed);
       const goldenFiles = new Set(judged.map((golden) => wantedKey(golden.task, golden.path))).size;
       if (missing.answers.length + missing.verdicts.length === 0) {
@@ -462,7 +462,7 @@ export function createRecordedAdapter(
     async lintCorpus(files: CorpusFile[], names: string[]): Promise<UpstreamFile[]> {
       // A rule the recording does not have (absent upstream) has no answer anywhere, as before the archive.
       const asked = names.filter((name) => name in recording.rules);
-      const context = corpus === null ? undefined : fetchedContext(files, corpus.commitOf);
+      const context = corpus === null ? undefined : fetchedContext(files, corpus.commitOf, Object.keys(recording.rules));
       return files.map((file) => {
         const findings = new Map<string, Span[]>();
         const unanswered = new Set<string>();

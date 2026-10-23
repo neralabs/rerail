@@ -129,10 +129,12 @@ count and bytes, and each is an object of its own in S3, `s3://nera-test-fixture
 and `…/<pack>/<tool>/corpus/<sha256>.tar.zst`, written once. `port-readiness:record` writes them into the cache, and
 `node scripts/s3/pack-fixtures.mjs recordings` fetches them there from S3 (`recordings push` puts new ones there); in CI,
 `port-readiness.yml` restores them from the Actions cache, keyed by the lock's digests, which its test-data job fills from
-S3, and a leg that finds them in neither records them, from the recordings its base's lock names, which the test-data
-job fetches too. A cached file whose sha256 is not the one the lock names reads as missing (a cached archive that is
+S3, and a leg that finds them in neither (or whose pull request changes the lock) checks them with `--check --base`,
+over the recordings its base's lock names, which the test-data job fetches too. A cached file whose sha256 is not the
+one the lock names reads as missing (a cached archive that is
 not the locked one is deleted and fetched again), and the gates extract a cached archive themselves when its tree is
-not there; a tree is reused only while the marker its extraction wrote (`.tar-sha256`) names the locked archive.
+not there; a tree is reused only while the marker its extraction wrote (`.tar-sha256`) names the locked archive and the
+canonical tar of the tree's files is that archive, and is extracted again from the verified archive otherwise.
 
 Each answer is named by everything it depends on, and only that, so it stays valid while its name does: `<config-id>`
 hashes upstream's pins, the runtimes' pin digests the lock records, the gates.yaml sections that say how upstream
@@ -140,7 +142,9 @@ lints a file (`upstream`, and ESLint's plugin, release, environment and `.vue` p
 adapter (`ADAPTER_SOURCES`); `<rule>` is the rule with `/` written `~`, `<task>` the golden's task or rerail corpus with
 `:` written `~`; `<key>` is the file's sha256, plus, for Ruff, a digest of the `__init__.py`/`__init__.pyi` files above
 it that the corpus holds, for PHPStan and Psalm a digest of every golden file of its task, which they analyse as one
-project, and for Clippy the corpus's commit. An answer file is `{"findings": [...]}` (`[]`: asked, upstream silent) or
+project, and for Clippy the corpus's commit; for stillat/blade-parser and PHPStan, whose answer for one rule depends
+on the other rules asked with it (`ASKS_EVERY_RULE`), the digest is also of the rules the tool-pack records, so a rule
+added or removed asks every answer again. An answer file is `{"findings": [...]}` (`[]`: asked, upstream silent) or
 `{"excluded": "<reason>"}`, each rule's on its own. The corpus pins (corpus-tasks.json, a corpus's paths and exclude)
 name none of it: a golden whose file changed has a new key, so importing goldens or moving a corpus asks upstream only
 about the new files.
@@ -148,9 +152,12 @@ about the new files.
 `npm run port-readiness:record -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/) writes the
 recordings, asking upstream only for the corpus answers the locked archive lacks; `--corpus` records only those, keeping
 recording.json (and refuses when the pins or runtime pins moved since it); `--full` asks every needed answer again (an
-incremental record must equal it); `--prune` drops answers no golden names, which are otherwise kept; `--check` records
-afresh and compares, and when the corpus answers differ says to record with `--corpus --full` (`--full` when
-recording.json differs too), since an incremental record never asks again about an answer the archive holds. A
+incremental record must equal it); `--prune` drops answers no golden names, which are otherwise kept; `--check` asks
+every needed answer afresh and holds the lock when its archive is what a record of them makes (the fresh tree, as
+`--full` and `--prune` leave it, or, with `--base <lock>`, the fresh answers over that lock's archive, as an
+incremental record on it leaves them) or holds each of them identically, and otherwise says to record with
+`--corpus --full` (`--full` when recording.json differs too), since an incremental record never asks again about an
+answer the archive holds. A
 tool-pack check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to
 promote. The recording is stale when pins
 disagree between `gates.yaml`, `recording.lock`, `recording.json` and `conformance.json`, a runtime's pins

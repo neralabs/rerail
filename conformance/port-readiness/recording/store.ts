@@ -90,13 +90,26 @@ export function recordingLockPath(root: string, pack: string, tool: string): str
 
 /**
  * The lock a tool-pack commits. A tool-pack with a gates.yaml and no lock has never been recorded; the message says
- * so, because the gates cannot tell that from a lock that failed to read.
+ * so, because the gates cannot tell that from a lock that failed to read. A lock of an older format (a v2 one names
+ * corpus.json, which the corpus answers archive replaced) is refused: nothing reads it, and the tool-pack is recorded
+ * again.
  */
 export function readRecordingLock(root: string, pack: string, tool: string): RecordingLock {
   const path = recordingLockPath(root, pack, tool);
-  if (!existsSync(path)) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK} is missing: run npm run port-readiness:record -- --pack ${pack} --tool ${tool}`);
-  const parsed = recordingLockSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
-  if (!parsed.success) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK}: ${parsed.error.issues.slice(0, 5).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
+  const label = `packs/${pack}/upstream/${tool}/${RECORDING_LOCK}`;
+  if (!existsSync(path)) throw new Error(`${label} is missing: run npm run port-readiness:record -- --pack ${pack} --tool ${tool}`);
+  return parseRecordingLock(readFileSync(path, "utf8"), label, `npm run port-readiness:record -- --pack ${pack} --tool ${tool}`);
+}
+
+/** A lock's text, named `label` in errors; one of another format is refused, saying to delete it and run `record`. */
+export function parseRecordingLock(text: string, label: string, record: string): RecordingLock {
+  const raw: unknown = JSON.parse(text);
+  const format = raw !== null && typeof raw === "object" && "format" in raw ? raw.format : undefined;
+  if (format !== RECORDING_LOCK_FORMAT) {
+    throw new Error(`${label} is format ${JSON.stringify(format)}, not ${RECORDING_LOCK_FORMAT}, and is not read: delete it and record the tool-pack again (${record})`);
+  }
+  const parsed = recordingLockSchema.safeParse(raw);
+  if (!parsed.success) throw new Error(`${label}: ${parsed.error.issues.slice(0, 5).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
   return parsed.data;
 }
 

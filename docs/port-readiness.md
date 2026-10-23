@@ -116,8 +116,10 @@ An answer is named by everything it depends on, so it holds exactly while its na
   and `runtimes.ts`). A bump moves it, and so does a fix to an adapter, and every answer is asked again;
 - **the key**: the file's sha256, so a golden whose file changed needs a new answer; for Ruff also the `__init__.py`
   and `__init__.pyi` files above it the corpus holds; for PHPStan and Psalm, which analyse the files they are handed
-  as one project, every golden file of the task, which the recorder hands them at once, for every recorded rule; and
-  for Clippy the corpus's commit;
+  as one project, every golden file of the task, which the recorder hands them at once, for every recorded rule; for
+  Clippy the corpus's commit; and for stillat/blade-parser and PHPStan, which leave a file out for every rule asked
+  when one of them cannot read it, the set of rules the tool-pack records, so a rule added or removed asks every
+  answer again;
 - **the rule**: a rule recording.json gains has no answers yet.
 
 The corpus pins do not: editing `corpus-tasks.json` or a corpus's paths leaves every answer whose file is unchanged
@@ -128,7 +130,8 @@ every rule the tool-pack records, and the parsers' verdict on it. A golden whose
 only the files and rules that lack them (for PHPStan and Psalm, every golden of a task that lacks one). An answer no
 golden names any more stays in the archive until `--prune`, and a new config id drops the old ones. `--full` records
 every needed answer from nothing, which an incremental record must equal; `port-readiness:record --check`, which the
-nightly runs, asks them all again and fails when the locked archive lacks one or holds another. An incremental record
+nightly and a pull request's recording leg run, asks them all again and fails when the locked archive lacks one or
+holds another. An incremental record
 never asks again about an answer the archive holds, so it cannot fix one upstream now gives otherwise: `--check` then
 says to record with `--corpus --full` (with `--full` when recording.json is stale too).
 
@@ -391,9 +394,9 @@ PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run port-readiness:record -- --pack
 "linux")]` item is compiled on Linux alone. Its derived data and recordings are Linux's, made on
 `x86_64-unknown-linux-gnu`; made on macOS, its answers and corpus answers lack the findings in Linux-only code (tokio's
 `examples/prewarm-fd-table.rs`), so derive and record it on Linux (the bump workflow does), or take what CI's leg
-records: a leg whose recording differs from the commit's lock fails with the lock and the two recordings it made in
-its report artifact (`recorded-rust--clippy/`), and once the commit has that lock the leg's
-`recordings-rust--clippy` artifact holds the two for the maintainer to push.
+records: a leg whose check fails leaves the lock and the two recordings a record makes in its report artifact
+(`recorded-rust--clippy/`), and once the commit has that lock the leg's `recordings-rust--clippy` artifact holds the
+two for the maintainer to push.
 
 Locally that is all: the lock names what was just recorded and the gates read it from
 `.rerail/port-readiness/recordings/`, so iterating on a port needs no network. The flow for a pull request that
@@ -406,10 +409,14 @@ changes a tool-pack:
    that the derivation did not is a bug in the derivation: fix it rather than commit the file. Until a maintainer
    pushes newly derived data, CI runs on the archive the old `test-data.lock` names.
 2. CI's test-data job looks the recordings the commit's lock names up in the cache, then in S3, unless the pull
-   request changes the lock: then it fetches the base lock's, and every leg of the tool-pack records it from the pull
-   request's commit and fails unless it wrote the same files. A leg that finds an unchanged lock's recordings in
-   neither also records, and saves them in the pull request's cache scope. Either way the legs upload the two as the
-   artifact `recordings-<pack>--<tool>`, and the comment carries the per-rule summary of each tool-pack recorded.
+   request changes the lock: then it fetches the base lock's, and every leg of the tool-pack runs
+   `port-readiness:record --check --base <the base's lock>` from the pull request's commit. It asks upstream for
+   every answer the goldens need and fails unless the commit's lock is what a record of them makes: an incremental
+   record over the base's archive, or a `--full` or `--prune` one, so each mode the maintainer chose holds, and
+   answers no golden names are no failure; recording.json and the case sources must be what it made too. A leg that
+   finds an unchanged lock's recordings in neither also checks, and saves them in the pull request's cache scope.
+   Either way the legs upload the two as the artifact `recordings-<pack>--<tool>`, and the comment carries the
+   per-rule summary of each tool-pack checked.
    **Pack test data is in S3** stays red until S3 holds what the locks name.
 3. Before merging, a maintainer derives any data the pull request changed away from every credential and pushes, from
    a trusted worktree of main, the archive and the recordings (the CI run's artifact, or the sandbox's own):

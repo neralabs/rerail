@@ -759,6 +759,24 @@ describe("recordings", () => {
     expect(existsSync(join(corpus.tree(root), CORPUS_TREE_MARKER))).toBe(true);
   });
 
+  it("extracts again a tree whose marker names the archive but whose files were edited or renamed, the counts kept", () => {
+    const { root, aws, calls, named, corpus } = locked();
+    for (const each of named) putFile(each.local(root), each.bytes);
+    recordings({ root, aws, log: quiet });
+    // A finding's coordinate moved: the same file count and bytes, other content.
+    const answer = join(corpus.tree(root), "answers/c0/no-null/rerail~vscode/src/a.js@0f.json");
+    writeFileSync(answer, ANSWERS["answers/c0/no-null/rerail~vscode/src/a.js@0f.json"].replace("[1, 1, 1, 5]", "[2, 1, 1, 5]"));
+    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, corpus)]);
+    expect(extractedTree(root, corpus)).toEqual(ANSWERS);
+    // An answer filed under another name.
+    renameSync(answer, answer.replace("a.js@0f", "c.js@0f"));
+    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, corpus)]);
+    expect(extractedTree(root, corpus)).toEqual(ANSWERS);
+    // An untouched tree is kept, its archive unread.
+    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
   it("fills the recording cache it is given, the recorder's --cache, rather than the checkout's", () => {
     const { root, aws, object, named, corpus } = locked();
     for (const each of named) putFile(object(each.key), each.bytes);

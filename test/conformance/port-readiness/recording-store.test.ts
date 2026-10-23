@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import ts from "typescript";
@@ -101,15 +101,19 @@ test("a lock names recording.json by its digest and the corpus answers archive b
   }
 });
 
-test("a lock of an older format is refused: a v2 lock's corpus.json is read by the migration alone", () => {
+test("a lock of an older format is refused, saying to record the tool-pack again", () => {
   const { root, lock, cleanup } = toolPack(RECORDING, TREE);
   try {
+    const refused = /packs\/demo\/upstream\/bandit\/recording\.lock is format "rerail\.port-readiness-recording-lock\/v[12]", not rerail\.port-readiness-recording-lock\/v3, and is not read: delete it and record the tool-pack again \(npm run port-readiness:record -- --pack demo --tool bandit\)/u;
     const v1 = { ...lock, format: "rerail.port-readiness-recording-lock/v1", release: "port-readiness-recordings" };
     writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(v1 as RecordingLock));
-    assert.throws(() => readRecordingLock(root, "demo", "bandit"), /recording\.lock: \/format: .*\/: Unrecognized key.*release/su);
+    assert.throws(() => readRecordingLock(root, "demo", "bandit"), refused);
     const v2 = { ...lock, format: "rerail.port-readiness-recording-lock/v2", files: { "recording.json": lock.files["recording.json"], "corpus.json": { sha256: "e".repeat(64), size: 10, format: "rerail.port-readiness-corpus/v2" } } };
     writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(v2 as unknown as RecordingLock));
-    assert.throws(() => readRecordingLock(root, "demo", "bandit"), /recording\.lock: \/format: .*corpus\.tar\.zst/su);
+    assert.throws(() => readRecordingLock(root, "demo", "bandit"), refused);
+    // A v3 lock that does not match its schema is refused by what is wrong with it.
+    writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText({ ...lock, release: "x" } as RecordingLock));
+    assert.throws(() => readRecordingLock(root, "demo", "bandit"), /recording\.lock: \/: Unrecognized key.*release/su);
   } finally {
     cleanup();
   }
@@ -266,8 +270,8 @@ const NO_COMMIT: KeyContext["commitOf"] = (task) => {
 const NO_BATCH: KeyContext["batchOf"] = (task) => {
   throw new Error(`no batch for ${task}`);
 };
-const ALONE: KeyContext = { sha256Of: () => undefined, commitOf: NO_COMMIT, batchOf: NO_BATCH };
-const placesOf = (files: Record<string, string>): KeyContext => ({ sha256Of: (task, path) => files[`${task}/${path}`], commitOf: NO_COMMIT, batchOf: NO_BATCH });
+const ALONE: KeyContext = { sha256Of: () => undefined, commitOf: NO_COMMIT, batchOf: NO_BATCH, rules: "e".repeat(64) };
+const placesOf = (files: Record<string, string>): KeyContext => ({ ...ALONE, sha256Of: (task, path) => files[`${task}/${path}`] });
 
 test("an answer is keyed by the file's content, plus what else the adapter's answer reads", () => {
   const file = { task: "rerail:corpus", path: "pkg/sub/mod.py", sha256: "b".repeat(64) };
@@ -290,14 +294,32 @@ test("PHPStan's and Psalm's answers are keyed by every fetched file of their tas
   const file = { task: "demo", path: "src/A.php", sha256: "a".repeat(64) };
   const sibling = { task: "demo", path: "src/B.php", sha256: "b".repeat(64) };
   const elsewhere = { task: "other", path: "src/C.php", sha256: "c".repeat(64) };
-  const alone = answerKey("phpstan", file, fetchedContext([file], NO_COMMIT));
+  const alone = answerKey("phpstan", file, fetchedContext([file], NO_COMMIT, ["R1"]));
   assert.match(alone, /^a{64}\+[0-9a-f]{12}$/u);
   // Another file of the task in the batch is another answer; one of another task is not in the batch.
-  assert.notEqual(answerKey("phpstan", file, fetchedContext([file, sibling], NO_COMMIT)), alone);
-  assert.equal(answerKey("phpstan", file, fetchedContext([file, elsewhere], NO_COMMIT)), alone);
-  assert.equal(answerKey("psalm", file, fetchedContext([sibling, file], NO_COMMIT)), answerKey("psalm", file, fetchedContext([file, sibling], NO_COMMIT)));
+  assert.notEqual(answerKey("phpstan", file, fetchedContext([file, sibling], NO_COMMIT, ["R1"])), alone);
+  assert.equal(answerKey("phpstan", file, fetchedContext([file, elsewhere], NO_COMMIT, ["R1"])), alone);
+  assert.equal(answerKey("psalm", file, fetchedContext([sibling, file], NO_COMMIT, ["R1"])), answerKey("psalm", file, fetchedContext([file, sibling], NO_COMMIT, ["R1"])));
   // A tool that reads each file on its own is not keyed by the batch.
-  assert.equal(answerKey("phpcs", file, fetchedContext([file, sibling], NO_COMMIT)), "a".repeat(64));
+  assert.equal(answerKey("phpcs", file, fetchedContext([file, sibling], NO_COMMIT, ["R1"])), "a".repeat(64));
+});
+
+test("stillat/blade-parser's and PHPStan's answers are keyed by the rules recorded, since one rule asked excludes a file for all", () => {
+  const file = { task: "demo", path: "views/a.blade.php", sha256: "a".repeat(64) };
+  const keyed = (adapter: "blade-parser" | "phpstan" | "psalm" | "tlint", rules: string[]) => answerKey(adapter, file, fetchedContext([file], NO_COMMIT, rules));
+  assert.match(keyed("blade-parser", ["V1", "V2"]), /^a{64}\+[0-9a-f]{12}$/u);
+  // The set, however listed, is the key; a validator or level added or removed is another answer, which is asked again.
+  assert.equal(keyed("blade-parser", ["V2", "V1", "V2"]), keyed("blade-parser", ["V1", "V2"]));
+  assert.notEqual(keyed("blade-parser", ["V1"]), keyed("blade-parser", ["V1", "V2"]));
+  assert.notEqual(keyed("phpstan", ["L1"]), keyed("phpstan", ["L1", "L2"]));
+  // PHPStan's key keeps the batch too, and an adapter that answers a rule whatever else is asked is not keyed by them.
+  assert.notEqual(answerKey("phpstan", file, fetchedContext([file, { ...file, path: "b.php" }], NO_COMMIT, ["L1"])), keyed("phpstan", ["L1"]));
+  assert.equal(keyed("psalm", ["P1"]), keyed("psalm", ["P1", "P2"]));
+  assert.equal(keyed("tlint", ["T1"]), "a".repeat(64));
+  // The gates and the recorder build the context alike: the needed answers' names are those keys.
+  const needed = (rules: string[]) => neededAnswers({ manifest: gatesYaml("blade-parser"), runtimes: RUNTIMES, parsers: PARSERS, rules, files: [file], context: fetchedContext([file], NO_COMMIT, rules) });
+  assert.deepEqual(needed(["V1", "V2"]).answers.map((answer) => answer.path.slice(answer.path.lastIndexOf("@"))), [`@${keyed("blade-parser", ["V1", "V2"])}.json`, `@${keyed("blade-parser", ["V1", "V2"])}.json`]);
+  assert.equal(needed(["V1"]).answers.some((answer) => needed(["V1", "V2"]).answers.some((other) => other.path === answer.path)), false);
 });
 
 test("the config id and the parsers id name the recorder's adapter code", () => {
@@ -415,6 +437,16 @@ test("the corpus answers archive is canonical, verified before it is extracted, 
     writeFileSync(join(tree, "config/x.json"), "[]\n");
     writeFileSync(join(tree, CORPUS_TREE_MARKER), `${"0".repeat(64)}\n`);
     assert.equal(readFileSync(join(cachedCorpusTree(cacheRoot, packed, "demo")!, "config/x.json"), "utf8"), "{}\n");
+    // Nor is one whose marker names the archive but whose files were edited, the counts and bytes kept: a finding's
+    // coordinate changed, or an answer renamed. Each is extracted again from the verified archive.
+    const answer = [...treeFiles(tree).keys()].find((path) => path.startsWith("answers/"))!;
+    const original = readFileSync(join(tree, answer));
+    const moved = Buffer.from(original.toString("utf8").replace("3", "4"), "utf8");
+    assert.equal(moved.length, original.length);
+    writeFileSync(join(tree, answer), moved);
+    assert.deepEqual(readFileSync(join(cachedCorpusTree(cacheRoot, packed, "demo")!, answer)), original);
+    renameSync(join(tree, answer), join(tree, `${answer}.renamed`));
+    assert.deepEqual(treeFiles(cachedCorpusTree(cacheRoot, packed, "demo")!).get(answer), original);
     // Another process's tree of the same archive, there first, is accepted as this one.
     extractCorpusTree(tree, unpackCorpusArchive(packed.compressed, packed, "demo"), packed);
     assert.equal(cachedCorpusTree(cacheRoot, packed, "demo"), tree);
