@@ -438,10 +438,52 @@ fn memtrace(name: &str, t: &Table, db: &Db<'_>) {
     crate::repo::thread_peak_reset();
 }
 
+/// One `run`'s tables for `facts-a stage-check` (the gate's `a-vs-reference`): every input and
+/// syntax table the clause read, then every stage it stored, by lower-case name, in order; `None`
+/// for a stage a kernel absorbed (never stored). A failing stage and everything after it are absent.
+pub type Traced = Vec<(String, Option<Rc<Table>>)>;
+
+type TraceHook = Box<dyn FnMut(&RelPlan, &str, &Traced)>;
+
+thread_local! {
+    /// Set by `stage-check` on each thread that evaluates clauses; `None` (the default) traces nothing.
+    pub static TRACE: std::cell::RefCell<Option<TraceHook>> = std::cell::RefCell::new(None);
+}
+
+/// Hands the traced tables to the hook when `run` returns, on every path.
+struct TraceGuard<'p> {
+    plan: &'p RelPlan,
+    path: String,
+    tables: Option<Traced>,
+}
+
+impl Drop for TraceGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(t) = self.tables.take() {
+            TRACE.with(|h| {
+                if let Some(h) = h.borrow_mut().as_mut() {
+                    h(self.plan, &self.path, &t);
+                }
+            });
+        }
+    }
+}
+
+impl TraceGuard<'_> {
+    fn push(&mut self, name: &str, t: Option<&Rc<Table>>) {
+        if let Some(v) = self.tables.as_mut() {
+            v.push((name.to_ascii_lowercase(), t.cloned()));
+        }
+    }
+}
+
 pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
     let mut out = RelOutcome { findings: Vec::new(), failure: None, stage_ns: Vec::new() };
+    let tracing = TRACE.with(|h| h.borrow().is_some());
+    let mut trace = TraceGuard { plan, path: part.path.to_owned(), tables: tracing.then(Vec::new) };
     let mut db = Db::new(part.source, part.path);
     for ((name, _), t) in plan.inputs.iter().zip(part.inputs) {
+        trace.push(name, Some(&t));
         db.tables.insert(name.to_ascii_lowercase(), t);
     }
     let mut syntax_tables_present = false;
@@ -455,13 +497,17 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     return out;
                 }
                 for (n, t) in spec.tables(f, path) {
-                    db.tables.insert(n.to_ascii_lowercase(), Rc::new(t));
+                    let t = Rc::new(t);
+                    trace.push(&n, Some(&t));
+                    db.tables.insert(n.to_ascii_lowercase(), t);
                 }
                 syntax_tables_present = true;
             }
             _ => {
                 for (n, s) in spec.schemas() {
-                    db.tables.insert(n.to_ascii_lowercase(), Rc::new(Table::empty(s)));
+                    let t = Rc::new(Table::empty(s));
+                    trace.push(&n, Some(&t));
+                    db.tables.insert(n.to_ascii_lowercase(), t);
                 }
             }
         }
@@ -473,7 +519,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
         match (st, kernel) {
             (StagePlan::Query { name, .. }, Some(crate::subst::Kernel::Absorbed)) if !check => {
                 // Read only by a later kernel, which reads its sources directly.
-                let _ = name;
+                trace.push(name, None);
             }
             (StagePlan::Query { name, stmt, schema, .. }, Some(k)) if !matches!(k, crate::subst::Kernel::Absorbed) => {
                 let t = match crate::subst::run(k, &db, schema) {
@@ -499,7 +545,9 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     }
                 }
                 memtrace(name, &t, &db);
-                db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
+                let t = Rc::new(t);
+                trace.push(name, Some(&t));
+                db.tables.insert(name.to_ascii_lowercase(), t);
                 out.stage_ns.push((format!("view:{name}"), ns));
             }
             (StagePlan::Query { name, stmt, deferred, schema }, _) => {
@@ -538,7 +586,9 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     }
                 }
                 memtrace(&name, &t, &db);
-                db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
+                let t = Rc::new(t);
+                trace.push(name, Some(&t));
+                db.tables.insert(name.to_ascii_lowercase(), t);
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
             }
             (StagePlan::Reach { name, roots, edges, forest, syntax }, _) => {
@@ -549,7 +599,9 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                         return out;
                     }
                 };
-                db.tables.insert(name.to_ascii_lowercase(), Rc::new(r));
+                let r = Rc::new(r);
+                trace.push(name, Some(&r));
+                db.tables.insert(name.to_ascii_lowercase(), r);
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
             }
         }

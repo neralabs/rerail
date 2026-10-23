@@ -1101,18 +1101,7 @@ pub fn evaluate_plan<S: Clone>(plan: &Plan<S>, stage_of: impl Fn(&S) -> Option<S
     };
     let ev = Evaluator::new(&source);
     for st in &plan.stages {
-        let rows = match &st.def {
-            StageDef::Query { rel } => {
-                let mut rows = ev.rel(rel, &[])?;
-                for row in rows.iter_mut() {
-                    for (v, col) in row.iter_mut().zip(&st.schema) {
-                        *v = sv::apply_affinity(std::mem::replace(v, V::Null), col.aff);
-                    }
-                }
-                rows
-            }
-            StageDef::Reach { roots, edges, graph } => reach(&ev.rel(roots, &[])?, edges.as_ref().map(|e| ev.rel(e, &[])).transpose()?.as_deref(), graph)?,
-        };
+        let rows = evaluate_stage(&ev, st)?;
         stages.borrow_mut().push(Rc::new(rows));
     }
     match &plan.sink {
@@ -1121,6 +1110,49 @@ pub fn evaluate_plan<S: Clone>(plan: &Plan<S>, stage_of: impl Fn(&S) -> Option<S
         Sink::Witnesses { .. } => Err("reference: a forbid sink reads one content's input".into()),
         Sink::Budget { .. } => Err("reference: budget sinks (closures, conditions) are not evaluated by the reference yet".into()),
     }
+}
+
+/// One stage's rows over `ev`'s sources, stored with its columns' affinities (CTAS).
+fn evaluate_stage<S>(ev: &Evaluator<'_, S>, st: &Stage<S>) -> Result<Vec<Row>, Error> {
+    Ok(match &st.def {
+        StageDef::Query { rel } => {
+            let mut rows = ev.rel(rel, &[])?;
+            for row in rows.iter_mut() {
+                for (v, col) in row.iter_mut().zip(&st.schema) {
+                    *v = sv::apply_affinity(std::mem::replace(v, V::Null), col.aff);
+                }
+            }
+            rows
+        }
+        StageDef::Reach { roots, edges, graph } => reach(&ev.rel(roots, &[])?, edges.as_ref().map(|e| ev.rel(e, &[])).transpose()?.as_deref(), graph)?,
+    })
+}
+
+/// A stage list's rows in order, each stage reading the earlier ones' (`stage_of`) and `scan`'s
+/// sources, as `evaluate_plan` computes them: every computed stage, then the first stage's
+/// refusal, if any (the stages after it are not evaluated). The gate's `a-vs-reference` compares
+/// an engine's stored stages with these.
+pub fn evaluate_stages<S>(stages: &[Stage<S>], stage_of: impl Fn(&S) -> Option<StageId>, scan: &dyn Fn(&S) -> Result<Vec<Row>, Error>) -> (Vec<Rc<Vec<Row>>>, Option<Error>) {
+    let done: RefCell<Vec<Rc<Vec<Row>>>> = RefCell::new(Vec::new());
+    let source = |s: &S| -> Result<Vec<Row>, Error> {
+        match stage_of(s) {
+            Some(id) => done.borrow().get(id as usize).map(|r| (**r).clone()).ok_or_else(|| format!("stage {id} read before it is computed")),
+            None => scan(s),
+        }
+    };
+    let ev = Evaluator::new(&source);
+    let mut refusal = None;
+    for st in stages {
+        match evaluate_stage(&ev, st) {
+            Ok(rows) => done.borrow_mut().push(Rc::new(rows)),
+            Err(e) => {
+                refusal = Some(e);
+                break;
+            }
+        }
+    }
+    drop(ev);
+    (done.into_inner(), refusal)
 }
 
 /// Reachability `(__path, root, node)`: reflexive, set semantics, per path (IR.md § Recursion).

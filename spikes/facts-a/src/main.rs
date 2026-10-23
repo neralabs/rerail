@@ -19,6 +19,7 @@ mod mutant;
 mod repo;
 mod rx;
 mod spill;
+mod stagecheck;
 mod sql;
 mod trits;
 mod subst;
@@ -82,6 +83,7 @@ fn main() {
         Some("explain") => explain(&args),
         Some("export-volume") => volume::run(&args),
         Some("pattern-check") => patcheck::run(&args),
+        Some("stage-check") => stagecheck::run(&args),
         Some("parse") => {
             let path = &args[2];
             let source = Arc::new(std::fs::read_to_string(path).unwrap());
