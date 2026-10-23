@@ -8,7 +8,9 @@
  */
 
 /* ---- page-local tokens ---------------------------------------------------------------- */
-/* --canvas: the design's corner wash, a gradient between existing tokens.
+/* --canvas: the design's corner glow: a radial tint anchored in the bottom-right corner that fades into the page
+ * colour about 40% of the way across, so a short page shows a quiet corner rather than a band across the page.
+ * --canvas-glow is its corner colour, taken from Minh's revised prototype (Oct 23); Nera has no token for it.
  * --switch-thumb: the switch knob has to stay light on a dark track in both themes, which no
  * single Nera colour does (shadcn's own switch flips the same way).
  * --steered / --logged: the two outcome marks, shape first (triangle, circle), colour second.
@@ -17,7 +19,8 @@
  * --scrim / --sheet-float: the veil and shadow when the sheet floats over the content (under 1100px).
  * --pill-rest: the repository pill's resting fill, a faint step off the bar in either theme. */
 :root {
-  --canvas: linear-gradient(to bottom right, var(--background) 0%, var(--background) 50%, var(--accent) 100%);
+  --canvas-glow: #F1EDF4;
+  --canvas: radial-gradient(farthest-corner at 100% 100%, var(--canvas-glow) 0%, var(--background) 40%);
   --switch-thumb: var(--card);
   --steered: var(--warning-foreground);
   --logged: var(--info-foreground);
@@ -35,16 +38,17 @@
 @media (min-width:1100px) { :root { --gutter: 48px; } }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --canvas: linear-gradient(to bottom left, var(--card) 0%, var(--background) 45%);
+    --canvas-glow: #27243A;
     --switch-thumb: var(--foreground);
   }
 }
 :root[data-theme="dark"] {
-  --canvas: linear-gradient(to bottom left, var(--card) 0%, var(--background) 45%);
+  --canvas-glow: #27243A;
   --switch-thumb: var(--foreground);
 }
 .dark {
-  --canvas: linear-gradient(to bottom left, var(--card) 0%, var(--background) 45%);
+  --canvas-glow: #27243A;
+  --canvas: radial-gradient(farthest-corner at 100% 100%, var(--canvas-glow) 0%, var(--background) 40%);
   --switch-thumb: var(--foreground);
 }
 /* ---- end page-local tokens ------------------------------------------------------------ */
