@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRerailApi, DatabaseApiStores, operations } from "../../src/api/index.js";
 import { type RuleCatalog, PACKAGE_ROOT, readRuleCatalog, recordCheckout, ruleSettings, setUpRepository } from "../../src/engine/index.js";
 import { toStoredRules } from "../../ui/poll.js";
-import { isRunning, onText, optionsText } from "../../ui/derive.js";
-import { data, matches, runningCount, summary, ui } from "../../ui/state.js";
+import { isRunning } from "../../ui/derive.js";
+import { data, matches, runningCount, ui } from "../../ui/state.js";
 
 const RULE = "typescript-eslint-consistent-type-definitions";
 const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
@@ -57,20 +57,17 @@ describe("a rule whose stored options no longer apply, on the page", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("keeps the API's reason, shows the rule switched on but not running, and counts it as off", () => {
+  it("keeps the API's reason, and counts the rule switched on but not running as off", () => {
     const entry = body.rules.find(candidate => candidate.rule.id === RULE)!;
     expect(entry).toMatchObject({ on: true, configError: expect.stringMatching(/`opton` is not an option this document declares/u) });
 
     const stored = toStoredRules(body.rules).get(RULE)!;
     expect(stored).toMatchObject({ enabled: true, configError: entry.configError });
     expect(isRunning(stored)).toBe(false);
-    expect(onText(stored)).toBe(`On · Set for the repository · not running: ${entry.configError}`);
-    expect(optionsText(stored)).toBe(`opton: "type" · Set for the repository · does not apply: ${entry.configError}`);
 
     const running = body.rules.filter(candidate => candidate.on && candidate.configError === null).length;
     expect(running).toBeGreaterThan(0);
     expect(runningCount()).toBe(running);
-    expect(summary().on).toHaveLength(running);
     ui.filter = "on";
     expect(matches(stored)).toBe(false);
     ui.filter = "off";

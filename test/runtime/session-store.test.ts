@@ -25,7 +25,7 @@ import { SqlitePresentationPreferenceStore } from "../../src/runtime/presentatio
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { decodeEventPayload, SqliteSessionReader, SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { NativeSessionClient } from "../../src/harness/index.js";
-import { schema } from "../../src/engine/index.js";
+import { databaseInstalledAt, resetRepositoryHistoryIn, schema } from "../../src/engine/index.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
 import { startTestRepository } from "../support/started-repository.js";
@@ -635,6 +635,39 @@ describe("one database for every repository", () => {
     expect(machineView.steersByRule(0)).toEqual(new Map([["shared-rule", 3]]));
     expect(alphaView.session("beta-session")).toMatchObject({ repositoryId: "beta" });
     expect(alpha.sessions().map(session => session.sessionId)).toEqual(["alpha-session"]);
+  });
+
+  it("pages sessions with when each last recorded an event, null for one with none", async () => {
+    await temporaryDirectory();
+    const path = defaultRerailDatabasePath();
+    const store = closeAfterTest(new SqliteSessionStore(path, { repositoryId: "alpha" }));
+    store.openSession({ host: "omp", sessionId: "busy", cwd: "/w" }, 100);
+    store.append({ sessionId: "busy", eventId: "a", kind: "user-prompt", observedAt: 110, payload: {} });
+    store.append({ sessionId: "busy", eventId: "b", kind: "turn-end", observedAt: 150, payload: {} });
+    store.openSession({ host: "omp", sessionId: "quiet", cwd: "/w" }, 90);
+    const reader = closeAfterTest(new SqliteSessionReader(path));
+    expect(reader.sessionPage({ limit: 50 }).sessions.map(({ sessionId, lastEventAt, steeredViolations }) => ({ sessionId, lastEventAt, steeredViolations })))
+      .toEqual([
+        { sessionId: "busy", lastEventAt: 150, steeredViolations: 0 },
+        { sessionId: "quiet", lastEventAt: null, steeredViolations: 0 },
+      ]);
+  });
+
+  it("dates the install by the database's earliest record, which a reset keeps", async () => {
+    await temporaryDirectory();
+    const path = defaultRerailDatabasePath();
+    const database = openRerailDatabase(path);
+    try {
+      const created = database.select({ at: schema.schemaMigrations.appliedAt }).from(schema.schemaMigrations).all().map(row => row.at);
+      expect(databaseInstalledAt(database)).toBe(Math.min(...created));
+      // A file older than `schema_migrations` recorded its steps at its first upgrade; its first repository is older.
+      database.insert(schema.repositories).values({ repositoryKey: "old", displayName: "old", createdAt: 7, updatedAt: 7 }).run();
+      expect(databaseInstalledAt(database)).toBe(7);
+      expect(resetRepositoryHistoryIn(database, ["old"])).toEqual({ sessions: 0, openSessions: 0 });
+      expect(databaseInstalledAt(database)).toBe(7);
+    } finally {
+      database.$client.close();
+    }
   });
 });
 

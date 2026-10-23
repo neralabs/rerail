@@ -1,1 +1,0 @@
-/* Filename: src/foo/[foo_bar].{baz_qux}.js */

@@ -1,1 +1,0 @@
-if (a) { for (elem of arr) if (b) foo(); } else bar();

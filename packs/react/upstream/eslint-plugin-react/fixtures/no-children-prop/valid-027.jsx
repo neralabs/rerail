@@ -1,1 +1,0 @@
-<MyComponent>Children</MyComponent>;

@@ -1,1 +1,0 @@
-function f() { var a; var a; }

@@ -1,1 +1,0 @@
-let fooVar: Array<(c: number) => number>;

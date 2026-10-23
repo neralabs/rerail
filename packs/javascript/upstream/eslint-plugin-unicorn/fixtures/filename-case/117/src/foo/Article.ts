@@ -1,1 +1,0 @@
-/* Filename: src/foo/Article.ts */

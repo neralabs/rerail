@@ -1,1 +1,0 @@
-SELECT foo.user_id FROM `foo.far.bar`

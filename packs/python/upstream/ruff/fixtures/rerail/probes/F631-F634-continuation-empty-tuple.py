@@ -1,5 +1,0 @@
-assert ( \
-)
-if ( \
-):
-    pass

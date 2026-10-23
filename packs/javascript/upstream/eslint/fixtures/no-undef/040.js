@@ -1,1 +1,0 @@
-(foo, bar) => { foo ||= WeakRef; bar ??= FinalizationRegistry; }

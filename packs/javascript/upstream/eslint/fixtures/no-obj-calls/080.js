@@ -1,1 +1,0 @@
-/*globals Reflect: true*/ new Reflect();

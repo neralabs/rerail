@@ -1,1 +1,0 @@
-Reflect.defineProperty(foo, 'bar', { set(val) { if (val) { return; } } })

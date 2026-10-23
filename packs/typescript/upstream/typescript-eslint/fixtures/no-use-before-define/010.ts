@@ -1,1 +1,0 @@
-const updatedAt = data?.updatedAt;

@@ -1,1 +1,0 @@
-const a = <any>(b, c);

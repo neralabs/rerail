@@ -107,6 +107,9 @@ const effectiveRuleBase = {
   configError: z.string().nullable().describe("Why config does not apply to the rule's document; the rule then runs nowhere."),
   revision: z.number().int().positive(),
   payloadHash: z.string(),
+  addedAt: z.number().int().nullable()
+    .describe("Epoch milliseconds the attachment that brings the rule in (its pack, or the rule itself) was added at this folder."),
+  updatedAt: z.number().int().nullable().describe("Epoch milliseconds a rule created by you was last edited; null for rules by Rerail."),
 };
 export const effectiveRuleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
@@ -253,4 +256,13 @@ export const followGitignoreBodySchema = z.object({
   ...targetShape,
   followGitignore: z.boolean()
     .describe("true: files Git ignores (.gitignore, .git/info/exclude, global excludes) are not audited; tracked files always are. false: only Rerail's own ignores apply."),
+}).strict();
+
+export const resetBodySchema = z.object({ ...targetShape }).strict();
+
+export const resetResultSchema = z.object({
+  repositoryKey: z.string(),
+  sessions: z.number().int().nonnegative().describe("Ended sessions removed together with all of their history."),
+  openSessions: z.number().int().nonnegative()
+    .describe("Sessions still running: their rows stay so they carry on recording; their history so far is removed."),
 }).strict();

@@ -293,6 +293,7 @@ jobs:
           "$smoke_directory/node_modules/.bin/rerail" --help
           # Every file the package runs by path (src/engine/package-root.ts ENTRY_POINTS: CLI, daemon, hooks, status
           # line, event stream), read from the installed package itself so a layout change cannot leave this stale.
+          # shellcheck disable=SC2016 # the script is JavaScript; its template literals are not the shell's.
           node --input-type=module --eval '
             import { existsSync } from "node:fs";
             import { join } from "node:path";

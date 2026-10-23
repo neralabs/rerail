@@ -1,1 +1,0 @@
-﻿''' SAM macro definitions '''

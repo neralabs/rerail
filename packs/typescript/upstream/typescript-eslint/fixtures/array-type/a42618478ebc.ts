@@ -1,1 +1,0 @@
-const x: Readonly<string> = 'a';

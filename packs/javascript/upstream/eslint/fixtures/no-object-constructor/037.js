@@ -1,1 +1,0 @@
-for (const element of iterable) Object();

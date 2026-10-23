@@ -1,3 +1,0 @@
-
-function foo<T extends (...args: any[]) => any>(fn: T, args: any[]) {}
-      

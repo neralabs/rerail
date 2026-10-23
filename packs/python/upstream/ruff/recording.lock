@@ -1,7 +1,6 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v1",
+  "format": "rerail.port-readiness-recording-lock/v2",
   "tool": "ruff",
-  "release": "port-readiness-recordings",
   "pins": {
     "repository": "https://github.com/astral-sh/ruff",
     "commit": "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1",
@@ -22,14 +21,12 @@
     "recording.json": {
       "sha256": "05b6f6952efb6c32312790f5adede4dbfaf9cdb6f6d190cdb35d2b0d86367b0a",
       "size": 3598133,
-      "format": "rerail.port-readiness-recording/v2",
-      "asset": "python-ruff-recording-05b6f6952efb6c32312790f5adede4dbfaf9cdb6f6d190cdb35d2b0d86367b0a.json.gz"
+      "format": "rerail.port-readiness-recording/v2"
     },
     "corpus.json": {
       "sha256": "ecfbc1a264ce82a1b530b8841d876f4bde9a67a455b9b2ecf678f67aaf6e6650",
       "size": 4320582,
-      "format": "rerail.port-readiness-corpus/v2",
-      "asset": "python-ruff-corpus-ecfbc1a264ce82a1b530b8841d876f4bde9a67a455b9b2ecf678f67aaf6e6650.json.gz"
+      "format": "rerail.port-readiness-corpus/v2"
     }
   }
 }

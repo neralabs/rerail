@@ -1,1 +1,0 @@
-function prompt() {} prompt();

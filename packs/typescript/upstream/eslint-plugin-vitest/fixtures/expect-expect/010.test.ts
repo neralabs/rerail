@@ -1,1 +1,0 @@
-it("should pass", () => somePromise().then(() => expect(true).toBeDefined()))

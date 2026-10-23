@@ -15,6 +15,8 @@ import warnings
 
 HERE = pathlib.Path(__file__).resolve().parent
 PACK = HERE.parent / "conformance.json"
+sys.path.insert(0, str(HERE.parents[2] / "scripts" / "s3"))
+import pack_fixtures  # noqa: E402
 
 # The directories a repository audit never enters (`IGNORED_DIRECTORIES`, rerail/src/code-rule-enforcer.ts).
 IGNORED_DIRECTORIES = {".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build",
@@ -99,6 +101,7 @@ def write(path: pathlib.Path, tool: str, version: str, source: dict, findings: l
     findings = sorted(findings, key=lambda f: (f["rule"], f["path"], f["line"], f.get("column", 0)))
     path.write_text(json.dumps({"tool": tool, "version": version, "source": source, "findings": findings},
                                indent=1, ensure_ascii=False) + "\n")
+    pack_fixtures.recording_written(path, source)
 
 
 def shipped(tool: str) -> set[str]:

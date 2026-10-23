@@ -1,1 +1,0 @@
-type Conditional<T> = (T extends string ? string : number)[];

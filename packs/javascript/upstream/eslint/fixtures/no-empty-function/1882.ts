@@ -1,1 +1,0 @@
-const B = class { protected constructor() {} } // allow: setters

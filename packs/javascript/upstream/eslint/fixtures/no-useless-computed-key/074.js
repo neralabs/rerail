@@ -1,1 +1,0 @@
-class Foo { async [2]() {} }

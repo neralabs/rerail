@@ -1,1 +1,0 @@
-function foo() { var bar = 1; if (true) { for (;;) { var qux = null; } } else { quxx(); } return 3; }

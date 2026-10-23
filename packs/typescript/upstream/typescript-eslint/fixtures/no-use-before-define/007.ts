@@ -1,5 +1,0 @@
-
-function a() {
-  alert(arguments);
-}
-    

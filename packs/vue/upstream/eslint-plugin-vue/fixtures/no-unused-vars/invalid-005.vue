@@ -1,1 +1,0 @@
-<template><ol v-for="i in data"><li v-for="f in i"></li></ol></template>

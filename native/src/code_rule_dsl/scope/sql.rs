@@ -732,18 +732,19 @@ fn is_policy<D: Doc>(kind: &str, children: &[Node<'_, D>]) -> bool {
 mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::test_support::pack_test_data;
     use ast_grep_language::LanguageExt;
     use serde_json::Value as Json;
     use std::collections::BTreeSet;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
-    /// SQLFluff's recording on its own fixtures: `packs/sql/upstream/sqlfluff`.
-    fn sqlfluff_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/sql/upstream/sqlfluff")
+    /// SQLFluff's recording on its own fixtures, or one of them: `packs/sql/upstream/sqlfluff/<name>`.
+    fn sqlfluff(name: &str) -> PathBuf {
+        pack_test_data(&format!("packs/sql/upstream/sqlfluff/{name}"))
     }
 
     fn json(name: &str) -> Json {
-        let text = std::fs::read_to_string(sqlfluff_dir().join(name)).expect("recording");
+        let text = std::fs::read_to_string(sqlfluff(name)).expect("recording");
         serde_json::from_str(&text).expect("json")
     }
 
@@ -1199,8 +1200,8 @@ mod tests {
         let mut reproduced: BTreeSet<Finding> = BTreeSet::new();
         for path in recording["source"]["files"].as_array().unwrap() {
             let path = path.as_str().unwrap();
-            let source = std::fs::read_to_string(sqlfluff_dir().join("fixtures").join(path))
-                .expect("fixture");
+            let source =
+                std::fs::read_to_string(sqlfluff(&format!("fixtures/{path}"))).expect("fixture");
             let grep = GrammarDialect::Sql.ast_grep(&source);
             let scopes = SqlScopes::read(&grep.root());
             for (rule, ranges) in [

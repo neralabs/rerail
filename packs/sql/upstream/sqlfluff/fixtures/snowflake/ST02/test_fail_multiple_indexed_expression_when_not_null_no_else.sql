@@ -1,1 +1,0 @@
-SELECT CASE WHEN genres[0][1] IS NOT NULL THEN genres[0][1] END

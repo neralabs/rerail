@@ -1,1 +1,0 @@
-const x = ({} as A) + b;

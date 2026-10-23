@@ -1,1 +1,0 @@
-type voidPromiseUnion = void | Promise<void>;

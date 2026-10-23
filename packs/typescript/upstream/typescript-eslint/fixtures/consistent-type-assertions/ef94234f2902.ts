@@ -1,1 +1,0 @@
-const x = [1] as readonly number[];

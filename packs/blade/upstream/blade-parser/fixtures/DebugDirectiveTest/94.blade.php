@@ -1,1 +1,0 @@
-Lead @endforeach($arg) Trail

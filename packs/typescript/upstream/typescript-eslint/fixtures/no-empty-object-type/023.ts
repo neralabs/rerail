@@ -1,1 +1,0 @@
-interface Base<T> extends Derived<T> {}

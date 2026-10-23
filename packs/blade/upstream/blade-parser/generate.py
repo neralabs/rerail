@@ -1,5 +1,6 @@
 """Records stillat/blade-parser 2.1.0 for the Blade pack's ported validators (rerail/packs/blade/conformance.json).
-Run offline, never in CI, with PHP 8.5.11 (laravel/framework 13.34.0 installed beside it):
+Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request CI),
+with PHP 8.5.11 (laravel/framework 13.34.0 installed beside it):
 
     python3 generate.py fixtures <stillat/blade-parser checkout at tag v2.1.0> <composer project with stillat/blade-parser 2.1.0>
     python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]

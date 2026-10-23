@@ -1,1 +1,0 @@
-let v: Array<fooName.BarType> = [{ bar: 'bar' }];

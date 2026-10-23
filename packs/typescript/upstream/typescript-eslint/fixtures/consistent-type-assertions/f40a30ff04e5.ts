@@ -1,1 +1,0 @@
-print?.call(<Foo>[5]);

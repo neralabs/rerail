@@ -1,1 +1,0 @@
-async function foo(){return await{}.hasOwnProperty.call(object, property)}

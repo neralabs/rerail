@@ -1,1 +1,0 @@
-var foo; var bar; const a=1, b=2; let c; let d
