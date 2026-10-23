@@ -440,6 +440,22 @@ pub(crate) struct Probe {
     pub(crate) expr_affs: Vec<Aff>,
 }
 
+/// R14 (`docs/facts/REWRITES.md`): comparison conjuncts `col OP e` (`OP` one of `<`, `<=`, `>`,
+/// `>=`) on one column of item `i`, `e` reading earlier items or outer rows. Candidates are the
+/// rows whose comparison value (`compare_affinity(col, col_aff)`) lies between the bounds in
+/// `value::cmp`'s total order, found by binary search in a sorted index (within the equality
+/// probe's group, if any), then put back in table order. The conjuncts stay in `level` and are
+/// re-checked.
+#[derive(Clone, Debug)]
+pub(crate) struct RangeProbe {
+    pub(crate) col: u16,
+    pub(crate) col_aff: Aff,
+    /// The lower bound: `(e, e's comparison affinity, strict)`.
+    pub(crate) lo: Option<(PE, Aff, bool)>,
+    /// The upper bound, likewise.
+    pub(crate) hi: Option<(PE, Aff, bool)>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct AggSpec {
     pub(crate) f: AggFn,
@@ -462,6 +478,8 @@ pub(crate) struct PSelect {
     pub(crate) probes: Vec<Option<Probe>>,
     /// Per item, the branch probes of an OR conjunct (candidates = union of the lookups).
     pub(crate) or_probes: Vec<Option<Vec<Probe>>>,
+    /// Per item, its range probe (R14).
+    pub(crate) ranges: Vec<Option<RangeProbe>>,
     /// Conjuncts tested once all of items[..=i] are bound (inner items; ON of left items).
     pub(crate) level: Vec<Vec<PE>>,
     /// WHERE conjuncts whose last item is a left-joined item i (after null extension).
@@ -565,6 +583,8 @@ pub struct Planner<'c> {
     bounds: Vec<SubBound>,
     reads: Vec<String>,
     texts: Vec<Box<str>>,
+    /// Whether R14 range probes are planned (off under `FACTS_REWRITES=0`).
+    ranges: bool,
 }
 
 fn lc(s: &str) -> String {
@@ -630,9 +650,48 @@ fn probe_eq(c: &PE, i: usize, probe: &mut Probe) -> bool {
     false
 }
 
+/// `c` as one bound of an R14 range probe on item `i`: `(col, col_aff, bound, bound_aff, lower,
+/// strict)`. The bound reads only earlier items or outer rows (never item `i`, an aggregate or a
+/// subquery) and reads at least one of them: a constant bound would sort the table to save one
+/// scan.
+fn probe_range(c: &PE, i: usize) -> Option<(u16, Aff, PE, Aff, bool, bool)> {
+    let PE::Cmp(op, l, r, (al, ar)) = c else { return None };
+    let varies = |b: &PE| {
+        let mut outer = false;
+        visit_cols(b, &mut |d, _, _| outer |= d > 0);
+        outer || max_item(b).is_some()
+    };
+    let pick = |a: &PE, b: &PE| -> Option<u16> {
+        if let PE::Col { depth: 0, item, col } = a {
+            if *item as usize == i && max_item(b).is_none_or(|m| m < i) && !refs_item(b, i) && !has_agg(b) && varies(b) {
+                return Some(*col);
+            }
+        }
+        None
+    };
+    // (lower, strict) of `col OP bound`.
+    let side = match op {
+        Cmp::Gt => (true, true),
+        Cmp::Ge => (true, false),
+        Cmp::Lt => (false, true),
+        Cmp::Le => (false, false),
+        Cmp::Eq | Cmp::Ne => return None,
+    };
+    if let Some(col) = pick(l, r) {
+        return Some((col, *al, (**r).clone(), *ar, side.0, side.1));
+    }
+    // `bound OP col`: the column is on the other side of the inequality.
+    pick(r, l).map(|col| (col, *ar, (**l).clone(), *al, !side.0, side.1))
+}
+
 pub fn plan(sql: &str, catalog: &Catalog) -> Result<Statement, String> {
+    plan_with(sql, catalog, crate::lowered::rewrites())
+}
+
+/// `plan` with R14's range probes on or off (`ranges`).
+pub(crate) fn plan_with(sql: &str, catalog: &Catalog, ranges: bool) -> Result<Statement, String> {
     let q = parse::parse_query(sql)?;
-    let mut p = Planner { catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new(), texts: Vec::new() };
+    let mut p = Planner { catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new(), texts: Vec::new(), ranges };
     let root = p.query(&q)?;
     let mut seen = std::collections::BTreeSet::new();
     let reads = p.reads.into_iter().filter(|r| seen.insert(r.clone())).collect();
@@ -643,7 +702,7 @@ pub fn plan(sql: &str, catalog: &Catalog) -> Result<Statement, String> {
 pub fn plan_scalar(sql: &str, schema: &Schema) -> Result<(PE, Statement), String> {
     let e = parse::parse_expr(sql)?;
     let catalog = Catalog::new();
-    let mut p = Planner { catalog: &catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new(), texts: Vec::new() };
+    let mut p = Planner { catalog: &catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new(), texts: Vec::new(), ranges: crate::lowered::rewrites() };
     p.scopes.push(Scope { items: vec![ScopeItem { name: "__row".into(), schema: schema.clone() }], aliases: Vec::new(), aggs: Vec::new(), wins: Vec::new(), allow_agg: false });
     let pe = p.expr(&e)?;
     let stmt = Statement { root: PQuery { ctes: vec![], body: PBody::Compound(Box::new(PBody::Select(Box::new(empty_select()))), SetOp::UnionAll, Box::new(PBody::Select(Box::new(empty_select()))), Schema::default()), order: vec![], order_on_output: false, limit: None, offset: None, out: Schema::default() }, subs: p.subs, n_slots: p.n_slots, reads: p.reads, texts: p.texts };
@@ -651,7 +710,7 @@ pub fn plan_scalar(sql: &str, schema: &Schema) -> Result<(PE, Statement), String
 }
 
 fn empty_select() -> PSelect {
-    PSelect { items: vec![], probes: vec![], or_probes: vec![], level: vec![], post: vec![], konst: vec![], grouped: false, group_by: vec![], aggs: vec![], having: None, wins: vec![], proj: vec![], order_keys: vec![], distinct: false, out: Schema::default() }
+    PSelect { items: vec![], probes: vec![], or_probes: vec![], ranges: vec![], level: vec![], post: vec![], konst: vec![], grouped: false, group_by: vec![], aggs: vec![], having: None, wins: vec![], proj: vec![], order_keys: vec![], distinct: false, out: Schema::default() }
 }
 
 impl<'c> Planner<'c> {
@@ -875,6 +934,7 @@ impl<'c> Planner<'c> {
         let mut konst = Vec::new();
         let mut probes: Vec<Option<Probe>> = vec![None; n];
         let mut or_probes: Vec<Option<Vec<Probe>>> = vec![None; n];
+        let mut ranges: Vec<Option<RangeProbe>> = vec![None; n];
         // Conjunct placement.
         let mut placed: Vec<(PE, Option<usize>, bool)> = Vec::new(); // (expr, max item, from ON of a left item)
         for (i, fi) in s.from.iter().enumerate() {
@@ -945,6 +1005,28 @@ impl<'c> Planner<'c> {
                     })
                     .collect::<Option<Vec<Probe>>>()
             });
+            // R14: comparison conjuncts on one column of the item, bounded by earlier items or
+            // outer rows, become a range probe (within the equality probe's group). They stay in
+            // `level[i]` and are re-checked. A column bounded on both sides is preferred.
+            if self.ranges && or_probes[i].is_none() {
+                let mut cands: Vec<RangeProbe> = Vec::new();
+                for c in &rest {
+                    let Some((col, col_aff, e, aff, lower, strict)) = probe_range(c, i) else { continue };
+                    let k = match cands.iter().position(|r| r.col == col && r.col_aff == col_aff) {
+                        Some(k) => k,
+                        None => {
+                            cands.push(RangeProbe { col, col_aff, lo: None, hi: None });
+                            cands.len() - 1
+                        }
+                    };
+                    let slot = if lower { &mut cands[k].lo } else { &mut cands[k].hi };
+                    if slot.is_none() {
+                        *slot = Some((e, aff, strict));
+                    }
+                }
+                let pick = cands.iter().position(|r| r.lo.is_some() && r.hi.is_some()).or((!cands.is_empty()).then_some(0));
+                ranges[i] = pick.map(|k| cands.swap_remove(k));
+            }
             level[i] = rest;
             if !probe.cols.is_empty() {
                 probes[i] = Some(probe);
@@ -1010,7 +1092,7 @@ impl<'c> Planner<'c> {
         }
         let scope = self.scopes.pop().unwrap();
         let grouped = !group_by.is_empty() || !scope.aggs.is_empty();
-        Ok(PSelect { items, probes, or_probes, level, post, konst, grouped, group_by, aggs: scope.aggs, having, wins: scope.wins, proj, order_keys, distinct: s.distinct, out })
+        Ok(PSelect { items, probes, or_probes, ranges, level, post, konst, grouped, group_by, aggs: scope.aggs, having, wins: scope.wins, proj, order_keys, distinct: s.distinct, out })
     }
 
     fn col_name(&self, depth: u16, item: u16, col: u16) -> Option<String> {
@@ -1538,10 +1620,83 @@ impl Index {
     }
 }
 
-/// A join's hash indexes per item: the plain equality probe's, and each OR branch's.
+/// R14's sorted index of a table on one column's comparison values (`compare_affinity(v, aff)`),
+/// within each group of the item's equality index (one group without one): per group, the rows
+/// with a non-NULL value sorted by (value in `value::cmp` order, row), and whether that order is
+/// the table's (then a slice of it is already in table order).
+struct RangeIndex {
+    /// Per group: (start, len, sorted rows ascending).
+    groups: Vec<(u32, u32, bool)>,
+    rows: Vec<u32>,
+    keys: Vec<V>,
+}
+
+impl RangeIndex {
+    /// `None` when a value is a NaN (`value::cmp` is then not a total order): the item runs
+    /// without the range probe.
+    fn build(table: &Table, eq: Option<&Index>, col: u16, aff: Aff) -> Option<RangeIndex> {
+        let all: Vec<u32>;
+        let groups: Vec<&[u32]> = match eq {
+            Some(ix) => ix.groups.iter().map(|g| &ix.rows[g.start as usize..(g.start + g.len) as usize]).collect(),
+            None => {
+                all = (0..table.len() as u32).collect();
+                vec![&all[..]]
+            }
+        };
+        let column = &table.cols[col as usize];
+        let mut out = RangeIndex { groups: Vec::with_capacity(groups.len()), rows: Vec::new(), keys: Vec::new() };
+        let mut buf: Vec<(V, u32)> = Vec::new();
+        for g in groups {
+            buf.clear();
+            for &r in g {
+                let v = column.get(r);
+                // NULL compares to nothing: such a row never satisfies a comparison.
+                if v.is_null() {
+                    continue;
+                }
+                let k = sv::compare_affinity(&v, aff);
+                if matches!(k, V::Real(f) if f.is_nan()) {
+                    return None;
+                }
+                buf.push((k, r));
+            }
+            buf.sort_by(|a, b| sv::cmp(&a.0, &b.0).then(a.1.cmp(&b.1)));
+            let ascending = buf.windows(2).all(|w| w[0].1 < w[1].1);
+            out.groups.push((out.rows.len() as u32, buf.len() as u32, ascending));
+            for (k, r) in buf.drain(..) {
+                out.rows.push(r);
+                out.keys.push(k);
+            }
+        }
+        Some(out)
+    }
+
+    /// Group `g`'s positions `[a, b)` in `rows` whose value lies within the bounds (`(value,
+    /// strict)`; `None`: unbounded on that side), and whether they are in table order.
+    fn span(&self, g: usize, lo: Option<(&V, bool)>, hi: Option<(&V, bool)>) -> (usize, usize, bool) {
+        let (start, len, ascending) = self.groups[g];
+        let keys = &self.keys[start as usize..(start + len) as usize];
+        let a = match lo {
+            // Mutant 23 (R14, wrong bound): `>=` taken as `>`, rows equal to the bound lost.
+            Some((v, strict)) if strict || crate::mutant::on(23) => keys.partition_point(|k| sv::cmp(k, v) != Ordering::Greater),
+            Some((v, _)) => keys.partition_point(|k| sv::cmp(k, v) == Ordering::Less),
+            None => 0,
+        };
+        let b = match hi {
+            Some((v, true)) => keys.partition_point(|k| sv::cmp(k, v) == Ordering::Less),
+            Some((v, false)) => keys.partition_point(|k| sv::cmp(k, v) != Ordering::Greater),
+            None => keys.len(),
+        };
+        (start as usize + a, start as usize + b.max(a), ascending)
+    }
+}
+
+/// A join's indexes per item: the plain equality probe's, each OR branch's, and the range
+/// probe's (R14; `None` also when its column holds a NaN).
 struct Indexes {
     plain: Vec<Option<Rc<Index>>>,
     or: Vec<Option<Vec<Rc<Index>>>>,
+    range: Vec<Option<Rc<RangeIndex>>>,
 }
 
 pub struct Exec<'d, 'a> {
@@ -1550,6 +1705,8 @@ pub struct Exec<'d, 'a> {
     slots: RefCell<Vec<Option<Rc<Table>>>>,
     /// This statement's indexes by (table, probe).
     indexes: RefCell<FxHashMap<(usize, usize), Rc<Index>>>,
+    /// This statement's range indexes by (table, range probe).
+    range_indexes: RefCell<FxHashMap<(usize, usize), Option<Rc<RangeIndex>>>>,
     sub_cache: RefCell<FxHashMap<usize, Rc<SubResult>>>,
     derived: RefCell<FxHashMap<usize, Rc<Table>>>,
     keep: RefCell<Vec<Rc<Table>>>,
@@ -1761,6 +1918,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             stmt,
             slots: RefCell::new(vec![None; stmt.n_slots]),
             indexes: Default::default(),
+            range_indexes: Default::default(),
             sub_cache: Default::default(),
             derived: Default::default(),
             keep: Default::default(),
@@ -2178,6 +2336,20 @@ impl<'d, 'a> Exec<'d, 'a> {
         ix
     }
 
+    /// R14's range index of `t` for range probe `r` (within `eq`'s groups), built once per
+    /// statement; `None` when the column holds a NaN.
+    fn range_index(&self, t: &Rc<Table>, r: &RangeProbe, eq: Option<&Index>) -> Option<Rc<RangeIndex>> {
+        let k = (Rc::as_ptr(t) as usize, r as *const RangeProbe as usize);
+        if let Some(ix) = self.range_indexes.borrow().get(&k) {
+            return ix.clone();
+        }
+        let ix = RangeIndex::build(t, eq, r.col, r.col_aff).map(Rc::new);
+        // The key holds the table's address: keep the table alive while the statement runs.
+        self.keep.borrow_mut().push(t.clone());
+        self.range_indexes.borrow_mut().insert(k, ix.clone());
+        ix
+    }
+
     /// The FROM items' tables (`None` after a failure).
     fn item_tables(&self, s: &PSelect, outer: Option<&Frame<'_>>) -> Option<Vec<Rc<Table>>> {
         let tables: Vec<Rc<Table>> = s.items.iter().map(|it| self.table_of(&it.src, outer)).collect();
@@ -2197,9 +2369,12 @@ impl<'d, 'a> Exec<'d, 'a> {
                 }
             }
         }
+        let plain: Vec<Option<Rc<Index>>> = s.probes.iter().zip(tables).zip(&s.items).map(|((p, t), it)| p.as_ref().map(|p| self.index(t, p, matches!(it.src, Src::Global(_))))).collect();
+        let range = s.ranges.iter().zip(tables).zip(&plain).map(|((r, t), eq)| r.as_ref().and_then(|r| self.range_index(t, r, eq.as_deref()))).collect();
         let indexes = Indexes {
-            plain: s.probes.iter().zip(tables).zip(&s.items).map(|((p, t), it)| p.as_ref().map(|p| self.index(t, p, matches!(it.src, Src::Global(_))))).collect(),
             or: s.or_probes.iter().zip(tables).zip(&s.items).map(|((b, t), it)| b.as_ref().map(|b| b.iter().map(|p| self.index(t, p, matches!(it.src, Src::Global(_)))).collect())).collect(),
+            plain,
+            range,
         };
         let _ = self.level(s, 0, tables, &indexes, &mut rows, outer, sink);
     }
@@ -2250,6 +2425,7 @@ impl<'d, 'a> Exec<'d, 'a> {
         };
         // Candidate rows, in table order.
         let or_cands: Vec<u32>;
+        let range_cands: Vec<u32>;
         let cands: Option<&[u32]> = {
             let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
             match (&s.or_probes[i], &indexes.or[i], &s.probes[i], &indexes.plain[i]) {
@@ -2264,6 +2440,39 @@ impl<'d, 'a> Exec<'d, 'a> {
                     c.dedup();
                     or_cands = c;
                     Some(&or_cands)
+                }
+                (_, _, p, eq) if indexes.range[i].is_some() => {
+                    // R14: the equality group (if any), then the rows within the bounds.
+                    let (rp, rix) = (s.ranges[i].as_ref().expect("range probe"), indexes.range[i].as_ref().unwrap());
+                    let group = match (p, eq) {
+                        (Some(p), Some(ix)) => self.probe_key(p, &ctx).and_then(|k| ix.find(key_hash(&k), &k)),
+                        _ => Some(0),
+                    };
+                    // `None`: a NULL bound (no row compares true); `Some(None)`: unbounded (absent,
+                    // or a NaN, which the re-checked conjunct decides).
+                    let bound = |b: &Option<(PE, Aff, bool)>| -> Option<Option<(V, bool)>> {
+                        let Some((e, aff, strict)) = b else { return Some(None) };
+                        let v = self.eval(e, &ctx);
+                        if v.is_null() {
+                            return None;
+                        }
+                        let k = sv::compare_affinity(&v, *aff);
+                        Some((!matches!(k, V::Real(f) if f.is_nan())).then_some((k, *strict)))
+                    };
+                    match (group, bound(&rp.lo), bound(&rp.hi)) {
+                        (Some(g), Some(lo), Some(hi)) => {
+                            let (a, b, ascending) = rix.span(g as usize, lo.as_ref().map(|(v, st)| (v, *st)), hi.as_ref().map(|(v, st)| (v, *st)));
+                            if ascending {
+                                Some(&rix.rows[a..b])
+                            } else {
+                                let mut c = rix.rows[a..b].to_vec();
+                                c.sort_unstable();
+                                range_cands = c;
+                                Some(&range_cands)
+                            }
+                        }
+                        _ => Some(&[][..]),
+                    }
                 }
                 (_, _, Some(p), Some(ix)) => Some(self.probe_key(p, &ctx).and_then(|k| ix.get(&k)).map_or(&[][..], |h| &h[..])),
                 _ => None,
@@ -3110,5 +3319,78 @@ mod tests {
         );
         // A FROM sibling is not in scope (SQLite: `no such column: s.id`).
         assert!(plan("SELECT (SELECT count(*) FROM d AS s, (SELECT 1 FROM p WHERE p.sym = s.id)) FROM d", &catalog).is_err());
+    }
+
+    fn ranges_in(q: &PQuery) -> usize {
+        fn body(b: &PBody) -> usize {
+            match b {
+                PBody::Select(s) => s.ranges.iter().flatten().count(),
+                PBody::Compound(l, _, r, _) => body(l) + body(r),
+            }
+        }
+        let ctes: usize = q.ctes.iter().map(|c| match c {
+            PCte::Plain { q, .. } => ranges_in(q),
+            PCte::Recursive { init, rec, .. } => init.iter().chain(rec).map(body).sum(),
+        }).sum();
+        ctes + body(&q.body)
+    }
+
+    /// R14 (range probe): every statement returns the same rows in the same order with range
+    /// probes as without (the filtered scan), over random tables mixing integers, integral and
+    /// fractional reals, numeric and non-numeric texts and NULLs under every column affinity;
+    /// bounds of both directions, strict and not, one- and two-sided, under an equality group, a
+    /// LEFT JOIN's ON and in correlated subqueries. Kills mutant 23.
+    #[test]
+    fn rewrite_range_probe_equals_scan() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let affs = [Aff::None, Aff::Integer, Aff::Text, Aff::Real, Aff::Numeric];
+        let queries = [
+            "SELECT a.k, a.lo, b.v FROM a JOIN b ON b.k = a.k AND b.v >= a.lo AND b.v <= a.hi",
+            "SELECT a.k, b.v FROM a JOIN b ON b.v > a.lo AND b.v < a.hi",
+            "SELECT a.k, b.v FROM a, b WHERE a.lo <= b.v AND a.hi > b.v AND b.k = a.k",
+            "SELECT a.k, b.v FROM a JOIN b ON b.v >= a.lo",
+            "SELECT a.k, b.v FROM a JOIN b ON a.hi < b.v",
+            "SELECT a.k, b.v FROM a LEFT JOIN b ON b.k = a.k AND b.v >= a.lo AND b.v < a.hi",
+            "SELECT a.k, (SELECT count(*) FROM b WHERE b.v >= a.lo AND b.v <= a.hi), EXISTS(SELECT 1 FROM b WHERE b.k = a.k AND b.v > a.hi) FROM a",
+            "SELECT a.k, b.v, c.v FROM a JOIN b ON b.v >= a.lo JOIN c ON c.v <= b.v AND c.v >= a.lo",
+        ];
+        let mut fired = 0;
+        for round in 0..60 {
+            let mut catalog = Catalog::new();
+            let mut db = Db::new("", "");
+            let value = |rnd: &mut dyn FnMut(u64) -> u64| match rnd(9) {
+                0 => V::Null,
+                1 | 2 | 3 => V::Int(rnd(12) as i64 - 3),
+                4 => V::Real(rnd(12) as f64 - 3.0),
+                5 => V::Real((rnd(24) as f64 - 6.0) / 2.0),
+                6 => V::text(&(rnd(12) as i64 - 3).to_string()),
+                7 => V::text(&format!("{}.5", rnd(9))),
+                _ => V::text(["a", "b", "", "x1", "1e1"][rnd(5) as usize]),
+            };
+            for (name, cols) in [("a", &["k", "lo", "hi"][..]), ("b", &["k", "v"][..]), ("c", &["k", "v"][..])] {
+                let schema = Schema { cols: cols.iter().map(|c| c.to_string()).collect(), affs: cols.iter().map(|_| affs[rnd(5) as usize]).collect() };
+                let rows: Vec<Box<[V]>> = (0..rnd(14)).map(|_| cols.iter().map(|_| value(&mut rnd)).collect()).collect();
+                catalog.insert(name.into(), schema.clone());
+                db.tables.insert(name.into(), Rc::new(Table::from_rows(schema, rows)));
+            }
+            for q in queries {
+                let with = plan_with(q, &catalog, true).unwrap();
+                let without = plan_with(q, &catalog, false).unwrap();
+                assert_eq!(ranges_in(&without.root) + without.subs.iter().map(|s| ranges_in(&s.q)).sum::<usize>(), 0);
+                fired += ranges_in(&with.root) + with.subs.iter().map(|s| ranges_in(&s.q)).sum::<usize>();
+                let rows = |st: &Statement| {
+                    let t = execute(&db, st).unwrap();
+                    format!("{:?}", (0..t.len()).map(|r| t.row(r)).collect::<Vec<_>>())
+                };
+                assert_eq!(rows(&with), rows(&without), "round {round}: {q}");
+            }
+        }
+        assert!(fired >= 60 * queries.len(), "range probes planned {fired}");
     }
 }

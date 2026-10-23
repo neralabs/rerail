@@ -162,6 +162,16 @@ impl Ctx<'_> {
             let item = match (src, s.probes.get(k).and_then(Option::as_ref), s.or_probes.get(k).and_then(Option::as_ref)) {
                 (Src::JsonEach(arg), _, _) if *lateral || k > 0 => Item::LateralJsonEach { arg: self.pe(arg) },
                 (Src::JsonEach(arg), _, _) => Item::Constant { rel: format!("json_each({})", self.pe(arg)) },
+                // R14: a range probe, within the equality probe's group if there is one.
+                (_, p, _) if s.ranges.get(k).and_then(Option::as_ref).is_some() => {
+                    let r = s.ranges[k].as_ref().unwrap();
+                    let bounds = match (&r.lo, &r.hi) {
+                        (Some(_), Some(_)) => "lo,hi",
+                        (Some(_), None) => "lo",
+                        _ => "hi",
+                    };
+                    Item::RangeProbe { rel, key_cols: p.map(|p| p.cols.clone()).unwrap_or_default(), range_col: r.col, range_aff: format!("{:?}", r.col_aff), bounds: bounds.into(), residual: preds }
+                }
                 // A probe at item 0: a correlated subquery's lookup on its correlation.
                 (_, Some(p), _) => Item::IndexNestedLoop { rel, key_cols: p.cols.clone(), key_affs: p.col_affs.iter().map(|a| format!("{a:?}")).collect(), residual: preds },
                 (_, _, Some(ps)) => Item::OrIndexProbe { rel, branches: ps.iter().map(|p| p.cols.clone()).collect(), residual: preds },
