@@ -1,0 +1,120 @@
+{
+  "format": "rerail.facts-class-overlay/v1",
+  "doc": "Class declarations of the data-layer rules on the facts side (docs/facts/PHASE-3.md § P3b; the rule files carry no `class`). Keyed `check/clause`; each entry admits a clause at `class`, names the stage and operator that set it (`facts-a explain --classes`) and why the rule keeps that shape. A declared clause compiles and runs under its algebraic budget; an unbounded clause without an entry is warned about by the census and EXPLAIN, and listed by the gate's class-residue check.",
+  "clauses": {
+    "impl_direct_execution/direct-execution-lines": {
+      "class": "unbounded",
+      "stage": "matches",
+      "operator": "range probe strings on #1 without a declared interval bound, per enclosing run (n^2·d)",
+      "reason": "a range probe over a stage table without a declared interval (R14 over a stage): an I2 interval declaration on the stage would bound it."
+    },
+    "legacy_execution_surfaces/legacy-execution-graphs": {
+      "class": "unbounded",
+      "stage": "receiver_tokens",
+      "operator": "fixpoint cte0: probe receiver_edges per derivation (n^3)",
+      "reason": "fixpoint work above O(n²): derivations times the probes of an edge stage (`receiver_edges`, `callable_edges`)."
+    },
+    "public_api_triples/exported-families": {
+      "class": "unbounded",
+      "stage": "imports",
+      "operator": "fixpoint cte3, counter #8 (rows ≤ initial × n) (n^3)",
+      "reason": "the counter fixpoint downstream of `imports` starts from up to n² initial rows (n rounds each)."
+    },
+    "serverplan_dispatch_architecture/executor-provenance": {
+      "class": "unbounded",
+      "stage": "executor_types",
+      "operator": "index nodes (#3), no key of nodes, per enclosing run (n^6)",
+      "reason": "`executor_types`: a per-row recursion arm with a kind-only lookup of `nodes` (no key of nodes)."
+    },
+    "serverplan_quality/quality-conditional-1": {
+      "class": "unbounded",
+      "stage": "descendants",
+      "operator": "reachability over a forest (roots × edges) (n^3)",
+      "reason": "reachability over a rule-declared forest, charged as roots × edges."
+    },
+    "serverplan_quality/quality-contracts-1": {
+      "class": "unbounded",
+      "stage": "call_paths",
+      "operator": "fixpoint cte0 is a simple-path enumeration (it extends a path value; bounded only by the number of simple paths)",
+      "reason": "`call_paths` is simple-path enumeration (it extends a path value): bounded only by the number of simple paths. Decider's ruling: classed unbounded honestly; on Jeremy's rule-shape list."
+    },
+    "serverplan_quality/quality-contracts-2": {
+      "class": "unbounded",
+      "stage": "diagnostics_0",
+      "operator": "index base_names (#0, #1, #2) keyed by the enclosing row, over all runs (n^3)",
+      "reason": "a correlated lookup keyed by the enclosing row whose total is bounded only per run, over an n² outer."
+    },
+    "serverplan_state_tripwires/state-flow-1": {
+      "class": "unbounded",
+      "stage": "parameters",
+      "operator": "a join on columns constant over the content (a cross product within it): index nodes on (#0) (n^3)",
+      "reason": "the stage joins `nodes` on the path alone (`index nodes on (#0)`): a cross product within the content that no key bounds. The rule's join is the issue (Jeremy's rule-shape list); the NARROWINGS `hierarchy` edit is the model."
+    },
+    "serverplan_state_tripwires/state-flow-project-1": {
+      "class": "unbounded",
+      "stage": "parameters",
+      "operator": "a join on columns constant over the content (a cross product within it): index nodes on (#0) (n^3)",
+      "reason": "the stage joins `nodes` on the path alone (`index nodes on (#0)`): a cross product within the content that no key bounds. The rule's join is the issue (Jeremy's rule-shape list); the NARROWINGS `hierarchy` edit is the model."
+    },
+    "serverplan_state_tripwires/state-projection-recovery-2": {
+      "class": "unbounded",
+      "stage": "string_values",
+      "operator": "join without a usable key: index derived1 on (#0, #1, #2) (n^2·d)",
+      "reason": "a join on keys of stage outputs that no K-rule reaches (unions of inputs, `derived1`, `contexts`, `returns`): an I2 key declaration on the stage would bound it."
+    },
+    "serverplan_state_tripwires/state-signatures-1": {
+      "class": "unbounded",
+      "stage": "parameters",
+      "operator": "a join on columns constant over the content (a cross product within it): index nodes on (#0) (n^3)",
+      "reason": "the stage joins `nodes` on the path alone (`index nodes on (#0)`): a cross product within the content that no key bounds. The rule's join is the issue (Jeremy's rule-shape list); the NARROWINGS `hierarchy` edit is the model."
+    },
+    "serverplan_steps/runtime-reference-summaries": {
+      "class": "unbounded",
+      "stage": "consumers",
+      "operator": "join without a usable key: index contexts on (#0, #1) (n^3)",
+      "reason": "a join on keys of stage outputs that no K-rule reaches (unions of inputs, `derived1`, `contexts`, `returns`): an I2 key declaration on the stage would bound it."
+    },
+    "serverplan_steps/step-contracts-1": {
+      "class": "unbounded",
+      "stage": "empty_tables",
+      "operator": "index nodes (#0, #46) keyed by the enclosing row, over all runs (n^3)",
+      "reason": "a correlated lookup keyed by the enclosing row whose total is bounded only per run, over an n² outer."
+    },
+    "serverplan_steps/step-contracts-2": {
+      "class": "unbounded",
+      "stage": "parameters",
+      "operator": "a join on columns constant over the content (a cross product within it): index nodes on (#0) (n^3)",
+      "reason": "the stage joins `nodes` on the path alone (`index nodes on (#0)`): a cross product within the content that no key bounds. The rule's join is the issue (Jeremy's rule-shape list); the NARROWINGS `hierarchy` edit is the model."
+    },
+    "serverplan_steps/step-contracts-3": {
+      "class": "unbounded",
+      "stage": "methods",
+      "operator": "index nodes (#0, #42, #16, #43), no key of nodes, per enclosing run (n^3)",
+      "reason": "a join on keys of stage outputs that no K-rule reaches (unions of inputs, `derived1`, `contexts`, `returns`): an I2 key declaration on the stage would bound it."
+    },
+    "serverplan_steps/step-contracts-4": {
+      "class": "unbounded",
+      "stage": "local_bindings",
+      "operator": "range probe assignments on #1 without a declared interval bound (n^2·d)",
+      "reason": "a range probe over a stage table without a declared interval (R14 over a stage): an I2 interval declaration on the stage would bound it."
+    },
+    "serverplan_steps/step-contracts-5": {
+      "class": "unbounded",
+      "stage": "parameters",
+      "operator": "a join on columns constant over the content (a cross product within it): index nodes on (#0) (n^3)",
+      "reason": "the stage joins `nodes` on the path alone (`index nodes on (#0)`): a cross product within the content that no key bounds. The rule's join is the issue (Jeremy's rule-shape list); the NARROWINGS `hierarchy` edit is the model."
+    },
+    "serverplan_steps/step-contracts-6": {
+      "class": "unbounded",
+      "stage": "user_callable",
+      "operator": "fixpoint cte0: probe callable_edges per derivation (n^3)",
+      "reason": "fixpoint work above O(n²): derivations times the probes of an edge stage (`receiver_edges`, `callable_edges`)."
+    },
+    "serverplan_target_architecture/required-contracts": {
+      "class": "unbounded",
+      "stage": "query",
+      "operator": "join without a usable key: index returns on (#0, #6, #5) (n^3)",
+      "reason": "a join on keys of stage outputs that no K-rule reaches (unions of inputs, `derived1`, `contexts`, `returns`): an I2 key declaration on the stage would bound it."
+    }
+  }
+}

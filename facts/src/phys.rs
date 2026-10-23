@@ -97,6 +97,9 @@ pub struct Meta {
     /// initial row derives (`n`: a counter over values of the content; `d`: a walk along a
     /// forest checked per content, W1).
     pub measure: Option<(String, Mono)>,
+    /// `Fixpoint`: `measure` holds only where a per-content check passes (W1's forest walk, M1's
+    /// shrinking text, M2's key): without the checks (`Analyzer::unchecked`) it is not used.
+    pub measure_checked: bool,
     /// `Fixpoint`: relations and columns the executor checks to be keys on every content before
     /// the fixpoint runs (W1's lookups); the fixpoint's arms may rely on them.
     pub checked_keys: Vec<(String, Vec<u16>)>,
@@ -433,12 +436,31 @@ pub struct PlanCost {
     /// (`(relation, columns)`); where one does not hold, the content runs under the algebraic
     /// budget and is counted (`bounds_unproven`).
     pub checked_keys: Vec<(String, Vec<u16>)>,
+    /// The class without any per-content check (no K1 key, no W1/M1/M2 measure), and the
+    /// operator that sets it: the class of a content where a check fails. Equal to `class` when
+    /// declared structure alone proves the class (`proven`). Set by `with_fallback`.
+    pub fallback: Class,
+    pub fallback_setter: String,
 }
 
 impl PlanCost {
     /// The `EXPLAIN` line.
     pub fn line(&self) -> String {
-        format!("class: {} (work {}; set by {})", self.class, self.work.text(), self.setter)
+        let assumed = if self.proven() { String::new() } else { format!("; per-content checks assumed, {} where one fails, set by {}", self.fallback, self.fallback_setter) };
+        format!("class: {} (work {}; set by {}{assumed})", self.class, self.work.text(), self.setter)
+    }
+
+    /// The class holds on every content: no per-content check stands behind it.
+    pub fn proven(&self) -> bool {
+        self.fallback == self.class
+    }
+
+    /// This cost with `unchecked`'s class (the same plan analysed by `Analyzer::unchecked`) as
+    /// its fallback.
+    pub fn with_fallback(mut self, unchecked: &PlanCost) -> PlanCost {
+        self.fallback = unchecked.class;
+        self.fallback_setter = unchecked.setter.clone();
+        self
     }
 
     /// The class checked against a rule's declaration: `None` while it holds; otherwise the
@@ -483,6 +505,8 @@ pub struct Analyzer {
     at: String,
     /// K1: keys of stored relations the plan relies on and the executor checks per content.
     assumed: Vec<(String, Vec<u16>)>,
+    /// No per-content check is assumed: no K1 key, no checked measure (the fallback class).
+    unchecked: bool,
 }
 
 fn is_marker(exprs: &[String], m: &str) -> bool {
@@ -500,6 +524,11 @@ fn product(a: &Keys, b: &[BTreeSet<u16>], k: u16) -> Keys {
 impl Analyzer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An analyzer that assumes no per-content check: the class of a content where one fails.
+    pub fn unchecked() -> Self {
+        Analyzer { unchecked: true, ..Self::default() }
     }
 
     /// A leaf relation's declared size (names are case-insensitive, as SQL's).
@@ -528,7 +557,7 @@ impl Analyzer {
             Bound::Unbounded(w) => w.clone(),
             _ => self.terms.iter().find(|t| t.work.class() == class).map_or_else(|| "reading the content".to_string(), |t| format!("{} ({})", t.what, t.work.text())),
         };
-        PlanCost { class, work, setter, terms: self.terms.clone(), checked_keys: self.assumed.clone() }
+        PlanCost { class, work, setter: setter.clone(), terms: self.terms.clone(), checked_keys: self.assumed.clone(), fallback: class, fallback_setter: setter }
     }
 
     fn mult(&self, skip_last: bool) -> Bound {
@@ -678,9 +707,12 @@ impl Analyzer {
         let name = n.meta.binds.clone().unwrap_or_default();
         let delta = n.meta.delta.clone().unwrap_or_else(|| name.clone());
         let (init, rec) = n.children.split_at(n.meta.init.min(n.children.len()));
-        // W1's lookups, checked per content before the fixpoint runs, are keys for its arms.
+        // W1's lookups, checked per content before the fixpoint runs, are keys for its arms; a
+        // checked measure holds only with its checks.
+        let checked_keys: &[(String, Vec<u16>)] = if self.unchecked { &[] } else { &n.meta.checked_keys };
+        let measure = n.meta.measure.as_ref().filter(|_| !(self.unchecked && n.meta.measure_checked));
         let mut checked = BTreeMap::new();
-        for (rel, cols) in &n.meta.checked_keys {
+        for (rel, cols) in checked_keys {
             let (mut card, delta) = self.lookup(rel);
             card.keys.push(cols.iter().copied().collect());
             // A stored relation's key is checked per content (K1) where the executor does not
@@ -737,7 +769,7 @@ impl Analyzer {
                 computes |= grows;
             }
         }
-        let rows = match &n.meta.measure {
+        let rows = match measure {
             Some((_, reach)) => first.mul(&Bound::of(*reach)),
             None if set && !computes => first.mul(&joined),
             None if n.meta.paths => Bound::Unbounded(format!("{}: fixpoint {name} is a simple-path enumeration (it extends a path value; bounded only by the number of simple paths)", self.at)),
@@ -782,7 +814,7 @@ impl Analyzer {
             self.mults.pop();
             self.scopes.pop();
         }
-        let how = match &n.meta.measure {
+        let how = match measure {
             Some((m, reach)) => format!("fixpoint {name}, {m} (rows ≤ initial × {})", reach.text()),
             None if set && !computes => format!("fixpoint {name} (set, copies columns: rows ≤ initial × joined)"),
             None => format!("fixpoint {name}"),
@@ -791,7 +823,7 @@ impl Analyzer {
         self.scopes.pop();
         // A stored relation's checked key holds for the rest of the clause: the relation does not
         // change once stored, and the check ran before any later stage.
-        for (rel, cols) in &n.meta.checked_keys {
+        for (rel, cols) in checked_keys {
             if let Some(c) = self.rels.get_mut(&rel.to_ascii_lowercase()) {
                 c.keys.push(cols.iter().copied().collect());
             }
@@ -955,7 +987,7 @@ impl Analyzer {
         // content (the path, which every row shares): the probed columns are taken as its key,
         // checked per content before the plan relies on it (`checked_keys`).
         let stored = self.scopes.iter().all(|s| !s.contains_key(&rel.to_ascii_lowercase())) && self.rels.contains_key(&rel.to_ascii_lowercase());
-        if stored && !refs.is_empty() && refs.iter().all(Option::is_some) && !on.is_subset(&card.consts) {
+        if !self.unchecked && stored && !refs.is_empty() && refs.iter().all(Option::is_some) && !on.is_subset(&card.consts) {
             let entry = (rel.to_ascii_lowercase(), cols.to_vec());
             if !self.assumed.contains(&entry) {
                 self.assumed.push(entry);
@@ -1045,6 +1077,34 @@ mod tests {
         let mut a = analyzer();
         a.stage("s", plan);
         a.finish()
+    }
+
+    /// The fallback class (`Analyzer::unchecked`): no K1 key and no checked measure is assumed,
+    /// so a class that rests on one falls back; a class proven by declared keys does not.
+    #[test]
+    fn cost_unchecked_assumes_no_per_content_check() {
+        let both = |plan: &Node| {
+            let mut u = Analyzer::unchecked();
+            u.declare("nodes", Card::new(Bound::n(), &[&[0]]));
+            let bag = Card { consts: [0].into(), ..Card::new(Bound::n(), &[]) };
+            u.declare("calls", bag.clone());
+            u.declare("names", bag);
+            u.stage("s", plan);
+            cost(plan).with_fallback(&u.finish())
+        };
+        let k1 = both(&select(vec![scan("calls"), index("names", &[1], &[Some((0, 0, 2))])], vec![], &[(0, 0, 0)]));
+        assert_eq!((k1.class, k1.fallback), (Class::N, Class::N2), "{}", k1.line());
+        assert!(!k1.proven() && k1.line().contains("per-content checks assumed, O(n²) where one fails"), "{}", k1.line());
+        let keyed = both(&select(vec![scan("calls"), index("nodes", &[0], &[Some((0, 0, 3))])], vec![], &[(0, 0, 0)]));
+        assert!(keyed.proven(), "{}", keyed.line());
+        // A bag fixpoint bounded by a checked measure (W1): unbounded without its check.
+        let init = select(vec![scan("nodes")], vec![], &[(0, 0, 0), (0, 0, 1)]);
+        let step = select(vec![scan("cte0"), index("nodes", &[0], &[Some((0, 0, 1))])], vec![], &[(0, 0, 0), (0, 1, 1)]);
+        let mut f = node(Op::Fixpoint { seminaive: true, set: false, closure: false }, vec![init, step]);
+        f.meta = Meta { binds: Some("cte0".into()), init: 1, measure: Some(("W1 walk".into(), Mono { n: 0, d: 1, log: 0 })), measure_checked: true, ..Meta::default() };
+        let with = node(Op::Project { exprs: vec!["with".into()] }, vec![f, select(vec![scan("cte0")], vec![], &[(0, 0, 0)])]);
+        let w1 = both(&with);
+        assert_eq!((w1.class, w1.fallback), (Class::ND, Class::Unbounded), "{}", w1.line());
     }
 
     #[test]

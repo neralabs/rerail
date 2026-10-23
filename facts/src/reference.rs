@@ -878,6 +878,9 @@ impl<'a, S> Evaluator<'a, S> {
             }
         }
         let mut rounds = vec![level.len() as u64];
+        // The algebraic budget (`crate::budget`): a top-level fixpoint's rounds count as they run.
+        let spend = |n: usize| if outer.is_empty() { crate::budget::round(n as u64) } else { Ok(()) };
+        spend(level.len())?;
         while !level.is_empty() {
             if result.len() > FIXPOINT_CAP {
                 return Err("recursive CTE exceeded 50M rows".into());
@@ -898,6 +901,7 @@ impl<'a, S> Evaluator<'a, S> {
                 }
             }
             rounds.push(level.len() as u64);
+            spend(level.len())?;
         }
         if outer.is_empty() {
             let mut f = self.fix.borrow_mut();
@@ -1329,8 +1333,14 @@ pub fn evaluate_stages_counted<S>(stages: &[Stage<S>], stage_of: impl Fn(&S) -> 
     for st in stages {
         match evaluate_stage(&ev, st) {
             Ok(rows) => {
+                let f = ev.take_fix();
+                // The algebraic budget: the stage's rows and fixpoint rows (`crate::budget`).
+                if let Err(e) = crate::budget::stage(rows.len() as u64, f.iter().sum()) {
+                    refusal = Some(e);
+                    break;
+                }
                 done.borrow_mut().push(Rc::new(rows));
-                fix.push(ev.take_fix());
+                fix.push(f);
             }
             Err(e) => {
                 refusal = Some(e);

@@ -5,6 +5,7 @@ use crate::counts::StageCounts;
 use crate::facts::{self, Facts};
 use crate::sql::engine::{self, Catalog, Db, PE, Schema, Statement, Table};
 use crate::sql::value::{self as sv, Aff, V};
+use rerail_facts::budget;
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -260,6 +261,11 @@ pub struct RelPlan {
     /// Per stage, the stored tables (lowercase) whose last reader it is: dropped, with their
     /// clause-level indexes, once it has run (`schedule_releases`).
     pub release: Vec<Vec<String>>,
+    /// K1 (docs/facts/REWRITES.md § Cost bounds): `(relation, columns)` the plan's class takes as
+    /// keys of stored relations (inputs, syntax tables, stages); `run` checks each on the stored
+    /// table, and a duplicate counts in `bounds_unproven` (the content's class is then the
+    /// fallback). Set by `eval::Rule::compile` from `physplan::clause_cost`.
+    pub checked_keys: Vec<(String, Vec<u16>)>,
 }
 
 impl RelPlan {
@@ -335,7 +341,7 @@ impl RelPlan {
         let key = o.get("key").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
         let code = o.get("code").and_then(Json::as_str).map(str::to_owned);
         let locations = o.get("locations").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, release: Vec::new() })
+        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, release: Vec::new(), checked_keys: Vec::new() })
     }
 
     /// Computes `release` from every statement's reads (stages and deferred columns); the
@@ -386,6 +392,9 @@ pub struct Partition<'a> {
     /// Paths whose rows feed the syntax spec (gate witnesses).
     pub source: &'a str,
     pub path: &'a str,
+    /// G3b.3: a per-content run's algebraic budget (`rerail_facts::budget`), and the work done
+    /// before it (the matcher's, on the clause's inputs); `None`: unmetered (repository runs).
+    pub budget: Option<(budget::Limits, u64)>,
 }
 
 pub struct RelOutcome {
@@ -472,11 +481,17 @@ impl TraceGuard<'_> {
 }
 
 /// One `run`'s counts (`crate::counts`): the rows of the leaf tables it read and, per stage it
-/// computed (in order, `<final>` last), the stage's counts.
+/// computed (in order, `<final>` last), the stage's counts; `unproven`, the K1 keys that did not
+/// hold on the content (counted in `bounds_unproven`); `budget`, the run's limits and the work
+/// before its stages (matcher work and leaf rows), and `verdict`, its `budget-exceeded` failure,
+/// for `stage-check`'s reference run.
 #[derive(Default, Clone)]
 pub struct RunCounts {
     pub leaf_rows: u64,
     pub stages: Vec<(String, StageCounts)>,
+    pub unproven: u64,
+    pub budget: Option<(budget::Limits, u64)>,
+    pub verdict: Option<String>,
 }
 
 thread_local! {
@@ -497,21 +512,85 @@ impl StageMeter {
         crate::counts::take_fix();
         StageMeter(crate::counts::phys_now())
     }
-    fn done(self, name: &str, rows: usize) {
+    /// Records the stage's counts and charges its rows and fixpoint rows to the budget.
+    fn done(self, name: &str, rows: usize) -> Result<(), String> {
         let now = crate::counts::phys_now();
         let c = StageCounts { rows: rows as u64, fix: crate::counts::take_fix(), phys: std::array::from_fn(|i| now[i] - self.0[i]) };
+        let charged = budget::stage(c.rows, c.fix.iter().sum());
         LAST.with(|l| l.borrow_mut().stages.push((name.to_owned(), c)));
+        charged
     }
+}
+
+/// K1 (docs/facts/REWRITES.md § Cost bounds): whether no two rows of `t` agree on `cols`, rows
+/// with a NULL among them left out (no probe finds them). Values compare as the loosest probe
+/// would: a numeric text as its number, an integral real as its integer, so a key that holds
+/// here holds for every probe of those columns. Mutant 61: the check always passes.
+pub fn key_holds(t: &Table, cols: &[u16]) -> bool {
+    if crate::mutant::on(61) {
+        return true;
+    }
+    if cols.iter().any(|&c| c as usize >= t.schema.cols.len()) {
+        return false;
+    }
+    let mut seen: rustc_hash::FxHashSet<Vec<sv::Key>> = Default::default();
+    'rows: for r in 0..t.len() {
+        let mut k = Vec::with_capacity(cols.len());
+        for &c in cols {
+            match sv::key(&sv::apply_affinity(t.value(r, c as usize), Aff::Numeric)) {
+                Some(x) => k.push(x),
+                None => continue 'rows,
+            }
+        }
+        if !seen.insert(k) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Checks the plan's K1 keys of the stored relation `name`; each that does not hold is counted.
+fn check_keys(plan: &RelPlan, name: &str, t: &Table) {
+    let failed = plan.checked_keys.iter().filter(|(rel, cols)| rel.eq_ignore_ascii_case(name) && !key_holds(t, cols)).count();
+    if failed > 0 {
+        LAST.with(|l| l.borrow_mut().unproven += failed as u64);
+    }
+}
+
+/// Stops this thread's budget meter when `run` returns, on every path.
+struct MeterGuard(bool);
+
+impl Drop for MeterGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            budget::stop();
+        }
+    }
+}
+
+/// A stage's failure: a spent budget as itself (the reference reports the same message).
+fn stage_failure(what: &str, e: String) -> String {
+    if e.starts_with("budget-exceeded") { spent(e) } else { format!("{what}: {e}") }
+}
+
+/// A spent budget's failure, recorded as the run's verdict (`RunCounts::verdict`).
+fn spent(e: String) -> String {
+    LAST.with(|l| l.borrow_mut().verdict = Some(e.clone()));
+    e
 }
 
 pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
     let mut out = RelOutcome { findings: Vec::new(), failure: None, stage_ns: Vec::new() };
     let tracing = TRACE.with(|h| h.borrow().is_some());
     let mut trace = TraceGuard { plan, path: part.path.to_owned(), tables: tracing.then(Vec::new) };
-    LAST.with(|l| *l.borrow_mut() = RunCounts { leaf_rows: part.inputs.iter().map(|t| t.len() as u64).sum(), stages: Vec::new() });
+    LAST.with(|l| *l.borrow_mut() = RunCounts { leaf_rows: part.inputs.iter().map(|t| t.len() as u64).sum(), ..RunCounts::default() });
+    // G3b.3: metered against the fallback limit while the stages run, the content's own limit
+    // at the end (`rerail_facts::budget`).
+    let _meter = MeterGuard(part.budget.is_some());
     let mut db = Db::new(part.source, part.path);
     for ((name, _), t) in plan.inputs.iter().zip(part.inputs) {
         trace.push(name, &t);
+        check_keys(plan, name, &t);
         db.tables.insert(name.to_ascii_lowercase(), t);
     }
     let mut syntax_tables_present = false;
@@ -528,6 +607,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     let t = Rc::new(t);
                     LAST.with(|l| l.borrow_mut().leaf_rows += t.len() as u64);
                     trace.push(&n, &t);
+                    check_keys(plan, &n, &t);
                     db.tables.insert(n.to_ascii_lowercase(), t);
                 }
                 syntax_tables_present = true;
@@ -541,6 +621,15 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
             }
         }
     }
+    if let Some((limits, before)) = part.budget {
+        let base = before + LAST.with(|l| l.borrow().leaf_rows);
+        LAST.with(|l| l.borrow_mut().budget = Some((limits, base)));
+        budget::start(limits.fallback, base);
+        if let Err(e) = budget::stage(0, 0) {
+            out.failure = Some(spent(e));
+            return out;
+        }
+    }
     for (si, st) in plan.stages.iter().enumerate() {
         let t0 = std::time::Instant::now();
         let meter = StageMeter::start();
@@ -549,7 +638,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                 let t = match engine::execute(&db, stmt) {
                     Ok(t) => t,
                     Err(e) => {
-                        out.failure = Some(format!("relational stage {name}: {e}"));
+                        out.failure = Some(stage_failure(&format!("relational stage {name}"), e));
                         return out;
                     }
                 };
@@ -584,9 +673,13 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                 let rows = t.len();
                 let t = Rc::new(t);
                 trace.push(name, &t);
+                check_keys(plan, name, &t);
                 db.tables.insert(name.to_ascii_lowercase(), t);
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
-                meter.done(name, rows);
+                if let Err(e) = meter.done(name, rows) {
+                    out.failure = Some(spent(e));
+                    return out;
+                }
             }
             StagePlan::Reach { name, roots, edges, forest, syntax } => {
                 let r = match reach(&db, roots, edges.as_ref(), *forest, if *syntax { part.facts.filter(|_| syntax_tables_present) } else { None }, plan.syntax.as_ref(), *syntax) {
@@ -597,10 +690,15 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     }
                 };
                 let r = Rc::new(r);
-                meter.done(name, r.len());
+                let charged = meter.done(name, r.len());
                 trace.push(name, &r);
+                check_keys(plan, name, &r);
                 db.tables.insert(name.to_ascii_lowercase(), r);
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
+                if let Err(e) = charged {
+                    out.failure = Some(spent(e));
+                    return out;
+                }
             }
         }
         for name in plan.release.get(si).into_iter().flatten() {
@@ -612,12 +710,26 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
     let fin = match engine::execute(&db, &plan.fin) {
         Ok(t) => t,
         Err(e) => {
-            out.failure = Some(format!("relational query: {e}"));
+            out.failure = Some(stage_failure("relational query", e));
             return out;
         }
     };
     out.stage_ns.push(("<final>".into(), t0.elapsed().as_nanos() as u64));
-    meter.done("<final>", fin.len());
+    if let Err(e) = meter.done("<final>", fin.len()) {
+        out.failure = Some(spent(e));
+        return out;
+    }
+    // The content's own limit: its class's, or the fallback's where a per-content check failed.
+    if let (Some((limits, _)), Some(m)) = (part.budget, budget::meter()) {
+        let unproven = LAST.with(|l| {
+            let l = l.borrow();
+            l.unproven + l.stages.iter().map(|(_, s)| s.phys[crate::counts::Phys::BoundsUnproven as usize]).sum::<u64>()
+        });
+        if let Err(e) = budget::verdict(m.spent, limits, unproven > 0) {
+            out.failure = Some(spent(e));
+            return out;
+        }
+    }
     let sch = fin.schema.clone();
     let ci = |n: &str| sch.cols.iter().position(|c| c == n);
     let (pi, si, ei) = (ci("path").unwrap(), ci("start_byte").unwrap(), ci("end_byte").unwrap());
@@ -772,4 +884,70 @@ fn reach(db: &Db<'_>, roots: &Statement, edges: Option<&Statement>, forest: bool
         }
     }
     Ok(Table::from_rows(schema, rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `a(k, v)` joined to its copy `s1` on `(k, v)`; the plan takes `s1.k` as a K1 key.
+    fn plan() -> RelPlan {
+        let rel = serde_json::json!({"partitionBy": "file", "stages": [{"name": "s1", "query": "SELECT __path, k, v FROM a"}],
+            "query": "SELECT a.__path AS path, a.__start AS start_byte, a.__end AS end_byte FROM a JOIN s1 ON s1.k = a.k AND s1.v = a.v"});
+        let mut p = RelPlan::compile(&rel, vec![("a".into(), 0, vec!["k".into(), "v".into()])], &facts::GRAMMAR).unwrap();
+        p.schedule_releases();
+        p.checked_keys = vec![("s1".into(), vec![1])];
+        p
+    }
+
+    fn run_on(p: &RelPlan, ks: &[V], budget: Option<(budget::Limits, u64)>) -> (RelOutcome, RunCounts) {
+        let schema = input_schema(&["k".into(), "v".into()]);
+        let span = |i: usize| (i as u32 * 10, i as u32 * 10 + 5);
+        let rows: Vec<Box<[V]>> = ks.iter().enumerate().map(|(i, k)| vec![V::text("t.py"), V::Int(span(i).0.into()), V::Int(span(i).1.into()), k.clone(), V::Int(i as i64)].into_boxed_slice()).collect();
+        let anchors = (0..ks.len()).map(|i| ((Rc::from("t.py"), span(i).0, span(i).1), i as u32)).collect();
+        let out = run(p, Partition { inputs: vec![Rc::new(Table::from_rows(schema, rows))], anchors, facts: None, source: "", path: "t.py", budget });
+        (out, last_counts())
+    }
+
+    /// K1: a key the plan assumes is checked on the stored stage; a duplicate over non-NULL
+    /// values (a numeric text and an integral real equal to an integer included) is counted, rows
+    /// with a NULL key are not. Kills mutant 61 (the check always passes).
+    #[test]
+    fn k1_checks_assumed_keys_on_stored_stages() {
+        let p = plan();
+        let unproven = |ks: &[V]| {
+            let (out, c) = run_on(&p, ks, None);
+            assert_eq!(out.failure, None);
+            assert_eq!(out.findings.len(), ks.iter().filter(|k| !k.is_null()).count());
+            c.unproven
+        };
+        assert_eq!(unproven(&[V::Int(1), V::Int(2), V::Int(3)]), 0);
+        assert_eq!(unproven(&[V::Int(1), V::Null, V::Null]), 0);
+        assert_eq!(unproven(&[V::Int(1), V::Int(2), V::Int(1)]), 1);
+        assert_eq!(unproven(&[V::Int(1), V::text("1")]), 1);
+        assert_eq!(unproven(&[V::Real(2.0), V::Int(2)]), 1);
+        assert_eq!(unproven(&[V::text("a"), V::text("b")]), 0);
+        assert!(key_holds(&Table::from_rows(input_schema(&[]), vec![]), &[0]));
+    }
+
+    /// G3b.3 in one run: the work is the matcher's (`before`), the leaf rows, the stages' rows
+    /// and the final rows. Over the content's limit the run fails with the limit named; where a
+    /// K1 key fails the fallback limit applies; over the fallback limit the run stops at the
+    /// stage boundary that crosses it.
+    #[test]
+    fn algebraic_budget_uses_the_fallback_where_a_check_fails() {
+        let p = plan();
+        let distinct = [V::Int(1), V::Int(2), V::Int(3)];
+        let dup = [V::Int(1), V::Int(2), V::Int(1)];
+        // before 1 + leaf 3 + s1 3 + final 3 = 10.
+        let limits = |proven, fallback| Some((budget::Limits { proven, fallback }, 1));
+        assert_eq!(run_on(&p, &distinct, limits(10, 100)).0.failure, None);
+        assert_eq!(run_on(&p, &distinct, limits(9, 100)).0.failure.as_deref(), Some("budget-exceeded: algebraic work over 9"));
+        let (out, c) = run_on(&p, &dup, limits(9, 100));
+        assert_eq!((out.failure, c.unproven), (None, 1));
+        let (out, c) = run_on(&p, &distinct, limits(5, 5));
+        assert_eq!(out.failure.as_deref(), Some("budget-exceeded: algebraic work over 5"));
+        assert_eq!(c.stages.len(), 1, "stopped after s1: {:?}", c.stages);
+        assert_eq!(budget::meter(), None, "the meter stops with the run");
+    }
 }

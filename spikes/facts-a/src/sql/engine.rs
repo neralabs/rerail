@@ -3357,6 +3357,16 @@ impl<'d, 'a> Exec<'d, 'a> {
         }
     }
 
+    /// G3b.3: one round of a top-level fixpoint (where `fix_rounds` counts it) against the
+    /// clause's algebraic budget (`rerail_facts::budget`); over it, the execution fails.
+    fn spend_round(&self, outer: Option<&Frame<'_>>, rows: u64) {
+        if outer.is_none() {
+            if let Err(e) = rerail_facts::budget::round(rows) {
+                self.fail(e);
+            }
+        }
+    }
+
     fn query(&self, q: &PQuery, outer: Option<&Frame<'_>>) -> Table {
         for cte in &q.ctes {
             match cte {
@@ -3947,6 +3957,9 @@ impl<'d, 'a> Exec<'d, 'a> {
         let mut row: Vec<Vec<u32>> = (0..w).map(|_| (0..n0 as u32).collect()).collect();
         let (mut lo, mut hi, mut steps) = (0usize, n0, 0usize);
         let mut rounds = vec![n0 as u64];
+        // The budget's rounds so far, restored if the walk gives up (the fixpoint runs again).
+        let mark = rerail_facts::budget::live();
+        self.spend_round(outer, n0 as u64);
         let mut slot_refs: Vec<&WalkRef<'_>> = Vec::with_capacity(n_slots);
         fn collect<'r, 'p>(r: &'r WalkRef<'p>, out: &mut Vec<&'r WalkRef<'p>>) {
             match r {
@@ -3996,6 +4009,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             }
             if srcs.len() >= PICK_NULL as usize {
                 self.slots.borrow_mut()[batch] = None;
+                rerail_facts::budget::set_live(mark);
                 return None;
             }
             let mut next_tag: Vec<Vec<u16>> = vec![Vec::new(); w];
@@ -4016,6 +4030,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             }
             (lo, hi) = (hi, tag.first().map_or(hi, Vec::len));
             rounds.push((hi - lo) as u64);
+            self.spend_round(outer, (hi - lo) as u64);
         }
         self.fix_rounds(outer, rounds);
         #[cfg(test)]
@@ -4155,6 +4170,7 @@ impl<'d, 'a> Exec<'d, 'a> {
         let mut levels: Vec<Table> = Vec::new();
         let queued = |q: &[Table]| q.iter().map(|t| t.len() as u64).sum::<u64>();
         let mut rounds = vec![queued(&queue)];
+        self.spend_round(outer, rounds[0]);
         let mut steps = 0usize;
         // M1: a shrinking text's longest value must shrink every round (counted where it does not).
         let shrink = if distinct { None } else { shrinking_text(batch, rec) };
@@ -4189,6 +4205,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                 admit(self.body(arm, outer), &mut queue);
             }
             rounds.push(queued(&queue));
+            self.spend_round(outer, *rounds.last().unwrap());
             self.indexes.borrow_mut().retain(|k, _| k.0 != Rc::as_ptr(&t) as usize);
             self.slots.borrow_mut()[batch] = None;
             levels.push(Rc::try_unwrap(t).unwrap_or_else(|rc| Table { schema: rc.schema.clone(), cols: rc.cols.clone(), len: rc.len }));
@@ -4419,7 +4436,9 @@ impl<'d, 'a> Exec<'d, 'a> {
         let cands: Option<&[u32]> = {
             let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
             match (&s.or_probes[i], &indexes.or[i], &s.probes[i], &indexes.plain[i]) {
-                (Some(branches), Some(ixs), _, _) => {
+                // Mutant 55 (the historical OR-probe regression, G3b.2): the item is scanned and
+                // the OR re-checked on every row (same rows, same order; quadratic work).
+                (Some(branches), Some(ixs), _, _) if !crate::mutant::on(55) => {
                     let mut c: Vec<u32> = Vec::new();
                     for (p, ix) in branches.iter().zip(ixs) {
                         self.ph.add(Phys::Probes, 1);
@@ -5517,6 +5536,34 @@ mod tests {
         }
         let fired = WALKS.with(|c| c.get()) - before;
         assert!(fired >= 4 * rounds, "R19 ran {fired} times");
+    }
+
+    /// W1 (`walk_bound`, `Exec::check_walk`): a bag recursion of the walk shape over an edge
+    /// relation that is a forest is admitted (bound `n·d`); over a 3-cycle, where every node has
+    /// one parent and one child, the check must fail (the walk never ends), and so must it over
+    /// two parents and two children. Kills mutant 59 (the acyclicity check skipped).
+    #[test]
+    fn w1_walk_check_refuses_cycles() {
+        let q = "WITH RECURSIVE r(p, node) AS (SELECT p, id FROM nd UNION ALL SELECT r.p, e.dst FROM r JOIN ed e ON e.p = r.p AND e.src = r.node) SELECT * FROM r";
+        let check = |edges: &[(i64, i64)]| {
+            let mut catalog = Catalog::new();
+            let mut db = Db::new("", "");
+            let nd: Vec<Box<[V]>> = vec![vec![V::text("f"), V::Int(1)].into_boxed_slice()];
+            let ed: Vec<Box<[V]>> = edges.iter().map(|&(a, b)| vec![V::text("f"), V::Int(a), V::Int(b)].into_boxed_slice()).collect();
+            for (name, cols, rows) in [("nd", vec!["p", "id"], nd), ("ed", vec!["p", "src", "dst"], ed)] {
+                let schema = Schema { cols: cols.iter().map(|c| c.to_string()).collect(), affs: vec![Aff::None; cols.len()] };
+                catalog.insert(name.into(), schema.clone());
+                db.tables.insert(name.into(), Rc::new(Table::from_rows(schema, rows)));
+            }
+            let st = plan(q, &catalog).unwrap();
+            let Some(PCte::Recursive { init, rec, batch, .. }) = st.root.ctes.first() else { panic!("a recursive CTE") };
+            let wb = walk_bound(*batch, rec).expect("the walk shape");
+            let [PBody::Select(s)] = &rec[..] else { panic!("one step") };
+            Exec::new(&db, &st).check_walk(&wb, init, s, None)
+        };
+        assert_eq!(check(&[(1, 2), (2, 3), (1, 4)]), Ok(()));
+        assert!(check(&[(1, 2), (2, 3), (3, 1)]).is_err_and(|e| e.contains("cycle")), "a 3-cycle is not a forest");
+        assert!(check(&[(1, 2), (3, 2), (2, 4), (2, 5)]).is_err());
     }
 
     /// A FROM subquery's outer references resolve and evaluate as in SQLite: past the enclosing
