@@ -83,7 +83,7 @@ impl Local {
         plan: &Plan,
         guard: &str,
     ) -> Result<Option<String>, String> {
-        if sql.memo_clause.is_some() {
+        if sql.generation.memo_clause.is_some() {
             return Ok(None);
         }
         let Op::Charge(utility, body) = &plan.op else {
@@ -98,6 +98,7 @@ impl Local {
         if last && !self.entries.iter().any(|e| e.utility == *utility) {
             return Ok(None);
         }
+        sql.generation.operator()?;
         let version = self.versions.values().copied().collect::<Vec<_>>();
         let existing = if self.direct {
             self.entries
@@ -162,7 +163,7 @@ impl Local {
             &format!("({guard}) AND d.memo_hit IS NULL AND d.work>0"),
             &body.writes,
             ("d.file", "d.node", "d.work-1"),
-            sql.memo_clause,
+            sql.generation.clone(),
         )?;
         let choice = |arms: &[String]| {
             if arms.is_empty() {

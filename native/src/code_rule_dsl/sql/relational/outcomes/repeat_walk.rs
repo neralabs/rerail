@@ -59,7 +59,9 @@ impl Sql {
         calls: usize,
         boolean: Boolean,
     ) -> Result<String, String> {
-        debug_assert!(calls > 1 && self.memo_clause.is_some() && signature(child).is_some());
+        debug_assert!(
+            calls > 1 && self.generation.memo_clause.is_some() && signature(child).is_some()
+        );
         let (query, profile) = program(
             child,
             input,
@@ -67,7 +69,7 @@ impl Sql {
             guard,
             &child.writes,
             ("d.file", "d.node", "d.work"),
-            self.memo_clause,
+            self.generation.clone(),
         )?;
         let query = replay(&query, calls - 1, boolean);
         let name = self.relation(

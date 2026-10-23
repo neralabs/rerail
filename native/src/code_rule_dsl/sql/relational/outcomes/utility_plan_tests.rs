@@ -208,7 +208,7 @@ fn utility_plan_bounds_and_cycles() {
             "distinct lowered operator count",
         ),
     ];
-    let mut utils = json!({"u0":{"value":{"gt":0}}});
+    let mut utils = json!({"u0":{"regex":"."}});
     for n in 1..=9 {
         utils[format!("u{n}")] =
             json!({"all":[{"matches":format!("u{}",n-1)},{"matches":format!("u{}",n-1)}]});
@@ -216,7 +216,7 @@ fn utility_plan_bounds_and_cycles() {
     cases.push((
         json!({"matches":"u9"}),
         utils,
-        "composition operator count after repeat grouping",
+        "emitted composition operator count",
     ));
     for (rule, utils, expected) in cases {
         let p = policy_utils(&[rule], utils);

@@ -24,50 +24,51 @@ pub(super) struct Sql {
     definitions: Vec<String>,
     profile: Vec<Value>,
     correlated: bool,
-    memo_clause: Option<usize>,
+    generation: Generation,
 }
 
-/// Bound residual expansion before recursive SQL planning. Repeat grouping uses the
-/// same proof as emission; other calls conservatively count their complete bodies.
-pub(super) fn composition_operators(plan: &Plan) -> Result<usize, String> {
-    fn visit(plan: &Plan, repeats: bool, count: &mut usize) -> Result<(), String> {
-        *count += 1;
-        if *count > 256 {
-            return Err(
-                "outcome relations: composition operator count after repeat grouping exceeds 256"
-                    .into(),
-            );
+/// One clause budget shared by every nested SQL program. Count operators only
+/// after the emitter selects a miss body, a replay, or a fused scalar expression.
+#[derive(Clone, Default)]
+pub(super) struct Generation {
+    operators: std::rc::Rc<std::cell::Cell<usize>>,
+    memo_clause: Option<usize>,
+}
+impl Generation {
+    fn operator(&self) -> Result<(), String> {
+        let count = self.operators.get();
+        if count == 256 {
+            return Err("outcome relations: emitted composition operator count exceeds 256".into());
         }
+        self.operators.set(count + 1);
+        Ok(())
+    }
+
+    /// Fused scalar/ordered programs consume their entire emitted tree. Utility
+    /// replays must never use this path: their miss body is charged separately.
+    fn tree(&self, plan: &Plan) -> Result<(), String> {
+        self.operator()?;
         match &plan.op {
             Op::All(items) | Op::Any(items) => {
-                let mut index = 0;
-                while index < items.len() {
-                    visit(&items[index], repeats, count)?;
-                    index += if repeats {
-                        repeat_walk::length(&items[index..])
-                    } else {
-                        1
-                    };
+                for child in items {
+                    self.tree(child)?;
                 }
             }
-            Op::Not(child) => visit(child, repeats, count)?,
-            Op::Charge(_, child) => visit(child, repeats, count)?,
+            Op::Not(child) => self.tree(child)?,
+            Op::Charge(_, child) => self.tree(child)?,
             Op::Search(_, _, child, stop)
             | Op::Count {
                 rule: child, stop, ..
             } => {
-                visit(child, repeats, count)?;
+                self.tree(child)?;
                 if let Some(stop) = stop {
-                    visit(stop, repeats, count)?;
+                    self.tree(stop)?;
                 }
             }
             _ => {}
         }
         Ok(())
     }
-    let mut count = 0;
-    visit(plan, file_memo::needed(plan), &mut count)?;
-    Ok(count)
 }
 
 fn value(input: &Demand, alias: &str, slot: usize) -> String {
@@ -190,11 +191,13 @@ impl Sql {
         reached: &str,
     ) -> Result<Option<String>, String> {
         if let Op::Value(term) = &plan.op {
+            self.generation.operator()?;
             return Ok(Some(self.relation("guarded budgeted value",format!("SELECT d.*,v.truth AS tested,v.work AS remaining FROM {} d LEFT JOIN relation_value_budget({term},d.file,d.node,CASE WHEN {reached} THEN d.work END) v ON 1",state.name),true,"input state,tested outcome,remaining allowance")));
         }
         let Some((expression, node)) = Self::scalar(plan, state)? else {
             return Ok(None);
         };
+        self.generation.tree(plan)?;
         let source = if node {
             " CROSS JOIN node n ON n.file=d.file AND n.id=d.node"
         } else {
@@ -234,9 +237,10 @@ impl Sql {
     }
 
     fn emit(&mut self, plan: &Plan, input: &Demand) -> Result<Output, String> {
-        if self.memo_clause.is_none() && memo::region(plan) {
+        if self.generation.memo_clause.is_none() && memo::region(plan)? {
             return memo::shared(self, plan, input);
         }
+        self.generation.operator()?;
         let operator = match &plan.op {
             Op::Predicate(_) => "total predicate",
             Op::Unknown(_) => "unknown leaf",
@@ -275,7 +279,7 @@ impl Sql {
                 )
             }
             Op::Charge(utility, child) => {
-                if self.memo_clause.is_some() && child.reads_value() {
+                if self.generation.memo_clause.is_some() && child.reads_value() {
                     return self.memo_utility(*utility, child, input);
                 }
                 let (query, profile) = ordered::nested::program(
@@ -285,7 +289,7 @@ impl Sql {
                     "d.work>0",
                     &child.writes,
                     ("d.file", "d.node", "d.work-1"),
-                    self.memo_clause,
+                    self.generation.clone(),
                 )?;
                 let columns = fields(&child.writes, |slot| {
                     let index = child.writes.iter().position(|s| s == &slot).unwrap();
@@ -388,7 +392,7 @@ impl Sql {
                 continue;
             }
             if self.correlated {
-                let repeats = if self.memo_clause.is_some() {
+                let repeats = if self.generation.memo_clause.is_some() {
                     repeat_walk::length(&items[index..])
                 } else {
                     1
@@ -490,7 +494,7 @@ impl Sql {
                 continue;
             }
             if self.correlated {
-                let repeats = if self.memo_clause.is_some() {
+                let repeats = if self.generation.memo_clause.is_some() {
                     repeat_walk::length(&items[index..])
                 } else {
                     1
@@ -621,7 +625,7 @@ pub(super) fn compile(
         definitions: vec![],
         profile: vec![],
         correlated: false,
-        memo_clause: None,
+        generation: Generation::default(),
     };
     let roots = Demand {
         name: sql.relation(
@@ -666,7 +670,7 @@ pub(super) fn compile(
             "outcomeOutput":output.name,"outcomeDemand":roots.name,"outcomePayload":payload,
             "outcomes":{"false":0,"true":1,"unknown":2},"nativeComposition":false,
             "captures":observed.iter().map(|&id|json!({"name":slots[id].name,"slot":id,"kind":if slots[id].count {"count"} else {"node"}})).collect::<Vec<_>>(),
-            "relations":sql.profile,
+            "relations":sql.profile,"compositionOperators":[sql.generation.operators.get()],
             "limitations":["Native work and stack/depth budgets remain unproved.","Following values, traversal depth beyond four, recursion, enumeration, and full-file failure publication remain unproved."],
             "flags":["Ordered node-local capture programs admit at most 61 slots and Boolean depth 16; masks keep recursive state at ten columns.","Only total structural search plans may evaluate candidates before ordered reduction.","Counts use reached candidate visits and carry a native work allowance."]
         }),

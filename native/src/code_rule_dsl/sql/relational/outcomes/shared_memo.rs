@@ -8,36 +8,61 @@ mod nested_utility;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-fn calls(plan: &Plan, counts: &mut BTreeMap<usize, usize>) {
+type CallCounts = BTreeMap<usize, usize>;
+
+fn add_calls(counts: &mut CallCounts, other: CallCounts) -> Result<(), String> {
+    for (id, count) in other {
+        let total = counts.entry(id).or_default();
+        *total = total
+            .checked_add(count)
+            .ok_or("utility memo: logical call count overflow")?;
+    }
+    Ok(())
+}
+
+// A shared utility graph can represent exponentially many logical calls. Visit
+// each distinct plan once and combine exact multiplicities without expanding it.
+fn call_counts(plan: &Plan, cache: &mut BTreeMap<usize, CallCounts>) -> Result<CallCounts, String> {
+    let key = std::ptr::from_ref(plan) as usize;
+    if let Some(counts) = cache.get(&key) {
+        return Ok(counts.clone());
+    }
+    let mut counts = CallCounts::new();
     match &plan.op {
         Op::Charge(id, body) if body.reads_value() => {
-            *counts.entry(*id).or_default() += 1;
-            calls(body, counts);
+            counts.insert(*id, 1);
+            add_calls(&mut counts, call_counts(body, cache)?)?;
         }
         Op::All(items) | Op::Any(items) => {
             for item in items {
-                calls(item, counts);
+                add_calls(&mut counts, call_counts(item, cache)?)?;
             }
         }
-        Op::Not(child) => calls(child, counts),
+        Op::Not(child) => counts = call_counts(child, cache)?,
         _ => {}
     }
+    cache.insert(key, counts.clone());
+    Ok(counts)
+}
+
+fn calls(plan: &Plan, counts: &mut CallCounts) -> Result<(), String> {
+    add_calls(counts, call_counts(plan, &mut BTreeMap::new())?)
 }
 
 /// Direct siblings already have a cheaper specialization. A shared scope is
 /// necessary only when a utility occurs in different child subtrees, at least
 /// one of which is nested. Deeper sharing stays inside its own child program.
-pub(in super::super) fn region(plan: &Plan) -> bool {
+pub(in super::super) fn region(plan: &Plan) -> Result<bool, String> {
     if let Op::Charge(_, body) = &plan.op {
-        return body.uses_memo();
+        return Ok(body.uses_memo());
     }
     let (Op::All(items) | Op::Any(items)) = &plan.op else {
-        return false;
+        return Ok(false);
     };
     let mut seen = BTreeMap::<usize, bool>::new();
+    let mut cache = BTreeMap::new();
     for item in items {
-        let mut counts = BTreeMap::new();
-        calls(item, &mut counts);
+        let counts = call_counts(item, &mut cache)?;
         for id in counts.keys() {
             let nested = match &item.op {
                 Op::Charge(direct, body) => direct != id || body.uses_memo(),
@@ -46,31 +71,34 @@ pub(in super::super) fn region(plan: &Plan) -> bool {
             if let Some(previous) = seen.insert(*id, nested)
                 && (previous || nested)
             {
-                return true;
+                return Ok(true);
             }
         }
     }
-    false
+    Ok(false)
 }
 
-fn keys(plan: &Plan, slots: &mut Slots) {
+fn keys(plan: &Plan, slots: &mut Slots, seen: &mut BTreeSet<usize>) {
+    if !seen.insert(std::ptr::from_ref(plan) as usize) {
+        return;
+    }
     slots.extend(&plan.mentions);
     slots.extend(&plan.writes);
     match &plan.op {
         Op::All(items) | Op::Any(items) => {
             for child in items {
-                keys(child, slots);
+                keys(child, slots, seen);
             }
         }
-        Op::Not(child) => keys(child, slots),
-        Op::Charge(_, child) => keys(child, slots),
+        Op::Not(child) => keys(child, slots, seen),
+        Op::Charge(_, child) => keys(child, slots, seen),
         Op::Search(_, _, child, stop)
         | Op::Count {
             rule: child, stop, ..
         } => {
-            keys(child, slots);
+            keys(child, slots, seen);
             if let Some(stop) = stop {
-                keys(stop, slots);
+                keys(stop, slots, seen);
             }
         }
         _ => {}
@@ -161,10 +189,15 @@ impl Shared<'_> {
     ) -> Result<(String, Option<(usize, usize)>), String> {
         match &plan.op {
             Op::Charge(id, body) if body.uses_memo() && !self.memo.proven.contains_key(id) => {
+                self.sql.generation.operator()?;
                 self.utility(*id, body, guard)
             }
-            Op::All(items) | Op::Any(items) => self.boolean(plan, items, guard),
+            Op::All(items) | Op::Any(items) => {
+                self.sql.generation.operator()?;
+                self.boolean(plan, items, guard)
+            }
             Op::Not(child) => {
+                self.sql.generation.operator()?;
                 // Double negation changes neither outcomes nor charges. Bindings must
                 // still roll back when the grandchild can export any.
                 if let Op::Not(grandchild) = &child.op
@@ -206,7 +239,7 @@ impl Shared<'_> {
                     && body.uses_memo()
                 {
                     let mut skipped = BTreeMap::new();
-                    calls(body, &mut skipped);
+                    calls(body, &mut skipped)?;
                     for (id, count) in skipped {
                         *self.memo.remaining.get_mut(&id).expect("skipped utility") -= count;
                     }
@@ -375,10 +408,10 @@ pub(in super::super) fn compile(
     input: &Demand,
 ) -> Result<Output, String> {
     let mut slots = input.slots.clone();
-    keys(plan, &mut slots);
+    keys(plan, &mut slots, &mut BTreeSet::new());
     let mut memo = Local::new(&slots, &[]);
     memo.direct = false;
-    calls(plan, &mut memo.remaining);
+    calls(plan, &mut memo.remaining)?;
     let columns = fields(&slots, |s| value(input, "d", s));
     let demand = Demand {
         name: sql.relation(
@@ -412,4 +445,43 @@ pub(in super::super) fn compile(
         "k,work,truth,observable bindings",
     );
     Ok(Output { name })
+}
+
+#[test]
+fn memo_metadata_bounds_shared_graph_analysis() {
+    use std::rc::Rc;
+    fn plan(op: Op) -> Plan {
+        Plan {
+            effects: crate::code_rule_dsl::sql::relational::outcomes::effects::Effects::of(&op),
+            op,
+            mentions: Slots::from([3]),
+            writes: Slots::new(),
+            node_writes: Slots::new(),
+            walk_filter: None,
+        }
+    }
+    let mut body = Rc::new(plan(Op::Value(0)));
+    for id in 0..40 {
+        body = Rc::new(plan(Op::All(vec![
+            plan(Op::Charge(id, body.clone())),
+            plan(Op::Charge(id, body.clone())),
+        ])));
+    }
+    let mut cache = BTreeMap::new();
+    let counts = call_counts(&body, &mut cache).unwrap();
+    assert_eq!(counts[&0], 1_usize << 40);
+    assert_eq!(cache.len(), 121);
+    let mut slots = Slots::new();
+    let mut visited = BTreeSet::new();
+    keys(&body, &mut slots, &mut visited);
+    assert_eq!(slots, Slots::from([3]));
+    assert_eq!(visited.len(), 121);
+    for id in 40..usize::BITS as usize {
+        body = Rc::new(plan(Op::All(vec![
+            plan(Op::Charge(id, body.clone())),
+            plan(Op::Charge(id, body.clone())),
+        ])));
+    }
+    let error = call_counts(&body, &mut BTreeMap::new()).unwrap_err();
+    assert!(error.contains("logical call count overflow"));
 }

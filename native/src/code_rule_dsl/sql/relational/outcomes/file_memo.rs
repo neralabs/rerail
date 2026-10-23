@@ -15,7 +15,7 @@ impl Sql {
         body: &Plan,
         input: &Demand,
     ) -> Result<Output, String> {
-        let clause = self.memo_clause.expect("clause answer scope");
+        let clause = self.generation.memo_clause.expect("clause answer scope");
         let identity = format!(
             "m.clause IS {clause} AND m.utility IS {utility} AND m.file IS d.file AND m.node IS d.node"
         );
@@ -37,7 +37,7 @@ impl Sql {
             "d.hit IS NULL AND d.work>0",
             &body.writes,
             ("d.file", "d.node", "d.work-1"),
-            self.memo_clause,
+            self.generation.clone(),
         )?;
         let exports = body
             .writes

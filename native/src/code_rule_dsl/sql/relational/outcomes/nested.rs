@@ -23,7 +23,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     guard: &str,
     exports: &Slots,
     location: (&str, &str, &str),
-    memo_clause: Option<usize>,
+    generation: super::super::Generation,
 ) -> Result<(String, Value), String> {
     let (file, node, work) = location;
     // A node-local child need not allocate a demand/result CTE pair.
@@ -60,6 +60,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
             _ => None,
         };
         if let Some((term, prefix)) = local_value {
+            generation.tree(plan)?;
             return Ok((
                 format!(
                     "SELECT COALESCE(v.truth,0),COALESCE(v.work,{work}) FROM node probe LEFT JOIN relation_value_budget({term},{file},{node},CASE WHEN ({guard}) AND ({prefix}) THEN {work} END) v ON 1 WHERE probe.file={file} AND probe.id={node} AND ({guard})"
@@ -70,6 +71,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
         if !plan.fallible()
             && let Ok(test) = super::truth(plan, 0, "probe")
         {
+            generation.tree(plan)?;
             return Ok((
                 format!(
                     "SELECT {test},{work} FROM node probe WHERE probe.file={file} AND probe.id={node} AND ({guard})"
@@ -82,7 +84,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
         definitions: vec![],
         profile: vec![],
         correlated: true,
-        memo_clause,
+        generation,
     };
     let slots = if fresh {
         Slots::new()
@@ -154,7 +156,7 @@ pub(super) fn emit(
     // prefix can still prove a candidate false before any charge, value, or write
     // becomes observable. This physical proof does not skip charged count visits
     // or stop rules. Restrict the new shape to clauses with traversal memo scope.
-    let prefix_kinds = sql.memo_clause.is_some() && super::super::kinds(rule).is_some();
+    let prefix_kinds = sql.generation.memo_clause.is_some() && super::super::kinds(rule).is_some();
     let filter = if rule.walk_filter.is_some() {
         super::candidate_filter(rule, "candidate")
     } else if prefix_kinds {
@@ -246,7 +248,7 @@ pub(super) fn emit(
                 "w.work"
             },
         ),
-        sql.memo_clause,
+        sql.generation.clone(),
     )?;
     let (stop_sql, stop_profile) = if let Some(stop) = stop {
         program(
@@ -260,7 +262,7 @@ pub(super) fn emit(
             },
             &Slots::new(),
             ("w.file", "n.id", "w.work"),
-            sql.memo_clause,
+            sql.generation.clone(),
         )?
     } else {
         ("SELECT 0".into(), Value::Null)
@@ -416,7 +418,7 @@ impl Sql {
             guard,
             &child.writes,
             ("d.file", "d.node", "d.work"),
-            self.memo_clause,
+            self.generation.clone(),
         )?;
         let columns = child
             .writes

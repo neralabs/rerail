@@ -693,27 +693,48 @@ The narrow 32-call fixture drops from 64 body lowerings to two, and from 32 valu
 The 30 previously admitted profiles retain identical SQL and VM counts.
 The journal records semantic qualification, prior controls, and frozen workload results.
 
+## Composition admission follows emitted sharing: bounded outcome milestone
+
+The composition limit now follows the existing emitter's sharing decisions.
+Each clause receives one generation counter, shared by every nested child program.
+A proved replay consumes one operator. A generated miss body consumes its own operators.
+Scalar and ordered programs consume their emitted trees. The limit remains 256.
+The `compositionOperators` profile now reports generation work instead of the preceding conservative estimate.
+
+Metadata analysis visits each distinct plan once per analysis and combines exact logical call counts with checked arithmetic.
+A compact shared graph cannot force exponential metadata traversal before generation starts.
+Graphs that still expand excessively fail at the shared generation limit.
+Capture versions and local memo proofs retain their existing requirements.
+
+All six previously rejected direct 32-call fixtures now compile with 46 composition operators and nine terminals.
+The 18 profiles retain one outer miss body and one value-read site, with 12 typed return cells across two files.
+Native boundaries, unknown behavior, capture keys, failure publication, and nested sharing have comparison coverage.
+The journal records qualification and retained failures.
+
 ## Next implementation action
 
-Align the composition bound with the existing local utility memo planner.
-The current preflight still expands bodies for direct node-local calls, even when SQL generation can share their answers.
-Do not increase the bound to bypass this mismatch.
+Combine adjacent proved direct utility replays into one guarded cost calculation.
+Use the new direct-call profiles as the baseline. Admission is fixed, but SQL still grows with repeated replay barriers.
+At 32 true `all` calls, the current shape uses 38,320 bytes, 103 EXPLAIN materialization sites, and 7,773 VM instructions.
+At two calls, it uses 14,970 bytes, 43 materialization sites, and 3,303 instructions.
+False `all` still grows from 3,161 to 7,031 instructions despite stopping after its first call.
 
-Start with 32 direct `matches(v)` operands inside `all` or `any` on a single candidate.
-Use the same eight-regex utility body and value-bearing inner utility from this phase.
-Use a number root in `1;` for true and false results, and an identifier root in `x;` for unknown.
-First record the current composition-bound rejection and native charges.
-Expected boundaries are 96 for true `all`, three for true `any`, three for false `all`, and 96 otherwise.
-Each fixture must read one value per file.
+Start with adjacent identical, binding-free, node-local utility calls under `all` and `any`.
+Use the existing memo planner's replay proof. Utility identity alone is insufficient.
+Compile the first call once, retain its answer and measured cost, and replay the remaining reached calls with one calculation.
+Reuse the overflow-safe arithmetic from traversal repeat groups rather than introducing a second replay algorithm.
 
-Make admission use the same sharing decisions as SQL emission, including nested utility programs.
-Count emitted composition work through a shared generation budget, or a bounded schedule consumed by emission.
-Keep an early failure for a shared graph whose SQL still requires excessive expansion.
-Preserve the existing repeat proof, local memo keys, capture versions, failure tags, and work charges.
-Use one planner and no runtime options.
+For `all`, false and failed answers stop; true and noncapturing unknown answers continue.
+For `any`, true and failed answers stop; false and noncapturing unknown answers continue.
+Exhaustion must produce Work with zero remaining allowance, preserving the existing partial-publication contract.
+Update remaining-use accounting for both the grouped utility and its nested bodies. Retire typed answers at their last use.
+The generation budget must count the emitted group, while semantic work still counts every reached call.
 
-Profile 2/8/32 calls for both operators and all three outcomes.
-Require constant atomic-terminal registration and one emitted miss body per proved shared answer.
-Measure SQL bytes, materialization sites, typed return cells, VM instructions, and compiler time.
-Repeat the existing controls and frozen B023 gates.
+Repeat all 18 2/8/32 profiles and both sides of the native charge boundaries.
+Require one miss body, constant terminal count, constant typed returns, and effectively constant SQL and materialization counts across group sizes.
+Check signed-limit arithmetic, reached value faults, unknown fallbacks, multiple clauses, and multiple files.
+Retain existing emission for changed capture keys, distinct utility IDs, intervening effects, and calls across optional branches.
+Those cases must not acquire the adjacent replay proof.
+Repeat the 213 prior profiles and the frozen B023 gates, preserving any failures.
+
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

@@ -4798,3 +4798,68 @@ Artifacts:
 The next phase aligns composition admission with existing local memo sharing for direct node-local utility calls.
 The transition plan specifies the failing fixture, native charge boundaries, generation bound, and profile controls.
 The outcome kernel remains test-only. Production integration, native depth limits, deadlines, general recursive outcomes, and the complete-job 100-execution gate remain open.
+
+### 2026-10-23 — Composition admission follows emitted sharing
+
+The next phase replaces conservative body expansion with a shared generation budget.
+The limit remains 256 composition operators per clause. SQL generation now consumes that budget after selecting a miss body, replay, or scalar program.
+Every nested program shares its parent counter. A new clause receives a new counter.
+The existing memo planner still decides which answers can be reused. There is no second planner or runtime option.
+
+**Failure first.** The six 32-call fixtures use direct `matches(v)` operands under `all` or `any`.
+`v` contains eight regex predicates and a call to a value-bearing inner utility.
+All six fail the preceding composition preflight, although native execution reads one value per file.
+Native boundaries are 96 charges for true `all`, three for true `any`, three for false `all`, and 96 otherwise.
+The retained preflight includes both sides of each boundary and all six admission errors.
+
+**Generation bound.** A proved replay consumes one operator. A generated miss body consumes its own operators.
+Fused scalar and ordered programs consume their emitted trees. Traversal repeat groups retain their existing proof and single body.
+The `compositionOperators` profile now reports this generation count, replacing the conservative preflight estimate.
+Distinct lowering, SQL byte, capture width, traversal depth, and local answer-storage limits remain unchanged.
+A non-value utility graph still expands through nested child programs and fails at the shared generation limit.
+Capture-bearing calls do not acquire a replay proof from utility identity alone.
+
+The old preflight also bounded metadata traversal indirectly. Removing it required explicit handling of shared graphs.
+Call-count analysis now caches each distinct plan and combines exact logical multiplicities with checked arithmetic.
+Capture-key collection visits each distinct plan once. Neither analysis expands every logical call.
+A metadata test represents more than one trillion calls with 121 plan nodes, then checks count-overflow rejection.
+
+**Measured shape.** All 18 direct-call profiles now compile and match native execution.
+Each has two utility bodies, nine terminals, one outer miss body, and one value-read site.
+At 32 calls, composition uses 46 operators. Typed returns stay at 12 cells across two files for every 2/8/32 profile.
+True `all` uses 38,320 SQL bytes and 7,773 VM instructions at 32 calls.
+Unknown `any` uses 39,818 bytes and 7,729 instructions.
+These are newly admitted shapes, not a measured runtime speedup over a previously executing baseline.
+
+The profiles expose the next structural cost. Every static replay still creates its own projection and Boolean barrier.
+True `all` grows from 14,970 bytes and 3,303 instructions at two calls to 38,320 bytes and 7,773 instructions at 32.
+Even false `all` grows from 3,161 to 7,031 instructions, although its first false result stops semantic evaluation.
+The next action is to combine adjacent proved direct replays into one guarded cost calculation.
+It must use the existing memo proof, preserve failed and unknown outcomes, and keep exact charge exhaustion.
+
+**Qualification.** The complete relational suite passes 139 tests. Workspace publication, nine B023 fixtures, the adversarial test, and the frozen corpus bring the total to 151 unique tests.
+Six new tests include 538 native-comparison jobs. The full suite records 5,989 publication traces.
+The 195 preceding profiles retain identical SQL, VM counts, native outputs, charges, reached calls, and typed return counts.
+Formatting and both Clippy configurations pass: workspace all targets and `code-rule-profile` all targets.
+
+Clippy initially found duplicated expected-value branches in the new test helper.
+The cleanup simplifies that assertion and removes an unused fixture parameter. No engine source changes follow the measured B023 run.
+The evidence retains the initial diagnostic, source hashes, and executable hash. The cleaned tests pass a separate optimized build and all 139 relational tests.
+All 18 profiles retain identical SQL, VM counts, typed returns, native results, charges, and reached calls after the cleanup.
+The initial 32-call unknown-`any` compiler sample took 45.453458 ms. That outlier remains in the evidence; these samples do not establish production compiler latency.
+
+**Frozen B023.** Both gates pass in this run across 138 files and two matches.
+All three generated samples use 2,812,255 VM instructions.
+Generated median cold-kernel CPU time is 124,086,375 ns; reference median is 66,864,917 ns, a ratio of 1.8557769988707231.
+The query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+Previous CPU-gate failures remain recorded. Unchanged SQL and VM counts provide no evidence of a structural B023 speedup or stable CPU qualification.
+The CPU gate is not repeated for the test-helper cleanup.
+
+Artifacts:
+
+- `benchmark/relational-composition-budget.py` reproduces the 18 profiles and checks emitted misses, replays, terminal counts, and the generation bound.
+- `benchmark/sql-relational-composition-budget-evidence.json` records the failed preflight, native boundaries, traces, full EXPLAIN, controls, and measured source hashes.
+- `benchmark/sql-relational-composition-budget.sql` records 32 true conjunction calls.
+- `benchmark/sql-relational-composition-budget-unknown.sql` records 32 unknown alternatives.
+
+The bounded outcome kernel remains test-only. Production integration, general recursive outcomes, native depth limits, deadlines, and the whole cold-job 100-execution gate remain open.

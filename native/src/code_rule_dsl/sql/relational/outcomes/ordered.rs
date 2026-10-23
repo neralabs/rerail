@@ -131,6 +131,10 @@ impl Sql {
         {
             return nested::emit(self, axis, end, rule, stop, bounds, input);
         }
+        self.generation.tree(rule)?;
+        if let Some(stop) = stop {
+            self.generation.tree(stop)?;
+        }
         let strict = bounds.is_none() && !rule.writes.is_empty();
         let captured = if !rule.mentions.is_empty() || !rule.writes.is_empty() {
             Some(candidate::compile(rule, input, false, strict)?)

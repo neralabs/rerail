@@ -2,6 +2,7 @@
 //! SQL owns composition. Bindings are typed columns; unknown is never SQL NULL.
 mod budget_tests;
 mod capture_walk_tests;
+mod composition_budget_tests;
 mod effects;
 mod emit;
 mod lower;
@@ -83,7 +84,6 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
     let plan = lower.plan(&grammar.matcher)?;
     let mut profile = lower.profile(0);
-    profile["compositionOperators"] = serde_json::json!(emit::composition_operators(&plan)?);
     let (sql, mut relations) = if plan.fallible() {
         let (sql, mut relations) = emit::compile_jobs(
             &[(&plan, &lower.slots, grammar.applies, &root_filter(grammar))],
@@ -95,6 +95,7 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     } else {
         emit::compile(&plan, &lower.slots, grammar.applies)?
     };
+    profile["compositionOperators"] = relations["compositionOperators"][0].clone();
     relations["lowering"] = serde_json::json!([profile]);
     Ok(Compiled {
         sql,
@@ -142,8 +143,7 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         let terminal_base = terminals.len();
         lower.pure.program.terminals = terminals;
         let plan = lower.plan(&grammar.matcher)?;
-        let mut profile = lower.profile(terminal_base);
-        profile["compositionOperators"] = serde_json::json!(emit::composition_operators(&plan)?);
+        let profile = lower.profile(terminal_base);
         lowering.push(profile);
         terminals = lower.pure.program.terminals;
         let roots = root_filter(grammar);
@@ -156,6 +156,9 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         .collect();
     let (sql, mut relations) = emit::compile_jobs(&borrowed, work)?;
     relations["terminalOwners"] = serde_json::json!(terminal_owners);
+    for (index, profile) in lowering.iter_mut().enumerate() {
+        profile["compositionOperators"] = relations["compositionOperators"][index].clone();
+    }
     relations["lowering"] = serde_json::json!(lowering);
     Ok(Compiled {
         sql,
