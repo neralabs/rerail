@@ -740,6 +740,7 @@ dependencies = [
  "ast-grep-core",
  "blake3",
  "fancy-regex 0.17.0",
+ "gix",
  "globset",
  "libc",
  "memchr",

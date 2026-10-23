@@ -463,6 +463,49 @@ impl Rule {
         self.clauses.retain(|_| *s.next().unwrap());
         self.last_use = last_use(&self.clauses, self.inputs.len());
     }
+
+    /// Per clause, whether its per-file result is a function of the file's content alone, the
+    /// path aside where it only labels the result (a finding's, a failure's or a budget row's
+    /// path, the first column of a repository clause's input rows, which every input fills with
+    /// the path): the memo stores such a clause's result once per content (`crate::memo`). A
+    /// clause qualifies when no input it reads has a `paths` filter, a path projection or a
+    /// `filePath` term (matcher or physical plan), a regex clause reads the content without a
+    /// `paths` filter, a budget neither groups nor filters on the path column, and a relational
+    /// clause is a repository clause (a per-file one's stages may read `__path`). The rule's
+    /// scope selects clauses by path before the memo is read, so it is not part of the result.
+    pub fn content_pure(&self) -> Vec<bool> {
+        fn proj_path(p: &Proj) -> bool {
+            match p {
+                Proj::Path | Proj::Directory | Proj::Name | Proj::Stem => true,
+                Proj::Regex(src, ..) => proj_path(src),
+                Proj::Capture(_) | Proj::Text(_) | Proj::Kind(_) | Proj::Start(_) | Proj::End(_) | Proj::Line(_) => false,
+            }
+        }
+        let input_pure = |i: usize| {
+            let inp = &self.inputs[i];
+            inp.paths.is_none()
+                && !inp.projs.iter().any(proj_path)
+                && !ast::reads_path(&inp.query)
+                && inp.phys.as_ref().map_or(true, |p| !p.reads_path(&self.preds))
+        };
+        fn where_reads(w: &Where, col: usize) -> bool {
+            match w {
+                Where::Constant(_) => false,
+                Where::All(v) | Where::Any(v) => v.iter().any(|w| where_reads(w, col)),
+                Where::Not(w) => where_reads(w, col),
+                Where::Equal(a, b, _) | Where::Ordered(a, b, ..) => [a, b].iter().any(|o| matches!(o, Operand::Field(c) if *c == col)),
+            }
+        }
+        self.clauses
+            .iter()
+            .map(|c| match &c.kind {
+                Kind::ForbidAst { input } => input_pure(*input),
+                Kind::ForbidRegex(rc) => matches!(rc.source, RegexSource::Content) && rc.paths.is_none(),
+                Kind::Budget { input, group, filter, .. } => input_pure(*input) && !group.contains(&0) && !filter.as_ref().is_some_and(|w| where_reads(w, 0)),
+                Kind::Relational(plan) => !plan.per_file && plan.inputs.iter().all(|(_, i)| input_pure(*i)),
+            })
+            .collect()
+    }
 }
 
 /// Per input, the last clause that reads it.

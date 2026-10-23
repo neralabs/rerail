@@ -105,11 +105,11 @@ fn walk_ext(root: &Path, ext: &str) -> Vec<String> {
 }
 
 /// The clauses `rules` evaluate on `path`: every clause of every rule whose scope matches it.
-fn in_scope(rules: &[eval::Rule], path: &str) -> Vec<(usize, usize)> {
+pub(crate) fn in_scope(rules: &[eval::Rule], path: &str) -> Vec<(usize, usize)> {
     rules.iter().enumerate().filter(|(_, r)| r.scope.matches(path)).flat_map(|(ri, r)| (0..r.clauses.len()).map(move |ci| (ri, ci))).collect()
 }
 
-fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsize, spill_dir: &Path, wi: usize, memo_dir: Option<&Path>) -> Worker {
+fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsize, spill_dir: &Path, wi: usize, memo: Option<&memo::Memo>) -> Worker {
     let mut out = eval::Output::default();
     let mut repo = Sink { spill: crate::spill::Spill::new(spill_dir, wi), capture: None };
     let mut budget: eval::BudgetRows = BTreeMap::new();
@@ -125,8 +125,8 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
         let source_bytes = bytes.len() as u32;
         let mut stat = FileStat { index: index as u32, source_bytes, nodes: 0, fact_bytes: 0, read_ns, parse_ns: 0, extract_ns: 0, eval_ns: 0 };
         // The memo: the in-scope clauses it holds for this (content, path) are served from it.
-        let mut fm = memo_dir.map(|d| memo::FileMemo::load(d, blake3::hash(&bytes).as_bytes(), path));
         let scope = in_scope(rules, path);
+        let mut fm = memo.filter(|_| !scope.is_empty()).map(|m| m.file(*blake3::hash(&bytes).as_bytes(), path));
         let hits: Vec<(usize, usize)> = fm.as_ref().map_or_else(Vec::new, |m| scope.iter().copied().filter(|&(ri, ci)| m.has(&rules[ri].digests[ci])).collect());
         if let Some(m) = &fm {
             let rc: std::rc::Rc<str> = std::rc::Rc::from(path.as_str());
@@ -195,7 +195,7 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
                                 v[b0[&(ri, ci)]..].iter().map(|b| eval::BudgetRow { path: b.path.clone(), key: b.key.clone(), line: b.line, values: b.values.clone() }).collect()
                             }),
                         };
-                        m.put(&rule.digests[ci], &e);
+                        m.put(ri, ci, &rule.digests[ci], &e);
                     }
                     counts.clear();
                 }
@@ -209,7 +209,7 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
         repo.capture = None;
         out.skip.clear();
         if let Some(m) = fm {
-            m.save();
+            m.save(source.as_bytes());
         }
         stat.parse_ns = ns.parse;
         stat.extract_ns = ns.extract;
@@ -299,12 +299,12 @@ pub fn repo(args: &[String]) {
     let compile_ns = t_compile.elapsed().as_nanos() as u64;
     let compiled_rss = cur_rss().saturating_sub(rss_before_compile);
     let compiled_heap = heap_in_use().saturating_sub(heap_before_compile);
-    let memo_dir = memo::dir(args);
+    let memo = memo::store_path(args).map(|p| memo::Memo::open(p, &rules));
     let t_workers = Instant::now();
     let workers: Vec<Worker> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads).map(|wi| {
-            let (rules, paths, next, spill_dir, memo_dir) = (&*rules, &paths, &next, &spill_dir, memo_dir.as_deref());
-            s.spawn(move || worker(rules, paths, root, next, spill_dir, wi, memo_dir))
+            let (rules, paths, next, spill_dir, memo) = (&*rules, &paths, &next, &spill_dir, memo.as_ref());
+            s.spawn(move || worker(rules, paths, root, next, spill_dir, wi, memo))
         }).collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
@@ -406,7 +406,7 @@ pub fn repo(args: &[String]) {
         // The digest memo (`crate::memo`): per-file clause evaluations served by it and run, and
         // the files it served whole (not parsed); `dir` null with `--no-memo` or a mutant.
         "memo": {
-            "dir": memo_dir,
+            "dir": memo.as_ref().map(|m| &m.path),
             "lookups": tally.values().map(|t| t.0 + t.1).sum::<u64>(),
             "hits": tally.values().map(|t| t.0).sum::<u64>(),
             "evaluated": tally.values().map(|t| t.1).sum::<u64>(),
