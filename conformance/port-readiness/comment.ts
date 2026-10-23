@@ -94,11 +94,9 @@ const stepIndex = (rule: RuleVerdict): number => STEPS.findIndex((step) => step.
 /** A failing rule's failure, as the tables group it: its stage and what is wrong. */
 const failureOf = (rule: RuleVerdict): string => failureLabel(rule.stoppedAt!, rule.check);
 
-/** The distinct failures of failing `rules`, in the order a rule meets them, with their fixes. */
-function failuresOf(rules: RuleVerdict[]): { label: string; fix: string }[] {
-  const seen = new Map<string, string>();
-  for (const rule of [...rules].sort((a, b) => stepIndex(a) - stepIndex(b))) seen.set(failureOf(rule), failurePoint(rule.stoppedAt!, rule.check).fix);
-  return [...seen].map(([label, fix]) => ({ label, fix }));
+/** The distinct failures of failing `rules`, in the order a rule meets them. */
+function failuresOf(rules: RuleVerdict[]): string[] {
+  return [...new Set([...rules].sort((a, b) => stepIndex(a) - stepIndex(b)).map(failureOf))];
 }
 
 /**
@@ -171,14 +169,14 @@ function candidatePack(pack: string, rules: RuleVerdict[], origins: string[], { 
     ])),
     ...(failures.length === 0
       ? []
-      : ["", ...table(["Fails because", ...origins], failures.map(({ label }) => [label, ...origins.map((origin) => {
+      : ["", ...table(["Fails because", ...origins], failures.map((label) => [label, ...origins.map((origin) => {
           const count = failing.filter((rule) => failureOf(rule) === label && originOf(rule) === origin).length;
           return count === 0 ? "" : String(count);
         })]))]),
     ...unjudgedLines(failing.filter((rule) => UNJUDGED.includes(rule.stoppedAt!)), why),
     ...(!limits.candidateLines || failing.length === 0
       ? []
-      : ["", ...details(`Each failing ${pack} candidate (${failing.length})`, failures.flatMap(({ label }) => [
+      : ["", ...details(`Each failing ${pack} candidate (${failing.length})`, failures.flatMap((label) => [
           `**${label}**`,
           "",
           ...failing.filter((rule) => failureOf(rule) === label).map((rule) => `- ${ruleName(rule)}: ${why(rule.why)}`),
@@ -190,7 +188,6 @@ function candidatePack(pack: string, rules: RuleVerdict[], origins: string[], { 
 function candidateSection(summary: Summary, render: Render): string[] {
   const candidates = summary.rules.filter((rule) => rule.location === "candidate");
   const ready = summary.promotable.length;
-  const failures = failuresOf(candidates.filter((rule) => rule.stoppedAt !== null));
   return [
     `### Candidate Rule Summary: ${plural(candidates.length, "candidate")}, 🟢 ${ready} ready to promote`,
     "",
@@ -203,7 +200,6 @@ function candidateSection(summary: Summary, render: Render): string[] {
           "",
         ]),
     ...byPack(candidates).flatMap(({ pack, rules, origins }) => candidatePack(pack, rules, origins, render)),
-    ...(failures.length === 0 ? [] : details("How to fix each failure", failures.map(({ label, fix }) => `- **${label}:** ${fix}.`))),
   ];
 }
 

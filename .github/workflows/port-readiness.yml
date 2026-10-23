@@ -443,7 +443,9 @@ jobs:
   report:
     name: Port readiness report
     needs: [plan, gates, conformance]
-    if: always()
+    # Not when the run was cancelled: a newer push to the pull request replaced it (ci.yml's cancel-in-progress), and its
+    # cancelled legs would read as missing reports. The newer run posts the comment.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Writing pull request comments: the results comment below. The callers grant the same.

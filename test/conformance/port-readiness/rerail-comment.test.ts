@@ -103,10 +103,7 @@ test("the candidate rule summary lists the candidates ready to promote, then eac
   assert.match(python, /^Not judged against upstream:\n\n- `ruff-g`: the fixtures are GPL-derived$/mu);
   // Every candidate of complexity is ready: no failure table.
   assert.doesNotMatch(block(section, "complexity: 1"), /Fails because/u);
-  // Each failure that occurs, with its fix, once.
-  const fixes = block(section, "How to fix each failure");
-  assert.match(fixes, /^- \*\*Conformance: Flags nothing in its test fixtures:\*\* add a fixture it should flag, or `examples` in `pack\.json`\.$/mu);
-  assert.equal(fixes.match(/^- /gmu)?.length, 5);
+  assert.doesNotMatch(text, /How to fix/u);
   // The comment names no failing candidate; the job summary does.
   assert.doesNotMatch(text, /Each failing/u);
 });

@@ -251,12 +251,11 @@ On a pull request, CI posts the results as one comment. It says only what a merg
    shape: its candidates by origin (ready, failing conformance, failing port readiness, total), and why they fail, one
    row per failure and one column per origin. Under it, the candidates no port readiness gate could judge: each port
    `origins.json` declares that no `conformance.json` entry maps yet, with the reason its `origins.json` entry gives,
-   and each linter not set up yet. A collapsed "How to
-   fix each failure" ends the section.
+   and each linter not set up yet.
 
 A failure is named by the check that failed, in plain words, not by the gate or check id: "Conformance: Flags code its
 test fixtures say is fine", "Port readiness: Doesn't check every file type upstream checks"
-(`conformance/port-readiness/failure-points.ts`, with each failure's fix).
+(`conformance/port-readiness/failure-points.ts`). A blocker's line also gives the fix.
 
 No table is wider than its origins, so nothing scrolls sideways. A new run collapses the earlier comments as outdated,
 so the pull request keeps its history. The comment stays under GitHub's size limit by capping its lists; the job
