@@ -86,7 +86,7 @@ test.describe("Settings over a repo with history", () => {
 test.describe("Settings over several repos", () => {
   test("lists every repo with its own rule count, and a switch only where it has rules", async ({ page, rerail }) => {
     const { origin, manifest } = await rerail.scenario("multi-repo");
-    // A direct load of #settings: no other view has polled the rules first (NER-2031).
+    // A direct load of #settings: no other view has polled the rules first, and the counts must still be right.
     await page.goto(await rerail.dashboard("multi-repo", { hash: "settings" }));
 
     await expect(page.locator("#content [data-repo]")).toHaveCount(manifest.repositories.length);

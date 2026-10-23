@@ -1,4 +1,4 @@
-/** E711 guidance must preserve the condition's polarity, including reversed and parenthesized operands (NER-2036). */
+/** E711 guidance must preserve the condition's polarity, including reversed and parenthesized operands. */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";

@@ -514,8 +514,6 @@ export const repositoryOperations: readonly Operation[] = [
             packs: add.filter(entry => entry.sourceKind === "pack").map(entry => ({ packId: entry.sourceId, folder: entry.folder })),
             rules: add.filter(entry => entry.sourceKind !== "pack"),
             settings,
-            // `/api` writes are the person's in the dashboard, where set-up's review sets the repository up.
-            inDashboard: caller.kind === "person",
           });
         } else {
           for (const entry of add) addAttachment(tx, { repositoryKey, ...entry });

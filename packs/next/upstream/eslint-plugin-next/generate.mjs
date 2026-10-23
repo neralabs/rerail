@@ -91,7 +91,7 @@ const RULE_IDS = RULES.map(rule => `@next/next/${rule}`);
  * `errors` is how many findings the case's own rule must report, checked against the recording as a test's count is.
  */
 const AUTHORED = [
-  // A bare `&` in a JSX attribute string is text; the vendored TSX grammar once read it as a parse error (NER-1760).
+  // A bare `&` in a JSX attribute string is text; the vendored TSX grammar once read it as a parse error.
   {
     rule: "no-img-element",
     name: "bare-ampersand",

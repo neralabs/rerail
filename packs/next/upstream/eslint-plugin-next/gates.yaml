@@ -1,5 +1,5 @@
 adapter: eslint
-# @next/eslint-plugin-next's documents in rerail's next pack (NER-1741).
+# @next/eslint-plugin-next's documents in rerail's next pack.
 rerail:
   pack: next
   project: next.js

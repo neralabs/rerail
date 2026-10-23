@@ -601,8 +601,8 @@ fn pack_rule_lines(document: &str, source: &str) -> Vec<u64> {
         .collect()
 }
 
-/// The templates tree-sitter-blade read as one error region (NER-1793, NER-1794) or as text
-/// (NER-1795): a directive inside an element, in a start tag or an attribute value, and an echo
+/// The templates tree-sitter-blade read as one error region or as text
+///: a directive inside an element, in a start tag or an attribute value, and an echo
 /// in `<script>`. Forte reads each as Blade.
 #[test]
 fn directives_in_elements_tags_and_scripts_are_reported() {

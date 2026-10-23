@@ -180,7 +180,10 @@ jobs:
               {"pack": "php", "tool": "psalm"},
               {"pack": "blade", "tool": "tlint"},
               {"pack": "blade", "tool": "blade-parser"},
-              {"pack": "blade", "tool": "bladestan"}
+              {"pack": "blade", "tool": "bladestan"},
+              {"pack": "sql", "tool": "sqlfluff"},
+              {"pack": "rust", "tool": "clippy"},
+              {"pack": "vue", "tool": "eslint-plugin-vue"}
             ]
         run: |
           set -euo pipefail
@@ -325,6 +328,30 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           save-cache: ${{ needs.authorize.outputs.pr == '' }}
+
+      # Clippy's recorder runs the rustup toolchain its runtime pins (runtimes/<runtime>/rust-toolchain.toml: an exact
+      # release with clippy), and refuses any other build; no other leg needs Rust.
+      - id: clippy-toolchain
+        name: Read the Rust toolchain Clippy's runtime pins
+        if: matrix.tool == 'clippy'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
+          [ -n "$runtime" ] || { echo "::error::packs/$PACK/upstream/$TOOL/gates.yaml has no upstream.runtime line this step reads"; exit 1; }
+          toolchain="conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml"
+          channel="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$toolchain")"
+          [ -n "$channel" ] || { echo "::error::$toolchain has no channel line this step reads"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain with clippy
+        if: matrix.tool == 'clippy'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
+          components: clippy
 
       # Restored only here; saved below only by a run that took nothing from a pull request. A cached runtime is trusted
       # on the `.tree.sha256` stored beside it in the same cache. upload/ is left out — `recordings/*` lists the

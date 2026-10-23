@@ -49,8 +49,11 @@ const EVERY_LEG: Leg[] = [
   { pack: "python", tool: "ruff" },
   { pack: "react", tool: "eslint-plugin-react" },
   { pack: "react", tool: "eslint-plugin-react-hooks" },
+  { pack: "rust", tool: "clippy" },
+  { pack: "sql", tool: "sqlfluff" },
   { pack: "typescript", tool: "eslint-plugin-vitest" },
   { pack: "typescript", tool: "typescript-eslint" },
+  { pack: "vue", tool: "eslint-plugin-vue" },
 ];
 
 const TOOL_PACKS = gatedToolPacks();

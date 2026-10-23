@@ -1,5 +1,5 @@
 /**
- * eslint-no-unused-vars (packs/javascript/candidates/) must apply ESLint's default `args: "after-used"` (NER-1839).
+ * eslint-no-unused-vars (packs/javascript/candidates/) must apply ESLint's default `args: "after-used"`.
  * With after-used, ESLint does not report a parameter that comes before the last parameter the function uses: removing
  * it would shift the next argument into its slot. The port reported those leading parameters, and an agent told to
  * remove one breaks every call site. Parameters after the last used one are still reported, as is the unused function.
@@ -57,7 +57,7 @@ const CASES: ReadonlyArray<[string, string, string[]]> = [
   ["a parameter before a used rest parameter", "export function q(a, ...xs) { return xs; }\n", []],
 ];
 
-describe("eslint-no-unused-vars args after-used (NER-1839)", async () => {
+describe("eslint-no-unused-vars args after-used", async () => {
   const compiled = await compile();
   it.each(CASES)("%s", (_name, source, expected) => {
     expect(reported(compiled, source)).toEqual(expected);

@@ -20,9 +20,9 @@ gates and are only reported.
 
 A rule's verdict is the first blocking gate it fails. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
-fix belongs in the engine (NER-1764). It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
-`real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens and never written by
-the gates (docs/port-readiness.md, "Goldens").
+fix belongs in the engine. It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
+`real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens or, where NRV pins no tool, found by
+rerail's own real-code run (each goldens.tsv's source line says which), and never written by the gates (docs/port-readiness.md, "Goldens").
 
 ## Where the code comes from
 
@@ -31,14 +31,13 @@ The gates and the recorder's adapters are adapted, not copied, from nera-rule-va
 `e8727c77d0464bd33b1890e56dcf322119911a34`, plus two commits made on its `dbf1a0cdf733b6b6da0ed709b644afbe715ae9b4`,
 `690f7223f7d62d23cb2c1cdfc2e910969b18d1e5` (Gate 6 skips type-checked rules, and a file that changed is a new golden)
 and `77c266a2545c3fb39c4f9707c0c1c95f20d82cf2` (a golden the engine could not fully read is an engine gap; here the
-blocking `engine-reads-goldens`). Both are in NRV's GitHub repository: `690f722` on branch `claude/ner-1762-gate-harness`
-and `77c266a` on branch `ner-1762-engine-gaps`.
+blocking `engine-reads-goldens`). Both commits are in NRV's GitHub repository.
 
 | NRV `src/validation/` | Here |
 | --- | --- |
 | `gates/compile.ts`, `generality.ts`, `size.ts`, `upstream-tests.ts`, `provenance.ts` | `checks/loads.ts`, `not-overfit.ts`, `compact.ts`, `matches-upstream-tests.ts`, `upstream-status.ts` |
 | `gates/real-code.ts` | none: Gate 6 runs in NRV only, and its goldens are imported |
-| `adapters/`, `languages/`, `runtimes.ts` | `conformance/recorders/port-readiness/adapters/` (`eslint_*` files are `eslint-*`), `languages/`, `runtimes.ts` |
+| `adapters/`, `languages/`, `runtimes.ts` | `conformance/recorders/port-readiness/adapters/` (`eslint_*` files are `adapters/eslint/eslint-*`), `languages/`, `runtimes.ts` |
 | `pack.ts`; `cli.ts`, `corpus.ts`, `engine.ts`, `goldens.ts`, `policy-literals.ts`, `report.ts`, `run.ts`, `spans.ts`, `types.ts` | `manifest.ts`; the file of the same name, most of them rewritten |
 | `rerail.ts` | none: the gates read this checkout, not a pinned rerail commit |
 
@@ -90,7 +89,7 @@ request's cache to that pull request, so main reads only what main's pushes and 
 ```
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
 packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording/store.ts)
-packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id, imported from NRV
+packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id, and the real-code run that found them
 
 .rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
   recording.json                                upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)
@@ -104,7 +103,7 @@ whose sha256 is not the one the lock names fails the run.
 `npm run port-readiness:record -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/) writes the recordings. A tool-pack
 check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
 recording is stale when pins disagree between `gates.yaml`, `recording.lock`, `recording.json` and `conformance.json`, a
-runtime's pins (`package.json`, `pyproject.toml`, `.python-version`, `composer.json`, `.php-version`, PHP's `extensions.txt`) differ from the ones the lock records, the kept
+runtime's pins (`package.json`, `pyproject.toml`, `.python-version`, `composer.json`, `.php-version`, PHP's `extensions.txt`, `rust-toolchain.toml`) differ from the ones the lock records, the kept
 licence (every `LICENSE` or `LICENCE` file under `licenses/<project>/`, in any letter case and with any extension, read in name order) is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
 recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
@@ -120,10 +119,10 @@ tool-pack listed there is still validated in nera-rule-validation until its reco
 and is not frozen.
 
 `ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (complexity).
-It was derived once, on branch `ggiangi/ner-1699-rule-gates-in-ci` from main `d81f2749`, as the sorted `rules[].id` of
+It was derived once, from main `d81f2749`, as the sorted `rules[].id` of
 each of those packs' `pack.json`; php and blade left it when main moved all their rules to `candidates/`, node when its
-22 rules moved there too (NER-1897), and sql and vue
-ship none. Gating is decided per (pack, tool), by each shipped rule's
+22 rules moved there too, and sql, rust and vue shipped none before their tool-packs were gated. Gating is
+decided per (pack, tool), by each shipped rule's
 `conformance.json` entry: a rule of a tool with a `gates.yaml` is judged, a rule of a pending tool is pending, and any
 other shipped rule, in a gated pack too, must be on the frozen list. A shipped rule that must be and is not listed fails
 ("keep it in candidates/ until the tool has a gates.yaml"); a listed rule no longer shipped, or whose tool is gated or

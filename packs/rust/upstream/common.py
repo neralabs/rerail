@@ -120,8 +120,9 @@ def relative_path(file_name: str, root: pathlib.Path) -> str | None:
 def run_corpus(root: pathlib.Path, name: str, target_dir: pathlib.Path, level: str) -> dict:
     """`cargo +1.99.0 clippy --keep-going --locked --workspace --all-targets --all-features --message-format=json
     -- <level> clippy::<lint>...` over corpus `name` (RUSTFLAGS untouched, CARGO_TARGET_DIR outside the corpus), so
-    no tokio_unstable or other `--cfg`. Returns the pack lints' findings (deduplicated across the units that compile
-    a file twice, primary span inside the corpus), the corpus files no compiled unit read (from the units' dep-info),
+    no tokio_unstable or other `--cfg`. Returns the pack lints' findings (one per distinct primary span, start and end,
+    so the units that compile a file twice report it once; primary span inside the corpus), the corpus files no
+    compiled unit read (from the units' dep-info),
     the units that failed to compile, and the findings outside the corpus that were dropped."""
     declared = corpus(name)
     check_head(root, declared["commit"])
@@ -164,7 +165,7 @@ def run_corpus(root: pathlib.Path, name: str, target_dir: pathlib.Path, level: s
         rule = code[len("clippy::"):]
         primary = next(span for span in diagnostic["spans"] if span["is_primary"])
         path = relative_path(primary["file_name"], root)
-        key = (rule, path, primary["line_start"], primary["column_start"])
+        key = (rule, path, primary["line_start"], primary["column_start"], primary["line_end"], primary["column_end"])
         if path is None:
             outside.add((rule, primary["file_name"], primary["line_start"], primary["column_start"]))
             continue

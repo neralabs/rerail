@@ -40,7 +40,7 @@ export function renderNow() {
 }
 
 /* ---------- toast, clipboard, theme ----------
- * One toast at a time (NER-2012). A success stays long enough to read, one with an action (Undo) a little longer;
+ * One toast at a time. A success stays long enough to read, one with an action (Undo) a little longer;
  * a failure stays until it is dismissed with its ✕, so a person who looked away still learns the change did not save. */
 
 const TOAST_MS = 6000;

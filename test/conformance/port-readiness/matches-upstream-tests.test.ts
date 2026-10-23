@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 
 import type { CompiledPolicy, Engine, EngineEvaluation } from "../../../conformance/port-readiness/engine.js";
-import { classifyParsers, staysSilentCheck, provenGaps, matchesUpstreamTestsGate, type ProvenGap } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
+import { classifyParsers, staysSilentCheck, provenGaps, matchesUpstreamTestsGate, outsideInScope, type ProvenGap } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
 import type { KnownGap, PackAdapter, ParserVerdict, Span, UpstreamCase } from "../../../conformance/port-readiness/types.js";
 
 // Sources are single lines of ASCII, so a byte offset is the column.
@@ -125,6 +125,38 @@ test("upstream findings in a file the rule cannot reach are a difference, not a 
   assert.equal(result.cases[1]!.reason, "RERAIL has no dialect for files without an extension, but upstream reports 1 finding(s) in it");
   assert.equal(result.totals.missing, 3);
   assert.equal(result.checks[0]!.ok, false);
+});
+
+test("a case of a file type outside the tool-pack's rerail.in_scope is not scored, and is counted apart", () => {
+  const narrowed = { ...adapter, inScopeTypes: [".ts"] } as PackAdapter;
+  const cases = [
+    upstreamCase("r/a.js", [span(1, 2)]),
+    upstreamCase("r/b.JS", []),
+    // A script case at a .vue name is read in the type its parser read it in.
+    upstreamCase("r/c.ts", [span(1, 2)], { parsedAs: ".js" }),
+    upstreamCase("r/d.ts", [span(1, 2)]),
+    upstreamCase("r/e.ts", []),
+  ];
+  const result = matchesUpstreamTestsGate(engine, narrowed, "r", compiled({ "r/d.ts": { spans: [[1, 2]] } }), cases, new Map());
+  assert.deepEqual(result.cases.map((testCase) => testCase.status), ["not-scored", "not-scored", "not-scored", "agree", "agree"]);
+  assert.deepEqual(result.cases.map((testCase) => testCase.reason).slice(0, 3), [
+    "outside the tool-pack's rerail.in_scope (.js)",
+    "outside the tool-pack's rerail.in_scope (.js)",
+    "outside the tool-pack's rerail.in_scope (.js)",
+  ]);
+  assert.deepEqual(result.cases.map(outsideInScope), [true, true, true, false, false]);
+  assert.deepEqual(result.totals, { scoredCases: 2, expected: 1, matched: 1, missing: 0, extra: 0, startsMatched: 1 });
+  assert.deepEqual(result.checks.map((check) => check.ok), [true, true]);
+  assert.equal(result.checks[0]!.detail, "identical on 2 scored file(s); 3 case(s) outside the tool-pack's rerail.in_scope not scored");
+
+  // fires and stays-silent count in-scope cases alone: out-of-scope agreement is no evidence.
+  const outOnly = matchesUpstreamTestsGate(engine, narrowed, "r", compiled({}), cases.slice(0, 3), new Map());
+  assert.equal(outOnly.checks[1]!.ok, false);
+  assert.equal(staysSilentCheck(outOnly.cases, []).ok, false);
+
+  // Without in_scope, the same .js case is the difference it always was.
+  const unnarrowed = matchesUpstreamTestsGate(engine, adapter, "r", compiled({}), cases.slice(0, 1), new Map());
+  assert.equal(unnarrowed.cases[0]!.status, "mismatch");
 });
 
 // This engine fails to parse anything as .ts and parses everything as .tsx.

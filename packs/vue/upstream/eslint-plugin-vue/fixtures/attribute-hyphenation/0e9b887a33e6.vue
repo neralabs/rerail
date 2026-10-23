@@ -1,0 +1,7 @@
+
+        <template>
+          <custom data-id="foo" aria-test="bar" slot-scope="{ data }" custom-hyphen="foo" second-custom="baz" third-custom="bar">
+            <a onClick="" my-prop="prop"></a>
+          </custom>
+        </template>
+      

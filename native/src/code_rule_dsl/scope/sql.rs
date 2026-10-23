@@ -29,7 +29,9 @@
 //! queries. That binding is no RF01 target: SQLFluff resolves a CTE only as a `FROM` table, so
 //! `c.a` resolves through a relation over `c` and is unresolved without one. A relation over the
 //! CTE's unqualified name uses it, as a qualifier naming it does; a DML target is used by its own
-//! statement.
+//! statement. A `CREATE POLICY` or `ALTER POLICY` binds its table in a block around its `USING` and
+//! `WITH CHECK` expressions, so the queries nested in them resolve a qualifier naming it, as RF01's
+//! `_get_implicit_targets` adds the policy's table on PostgreSQL.
 //!
 //! `visit` puts the blocks, bindings and qualified references into the file's `ScopeTable` (each
 //! block a `ScopeKind::Query` scope, each binding keyed by its folded name) and keeps the
@@ -53,6 +55,9 @@ enum BlockKind {
     Insert,
     /// The wrapper of a `WITH` statement: it binds the CTE names.
     With,
+    /// A `CREATE POLICY` or `ALTER POLICY`: it binds the policy's table, which its `USING` and
+    /// `WITH CHECK` expressions and the queries nested in them see.
+    Policy,
 }
 
 /// What a binding names.
@@ -65,7 +70,7 @@ enum BindingKind {
     /// A derived table (a subquery or `VALUES`) or anything else a relation can be.
     Derived,
     /// A DML target (`DELETE FROM t`, `INSERT INTO t`; the grammar writes `UPDATE t`'s as a
-    /// relation) or a CTE name.
+    /// relation), a policy's table or a CTE name.
     Named,
 }
 
@@ -455,7 +460,8 @@ impl Reader {
     /// beside the keyword node rather than inside it. An `INSERT`'s `ON CONFLICT` or `ON DUPLICATE
     /// KEY UPDATE` action, from its `ON` on, is the insert's again, not its `SELECT`'s: SQLFluff
     /// 4.4.0 RF01 (dialect postgres) reports no qualifier there, neither `EXCLUDED.y` nor an
-    /// unknown `zz.y`, as for `INSERT ... VALUES`.
+    /// unknown `zz.y`, as for `INSERT ... VALUES`. A `CREATE POLICY` or `ALTER POLICY` statement
+    /// is a block of its own, around its expressions.
     fn read<D: Doc>(
         &mut self,
         root: &Node<'_, D>,
@@ -469,6 +475,8 @@ impl Reader {
             let has_cte = children.iter().any(|child| child.kind() == "cte");
             let block = if has_cte {
                 Some(self.open(block, BlockKind::With, node.range()))
+            } else if is_policy(&kind, &children) {
+                Some(self.open(block, BlockKind::Policy, node.range()))
             } else {
                 block
             };
@@ -565,6 +573,14 @@ impl Reader {
                 }
             }
             "field" | "all_fields" => self.read_reference(node, kind, children, block),
+            // SQLFluff 4.4.0 RF01 (`_get_implicit_targets`, dialect postgres): a query inside a
+            // `CREATE POLICY` or `ALTER POLICY` statement resolves against the policy's table, the
+            // statement's first table reference, besides its own.
+            _ if is_policy(kind, children) => {
+                if let Some(table) = children.iter().find(|c| c.kind() == "object_reference") {
+                    self.bind_table(node, table, None, BindingKind::Named, block);
+                }
+            }
             _ => {}
         }
     }
@@ -602,9 +618,9 @@ impl Reader {
         });
     }
 
-    /// A table relation (or a DML target, `kind` `Named`, at `site`), with its alias if it has
-    /// one: it binds the alias, else the last part of the name, and always the qualified name
-    /// (RF01's `_alias_info_as_tuples`).
+    /// A table relation (or a DML target or policy table, `kind` `Named`, at `site`), with its
+    /// alias if it has one: it binds the alias, else the last part of the name, and always the
+    /// qualified name (RF01's `_alias_info_as_tuples`).
     fn bind_table<'a, D: Doc>(
         &mut self,
         site: &Node<'_, D>,
@@ -702,6 +718,16 @@ fn node_is_alias<D: Doc>(node: &Node<'_, D>, candidate: &Node<'_, D>) -> bool {
         .is_some_and(|alias| alias.range() == candidate.range())
 }
 
+/// Whether a node of `kind` with `children` is a `CREATE POLICY` (`create_policy`) or an `ALTER
+/// POLICY` (the `alter_object` that starts `ALTER POLICY`).
+fn is_policy<D: Doc>(kind: &str, children: &[Node<'_, D>]) -> bool {
+    kind == "create_policy"
+        || (kind == "alter_object"
+            && children
+                .get(1)
+                .is_some_and(|child| child.kind() == "keyword_policy"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,6 +766,8 @@ mod tests {
     }
 
     const QUOTED_CASE: &str = "recorded under ansi, where a naked identifier folds to upper case so `a` matches `\"A\"`; the scope folds as PostgreSQL does (lower case), and SQLFluff run with dialect postgres reports this AL05 too (checked); `sameFindings` is false in fixtures.cases.json";
+
+    const SQLITE_TRIGGER: &str = "sqlite-only: a SQLite trigger body (`CREATE TRIGGER x AFTER DELETE ON y BEGIN SELECT ... END`) is no PostgreSQL statement, which runs a trigger's function; the grammar reads the trigger head as an ERROR and the body's `SELECT` as a statement of its own, so the `old`/`new` row that SQLFluff's sqlite RF01 adds as an implicit target (`_get_implicit_targets`) is unresolved there";
 
     /// Every difference between the recording and the scope: (path, rule, line, column, kind, reason).
     const MISMATCHES: &[(&str, &str, u64, u64, Mismatch, &str)] = &[
@@ -802,26 +830,10 @@ mod tests {
         (
             "ansi/RF01/test_fail_redundantly_bracketed_join_target_unknown_table.sql",
             "AL05",
-            4,
-            25,
+            2,
+            15,
             Mismatch::Extra,
-            "grammar shape: `JOIN ((b JOIN c ON b.id = c.id))` parses with ERROR nodes and `c.id` is a bare object_reference inside one, not a field, so `c` looks unused",
-        ),
-        (
-            "ansi/RF01/test_pass_redundantly_bracketed_join_target_alias.sql",
-            "AL05",
-            4,
-            25,
-            Mismatch::Extra,
-            "grammar shape: the same redundantly bracketed join as above",
-        ),
-        (
-            "postgres/RF01/test_pass_postgres_create_policy_using_target_table.sql",
-            "RF01",
-            8,
-            23,
-            Mismatch::Extra,
-            "grammar shape: `CREATE POLICY ... ON table_1 USING (...)` parses as ERROR plus a bogus select, so the policy's target table (RF01's implicit target, `_get_implicit_targets`) is not bound",
+            "grammar gap: the grammar reads no redundantly bracketed join target (`INNER JOIN ((b JOIN c ON b.id = c.id)) ON a.id = b.id`), which PostgreSQL accepts; the join from its `INNER` to the outer `ON` is an ERROR outside the statement, so the outer condition's `a.id` is no reference and `a` looks unused",
         ),
         (
             "sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql",
@@ -838,6 +850,38 @@ mod tests {
             17,
             Mismatch::Extra,
             "sqlite-only: the alias is used by the string-literal qualifier above, which the grammar does not read",
+        ),
+        (
+            "sqlite/RF01/test_sqlite_create_trigger_after_delete_reference.sql",
+            "RF01",
+            5,
+            16,
+            Mismatch::Extra,
+            SQLITE_TRIGGER,
+        ),
+        (
+            "sqlite/RF01/test_sqlite_create_trigger_after_insert_reference.sql",
+            "RF01",
+            5,
+            16,
+            Mismatch::Extra,
+            SQLITE_TRIGGER,
+        ),
+        (
+            "sqlite/RF01/test_sqlite_create_trigger_after_update_reference.sql",
+            "RF01",
+            5,
+            16,
+            Mismatch::Extra,
+            SQLITE_TRIGGER,
+        ),
+        (
+            "sqlite/RF01/test_sqlite_create_trigger_after_update_reference.sql",
+            "RF01",
+            5,
+            27,
+            Mismatch::Extra,
+            SQLITE_TRIGGER,
         ),
     ];
 
@@ -950,6 +994,25 @@ mod tests {
         assert!(read_scopes(source).unresolved().is_empty());
         let source =
             "DELETE FROM s.t AS d WHERE EXISTS (SELECT 1 FROM u WHERE u.k = d.k AND w.k = 1)";
+        assert_eq!(read_scopes(source).unresolved(), vec![at(source, "w", 0)]);
+    }
+
+    /// SQLFluff 4.4.0 RF01 (`_get_implicit_targets`, dialect postgres) resolves a qualifier in a
+    /// query nested in a `CREATE POLICY` or `ALTER POLICY` statement against the policy's table,
+    /// and still reports an unknown one.
+    #[test]
+    fn policies_bind_their_table() {
+        for source in [
+            "CREATE POLICY p ON t USING (EXISTS (SELECT 1 FROM u WHERE u.k = t.k));",
+            "CREATE POLICY p ON s.t FOR UPDATE TO PUBLIC USING (true) \
+             WITH CHECK (EXISTS (SELECT 1 FROM u WHERE u.k = t.k));",
+            "ALTER POLICY p ON t USING (EXISTS (SELECT 1 FROM u WHERE u.k = t.k));",
+        ] {
+            assert!(read_scopes(source).unresolved().is_empty(), "{source}");
+        }
+        let source = "CREATE POLICY p ON t USING (EXISTS (SELECT 1 FROM u WHERE u.k = w.k));";
+        assert_eq!(read_scopes(source).unresolved(), vec![at(source, "w", 0)]);
+        let source = "ALTER POLICY p ON t WITH CHECK (EXISTS (SELECT w.k FROM u));";
         assert_eq!(read_scopes(source).unresolved(), vec![at(source, "w", 0)]);
     }
 
@@ -1166,6 +1229,7 @@ mod tests {
         assert!(missing.is_empty(), "recorded, not reproduced: {missing:#?}");
         assert!(extra.is_empty(), "reproduced, not recorded: {extra:#?}");
         assert_eq!(recorded.len(), 44, "RF01 32 + AL05 12 recorded");
-        assert_eq!(reproduced.len(), 50);
+        // The recorded findings less the 3 `Missing` entries, plus the 11 `Extra` ones.
+        assert_eq!(reproduced.len(), 52);
     }
 }

@@ -1,7 +1,7 @@
 import { steerBlock, steerRules, type AdapterDelivery, type SteerFinding } from "../../src/engine/index.js";
 
 /**
- * The steers of the session enforcement design (NER-1870, scenes N4 and N4b; docs/in-session-surfaces.md), as each
+ * The steers of the session enforcement design (scenes N4 and N4b; docs/in-session-surfaces.md), as each
  * coding agent's adapter receives them: their rules linked to a loopback dashboard. Every agent's golden output
  * renders these same deliveries.
  */

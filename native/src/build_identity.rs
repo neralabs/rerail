@@ -46,9 +46,9 @@ fn grammar_packages(lock: &str) -> Vec<String> {
     packages
 }
 
-/// The locked version of one package; a missing package fails the build rather than silently
-/// dropping out of the identity.
-fn locked_version(lock: &str, package: &str) -> String {
+/// The locked version of one package in an LF Cargo.lock; a missing package fails the build rather
+/// than silently dropping out of the identity.
+pub fn locked_version(lock: &str, package: &str) -> String {
     let header = format!("name = \"{package}\"\n");
     let start = lock
         .find(&header)

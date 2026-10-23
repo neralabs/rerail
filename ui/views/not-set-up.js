@@ -1,6 +1,6 @@
 /**
  * The page a repository that is not set up shows in place of Overview and its pack pages: nothing runs there yet.
- * It offers the set-up in the page (NER-2011): the rule packs recommended for it in one click, the review of them
+ * It offers the set-up in the page, rather than sending people back to a terminal: the rule packs recommended for it in one click, the review of them
  * first, or the catalog; `/rerail-start` in a coding agent session does the same from there.
  */
 import { h, setContent, icon } from "../dom.js";
