@@ -46,7 +46,7 @@ const MAX_BUILD_STACK_BYTES: usize = 512 << 10;
 const DEADLINE_INTERVAL: usize = 1_024;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ScopeKind {
+pub enum ScopeKind {
     Module,
     Class,
     Function,
@@ -70,7 +70,7 @@ pub(crate) enum ScopeKind {
 
 /// How a name is bound: the construct its site is.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Form {
+pub enum Form {
     /// Python `x = v` (each target of `a = b = v` too); TypeScript `var`, `let` and `const`
     /// declarators.
     Assignment,
@@ -125,8 +125,8 @@ pub(crate) enum Form {
 
 /// Where and how a binding binds its name.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Site {
-    pub(crate) form: Form,
+pub struct Site {
+    pub form: Form,
     /// The construct that binds the name: the assignment, declarator, parameter, import item,
     /// `as` pattern, definition, loop or `global` statement.
     pub(crate) node: Option<NodeRef>,
@@ -162,7 +162,7 @@ pub struct Binding {
     /// Where Python unbinds the name: the end of its `except` handler. A later read, and any read
     /// from a deferred body, sees what the name meant before.
     pub(crate) until: Option<usize>,
-    pub(crate) site: Site,
+    pub site: Site,
     /// TypeScript: references that write the name (assignments, updates, `for ... in/of`
     /// targets), its declarator's initializer aside.
     pub(crate) writes: u32,
@@ -179,7 +179,7 @@ pub struct Binding {
     /// Python: made under a `global` or `nonlocal` declaration (Ruff's `GLOBAL`/`NONLOCAL`
     /// flags): the `global` statement itself, a later binding of a name its scope declares
     /// `global`, or a `nonlocal` name's binding.
-    pub(crate) outer: bool,
+    pub outer: bool,
     /// Python: an explicit re-export, `import a as a` or `from m import a as a`.
     pub(crate) explicit_export: bool,
     /// Python: `import a.b` without an alias binds `a`; this is the submodule it imports.
@@ -277,7 +277,7 @@ pub enum Import {
 }
 
 pub struct Scope {
-    pub(crate) kind: ScopeKind,
+    pub kind: ScopeKind,
     #[allow(dead_code)]
     pub(crate) range: Range<usize>,
     pub(crate) parent: Option<u32>,

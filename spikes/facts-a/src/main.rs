@@ -1,5 +1,7 @@
 mod ast;
+mod bindings;
 mod cgnative;
+mod closure;
 mod derived_check;
 mod eval;
 mod facts;

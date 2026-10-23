@@ -71,8 +71,9 @@ pub enum Kind {
     ForbidRegex(RegexClause),
     /// `budget` (native query/crossfile.rs:436-509): rows kept by `filter` (the evidence `where`),
     /// grouped by the `group` columns of the input's table (none: one group), a group of more
-    /// than `lte` rows reported at its first row.
-    Budget { input: usize, lte: u64, group: Vec<usize>, filter: Option<Where> },
+    /// than `lte` rows reported at its first row. With a `closure` (closure.rs) the rows keep
+    /// their projected values and `filter` reads them and the closure's outputs after every file.
+    Budget { input: usize, lte: u64, group: Vec<usize>, filter: Option<Where>, closure: Option<Box<crate::closure::Closure>> },
     Relational(Box<RelPlan>),
 }
 
@@ -88,20 +89,25 @@ pub enum Where {
     Ordered(Operand, Operand, std::cmp::Ordering, bool),
 }
 
-/// A field (a column of the input's table) or a literal: a string, number or null (a boolean,
-/// array or object literal is refused: projected fields hold none of them).
+/// A field (a column of the input's table, or after the projected fields a closure output) or a
+/// literal: a string, number, boolean or null (an array or object literal is refused).
 pub enum Operand {
     Field(usize),
     /// A literal; compiled rules are shared across workers, so it holds no `V` (`Rc`) and is
     /// read as one per comparison.
-    Literal(Literal),
+    Literal(Val),
 }
 
-pub enum Literal {
-    Null,
-    Int(i64),
-    Real(f64),
-    Text(Box<str>),
+use crate::closure::Val;
+
+/// A table value as a `where` reads it.
+fn val_of(v: V) -> Val {
+    match v {
+        V::Null => Val::Null,
+        V::Int(i) => Val::Int(i),
+        V::Real(r) => Val::Real(r),
+        V::Text(t) => Val::Text((*t).into()),
+    }
 }
 
 impl Where {
@@ -113,10 +119,11 @@ impl Where {
                 return column(t).map(Operand::Field).ok_or_else(|| format!("`{t}` names no projected field"));
             }
             Ok(Operand::Literal(match v {
-                Json::Null => Literal::Null,
-                Json::String(s) => Literal::Text(s.as_str().into()),
-                Json::Number(n) if n.is_i64() => Literal::Int(n.as_i64().unwrap()),
-                Json::Number(n) if n.is_f64() => Literal::Real(n.as_f64().unwrap()),
+                Json::Null => Val::Null,
+                Json::String(s) => Val::Text(s.as_str().into()),
+                Json::Number(n) if n.is_i64() => Val::Int(n.as_i64().unwrap()),
+                Json::Number(n) if n.is_f64() => Val::Real(n.as_f64().unwrap()),
+                Json::Bool(b) => Val::Bool(*b),
                 _ => return Err(format!("literal {v} unsupported")),
             }))
         };
@@ -147,33 +154,31 @@ impl Where {
     }
 
     fn holds(&self, t: &Table, r: usize) -> bool {
-        let read = |o: &Operand| match o {
-            Operand::Field(c) => t.value(r, *c),
-            Operand::Literal(l) => match l {
-                Literal::Null => V::Null,
-                Literal::Int(i) => V::Int(*i),
-                Literal::Real(f) => V::Real(*f),
-                Literal::Text(s) => V::text(s),
-            },
+        self.holds_by(&|c| val_of(t.value(r, c)))
+    }
+
+    /// The predicate over a row whose column `c` reads as `read(c)`: `eq`/`ne` by JSON text
+    /// (values of different types differ), order on strings only.
+    fn holds_by(&self, read: &dyn Fn(usize) -> Val) -> bool {
+        let get = |o: &Operand| match o {
+            Operand::Field(c) => read(*c),
+            Operand::Literal(l) => l.clone(),
         };
         match self {
             Where::Constant(b) => *b,
-            Where::All(v) => v.iter().all(|w| w.holds(t, r)),
-            Where::Any(v) => v.iter().any(|w| w.holds(t, r)),
-            Where::Not(w) => !w.holds(t, r),
+            Where::All(v) => v.iter().all(|w| w.holds_by(read)),
+            Where::Any(v) => v.iter().any(|w| w.holds_by(read)),
+            Where::Not(w) => !w.holds_by(read),
             Where::Equal(a, b, eq) => {
-                let same = match (read(a), read(b)) {
-                    (V::Null, V::Null) => true,
-                    (V::Int(x), V::Int(y)) => x == y,
-                    (V::Real(x), V::Real(y)) => x.to_bits() == y.to_bits(),
-                    (V::Text(x), V::Text(y)) => x == y,
-                    _ => false,
+                let same = match (get(a), get(b)) {
+                    (Val::Real(x), Val::Real(y)) => x.to_bits() == y.to_bits(),
+                    (x, y) => x == y,
                 };
                 same == *eq
             }
             // `lt`: order is Less; `le`: order is not Greater; `gt`: Greater; `ge`: not Less.
-            Where::Ordered(a, b, ord, holds) => match (read(a), read(b)) {
-                (V::Text(x), V::Text(y)) => (x.encode_utf16().cmp(y.encode_utf16()) == *ord) == *holds,
+            Where::Ordered(a, b, ord, holds) => match (get(a), get(b)) {
+                (Val::Text(x), Val::Text(y)) => (x.encode_utf16().cmp(y.encode_utf16()) == *ord) == *holds,
                 _ => false,
             },
         }
@@ -197,6 +202,9 @@ pub struct Rule {
     pub last_use: Vec<usize>,
     /// The physical predicates of the rule's lowered inputs (memoised per file, shared by them).
     pub preds: crate::lowered::Preds,
+    /// `define.report_when.count.gt`: the rule's findings are reported only when there are more
+    /// than this many over the evaluation (native eval/mod.rs `evaluate_code_rule`).
+    pub report_count_gt: Option<u64>,
 }
 
 /// Compiled rules are one immutable object per process, shared by every worker (G2.5).
@@ -267,11 +275,19 @@ impl Rule {
         let check = id.trim_start_matches("data-layer-").replace('-', "_");
         let scope = Scope::new(scope_override.or(doc.get("scope")))?;
         let mut utils: BTreeMap<String, Json> = BTreeMap::new();
+        let mut report_count_gt = None;
         for c in doc["clauses"].as_array().ok_or("clauses")? {
             if let Some(u) = c.get("define").and_then(|d| d.get("utils")).and_then(Json::as_object) {
                 for (k, v) in u {
                     utils.insert(k.clone(), v.clone());
                 }
+            }
+            if let Some(rw) = c.get("define").and_then(|d| d.get("report_when")) {
+                if report_count_gt.is_some() {
+                    return Err("report_when must be declared once per document".into());
+                }
+                let count = rw.as_object().filter(|o| o.len() == 1).and_then(|o| o.get("count")).and_then(Json::as_object).filter(|c| c.len() == 1);
+                report_count_gt = Some(count.and_then(|c| c.get("gt")).and_then(Json::as_u64).ok_or("/report_when must be {count: {gt: N}}")?);
             }
         }
         let mut names = Names::default();
@@ -359,13 +375,13 @@ impl Rule {
                 if b["count"].get("distinct").is_some() {
                     return Err(format!("{cid}: budget count.distinct unsupported"));
                 }
-                if ev.get("closure").is_some() {
-                    return Err(format!("{cid}: budget evidence closure unsupported (a name closure over the repository's rows)"));
-                }
                 let alias = ev.get("as").and_then(Json::as_str).unwrap_or("row").to_owned();
                 let gb: Vec<String> = b.get("group_by").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_str).map(str::to_owned).collect()).unwrap_or_default();
                 let (i, fields) = add_input(&ev, &mut names, &mut inputs).map_err(|e| format!("{cid}: {e}"))?;
-                // Table columns: __path, __start, __end, then the projected fields in name order.
+                let closure = ev.get("closure").map(|c| crate::closure::Closure::compile(c, &fields, &format!("{cid}/evidence"))).transpose()?.map(Box::new);
+                // Table columns: __path, __start, __end, then the projected fields in name order;
+                // a `where` reads the closure's outputs after them.
+                let outputs: &[String] = closure.as_ref().map_or(&[], |c| &c.outputs);
                 let column = |operand: &str| -> Option<usize> {
                     let field = operand.strip_prefix(alias.as_str())?.strip_prefix('.')?;
                     fields.iter().position(|f| f == field).map(|p| p + 3)
@@ -374,8 +390,14 @@ impl Rule {
                     .iter()
                     .map(|g| column(g).ok_or_else(|| format!("{cid}: group_by {g} is not a projected field of {alias}")))
                     .collect::<Result<Vec<_>, String>>()?;
-                let filter = ev.get("where").map(|w| Where::compile(w, &alias, &column)).transpose().map_err(|e| format!("{cid}/where: {e}"))?;
-                Kind::Budget { input: i, lte: b["count"]["lte"].as_u64().ok_or("lte")?, group, filter }
+                let read = |operand: &str| -> Option<usize> {
+                    column(operand).or_else(|| {
+                        let field = operand.strip_prefix(alias.as_str())?.strip_prefix('.')?;
+                        outputs.iter().position(|o| o == field).map(|p| p + 3 + fields.len())
+                    })
+                };
+                let filter = ev.get("where").map(|w| Where::compile(w, &alias, &read)).transpose().map_err(|e| format!("{cid}/where: {e}"))?;
+                Kind::Budget { input: i, lte: b["count"]["lte"].as_u64().ok_or("lte")?, group, filter, closure }
             } else if let Some(r) = c.get("relational") {
                 let mut ins = Vec::new();
                 let mut named: Vec<(&String, &Json)> = r["inputs"].as_object().ok_or("inputs")?.iter().collect();
@@ -401,7 +423,7 @@ impl Rule {
                 Kind::ForbidRegex(_) => {}
             }
         }
-        Ok(Rule { id, check, scope, clauses, inputs, names, last_use, preds })
+        Ok(Rule { id, check, scope, clauses, inputs, names, last_use, preds, report_count_gt })
     }
 }
 
@@ -926,8 +948,17 @@ impl Output {
     }
 }
 
-/// Budget rows per (rule, clause): (path, group key, the row's witness line), in file order.
-pub type BudgetRows = BTreeMap<(usize, usize), Vec<(String, String, u32)>>;
+/// One budget row: its path, group key and witness line (0-based); with a closure, its projected
+/// values (field order), which the closure and the `where` read after every file.
+pub struct BudgetRow {
+    pub path: String,
+    pub key: String,
+    pub line: u32,
+    pub values: Box<[Val]>,
+}
+
+/// Budget rows per (rule, clause), in file order.
+pub type BudgetRows = BTreeMap<(usize, usize), Vec<BudgetRow>>;
 
 pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut dyn crate::spill::RepoSink, budget: &mut BudgetRows) {
     // The file's text, shared by every input column that reads node text.
@@ -1019,7 +1050,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         }, &clause.viol.anchor, &rule.names);
                     }
                 }
-                Kind::Budget { input, group, filter, .. } => {
+                Kind::Budget { input, group, filter, closure, .. } => {
                     if let Some(rows) = get(*input, out) {
                         if let Some(u) = &rows.unsupported {
                             fail(out, format!("unsupported: {u}"));
@@ -1027,8 +1058,10 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         let acc = budget.entry((ri, ci)).or_default();
                         // The group key: the `group_by` values, each typed (as native's JSON text
                         // of each value tells types apart).
+                        let width = rule.inputs[*input].fields.len();
                         for k in 0..rows.table.len() {
-                            if filter.as_ref().is_some_and(|w| !w.holds(&rows.table, k)) {
+                            // With a closure the `where` reads its outputs: applied in `finish`.
+                            if closure.is_none() && filter.as_ref().is_some_and(|w| !w.holds(&rows.table, k)) {
                                 continue;
                             }
                             let mut key = String::new();
@@ -1040,7 +1073,9 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                                     V::Text(t) => key.push_str(&format!("t{}:{t}\u{1f}", t.len())),
                                 }
                             }
-                            acc.push((ctx.path.to_owned(), key, line_of(ctx.f, rows.witnesses[k].0)));
+                            let values = if closure.is_some() { (0..width).map(|c| val_of(rows.table.value(k, c + 3))).collect() } else { Box::default() };
+                            // Reported at the evidence's anchor (native eval/evidence.rs `reported`).
+                            acc.push(BudgetRow { path: ctx.path.to_owned(), key, line: rows.anchors[k].2, values });
                         }
                     }
                 }
@@ -1171,24 +1206,41 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
     for ((ri, ci), mut rows) in budget {
         let rule = &rules[ri];
         let clause = &rule.clauses[ci];
-        let Kind::Budget { lte, .. } = &clause.kind else { continue };
+        let Kind::Budget { lte, filter, closure, .. } = &clause.kind else { continue };
         // Files in path order, each file's rows in preorder (a stable sort); groups in first-row
         // order, each reported at its first row.
-        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows.sort_by(|a, b| a.path.cmp(&b.path));
+        if let Some(closure) = closure {
+            // Native fails the derived relation when some file's rows are unknown (that file's
+            // failure is reported above), or when it spends more than `maxVisitedNodes` steps.
+            let incomplete = out.failures.iter().any(|f| f.check == rule.check && f.clause == clause.id);
+            let derived = if incomplete { Err(crate::closure::INCOMPLETE) } else { closure.derive(&rows.iter().map(|r| &*r.values).collect::<Vec<_>>()) };
+            let outputs = match derived {
+                Ok(o) => o,
+                Err((code, message)) => {
+                    out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: String::new(), message: format!("{code}: {message}") });
+                    continue;
+                }
+            };
+            let width = rows.first().map_or(0, |r| r.values.len());
+            let kept: Vec<bool> = outputs.iter().zip(&rows).map(|(o, r)| filter.as_ref().is_none_or(|w| w.holds_by(&|c| if c - 3 < width { r.values[c - 3].clone() } else { Val::Bool(o[c - 3 - width]) }))).collect();
+            let mut kept = kept.into_iter();
+            rows.retain(|_| kept.next().unwrap_or(false));
+        }
         let mut groups: Vec<(usize, u64)> = Vec::new();
         let mut index: std::collections::HashMap<&str, usize> = Default::default();
         for (j, r) in rows.iter().enumerate() {
-            match index.get(r.1.as_str()) {
+            match index.get(r.key.as_str()) {
                 Some(&g) => groups[g].1 += 1,
                 None => {
-                    index.insert(&r.1, groups.len());
+                    index.insert(&r.key, groups.len());
                     groups.push((j, 1));
                 }
             }
         }
         for (first, n) in groups {
             if n > *lte {
-                let (p, _, line) = &rows[first];
+                let BudgetRow { path: p, line, .. } = &rows[first];
                 out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p.clone(), line: line + 1, code: clause.viol.code.clone(), column: None });
             }
         }
@@ -1228,6 +1280,15 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
             let e = out.clause_ns.entry((ri, ci)).or_default();
             e.0 += 1;
             e.1 += t0.elapsed().as_nanos() as u64;
+        }
+    }
+    // `report_when`: a rule with no more findings than its gate reports none (native
+    // eval/mod.rs `evaluate_code_rule`, over the whole evaluation).
+    for rule in rules {
+        if let Some(gt) = rule.report_count_gt {
+            if out.findings.iter().filter(|f| f.check == rule.check).count() as u64 <= gt {
+                out.findings.retain(|f| f.check != rule.check);
+            }
         }
     }
 }
