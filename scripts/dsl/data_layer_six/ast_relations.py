@@ -210,6 +210,11 @@ def batched_reachability(clause,forest=False):
    seeds += [f"SELECT __path,{f}_kind||':'||{f}_start||':'||{f}_end FROM nodes WHERE {f}_start IS NOT NULL" for f in FIELDS if {f+'_kind',f+'_start',f+'_end'}<=projected]
    if any(s['name']=='arguments' for s in plan['stages']):seeds.append('SELECT __path,id FROM arguments')
    roots=' UNION '.join(seeds)
+  elif clause['id'].startswith(('state-signatures','state-flow','state-projection-recovery')):
+   # Keep the exact selected-edge forest. Root expansion is independent of
+   # traversal through that node on behalf of another root.
+   expansion=",kind NOT IN ('module','block','expression_statement','argument_list','decorated_definition','type') AS expand" if 'walk(__path,root,node,expand)' in original else ''
+   roots='SELECT __path,id'+expansion+' FROM nodes'
   else:
    # Other linters retain all authored seeds until a smaller producer is proved.
    continue

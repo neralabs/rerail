@@ -57,6 +57,7 @@ impl Allowance {
 pub(super) struct Root {
     pub file: u32,
     pub node: u32,
+    pub expand: u32,
 }
 #[derive(Clone)]
 pub(super) struct Tree {
@@ -181,6 +182,7 @@ impl Resident {
                         .get(root.file as usize)
                         .ok_or_else(|| invalid("producer file identity"))?,
                     node: root.node,
+                    expand: root.expand,
                 });
             }
             r.relations.push(r.roots.len());
@@ -195,7 +197,11 @@ impl Resident {
         if root.node >= len {
             return Err(invalid("invalid syntax root"));
         }
-        let end = self.ends[offset as usize + root.node as usize];
+        let end = if root.expand != 0 {
+            self.ends[offset as usize + root.node as usize]
+        } else {
+            root.node + 1
+        };
         let visible = &self.visible[start as usize..start as usize + count as usize];
         let a = visible.partition_point(|&id| id < root.node);
         let b = visible.partition_point(|&id| id < end);

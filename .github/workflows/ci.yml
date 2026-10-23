@@ -105,6 +105,9 @@ jobs:
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - 'scripts/profiling/reachability/**'
+              - 'scripts/profiling/preparation/**'
+              - 'scripts/profiling/composition.py'
+              - 'test/scripts/test_sql_composition.py'
               - 'scripts/profiling/reachability_*.py'
               - 'scripts/profiling/native_*_*.py'
               - 'test/scripts/test_reachability.py'
@@ -215,6 +218,13 @@ jobs:
       - name: Test SQL statement capture and deferred explanations
         if: matrix.task == 'test'
         run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::tests
+
+      - name: Check and test captured SQL replay and composition kernels
+        if: matrix.task == 'test'
+        run: |
+          cargo fmt --manifest-path scripts/profiling/preparation/Cargo.toml -- --check
+          cargo clippy --manifest-path scripts/profiling/preparation/Cargo.toml --locked --all-targets --target-dir target/sql-preparation-lab -- -D warnings
+          cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
 
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:

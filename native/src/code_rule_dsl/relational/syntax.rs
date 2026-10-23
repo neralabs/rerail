@@ -363,6 +363,7 @@ enum Column {
     Start,
     End,
     Id,
+    SubtreeEnd,
     Parent,
     Kind,
     Line,
@@ -457,7 +458,7 @@ impl Source for Nodes {
             && matches!(self.columns[upper].1, Column::End)
     }
     fn range_indexed(&self, c: usize) -> bool {
-        matches!(self.columns[c].1, Column::Start)
+        matches!(self.columns[c].1, Column::Start | Column::Id)
     }
     fn range_lookup(
         &self,
@@ -480,15 +481,22 @@ impl Source for Nodes {
         };
         let rows = &self.facts.rows;
         let doc = &self.facts.doc;
+        let coordinate = |id| {
+            if matches!(self.columns[c].1, Column::Id) {
+                i64::from(id)
+            } else {
+                doc.transducer_span(id).start as i64
+            }
+        };
         let begin = lower.map_or(0, |(n, inclusive)| {
             rows.partition_point(|&id| {
-                let start = doc.transducer_span(id).start as i64;
+                let start = coordinate(id);
                 if inclusive { start < n } else { start <= n }
             })
         });
         let end = upper.map_or(rows.len(), |(n, inclusive)| {
             rows.partition_point(|&id| {
-                let start = doc.transducer_span(id).start as i64;
+                let start = coordinate(id);
                 if inclusive { start <= n } else { start < n }
             })
         });
@@ -572,6 +580,9 @@ impl Source for Nodes {
         match &self.columns[c].1 {
             Column::Path => ctx.set_result(&self.path),
             Column::Id => ctx.set_result(&i64::from(id)),
+            Column::SubtreeEnd => {
+                ctx.set_result(&i64::from(self.facts.packed.subtree_end[id as usize]))
+            }
             Column::Start => ctx.set_result(&(span.start as i64)),
             Column::End => ctx.set_result(&(span.end as i64)),
             Column::Parent => ctx.set_result(&self.facts.packed.parent(id).map(i64::from)),
@@ -631,6 +642,7 @@ fn columns(spec: &Spec) -> Vec<(String, Column)> {
         ("__start", Column::Start),
         ("__end", Column::End),
         ("id", Column::Id),
+        ("subtree_end", Column::SubtreeEnd),
         ("parent", Column::Parent),
         ("edge_parent", Column::Parent),
         ("kind", Column::Kind),
@@ -887,9 +899,14 @@ pub(super) fn demand(
         .map(|(i, p)| (p.as_str(), i as u32))
         .collect::<HashMap<_, _>>();
     let trees = prepared.to_vec();
+    let expansion = if spec.expand {
+        "CASE WHEN expand THEN 1 ELSE 0 END"
+    } else {
+        "1"
+    };
     let mut statement = db
         .prepare(&format!(
-            "SELECT DISTINCT __path,id FROM ({}) WHERE __path IS NOT NULL AND id IS NOT NULL",
+            "SELECT __path,id,max({expansion}) FROM ({}) WHERE __path IS NOT NULL AND id IS NOT NULL GROUP BY __path,id",
             spec.roots
         ))
         .map_err(sql_error)?;
@@ -913,7 +930,11 @@ pub(super) fn demand(
         if roots.len() >= 64 * 1024 * 1024 / std::mem::size_of::<super::producer::Root>() {
             return Err(invalid("producer request capacity"));
         }
-        roots.push(super::producer::Root { file, node });
+        roots.push(super::producer::Root {
+            file,
+            node,
+            expand: row.get::<_, u32>(2).map_err(sql_error)?,
+        });
     }
     Ok(super::producer::Demand {
         roots,

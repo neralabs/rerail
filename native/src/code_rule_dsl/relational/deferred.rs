@@ -78,11 +78,22 @@ pub(super) fn release(db: &Connection, name: &str, stages: &[Stage]) -> Result<(
                 .as_ref()
                 .is_some_and(|s| s.syntax.is_none()) =>
         {
+            let forest = stage.reachability.as_ref().unwrap().forest;
             db.execute_batch(&format!(
-                "DROP VIEW {};DROP TABLE {};DROP TABLE {}",
+                "DROP VIEW {};DROP TABLE {};DROP {} {}{}",
                 quote(name),
                 quote(&format!("__reach_{name}_keys")),
-                quote(&format!("__reach_{name}_pairs"))
+                if forest { "VIEW" } else { "TABLE" },
+                quote(&format!("__reach_{name}_pairs")),
+                if forest {
+                    format!(
+                        ";DROP TABLE {};DROP TABLE {}",
+                        quote(&format!("__reach_{name}_ranges")),
+                        quote(&format!("__reach_{name}_positions"))
+                    )
+                } else {
+                    String::new()
+                }
             ))
         }
         Some(stage) if !stage.deferred.is_empty() => db.execute_batch(&format!(

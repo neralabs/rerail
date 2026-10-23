@@ -16,6 +16,7 @@ pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
     violation_ids,
 };
+pub(super) use query::Output;
 pub(super) use query::{
     TapeCacheSlot, WitnessError, evaluate_query, file_language, file_tape, grammar_matcher,
     witness_from_match, witnesses_from_match,
@@ -260,6 +261,7 @@ pub(super) fn evaluate_clauses(
     mode: &str,
     clauses: &[CompiledClause],
 ) -> Result<Evaluation> {
+    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
     let _tapes = TapeCacheSlot::install();
     let _syntax = super::relational::syntax::Pool::install();
     if mode != "decision" && mode != "report" {
@@ -295,6 +297,7 @@ pub(super) fn evaluate_clauses(
         },
         clauses: covered,
     };
+    prepare_candidates(code_rule, snapshot);
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
     let mut relational_jobs = Vec::new();
     for clause in clauses {
@@ -418,40 +421,21 @@ pub(super) fn evaluate_clauses(
                     vec![snapshot.clone()]
                 };
                 for partition in partitions {
-                    prepare_relation_inputs(code_rule, plan, &partition)?;
                     #[cfg(feature = "code-rule-profile")]
                     let _context = super::profile::trace::Context::enter(
                         &code_rule.id,
                         &clause.id,
                         (partition.files.len() == 1).then(|| partition.files[0].path.as_str()),
                     );
-                    let rows = plan
-                        .inputs
-                        .iter()
-                        .map(|(name, input)| {
-                            #[cfg(not(feature = "code-rule-profile"))]
-                            let _ = name;
-                            #[cfg(feature = "code-rule-profile")]
-                            let mut span = super::profile::trace::Span::start("input-extract", name);
-                            let rows =
-                            stateless_rows(
-                                code_rule,
-                                clause,
-                                (input, evidence::Side::Counted),
-                                &partition,
-                                &mut evaluation.metrics,
-                            );
-                            #[cfg(feature = "code-rule-profile")]
-                            span.detail(|| serde_json::json!({"rows": rows.as_ref().ok().map(|rows| rows.witnesses.len()), "failed": rows.is_err()}));
-                            rows
-                        })
-                        .collect::<Result<Vec<_>>>()?;
                     relational_jobs.push(super::relational::Job {
                         code_rule,
                         clause,
-                        rows,
-                        facts: Vec::new(),
-                        snapshot: partition,
+                        inputs: super::relational::Inputs {
+                            file_local: false,
+                            rows: None,
+                            facts: Vec::new(),
+                            snapshot: partition,
+                        },
                         budget: super::budget::Context::capture(),
                     });
                 }
@@ -489,7 +473,46 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
     evaluation.metrics.witnesses += other.metrics.witnesses;
 }
 
+fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
+    use crate::code_rule_dsl::matcher::{CorpusSlot, anchor_plans};
+    let plans = anchor_plans(std::iter::once(code_rule));
+    if plans.is_empty() {
+        return;
+    }
+    let corpus = CorpusSlot::current();
+    for file in snapshot
+        .files
+        .iter()
+        .filter(|file| code_rule.scope.matches(&file.path))
+    {
+        let Some(lang) = file_language(file) else {
+            continue;
+        };
+        if !plans.contains_key(&u32::from(
+            crate::code_rule_dsl::language::tape_tag(lang).expect("tape language"),
+        )) {
+            continue;
+        }
+        match file_tape(lang, file) {
+            Ok((doc, _)) => {
+                if let Err(error) = corpus.put(
+                    &file.path,
+                    &doc,
+                    &crate::code_rule_dsl::budget::matcher_budget_exhausted,
+                ) {
+                    eprintln!("SQL AST batch publication unavailable: {error}");
+                }
+            }
+            Err(error) => eprintln!("SQL AST batch source unavailable: {error}"),
+        }
+    }
+    if let Err(error) = corpus.prepare(&plans) {
+        eprintln!("SQL AST corpus batch unavailable; retaining authoritative candidates: {error}");
+    }
+}
+
 /// Full file-local projections preserve the original local semantic side tables.
+#[cfg(test)]
 pub(super) fn relational_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
@@ -497,9 +520,10 @@ pub(super) fn relational_rows(
     snapshot: &Snapshot,
     metrics: &mut Metrics,
 ) -> Result<Vec<evidence::Rows>> {
+    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
     let _tapes = TapeCacheSlot::install();
     let _calls = stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
-    prepare_relation_inputs(code_rule, plan, snapshot)?;
+
     plan.inputs
         .iter()
         .map(|(_, input)| {
@@ -514,40 +538,6 @@ pub(super) fn relational_rows(
         .collect()
 }
 
-fn prepare_relation_inputs(
-    code_rule: &CompiledCodeRule,
-    plan: &super::relational::Plan,
-    snapshot: &Snapshot,
-) -> Result<()> {
-    if let [file] = snapshot.files.as_slice() {
-        let grammars: Vec<_> = plan
-            .inputs
-            .iter()
-            .filter_map(|(_, input)| {
-                if !code_rule.scope.matches(&file.path)
-                    || input
-                        .ast
-                        .domain
-                        .as_ref()
-                        .is_some_and(|domain| !domain.matches(&file.path))
-                {
-                    return None;
-                }
-                let super::model::Query::Ast { matchers, .. } = &input.ast.query else {
-                    return None;
-                };
-                grammar_matcher(matchers, file)
-            })
-            .collect();
-        query::prepare_anchors(
-            file,
-            &grammars,
-            code_rule.capabilities.limits.max_visited_nodes,
-        )?;
-    }
-    Ok(())
-}
-
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
 /// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
 pub(super) fn stateless_rows(
@@ -556,6 +546,16 @@ pub(super) fn stateless_rows(
     (relation, side): (&FactQuery, evidence::Side),
     snapshot: &Snapshot,
     metrics: &mut Metrics,
+) -> Result<evidence::Rows> {
+    stateless_rows_to(code_rule, clause, (relation, side), snapshot, metrics, None)
+}
+pub(super) fn stateless_rows_to(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    (relation, side): (&FactQuery, evidence::Side),
+    snapshot: &Snapshot,
+    metrics: &mut Metrics,
+    output: Option<&Output<'_>>,
 ) -> Result<evidence::Rows> {
     let ast = relation.ast.as_ref();
     let violation = evidence::producer_violation(clause, relation, side);
@@ -583,7 +583,7 @@ pub(super) fn stateless_rows(
         let mut partial = BTreeMap::new();
         let mut util_limit = None;
         let mut file_metrics = Metrics::default();
-        let witnesses = evaluate_query(
+        let witnesses = query::evaluate_query_to(
             &ast.query,
             &single,
             &BTreeMap::new(),
@@ -594,6 +594,7 @@ pub(super) fn stateless_rows(
             &mut partial,
             Some(&violation),
             &mut util_limit,
+            output,
         )?;
         metrics.visited_nodes += file_metrics.visited_nodes;
         match witnesses {
@@ -618,7 +619,7 @@ pub(super) fn stateless_rows(
 /// spends the evaluation's work budget (`metrics.visited_nodes`); seed witnesses are no violation,
 /// so each seed evaluation has its own witness budget, as a workspace's seed producer has per
 /// file, and spends none of the clauses'.
-fn stateless_calls(
+pub(super) fn stateless_calls(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     clauses: &[CompiledClause],

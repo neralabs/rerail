@@ -10,7 +10,7 @@ use napi::Result;
 use regex::Regex;
 use serde_json::Value;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// The failure code of an output cap: a clause found more witnesses (or regex matches) than
@@ -128,6 +128,8 @@ fn folder_contains(folder: &str, path: &str) -> bool {
 
 #[derive(Clone)]
 pub(super) struct ViolationSpec {
+    /// SQL inputs retain only their anchor and typed fields, without diagnostic payloads.
+    pub(super) input_only: bool,
     pub(super) code: String,
     pub(super) message: String,
     pub(super) anchor: Anchor,
@@ -450,9 +452,20 @@ pub(super) struct FactQuery {
     pub(super) predicate: Option<Value>,
     /// Rows projected from an AST query's matches in every file of the code rule's scope.
     pub(super) ast: Arc<AstRelation>,
+    /// Consumer columns are independent of the shared matcher and file domain.
+    pub(super) project: Arc<[Projection]>,
     pub(super) closure: Vec<NameClosure>,
     pub(super) each: Option<String>,
     pub(super) anchor: Anchor,
+}
+
+impl FactQuery {
+    pub(super) fn retain_projected_fields(&mut self, fields: Option<&BTreeSet<String>>) {
+        let needed = |p: &Projection| fields.is_some_and(|f| f.contains(&p.field));
+        if self.project.iter().any(|p| !needed(p)) {
+            self.project = self.project.iter().filter(|p| needed(p)).cloned().collect();
+        }
+    }
 }
 
 /// A staged, cycle-safe closure over authored relation fields. Earlier sets may seed later sets;
@@ -472,7 +485,6 @@ pub(super) struct NameClosure {
 pub(super) struct AstRelation {
     /// A `Query::Ast`.
     pub(super) query: Query,
-    pub(super) project: Vec<Projection>,
     /// The files the relation reads, within the code rule's scope; `None` reads all of it.
     pub(super) domain: Option<CodeRuleScope>,
 }
@@ -667,8 +679,6 @@ pub(super) struct CompiledClause {
     pub(super) violation: ViolationSpec,
     pub(super) kind: ClauseKind,
     pub(super) synthetic: bool,
-    /// A SQL input needs only its selected anchor and already computed projection.
-    pub(super) projected_only: bool,
     /// A synthetic leaf under a `select_when`'s `exists` side: one witness answers it, so a file's
     /// evaluation stops at its first witness.
     pub(super) decision: bool,

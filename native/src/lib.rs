@@ -190,11 +190,8 @@ pub fn native_memory_profile() -> String {
     .to_string()
 }
 
-/// Tell SQLite and jemalloc to discard free pages after a workspace eviction.
+/// Return allocator pages after eviction closes idle SQLite connections.
 pub(crate) fn release_allocator_memory() {
-    // SAFETY: SQLite owns its global allocator; the maximum request asks every connection to
-    // release reclaimable page-cache memory.
-    unsafe { rusqlite::ffi::sqlite3_release_memory(i32::MAX) };
     // Background threads, where available, decay pages between applies too.
     #[cfg(not(windows))]
     let _ = tikv_jemalloc_ctl::background_thread::write(true);

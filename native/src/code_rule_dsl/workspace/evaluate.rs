@@ -22,7 +22,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    FileAnchorIndex, FileGates, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
+    FileAnchorIndex, FileGates, FileScopeSlot, GrammarMatcher, UtilLimit,
 };
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
@@ -58,6 +58,88 @@ pub(super) fn candidate_grammar<'a>(
     grammar_matcher(matchers, file).expect("AST candidate has a grammar matcher")
 }
 
+pub(super) struct PreparedAst {
+    doc: Option<tape::TapeDoc>,
+    lines: Arc<LineTable>,
+    failures: BTreeMap<ClauseId, LocalFailure>,
+    context: Option<crate::code_rule_dsl::budget::Context>,
+    metrics: Metrics,
+    had_tape: bool,
+}
+
+fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> {
+    use crate::code_rule_dsl::{
+        budget::Context,
+        matcher::{CorpusSlot, anchor_plans},
+    };
+    let _corpus = CorpusSlot::install(Arc::clone(context.anchor_corpus));
+    let plans = anchor_plans(context.code_rules.iter().map(Arc::as_ref));
+    if plans.is_empty() {
+        return Ok(());
+    }
+    let mut grammars = BTreeMap::new();
+    for job in jobs {
+        let file = &mut job.file;
+        if file.selector_skipped
+            || !file.candidates.ast.iter().any(|id| {
+                let limits = &context.code_rules[id.0].capabilities.limits;
+                file.input.source.len() <= limits.max_source_bytes && limits.max_files != 0
+            })
+        {
+            continue;
+        }
+        let mut work = Context::work(context.closed, file_work_budget(file.input.source.len()));
+        let mut metrics = Metrics::default();
+        let language = file_language(&file.input).expect("eligible AST source");
+        let lines = Arc::new(LineTable::new(
+            &file.input.source,
+            Terminators::of(language),
+        ));
+        #[cfg(test)]
+        crate::code_rule_dsl::matcher::note_line_table_construction();
+        let old_failures = std::mem::take(&mut file.failures);
+        let had_tape = file.tape.is_some();
+        let doc = work.run(|| {
+            restore_ast_doc(
+                file,
+                &mut grammars,
+                context.closed,
+                Arc::clone(&lines),
+                &mut metrics,
+            )
+        })?;
+        let failures = std::mem::replace(&mut file.failures, old_failures);
+        if let Some(doc) = &doc
+            && let Err(error) = work.run(|| {
+                context
+                    .anchor_corpus
+                    .put(&file.input.path, doc, &matcher_budget_exhausted)
+            })
+        {
+            eprintln!("SQL AST batch publication unavailable: {error}");
+        }
+        file.prepared = Some(Box::new(PreparedAst {
+            doc,
+            lines,
+            failures,
+            context: Some(work),
+            metrics,
+            had_tape,
+        }));
+    }
+    // One broad rule frontier for all published files, before workers consume any candidates.
+    let mut work = Context::work(
+        context.closed,
+        super::CLAUSE_WORK_BUDGET
+            .saturating_mul(plans.values().map(Vec::len).sum::<usize>() as u64)
+            .max(1),
+    );
+    if let Err(error) = work.run(|| context.anchor_corpus.prepare(&plans)) {
+        eprintln!("SQL AST batch unavailable; retaining authoritative candidates: {error}");
+    }
+    Ok(())
+}
+
 /// One file to evaluate in an apply.
 pub(super) struct Job {
     pub(super) path: String,
@@ -75,6 +157,7 @@ pub(super) struct JobContext<'a> {
     pub(super) closed: &'a Arc<AtomicBool>,
     /// Extract each Python file's call summary (a code rule holds `calls` terms).
     pub(super) summarize: bool,
+    pub(super) anchor_corpus: &'a Arc<crate::code_rule_dsl::matcher::Corpus>,
 }
 
 type Evaluated = Vec<(String, FileState, Result<Metrics>)>;
@@ -116,8 +199,59 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         }
         None => documents::StoredDocuments::default(),
     };
+    let mut storage_times = Vec::with_capacity(jobs.len());
+    for job in jobs.iter_mut() {
+        let path = &job.path;
+        let file = &mut job.file;
+        let storage_started = Instant::now();
+        #[cfg(feature = "code-rule-profile")]
+        let _storage_read_timer = profile::PhaseTimer::start(profile::Phase::StoreRead);
+        if let Some(storage) = context.storage {
+            let source_hash = HashKey::from_sha256_digest(file.source_digest);
+            let result_key = (source_hash, result_context(file));
+            let persisted = result_manifest
+                .get(&result_key)
+                .map(|results| results.as_slice());
+            if context.summarize {
+                CrossFileScheduler::restore_summary(file, persisted.unwrap_or_default());
+            }
+            restore_persisted_file(
+                &stored_documents,
+                storage.store.as_ref(),
+                file,
+                &mut BTreeMap::new(),
+                context.code_rules,
+                persisted,
+                source_hash,
+            )?;
+            // A stored file whose source was dropped is read back only for an adapter
+            // consumer pass the store did not answer.
+            let unanswered = (!file.candidates.ast.is_empty() && !file.selector_skipped)
+                || !file.candidates.regex.is_empty();
+            if unanswered && file.input.source.is_empty() && file.stored.is_some() {
+                let stored = stored_documents
+                    .objects
+                    .get(&source_hash)
+                    .ok_or_else(|| invalid(format!("{path} is not in the store")))?;
+                let source = storage
+                    .store
+                    .get_source(stored.source)
+                    .map_err(|error| invalid(error.to_string()))?;
+                file.input.source = Arc::new(
+                    String::from_utf8(source)
+                        .map_err(|_| invalid(format!("stored {path} is not UTF-8")))?,
+                );
+            }
+        }
+        #[cfg(feature = "code-rule-profile")]
+        drop(_storage_read_timer);
+        let storage_read_nanoseconds = storage_started.elapsed().as_nanos() as u64;
+        storage_times.push(storage_read_nanoseconds);
+    }
+    prepare_candidates(jobs, context)?;
     let jobs = std::mem::take(jobs);
-    let work = |job: Job, grammars: &mut BTreeMap<String, Arc<tape::Grammar>>| {
+    let work = |(job, storage_read_nanoseconds): (Job, u64),
+                grammars: &mut BTreeMap<String, Arc<tape::Grammar>>| {
         let Job {
             path,
             mut file,
@@ -125,54 +259,21 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
             crossfile,
         } = job;
         let closed = context.closed;
+        let _corpus =
+            crate::code_rule_dsl::matcher::CorpusSlot::install(Arc::clone(context.anchor_corpus));
         let work = check_closed(closed).and_then(|()| {
             #[cfg(feature = "code-rule-profile")]
             let _worker_profile = profile::WorkerProfile::start();
-            let storage_started = Instant::now();
-            #[cfg(feature = "code-rule-profile")]
-            let _storage_read_timer = profile::PhaseTimer::start(profile::Phase::StoreRead);
-            if let Some(storage) = context.storage {
-                let source_hash = HashKey::from_sha256_digest(file.source_digest);
-                let result_key = (source_hash, result_context(&file));
-                let persisted = result_manifest
-                    .get(&result_key)
-                    .map(|results| results.as_slice());
-                if context.summarize {
-                    CrossFileScheduler::restore_summary(&mut file, persisted.unwrap_or_default());
-                }
-                restore_persisted_file(
-                    &stored_documents,
-                    storage.store.as_ref(),
-                    &mut file,
-                    grammars,
-                    context.code_rules,
-                    persisted,
-                    source_hash,
-                )?;
-                // A stored file whose source was dropped is read back only for an adapter
-                // consumer pass the store did not answer.
-                let unanswered = (!file.candidates.ast.is_empty() && !file.selector_skipped)
-                    || !file.candidates.regex.is_empty();
-                if unanswered && file.input.source.is_empty() && file.stored.is_some() {
-                    let stored = stored_documents
-                        .objects
-                        .get(&source_hash)
-                        .ok_or_else(|| invalid(format!("{path} is not in the store")))?;
-                    let source = storage
-                        .store
-                        .get_source(stored.source)
-                        .map_err(|error| invalid(error.to_string()))?;
-                    file.input.source = Arc::new(
-                        String::from_utf8(source)
-                            .map_err(|_| invalid(format!("stored {path} is not UTF-8")))?,
-                    );
-                }
-            }
-            #[cfg(feature = "code-rule-profile")]
-            drop(_storage_read_timer);
-            let storage_read_nanoseconds = storage_started.elapsed().as_nanos() as u64;
             // The shared steps' budget grows with the file; each clause has its own allowance.
-            let budget = MatchBudget::work(closed, file_work_budget(file.input.source.len()));
+            let budget = match file.prepared.as_mut().and_then(|p| p.context.take()) {
+                Some(context) => MatchBudget::resume(context),
+                None => MatchBudget::work(closed, file_work_budget(file.input.source.len())),
+            };
+            let preparation_metrics = file
+                .prepared
+                .as_mut()
+                .map(|p| std::mem::take(&mut p.metrics))
+                .unwrap_or_default();
             let transient = file.transient_failure && crossfile.is_some();
             // A consumers' pass, or a pass over the clauses the store did not answer, runs some of
             // the file's clauses only.
@@ -201,6 +302,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 super::TEST_CLAUSE_WORK_BUDGET.set(previous);
             }
             let mut metrics = evaluated?;
+            metrics.merge(preparation_metrics);
             // A consumers' pass after a transient evaluation of the file stays transient.
             file.transient_failure |= transient;
             if context.summarize {
@@ -225,11 +327,13 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     Ok(if jobs.len() < WORKER_THREADS {
         let mut grammars = BTreeMap::new();
         jobs.into_iter()
+            .zip(storage_times)
             .map(|job| work(job, &mut grammars))
             .collect()
     } else {
         WORK_POOL.install(|| {
             jobs.into_par_iter()
+                .zip(storage_times.into_par_iter())
                 .map_init(BTreeMap::new, |grammars, job| work(job, grammars))
                 .collect()
         })
@@ -294,9 +398,17 @@ pub(super) fn evaluate_file(
     let terminators = file_language(&file.input)
         .map(Terminators::of)
         .unwrap_or(Terminators::Eslint);
-    let lines = needs_lines.then(|| Arc::new(LineTable::new(&file.input.source, terminators)));
+    let prepared_lines = file
+        .prepared
+        .as_ref()
+        .map(|prepared| Arc::clone(&prepared.lines));
+    let lines = needs_lines.then(|| {
+        prepared_lines
+            .clone()
+            .unwrap_or_else(|| Arc::new(LineTable::new(&file.input.source, terminators)))
+    });
     #[cfg(test)]
-    if lines.is_some() {
+    if lines.is_some() && prepared_lines.is_none() {
         crate::code_rule_dsl::matcher::note_line_table_construction();
     }
     metrics.line_index_nanoseconds = line_index_started.elapsed().as_nanos() as u64;
@@ -443,7 +555,11 @@ pub(super) fn evaluate_file(
         }
     }
     if !file.candidates.ast.is_empty() && !file.selector_skipped {
-        metrics.restored_tapes += usize::from(file.tape.is_some());
+        metrics.restored_tapes += usize::from(
+            file.prepared
+                .as_ref()
+                .map_or(file.tape.is_some(), |p| p.had_tape),
+        );
         if any_eligible {
             *restored = evaluate_ast_file(
                 file,
@@ -479,18 +595,14 @@ pub(super) fn evaluate_file(
     Ok(metrics)
 }
 
-/// The document the clauses were read on, `None` where none was restored.
-fn evaluate_ast_file(
+pub(super) fn restore_ast_doc(
     file: &mut FileState,
-    code_rules: &[Arc<CompiledCodeRule>],
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
     closed: &AtomicBool,
-    lines: Option<Arc<LineTable>>,
-    work: &mut ClauseWork,
+    lines: Arc<LineTable>,
     metrics: &mut Metrics,
 ) -> Result<Option<tape::TapeDoc>> {
     let language = file_language(&file.input).expect("AST candidate has a supported language");
-    let lines = lines.expect("eligible AST file has a line index");
     let grammar = if let Some(grammar) = grammars.get(&file.input.language) {
         Arc::clone(grammar)
     } else {
@@ -558,6 +670,34 @@ fn evaluate_ast_file(
         drop(_decode_timer);
         profile::record_transient(doc.navigation_bytes());
     }
+    Ok(Some(doc))
+}
+
+/// The document the clauses were read on, `None` where none was restored.
+fn evaluate_ast_file(
+    file: &mut FileState,
+    code_rules: &[Arc<CompiledCodeRule>],
+    grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
+    closed: &AtomicBool,
+    lines: Option<Arc<LineTable>>,
+    work: &mut ClauseWork,
+    metrics: &mut Metrics,
+) -> Result<Option<tape::TapeDoc>> {
+    let _projections = violations::projection::Scope::enter();
+    let lines = lines.expect("eligible AST file has a line index");
+    let doc = if let Some(prepared) = file.prepared.take() {
+        file.failures.extend(prepared.failures);
+        let Some(doc) = prepared.doc else {
+            return Ok(None);
+        };
+        doc
+    } else {
+        let Some(doc) = restore_ast_doc(file, grammars, closed, Arc::clone(&lines), metrics)?
+        else {
+            return Ok(None);
+        };
+        doc
+    };
     let errors = SyntaxErrors::of_doc(&doc);
     #[cfg(feature = "code-rule-profile")]
     let _doc_owner = profile::DocOwner::start();
@@ -653,7 +793,13 @@ fn evaluate_ast_file(
             .collect::<Vec<_>>();
         #[cfg(feature = "code-rule-profile")]
         let index_timer = profile::PhaseTimer::start(profile::Phase::Index);
-        let index = FileAnchorIndex::build(&root, &plans, max_nodes, matcher_budget_exhausted);
+        let index = FileAnchorIndex::build_at(
+            &root,
+            &plans,
+            max_nodes,
+            matcher_budget_exhausted,
+            &file.input.path,
+        );
         metrics.visited_nodes += index.visited_nodes();
         #[cfg(feature = "code-rule-profile")]
         drop(index_timer);
@@ -666,24 +812,13 @@ fn evaluate_ast_file(
             }
             #[cfg(feature = "code-rule-profile")]
             let _selection_timer = profile::PhaseTimer::start(profile::Phase::Selection);
-            let selection = index.select(&grammars[slot].anchors);
+            let roots = index.selected(&grammars[slot].anchors);
             #[cfg(feature = "code-rule-profile")]
             profile::record_selection(
-                match &selection {
-                    Selection::All => index.len(),
-                    Selection::Roots(roots) => roots.len(),
-                },
-                matches!(selection, Selection::All),
+                roots.as_ref().map_or(index.len(), |roots| roots.len()),
+                roots.is_none(),
             );
-            match selection {
-                Selection::All => None,
-                Selection::Roots(roots) => Some(
-                    roots
-                        .iter()
-                        .map(|&ordinal| index.node(ordinal).node_id() as u32)
-                        .collect(),
-                ),
-            }
+            roots
         };
         let mut util_work = file
             .candidates
@@ -1051,12 +1186,7 @@ fn evaluate_clauses(
                                     return Ok(false);
                                 }
                             };
-                            for mut witness in found {
-                                if code_rule.clauses[id.1].projected_only {
-                                    witness.span =
-                                        violations::anchored_span(&violation.anchor, &witness).0;
-                                    witness.captures.retain_projection();
-                                }
+                            for witness in found {
                                 let witnesses =
                                     file.witnesses.get_mut(&id).expect("eligible check");
                                 if witnesses.len() >= limits.max_witnesses {

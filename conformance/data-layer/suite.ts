@@ -31,7 +31,7 @@ const policyDigests: Record<string, string> = {};
 const policyCompilationMs: Record<string, number> = {};
 const phaseCpuMs: Record<string, { userMs: number; systemMs: number }> = {};
 const memoryCheckpoints: unknown[] = [];
-const applies: { revision: number; phase: string; files: number; sourceBytes: number; wallMs: number; cpuMs: number; rssBytes: number; heapUsed: number; external: number; arrayBuffers: number }[] = [];
+const applies: { revision: number; phase: string; files: number; sourceBytes: number; wallMs: number; cpuMs: number; peakRssBytes: number; rssBytes: number; heapUsed: number; external: number; arrayBuffers: number }[] = [];
 const memoryCheckpoint = (phase: string): void => {
   if (!values["memory-census"]) return;
   const cpu = process.cpuUsage(), started = performance.now();
@@ -58,7 +58,7 @@ const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<voi
   applies.push({ revision, phase: deferGlobal ? "file-inputs" : "global-results", files: batchFiles.length,
     sourceBytes: batchFiles.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
     wallMs: performance.now() - started, cpuMs: (elapsed.user + elapsed.system) / 1000,
-    rssBytes: memory.rss, heapUsed: memory.heapUsed, external: memory.external, arrayBuffers: memory.arrayBuffers });
+    peakRssBytes: process.resourceUsage().maxRSS * 1024, rssBytes: memory.rss, heapUsed: memory.heapUsed, external: memory.external, arrayBuffers: memory.arrayBuffers });
   if (values.progress) console.error(JSON.stringify({ phase: deferGlobal ? "file-inputs" : "global-results", loadedFiles, revision, rssBytes: process.memoryUsage().rss }));
 };
 const collect = async (): Promise<{ violations: z.infer<typeof pageSchema>["violations"]; failures: unknown[] }> => {

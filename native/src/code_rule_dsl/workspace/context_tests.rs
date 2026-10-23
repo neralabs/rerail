@@ -2304,8 +2304,8 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
             "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
         })
     };
-    // Every element reads each one before it: quadratic in the list, with no text to rule a
-    // file out.
+    // Enough roots to exhaust the clause allowance even when candidate selection and sibling
+    // checks share their work. No required literal rules the file out before matching.
     let costly = json!({
         "id": "costly", "violation": { "anchor": "witness.span", "code": "SLOW", "message": "slow" },
         "forbid": { "ast": { "language": "python", "rule": {
@@ -2315,7 +2315,7 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
         "clause-allowance",
         json!([print("before"), costly, print("after")]),
     );
-    let numbers = (0..3_000)
+    let numbers = (0..30_000)
         .map(|n| n.to_string())
         .collect::<Vec<_>>()
         .join(", ");

@@ -11,10 +11,11 @@ use rusqlite::hooks::{AuthAction, Authorization};
 
 mod anchors;
 mod batch;
-mod database;
+pub(super) mod database;
 use database::Database;
 pub(super) mod deferred;
 mod forest;
+mod inputs;
 mod insert;
 mod producer;
 mod reachability;
@@ -183,20 +184,36 @@ pub(super) fn inspect(
     query: &str,
     tables: &BTreeSet<String>,
 ) -> Result<(Vec<String>, BTreeSet<String>, bool)> {
+    inspect_fields(db, query, tables)
+        .map(|(columns, fields, source)| (columns, fields.into_keys().collect(), source))
+}
+pub(super) type FieldReads = BTreeMap<String, BTreeSet<String>>;
+pub(super) fn inspect_fields(
+    db: &Connection,
+    query: &str,
+    tables: &BTreeSet<String>,
+) -> Result<(Vec<String>, FieldReads, bool)> {
     let tables = tables.clone();
-    let reads = Arc::new(parking_lot::Mutex::new(BTreeSet::new()));
+    let reads = Arc::new(parking_lot::Mutex::new(
+        BTreeMap::<String, BTreeSet<String>>::new(),
+    ));
     let observed = Arc::clone(&reads);
     let source_read = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let source_observed = Arc::clone(&source_read);
     db.authorizer(Some(
         move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
             AuthAction::Select | AuthAction::Recursive => Authorization::Allow,
-            AuthAction::Read { table_name, .. }
-                if tables.contains(table_name)
-                    || matches!(table_name, "json_each" | "json_tree") =>
-            {
+            AuthAction::Read {
+                table_name,
+                column_name,
+                ..
+            } if tables.contains(table_name) || matches!(table_name, "json_each" | "json_tree") => {
                 if tables.contains(table_name) {
-                    observed.lock().insert(table_name.to_owned());
+                    observed
+                        .lock()
+                        .entry(table_name.to_owned())
+                        .or_default()
+                        .insert(column_name.to_owned());
                 }
                 Authorization::Allow
             }
@@ -207,7 +224,7 @@ pub(super) fn inspect(
                 if context.accessor.is_some_and(|view| {
                     tables.contains(view)
                         && (table_name == format!("__stage_{view}")
-                            || ["keys", "pairs"]
+                            || ["keys", "pairs", "ranges", "positions"]
                                 .iter()
                                 .any(|suffix| table_name == format!("__reach_{view}_{suffix}")))
                 }) =>
@@ -439,19 +456,6 @@ pub(super) fn create_stage(
     }
     Ok(())
 }
-fn sql_value(value: &Value) -> rusqlite::types::Value {
-    use rusqlite::types::Value as Sql;
-    match value {
-        Value::Null => Sql::Null,
-        Value::Bool(value) => Sql::Integer(i64::from(*value)),
-        Value::Number(value) => value
-            .as_i64()
-            .map(Sql::Integer)
-            .unwrap_or_else(|| Sql::Real(value.as_f64().unwrap_or_default())),
-        Value::String(value) => Sql::Text(value.clone()),
-        _ => Sql::Text(value.to_string()),
-    }
-}
 fn read_value(value: rusqlite::types::ValueRef<'_>) -> Result<Value> {
     use rusqlite::types::ValueRef as Sql;
     Ok(match value {
@@ -474,10 +478,14 @@ fn read_value(value: rusqlite::types::ValueRef<'_>) -> Result<Value> {
 pub(super) struct Job<'a> {
     pub code_rule: &'a CompiledCodeRule,
     pub clause: &'a CompiledClause,
-    pub rows: Vec<Rows>,
+    pub inputs: Inputs,
+    pub budget: super::budget::Context,
+}
+pub(super) struct Inputs {
+    pub rows: Option<Vec<Rows>>,
     pub facts: syntax::Files,
     pub snapshot: Snapshot,
-    pub budget: super::budget::Context,
+    pub file_local: bool,
 }
 struct Session<'a> {
     code_rule: &'a CompiledCodeRule,
@@ -495,11 +503,11 @@ impl<'a> Session<'a> {
     fn new(
         code_rule: &'a CompiledCodeRule,
         clause: &'a CompiledClause,
-        rows: Vec<Rows>,
-        snapshot: &Snapshot,
-        supplied: syntax::Files,
-        prepared: &mut HashMap<(usize, super::language::GrammarDialect), Arc<syntax::Facts>>,
+        inputs: Inputs,
+        metrics: &mut super::model::Metrics,
     ) -> Result<Self> {
+        let snapshot = &inputs.snapshot;
+        let supplied = inputs.facts;
         let limits = &code_rule.capabilities.limits;
         let files = snapshot
             .files
@@ -513,6 +521,45 @@ impl<'a> Session<'a> {
         }
         let super::model::ClauseKind::Relational(plan) = &clause.kind else {
             return Err(invalid("expected relational job"));
+        };
+        // Input writes spend one work unit per row. Adjust to the exact row/node allowance
+        // below; no SQL stage can run before that check and all imports share this transaction.
+        let work = Arc::new(AtomicUsize::new(usize::MAX));
+        let db = connection(limits.max_regex_pattern_bytes, Arc::clone(&work))?;
+        #[cfg(feature = "code-rule-profile")]
+        db.context(json!({"scope":"relational", "ruleId":code_rule.id, "clauseId":clause.id,
+            "path":(snapshot.files.len() == 1).then(|| snapshot.files[0].path.as_str()), "stage":"inputs"}));
+        db.execute_batch("BEGIN").map_err(sql_error)?;
+        let streamed = inputs.rows.is_none();
+        let rows = match inputs.rows {
+            Some(rows) => rows,
+            None => {
+                let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
+                let _calls = if inputs.file_local {
+                    super::eval::stateless_calls(
+                        code_rule,
+                        snapshot,
+                        std::slice::from_ref(clause),
+                        metrics,
+                    )?
+                } else {
+                    None
+                };
+                plan.inputs
+                    .iter()
+                    .map(|(name, input)| {
+                        let fields = input
+                            .project
+                            .iter()
+                            .map(|p| p.field.clone())
+                            .collect::<Vec<_>>();
+                        create_input(&db, name, &fields)?;
+                        inputs::stream(
+                            &db, name, input, &work, code_rule, clause, snapshot, metrics,
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            }
         };
         if rows.iter().any(|r| !r.incomplete.is_empty()) {
             return Err(invalid("A relational input is incomplete"));
@@ -533,20 +580,9 @@ impl<'a> Session<'a> {
                 .iter()
                 .filter(|f| code_rule.scope.matches(&f.path) && paths.contains(f.path.as_str()))
                 .map(|f| {
-                    let key = (
-                        Arc::as_ptr(&f.source) as usize,
-                        super::eval::file_language(f)
-                            .ok_or_else(|| invalid("syntax grammar unavailable"))?,
-                    );
-                    let facts = if let Some(facts) = prepared.get(&key) {
-                        Arc::clone(facts)
-                    } else {
-                        let facts = match supplied.iter().find(|(p, _)| p == &f.path) {
-                            Some((_, facts)) => Arc::clone(facts),
-                            None => syntax::Pool::get(f)?,
-                        };
-                        prepared.insert(key, Arc::clone(&facts));
-                        facts
+                    let facts = match supplied.iter().find(|(path, _)| path == &f.path) {
+                        Some((_, facts)) => Arc::clone(facts),
+                        None => syntax::Pool::get(f)?,
                     };
                     Ok((f.path.clone(), facts))
                 })
@@ -560,17 +596,13 @@ impl<'a> Session<'a> {
             Some(spec) => syntax::prepare_trees(spec, &syntax_files)?,
             None => Vec::new(),
         };
-        let work = Arc::new(AtomicUsize::new(
-            code_rule.capabilities.limits.visits_for(count),
-        ));
+        let spent = usize::MAX - work.load(Ordering::Relaxed);
+        let allowance = limits.visits_for(count);
+        if spent > allowance {
+            return Err(invalid("relational input row budget exceeded"));
+        }
+        work.store(allowance - spent, Ordering::Relaxed);
         let anchors = anchors::collect(plan, &rows);
-        let db = connection(
-            code_rule.capabilities.limits.max_regex_pattern_bytes,
-            Arc::clone(&work),
-        )?;
-        #[cfg(feature = "code-rule-profile")]
-        db.context(json!({"scope":"relational", "ruleId":code_rule.id, "clauseId":clause.id,
-            "path":(snapshot.files.len() == 1).then(|| snapshot.files[0].path.as_str()), "stage":"inputs"}));
         if plan.reads_source {
             let visible = Snapshot {
                 revision: snapshot.revision,
@@ -583,7 +615,6 @@ impl<'a> Session<'a> {
             };
             source::install(&db, Some(&visible), Arc::clone(&work))?;
         }
-        db.execute_batch("BEGIN").map_err(sql_error)?;
         let mut tables = BTreeSet::new();
         if let Some(spec) = &plan.syntax {
             tables.extend(syntax::load(&db, spec, &syntax_files, Arc::clone(&work))?);
@@ -597,32 +628,50 @@ impl<'a> Session<'a> {
                 );
             }
             let fields = input
-                .ast
                 .project
                 .iter()
                 .map(|project| project.field.clone())
                 .collect::<Vec<_>>();
+            if streamed {
+                tables.insert(name.clone());
+                continue;
+            }
             create_input(&db, name, &fields)?;
+            // Bind projection positions once per shared schema, never search field names per row.
+            let mut layouts = HashMap::new();
+            for witness in &rows.witnesses {
+                if let Some(projected) = witness.captures.projection() {
+                    layouts
+                        .entry(projected.schema_identity())
+                        .or_insert_with(|| {
+                            fields
+                                .iter()
+                                .map(|f| projected.index(f))
+                                .collect::<Vec<_>>()
+                        });
+                }
+            }
             insert::insert_rows(
                 &db,
                 name,
                 fields.len() + 3,
                 rows.witnesses.iter().map(|witness| {
+                    use rusqlite::types::ValueRef;
                     let location = super::violations::anchored_span(&input.anchor, witness).0;
-                    let projected = witness.captures.projection().and_then(Value::as_object);
+                    let projected = witness.captures.projection();
+                    let layout = projected.map(|p| &layouts[&p.schema_identity()]);
                     [
-                        rusqlite::types::Value::Text(witness.path.clone()),
-                        rusqlite::types::Value::Integer(location.start_byte as i64),
-                        rusqlite::types::Value::Integer(location.end_byte as i64),
+                        ValueRef::Text(witness.path.as_bytes()),
+                        ValueRef::Integer(location.start_byte as i64),
+                        ValueRef::Integer(location.end_byte as i64),
                     ]
                     .into_iter()
-                    .chain(fields.iter().map(move |field| {
-                        sql_value(
-                            projected
-                                .and_then(|fields| fields.get(field))
-                                .unwrap_or(&Value::Null),
-                        )
+                    .chain(fields.iter().enumerate().map(move |(i, _)| {
+                        projected
+                            .zip(layout.and_then(|l| l[i]))
+                            .map_or(ValueRef::Null, |(row, index)| row.sql(index))
                     }))
+                    .map(insert::Borrowed)
                 }),
                 &work,
                 "relational input row budget exceeded",
@@ -912,9 +961,12 @@ pub(super) fn evaluate(
     evaluate_batch(vec![Job {
         code_rule,
         clause,
-        rows,
-        facts: Vec::new(),
-        snapshot: snapshot.clone(),
+        inputs: Inputs {
+            file_local: false,
+            rows: Some(rows),
+            facts: Vec::new(),
+            snapshot: snapshot.clone(),
+        },
         budget: super::budget::Context::capture(),
     }])
     .pop()
@@ -924,4 +976,12 @@ pub(super) fn evaluate(
 /// SQL remains the consumer; capacity partitions bound suspended sessions.
 pub(super) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
     batch::evaluate(jobs)
+}
+
+/// Restore documents only when the scheduler prepares this consumer.
+pub(super) fn evaluate_prepared(
+    jobs: Vec<Job<'_>>,
+    prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause) -> Result<()>,
+) -> Vec<Evaluation> {
+    batch::evaluate_prepared(jobs, prepare)
 }

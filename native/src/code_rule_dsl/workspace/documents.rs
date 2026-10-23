@@ -37,6 +37,10 @@ impl FileVersion {
         }
     }
 
+    pub(super) fn source_digest(&self) -> [u8; 32] {
+        self.source.sha256_bytes().expect("source uses SHA-256")
+    }
+
     /// The (source, file context) key this version's stored clause results are kept under.
     pub(super) fn result_key(&self) -> (HashKey, HashKey) {
         (self.source, self.context)

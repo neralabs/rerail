@@ -26,6 +26,36 @@ const evaluate = (rule: ReturnType<typeof compile>, current = files) => {
   const { failures, violations } = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: current }), "report"));
   return { failures, violations };
 };
+it.each([false, true])("preserves per-root expansion guards with forest=%s", forest => {
+  const doc = document(["r", "a"], [["r", "a"], ["a", "leaf"]], 2, false, forest);
+  doc.clauses[0]!.relational.stages[2]!.reachability!.roots = "SELECT __path,id,id!='a' AS expand FROM requested UNION ALL SELECT __path,id,0 FROM requested WHERE id='r'";
+  const actual = evaluate(compile(doc));
+  expect(actual.failures).toEqual([]);
+  const oracle = structuredClone(doc);
+  Object.assign(oracle.clauses[0]!.relational.stages[2]!, {
+    query: "WITH RECURSIVE seeds(__path,id,expand) AS (SELECT __path,id,max(id!='a') FROM requested GROUP BY __path,id),walk(__path,root,node,expand) AS (SELECT __path,id,id,expand FROM seeds UNION SELECT w.__path,w.root,e.dst,w.expand FROM walk w JOIN links e ON e.__path=w.__path AND e.src=w.node WHERE w.expand) SELECT __path,root,node FROM walk",
+  });
+  delete oracle.clauses[0]!.relational.stages[2]!.reachability;
+  expect(actual.violations).toEqual(evaluate(compile(oracle)).violations);
+  expect(actual.violations).toHaveLength(6); // r has three nodes in a.py. a stays reflexive in both files.
+});
+
+it("shares candidate producers across more than 500 policy outputs", () => {
+  const doc = {
+    format: "rerail.policy/v1", id: "frontier", revision: 1, mode: "log",
+    clauses: Array.from({ length: 535 }, (_, i) => ({
+      id: `rule${i}`,
+      forbid: { ast: { language: "python", rule: {
+        kind: "call", has: { kind: "identifier", field: "function", stopBy: "neighbor", regex: "^target$" },
+      } } },
+      violation: { code: "MATCH", message: "Target", anchor: "witness.span" },
+    })),
+  };
+  const result = evaluate(compile(doc), [{ path: "a.py", language: "python", source: "target(value)\nother()\n" }]);
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toHaveLength(535);
+  expect(new Set(result.violations.map((v: { clauseId: string }) => v.clauseId)).size).toBe(535);
+});
 it("normalizes a derived forest within a linear SQL work allowance", () => {
   const doc = document(["0"], [], 256, false, true);
   doc.clauses[0]!.relational.stages[0]!.query = "SELECT __path,0 AS id FROM functions";

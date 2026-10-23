@@ -1,11 +1,21 @@
 //! Bounded SQLite input batches shared by AST evidence and reference edges.
 use super::{invalid, quote, sql_error};
 use napi::Result;
-use rusqlite::{Connection, params_from_iter, types::Value};
+#[cfg(test)]
+use rusqlite::types::Value;
+use rusqlite::{Connection, params_from_iter};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
+
+/// A SQLite value borrowed until the bounded INSERT batch has consumed it.
+pub(super) struct Borrowed<'a>(pub rusqlite::types::ValueRef<'a>);
+impl rusqlite::ToSql for Borrowed<'_> {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(self.0))
+    }
+}
 
 const DEFAULT_ROWS: usize = 32;
 const DEFAULT_BYTES: usize = 1024 * 1024;
@@ -25,7 +35,7 @@ struct Stats {
     max_buffered_bytes: usize,
 }
 
-pub(super) fn insert_rows<R: IntoIterator<Item = Value>>(
+pub(super) fn insert_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
     db: &Connection,
     name: &str,
     width: usize,
@@ -67,7 +77,7 @@ pub(super) fn insert_rows<R: IntoIterator<Item = Value>>(
 
 /// Derived writes spend SQLite VM work; the producing algorithm charges visits.
 /// They are not new AST inputs, and the loop still polls cancellation.
-pub(super) fn stage_rows<R: IntoIterator<Item = Value>>(
+pub(super) fn stage_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
     db: &Connection,
     name: &str,
     width: usize,
@@ -90,16 +100,24 @@ pub(super) fn stage_rows<R: IntoIterator<Item = Value>>(
     .map(|_| ())
 }
 
-fn payload_bytes(value: &Value) -> usize {
+fn scalar_bytes(value: rusqlite::types::ValueRef<'_>) -> usize {
+    use rusqlite::types::ValueRef;
     match value {
-        Value::Null => 0,
-        Value::Integer(_) | Value::Real(_) => 8,
-        Value::Text(value) => value.len(),
-        Value::Blob(value) => value.len(),
+        ValueRef::Null => 0,
+        ValueRef::Integer(_) | ValueRef::Real(_) => 8,
+        ValueRef::Text(v) | ValueRef::Blob(v) => v.len(),
     }
 }
+fn payload_bytes(value: &impl rusqlite::ToSql) -> Result<usize> {
+    use rusqlite::types::ToSqlOutput;
+    Ok(match value.to_sql().map_err(sql_error)? {
+        ToSqlOutput::Borrowed(v) => scalar_bytes(v),
+        ToSqlOutput::Owned(v) => scalar_bytes((&v).into()),
+        _ => return Err(invalid("unsupported SQL input payload")),
+    })
+}
 
-fn write_rows<R: IntoIterator<Item = Value>>(
+fn write_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
     db: &Connection,
     name: &str,
     width: usize,
@@ -125,7 +143,7 @@ fn write_rows<R: IntoIterator<Item = Value>>(
     };
     let mut full_statement = None;
     let mut statements = 0;
-    let mut flush = |values: &mut Vec<Value>| -> Result<()> {
+    let mut flush = |values: &mut Vec<I>| -> Result<()> {
         let count = values.len() / width;
         if count == batch_rows {
             if full_statement.is_none() {
@@ -168,7 +186,9 @@ fn write_rows<R: IntoIterator<Item = Value>>(
                 "relational input row has an unexpected column count",
             ));
         }
-        let row_bytes = scratch.iter().map(payload_bytes).sum::<usize>();
+        let row_bytes = scratch
+            .iter()
+            .try_fold(0usize, |n, v| payload_bytes(v).map(|b| n.saturating_add(b)))?;
         if !values.is_empty() && bytes.saturating_add(row_bytes) > limits.bytes {
             flush(&mut values)?;
             bytes = 0;
@@ -339,5 +359,40 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+}
+
+#[cfg(test)]
+mod borrowed_tests {
+    use super::*;
+    #[test]
+    fn borrowed_unicode_and_null_inputs_survive_chunking_and_source_release() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE facts(text,position,absent)")
+            .unwrap();
+        let source = String::from("αβ");
+        let work = Arc::new(AtomicUsize::new(70));
+        insert_rows(
+            &db,
+            "facts",
+            3,
+            (0..70).map(|i| {
+                [
+                    Borrowed(rusqlite::types::ValueRef::Text(source.as_bytes())),
+                    Borrowed(rusqlite::types::ValueRef::Integer(i)),
+                    Borrowed(rusqlite::types::ValueRef::Null),
+                ]
+            }),
+            &work,
+            "budget",
+        )
+        .unwrap();
+        drop(source);
+        let row: (String, i64, Option<String>) = db
+            .query_row("SELECT * FROM facts WHERE position=69", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap();
+        assert_eq!(row, ("αβ".into(), 69, None));
     }
 }

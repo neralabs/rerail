@@ -18,19 +18,22 @@ use std::ops::Range;
 use std::sync::Arc;
 use tree_sitter::{Language, Node as TsNode};
 
-const WIDTH: usize = 6;
 pub(super) const TAPE_FORMAT_VERSION: u32 = 5;
 const TAPE_MAGIC: &[u8; 8] = b"TMPTAPE5";
 const KIND_LIMIT: usize = 1024;
 const FIELD_LIMIT: usize = 64;
 const SENTINEL: u16 = u16::MAX;
 const NONE: u32 = u32::MAX;
-const CHECKPOINT_STRIDE: usize = 16;
 const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 /// Tree-sitter's ERROR symbol does not fit the 10-bit kind code. ERROR records store the
 /// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
 const ERROR_CODE: u16 = 0;
 const ERROR_SYMBOL: u16 = u16::MAX;
+
+mod index;
+mod wire;
+pub(super) use wire::index_span;
+use wire::{CHECKPOINT_STRIDE, WIDTH, read_varint};
 
 #[cfg(test)]
 thread_local! {
@@ -178,22 +181,6 @@ fn varint(mut value: u32, output: &mut Vec<u8>) {
             break;
         }
     }
-}
-
-fn read_varint(bytes: &[u8], at: &mut usize) -> Result<u32, String> {
-    let mut result = 0u32;
-    for shift in (0..=28).step_by(7) {
-        let byte = *bytes.get(*at).ok_or("truncated tape span")?;
-        *at += 1;
-        if shift == 28 && byte > 0x0f {
-            return Err("span varint overflow".into());
-        }
-        result |= u32::from(byte & 127) << shift;
-        if byte & 128 == 0 {
-            return Ok(result);
-        }
-    }
-    Err("span varint overflow".into())
 }
 
 fn checkpoint(value: usize, bytes: &mut Vec<u8>) -> Result<(), String> {
@@ -1155,6 +1142,7 @@ struct Rec {
 
 #[derive(Clone)]
 pub(super) struct TapeDoc {
+    source_digest: [u8; 32],
     source: Arc<String>,
     grammar: Arc<Grammar>,
     data: Arc<Vec<Rec>>,
@@ -1424,6 +1412,7 @@ impl TapeDoc {
             return Err("an embedded program's root is not a child of the tape's root".into());
         }
         Ok(Self {
+            source_digest: image.source_digest,
             points: Arc::new(Points {
                 source: Arc::clone(&source),
                 rows: std::sync::OnceLock::new(),
@@ -1488,6 +1477,10 @@ impl TapeDoc {
     ) -> Result<Self, String> {
         let lines = Arc::new(LineTable::new(&source, Terminators::of(grammar.lang)));
         Self::restore_with_lines(source, grammar, image, lines, budget)
+    }
+
+    pub(super) fn index_source_digest(&self) -> &[u8; 32] {
+        &self.source_digest
     }
 
     /// The source's line table, shared with the evaluator that restored this document.
@@ -1611,6 +1604,7 @@ pub(super) struct TapeNode<'a> {
 }
 
 impl<'a> TapeNode<'a> {
+    #[cfg(test)]
     pub(super) fn incoming_field(&self) -> u16 {
         self.rec().field
     }

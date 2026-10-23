@@ -69,7 +69,11 @@ mod tests {
         let facts = Facts::build(&file).unwrap();
         let visible = Arc::new((0..facts.subtree_ends().len() as u32).collect());
         Demand {
-            roots: vec![Root { file: 0, node: 0 }],
+            roots: vec![Root {
+                file: 0,
+                node: 0,
+                expand: 1,
+            }],
             trees: vec![Tree { facts, visible }],
             paths: vec![file.path],
             work: Arc::new(AtomicUsize::new(100_000)),

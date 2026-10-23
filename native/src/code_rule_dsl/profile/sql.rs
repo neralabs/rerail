@@ -112,6 +112,7 @@ struct Running {
 
 #[derive(Default)]
 struct State {
+    explained: usize,
     running: HashMap<usize, Running>,
     ids: HashMap<String, usize>,
     queries: Vec<Value>,
@@ -252,14 +253,21 @@ impl Profiler {
         &self,
         connection: &Connection,
     ) -> rusqlite::Result<()> {
+        self.explain_pending(connection);
+        self.save()
+    }
+
+    /// Capture plans before their physical inputs are released, without rewriting the report.
+    pub(in crate::code_rule_dsl) fn explain_pending(&self, connection: &Connection) {
         let _explanation = Explanation(EXPLAINING.replace(true));
         self.state.borrow_mut().enabled = false;
-        let result = {
+        {
             let pending: Vec<_> = self
                 .state
                 .borrow()
                 .queries
                 .iter()
+                .skip(self.state.borrow().explained)
                 .filter(|q| q["kind"] == "sql" && q.get("plan").is_none())
                 .map(|q| {
                     (
@@ -279,10 +287,10 @@ impl Profiler {
                 state.queries[id]["plan"] = plan;
                 state.queries[id]["bytecode"] = bytecode;
             }
-            self.save()
+            let mut state = self.state.borrow_mut();
+            state.explained = state.queries.len();
         };
         self.state.borrow_mut().enabled = true;
-        result
     }
 
     fn save(&self) -> rusqlite::Result<()> {

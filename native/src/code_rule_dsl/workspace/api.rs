@@ -902,7 +902,9 @@ impl WorkspaceApplyTask {
         let storage = state.storage.clone();
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
+        let anchor_corpus = Arc::clone(&state.anchor_corpus);
         let context = JobContext {
+            anchor_corpus: &anchor_corpus,
             code_rules: &code_rules,
             storage: storage.as_ref(),
             closed: &self.closed,

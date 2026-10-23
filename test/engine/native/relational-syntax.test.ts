@@ -30,6 +30,19 @@ it("uses native identities, shared owners and direct descendants in SQL", () => 
   expect(rows.every((r: typeof rows[number]) => Number.isSafeInteger(r.id) && r.id === r.fn && r.name_id > r.id && r.descendants > 1)).toBe(true);
 });
 
+it("exposes exclusive preorder bounds and applies expansion guards to syntax roots", () => {
+  const value=policy();
+  value.clauses[0]!.relational.stages[0]!.reachability.roots="SELECT __path,id,name_source!='inner' AS expand FROM nodes WHERE kind='function_definition'";
+  value.clauses[0]!.relational.query="SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.id,n.subtree_end,(SELECT count(*) FROM descendants d WHERE d.__path=n.__path AND d.root=n.id) AS count,(SELECT count(*) FROM nodes child WHERE child.__path=n.__path AND child.id>=n.id AND child.id<n.subtree_end) AS interval_count FROM nodes n WHERE n.kind='function_definition'";
+  const result=evaluate(compile(value));
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toHaveLength(2);
+  const rows=result.violations.map((v:{variables:{row:{id:number;subtree_end:number;count:number;interval_count:number}}})=>v.variables.row);
+  expect(rows.every((r:typeof rows[number])=>r.subtree_end>r.id)).toBe(true);
+  expect(rows.filter((r:typeof rows[number])=>r.count===1)).toHaveLength(1);
+  expect(rows.some((r:typeof rows[number])=>r.count>1&&r.count===r.interval_count)).toBe(true);
+});
+
 it("preserves source gates, scope, same-length edits, restoration and removal", async () => {
   const value = policy();
   Object.assign(value, { scope: { include: ["a.py"], exclude: [] } });
