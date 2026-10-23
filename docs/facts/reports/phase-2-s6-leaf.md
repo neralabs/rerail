@@ -148,3 +148,36 @@ Ordered by the rules each one unblocked in the census:
 5. **Cleanup:**
    - Dead-code warnings in `ast/*.rs` (unused `sub_rules`/`reads` helpers) and `ast.rs` (`Names::get`, `Unsupported`, `trial`).
    - The census JSON's leaf pass still reports through `leaf.rs`; only compile is checked there.
+
+## 8. Wave 3 (S6Leaf-2): `binds`, budget evidence `closure`, `printf`
+
+Run dirs under `~/rerail-bench/facts/phase-2/s6-leaf/runs/`: `20261022T230348-w3-replay-b45` (first), `…T230914-w3-replay-b45b`, `…T231417-w3-replay-b45c` (latest). Load 5.7–18 (shared machine; no timing row owned).
+
+### 8.1 Replay `--engine facts`, batches 4–5 (latest build, `…T231417-w3-replay-b45c`)
+
+| batch | calls | FP | FN | failures | remaining (named) |
+|---|--:|--:|--:|--:|---|
+| 4 | 573 | 0 | 0 | 0 | — (all 10 checks exact; the 3 closure checks newly exact) |
+| 5 | 312 | 2 | 207 | 116 | `imperative_private_functions`: `calls` atom (S3). `internal_dead_code`: `binds` now compiles; next refusal input `raw_modules` projection `file.module` (membership-dependent, S3 agreed), then `references` (S3). `public_api_triples`: compiles and runs (printf, json_group_array, json_array, min() OVER); 2 FP / 2 FN on two relational probes (`signature-exempts-legacy`, `inherited-distinct-family`), open: suspected correlated derived table `FROM (SELECT … WHERE p.symbol=d.id)` in the `traits` stage's `params` subquery |
+
+Suite (`suite.ts --engine facts`) for b4/b5 not run this wave (budget); S5's lane `suite-b4/b5` covers it on merge.
+
+### 8.2 Constructs
+
+- **`binds`** (`bindings.rs`, `ast.rs` `Rule::Binds`): native's scope table (`ScopeTable::build_in`, Python, default reading) extracted per content as `py_binding(node, form, scope_kind, index, chain_len, outer)` (SCHEMA § 1.3), name sites mapped to fact nodes by `(start, end, kind id)` as native `Usage::named_at`. Filters `form`, `scope`, `latest`, `outer`, `bindings.{min,max}`; usage filters, `within`, sub-rules, `builtin`/`directives` refused by name. Declaration-only binds read no values (native `reads_values`), so the query stays two-valued. Native changes: visibility only (`ScopeKind`, `Form`, `Site{form}`, `Binding.site/outer`, `Scope.kind`, `NodeRef.kind`).
+- **Budget evidence `closure`** (`closure.rs`, hooks in `eval.rs`): port of `query/name_closure.rs` `derive` and `compile/evidence.rs` `compile_closure`. Budget rows of closure clauses keep their projected values; `finish` derives the outputs over every file's rows, then applies `where` (which may read outputs; `Where` gained boolean literals) and groups. Native's clause-wide failures reproduced: `source-incomplete` when some file's rows failed, `budget-exceeded` when the step count (computed exactly; order independent) exceeds `maxVisitedNodes` of `native/src/code_rule_dsl/capabilities.json`. **Classification:** `captured-return` partitions by `[path, owner]` and groups by path → per file (S1's classifier says File: agrees); `constructor-arg` (no partition) and `unsafe-parameter` (no partition, seeds from options) → repository (S1 agrees). **Finding for the decider:** native's two clause-wide failure conditions (any file incomplete; the step allowance summed over all files) make even the per-file closure clause's *failure* membership-dependent; its findings are per file. The per-file plan needs a repository side condition (sum of per-file steps ≤ allowance, no incomplete file) to be exact in failures.
+- **Budget findings at the evidence anchor** (native `reported`): was the witness line; fixed `sql_grammar_escape_hatches` (`anchor: capture.PARAMETER`).
+- **`report_when`** (`define.report_when.count.gt`) was silently ignored by `eval::Rule::compile` (I9 gap): now compiled and applied at the end of `finish` (native `evaluate_code_rule`).
+- **`printf`**: moved verbatim from `rerail_facts::reference` to `rerail_facts::sql::value::printf` (one implementation; reference calls it), plus a refusal for `%s` width/precision over non-ASCII (SQLite counts bytes). Spike engine `Func::Printf` calls it.
+- **Spike SQL engine** (needed by `public_api_triples` after printf): `json_array` and `json_group_array` with SQLite's JSON subtype for directly nested JSON functions (`json_extract`/`json_quote` subtype cases refused at plan time); `min`/`max(x) OVER (PARTITION BY …)` without ORDER BY.
+
+### 8.3 Interface changes
+
+`eval::BudgetRows` is `BTreeMap<(rule, clause), Vec<BudgetRow>>` (`path, key, line, values`); `Kind::Budget` gains `closure`; `eval::Rule` gains `report_count_gt`; `Operand::Literal` holds `closure::Val`; `facts::Facts` gains `bindings` + `bindings()`; `sql::engine::WinSpec` gains `func`; `rerail_facts::sql::value::printf` is pub.
+
+### 8.4 Resume notes
+
+1. `public_api_triples` 2 FP / 2 FN: dump the `traits` stage for `batch-05-relational:signature-exempts-legacy`; check that the derived table in `(SELECT json_group_array(name) FROM (SELECT name FROM parameters p WHERE p.symbol=d.id ORDER BY p.__start))` sees the outer `d`.
+2. S5: add `grammar_callable_constructors`, `grammar_fragment_usage`, `sql_grammar_escape_hatches` to `GATED` after confirming suite-b4.
+3. S3: `calls`, `references`, `file.module` for the two batch-5 rules.
+4. Note to S7: the reference's `json_group_array`/`json_array` render nested JSON-function results as strings (SQLite embeds them); the spike engine now embeds.
