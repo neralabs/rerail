@@ -453,4 +453,5 @@ Base: integration `caceb656f`; merged integration `8960a5db7` (S6's leaf constru
   2. Pattern front end: captures bound under relations (ancestor captures `any[inside{all[X, pattern $A], stopBy: X}, …]`) and stop rules, so the dump inputs lower to algebra over `node`; then origin tracing through text ids (`kind||':'||start||':'||end` is injective given node uniqueness) so R6–R9/R11 fire on dump clauses — the route to deleting `subst.rs` by rewrites rather than by executor speed.
   3. A cheaper check for `pattern-check` (memoised reference or S2's executor over `InputDef.algebra`) and a corpus run that exercises value tests with rows.
   4. Input span keys only with a per-content check that refuses on violation (S4's recommendation), then re-count proven vs checked.
-  5. S3: confirm `equi_keys`/`semi_join` adoption; definitions of `reference_edges` and `calls` over exported facts.
+  5. On merging S2's `08484861a`: port `spikes/facts-a/src/physplan.rs` to `PE::Lit(Lit)` (text literals via `Statement.texts`) and print `Fixpoint` closure vs levels with `closure_applies(&PCte)`.
+  6. S3: confirm `equi_keys`/`semi_join` adoption; definitions of `reference_edges` and `calls` over exported facts.
