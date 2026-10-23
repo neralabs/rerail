@@ -20,16 +20,16 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "471d628772d199e2d4472923a46067d813740d5f841795e3eafe88b2379251ec",
-      "size": 3262467,
+      "sha256": "54c3afce9ed5d8d530790d80d274785c947ef232854807d526a3c4b724a520ad",
+      "size": 3598170,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "python-ruff-recording-471d628772d199e2d4472923a46067d813740d5f841795e3eafe88b2379251ec.json.gz"
+      "asset": "python-ruff-recording-54c3afce9ed5d8d530790d80d274785c947ef232854807d526a3c4b724a520ad.json.gz"
     },
     "corpus.json": {
-      "sha256": "78c90338ebbc419134b9af4409ef8759c217c2cd5fb0206dddc864ad58038616",
-      "size": 4127286,
+      "sha256": "ecfbc1a264ce82a1b530b8841d876f4bde9a67a455b9b2ecf678f67aaf6e6650",
+      "size": 4320582,
       "format": "rerail.port-readiness-corpus/v2",
-      "asset": "python-ruff-corpus-78c90338ebbc419134b9af4409ef8759c217c2cd5fb0206dddc864ad58038616.json.gz"
+      "asset": "python-ruff-corpus-ecfbc1a264ce82a1b530b8841d876f4bde9a67a455b9b2ecf678f67aaf6e6650.json.gz"
     }
   }
 }
