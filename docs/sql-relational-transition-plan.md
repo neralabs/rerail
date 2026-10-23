@@ -756,29 +756,46 @@ All 231 preceding profiles also reduce VM work, with unchanged native results, c
 All 165 unique tests pass. B023 passes both gates in this run at 1.941× reference CPU time, with unchanged SQL and VM counts.
 The preceding CPU failure remains recorded. The journal does not claim a structural B023 speedup or stable CPU qualification.
 
+## Bound set predicate emission: bounded outcome milestone
+
+The emitter now represents each arm's sources and conditions before SQL formatting.
+It emits a direct condition when the bound node supplies every source.
+Witness joins retain an existence query. Union membership uses Boolean alternatives instead of a temporary union result.
+Atomic outcome predicates use this same representation.
+Reached-call guards and failure/capture publication barriers remain unchanged.
+
+B023 removes all eight redundant outer existence layers and preserves results, captures, relation rows, and typed returns.
+VM work falls from 2,812,255 to 2,804,023 instructions: a 0.29% reduction.
+Both frozen gates pass at 1.830× reference CPU time in this run. Earlier CPU failures remain recorded.
+All 166 unique tests pass. The 54-profile matrix and 231 prior controls retain identical SQL and VM counts.
+
+This phase leaves 33 materialization sites, 54,156 automatic-index rows, and 35,379 full-scan steps unchanged.
+Correlated subquery sites rise from 34 to 60 because Boolean alternatives now expose separate witness queries.
+Constant-row scans fall from 58 to 46. Fewer wrappers do not establish that the remaining SQL work is efficient.
+
 ## Next implementation action
 
-Remove redundant outer existence layers around bound set predicates.
-The general emitter still builds `SELECT 1 WHERE ...` when the input node already supplies every required source.
-It then wraps that query in `NOT (NOT EXISTS (...))`.
-B023 contains eight such layers around references, region membership, and negated structural tests.
-Its actual witness joins must remain intact.
+Attribute the remaining B023 work to its generated producers before changing another SQL expression.
+The existing diagnostics count answer relations but omit the upstream binding and recursive set producers.
+Extend compiler metadata with generated CTE names and producer families.
+Extend the existing diagnostic measurement to record rows, VM instructions, node filters/advances, automatic-index rows, and EXPLAIN for each producer.
+Consume the complete producer rows; a `COUNT(*)` query can prune expressions whose cost we need to measure.
+Run each diagnostic with fresh execution state, outside the timed full-query samples.
+These separate queries describe dependency costs and may use different plans. Do not add their counters as whole-query attribution.
 
-Refactor bound-arm emission to expose its sources and conditions before SQL formatting.
-When an arm needs no additional source, emit its total Boolean condition directly.
-When an arm needs a witness join, retain an existence query with those joins and correlations.
-Preserve union and intersection semantics, two-valued set membership, aliases, file identity, and recursive relation references.
-Consolidate atomic expression lowering through this representation after the comparison tests pass.
-Do not remove the outer guards for reached value calls or the barriers that publish failures and captures.
+Start with `needed14`, `r14`, `walk7`, `pairs7`, `regions7`, `r15`, `r16`, `binding_seeds`, `binding_walk`, `binding_choices`, and `capture_demand`.
+Include the answer producers so upstream and downstream costs can be compared.
+Keep the complete query at one matching statement. Diagnostic executions must be labeled and counted separately.
+Record row amplification across each dependency edge and identify the largest measured source of repeated work.
+Require any resulting optimization to reduce full-query work below this phase's 2,804,023-instruction baseline.
 
-First prove that B023 still contains eight redundant outer layers.
-Then require zero such layers, unchanged native results, unchanged terminal registration, and no increase in typed returns or VM work.
-The full B023 VM count must decrease before this change is accepted as a performance improvement.
-Retain the CPU gate even if deterministic shape checks pass.
+A concrete candidate is repeated parent lookups inside structural alternatives.
+A union of `parent.kind = A` and `parent.kind = B` can probe the parent once and test `kind IN (A,B)`.
+If measurements justify this change, combine typed set expressions or physical arms before SQL formatting.
+Start with arms that have identical edges, references, and all predicates except one kind set.
+Preserve independent witnesses when edge graphs or other predicates differ.
+Test overlapping kind sets, negation, missing parents, multiple files, and branching children with different witnesses.
+Keep recursive reference placement, file identity, admission limits, and failure/capture publication unchanged.
 
-Repeat the 54-profile matrix and all 231 preceding controls.
-Add comparisons for negated relation membership, region membership, empty and overlapping union arms, and structural witness joins.
-Include recursive references, multiple files, unknown boundaries, reached failures, and capture publication.
-Keep full SQL, EXPLAIN, source hashes, and any failed gates in the journal.
-
+Retain full SQL, EXPLAIN, source hashes, and the CPU gate. Repeat the 54-profile matrix and 231 preceding controls.
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

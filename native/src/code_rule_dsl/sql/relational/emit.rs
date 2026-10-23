@@ -173,6 +173,45 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
     Ok(relations)
 }
 
+/// Keep the bound expression separate from query formatting. A witness-free arm
+/// is already a total predicate on an existing node; it needs no scalar query.
+struct ArmSql {
+    projection: String,
+    sources: Vec<String>,
+    conditions: Vec<String>,
+    unit: Option<usize>,
+}
+impl ArmSql {
+    fn query(&self) -> String {
+        let from = if self.sources.is_empty() {
+            String::new()
+        } else if let Some(serial) = self.unit {
+            format!(
+                " FROM (SELECT 1) AS unit{serial} CROSS JOIN {}",
+                self.sources.join(" CROSS JOIN ")
+            )
+        } else {
+            format!(" FROM {}", self.sources.join(" CROSS JOIN "))
+        };
+        let filter = if self.conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", self.conditions.join(" AND "))
+        };
+        format!("SELECT {}{from}{filter}", self.projection)
+    }
+    fn predicate(&self) -> String {
+        if !self.sources.is_empty() {
+            return format!("EXISTS ({})", self.query());
+        }
+        match self.conditions.as_slice() {
+            [] => "1".into(),
+            [condition] => condition.clone(),
+            conditions => format!("({})", conditions.join(" AND ")),
+        }
+    }
+}
+
 impl Emitter {
     fn recursive(&self, relation: usize, owner: Option<usize>) -> bool {
         self.component
@@ -182,17 +221,21 @@ impl Emitter {
             })
     }
 
-    fn absent(&mut self, set: &Set, root: &str) -> Result<String, String> {
+    fn condition(&mut self, set: &Set, root: &str) -> Result<String, String> {
         let arms = physical::expand(set)?;
-        let queries = arms
+        let predicates = arms
             .iter()
-            .map(|a| self.arm(a, None, Some(root), false))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(if queries.is_empty() {
-            "1".into()
-        } else {
-            format!("NOT EXISTS ({})", queries.join(" UNION "))
+            .map(|arm| Ok(self.arm_parts(arm, None, Some(root), false)?.predicate()))
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(match predicates.as_slice() {
+            [] => "0".into(),
+            [predicate] => predicate.clone(),
+            predicates => format!("({})", predicates.join(" OR ")),
         })
+    }
+
+    fn absent(&mut self, set: &Set, root: &str) -> Result<String, String> {
+        Ok(format!("NOT ({})", self.condition(set, root)?))
     }
 
     fn arm(
@@ -211,6 +254,16 @@ impl Emitter {
             // A set reference already has the required key and multiplicity. No AST lookup.
             return Ok(format!("SELECT file,node FROM r{relation}"));
         }
+        Ok(self.arm_parts(arm, owner, bound, distinct)?.query())
+    }
+
+    fn arm_parts(
+        &mut self,
+        arm: &Arm,
+        owner: Option<usize>,
+        bound: Option<&str>,
+        distinct: bool,
+    ) -> Result<ArmSql, String> {
         let serial = self.aliases;
         self.aliases += 1;
         let mut names: Vec<_> = (0..arm.nodes).map(|n| format!("a{serial}n{n}")).collect();
@@ -358,22 +411,6 @@ impl Emitter {
                 Predicate::Absent(node, set) => self.absent(set, &names[*node])?,
             });
         }
-        // A bound root can leave the first source with an ON clause. SQLite needs a left source.
-        let from = if sources.is_empty() {
-            String::new()
-        } else if bound.is_some() {
-            format!(
-                " FROM (SELECT 1) AS unit{serial} CROSS JOIN {}",
-                sources.join(" CROSS JOIN ")
-            )
-        } else {
-            format!(" FROM {}", sources.join(" CROSS JOIN "))
-        };
-        let filter = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
         let projection = if bound.is_some() {
             "1".into()
         } else {
@@ -389,7 +426,12 @@ impl Emitter {
                 names[0]
             )
         };
-        Ok(format!("SELECT {projection}{from}{filter}"))
+        Ok(ArmSql {
+            projection,
+            sources,
+            conditions,
+            unit: bound.map(|_| serial),
+        })
     }
 }
 
@@ -410,7 +452,7 @@ pub(super) fn condition(set: &Set, alias: &str) -> Result<String, String> {
         bound_regions: true,
         ..Emitter::default()
     };
-    Ok(format!("NOT ({})", emitter.absent(set, alias)?))
+    emitter.condition(set, alias)
 }
 
 pub(super) fn capture_definitions(
@@ -431,4 +473,122 @@ pub(super) fn capture_definitions(
     definitions.push(format!("origin_choices AS (SELECT p.file,p.origin,b.atom,b.witness,p.node AS ancestor,p.distance,ROW_NUMBER() OVER (PARTITION BY p.file,p.origin,b.atom ORDER BY p.distance) AS choice FROM pairs{roots} p JOIN binding_choices b ON b.file=p.file AND b.node=p.node)"));
     definitions.push("capture_demand AS MATERIALIZED (SELECT file,origin,atom,witness,ancestor,distance FROM origin_choices WHERE choice=1)".into());
     Ok(definitions)
+}
+
+#[cfg(test)]
+mod bound_predicate_tests {
+    use super::*;
+
+    #[test]
+    fn bound_predicate_membership_witnesses_regions_and_recursive_references() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE node(file INTEGER NOT NULL,id INTEGER NOT NULL,parent INTEGER,prev INTEGER,next INTEGER,kind INTEGER NOT NULL,\"last\" INTEGER NOT NULL);
+             INSERT INTO node VALUES (0,1,NULL,NULL,NULL,10,3),(0,2,1,NULL,3,20,2),(0,3,1,2,NULL,30,3),
+                                     (1,1,NULL,NULL,NULL,20,2),(1,2,1,NULL,NULL,30,2);",
+        ).unwrap();
+        let pre = |edge, set| Set::Preimage(edge, Box::new(set));
+        let not = |set| Set::Complement(Box::new(set));
+        let all = vec![(0, 1), (0, 2), (0, 3), (1, 1), (1, 2)];
+        let cases = vec![
+            (Set::AllNodes, all.clone(), false),
+            (Set::Empty, vec![], false),
+            (Set::Union(vec![]), vec![], false),
+            (Set::Intersect(vec![]), all.clone(), false),
+            (Set::Kinds(vec![]), vec![], false),
+            (Set::Reference(0), all.clone(), false),
+            (Set::Reference(1), vec![(0, 1)], false),
+            (
+                not(Set::Reference(1)),
+                vec![(0, 2), (0, 3), (1, 1), (1, 2)],
+                false,
+            ),
+            (Set::Within(1), vec![(0, 2), (0, 3)], false),
+            (not(Set::Within(1)), vec![(0, 1), (1, 1), (1, 2)], false),
+            (
+                Set::Union(vec![
+                    Set::Empty,
+                    Set::Kinds(vec![20]),
+                    Set::Kinds(vec![20, 30]),
+                ]),
+                vec![(0, 2), (0, 3), (1, 1), (1, 2)],
+                false,
+            ),
+            (
+                Set::Intersect(vec![
+                    Set::Union(vec![Set::Kinds(vec![10]), Set::Kinds(vec![30])]),
+                    not(Set::Within(1)),
+                ]),
+                vec![(0, 1), (1, 2)],
+                false,
+            ),
+            (
+                pre(Edge::Parent, Set::Kinds(vec![10])),
+                vec![(0, 2), (0, 3)],
+                true,
+            ),
+            (
+                not(pre(Edge::Child, Set::Kinds(vec![20]))),
+                vec![(0, 2), (0, 3), (1, 1), (1, 2)],
+                true,
+            ),
+            (pre(Edge::Next, Set::Kinds(vec![30])), vec![(0, 2)], true),
+            (
+                pre(Edge::Previous, Set::Kinds(vec![20])),
+                vec![(0, 3)],
+                true,
+            ),
+            (
+                pre(
+                    Edge::Child,
+                    Set::Intersect(vec![Set::Reference(0), not(Set::Within(1))]),
+                ),
+                vec![(1, 1)],
+                true,
+            ),
+            (
+                pre(Edge::Child, pre(Edge::Parent, Set::Kinds(vec![20]))),
+                vec![(1, 1)],
+                true,
+            ),
+            (
+                Set::Union(vec![
+                    pre(Edge::Child, Set::Kinds(vec![20])),
+                    pre(Edge::Child, Set::Kinds(vec![30])),
+                ]),
+                vec![(0, 1), (1, 1)],
+                true,
+            ),
+        ];
+        for (set, expected, witness) in cases {
+            let expression = condition(&set, "n").unwrap();
+            assert!(!expression.contains("SELECT 1 WHERE"), "{expression}");
+            assert_eq!(expression.contains("AS unit"), witness, "{expression}");
+            for negate in [false, true] {
+                let predicate = if negate {
+                    format!("NOT ({expression})")
+                } else {
+                    expression.clone()
+                };
+                let query = format!(
+                    "WITH RECURSIVE r0(file,node) AS (SELECT file,id FROM node WHERE parent IS NULL UNION SELECT n.file,n.id FROM r0 r JOIN node n ON n.file=r.file AND n.parent=r.node), r1(file,node) AS (SELECT 0,1) SELECT n.file,n.id FROM node n WHERE {predicate} ORDER BY n.file,n.id"
+                );
+                let mut statement = db.prepare(&query).unwrap();
+                let actual: Vec<(i64, i64)> = statement
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap();
+                let expected = if negate {
+                    all.iter()
+                        .copied()
+                        .filter(|key| !expected.contains(key))
+                        .collect()
+                } else {
+                    expected.clone()
+                };
+                assert_eq!(actual, expected, "{query}");
+            }
+        }
+    }
 }

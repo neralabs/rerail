@@ -5066,3 +5066,66 @@ Artifacts:
 - `benchmark/sql-relational-atomic-predicate-wide.sql` records 32 predicates with 32 true utility calls.
 
 The bounded outcome compiler remains test-only. Production integration and the complete cold-job 100-execution gate remain open.
+
+### 2026-10-23 — Bound set predicates without redundant outer queries
+
+The preceding frozen B023 SQL contains eight `NOT (NOT EXISTS (SELECT 1 WHERE ...))` layers.
+These layers surround relation membership, region membership, and negated structural tests.
+The baseline uses 2,812,255 VM instructions. This phase requires zero redundant layers and strictly fewer instructions.
+
+The emitter now separates each arm's sources, conditions, and projection from SQL formatting.
+An arm without additional sources emits its Boolean condition directly. A witness arm retains an existence query.
+Union membership combines arm predicates with `OR`. Intersection retains arm conditions and witness correlations.
+Negation uses the same bound membership emitter. Atomic outcome expressions now use this shared implementation.
+Existing reached-call guards and failure/capture publication barriers remain in place.
+
+New SQL comparisons exercise empty and overlapping unions, negation, regions, recursive references, and structural witnesses across two files.
+The existing atomic comparisons retain the old existence wrapper as their reference and check reached regex calls.
+The new test passes 38 SQL comparisons. The retained atomic test passes 96 comparisons, including guarded regex call counts.
+All 154 relational tests pass, with 7,555 publication traces.
+The focused run passes nine tests and 882 native-comparison jobs.
+All 54 width/repetition profiles and 231 preceding controls retain identical SQL and VM counts.
+They preserve results, charges, reached value calls, terminal counts, and typed returns.
+
+**Frozen B023.** All eight redundant outer layers are gone. The 138-file corpus retains two matches and exact parity.
+Captures, outcomes, intermediate answer cardinalities, and typed returns match the preceding run.
+Terminal call sites remain unchanged. Pure regex probes fall from 3,092 to 3,090 as Boolean alternatives skip unnecessary work.
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| VM instructions, each of three samples | 2,812,255 | 2,804,023 |
+| SQL bytes, excluding final newline | 22,020 | 21,882 |
+| Node filters | 53,446 | 53,356 |
+| Node advances | 87,702 | 87,692 |
+| Materialization sites | 33 | 33 |
+| Automatic-index rows | 54,156 | 54,156 |
+| Full-scan steps | 35,379 | 35,379 |
+| Correlated scalar subquery sites | 34 | 60 |
+| Constant-row scans | 58 | 46 |
+
+The VM reduction is 8,232 instructions, or 0.29%. This is a small improvement.
+Boolean alternatives expose separate witness subqueries, so their static count rises despite lower runtime work.
+The unchanged materialization, index, and scan counters show that this phase leaves the larger sources of work intact.
+The next phase will measure upstream recursive and binding producers before choosing another optimization.
+Repeated parent-kind probes remain a candidate; their impact still needs measurement.
+
+Generated median CPU time is 124,714,834 ns. Reference median CPU time is 68,140,376 ns.
+Both gates pass at 1.830× reference CPU time. This single run does not establish stable CPU qualification.
+Earlier failed gates remain recorded. No unchanged gate was rerun to replace a failure.
+The final query hash is `f1ffb7eb4f48dcf2552ae0b7569f736330b0fe4be99842a666f4e01488c76c73`.
+The executable hash is `c120a6b7597cc8228ba7c122ad8a1f989141dbb8864546ec79d2e9a6fa7e29da`.
+
+**Final checks.** All 166 unique tests pass: 154 relational tests, nine B023 fixtures, adversarial and corpus tests, and workspace publication.
+Formatting and both Clippy configurations pass with the existing diagnostic jemalloc shim.
+The measured source files and executable are pinned by hash. All 231 baseline query hashes and VM counts match the preceding committed evidence.
+
+Artifacts:
+
+- `benchmark/relational-bound-predicate.py` reproduces the focused comparisons and checks the frozen wrapper, parity, VM, and CPU gates.
+- `benchmark/sql-relational-bound-predicate-evidence.json` records native traces, controls, full frozen evidence, EXPLAIN, source hashes, and comparisons.
+- `benchmark/sql-relational-bound-predicate-b023.sql` records the final frozen workload query.
+
+Reproduce the frozen run with `benchmark/relational-complete-spike.py`, the frozen corpus config, and the optimized test executable.
+Pass that run's `evidence.json` to `benchmark/relational-bound-predicate.py` through `--frozen-evidence`, alongside `--binary` and a new output directory.
+
+The compiler remains test-only. Production integration and the complete cold-job 100-execution gate remain open.

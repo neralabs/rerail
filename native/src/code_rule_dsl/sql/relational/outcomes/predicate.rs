@@ -1,25 +1,8 @@
-//! Total atoms on an existing node need no existence subquery. Node kinds and
-//! node_regex are non-null; surrounding CASE expressions still own reachability.
+//! Bound predicates share the relational emitter. Surrounding CASE expressions
+//! continue to own reached calls and publication boundaries.
 use super::Set;
 
-pub(super) fn condition(set: &Set, alias: &str) -> Result<String, String> {
-    Ok(match set {
-        Set::AllNodes => "1".into(),
-        Set::Empty => "0".into(),
-        Set::Kinds(kinds) => format!(
-            "{alias}.kind IN ({})",
-            kinds
-                .iter()
-                .map(u16::to_string)
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-        Set::Regex(term) => format!("node_regex({term},{alias}.file,{alias}.id)"),
-        // Patterns, set composition, references, and walks keep their relational
-        // witnesses and joins. This is only an atomic expression specialization.
-        _ => super::super::super::emit::condition(set, alias)?,
-    })
-}
+pub(super) use super::super::super::emit::condition;
 
 #[test]
 fn atomic_predicate_truth_negation_and_reached_calls() {
@@ -50,7 +33,7 @@ fn atomic_predicate_truth_negation_and_reached_calls() {
     ] {
         let direct = condition(&set, "n").unwrap();
         assert!(!direct.contains("SELECT"));
-        let prior = super::super::super::emit::condition(&set, "n").unwrap();
+        let prior = format!("NOT (NOT EXISTS (SELECT 1 WHERE {direct}))");
         for kind in [0, 109, 110, 65535] {
             for guard in [false, true] {
                 for negate in [false, true] {
@@ -75,19 +58,5 @@ fn atomic_predicate_truth_negation_and_reached_calls() {
                 }
             }
         }
-    }
-    // Non-atomic expressions must keep the relational witness path.
-    for set in [
-        Set::Pattern(0),
-        Set::Reference(0),
-        Set::Preimage(
-            super::super::super::ir::Edge::Parent,
-            Box::new(Set::Kinds(vec![110])),
-        ),
-    ] {
-        assert_eq!(
-            condition(&set, "n").unwrap(),
-            super::super::super::emit::condition(&set, "n").unwrap()
-        );
     }
 }
