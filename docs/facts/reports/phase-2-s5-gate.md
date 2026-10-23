@@ -1,6 +1,6 @@
 # Phase 2 S5 report: gate harness
 
-Status: **G2.6 measured and passing** on this branch, with every slice's latest work merged: 13 of 13 seeded mutants killed, gate median 295 s in one command. `--engine facts` reproduces Spike A's batch-6 numbers through Jeremy's harness. Wave 2 (§ 7): batches 1–5 run through the harness in the gate (lane h); 6 of their 50 checks are exact and gated, 40 refuse by name, 4 differ without refusing; with lane h the gate passes in 314 s. Branch `Moti-Velz/facts-engine-s5-gate`, worktree `~/orca/workspaces/rerail/facts-engine/.worktrees/s5-gate`. Raw runs are under `~/rerail-bench/facts/phase-2/s5-gate/runs/` and are cited relative to it.
+Status: **G2.6 measured and passing** on this branch, with every slice's latest work merged: 13 of 13 seeded mutants killed, gate median 295 s in one command. `--engine facts` reproduces Spike A's batch-6 numbers through Jeremy's harness. Wave 2 (§ 7): batches 1–5 run through the harness in the gate; 44 of their 50 checks are exact and gated, 6 refuse by name; the gate passes with 25 checks and 21 of 21 mutants killed in 389 s (load 15). Branch `Moti-Velz/facts-engine-s5-gate`, worktree `~/orca/workspaces/rerail/facts-engine/.worktrees/s5-gate`. Raw runs are under `~/rerail-bench/facts/phase-2/s5-gate/runs/` and are cited relative to it.
 
 ## 1. Setup
 
@@ -149,96 +149,99 @@ S3 owns the plan registry. `facts-b greplay [--plans …] [--real spec.json]` ru
 
 ## 7. Wave 2
 
-Base: integration `caceb656f` (wave 1 merged). Commits on `Moti-Velz/facts-engine-s5-gate`: `7d23ab4a7` per-batch checks and refusals; `3f6c5fe6d` the `GATED` ratchet and replay coverage.
+Base: integration `caceb656f`; merged since: S6 `39d33188c`, `8bdf55063`; S1 `a40a2bcbb`, `f1edf7edc`; S3's tie vector; integration `8960a5db7`. S5 commits on `Moti-Velz/facts-engine-s5-gate`: `7d23ab4a7` per-batch checks and refusals; `3f6c5fe6d` `GATED` ratchet; `2093ccc98`, `6c7cec396` report; `ec37ce73b` mutant 9 reserved; `e2c4d55e7` harness column comparison and mutant 10; `c176eefc7` reference tie refusals; `cc2fce760` 44 checks gated; `4c907e133` explain-physical, b-ties, mutant 9; `3e7bee330` merge of `8960a5db7`.
 
 ### 7.1 Results
 
 | Gate row | Target | Measured | Pass/fail | Run dir |
 |---|---|---|---|---|
-| G2.6 every seeded mutant caught, at `caceb656f` | all | 13/13 killed, 13/13 checks pass. Mutants 1 and 3 again survive `a-reference` and are killed by `a3-check` alone (§ 6) | **pass** | `20261022T203358-gate` |
-| G2.6 every seeded mutant caught, lane h added | all | 13/13 killed, 23/23 checks pass | **pass** | `20261022T204421-gate` |
-| G2.6 gate time, one command | ≤ 10 min | `--mutants --no-build` under `bench-lock`, three runs back to back: 314 / 335 / 369 s, median **335 s** (loads at start 5.5 / 7.2 / 13.2; only the first below 8, so untrusted). At `caceb656f` without lane h: 465 s with a 169 s build, so ≈ 296 s of checks (load 13). Lane h adds 24 s of work in its own lane; the critical path is still lane b/g (274–328 s, growing with load) | **pass** (untrusted; re-run on a quiet machine) | `20261022T204421-gate`, `…205339-gate`, `…205914-gate`; `20261022T203358-gate` |
-| Per-batch `--engine facts`, batches 1–5 | reported; refusals count as failures | 6 of 50 checks exact in both replay and suite, now in `GATED`; 4 differ without refusing (I9 violations, § 7.3); 40 refused. Table § 7.2 | measured | `20261022T204421-gate/harness-b*`, `…/suite-b*` |
-| Per-batch suite, incremental phases | from-scratch runs equal to the cold run | `suite.ts --engine facts` without `--cold-only`: for every batch the unchanged and trailing-newline phases give the cold run's FP, FN and failures | measured | `20261022T205039-harness-suites` |
+| G2.6 every seeded mutant caught, at `caceb656f` | all | 13/13 killed, 13/13 checks | **pass** | `20261022T203358-gate` |
+| G2.6 every seeded mutant caught, current tree (`3e7bee330`) | all | **21/21 killed** (1–10, 11–21), **25/25 checks**. New: 9 (S3 tie detection, killed by `b-ties`: 51 differences, 51 of 51 expected refusals missing), 10 (S1 order proofs), 16–21 (S1 rewrites R6–R11, unit differentials). Mutants 1 and 3 still survive `a-reference` and die by `a3-check` only | **pass** | `20261022T214833-gate` |
+| G2.6 gate time, one command | ≤ 10 min | `--mutants --no-build`, lane h added, under `bench-lock`: 314 / 335 / 369 s, median **335 s** (loads 5.5 / 7.2 / 13.2). Current tree with 25 checks and 21 mutants: **389 s** (build up to date, load 15.4, untrusted). Critical path: lane b/g (342–343 s at load 15); lanes h and t add 20 s (explain-physical) and 11 s (b-ties) in parallel | **pass** (untrusted; decider to re-run quiet) | `20261022T204421-gate`, `…205339-gate`, `…205914-gate`, `20261022T214833-gate` |
+| Per-batch `--engine facts`, batches 1–5 (replay + suite) | reported; refusals are failures | **44/50 checks exact in both and gated**; 6 refuse by name (budget-evidence closure ×3, `binds` ×2, `printf` ×1); 0 checks differ without refusing | measured, gated | `20261022T214833-gate/harness-b*`, `…/suite-b*` |
+| Per-batch suite incremental phases (wave-2 start) | from-scratch phases = cold | equal for every batch | measured | `20261022T205039-harness-suites` |
+| `explain-physical` per file over the subset | identical runs; one text per clause across files | 1,150/1,150 files, 50 clauses, sha256 `560fc8448638d5a4` in both runs, each clause one text; 1,233 audit inner-scan lines (informational, 2 stage plans) | **pass** | `20261022T214833-gate/explain-physical` |
+| `b-ties` (S3's constructed tie, 200 events) | refusals met, 0 differences | 0 differences in 201 checkpoints, expected refusals `rt` 280/280 | **pass** | `20261022T214833-gate/b-ties` |
 
-### 7.2 Per-batch parity through the harness (`20261022T204421-gate`)
+### 7.2 Per-batch parity through the harness (`20261022T214833-gate`)
 
-Replay: `replay.ts --engine facts` over the batch's recordings and probes (as `/tmp/dl60/replay-all.sh` combines them), 317 / 391 / 361 / 573 / 312 calls; batch 4's 3 host-signature-guard calls are evaluated by the host, not the engine. Suite: `suite.ts --engine facts --cold-only` over the oracle `data_layer_suite_record.py` recorded at `2b1504adc` (`/tmp/dl60/suite-b<n>.json`, copied with SHA256SUMS to `~/rerail-bench/facts/phase-2/s5-gate/suites/`): 9,010 / 5,912 / 6,982 / 3,870 / 5,914 files. A suite oracle with 0 findings only shows that the engine adds none. Status: exact, differs (FP or FN, no failure) or refused (any failure: a compile error naming the construct, a harness refusal, a Rust source). The refusal column is the first message.
+Replay: `replay.ts --engine facts` over the batch's recordings and probes (as `/tmp/dl60/replay-all.sh` combines them): 317 / 391 / 361 / 573 / 312 calls; batch 4's 3 host-signature-guard calls are evaluated by the host. Suite: `suite.ts --engine facts --cold-only` over `data_layer_suite_record.py`'s oracle at `2b1504adc` (`/tmp/dl60/suite-b<n>.json`, copied with SHA256SUMS to `~/rerail-bench/facts/phase-2/s5-gate/suites/`): 9,010 / 5,912 / 6,982 / 3,870 / 5,914 files. A 0-finding suite oracle only shows that the engine adds none; the replay carries the coverage (≥ 1 positive and ≥ 1 clean call per gated check). The wave-2 start (`20261022T204421-gate`): 6/50 exact, 4 differing without refusing (regex `lines` ignored, fixed by S6), 40 refused.
 
 | batch | check | replay exact calls | replay FP / FN / failures | suite oracle findings | suite FP / FN / failures | status | first refusal |
 |---|---|--:|---|--:|---|---|---|
 | 1 | `removed_compat_surfaces` | 4/4 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
 | 1 | `versioned_lifecycle_legacy_surfaces` | 3/3 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
 | 1 | `no_api_root_imports` | 4/4 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
-| 1 | `backend_type_strings` | 0/60 | 53 / 48 / 60 | 0 | 0 / 0 / 0 | refused (replay) / exact (suite) | harness: findings carry no column; backend_type_strings compares columns |
-| 1 | `hasattr_async` | 26/33 | 7 / 0 / 0 | 0 | 1 / 0 / 0 | **differs** |  |
-| 1 | `no_source_inspection` | 69/72 | 3 / 0 / 0 | 0 | 0 / 0 / 0 | **differs** (replay) |  |
-| 1 | `serverplan_name_inference` | 8/8 | 0 / 0 / 0 | 0 | 456 / 0 / 0 | **differs** (suite) |  |
-| 1 | `no_blanket_grammar_bypass` | 29/121 | 3 / 117 / 89 | 0 | 0 / 0 / 1 | refused | public-methods: unsupported ast key file |
+| 1 | `backend_type_strings` | 60/60 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 1 | `hasattr_async` | 33/33 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 1 | `no_source_inspection` | 72/72 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 1 | `serverplan_name_inference` | 8/8 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 1 | `no_blanket_grammar_bypass` | 121/121 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
 | 1 | `serverplan_grammar_surface` | 7/7 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
-| 1 | `permission_error` | 0/5 | 0 / 3 / 5 | 0 | 0 / 0 / 1 | refused | raise: rule/all/0/not: unsupported rule key `layout` |
-| 2 | `dynamic_module_loading` | 0/66 | 0 / 47 / 66 | 0 | 0 / 0 / 1 | refused | pattern-0: regex content gate unsupported |
-| 2 | `forwardref` | 0/15 | 0 / 10 / 15 | 0 | 0 / 0 / 1 | refused | fwdref001: pattern `isinstance(annotation, type)` unsupported (only metavariables and single names) |
-| 2 | `unresolved_forward_refs` | 0/73 | 0 / 45 / 73 | 0 | 0 / 0 / 1 | refused | inspection: unsupported rule key `arguments` |
-| 2 | `classvar_check` | 0/16 | 0 / 11 / 16 | 0 | 0 / 0 / 1 | refused | comparison: unsupported rule key `follows` |
-| 2 | `type_safety_patterns` | 0/56 | 0 / 40 / 56 | 0 | 0 / 0 / 1 | refused | text-str_union_expression: regex content gate unsupported |
+| 1 | `permission_error` | 5/5 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 2 | `dynamic_module_loading` | 66/66 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 2 | `forwardref` | 15/15 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 2 | `unresolved_forward_refs` | 73/73 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 2 | `classvar_check` | 16/16 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 2 | `type_safety_patterns` | 56/56 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
 | 2 | `conn_or_txn_union` | 15/15 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
-| 2 | `async_executor` | 0/47 | 0 / 39 / 47 | 0 | 0 / 0 / 1 | refused | executor: terminators |
-| 2 | `async_patterns` | 0/38 | 0 / 29 / 38 | 0 | 0 / 0 / 1 | refused | to-thread-analyzer: unsupported ast key when |
-| 2 | `async_sync_boundary` | 0/17 | 0 / 9 / 17 | 0 | 0 / 0 / 1 | refused | sync-wraps-analyzer: unsupported ast key when |
-| 2 | `admin_async_purity` | 32/48 | 21 / 0 / 0 | 0 | 0 / 0 / 0 | **differs** (replay) |  |
-| 3 | `plan_scope_side_effects` | 0/29 | 0 / 18 / 29 | 0 | 0 / 0 / 1 | refused | eager-value: unsupported rule key `layout` |
-| 3 | `plan_scope_ownership` | 0/30 | 0 / 28 / 30 | 0 | 0 / 0 / 1 | refused | runner-no-parameter: unsupported rule key `precedes` |
-| 3 | `transaction_closures` | 0/104 | 0 / 48 / 104 | 0 | 0 / 0 / 1 | refused | inline-mutation: unsupported rule key `precedes` |
-| 3 | `transaction_callback_wrappers` | 0/20 | 0 / 7 / 20 | 0 | 0 / 0 / 1 | refused | callback-helper: unsupported ast key file |
-| 3 | `transaction_patterns` | 0/50 | 0 / 33 / 50 | 0 | 0 / 0 / 1 | refused | category-1: unsupported ast key when |
-| 3 | `lazy_result_usage` | 0/17 | 0 / 4 / 17 | 0 | 0 / 0 / 1 | refused | execute: unsupported ast key file |
-| 3 | `swallowed_exceptions` | 0/25 | 0 / 23 / 25 | 807 | 0 / 807 / 1 | refused | except-warning: pattern `queue.Empty` unsupported |
-| 3 | `error_handling` | 0/13 | 0 / 8 / 13 | 0 | 0 / 0 / 1 | refused | log-reraise: unsupported ast key file |
-| 3 | `module_level_caches` | 0/23 | 0 / 21 / 23 | 0 | 0 / 0 / 1 | refused | raw-dict_cache: unsupported ast key file |
-| 3 | `connection_caches` | 0/50 | 0 / 34 / 50 | 0 | 0 / 0 / 1 | refused | pattern-0: regex content gate unsupported |
+| 2 | `async_executor` | 47/47 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 2 | `async_patterns` | 38/38 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 2 | `async_sync_boundary` | 17/17 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 2 | `admin_async_purity` | 48/48 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `plan_scope_side_effects` | 29/29 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `plan_scope_ownership` | 30/30 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `transaction_closures` | 104/104 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `transaction_callback_wrappers` | 20/20 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `transaction_patterns` | 50/50 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `lazy_result_usage` | 17/17 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `swallowed_exceptions` | 25/25 | 0 / 0 / 0 | 807 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `error_handling` | 13/13 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `module_level_caches` | 23/23 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 3 | `connection_caches` | 50/50 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
 | 4 | `render_fstrings` | 37/37 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
-| 4 | `render_raw_strings` | 0/53 | 0 / 50 / 53 | 178 | 0 / 178 / 1 | refused | literal: value key type unsupported |
-| 4 | `regex_sql_parsing` | 0/97 | 0 / 68 / 97 | 0 | 0 / 0 / 1 | refused | category-0: value key type unsupported |
-| 4 | `sql_grammar_escape_hatches` | 3/163 | 0 / 464 / 160 | 0 | 0 / 0 / 1 | refused | forbidden-class: unsupported rule key `layout` |
-| 4 | `grammar_render_methods` | 0/75 | 0 / 58 / 75 | 0 | 0 / 0 / 1 | refused | fstring: unsupported rule key `layout` |
-| 4 | `grammar_str_params` | 0/19 | 0 / 25 / 19 | 0 | 0 / 0 / 1 | refused | parameter: unsupported rule key `follows` |
-| 4 | `grammar_callable_constructors` | 0/27 | 0 / 30 / 27 | 0 | 0 / 0 / 1 | refused | namespace-render: unsupported rule key `params` |
-| 4 | `grammar_fragment_usage` | 0/80 | 0 / 61 / 80 | 0 | 0 / 0 / 1 | refused | forbidden-class: unsupported rule key `params` |
-| 4 | `grammar_allowlist_burndown` | 0/8 | 0 / 9 / 8 | 0 | 0 / 0 / 1 | refused | allowlist-allowlisted_static_classes: budget shape unsupported |
-| 4 | `rust_sql_grammar_boundary` | 0/14 | 0 / 26 / 14 | 0 | 0 / 0 / 11 | refused | Rust sources are not supported by the facts engine (language rust) |
-| 5 | `missing_async_pairs` | 0/15 | 0 / 6 / 15 | 0 | 0 / 0 / 1 | refused | missing-async: unsupported rule key `params` |
-| 5 | `sync_async_signatures` | 0/10 | 0 / 4 / 10 | 0 | 0 / 0 / 1 | refused | transaction-connection: parameterised matches unsupported |
-| 5 | `async_sync_delegation` | 0/37 | 0 / 16 / 37 | 0 | 0 / 0 / 1 | refused | sync-delegation: value key type unsupported |
-| 5 | `public_api_triples` | 0/38 | 0 / 32 / 38 | 0 | 0 / 0 / 1 | refused | exported-families/raw_all: unsupported ast key file |
-| 5 | `data_layer_facade_purity` | 0/12 | 0 / 9 / 12 | 0 | 0 / 0 / 1 | refused | expression: value key type unsupported |
-| 5 | `data_layer_compat_aliases` | 0/11 | 0 / 6 / 11 | 0 | 0 / 0 / 1 | refused | import-alias: transform LEAF: unsupported shape |
-| 5 | `layer_violations` | 0/11 | 0 / 9 / 11 | 133 | 0 / 133 / 1 | refused | layer-0: budget shape unsupported |
-| 5 | `backend_coupling` | 0/62 | 0 / 36 / 62 | 0 | 0 / 0 / 1 | refused | backend-import: unsupported ast key file |
-| 5 | `internal_dead_code` | 0/43 | 0 / 55 / 43 | 4,931 | 0 / 4,931 / 1 | refused | unreachable-internal-symbols/raw_all: unsupported ast key file |
-| 5 | `imperative_private_functions` | 0/73 | 0 / 150 / 73 | 18,771 | 0 / 18,771 / 1 | refused | direct-execution: unsupported rule key `binds` |
-
-Per batch, replay exact calls / checks exact (replay; suite): b1 150/317, 5/10; 6/10. b2 47/391, 1/10; 2/10. b3 0/361, 0/10; 0/10. b4 40/573, 1/10; 1/10. b5 0/312, 0/10; 0/10. Six checks are exact in both, with positive and clean replay coverage: `GATED`.
+| 4 | `render_raw_strings` | 53/53 | 0 / 0 / 0 | 178 | 0 / 0 / 0 | exact, gated |  |
+| 4 | `regex_sql_parsing` | 97/97 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 4 | `sql_grammar_escape_hatches` | 21/163 | 0 / 451 / 142 | 0 | 0 / 0 / 1 | refused | unsafe-parameter: budget evidence closure unsupported (a name closure over the repository's rows) |
+| 4 | `grammar_render_methods` | 75/75 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 4 | `grammar_str_params` | 19/19 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 4 | `grammar_callable_constructors` | 0/27 | 0 / 30 / 27 | 0 | 0 / 0 / 1 | refused | constructor-arg: budget evidence closure unsupported (a name closure over the repository's rows) |
+| 4 | `grammar_fragment_usage` | 0/80 | 0 / 61 / 80 | 0 | 0 / 0 / 1 | refused | captured-return: budget evidence closure unsupported (a name closure over the repository's rows) |
+| 4 | `grammar_allowlist_burndown` | 8/8 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 4 | `rust_sql_grammar_boundary` | 14/14 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 5 | `missing_async_pairs` | 15/15 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 5 | `sync_async_signatures` | 10/10 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 5 | `async_sync_delegation` | 37/37 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 5 | `public_api_triples` | 0/38 | 0 / 32 / 38 | 0 | 0 / 0 / 1 | refused | exported-families: stage hierarchy: function printf unsupported |
+| 5 | `data_layer_facade_purity` | 12/12 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 5 | `data_layer_compat_aliases` | 11/11 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 5 | `layer_violations` | 11/11 | 0 / 0 / 0 | 133 | 0 / 0 / 0 | exact, gated |  |
+| 5 | `backend_coupling` | 62/62 | 0 / 0 / 0 | 0 | 0 / 0 / 0 | exact, gated |  |
+| 5 | `internal_dead_code` | 0/43 | 0 / 55 / 43 | 4,931 | 0 / 4,931 / 1 | refused | unreachable-internal-symbols/raw_module_names: rule/all/7/not: unsupported rule key `binds` |
+| 5 | `imperative_private_functions` | 0/73 | 0 / 150 / 73 | 18,771 | 0 / 18,771 / 1 | refused | direct-execution: rule/all/0/all/4/any/0/all/1/any/0/has: unsupported rule key `binds` |
 
 ### 7.3 Findings
 
-- **I9 violation: regex `lines` is accepted and ignored.** `forbid.regex.lines` (`exclude`, `include`, `first`, the `state` machine) compiles in `eval.rs` but is not evaluated, so comment and docstring lines match: `hasattr_async` (7 FP replay, 1 FP suite), `no_source_inspection` (3 FP), `admin_async_purity` (21 FP, the `state` machine), `serverplan_name_inference` (456 FP in the suite, `lines.include`). Reported to S6, who confirms the gap (`leaf.rs` refuses the key, `eval.rs` ignores it) and is porting native's `lines`/`content` evaluation. `no_blanket_grammar_bypass`'s 3 replay FP sit in calls without a refused clause; they are listed under refused because other calls refuse.
-- **Rust sources were skipped silently.** `facts-a calls` dropped `.rs` inputs and `facts-a repo` walked `.py` only, so batch 4's `rust_sql_grammar_boundary` would have passed its 0-finding suite oracle. Both now refuse a Rust file a rule's scope selects, by name.
-- **`facts-a repo` ran batch 6 only.** `suite.ts --engine facts` evaluated batch 6's rules whatever the recording; it now passes the recording's checks (`--checks`).
+- **I9 violation (fixed): regex `lines` was accepted and ignored** in `eval.rs`, giving FPs in `hasattr_async`, `no_source_inspection`, `admin_async_purity` and 456 suite FPs in `serverplan_name_inference`. Found by lane h at the wave-2 start, reported to S6, fixed in `39d33188c`; all four are exact and gated now.
+- **Rust sources were skipped silently** by `facts-a calls` and `facts-a repo`. First refused by name (`7d23ab4a7`); with S6's `eval_text_file` (`8bdf55063`) both now evaluate regex clauses over `.rs` text, and `rust_sql_grammar_boundary` is exact.
+- **`facts-a repo` ran batch 6 only**, so `suite.ts --engine facts` silently evaluated the wrong rules for batches 1–5; it now takes `--checks` from the recording.
+- **`backend_type_strings`** compares columns: the harness compared nothing and refused; with S6's code-point `column` the harness compares it when every finding carries one (60/60 calls exact).
 
 ### 7.4 Interface changes
 
-- `facts-a repo --checks c1,c2,…` (snake-case check names, default batch 6). A policy that does not compile, or panics compiling, is one failure `{check, clause: "", path: "", message: "compile: …"}` and is not evaluated; before, `repo` panicked.
-- `facts-a repo` and `facts-a calls`: a `.rs` file a compiled rule's scope selects yields a failure "Rust sources are not supported by the facts engine (language rust)".
-- `facts-a calls`: a panic while compiling a policy is that call's `compile_error`; a panic while evaluating is a failure `engine panic: …` of that call (its findings discarded). `facts-a repo` does not catch evaluation panics: `a3-check` relies on the `FACTS_A3_CHECK` panic failing the run.
-- `conformance/data-layer/facts-engine.ts`: `runFactsRepository(files, policies, checks, threads = 4)`.
-- Gate: lane h (`harness-b1`…`b5`, `suite-b1`…`b5`); `GATED` in `facts-gate.py` is the ratchet of batch 1–5 checks held exact.
+- `facts-a repo --checks c1,c2,…` (default batch 6); `repo::compile_checks(policies, checks) -> (rules, refused)` and `repo::selected_checks(args)` replace `compile_batch6` (S1's `physplan.rs` uses them). A policy that does not compile, or panics compiling, is a failure `compile: …` of its check.
+- `facts-a repo` evaluates `.rs` files' regex clauses via `eval::eval_text_file` (as `facts-a calls`).
+- `facts-a calls`: a compile panic is that call's `compile_error`; an evaluation panic is a failure `engine panic: …` of that call. `repo` does not catch evaluation panics (`a3-check` relies on them).
+- `conformance/data-layer/facts-engine.ts`: `runFactsRepository(files, policies, checks, threads)`; findings carry an optional `column`; `replay.ts` compares it for column-compared checks and refuses only a finding without one.
+- `rerail_facts::reference`: under `Total::Checked`, a tie between distinct rows is `Err("tie: …")` — row_number (equal partition and order keys), `Sort` with LIMIT/OFFSET (any tie, wherever the cut falls), group_concat/json_group_array (keys of the Sort reached through Project/Filter; none: any two distinct rows of a group). Mirrors S3's dataflow; test `reference::tests::checked_orders_refuse_ties`.
+- Gate: lanes h (`harness-b1..b5`, `suite-b1..b5`, `explain-physical`) and t (`b-ties`); `GATED` (44 checks) is the ratchet; `check_b` accepts run-time refusals only on plans in `expected_refusals` and counts `missing_expected_refusals` as a detection; fixed mutants 9 and 10; REWRITES § Numbers lists 9 and 10.
 
 ## 8. Resume notes
 
-- **State:** `3f6c5fe6d` on `Moti-Velz/facts-engine-s5-gate`; the gate passes with lane h (`20261022T204421-gate`). S2 agreed to the `repo.rs` call-site edits and will merge them.
+- **State:** `3e7bee330` on `Moti-Velz/facts-engine-s5-gate` (integration `8960a5db7`, S1 `f1edf7edc`, S3 tie vector, S6 `8bdf55063` merged); gate passes 25/25 checks, 21/21 mutants (`20261022T214833-gate`). Nothing half-done.
 - **Successor's next steps:**
-  1. When S6 lands a commit (it messages hash and rules): merge it, run `just facts-gate --only harness-b1,…,suite-b5`, add every check exact in both to `GATED` (replay needs a positive and a clean call), and refresh § 7.2.
-  2. When S2 deletes `subst.rs`, it messages the switches that replace `FACTS_A3_CHECK`/`FACTS_A3_OFF`. Re-point `a-subset`/`a3-check`/`a-reference` to rewritten vs unrewritten vs `reference::evaluate_plan`, drop mutants 1–3, and let rewrite mutants also run the corpus differentials.
-  3. When S1's physical EXPLAIN takes a file (`facts-a explain --rules R [--rule id] --file <path>` or `--root <dir>`, agreed with S1), make `explain-stable` compare per file over the subset. S1 numbers new registry rows' mutants from 16.
-  4. When S3 registers the 8 real repository plans (`--real`), confirm `b-generated` runs them, and add `--plans` names if needed.
+  1. **S2's `subst.rs` deletion (not yet landed; S2 will message the switch names).** Re-point `a-subset`/`a3-check`/`a-reference` to rewritten vs unrewritten vs `reference::evaluate_plan`, drop mutants 1–3 from `MUTANTS` (and REWRITES § Numbers), and add `a-reference`/the new differential to the rewrite mutants' families (11–21) so they are also killed on the corpus, not only by unit differentials.
+  2. When S6 unblocks the remaining 6 checks (closure evidence, `binds`, `printf`), run `just facts-gate --only harness-b4,harness-b5,suite-b4,suite-b5`, add the exact ones to `GATED`, refresh § 7.2.
+  3. When S3 lands ordered aggregates in the generator, extend `b-ties` (or the tie vector) to cover them; the reference side is done.
+  4. Ask the decider for a quiet-machine timing run (3 × `--mutants --no-build`); every timing above is untrusted.
+  5. When S3 registers the 8 real repository plans, confirm `b-generated` runs them (`--plans` if needed); runtime refusals on real plans fail the gate unless the run declares them expected.
