@@ -12,6 +12,7 @@
 //! | `[NOT] EXISTS`, `[NOT] IN (subquery)` under a conjunction, equality-correlated | `Semi` (count-based presence) |
 //! | scalar subquery over an aggregate, equality-correlated | `Group` on the correlation keys + left join, empty-group value |
 //! | scalar subquery `ORDER BY … LIMIT 1`, equality-correlated | `Window` row_number on the correlation keys + left join |
+//! | any of the three with θ-correlations (R36) | the body joined with the distinct enclosing rows, θ as its filter, correlated on the enclosing row's identity |
 //! | `Aggregate` | `Group` (group recompute per touched key); bare non-key columns refused |
 //! | `Window` | `Window` (partition recompute; a tie between distinct rows is a runtime refusal) |
 //! | `Distinct` full row / set `Union` | `Distinct` (count-based presence) |
@@ -39,6 +40,10 @@ pub enum KeyMode {
 }
 
 pub type Key = Vec<(X, KeyMode)>;
+
+/// A subquery's correlation with its enclosing row: (expression over the enclosing row, expression
+/// over the body row, how each side compares).
+type Corr = (X, X, (KeyMode, KeyMode));
 
 #[derive(Debug)]
 pub enum Op {
@@ -1345,25 +1350,28 @@ impl<'a> Ctx<'a> {
     }
 
     /// A subquery body whose rows (not only existence) are read: an uncorrelated relation as is,
-    /// or a correlated WHERE over an uncorrelated input split into body and correlations.
-    /// Correlation anywhere else is refused (projections and DISTINCT must be kept here).
-    fn rows_of(&mut self, rel: &Rel<RepoSource>) -> R<(Rel<RepoSource>, Vec<(X, X, (Aff, Aff))>)> {
+    /// or a correlated WHERE over an uncorrelated input split into body, correlations and
+    /// θ-correlations (R36). Correlation anywhere else is refused (projections and DISTINCT must
+    /// be kept here).
+    fn rows_of(&mut self, rel: &Rel<RepoSource>) -> R<(Rel<RepoSource>, Vec<Corr>, Vec<X>)> {
         if !rel_free(rel, 1) {
-            return Ok((rel.clone(), Vec::new()));
+            return Ok((rel.clone(), Vec::new(), Vec::new()));
         }
         let lifted = lift_correlations(rel);
         let rel = lifted.as_ref().unwrap_or(rel);
         if !matches!(rel, Rel::Filter { .. }) {
             return refuse(&self.at, "correlated scalar subquery whose correlation is not its top-level WHERE");
         }
-        let (b, c, _) = self.decorrelate(rel)?;
-        Ok((b, c))
+        let (b, c, _, theta) = self.decorrelate(rel)?;
+        Ok((b, c, theta))
     }
 
-    /// Split a subquery body into its uncorrelated part and the equality correlations with the
-    /// enclosing row: `(body, [(outer expr at depth 0 of the enclosing row, inner expr, affs)],
-    /// projection of the first output column)`.
-    fn decorrelate(&mut self, rel: &Rel<RepoSource>) -> R<(Rel<RepoSource>, Vec<(X, X, (Aff, Aff))>, Option<X>)> {
+    /// Split a subquery body into its uncorrelated part, the equality correlations with the
+    /// enclosing row (`[(outer expr at depth 0 of the enclosing row, inner expr, modes)]`), the
+    /// projection of the first output column, and the θ-correlations: every other conjunct of its
+    /// WHERE that reads the enclosing row (columns at depth 1 of the body row, nested subqueries
+    /// included), lowered by [`Self::theta_body`].
+    fn decorrelate(&mut self, rel: &Rel<RepoSource>) -> R<(Rel<RepoSource>, Vec<Corr>, Option<X>, Vec<X>)> {
         let mut first: Option<X> = None;
         // R22: correlations below the top WHERE (inner-join ONs, nested filters) lifted to it.
         let mut cur = lift_correlations(rel).unwrap_or_else(|| rel.clone());
@@ -1385,6 +1393,7 @@ impl<'a> Ctx<'a> {
             }
         }
         let mut corr = Vec::new();
+        let mut theta = Vec::new();
         let body = match cur {
             Rel::Filter { input, .. } if rel_free(&input, 1) => return refuse(&self.at, "correlation below the subquery's WHERE (in a join or nested relation)"),
             Rel::Filter { input, pred } => {
@@ -1401,15 +1410,18 @@ impl<'a> Ctx<'a> {
                         let inner_only = |x: &X| !expr_free(x, 1);
                         let up = |x: &X| map_cols(x, &|d, col| (d == 1).then_some(Expr::Col { depth: 0, col }));
                         if outer_only(a) && inner_only(b) {
-                            corr.push((up(a), (**b).clone(), (*fa, *fb)));
+                            corr.push((up(a), (**b).clone(), (KeyMode::Eq(*fa), KeyMode::Eq(*fb))));
                             continue;
                         }
                         if outer_only(b) && inner_only(a) {
-                            corr.push((up(b), (**a).clone(), (*fb, *fa)));
+                            corr.push((up(b), (**a).clone(), (KeyMode::Eq(*fb), KeyMode::Eq(*fa))));
                             continue;
                         }
                     }
-                    return refuse(&self.at, "correlated subquery with a non-equality correlation");
+                    if expr_free(&c, 2) {
+                        return refuse(&self.at, "correlated subquery reading a row two or more levels out in a non-equality correlation");
+                    }
+                    theta.push(c);
                 }
                 match and_all(keep) {
                     None => *input,
@@ -1423,20 +1435,57 @@ impl<'a> Ctx<'a> {
                 other
             }
         };
-        Ok((body, corr, first))
+        Ok((body, corr, first, theta))
+    }
+
+    /// R36 (REWRITES.md, mutant 48): a subquery with θ-correlations, as one correlated on the
+    /// enclosing row's identity. The body becomes `σ_θ(body ⋈_eq distinct(n))` (body row ++ enclosing row; θ
+    /// reads the enclosing row's columns in the joined row, the equality correlations key the
+    /// join, none: a cross join), correlated with `n` on every column of `n` (grouping identity,
+    /// NULLs equal). Exact: the subquery's value for a row of `n` depends on that row's values
+    /// only, so equal rows share it, and the distinct enclosing rows keep aggregates from counting
+    /// a body row once per copy. Returns the body node and the identity correlations; columns
+    /// of the body keep their positions. Mutant 48 drops θ.
+    fn theta_body(&mut self, n: NodeId, body: &Rel<RepoSource>, corr: &[Corr], theta: &[X]) -> R<(NodeId, Vec<Corr>)> {
+        if !self.g.poison[n].is_empty() {
+            return refuse(&self.at, "θ-correlated subquery over a row holding bare aggregate columns");
+        }
+        let b = self.rel(body)?;
+        let (wb, wn) = (self.width(b), self.width(n));
+        let d = self.add(Op::Distinct { input: n }, wn, Vec::new());
+        let (mut lk, mut rk) = (Vec::new(), Vec::new());
+        for (o, i, (mo, mi)) in corr {
+            self.check_reads(b, i)?;
+            self.check_reads(d, o)?;
+            lk.push((i.clone(), *mi));
+            rk.push((o.clone(), *mo));
+        }
+        let mut p = self.g.poison[b].clone();
+        p.extend(self.g.poison[d].iter().map(|c| c + wb));
+        let j = self.add(Op::Join { l: b, r: d, lk, rk }, wb + wn, p);
+        // θ over the joined row: the enclosing row (depth 1 of the body row) is now columns
+        // wb.. of the same row; deeper subqueries see it one level further out, as before.
+        let pred = and_all(theta.iter().map(|c| remap_expr(c, 0, &|r, col| match r {
+            0 => (0, col),
+            1 => (0, wb as u16 + col),
+            r => (r - 1, col),
+        })).collect()).unwrap();
+        let f = if crate::mutant::on(48) { j } else { self.filter(j, &pred)? };
+        let ident = (0..wn).map(|c| (col(c), col(wb + c), (KeyMode::Group, KeyMode::Group))).collect();
+        Ok((f, ident))
     }
 
     /// `[NOT] EXISTS (rel)` or `e [NOT] IN (rel)` as a semijoin / antijoin of `n`.
     fn semi(&mut self, n: NodeId, rel: &Rel<RepoSource>, inl: Option<(X, (Aff, Aff))>, anti: bool) -> R<NodeId> {
-        let (body, corr, first) = self.decorrelate(rel)?;
-        let b = self.rel(&body)?;
+        let (body, corr, first, theta) = self.decorrelate(rel)?;
+        let (b, corr) = if theta.is_empty() { (self.rel(&body)?, corr) } else { self.theta_body(n, &body, &corr, &theta)? };
         let mut lk: Key = Vec::new();
         let mut rk: Key = Vec::new();
-        for (o, i, (fo, fi)) in &corr {
+        for (o, i, (mo, mi)) in &corr {
             self.check_reads(n, o)?;
             self.check_reads(b, i)?;
-            lk.push((o.clone(), KeyMode::Eq(*fo)));
-            rk.push((i.clone(), KeyMode::Eq(*fi)));
+            lk.push((o.clone(), *mo));
+            rk.push((i.clone(), *mi));
         }
         let w = self.width(n);
         let p = self.g.poison[n].clone();
@@ -1573,11 +1622,23 @@ impl<'a> Ctx<'a> {
         let pn = self.g.poison[n].clone();
         match cur {
             Rel::Aggregate { input, keys, aggs } if keys.is_empty() => {
-                let (body, corr) = self.rows_of(input)?;
+                let (body, corr, theta) = self.rows_of(input)?;
                 // Ordered aggregates: the body's rows carry their sort keys (trailing columns),
                 // read by the group as its order and dropped right after it.
-                let (b, desc) = if aggs.iter().any(ordered_agg) { self.rel_keyed(&body)? } else { (self.rel(&body)?, Vec::new()) };
-                let wk = self.width(b);
+                let ordered = aggs.iter().any(ordered_agg);
+                if ordered && !theta.is_empty() {
+                    return refuse(&self.at, "θ-correlated ordered aggregate (group_concat/json_group_array)");
+                }
+                let (b, desc, corr, wk) = if !theta.is_empty() {
+                    // The joined body row is body ++ enclosing row; the group reads the body part.
+                    let (b, corr) = self.theta_body(n, &body, &corr, &theta)?;
+                    let wk = self.width(b) - wn;
+                    (b, Vec::new(), corr, wk)
+                } else {
+                    let (b, desc) = if ordered { self.rel_keyed(&body)? } else { (self.rel(&body)?, Vec::new()) };
+                    let wk = self.width(b);
+                    (b, desc, corr, wk)
+                };
                 let wb = wk - desc.len();
                 // Group by the inner correlation expressions; the group row is
                 // corr values ++ representative (poisoned) ++ aggs.
@@ -1585,8 +1646,8 @@ impl<'a> Ctx<'a> {
                 for k in &ck {
                     self.check_reads(b, k)?;
                 }
-                let keyed = self.add(Op::Map { input: b, exprs: ck.iter().cloned().chain((0..wk).map(col)).collect() }, ck.len() + wk, self.g.poison[b].iter().map(|c| c + ck.len()).collect());
-                let gk: Key = corr.iter().enumerate().map(|(i, (_, _, (_, fi)))| (col(i), KeyMode::Eq(*fi))).collect();
+                let keyed = self.add(Op::Map { input: b, exprs: ck.iter().cloned().chain((0..wk).map(col)).collect() }, ck.len() + wk, self.g.poison[b].iter().filter(|c| **c < wk).map(|c| c + ck.len()).collect());
+                let gk: Key = corr.iter().enumerate().map(|(i, (_, _, (_, mi)))| (col(i), *mi)).collect();
                 let aggs2: Vec<AggCall<RepoSource>> = aggs.iter().map(|a| AggCall { f: a.f, arg: a.arg.as_ref().map(|e| shift(e, ck.len() as isize)), sep: a.sep.as_ref().map(|e| shift(e, ck.len() as isize)), distinct: a.distinct, total: a.total }).collect();
                 let order = desc.iter().enumerate().map(|(j, d)| (col(ck.len() + wb + j), *d)).collect();
                 let g = self.group_eq(keyed, gk, aggs2, order)?;
@@ -1631,8 +1692,8 @@ impl<'a> Ctx<'a> {
                 if sel.iter().any(|e| expr_free(e, 1) || has_subquery(e)) {
                     return refuse(&self.at, "scalar subquery projecting an outer column or a subquery");
                 }
-                let (body, corr) = self.rows_of(inner)?;
-                let b = self.rel(&body)?;
+                let (body, corr, theta) = self.rows_of(inner)?;
+                let (b, corr) = if theta.is_empty() { (self.rel(&body)?, corr) } else { self.theta_body(n, &body, &corr, &theta)? };
                 let k = corr.len();
                 for (_, i, _) in &corr {
                     self.check_reads(b, i)?;
@@ -1641,7 +1702,7 @@ impl<'a> Ctx<'a> {
                     self.check_reads(b, e)?;
                 }
                 let keyed = self.add(Op::Map { input: b, exprs: corr.iter().map(|(_, i, _)| i.clone()).chain(sel.iter().cloned()).collect() }, k + sel.len(), Vec::new());
-                let part: Key = corr.iter().enumerate().map(|(i, (_, _, (_, fi)))| (col(i), KeyMode::Eq(*fi))).collect();
+                let part: Key = corr.iter().enumerate().map(|(i, (_, _, (_, mi)))| (col(i), *mi)).collect();
                 let order: Vec<(X, bool)> = keys.iter().map(|(c, d)| (col(k + *c as usize), *d)).collect();
                 let wk = k + sel.len();
                 let win = self.add(Op::Window { input: keyed, part: part.clone(), order, kind: WindowKind::RowNumber }, wk + 1, Vec::new());
@@ -1657,12 +1718,13 @@ impl<'a> Ctx<'a> {
 
     /// Left-join `n` with `vals` (corr keys ++ value) on the correlation; a row with no group gets
     /// `empty`. Output: n's columns ++ value.
-    fn attach(&mut self, n: NodeId, wn: usize, pn: Vec<usize>, vals: NodeId, corr: &[(X, X, (Aff, Aff))], empty: V) -> R<NodeId> {
+    fn attach(&mut self, n: NodeId, wn: usize, pn: Vec<usize>, vals: NodeId, corr: &[Corr], empty: V) -> R<NodeId> {
         let k = corr.len();
         // The group key was computed from the inner expressions with grouping identity; the
-        // correlation compares with `=` under each side's comparison affinity.
-        let lk: Key = corr.iter().map(|(o, _, (fo, _))| (o.clone(), KeyMode::Eq(*fo))).collect();
-        let rk: Key = corr.iter().enumerate().map(|(i, (_, _, (_, fi)))| (col(i), KeyMode::Eq(*fi))).collect();
+        // correlation compares with `=` under each side's comparison affinity (or, R36, by
+        // grouping identity on the enclosing row).
+        let lk: Key = corr.iter().map(|(o, _, (mo, _))| (o.clone(), *mo)).collect();
+        let rk: Key = corr.iter().enumerate().map(|(i, (_, _, (_, mi)))| (col(i), *mi)).collect();
         for (o, _, _) in corr {
             self.check_reads(n, o)?;
         }
@@ -2180,6 +2242,50 @@ mod tests {
             let t = rng.tables();
             agree_generated(&plain, &t);
             agree_generated(&rec, &t);
+        }
+    }
+
+    /// R36: θ-correlated subqueries (a non-equality correlation, alone or with equalities, and in
+    /// a nested subquery) as subqueries correlated on the enclosing row's identity: EXISTS, NOT
+    /// EXISTS, IN, NOT IN, a scalar aggregate and a scalar `ORDER BY … LIMIT 1`, the dataflow
+    /// against the reference with NULLs and duplicate enclosing rows. Inside a recursion, a
+    /// θ-correlated NOT EXISTS reading the recursive row is an antijoin against the recursion: a
+    /// named refusal, never a guess.
+    #[test]
+    fn generated_theta_correlations() {
+        let t = tabs();
+        let (a, b, cc) = (&t.0, &t.1, &t.2);
+        let ex = |p: X, neg: bool| filt(a.clone(), exists(filt(cc.clone(), p), neg));
+        let eq_gt = || and(eq(c(0), o(1, 0)), cmp(CmpOp::Gt, c(1), o(1, 1)));
+        let le = || cmp(CmpOp::Le, c(0), o(1, 1));
+        // cc.u <= coalesce((SELECT min(b.z) FROM b WHERE b.x = a.x), a.y): θ through a nested scalar.
+        let nested = || cmp(CmpOp::Le, c(0), Expr::Func(ir::Func::Coalesce, vec![sub(proj(agg(filt(b.clone(), eq(c(0), o(2, 0))), vec![call(ir::AggFn::Min, Some(c(1)), ir::Total::Proven)]), vec![c(2)])), o(1, 1)]));
+        let inr = |neg: bool| filt(a.clone(), Expr::InRel { e: Box::new(c(0)), rel: Box::new(proj(filt(cc.clone(), cmp(CmpOp::Gt, c(1), o(1, 1))), vec![c(0)])), negated: neg, aff: (Aff::None, Aff::None) });
+        let count = proj(a.clone(), vec![c(0), c(1), sub(proj(agg(filt(cc.clone(), and(eq(c(0), o(1, 0)), cmp(CmpOp::Lt, c(1), o(1, 1)))), vec![call(ir::AggFn::CountStar, None, ir::Total::Proven)]), vec![c(2)]))]);
+        let first = proj(a.clone(), vec![c(0), sub(proj(sort(filt(cc.clone(), cmp(CmpOp::Ge, c(1), o(1, 0))), vec![(1, false), (0, false)], Some(1)), vec![c(0)]))]);
+        let cases = [ex(eq_gt(), false), ex(eq_gt(), true), ex(le(), false), ex(le(), true), ex(nested(), false), ex(nested(), true), inr(false), inr(true), count, first];
+        install();
+        for q in &cases {
+            assert!(super::plan(&plan(q.clone()), &[]).is_ok(), "R36 normalises {q:?}");
+        }
+        let mut rng = Rng(0x5eed_48);
+        let mut rows = 0;
+        for _ in 0..150 {
+            let t = rng.tables();
+            for q in &cases {
+                agree_generated(q, &t);
+                rows += reference(q, &t).map_or(0, |m| m.len());
+            }
+        }
+        assert!(rows > 1000, "rows {rows}");
+        // A θ-correlated NOT EXISTS over the recursive row inside the recursion: refused by name.
+        let local = Rel::Local { id: 7, schema: vec![Column::new("x", Aff::None)] };
+        let step = filt(proj(local.clone(), vec![Expr::Arith(ir::ArithOp::Add, Box::new(c(0)), Box::new(lit(1)))]), and(cmp(CmpOp::Lt, c(0), lit(4)), exists(filt(cc.clone(), cmp(CmpOp::Le, c(0), o(1, 0))), true)));
+        let rec = Rel::With { bindings: vec![(7, Binding::Fix { init: vec![proj(a.clone(), vec![c(0)])], step: vec![step], set: true, schema: vec![Column::new("x", Aff::None)] })], body: Box::new(local) };
+        let t = rng.tables();
+        match generated(&rec, &t) {
+            Err(e) => assert!(e.contains("not stratified"), "{e}"),
+            Ok(m) => panic!("θ antijoin over the recursion lowered: {m:?}"),
         }
     }
 }

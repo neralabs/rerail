@@ -1286,7 +1286,7 @@ mod tests {
         let query = Compiler::new(&mut names, &facts::GRAMMAR, &utils).query(&ast).unwrap();
         let mut preds = super::Preds::default();
         let plan = super::lower_and_plan(&ev, &ast, &[], &utils, &facts::GRAMMAR, &mut preds).expect("the input plans");
-        let input = Input { query, fields: vec![], projs: vec![], each: None, anchor: Anchor::Span, paths: None, node_regexes: vec![], phys: Err("leaf".into()) };
+        let input = Input { query, fields: vec![], projs: vec![], each: None, anchor: Anchor::Span, paths: None, node_regexes: vec![], groups: vec![], phys: Err("leaf".into()) };
         let source = Arc::new(src.to_owned());
         let Ok(facts::Built::Facts(f)) = facts::build("t.py", source.clone()) else { panic!("facts") };
         let ctx = FileCtx { f: &f, path: "t.py", source: &source };
