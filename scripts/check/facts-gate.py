@@ -101,6 +101,17 @@ GATED: set[str] = {
     # exact in both at 7d23ab4a7 (run 20261022T204421-gate)
     "removed_compat_surfaces", "versioned_lifecycle_legacy_surfaces", "no_api_root_imports", "serverplan_grammar_surface",
     "conn_or_txn_union", "render_fstrings",
+    # exact in both at c176eefc7, S6's 39d33188c and 8bdf55063 merged (run 20261022T213016-gate)
+    "backend_type_strings", "hasattr_async", "no_source_inspection", "serverplan_name_inference", "no_blanket_grammar_bypass",
+    "permission_error",
+    "dynamic_module_loading", "forwardref", "unresolved_forward_refs", "classvar_check", "type_safety_patterns", "async_executor",
+    "async_patterns", "async_sync_boundary", "admin_async_purity",
+    "plan_scope_side_effects", "plan_scope_ownership", "transaction_closures", "transaction_callback_wrappers",
+    "transaction_patterns", "lazy_result_usage", "swallowed_exceptions", "error_handling", "module_level_caches", "connection_caches",
+    "render_raw_strings", "regex_sql_parsing", "grammar_render_methods", "grammar_str_params", "grammar_allowlist_burndown",
+    "rust_sql_grammar_boundary",
+    "missing_async_pairs", "sync_async_signatures", "async_sync_delegation", "data_layer_facade_purity", "data_layer_compat_aliases",
+    "layer_violations", "backend_coupling",
 }
 
 # The generic mutants: (number, name, crate, site, what it breaks, the checks that run against it). They
