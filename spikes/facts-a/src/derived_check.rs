@@ -955,19 +955,23 @@ pub fn run(args: &[String]) {
         paths = paths.into_iter().enumerate().filter(|(i, _)| i % n == k).map(|(_, p)| p).collect();
     }
     let shared = shared_texts(&policies);
+    // Workers take files largest first, so the slowest file does not start last; the set checked and
+    // every per-file result are unchanged (`per_file` is keyed by the index into `paths`).
+    let mut order: Vec<usize> = (0..paths.len()).collect();
+    order.sort_by_cached_key(|&i| std::cmp::Reverse(std::fs::metadata(root.join(&paths[i])).map_or(0, |m| m.len())));
     let t_all = Instant::now();
     let next = AtomicUsize::new(0);
     let outs: Vec<Out> = std::thread::scope(|s| {
         let hs: Vec<_> = (0..threads)
             .map(|_| {
-                let (paths, next, policies, shared) = (&paths, &next, &policies, &shared);
+                let (paths, order, next, policies, shared) = (&paths, &order, &next, &policies, &shared);
                 s.spawn(move || {
                     let (rules, targets) = if check { compile(policies, shared) } else { (Vec::new(), Vec::new()) };
                     let vc = Views::compile().unwrap();
                     let mut out = Out::default();
                     loop {
-                        let i = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(path) = paths.get(i) else { break };
+                        let Some(&i) = order.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
+                        let path = &paths[i];
                         let Ok(src) = String::from_utf8(std::fs::read(root.join(path)).unwrap()) else { continue };
                         let source = Arc::new(src);
                         let mut ns = facts::BuildNs::default();

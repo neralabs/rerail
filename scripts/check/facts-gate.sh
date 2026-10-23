@@ -8,9 +8,10 @@
 #                             be killed by at least one. Prints the kill matrix.
 #
 # Options: --only <check,...> runs a subset of the checks; --no-build reuses the last gate build;
-# --run-dir <dir> overrides ~/rerail-bench/facts/phase-2/s5-gate/runs/<timestamp>-gate. Exit 0: passed,
-# 1: a check failed or a mutant survived, 2: usage. Output format and checks: scripts/check/facts-gate.py
-# and docs/facts/reports/phase-2-s5-gate.md § Gate.
+# --full replays all 1,111 edit events (default: the first 300); --run-dir <dir> overrides
+# ~/rerail-bench/facts/phase-2/s5-gate/runs/<timestamp>-gate. Exit 0: passed, 1: a check failed or a
+# mutant survived, 2: usage. Output format and checks: scripts/check/facts-gate.py and
+# docs/facts/reports/phase-2-s5-gate.md § Gate.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"

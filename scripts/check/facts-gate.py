@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The facts engine's gate (Phase 2 deliverable 5, G2.6); run it through `facts-gate.sh` / `just facts-gate`.
 
-Checks (clean build, `FACTS_MUTANT` unset), in six concurrent lanes:
+Checks (clean build, `FACTS_MUTANT` unset), in seven concurrent lanes:
 
   a  a-replay         facts-a replay of batch 6's recordings (1,259 calls): 0 FP, every call replayed, every
                       miss or failure accepted residue (RESIDUE, empty now).
@@ -12,7 +12,8 @@ Checks (clean build, `FACTS_MUTANT` unset), in six concurrent lanes:
      a-reference      FACTS_A3_OFF=1 over the subset (the unrewritten plan); findings and failures equal
                       a-subset's as multisets.
   b  b-exactness      facts-b replay: Spike B's hand-written delta rules (the generator's test vectors)
-                      against their from-scratch oracle over the 1,111-event edit script.
+                      against their from-scratch oracle over the first EDITS_PREFIX (300) events of the
+                      1,111-event edit script; `--full` replays all of it.
   g  b-generated      facts-b greplay: the delta-plan generator over IR plans against
                       rerail_facts::reference, same events.
   t  b-ties           facts-b greplay --plans rt --limit 200: S3's constructed-tie vector; every tie under a
@@ -23,7 +24,8 @@ Checks (clean build, `FACTS_MUTANT` unset), in six concurrent lanes:
      planner-audit    cargo test -p rerail-facts phys::tests::audit: an inner scan is refused.
      explain-stable   facts-a explain over the pack: byte-identical across two runs and per-rule processes.
      harness-replay   Jeremy's replay.ts --engine facts: same acceptance as a-replay.
-     views-derived    S4's facts-a derived-check --shard 0/4: schema views equal the policies' stage texts.
+  v  views-derived    S4's facts-a derived-check --shard 0/8 (VIEWS_SHARD): schema views equal the policies'
+                      stage texts over every 8th corpus file in sorted path order (1,127 of 9,010).
   h  harness-b1..b5   Jeremy's replay.ts --engine facts over batch n's recordings and probes (BATCH_RECORDINGS).
      suite-b1..b5     suite.ts --engine facts --cold-only over batch n's repository oracle (SUITES/suite-b<n>.json).
                       Per check: exact, differs (FP/FN) or refused (any failure: compile error, unsupported
@@ -176,8 +178,17 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
 
 BATCH_CHECKS = [f"harness-b{n}" for n in BATCH_RECORDINGS] + [f"suite-b{n}" for n in BATCH_RECORDINGS]
 LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"], "g": ["b-generated"],
-         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay", "views-derived"],
-         "h": [*BATCH_CHECKS, "explain-physical"], "t": ["b-ties"]}
+         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay"],
+         "v": ["views-derived"], "h": [*BATCH_CHECKS, "explain-physical"], "t": ["b-ties"]}
+# The edit replays' prefix (b-exactness, b-generated and their mutants): events 0-299 hold every
+# single-file edit kind, one new worktree (event 100) and one 200-file bulk replace (event 161), but none
+# of the 51 real commits (events 1060-1110). `--full` replays all 1,111 events.
+EDITS_PREFIX = 300
+# S4's views differential on a fixed eighth of the corpus: derived-check's `--shard k/n` keeps every n-th
+# file of the sorted walk from the k-th.
+VIEWS_SHARD = "0/8"
+# Lane v outlives every other lane, which finish within about 2 minutes, so it gets 8 workers.
+VIEWS_THREADS = "8"
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
 
 print_lock = threading.Lock()
@@ -548,8 +559,8 @@ def check_explain_physical(d: Path, env: dict) -> tuple[bool, str, dict]:
 
 def check_views(d: Path, env: dict) -> tuple[bool, str, dict]:
     """S4's views differential (`facts-a derived-check`): the schema's SQL views over the syntactic core
-    against the policies' own stage texts, shard 0 of 4 (2,253 files, every stage text and clause)."""
-    status, _ = run([binary("facts-a"), "derived-check", "--root", str(CORPUS), "--threads", THREADS, "--shard", "0/4", "--out-dir", str(d)], d, env)
+    against the policies' own stage texts on VIEWS_SHARD (every stage text and clause)."""
+    status, _ = run([binary("facts-a"), "derived-check", "--root", str(CORPUS), "--threads", VIEWS_THREADS, "--shard", VIEWS_SHARD, "--out-dir", str(d)], d, env)
     if status != 0 or not (d / "results.json").exists():
         return False, f"exit {status}", {}
     r = json.loads((d / "results.json").read_text())
@@ -677,7 +688,8 @@ def check_suite_batch(d: Path, env: dict, n: int) -> tuple[bool, str, dict]:
 # Driver
 
 
-def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
+def run_check(cid: str, gate_dir: Path, env: dict, edits: int | None) -> tuple[bool, str, dict]:
+    """Runs check `cid`; `edits` is the edit replays' event prefix (None: all events)."""
     d = gate_dir / cid
     if cid == "a-replay":
         return check_a_replay(d, env)
@@ -690,9 +702,9 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
     if cid == "a-reference":
         return check_a_reference(d, env, gate_dir)
     if cid == "b-exactness":
-        return check_b(d, env, "replay")
+        return check_b(d, env, "replay", limit=edits)
     if cid == "b-generated":
-        return check_b(d, env, "greplay")
+        return check_b(d, env, "greplay", limit=edits)
     if cid == "b-ties":
         return check_ties(d, env)
     if cid == "rerail-facts-lib":
@@ -716,7 +728,7 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
     raise ValueError(cid)
 
 
-def run_mutant_check(n: int, cid: str, gate_dir: Path) -> str:
+def run_mutant_check(n: int, cid: str, gate_dir: Path, edits: int | None) -> str:
     """killed | survived | error, for mutant `n` under check `cid`. A kill is a detection the check
     names (an A3_CHECK panic, a findings difference, an exactness difference, a failing test), never a
     crash or a missing tool."""
@@ -733,7 +745,7 @@ def run_mutant_check(n: int, cid: str, gate_dir: Path) -> str:
         (d / "difference.json").write_text(json.dumps(diff, indent=1))
         return "survived" if same else "killed"
     elif cid in ("b-exactness", "b-generated"):
-        ok, _, det = check_b(d, env, "replay" if cid == "b-exactness" else "greplay", fail_fast=True)
+        ok, _, det = check_b(d, env, "replay" if cid == "b-exactness" else "greplay", fail_fast=True, limit=edits)
     elif cid == "b-ties":
         ok, _, det = check_ties(d, env)
     elif cid in ("rerail-facts-lib", "classifier-leak", "planner-audit"):
@@ -751,10 +763,12 @@ def main() -> int:
     ap.add_argument("--only", help="comma-separated check ids (default: all)")
     ap.add_argument("--no-build", action="store_true", help="reuse the last gate build")
     ap.add_argument("--run-dir", help="run directory (default ~/rerail-bench/facts/phase-2/s5-gate/runs/<ts>-gate)")
+    ap.add_argument("--full", action="store_true", help=f"replay all 1,111 edit events (default: the first {EDITS_PREFIX})")
     try:
         args = ap.parse_args()
     except SystemExit as e:
         return 2 if e.code else 0
+    edits = None if args.full else EDITS_PREFIX
     all_checks = [c for lane in LANES.values() for c in lane]
     only = args.only.split(",") if args.only else all_checks
     unknown = [c for c in only if c not in all_checks]
@@ -768,7 +782,8 @@ def main() -> int:
     started = time.monotonic()
     say(f"run {gate_dir} commit {commit()} load {load1()}")
     report: dict = {"format": "rerail.facts-gate/v1", "commit": commit(), "run_dir": str(gate_dir),
-                    "argv": sys.argv[1:], "load_before": load1(), "checks": {}, "mutants": []}
+                    "argv": sys.argv[1:], "load_before": load1(), "edit_events": edits or "all", "views_shard": VIEWS_SHARD,
+                    "checks": {}, "mutants": []}
     if not args.no_build:
         ok, info = build(gate_dir)
         report["build"] = info
@@ -786,7 +801,7 @@ def main() -> int:
                 continue
             t0 = time.monotonic()
             try:
-                ok, summary, details = run_check(cid, gate_dir, {})
+                ok, summary, details = run_check(cid, gate_dir, {}, edits)
             except Exception as e:  # a harness error is a failed check, never a pass
                 ok, summary, details = False, f"gate error: {e!r}", {}
             secs = time.monotonic() - t0
@@ -798,7 +813,7 @@ def main() -> int:
             cells = {}
             for cid in tests:
                 try:
-                    cells[cid] = run_mutant_check(n, cid, gate_dir)
+                    cells[cid] = run_mutant_check(n, cid, gate_dir, edits)
                 except Exception as e:
                     cells[cid] = "error"
                     (gate_dir / "mutants").mkdir(exist_ok=True)
