@@ -283,6 +283,23 @@ describe("the pack's conformance check, run once in the conformance job", () => 
     // A tool-pack run that ran the check itself keeps its own result.
     assert.equal(summarize([report([rule("a", "shipped")])], [], [], conformanceReport([], [pythonPack])).pass, true);
   });
+
+  it("a shipped port of a linter the plan left out that fails the conformance job blocks; a candidate does not", () => {
+    const job = (passes: ConformanceReport["passesConformance"]) => conformanceReport([], [pythonPack], passes);
+    const summary = summarize([], [bandit], [], job([
+      fromJob("packs/python/rules/a.json", "shipped", false),
+      fromJob("packs/python/rules/b.json", "shipped", true),
+      fromJob("packs/python/candidates/rules/c.json", "candidate", false),
+    ]));
+    assert.deepEqual(summary.notJudged, ["python/bandit"]);
+    assert.deepEqual(summary.otherFailures.map((entry) => [entry.what, entry.check]), [["packs/python/rules/a.json", "catches-something"]]);
+    assert.match(summary.otherFailures[0]!.why, /not re-run on this change/u);
+    assert.equal(summary.pass, false);
+    // A port its tool-pack's report holds is judged with that report, not counted again.
+    const judged = summarize([report([leftToJob("a", "shipped")])], [bandit], [bandit], job([fromJob("packs/python/rules/a.json", "shipped", false)]));
+    assert.deepEqual(judged.failing.map((entry) => entry.id), ["a"]);
+    assert.deepEqual(judged.otherFailures, []);
+  });
 });
 
 describe("the report", () => {

@@ -70,9 +70,12 @@ export interface RuleVerdict {
   onByDefault?: boolean;
 }
 
-/** A blocking failure no one rule owns: a stale known gap, a failing pack check, a missing report. */
+/**
+ * A blocking failure no one rule owns: a stale known gap, a failing pack check, a missing report, or a shipped port of a
+ * linter the plan left out that fails the pack's conformance check.
+ */
 export interface OtherFailure {
-  /** What fails: a pack (`python`), an upstream linter's run (`python/ruff`), or `(every pack)`. */
+  /** What fails: a pack (`python`), an upstream linter's run (`python/ruff`), a document (`packs/python/rules/x.json`), or `(every pack)`. */
   what: string;
   check: string;
   why: string;
@@ -210,7 +213,24 @@ function unjudgedPortStep(rule: ConformanceReport["rules"][number]): Failure {
   return { stoppedAt: "set-up", check: "gates-yaml", why: `${rule.upstream.tool} has no packs/${rule.pack}/upstream/${rule.upstream.tool}/gates.yaml yet, so no port readiness gate can run on its ports` };
 }
 
-/** The blocking failures no one rule owns: stale known gaps, failing pack checks, missing reports, a wrong plan. */
+/**
+ * The conformance job runs every pack's conformance check, so it also judges the ports of a linter the plan left out,
+ * which no report holds: each shipped one that fails blocks, as it fails the conformance job.
+ */
+function unreportedConformanceFailures(reports: GatesReport[], conformance: ConformanceReport | null): OtherFailure[] {
+  const judged = new Set(reports.flatMap((report) => report.rules.map((rule) => rule.file)));
+  return (conformance?.passesConformance ?? [])
+    .filter((entry) => entry.location === "shipped" && !entry.gate.pass && !judged.has(entry.file))
+    .map((entry) => {
+      const { check, why } = failing(entry.gate);
+      return { what: entry.file, check, why: `${why} (the pack's conformance check; its upstream linter was not re-run on this change)` };
+    });
+}
+
+/**
+ * The blocking failures no one rule owns: stale known gaps, failing pack checks, missing reports, shipped ports of a
+ * linter the plan left out that fail the pack's conformance check, a wrong plan.
+ */
 function blockingOutsideRules(reports: GatesReport[], conformance: ConformanceReport | null, missingReports: string[], notGatedButPlanned: string[]): OtherFailure[] {
   // A listed known gap that does not hold, or excused nothing across every shard, is a stale gates.yaml entry.
   const otherFailures: OtherFailure[] = reports.flatMap((report) => report.knownGaps.filter((entry) => !entry.proven || entry.excused === 0).map((gap) => ({
@@ -220,6 +240,7 @@ function blockingOutsideRules(reports: GatesReport[], conformance: ConformanceRe
     for (const check of entry.checks.checks.filter((item) => !item.ok)) otherFailures.push({ what: entry.pack, check: check.id, why: check.detail });
   }
   if (conformance === null) otherFailures.push({ what: "(every pack)", check: "report", why: `no ${CONFORMANCE_REPORT_FILE} in the directory: the conformance gates did not run` });
+  otherFailures.push(...unreportedConformanceFailures(reports, conformance));
   for (const toolPack of missingReports) otherFailures.push({ what: toolPack, check: "report", why: "its port readiness run left no report" });
   // The plan finds tool-packs as gatedToolPacks does, so one it planned that is not gated is a bug in the plan.
   for (const toolPack of notGatedButPlanned) otherFailures.push({ what: toolPack, check: "plan", why: "planned, but it has no gates.yaml: the plan is wrong" });
