@@ -31,5 +31,6 @@ tikv-jemalloc-ctl = { version = "=0.6.1", features = ["stats"] }
 tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }
 
 [features]
-# The gate's seeded mutants (src/mutant.rs, FACTS_MUTANT); off in every normal build.
-mutants = []
+# The gate's seeded mutants (src/mutant.rs, FACTS_MUTANT); off in every normal build. Turns on
+# rerail-facts' mutants too, so its rewrite mutants (11..) reach the corpus runs of `facts-a repo`.
+mutants = ["rerail-facts/mutants"]

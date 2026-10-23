@@ -222,6 +222,21 @@ struct Agg {
     seen: HashSet<DKey>,
 }
 
+/// SQLite passes a JSON function's result (`json_array`, `json_quote`) to another with its JSON
+/// subtype: `json_array` and `json_group_array` embed it as JSON instead of quoting the text. The
+/// subtype is the argument expression's, as the engine's planner reads it.
+fn json_subtype<S>(arg: Option<&Expr<S>>) -> bool {
+    matches!(arg, Some(Expr::Func(Func::JsonArray | Func::JsonQuote, _)))
+}
+
+/// One element of a JSON array: JSON-subtype text embedded as JSON, anything else as `json_of`.
+fn json_elem(v: &V, subtype: bool) -> serde_json::Value {
+    match v {
+        V::Text(t) if subtype => serde_json::from_str(t).unwrap_or_else(|_| json_of(v)),
+        _ => json_of(v),
+    }
+}
+
 fn json_of(v: &V) -> serde_json::Value {
     match v {
         V::Null => serde_json::Value::Null,
@@ -233,7 +248,8 @@ fn json_of(v: &V) -> serde_json::Value {
 
 impl Agg {
     /// Folds one row's value; true when a `min`/`max` took it (strictly better than before).
-    fn add(&mut self, f: AggFn, distinct: bool, v: Option<V>, sep: Option<V>) -> Result<bool, Error> {
+    /// `subtype`: the argument is a JSON function's result (`json_subtype`).
+    fn add(&mut self, f: AggFn, distinct: bool, v: Option<V>, sep: Option<V>, subtype: bool) -> Result<bool, Error> {
         if f == AggFn::CountStar {
             self.count += 1;
             return Ok(false);
@@ -244,7 +260,7 @@ impl Agg {
             if distinct && !self.seen.insert(sv::dkey(&v)) {
                 return Ok(false);
             }
-            self.json.push(json_of(&v));
+            self.json.push(json_elem(&v, subtype));
             return Ok(false);
         }
         if v.is_null() {
@@ -548,7 +564,7 @@ impl<'a, S> Evaluator<'a, S> {
                     });
                     let mut picked = false;
                     for ((state, a), (v, sep)) in g.0.iter_mut().zip(aggs).zip(vals) {
-                        picked |= state.add(a.f, a.distinct, v, sep)?;
+                        picked |= state.add(a.f, a.distinct, v, sep, json_subtype(a.arg.as_ref()))?;
                     }
                     if picked {
                         g.1 = Some(row.clone());
@@ -1073,7 +1089,7 @@ impl<'a, S> Evaluator<'a, S> {
             Func::JsonArray => {
                 let mut items = Vec::with_capacity(args.len());
                 for i in 0..args.len() {
-                    items.push(json_of(&a(i)?));
+                    items.push(json_elem(&a(i)?, json_subtype(args.get(i))));
                 }
                 V::text(&serde_json::Value::Array(items).to_string())
             }
@@ -1102,18 +1118,7 @@ pub fn evaluate_plan<S: Clone>(plan: &Plan<S>, stage_of: impl Fn(&S) -> Option<S
     };
     let ev = Evaluator::new(&source);
     for st in &plan.stages {
-        let rows = match &st.def {
-            StageDef::Query { rel } => {
-                let mut rows = ev.rel(rel, &[])?;
-                for row in rows.iter_mut() {
-                    for (v, col) in row.iter_mut().zip(&st.schema) {
-                        *v = sv::apply_affinity(std::mem::replace(v, V::Null), col.aff);
-                    }
-                }
-                rows
-            }
-            StageDef::Reach { roots, edges, graph } => reach(&ev.rel(roots, &[])?, edges.as_ref().map(|e| ev.rel(e, &[])).transpose()?.as_deref(), graph)?,
-        };
+        let rows = evaluate_stage(&ev, st)?;
         stages.borrow_mut().push(Rc::new(rows));
     }
     match &plan.sink {
@@ -1122,6 +1127,49 @@ pub fn evaluate_plan<S: Clone>(plan: &Plan<S>, stage_of: impl Fn(&S) -> Option<S
         Sink::Witnesses { .. } => Err("reference: a forbid sink reads one content's input".into()),
         Sink::Budget { .. } => Err("reference: budget sinks (closures, conditions) are not evaluated by the reference yet".into()),
     }
+}
+
+/// One stage's rows over `ev`'s sources, stored with its columns' affinities (CTAS).
+fn evaluate_stage<S>(ev: &Evaluator<'_, S>, st: &Stage<S>) -> Result<Vec<Row>, Error> {
+    Ok(match &st.def {
+        StageDef::Query { rel } => {
+            let mut rows = ev.rel(rel, &[])?;
+            for row in rows.iter_mut() {
+                for (v, col) in row.iter_mut().zip(&st.schema) {
+                    *v = sv::apply_affinity(std::mem::replace(v, V::Null), col.aff);
+                }
+            }
+            rows
+        }
+        StageDef::Reach { roots, edges, graph } => reach(&ev.rel(roots, &[])?, edges.as_ref().map(|e| ev.rel(e, &[])).transpose()?.as_deref(), graph)?,
+    })
+}
+
+/// A stage list's rows in order, each stage reading the earlier ones' (`stage_of`) and `scan`'s
+/// sources, as `evaluate_plan` computes them: every computed stage, then the first stage's
+/// refusal, if any (the stages after it are not evaluated). The gate's `a-vs-reference` compares
+/// an engine's stored stages with these.
+pub fn evaluate_stages<S>(stages: &[Stage<S>], stage_of: impl Fn(&S) -> Option<StageId>, scan: &dyn Fn(&S) -> Result<Vec<Row>, Error>) -> (Vec<Rc<Vec<Row>>>, Option<Error>) {
+    let done: RefCell<Vec<Rc<Vec<Row>>>> = RefCell::new(Vec::new());
+    let source = |s: &S| -> Result<Vec<Row>, Error> {
+        match stage_of(s) {
+            Some(id) => done.borrow().get(id as usize).map(|r| (**r).clone()).ok_or_else(|| format!("stage {id} read before it is computed")),
+            None => scan(s),
+        }
+    };
+    let ev = Evaluator::new(&source);
+    let mut refusal = None;
+    for st in stages {
+        match evaluate_stage(&ev, st) {
+            Ok(rows) => done.borrow_mut().push(Rc::new(rows)),
+            Err(e) => {
+                refusal = Some(e);
+                break;
+            }
+        }
+    }
+    drop(ev);
+    (done.into_inner(), refusal)
 }
 
 /// Reachability `(__path, root, node)`: reflexive, set semantics, per path (IR.md § Recursion).
