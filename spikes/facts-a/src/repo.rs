@@ -5,7 +5,7 @@
 //! a `production_scope` suite event) and, per file, reads, parses, builds facts, evaluates and
 //! drops them. Workers return findings, timings and the repository-partition rows; the main
 //! thread merges them and runs the repository partitions and budgets once (`eval::finish`).
-use crate::{BATCH6, arg, call_config, eval, facts, multiset_minus, policy_doc};
+use crate::{BATCH6, RUST_REFUSED, arg, call_config, caught, eval, facts, multiset_minus, policy_doc};
 use serde_json::{Map, Value as Json, json};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -33,27 +33,39 @@ struct Worker {
     compile_ns: u64,
 }
 
-/// The suite's call configuration for every batch-6 check: `production_scope`, no
-/// `oracle_config` (verified against the oracle by `repo-compare`).
-fn compile_batch6(policies: &str) -> Vec<eval::Rule> {
+/// The suite's call configuration for each selected check (default: batch 6): `production_scope`,
+/// no `oracle_config` (verified against the oracle by `repo-compare`). A policy that does not compile
+/// is refused by name: it becomes one failure of its check (`compile: …`) and is not evaluated.
+fn compile_checks(policies: &str, checks: &[String]) -> (Vec<eval::Rule>, Vec<eval::Failure>) {
     let event = json!({"production_scope": true});
-    BATCH6
-        .iter()
-        .map(|check| {
-            let doc = policy_doc(policies, check);
-            let (config, scope) = call_config(&doc, &event);
-            let r = eval::Rule::compile(&doc, &config, scope.as_ref(), &facts::GRAMMAR).unwrap_or_else(|e| panic!("compile {check}: {e}"));
-            if std::env::var_os("FACTS_MEMTRACE").is_some() {
-                eprintln!("compiled {check}: rss {} MB", cur_rss() >> 20);
-            }
-            r
-        })
-        .collect()
+    let (mut rules, mut refused) = (Vec::new(), Vec::new());
+    for check in checks {
+        let doc = policy_doc(policies, check);
+        let (config, scope) = call_config(&doc, &event);
+        match caught(|| eval::Rule::compile(&doc, &config, scope.as_ref(), &facts::GRAMMAR)).unwrap_or_else(|p| Err(format!("compiler panic: {p}"))) {
+            Ok(r) => rules.push(r),
+            Err(e) => refused.push(eval::Failure { check: check.clone(), clause: String::new(), path: String::new(), message: format!("compile: {e}") }),
+        }
+        if std::env::var_os("FACTS_MEMTRACE").is_some() {
+            eprintln!("compiled {check}: rss {} MB", cur_rss() >> 20);
+        }
+    }
+    (rules, refused)
+}
+
+/// `--checks c1,c2,…` (snake-case check names), default batch 6.
+pub fn selected_checks(args: &[String]) -> Vec<String> {
+    arg(args, "--checks").map_or_else(|| BATCH6.iter().map(|c| c.to_string()).collect(), |s| s.split(',').map(str::to_owned).collect())
 }
 
 /// Relative paths of every `.py` file under `root`, sorted; directories are entered, symlinked
 /// directories are not (`os.walk` defaults).
 pub fn walk(root: &Path) -> Vec<String> {
+    walk_ext(root, "py")
+}
+
+/// As `walk`, for files with extension `ext`.
+fn walk_ext(root: &Path, ext: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -63,7 +75,7 @@ pub fn walk(root: &Path) -> Vec<String> {
             let path = entry.path();
             if ty.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|x| x == "py") {
+            } else if path.extension().is_some_and(|x| x == ext) {
                 out.push(path.strip_prefix(root).unwrap().to_string_lossy().into_owned());
             }
         }
@@ -72,9 +84,9 @@ pub fn walk(root: &Path) -> Vec<String> {
     out
 }
 
-fn worker(paths: &[String], root: &Path, policies: &str, next: &AtomicUsize, spill_dir: &Path, wi: usize) -> Worker {
+fn worker(paths: &[String], root: &Path, policies: &str, checks: &[String], next: &AtomicUsize, spill_dir: &Path, wi: usize) -> Worker {
     let t0 = Instant::now();
-    let rules = compile_batch6(policies);
+    let (rules, _) = compile_checks(policies, checks);
     let compile_ns = t0.elapsed().as_nanos() as u64;
     let mut out = eval::Output::default();
     let mut repo = crate::spill::Spill::new(spill_dir, wi);
@@ -156,6 +168,7 @@ pub fn repo(args: &[String]) {
     let root = Path::new(&root);
     let threads: usize = arg(args, "--threads").map_or(4, |t| t.parse().unwrap());
     let policies = arg(args, "--policies").unwrap_or("packs/data-layer/candidates/rules".into());
+    let checks = selected_checks(args);
     let out_dir = arg(args, "--out-dir").expect("--out-dir");
     let t_all = Instant::now();
     let paths = walk(root);
@@ -167,8 +180,8 @@ pub fn repo(args: &[String]) {
     let t_workers = Instant::now();
     let workers: Vec<Worker> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads).map(|wi| {
-            let (paths, policies, next, spill_dir) = (&paths, &policies, &next, &spill_dir);
-            s.spawn(move || worker(paths, root, policies, next, spill_dir, wi))
+            let (paths, policies, checks, next, spill_dir) = (&paths, &policies, &checks, &next, &spill_dir);
+            s.spawn(move || worker(paths, root, policies, checks, next, spill_dir, wi))
         }).collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
@@ -177,8 +190,16 @@ pub fn repo(args: &[String]) {
     let cur_after_workers = cur_rss();
     // Merge on this thread, then the repository partitions and budgets once.
     let t_merge = Instant::now();
-    let rules = compile_batch6(&policies);
+    let (rules, refused) = compile_checks(&policies, &checks);
     let mut out = eval::Output::default();
+    out.failures.extend(refused);
+    // The engine parses Python only: a Rust file a compiled rule's scope selects is refused by name
+    // for that rule, never skipped.
+    for path in walk_ext(root, "rs") {
+        for rule in rules.iter().filter(|r| r.scope.matches(&path)) {
+            out.failures.push(eval::Failure { check: rule.check.clone(), clause: String::new(), path: path.clone(), message: RUST_REFUSED.into() });
+        }
+    }
     let mut budget: BTreeMap<(usize, usize), Vec<(String, u32)>> = BTreeMap::new();
     let mut files = Vec::new();
     let mut compile_ns = Vec::new();

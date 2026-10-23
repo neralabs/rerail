@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The facts engine's gate (Phase 2 deliverable 5, G2.6); run it through `facts-gate.sh` / `just facts-gate`.
 
-Checks (clean build, `FACTS_MUTANT` unset), in four concurrent lanes:
+Checks (clean build, `FACTS_MUTANT` unset), in five concurrent lanes:
 
   a  a-replay         facts-a replay of batch 6's recordings (1,259 calls): 0 FP, every call replayed, every
                       miss or failure accepted residue (RESIDUE, empty now).
@@ -22,6 +22,11 @@ Checks (clean build, `FACTS_MUTANT` unset), in four concurrent lanes:
      explain-stable   facts-a explain over the pack: byte-identical across two runs and per-rule processes.
      harness-replay   Jeremy's replay.ts --engine facts: same acceptance as a-replay.
      views-derived    S4's facts-a derived-check --shard 0/4: schema views equal the policies' stage texts.
+  h  harness-b1..b5   Jeremy's replay.ts --engine facts over batch n's recordings and probes (BATCH_RECORDINGS).
+     suite-b1..b5     suite.ts --engine facts --cold-only over batch n's repository oracle (SUITES/suite-b<n>.json).
+                      Per check: exact, differs (FP/FN) or refused (any failure: compile error, unsupported
+                      construct, panic, Rust source). Passes when every check in GATED is exact; the rest
+                      is measured and reported, so the summary line is the per-batch parity table.
 
 The subset is deterministic: every corpus file whose sha256(relative path)[0] % 8 == 0, plus every file
 holding an oracle finding (1,150 files of 9,010). It is hard-linked under SUBSET.
@@ -75,6 +80,24 @@ BATCH6 = ["serverplan_bypass", "serverplan_steps", "serverplan_state_tripwires",
 RESIDUE: list[tuple[str, str, str]] = []
 THREADS = "4"
 
+# Batches 1-5 through Jeremy's harness with `--engine facts`: each batch's recordings for replay.ts (as
+# /tmp/dl60/replay-all.sh combines them) and its repository oracle for suite.ts (recorded by
+# data_layer_suite_record.py at 2b1504adc, copied from /tmp/dl60 with SHA256SUMS beside them).
+PORT = "fixtures/host/data-layer-port"
+BATCH_RECORDINGS = {
+    1: ["batch-01-recording.json"],
+    2: ["batch-02-recording.json", "batch-02-probes.json"],
+    3: ["batch-03-recording.json", "batch-03-probes.json"],
+    4: ["batch-04-recording.json", "batch-04-probes.json"],
+    5: ["batch-05-recording.json", "batch-05-probes.json", "batch-05-graph-probes.json",
+        "batch-05-remaining-graph-probes.json", "batch-05-relational-probes.json"],
+}
+SUITES = BENCH / "facts/phase-2/s5-gate/suites"
+# The batch 1-5 checks the gate holds exact through the harness (replay and suite: 0 FP, 0 FN, 0
+# failures, refusals included). A check joins when S6's leaf constructs make it exact, and never
+# leaves: the list is a ratchet. Every other check is measured and reported, not gated.
+GATED: set[str] = set()
+
 # The generic mutants: (number, name, crate, site, what it breaks, the checks that run against it). They
 # target components, not rules: the delta generator (S3), the classifier and the plan audit (S1). Rewrite
 # mutants come from docs/facts/REWRITES.md (`rewrite_mutants`), one per registered rewrite; 1-3 are the
@@ -126,8 +149,10 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
     return out, problems
 
 
+BATCH_CHECKS = [f"harness-b{n}" for n in BATCH_RECORDINGS] + [f"suite-b{n}" for n in BATCH_RECORDINGS]
 LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"], "g": ["b-generated"],
-         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay", "views-derived"]}
+         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay", "views-derived"],
+         "h": BATCH_CHECKS}
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
 
 print_lock = threading.Lock()
@@ -450,6 +475,96 @@ def check_harness_replay(d: Path, env: dict) -> tuple[bool, str, dict]:
                 + ("" if not bad else f", unaccepted: {'; '.join(bad[:5])}")), {"unaccepted": bad}
 
 
+def batch_checks(n: int) -> list[str]:
+    return json.loads((ROOT / PORT / "batches.json").read_text())["batches"][n - 1]["checks"]
+
+
+def batch_verdict(n: int, per: dict[str, dict], unattributed: list[str]) -> tuple[bool, str, dict]:
+    """Per-check status (exact / refused / differs) for batch `n`; passes when every gated check of
+    the batch is exact and nothing unattributed failed while one is gated. A failure of any kind
+    (compile error, unsupported construct, panic, Rust source) is a refusal and counts against exactness."""
+    status = {c: ("refused" if v["failures"] else "differs" if v["fp"] or v["fn"] else "exact") for c, v in per.items()}
+    gated = [c for c in per if c in GATED]
+    bad = [c for c in gated if status[c] != "exact"] + (["unattributed failures"] if unattributed and gated else [])
+    by = {s: [c for c in per if status[c] == s] for s in ("exact", "differs", "refused")}
+    summary = (f"b{n}: {len(by['exact'])}/{len(per)} checks exact, {sum(v['fp'] for v in per.values())} FP, "
+               f"{sum(v['fn'] for v in per.values())} FN, {sum(v['failures'] for v in per.values()) + len(unattributed)} failures; "
+               f"gated {len(gated) - len(bad)}/{len(gated)} exact"
+               + "".join(f"; {s}: {','.join(by[s])}" for s in ("differs", "refused") if by[s])
+               + (f"; unattributed failures {len(unattributed)}" if unattributed else "")
+               + (f"; GATED NOT EXACT: {', '.join(bad)}" if bad else ""))
+    return not bad, summary, {"checks": per, "status": status, "unattributed": unattributed[:20], "gated_failing": bad}
+
+
+def check_harness_batch(d: Path, env: dict, n: int) -> tuple[bool, str, dict]:
+    """`replay.ts --engine facts` over batch `n`'s recordings; per check: calls, exact calls, FP, FN,
+    failures (the first messages kept)."""
+    if not (ROOT / "node_modules" / "tsx").exists():
+        return False, "node_modules missing in the checkout", {}
+    out = d / "results.json"
+    cmd = ["node", "--import", "tsx", "conformance/data-layer/replay.ts",
+           *sum((["--recording", f"{PORT}/{r}"] for r in BATCH_RECORDINGS[n]), []), "--output", str(out), "--engine", "facts"]
+    status, _ = run(cmd, d, {**env, "FACTS_ENGINE_BIN": binary("facts-a")})
+    if not out.exists():
+        return False, f"exit {status}", {}
+    r = json.loads(out.read_text())
+    per: dict[str, dict] = {c: {"calls": 0, "exact_calls": 0, "fp": 0, "fn": 0, "failures": 0, "messages": []} for c in batch_checks(n)}
+    for row in r["rows"]:
+        v = per.setdefault(row["check"], {"calls": 0, "exact_calls": 0, "fp": 0, "fn": 0, "failures": 0, "messages": []})
+        fails = row["engineFailures"] + row["statelessFailures"]
+        v["calls"] += 1
+        v["fp"] += len(row["falsePositives"])
+        v["fn"] += len(row["falseNegatives"])
+        v["failures"] += len(fails)
+        v["exact_calls"] += not (row["falsePositives"] or row["falseNegatives"] or fails or row["executionPathDifferences"])
+        for f in fails:
+            if f["message"] not in v["messages"] and len(v["messages"]) < 3:
+                v["messages"].append(f["message"][:200])
+    ok, summary, det = batch_verdict(n, per, [])
+    calls = f"{sum(v['exact_calls'] for v in per.values())}/{r['replayedCalls']} calls exact"
+    return ok, summary.replace(f"b{n}: ", f"b{n}: {calls}, ", 1), {**det, "replayed_calls": r["replayedCalls"],
+                                                                    "facts_calls": r["factsCalls"], "host_guard_calls": r["hostGuardCalls"]}
+
+
+def check_suite_batch(d: Path, env: dict, n: int) -> tuple[bool, str, dict]:
+    """`suite.ts --engine facts --cold-only` over batch `n`'s repository oracle (SUITES/suite-b<n>.json);
+    per check: oracle findings, FP, FN, failures. The incremental phases are from-scratch reruns for the
+    facts engine (report § 5.2), so the gate runs the cold pass only."""
+    if not (ROOT / "node_modules" / "tsx").exists():
+        return False, "node_modules missing in the checkout", {}
+    oracle = SUITES / f"suite-b{n}.json"
+    if not oracle.exists():
+        return False, f"missing oracle {oracle}", {}
+    out = d / "results.json"
+    cmd = ["node", "--import", "tsx", "conformance/data-layer/suite.ts", "--recording", str(oracle), "--output", str(out),
+           "--engine", "facts", "--cold-only"]
+    status, _ = run(cmd, d, {**env, "FACTS_ENGINE_BIN": binary("facts-a")})
+    if not out.exists():
+        err = (d / "stderr.txt").read_text(errors="replace")
+        why = next((l.strip() for l in err.splitlines() if "panicked" in l or l.startswith("Error")), "")
+        return False, f"exit {status}" + (f": {why[:200]}" if why else ""), {}
+    r = json.loads(out.read_text())
+    rule = lambda key: json.loads(key)[0].removeprefix("data-layer-").replace("-", "_")
+    per: dict[str, dict] = {c: {"expected": 0, "fp": 0, "fn": 0, "failures": 0, "messages": []} for c in batch_checks(n)}
+    for e in json.loads(oracle.read_text())["events"]:
+        per[e["check"]]["expected"] += len(e["findings"])
+    for key in r["falsePositives"]:
+        per[rule(key)]["fp"] += 1
+    for key in r["falseNegatives"]:
+        per[rule(key)]["fn"] += 1
+    unattributed = []
+    for f in r["failures"]:
+        if f["check"] not in per:
+            unattributed.append(f"{f['path']}: {f['message'][:160]}")
+            continue
+        v = per[f["check"]]
+        v["failures"] += 1
+        if f["message"] not in v["messages"] and len(v["messages"]) < 3:
+            v["messages"].append(f["message"][:200])
+    return batch_verdict(n, per, unattributed)
+
+
+
 # ---------------------------------------------------------------------------------------------------
 # Driver
 
@@ -482,6 +597,10 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
         return check_harness_replay(d, env)
     if cid == "views-derived":
         return check_views(d, env)
+    if cid.startswith("harness-b"):
+        return check_harness_batch(d, env, int(cid.removeprefix("harness-b")))
+    if cid.startswith("suite-b"):
+        return check_suite_batch(d, env, int(cid.removeprefix("suite-b")))
     raise ValueError(cid)
 
 

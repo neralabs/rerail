@@ -38,6 +38,18 @@ const BATCH6: &[&str] = &[
     "legacy_execution_surfaces",
 ];
 
+/// The failure message for a Rust source a rule's scope selects: the engine parses Python only, so
+/// such a file is refused by name (I9), never skipped.
+const RUST_REFUSED: &str = "Rust sources are not supported by the facts engine (language rust)";
+
+/// Runs `f`, turning a panic into its message: the harness paths report a panic as a failure of the
+/// call, file or rule it hit (I9: refused by name, never an answer, never a lost batch).
+fn caught<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|p| {
+        p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "non-string panic".into())
+    })
+}
+
 fn arg(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
 }
@@ -100,14 +112,23 @@ fn calls(args: &[String]) {
         let key = serde_json::to_string(policy).unwrap();
         let rules = compiled
             .entry(key)
-            .or_insert_with(|| eval::Rule::compile(policy, &Map::new(), None, &facts::GRAMMAR).map(|r| Rc::new(vec![r])))
+            .or_insert_with(|| {
+                caught(|| eval::Rule::compile(policy, &Map::new(), None, &facts::GRAMMAR))
+                    .unwrap_or_else(|panic| Err(format!("compiler panic: {panic}")))
+                    .map(|r| Rc::new(vec![r]))
+            })
             .clone();
         let result = match rules {
             Err(e) => json!({"id": call["id"], "compile_error": e}),
             Ok(rules) => {
                 let files: Vec<(String, Arc<String>)> = call["files"].as_array().expect("files").iter().map(|f| (f["path"].as_str().unwrap().to_owned(), Arc::new(f["source"].as_str().unwrap().to_owned()))).collect();
                 let t = Instant::now();
-                let o = evaluate(&rules, &files);
+                // A panic is a failure of this call, its findings discarded; it never loses the batch.
+                let o = caught(|| evaluate(&rules, &files)).unwrap_or_else(|panic| {
+                    let mut o = eval::Output::default();
+                    o.failures.push(eval::Failure { check: rules[0].check.clone(), clause: String::new(), path: String::new(), message: format!("engine panic: {panic}") });
+                    o
+                });
                 json!({"id": call["id"], "ms": t.elapsed().as_secs_f64() * 1e3, "findings": o.findings, "failures": o.failures})
             }
         };
@@ -134,7 +155,11 @@ fn evaluate(rules: &[eval::Rule], files: &[(String, Arc<String>)]) -> eval::Outp
             Some(Ok(facts::Built::Unparsed)) | Some(Err(_)) => {
                 out.failures.push(eval::Failure { check: String::new(), clause: String::new(), path: path.clone(), message: "file could not be parsed".into() });
             }
-            None => {}
+            None => {
+                for rule in rules.iter().filter(|r| r.scope.matches(path)) {
+                    out.failures.push(eval::Failure { check: rule.check.clone(), clause: String::new(), path: path.clone(), message: RUST_REFUSED.into() });
+                }
+            }
         }
     }
     eval::finish(rules, |k| repo.0.remove(&k).unwrap_or_default(), budget, &mut out);
