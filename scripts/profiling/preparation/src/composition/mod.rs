@@ -30,7 +30,7 @@ pub(super) fn cpu_ms() -> f64 {
             + (r.ru_utime.tv_usec + r.ru_stime.tv_usec) as f64 / 1000.0
     }
 }
-fn peak_bytes() -> u64 {
+pub(super) fn peak_bytes() -> u64 {
     // SAFETY: as in cpu_ms.
     unsafe {
         let mut r: libc::rusage = std::mem::zeroed();

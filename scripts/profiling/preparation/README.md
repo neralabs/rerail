@@ -32,6 +32,32 @@ The CPU totals include replay setup and cache construction.
 They exclude parsing, initial publication, earlier structural preparation, and final matcher evaluation.
 Complete-pipeline controls remain necessary before an engine promotion.
 
+## Cache-budget controls
+
+The `cache_budget` binary replays the scheduled SQL with explicit main and temporary cache targets, in KiB.
+It changes no rule algorithm and adds no production configuration.
+Its snapshots use SQLite counters without a `dbstat` scan of retained tables.
+The counters report hits, misses, writes, spills, and cache bytes.
+Stage and result statements also report VM steps, full-scan steps, and sorts.
+Those VM totals exclude index and release batches.
+
+```sh
+python3 scripts/profiling/run.py --trace off --deadline 115 \
+  --output .rerail/profiles/cache-budget/control -- \
+  scripts/profiling/preparation/target/release/cache_budget \
+  path/to/candidate.json 1024 512 .rerail/profiles/cache-budget/control-result.json
+```
+
+Use fresh processes and separate outputs for each budget and trial.
+Compare complete `.rows.json` multisets before comparing CPU.
+Check VM totals to distinguish changed query work from changed storage traffic.
+SQL CPU covers preparation, execution, indexes, result collection, and relation release.
+Copying, capture parsing, scheduling, and counter snapshots remain outside that SQL timer.
+The outer profiler separately records process CPU and RSS, including setup.
+Captured inputs and backing files remain unchanged.
+An ownership replay still uses the `lifetimes` binary; its table scans can alter page-cache contents.
+Use the counter-only command for cache-capacity comparisons.
+
 ## Composition kernels
 
 The `composition` binary compares four SQL shapes over a private copy of a captured database.

@@ -29,6 +29,81 @@ fn heap(reset: bool) -> Result<(i64, i64)> {
 }
 
 pub fn run(capture: &std::path::Path, layout: &str, output: &std::path::Path) -> Result<()> {
+    measure(
+        capture,
+        layout,
+        output,
+        (crate::session::CACHE_KIB, 512),
+        working_set::snapshot,
+        "ownership",
+    )
+}
+
+/// Replay the selected production schedule with cheap counters and explicit physical budgets.
+/// Unlike the ownership observer, this observer never scans retained database objects.
+pub fn run_cache(
+    capture: &std::path::Path,
+    main_kib: i64,
+    temp_kib: i64,
+    output: &std::path::Path,
+) -> Result<()> {
+    if main_kib <= 0 || temp_kib <= 0 {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    measure(
+        capture,
+        "scheduled",
+        output,
+        (main_kib, temp_kib),
+        cache_snapshot,
+        "cache-counters",
+    )
+}
+
+fn cache_snapshot(db: &rusqlite::Connection, live: usize) -> Result<Json> {
+    let mut counters = json!({});
+    for (name, kind) in [
+        ("cacheBytes", rusqlite::ffi::SQLITE_DBSTATUS_CACHE_USED),
+        ("cacheHits", rusqlite::ffi::SQLITE_DBSTATUS_CACHE_HIT),
+        ("cacheMisses", rusqlite::ffi::SQLITE_DBSTATUS_CACHE_MISS),
+        ("cacheWrites", rusqlite::ffi::SQLITE_DBSTATUS_CACHE_WRITE),
+        ("cacheSpills", rusqlite::ffi::SQLITE_DBSTATUS_CACHE_SPILL),
+    ] {
+        let (mut current, mut high) = (0i64, 0i64);
+        // SAFETY: this replay thread owns the live connection and both scalar outputs.
+        let code = unsafe {
+            rusqlite::ffi::sqlite3_db_status64(db.handle(), kind, &mut current, &mut high, 0)
+        };
+        if code != rusqlite::ffi::SQLITE_OK {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(code),
+                None,
+            ));
+        }
+        counters[name] = current.into();
+    }
+    Ok(json!({"liveRelations":live,"sqlite":counters}))
+}
+
+fn count_steps(statement: &rusqlite::Statement<'_>, totals: &mut [u64; 3]) {
+    for (total, kind) in totals.iter_mut().zip([
+        rusqlite::StatementStatus::VmStep,
+        rusqlite::StatementStatus::FullscanStep,
+        rusqlite::StatementStatus::Sort,
+    ]) {
+        *total += statement.get_status(kind) as u64;
+    }
+}
+
+fn measure(
+    capture: &std::path::Path,
+    layout: &str,
+    output: &std::path::Path,
+    budget: (i64, i64),
+    observe: fn(&rusqlite::Connection, usize) -> Result<Json>,
+    observation: &str,
+) -> Result<()> {
+    let process_start = crate::composition::cpu_ms();
     assert!(matches!(layout, "eager" | "scheduled"));
     let data: Json = serde_json::from_slice(&std::fs::read(capture).unwrap()).unwrap();
     let temporary = tempfile::NamedTempFile::new().unwrap();
@@ -41,6 +116,10 @@ pub fn run(capture: &std::path::Path, layout: &str, output: &std::path::Path) ->
     )
     .unwrap();
     let store = Store::open(temporary.path())?;
+    store.db.pragma_update(None, "cache_size", -budget.0)?;
+    store
+        .db
+        .pragma_update(Some("temp"), "cache_size", -budget.1)?;
     store.db.execute_batch("BEGIN")?;
     if data["fileScope"] == true {
         crate::session::request(
@@ -97,14 +176,14 @@ pub fn run(capture: &std::path::Path, layout: &str, output: &std::path::Path) ->
     } else {
         &schedule.actions
     };
-    let mut snapshots =
-        vec![json!({"label":"start","operation":0,"sample":working_set::snapshot(&store.db,0)?})];
+    let mut snapshots = vec![json!({"label":"start","operation":0,"sample":observe(&store.db,0)?})];
     let (mut live, mut peak, mut operation, mut next_sample) = (0usize, 0usize, 0usize, 128usize);
     let (mut prepare_ns, mut results_ns, mut release_ns) = (0u128, 0u128, 0u128);
     let mut rows = Vec::<(i64, i64, i64)>::new();
     let mut statements = Vec::new();
     let mut heap_peaks = Vec::new();
     let mut compile_ns = 0u128;
+    let mut vm = [0u64; 3];
     for group in
         actions.chunk_by(|a, b| matches!(a, Action::Release(_)) && matches!(b, Action::Release(_)))
     {
@@ -121,6 +200,7 @@ pub fn run(capture: &std::path::Path, layout: &str, output: &std::path::Path) ->
                 statements.push(json!({"name":inputs[i].name,"sqlBytes":inputs[i].sql.len(),"statementBytes":q.get_status(rusqlite::StatementStatus::MemUsed),"heapAfterPrepare":prepared,"preparePeakBytes":prepare_peak}));
                 let n = q.parameter_count();
                 q.execute(params_from_iter(&parameters[..n]))?;
+                count_steps(&q, &mut vm);
                 drop(q);
                 store.readers.clear();
                 if inputs[i].temporary {
@@ -147,6 +227,7 @@ pub fn run(capture: &std::path::Path, layout: &str, output: &std::path::Path) ->
                     })?
                     .collect::<Result<Vec<_>>>()?,
                 );
+                count_steps(&q, &mut vm);
                 results_ns += thread_cpu_ns().unwrap() - started;
                 boundary = true;
             }
@@ -169,14 +250,15 @@ pub fn run(capture: &std::path::Path, layout: &str, output: &std::path::Path) ->
         let (after_heap, peak_heap) = heap(false)?;
         heap_peaks.push(json!({"action":group[0],"beforeBytes":before_heap,"afterBytes":after_heap,"peakBytes":peak_heap}));
         if operation >= next_sample || boundary {
-            snapshots.push(json!({"label":format!("{:?}",group[0]),"operation":operation,"sample":working_set::snapshot(&store.db,live)?}));
+            snapshots.push(json!({"label":format!("{:?}",group[0]),"operation":operation,"sample":observe(&store.db,live)?}));
             next_sample = (operation / 128 + 1) * 128;
         }
     }
     assert_eq!(live, 0);
     store.readers.clear();
     store.db.execute_batch("COMMIT")?;
-    snapshots.push(json!({"label":"finished","operation":operation,"sample":working_set::snapshot(&store.db,0)?}));
+    snapshots
+        .push(json!({"label":"finished","operation":operation,"sample":observe(&store.db,0)?}));
     std::fs::write(
         output.with_extension("rows.json"),
         serde_json::to_vec(&rows).unwrap(),
@@ -189,7 +271,7 @@ pub fn run(capture: &std::path::Path, layout: &str, output: &std::path::Path) ->
     heap_peaks.sort_by_key(|s| std::cmp::Reverse(s["peakBytes"].as_i64().unwrap()));
     statements.truncate(20);
     heap_peaks.truncate(20);
-    let result = json!({"capture":capture,"layout":layout,"rows":rows.len(),"stages":stages.len(),"queries":queries.len(),"peakLiveRelations":peak,"scheduledPeakLiveRelations":schedule.peak_relations,"scheduleCpuMs":schedule_cpu_ms,"sqliteCompileCpuMs":compile_ns as f64/1e6,"largestStatements":statements,"largestCompilePeaks":compile_peaks,"largestHeapPeaks":heap_peaks,"heapPeakScope":"stepping, index construction, finalization; compilation peaks are separate","prepareCpuMs":prepare_ns as f64/1e6,"resultsCpuMs":results_ns as f64/1e6,"releaseCpuMs":release_ns as f64/1e6,"sqlCpuMs":(prepare_ns+results_ns+release_ns) as f64/1e6,"snapshots":snapshots});
+    let result = json!({"capture":capture,"layout":layout,"observation":observation,"replayProcessCpuMs":crate::composition::cpu_ms()-process_start,"processPeakRssBytes":crate::composition::peak_bytes(),"cacheBudgetKiB":{"main":budget.0,"temp":budget.1},"statementCounters":{"vmSteps":vm[0],"fullscanSteps":vm[1],"sorts":vm[2],"scope":"stage and result statements; index and release batches excluded"},"rows":rows.len(),"stages":stages.len(),"queries":queries.len(),"peakLiveRelations":peak,"scheduledPeakLiveRelations":schedule.peak_relations,"scheduleCpuMs":schedule_cpu_ms,"sqliteCompileCpuMs":compile_ns as f64/1e6,"largestStatements":statements,"largestCompilePeaks":compile_peaks,"largestHeapPeaks":heap_peaks,"heapPeakScope":"stepping, index construction, finalization; compilation peaks are separate","prepareCpuMs":prepare_ns as f64/1e6,"resultsCpuMs":results_ns as f64/1e6,"releaseCpuMs":release_ns as f64/1e6,"sqlCpuMs":(prepare_ns+results_ns+release_ns) as f64/1e6,"snapshots":snapshots});
     std::fs::write(output, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
     println!(
         "{}",

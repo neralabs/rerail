@@ -242,6 +242,15 @@ Source references can overlap workspace storage. Do not add their byte counts to
 Run timing controls with tracing, census, SQL capture, and external samplers off.
 The journal records measured CPU and RSS independently from these storage counters.
 
+External macOS samples record thread stacks over time.
+The report separates known parked threads and marks read, write, and sync syscall frames.
+I/O frames can execute or wait. Their percentages describe observed stacks, rather than CPU-time shares.
+Use driver phase CPU for process totals and SQL thread CPU for operation rankings.
+
+External `vmmap` summaries retain rounded physical footprints, malloc-region residency, swapped bytes, and allocator-zone totals.
+Region and allocator totals overlap. They do not identify which Rust structures own allocations.
+The profiler preserves the raw report beside the structured summary.
+
 Selected native spans also record `memory.before` and `memory.after` when tracing is enabled.
 These observations include the process RSS high-water mark and macOS allocator bytes in use and allocated.
 The report preserves them in `native.memorySpans`. High-water marks are cumulative; do not add them across spans.

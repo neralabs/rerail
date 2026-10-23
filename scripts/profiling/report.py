@@ -140,6 +140,9 @@ def summary(report):
             lines += [f"Memory boundary {boundary['phase']}/{boundary['name']}: peak +{growth(boundary)} bytes ({after['peakRssBytes']} cumulative); allocator in use {after.get('inUseBytes')}, allocated {after.get('allocatedBytes')} bytes. Inclusive boundaries overlap."]
     for snapshot in report.get("memorySnapshots", []):
         lines += [f"Memory snapshot: {snapshot['file']}; exit={snapshot.get('exitCode')}; error={snapshot.get('error')}"]
+        memory = snapshot.get("summary", {})
+        if "physicalFootprintBytesApprox" in memory:
+            lines += [f"  Approximate physical footprint: {memory['physicalFootprintBytesApprox']} bytes; region and allocator totals are separate views."]
     if report["native"].get("parseErrors"):
         lines += [f"Warning: {len(report['native']['parseErrors'])} malformed or interleaved profiling lines; see stderr.log."]
     if "parity" in report:
@@ -172,6 +175,9 @@ def summary(report):
               for row in [row for row in report["native"]["spans"] if row["runPhase"] == "cold" and row["phase"] in {"sql-materialize", "sql-reach-prepare", "sql-reach-walk", "sql-reach-index", "anchor-lower", "anchor-prepare", "anchor-materialize", "anchor-index", "anchor-results", "anchor-schema", "anchor-release", "anchor-explain"}][:12]]
     for index, sample in enumerate(report["samples"], 1):
         lines += ["", f"Sample {index}: native active={sample.get('activeNativeSamples', 0)}; parked={sample.get('parkedThreadSamples', 0)}; other active={sample.get('otherActiveSamples', 0)}"]
+        lines += [sample.get("samplingBasis", "Wall-time stack observations, rather than CPU-time shares.")]
+        if "ioSyscallSamples" in sample:
+            lines += [f"  I/O syscall observations: {sample['ioSyscallSamples']}; frames can include execution or blocked I/O."]
         if sample.get("parseError"):
             lines += [f"  Parse error: {sample['parseError']}; raw capture retained in {sample['file']}"]
         lines += [f"  stack {row['percent']:6.2f}% {row['symbol']}" for row in sample.get("subsystems", [])]

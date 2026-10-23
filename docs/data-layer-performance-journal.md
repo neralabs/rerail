@@ -10,8 +10,8 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Aggregate optimization checkpoint: 2026-10-23
 
-Status: broader validation and repository comparisons are in progress. WP1 has not started.
-The same worktree will retain the completed checkpoint and subsequent implementation work.
+Status: repository comparisons are complete, with substantial CPU regressions and failed broader gates.
+This is an evidence checkpoint, not a passing performance release. WP1 has not started and will use the same worktree.
 
 The archived pre-SQL reference has SHA-256 `52692a151eea8bab2add9c1c3aeb8400bf0cf1e59e743f5ffdf176265b6f945b`.
 Its archived changed-source manifest matches the corresponding files at `5616076a`.
@@ -40,31 +40,63 @@ The corrections preserve explicit fixture inputs, reject an actually unknown pre
 Typechecking and all repository checks pass before those test-only corrections.
 
 Local runs and frozen inputs are under `.rerail/profiles/aggregate-checkpoint-20261023/`.
-Final results and commit identities will replace this in-progress status after validation completes.
+Runtime source is committed at `5b09437c`; fixture and runner corrections are committed at `b9c4fc67`.
+The final measurement archive pins the addon and all 470 native source files.
 
-| Workload | Reference | Cold CPU | Whole-run peak RSS | Parity |
+| Workload | Reference | Cold CPU | Resource high-water RSS | Parity |
 | --- | --- | ---: | ---: | --- |
 | First 50 rules | Pre-SQL | 125.804 s | 6.441 GiB | 24,820 findings, pass |
 | First 50 rules | Final SQL | 2,507.496 s | 6.143 GiB | 24,820 findings, pass |
-| Combined 60 rules | Pre-SQL | 709.151 s | 16.102 GiB | Findings match; 23 failures, two incremental differences |
-| Combined 60 rules | Final SQL | Pending | Pending | Pending |
+| Combined 60 rules | Pre-SQL | 709.151 s | 16.102 GiB | Findings match; 23 failures, two failed incremental checks |
+| Combined 60 rules | Final SQL | 7,211.657 s | 14.997 GiB | Findings match; 34 failures, two failed incremental checks |
 
 The fresh pre-SQL first-50 reference completes all 9,021 files with 24,820 findings and no parity failures.
 Cold CPU is 125.804 seconds. This replaces historical CPU values as the matched comparison reference.
 The corrected first-50 SQL reference completes with all 24,820 findings and no parity differences.
 Cold CPU is 2,507.496 seconds, or 19.93 times the matched pre-SQL reference.
-Peak RSS falls from 6.441 to 6.143 GiB, a 4.6 percent reduction.
+Reported resource high-water RSS falls from 6.441 to 6.143 GiB, a 4.6 percent reduction.
+Separate `ps` sampling records peaks of 6.441 and 6.217 GiB.
+Sampled RSS and `process.resourceUsage().maxRSS` do not agree exactly in these reports; the evidence preserves both measurements.
+Some ingestion boundaries also report current RSS above the resource high-water counter.
+These observations prevent a strict bound between the two APIs, without changing the large CPU regression.
 This aggregate result is a substantial CPU regression, rather than an optimization success.
 The prior 60-rule reference completes with all 24,993 expected findings and no finding differences.
-It reports 23 file-budget failures and two incremental differences, so it is not a successful parity reference.
+It reports 21 file-budget failures, two incomplete-input failures, and two failed incremental checks.
+It is not a successful parity reference.
 The failures include serverplan-target-architecture clauses on `commit_branch_steps.py`.
-The final SQL 60-rule run remains in progress.
+The final SQL 60-rule run completes with all 24,993 expected findings and no finding differences.
+It reports 34 relational failures in `serverplan-state-tripwires`: 12 regex-budget errors and 22 query interruptions.
+The unchanged and trailing-newline edit checks retain those failures, with zero finding differences.
+Matching findings do not establish complete execution when failures remain.
+The regex and SQLite progress handlers share a deterministic work allowance; these errors are not command wall-time deadlines.
+The full-repository result therefore fails, despite the passing source-corpus tests below.
+The two 60-rule references fail differently, so their times do not establish a clean performance ratio.
+
+The final 60-rule cold CPU splits into 6,782.080 seconds for ingestion and 429.207 seconds for the global apply.
+The failed prior reference uses 202.550 and 506.184 seconds respectively.
+The final unchanged check uses 0.517 seconds CPU; the edit uses 121.587 seconds, versus 62.576 seconds previously.
+Total OS process CPU is 7,341.770 seconds, including startup, compilation, and incremental checks.
+Sampled peak process RSS is approximately 14.997 GiB, close to the reported resource high-water value for this run.
+The controller records 15,877.030 seconds wall time, including the recorded pause and diagnostic interference.
+The OS `time` report instead records 3,516.32 seconds as `real`; this clock discrepancy remains unresolved.
+Both raw reports remain preserved. Neither wall value supports a comparative performance claim.
+Its 288 ingestion batches execute 1,363,392 candidate data statements and 1,359,072 materialization actions.
+They prepare 197,856 plan memberships: 687 plans per batch, versus 377 in the first-50 run.
+The same 28,230,245 indexed nodes feed both rule sets. Adding ten rules broadens preparation work substantially.
+Native anchor-selection counters report 6,421.643 seconds; nested thread counters are not an additive process-CPU breakdown.
 
 The controller restarts after the completed references to remove its arbitrary three-hour cap for the final full run.
 That run uses the existing approval to finish and records OS process CPU and peak RSS alongside driver phase CPU.
 The briefly started, interrupted 60-rule SQL trial remains excluded.
 The final SQL trial is allowed to finish despite its measured CPU regression.
 Intermediate process samples include startup and do not replace completed driver phase measurements.
+During that trial, host free space falls below four GiB.
+Cleanup removes 0.782 GiB of unopened, orphaned temporary index files after two batched open-file checks.
+Transparent APFS compression saves another 4.519 GiB across 167 old text captures.
+SHA-256 checks verify unchanged capture contents; their paths remain intact.
+The active database, reference binaries, and source inputs remain unchanged.
+This storage maintenance can add host contention during the 60-rule trial; the completed first-50 comparison precedes it.
+Host free space later recovers above 550 GiB without a storage pause of the target process.
 
 The completed first-50 reports locate the CPU regression in file ingestion.
 
@@ -213,6 +245,102 @@ A complete static plan inventory does not require execution of every plan/file p
 Repeated selector construction around retained facts remains another measured target.
 
 This separates index join order from the planned cross-rule producer work; WP1 remains pending.
+
+### Large-corpus pager pressure
+
+Across four equal groups of 72 first-50 ingestion applies, anchor-selection CPU per indexed node rises from 50.2 to 115.3 microseconds.
+The last group processes fewer nodes than the first. Source content also changes, so this comparison alone does not establish a corpus-size cause.
+
+A one-second external sample observes the final 60-rule run near 1,600 ingested files.
+Of 749 selected non-parked stack observations, 537 end in `pwrite` and 65 end in `pread`.
+The write callers include `pagerStress`, `pagerWalFrames`, and `subjournalPageIfRequired` under candidate materialization.
+These are wall-time stack observations, including possible I/O waits, rather than measured CPU shares.
+SQL compilation appears in seven observations. The window identifies pager and statement-journal traffic as a concrete investigation target.
+
+The production store sets its main page-cache target to 1,024 KiB and its temporary target to 512 KiB.
+The main database already exceeds one GiB during this sample interval.
+Cache-budget and publication-boundary experiments must preserve rollback guarantees and measure cache misses, writes, spills, CPU, and memory together.
+The isolated cache experiment below tests this proposal. The native implementation stays frozen.
+
+An APFS clone preserves the main database and WAL for later isolated replay.
+The target process pauses for 72 milliseconds during the clone, then resumes immediately.
+The snapshot needs SQLite recovery and validation before replay.
+The 60-rule timing therefore includes external sampling, this brief snapshot pause, and the storage maintenance above.
+The completed first-50 controls precede these diagnostics and remain separate.
+
+The profiling report now labels I/O stack observations explicitly to prevent their interpretation as CPU percentages.
+Its new counter test passes. The profiling suite now passes 74 Python checks and 14 Node checks.
+The standalone replay host also gains a `cache_budget` command with cheap cache counters and explicit physical budgets.
+It reuses scheduled SQL execution and avoids the ownership observer's full-table `dbstat` scans.
+Its row-bag and file-scope test passes with the other 18 standalone Rust checks, and the command builds successfully.
+This addition changes profiling tools only; production cache targets remain frozen.
+
+### Controlled cache replay
+
+The full process pauses for 1,022.218 seconds while isolated replay runs, then resumes with its computation intact.
+This pause affects the reported 60-rule wall time. It does not add CPU to that stopped process.
+
+The fixture combines the recovered native snapshot with a native-recorded state-rule input, without rebuilding its indexes.
+It retains 1,886 files and 6,223,803 nodes, and requests `_conditional_compile.py` with its original 18,993-node index representation.
+Source digests match the pinned checkout, and SQLite `quick_check` passes.
+This query-scaling fixture holds the requested program and index representation constant; it does not measure publication or complete engine execution.
+
+Twelve replays use three rotated observations for each physical cache pair.
+All preserve the exact 146,136-row candidate multiset, including multiplicities, after file-ID normalization against the small native capture.
+Every large-fixture replay records 59,590,722 VM steps, 3,294,894 full-scan steps, and 4,979 sorts for stage and result statements.
+Those VM totals exclude index and release batches.
+
+| Main / temporary cache target | Median SQL CPU | Median process peak RSS | Cache misses | Cache writes | Cache spills |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 MiB / 0.5 MiB | 1,531.078 ms | 112.656 MiB | 66,709 | 14,949 | 14,630 |
+| 64 MiB / 0.5 MiB | 1,336.781 ms | 143.563 MiB | 10,814 | 5,427 | 1,721 |
+| 1 MiB / 16 MiB | 1,402.635 ms | 109.344 MiB | 62,595 | 13,119 | 12,909 |
+| 64 MiB / 16 MiB | 1,403.610 ms | 150.484 MiB | 6,700 | 3,597 | 0 |
+
+The combined larger budgets eliminate measured spills and reduce median SQL CPU by 8.3 percent in this fixture.
+CPU varies across trials; these observations do not establish a preferred full-engine budget.
+They also do not explain the 19.93-fold aggregate CPU regression.
+The unchanged VM work remains substantial for one requested file, so demand scope and repeated query work remain the main architectural targets.
+Production settings remain unchanged for the completed checkpoint comparison.
+
+### Full-run memory observation
+
+An external `vmmap` inspection during 60-rule ingestion completes in 3.023 seconds.
+It reports a 6.6 GiB physical footprint, with 4.5 GiB resident and 1.9 GiB reported swapped in `MALLOC_SMALL` regions.
+Its allocator-zone view reports 15,992,992 allocations and 6.2 GiB allocated.
+These rounded region and allocator views overlap; they are not an ownership census.
+
+Prepared candidate payloads account for about 218 MiB near this interval.
+The completed first-50 run peaks at 86.565 MiB of compact candidate payloads.
+Those counters exclude map metadata, but the payloads alone cannot explain the process footprint.
+The explicit workspace estimator also omits heap storage owned by retained tape, scope, and preparation fields.
+Attribution of the remaining native allocations remains open; this observation does not establish a leak in any specific structure.
+
+The profiling framework now extracts these external memory fields into structured reports while preserving the raw output.
+The full 60-rule timing includes this additional external observation window.
+
+A second external inspection runs after cold completion, during the unchanged/edit boundary, and takes 7.527 seconds.
+Its rounded allocator-zone view reports 31,521,959 allocations and approximately 11.3 GiB allocated.
+Physical footprint is approximately 12.7 GiB, with a reported peak of 13.9 GiB.
+These views remain distinct from peak RSS and from Rust ownership estimates.
+The larger retained allocation count reinforces the need for ownership attribution before a memory improvement claim.
+
+### Final diagnostic and tooling checks
+
+The profiling suite passes 75 Python checks and 14 Node checks, including the new external-memory parser test.
+All 19 standalone SQL replay tests pass. Standalone format and Clippy checks also pass.
+The frozen manifest still matches all 470 native files after the full run.
+Final typechecking, boundary checks, structure checks, Windows-path checks, and execution-shape checks pass.
+The structure check also passes after the new replay command enters the tracked file inventory.
+The broader public-suite failure and six timeouts above remain unresolved; these checks do not supersede them.
+
+The bounded ten-rule/two-file diagnostic preserves all 31 expected findings with no execution failures.
+It records 11,594 trace events and a successful external memory inspection.
+Two external sample commands exit with signal 9, so their observer wrapper fails despite target success.
+The third sample succeeds; its 823 selected non-parked observations include 299 I/O syscall leaves.
+These wall-stack observations include profiler and trace overhead and do not establish CPU percentages.
+The separate state-rule SQL capture also passes, recording 6,095 trace events with query plans.
+Neither instrumented workload replaces the untraced aggregate comparison.
 
 
 ## Shared producer implementation plan: 2026-10-23
