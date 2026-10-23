@@ -1,10 +1,25 @@
 # Contributing to Rerail
 
-Thank you for helping. This guide covers how work starts, how to set up a checkout, what a pull request needs, and the
-rules that keep the project open source and its licensing clean.
+Thank you for helping. This guide covers who can open a pull request, how work starts, how to set up a checkout, what a
+pull request needs, and the rules that keep the project open source and its licensing clean.
 
 Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report a security vulnerability privately, as
 [SECURITY.md](SECURITY.md) describes, never in a public issue or pull request.
+
+## Who can open a pull request
+
+Anyone can open an issue. Pull requests are open to trusted contributors, from their own fork; a pull request from
+anyone else is closed with a pointer to the issues, which says nothing about the change itself. A clear issue, with a
+reproduction or a failing case, is often all a fix needs.
+
+Contributors never get write access to this repository. CI on a pull request from a fork runs without the project's
+secrets, and only once a maintainer has approved the run.
+
+### Becoming a trusted contributor
+
+Ask in the issue you want to work on, or open one: say what you plan to change and how. A maintainer who agrees adds
+you to the trusted contributors list and assigns you the issue, and you stay on the list for later work. There is no
+form to fill in; how you work in the issues is what counts.
 
 ## Start with an issue
 
@@ -18,7 +33,7 @@ Open an issue before you start on:
 Agree on the approach with a maintainer in the issue before you write the code. A pull request for work nobody agreed
 on may be closed, however good it is.
 
-These can go straight to a pull request, with no issue:
+A trusted contributor can take these straight to a pull request, with no issue:
 
 - typo and documentation fixes;
 - a bug fix with a test that fails without it;
@@ -26,14 +41,16 @@ These can go straight to a pull request, with no issue:
 
 ### Claiming an issue
 
-Issues labelled `good first issue` or `help wanted` are open to anyone. Check that the issue is not assigned, then
-comment on it to claim it; a maintainer assigns it to you. If there is no pull request or update from you within two
-weeks, the issue is open to others again.
+Issues labelled `good first issue` or `help wanted` are open to any trusted contributor, and asking for one is a good
+way to become one ([Becoming a trusted contributor](#becoming-a-trusted-contributor)). Check that the issue is not
+assigned, then comment on it to claim it; a maintainer assigns it to you. If there is no pull request or update from
+you within two weeks, the issue is open to others again.
 
 ## Contribution flow
 
 1. Find an issue, or open one ([Start with an issue](#start-with-an-issue)).
-2. Claim it, and agree on the approach with a maintainer when the issue needs one.
+2. Claim it ([Becoming a trusted contributor](#becoming-a-trusted-contributor) the first time), and agree on the
+   approach with a maintainer when the issue needs one.
 3. Fork the repository and create a branch from `main`.
 4. Set up your checkout ([Development setup](#development-setup)), make the change, and add tests for the behavior it
    changes.
