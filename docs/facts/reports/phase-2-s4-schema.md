@@ -123,7 +123,7 @@ Base: integration `caceb656f`, plus S1's `0ea181a84` (pattern front end) merged 
 |---|---|---|---|---|
 | Unresolved call-graph views (SCHEMA § 3.3: `cg_scope`, `cg_def`, `cg_call`, `cg_import`, `cg_refusal`), content-keyed, agreed with S3 | 0 differences against native | **0 differences** over 9,010 files:<br>• `cg_def`, 194,281 rows, against native `Summary::extract` defs (name, kind, span);<br>• `cg_import`, 235,250 rows, against native scope-table import bindings;<br>• `cg_call`, 1,056,492 rows, and `cg_import.scope`, against native's context rule.<br>`cg_refusal`: 0 rows; a crafted file shows both refusal constructs firing exactly where the raw text differs from native. | **pass** | `20261022T211538-cg-differential` |
 | Native call summary per content (SCHEMA § 3.4, `cgn_*`, S3's ask): symbolic module path, real one substituted on the membership side | 0 differences after substitution | **0 differences, 0 refusals** over 9,010 files (variants: module 6,695 / init 482 / unpackaged 1,833). Covers 13 relations, both `summary` and `as_references` (no links, and batch 6's links). Export: 8,957 contents × 3 variants, 64.6 MB zstd JSONL. | **pass** | `20261022T212451-cg-native` |
-| `string_value` as a core fact; § 2.4 views runnable (`string_values`, `special_attributes`, `return_kinds`, `direct_events`) | 0 differences | See W2.2 | see W2.2 | `…-derived-check-w2-shard{0,1}of2` |
+| `string_value` as a core fact; § 2.4 views runnable (`string_values`, `special_attributes`, `return_kinds`, `direct_events`) | 0 differences | **0 differences** in bag and order over 9,010 files. Lowered matcher inputs: 0 differences on the 6,587 files of at most 3,000 nodes (W2.4). | **pass** (inputs bounded) | `20261022T220103-derived-check-w2-shard0of2`, `…220434-…shard1of2` |
 | Costs, A/B, 3 runs each, back-to-back under `bench-lock` | reported | Table W2.3 | reported | `20261022T2125…–2128…` |
 | `inspect` reads v0, v1 and `.xfacts` | 0 failures | v1 store: 8,957 `.facts`. Old store: 8,957 v0 `.facts` and 19,772 `.xfacts`. 0 failures. | pass | `20261022T213340-inspect` |
 | `just facts-gate` (after milestone 1: native visibility, views, derived-check) | 13/13 | **13/13 pass**, 671 s, load 16.6. `views-derived`: bag 0, including the § 2.4 compositions. | pass | `~/rerail-bench/facts/phase-2/s5-gate/runs/20261022T205508-gate` |
@@ -171,7 +171,18 @@ The new views cost 19.5 s summed: `cg_scope` 2.8, `cg_def` 2.7, `cg_call` 4.8 an
 
 ### W2.4 Full-corpus differential (wave 2)
 
-Filled from `…-derived-check-w2-shard{0,1}of2` below.
+Runs `20261022T220103-derived-check-w2-shard0of2` and `…220434-…shard1of2` (load 4–14, 207–211 s each). Command: `derived-check --threads 4 --shard k/2 --input-max-nodes 3000 --cg`.
+
+- **The § 2.2 views and the § 2.4 compositions: bag mismatches 0, failures 0, node-set mismatches 0** over 9,010 files.
+  - `string_values`: 1,448 rows × 3 clauses.
+  - `special_attributes`: 64 rows × 2.
+  - `return_kinds`: 1,153,575 rows × 2.
+  - `direct_events`: 7,846 rows × 2.
+  - All four match **in order** as well.
+- **Matcher inputs, S1's lowered algebra over `string_value` against the leaf executor: 0 differences.** `raw_strings_0` has 325 rows, `raw_strings_1` 1,111, `raw_strings_2` 0, and `project_mode` 9,010, per clause. The lowered side ran on the 6,587 files of at most 3,000 nodes. The 2,423 larger files are `inputs unchecked` (leaf inputs on both sides).
+- Order mismatches: 106,653, informational. In the 150-file sample all were `ownership` (its fixpoint level order, as in wave 1).
+- `--cg` on the same runs: `cg_def`, `cg_call`, `cg_import` and its scope give 0 differences; `cg_refusal` has 0 rows.
+- Span census for S1's keys: two named nodes of one kind never share a span (0). Over all nodes: 492 collisions, all an anonymous `yield` token inside a named `yield`.
 
 ## 7. Resume notes
 
