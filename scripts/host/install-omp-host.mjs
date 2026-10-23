@@ -7,16 +7,16 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
-const version = "18.0.4";
+const version = "18.12.3";
 // Published release digests, pinned with the SDK rather than trusted at download time.
 const digests = {
-  "omp-darwin-arm64": "d493163887bcf8f77b9991ab7219f77712b5b27de6564f7af7283064aca84824",
-  "omp-darwin-x64": "f217752f5f579d2b220818462fc515ad333e8a410f1bbfcd6307825b705260f5",
-  "omp-linux-arm64": "f2b7c8a019681ede314ac165100c1c5b5cd4900139075948da809c004bec5ce7",
-  "omp-linux-x64": "94ec42d17d71975a381e20335bb3c005a7fd7eec19b319358df6d22f28e16b37",
-  "omp-linux-musl-arm64": "438a8541d87796711af24fdc7dc5e00e88eefc8a5ae75e92039e874cca1aa217",
-  "omp-linux-musl-x64": "f5bdec984733a4441ed9e58262d024dda1c4c4a046e31ef0ad82ba2954cd933b",
-  "omp-windows-x64.exe": "8e04c83fb03a7068c3c5f08b509e9d0ed51f6a01ef0e2118de369c32daad1f47",
+  "omp-darwin-arm64": "f2a657b3320fcafa23055053940a45b26a8d3254e1412a158838013d670d6ec5",
+  "omp-darwin-x64": "73918ae225fa63bc0686081dce4eb90716540ef94e55185b999c697999f7b2c9",
+  "omp-linux-arm64": "58f7c25e9b729b082192049ada07a31820c8b257325545a5fe232ff1679f1093",
+  "omp-linux-x64": "065b5079d65ff6b77d961c935ba808e8f0f569ca6a2cb7b5fb6a1e8da72d7dec",
+  "omp-linux-musl-arm64": "cd5497cf754c2278f62fbd1d0c0e5e3dbb01c55201eeb4d20ffba877de00af6d",
+  "omp-linux-musl-x64": "8e1dfb5aa052600ba17f28be5af74626cc8377c7fd5025d72cd7ce910dc83e39",
+  "omp-windows-x64.exe": "5e22e9ff5d93bde52a402d4ec4cfd073b2f0f02233181f0b7634c6441e61a108",
 };
 
 function confinedPath(directory, name) {
