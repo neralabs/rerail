@@ -111,10 +111,6 @@ fn memo_rejects_unproved_scope_sharing() {
             json!({"v":{"value":{"gt":0}}}),
         ),
         (
-            json!({"kind":"number","all":[{"matches":"v"},{"not":{"matches":"v"}}]}),
-            json!({"v":{"value":{"gt":0}}}),
-        ),
-        (
             json!({"kind":"number","all":[{"matches":"outer"},{"matches":"outer"}]}),
             json!({"outer":{"matches":"v"},"v":{"value":{"gt":0}}}),
         ),

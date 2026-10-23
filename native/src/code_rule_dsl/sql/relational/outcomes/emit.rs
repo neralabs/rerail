@@ -186,6 +186,9 @@ impl Sql {
     }
 
     fn emit(&mut self, plan: &Plan, input: &Demand) -> Result<Output, String> {
+        if memo::region(plan) {
+            return memo::shared(self, plan, input);
+        }
         let operator = match &plan.op {
             Op::Predicate(_) => "total predicate",
             Op::Unknown(_) => "unknown leaf",

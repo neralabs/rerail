@@ -9,6 +9,7 @@ mod nested_tests;
 mod pruning_tests;
 mod publication_tests;
 mod reached_tests;
+mod shared_memo_tests;
 mod tests;
 
 use super::{Compiled, ir::Set};

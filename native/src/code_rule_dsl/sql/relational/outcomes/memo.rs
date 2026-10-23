@@ -1,60 +1,48 @@
-//! Reached utility answers and measured semantic costs, scoped to one Boolean demand.
+//! Reached utility answers and measured semantic costs within one Boolean demand scope.
 //! The demand retains file/node identity. Each typed memo slot specializes a utility ID.
 use super::ordered::nested::{bridge, program};
 use super::{Demand, Op, Plan, Slots, Sql, value};
 use serde_json::json;
 use std::collections::BTreeMap;
 
-/// No value-utility answer may be reused outside the Boolean demand that owns it yet.
+/// Traversal and nested utility keys still need a separate demand lifetime contract.
 pub(in crate::code_rule_dsl::sql::relational::outcomes) fn admit(
     plan: &Plan,
 ) -> Result<(), String> {
-    fn visit(
-        plan: &Plan,
-        owner: Option<usize>,
-        moved: bool,
-        utility: bool,
-        serial: &mut usize,
-        owners: &mut BTreeMap<usize, usize>,
-    ) -> Result<(), String> {
-        *serial += 1;
-        let here = *serial;
+    fn visit(plan: &Plan, moved: bool, utility: bool) -> Result<(), String> {
         match &plan.op {
-            Op::Charge(id, body) => {
-                if body.reads_value() {
-                    if moved || utility {
-                        return Err("utility memo: cross-root, traversal, or nested utility reuse requires a shared demand contract".into());
-                    }
-                    let owner = owner.unwrap_or(here);
-                    if let Some(previous) = owners.insert(*id, owner)
-                        && previous != owner
-                    {
-                        return Err("utility memo: reuse across Boolean demand scopes requires a shared answer contract".into());
-                    }
+            Op::Charge(_, body) => {
+                if body.reads_value() && (moved || utility) {
+                    return Err("utility memo: cross-root, traversal, or nested utility reuse requires a shared demand contract".into());
                 }
-                visit(body, None, moved, true, serial, owners)?;
+                visit(body, moved, true)?;
             }
             Op::All(items) | Op::Any(items) => {
                 for item in items {
-                    visit(item, Some(here), moved, utility, serial, owners)?;
+                    visit(item, moved, utility)?;
                 }
             }
-            Op::Not(child) => visit(child, None, moved, utility, serial, owners)?,
+            Op::Not(child) => visit(child, moved, utility)?,
             Op::Search(_, _, child, stop)
             | Op::Count {
                 rule: child, stop, ..
             } => {
-                visit(child, None, true, utility, serial, owners)?;
+                visit(child, true, utility)?;
                 if let Some(stop) = stop {
-                    visit(stop, None, true, utility, serial, owners)?;
+                    visit(stop, true, utility)?;
                 }
             }
             _ => {}
         }
         Ok(())
     }
-    visit(plan, None, false, false, &mut 0, &mut BTreeMap::new())
+    visit(plan, false, false)
 }
+
+#[path = "shared_memo.rs"]
+mod shared;
+pub(super) use shared::{compile as shared, region};
+
 struct Entry {
     utility: usize,
     version: Vec<usize>,
@@ -63,6 +51,8 @@ struct Entry {
 }
 pub(super) struct Local {
     keys: Slots,
+    direct: bool,
+    proven: BTreeMap<usize, usize>,
     versions: BTreeMap<usize, usize>,
     remaining: BTreeMap<usize, usize>,
     entries: Vec<Entry>,
@@ -79,6 +69,8 @@ impl Local {
         }
         Self {
             keys: keys.clone(),
+            direct: true,
+            proven: BTreeMap::new(),
             versions: keys.iter().map(|&s| (s, 0)).collect(),
             remaining,
             entries: vec![],
@@ -119,15 +111,20 @@ impl Local {
             return Ok(None);
         }
         let version = self.versions.values().copied().collect::<Vec<_>>();
-        let existing = self
-            .entries
-            .iter()
-            .position(|e| e.utility == *utility && e.version == version);
+        let existing = if self.direct {
+            self.entries
+                .iter()
+                .position(|e| e.utility == *utility && e.version == version)
+        } else {
+            self.proven.get(utility).copied()
+        };
         if let Some(id) = existing {
             // A later direct operand cannot become reached after the same utility was
             // skipped: All withholding only grows, and Any stops permanently. Equal
             // static versions prove that every input binding is unchanged. Therefore
             // this reached invocation has a valid answer; no miss program is needed.
+            // Shared scopes supply a particular dominating entry instead. That proof
+            // is restricted to regions with no bindings, and expires at branch exit.
             let exports = body
                 .writes
                 .iter()

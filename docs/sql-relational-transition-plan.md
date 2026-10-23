@@ -567,18 +567,43 @@ The frozen B023 run passes at 1.83296×, with unchanged query text and VM work.
 The journal records final profiles and both rejected shapes.
 This is matching-query evidence; node-index construction and the complete cold job remain separate measurements.
 
+## Nested Boolean utility replay: bounded outcome milestone
+
+Utility answers now survive nested Boolean scopes within one root demand.
+The compiler selects the smallest Boolean scope shared by repeated calls.
+It emits one dependency chain through that scope and retires temporary columns after their last use.
+Capture snapshots preserve commit and rollback behavior. Answers retain their original input keys and measured costs.
+There is no runtime option or native composition fallback.
+
+Separate answer CTEs failed reached-call parity because SQLite reevaluated correlated dependencies at multiple references.
+The dependency chain removes that duplicated work.
+An unconditional call can provide a replay proof for later siblings in a region without captures.
+Calls in optional branches do not export that proof.
+Other calls compare every input capture and preserve the bounded memo storage contract.
+
+The initial fixture now passes: allowance three fails, while four succeeds with zero remaining and one value read per file.
+The six new tests cover 804 native-comparison jobs and 15 profiles.
+Coverage includes unknowns, capture rollback, changed keys, counts, independent utilities, reached failures, and skipped nested branches.
+At 32 nested calls, VM work falls from 8,943 in the first correct shape to 5,771.
+Typed return cells remain at 12 across two files. Materialization sites fall from 178 to 82.
+The 81 preceding-phase controls retain identical SQL, output, and VM counts.
+The journal records the qualification gates and measured source hashes.
+
 ## Next implementation action
 
-Extend utility cost replay across nested Boolean scopes within one root demand.
-Start with `all(matches(v), not(not(matches(v))))`, where `v` reads one numeric value.
-An allowance of three must fail with `Work`; four must succeed with zero remaining and one value-leaf call.
-The current compiler rejects this fixture because its two invocations have different Boolean owners.
+Extend the same answer lifetime through nested value-bearing utility bodies at one root.
+Start with `inner = value(gt: 0)` and `outer = all(matches(inner), not(not(matches(inner))))`.
+The root repeats `outer` across double negation.
+First measure native execution and retain the compiler's current rejection as the failing admission gate.
+The expected boundary is allowance nine failing and ten succeeding, with one value-leaf call and zero remaining work.
 
-Place the typed answer at the smallest shared demand scope that contains both invocations.
-Only the first reached invocation may populate it.
-Nested Boolean programs must use the same utility, file, node, capture-input, answer, and measured-cost contract.
-Prove unknown answers, changed captures, decisive branches, and reached failures before removing that admission boundary.
-Cross-traversal and nested value-utility reuse remain separate gates.
+The outer miss must charge its entry, evaluate its body in the shared scope, and record the complete measured cost.
+An outer replay must charge that stored cost without executing the body again.
+Answers from reached inner calls must remain available after the outer utility returns.
+A false outer call followed by a direct inner call must replay the inner cost, including a warm value cache.
+Prove unknowns, changed captures, rolled-back exports, and failures before removing the nested-utility boundary.
+Keep utility identity distinct from shared body shape.
 
-Repeat the frozen B023 gates and existing work-count controls after the compiler changes.
+Cross-traversal and cross-root memo lifetimes remain separate gates.
+Repeat the frozen B023 gates and existing work-count controls after these changes.
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

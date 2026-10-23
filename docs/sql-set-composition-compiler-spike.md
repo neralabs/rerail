@@ -4170,3 +4170,141 @@ Those materializations remain a physical planning cost; the sparse-case gains do
 The next semantic transition is utility cost replay across nested Boolean scopes within one root demand.
 The transition plan specifies the rejected fixture and its exact allowance thresholds.
 Production integration, broader semantic gates, and the complete cold-job 100-execution gate remain open.
+
+
+### 2026-10-23 — Utility answers across nested Boolean scopes
+
+This phase extends measured utility cost replay within one root demand.
+The starting fixture repeats a value utility across a double negation.
+Allowance three must fail. Allowance four must succeed with one value call and zero remaining work.
+
+The first proposed shape placed immutable typed answers at the smallest Boolean scope shared by both calls.
+Nested Boolean operators used reached demand relations in that scope.
+Later calls joined prior answers by demand, file, node, and all input captures.
+Only successful misses could publish answers. A replay consumed the original measured cost.
+This proposal failed the reached-call checks described below.
+
+Validation covers branch order, unknowns, capture rollback, changed keys, failures, and bounded storage.
+Profiles include EXPLAIN, VM instructions, typed return cells, and existing controls.
+Existing direct sibling replay retains its cheaper row-local specialization.
+Traversal and nested value-utility sharing remain separate admission gates.
+The frozen B023 gates and the complete cold-job limitation remain unchanged.
+
+
+The first physical shape failed reached-call parity before profiling.
+It joined separate immutable answer CTEs inside a correlated root program.
+SQLite reevaluated their correlated dependencies despite `MATERIALIZED`, duplicating value reads.
+Allowance one produced two leaf calls where native execution produced one.
+That shape was rejected.
+
+The replacement uses one dependency chain through the shared Boolean scope.
+Each barrier references its predecessor once and projects only live state.
+Nested branches retain typed binding snapshots until commit or rollback.
+Memo answers survive those boundaries and retire after their last use.
+A guaranteed first invocation with no bindings allows direct replay across later branches.
+Other invocations retain guarded lookup, including misses after an earlier skipped call.
+
+
+The first dependency-chain build passes six tests and 628 native-comparison jobs.
+All 15 profiles use one matching statement and zero frame publications.
+At 32 repeated nested calls, it uses 8,943 VM instructions and 12 typed return cells across two files.
+EXPLAIN contains 178 materialization sites. SQL size is 39,552 bytes.
+The corresponding existing direct-sibling profile uses 5,059 VM instructions.
+This comparison measures nesting overhead, not a speedup over the previously rejected fixture.
+
+The next physical pass removes redundant double negations when the child exports no bindings.
+It also propagates replay proofs through sequential siblings in regions without captures.
+A later reached sibling proves that the preceding sibling was reached.
+Only that sibling's unconditional first call exports a proof. Optional branch calls do not.
+This permits direct replay after an earlier syntactic call was skipped.
+Binding-bearing regions retain dynamic key comparisons and conservative storage limits.
+Explicitly false guards prevent an unreached nested scope from replaying a cached charge.
+
+
+The replay-proof pass adds unreachable nested-scope fixtures and passes 804 comparison jobs.
+At 32 repeated calls, VM work falls to 6,791 and materialization sites fall to 114.
+Typed return cells stay at 12 across two files.
+The skipped-first fixture now supports 32 calls with 16 return cells, independent of repetition count.
+The earlier eight-call shape copied 40 cells because it retained guarded miss programs.
+
+EXPLAIN still shows one redundant materialization after every atomic result.
+The atomic predecessor already stores the reached call or replay.
+The next pass lets SQLite inline the following projection, which only renames results and commits bindings.
+Boolean sequencing barriers remain materialized to bound expression expansion and preserve reached work.
+
+
+#### Final evidence and qualification
+
+The final shape passes 109 unique tests.
+These include 97 relational tests, one workspace publication test, nine B023 fixtures, one adversarial test, and one corpus test.
+The six new tests record 804 native-comparison jobs, including 15 profiles.
+The full relational suite records 1,613 publication traces.
+Formatting and both Clippy configurations pass.
+
+The core fixture now matches native execution.
+Allowance three fails with `Work`. Allowance four succeeds with zero remaining and one value-leaf call per file.
+Negation rolls back bindings while retaining answers and spent work.
+Changed input captures select distinct memo keys, including unrelated bindings.
+Unknown answers and counts retain their measured costs and exported values.
+Failed and unreached calls cannot become reusable answers.
+
+Every profile uses one matching SQL statement and zero frame publications.
+The following measurements cover two files:
+
+| Fixture | First chain VM | Replay-proof VM | Final VM | First chain return cells | Final return cells |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 32 repeated nested calls | 8,943 | 6,791 | 5,771 | 12 | 12 |
+| 32 false alternatives | 9,161 | 6,813 | 5,729 | 12 | 12 |
+| 32 unknown alternatives | 9,043 | 6,759 | 5,675 | 12 | 12 |
+| Eight calls, first skipped | 5,012 | 3,092 | 2,766 | 40 | 16 |
+| 32 roots, two calls each | 47,283 | 43,637 | 41,717 | 384 | 384 |
+
+The repeated-call fixture uses 35% fewer VM instructions than the first correct chain.
+SQL size falls from 39,552 to 27,144 bytes, including the final newline.
+EXPLAIN materialization sites fall from 178 to 82.
+The final query retains sequencing barriers but inlines projections after stored atomic results.
+Its individual preparation sample is 6.899 ms, versus 10.341 ms for the first chain.
+These individual wall-time samples do not establish a timing improvement.
+
+The skipped-first fixture now supports 32 calls with 6,390 VM instructions and 16 typed return cells.
+It evaluates the value once per file. Repetition does not increase return-cell copies.
+The unchanged direct-sibling 32-call control uses 5,059 VM instructions.
+The final nested shape therefore retains about 14% more VM work than that simpler equivalent fixture.
+This is a physical-shape comparison on newly admitted programs, not a speedup over an earlier correct cross-scope implementation.
+
+All 81 preceding-phase controls retain identical SQL, output, and VM counts.
+These comprise 30 traversal controls, 12 allowance profiles, 12 publication profiles, 12 local memo profiles, and 15 pruning profiles.
+The frozen B023 run retains 138 files, two matches, and 2,812,255 generated-query VM instructions in every pair.
+Its query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+Both gates pass: 128.493 ms generated versus 65.364 ms reference, or 1.96580× against the 2× CPU limit.
+The unchanged SQL and VM counts do not establish a B023 speedup.
+Earlier passing and failing CPU samples remain in the preceding-phase evidence.
+
+Committed evidence:
+
+- `benchmark/relational-shared-utility-memo.py`: pinned-source profiling driver with reached-call and return-cell assertions.
+- `benchmark/sql-relational-shared-utility-memo-evidence.json`: 804 traces, 15 profiles, both shape comparisons, rejected-DAG diagnostics, 81 controls, and B023 gates.
+- `benchmark/sql-relational-shared-utility-memo.sql`: final 32-call query.
+- `benchmark/sql-relational-shared-utility-memo-skipped.sql`: final query with an earlier skipped call.
+- `benchmark/sql-relational-shared-utility-memo-first-chain.sql`: first correct chain before physical simplification.
+
+Raw profiles are in `/tmp/rerail-shared-memo-20261023-{chain,proven,final}`.
+The frozen B023 run is in `/tmp/rerail-shared-memo-b023-20261023-final`.
+The recorded revision is the parent commit. Source hashes identify the measured working tree.
+The build retains the diagnostic allocator shim and test-only local-LTO wrapper.
+
+Reproduce the nested memo profiles with a new output directory:
+
+```sh
+python3 benchmark/relational-shared-utility-memo.py /tmp/new-shared-memo-profile --binary target/loop/deps/rerail_engine-11d3550fad116d17
+```
+
+This completes the nested Boolean milestone for the bounded outcome kernel.
+The scope carries its capture columns and live memo answers through one dependency chain.
+Temporary binding snapshots and Boolean results retire at scope exit.
+Replay proofs currently require a region without captures. Other regions use dynamic comparisons and conservative storage limits.
+The memo limit remains eight allocated answer entries and 512 typed columns. Shared sequencing state also has a 512-column limit.
+These remain test-only admission bounds, not production workload limits.
+The next transition extends the same answer lifetime through nested value-bearing utility bodies at one root.
+The transition plan specifies the initial fixture and its expected finite-allowance boundary.
+Cross-traversal sharing, production integration, broader semantic gates, and the complete cold-job 100-execution gate remain open.
