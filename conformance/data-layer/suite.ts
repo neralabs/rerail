@@ -35,7 +35,8 @@ if (engine === "facts") {
   const expected = recording.events.flatMap(event => event.findings.map(f => JSON.stringify([`data-layer-${event.check.replaceAll("_", "-")}`, f.path, f.line, f.code]))).sort();
   const difference = (a: string[], b: string[]) => { const rest = [...b]; return a.filter(key => { const at = rest.indexOf(key); if (at < 0) return true; rest.splice(at, 1); return false; }); };
   const started = performance.now();
-  const cold = runFactsRepository(recording.files, values.policies);
+  const checks = [...new Set(recording.events.map(event => event.check))];
+  const cold = runFactsRepository(recording.files, values.policies, checks);
   const coldMs = performance.now() - started;
   const incrementalDifferences: { phase: string; falsePositives: string[]; falseNegatives: string[]; failures: unknown[] }[] = [];
   let unchangedFileMs: number | null = null, editedFileMs: number | null = null;
@@ -43,7 +44,7 @@ if (engine === "facts") {
   if (!values["cold-only"]) {
     for (const [phase, files] of [["unchanged", recording.files], ["trailing-newline-edit", recording.files.map(file => file === edited ? { ...file, source: file.source + "\n" } : file)]] as const) {
       const phaseStarted = performance.now();
-      const run = runFactsRepository(files, values.policies);
+      const run = runFactsRepository(files, values.policies, checks);
       if (phase === "unchanged") unchangedFileMs = performance.now() - phaseStarted; else editedFileMs = performance.now() - phaseStarted;
       const falsePositives = difference(run.keys, expected), falseNegatives = difference(expected, run.keys);
       if (falsePositives.length + falseNegatives.length + run.failures.length !== 0) incrementalDifferences.push({ phase, falsePositives, falseNegatives, failures: run.failures });

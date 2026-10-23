@@ -19,6 +19,11 @@ pub trait LeafCheck {
     /// Whether the regex leaf executor implements a `forbid.regex` spec (native keys checked
     /// already); `Err` names the construct it lacks.
     fn regex(&mut self, spec: &Json) -> Result<(), String>;
+    /// Whether the grammar has a field of this name (`None`: unknown to this checker). The
+    /// pattern front end needs it where the executor folds an unknown field to `Never`.
+    fn known_field(&self, _field: &str) -> Option<bool> {
+        None
+    }
 }
 
 /// A clause before classification.
@@ -304,6 +309,7 @@ impl Front {
                 each: o.get("each").and_then(Json::as_str).map(str::to_owned),
                 paths: o.get("paths").cloned(),
                 schema,
+                algebra: Err("not lowered".into()),
             })
         })();
         let def = match r {
@@ -355,6 +361,8 @@ impl Front {
         }
         let mut def = def;
         def.kind = InputKind::Pattern { query };
+        let leaves: &dyn LeafCheck = &*ctx.leaves;
+        def.algebra = super::pattern::lower_input(&def, &local_utils, &|f: &str| leaves.known_field(f));
         self.inputs.push(def);
         self.input_cross.push(cross);
         let id = (self.inputs.len() - 1) as InputId;
@@ -378,7 +386,7 @@ impl Front {
             check_keys(obj(c, "forbid.regex.content")?, &["include", "exclude"], "forbid.regex.content")?;
         }
         ctx.leaves.regex(spec).map_err(|e| format!("regex leaf: {e}"))?;
-        let def = InputDef { name: clause.into(), kind: InputKind::Regex { spec: spec.clone() }, fields: vec![], anchor: Anchor::Span, each: None, paths: None, schema: input_schema(&[]) };
+        let def = InputDef { name: clause.into(), kind: InputKind::Regex { spec: spec.clone() }, fields: vec![], anchor: Anchor::Span, each: None, paths: None, schema: input_schema(&[]), algebra: Err("regex clause (lowered by the regex leaf)".into()) };
         self.inputs.push(def);
         self.input_cross.push(None);
         Ok((self.inputs.len() - 1) as InputId)

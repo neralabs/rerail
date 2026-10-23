@@ -56,6 +56,10 @@ impl LeafCheck for Leaves {
         Ok(runtime)
     }
 
+    fn known_field(&self, field: &str) -> Option<bool> {
+        Some(crate::facts::GRAMMAR.field_code(field).is_some())
+    }
+
     fn regex(&mut self, spec: &Json) -> Result<(), String> {
         crate::ast::lines::options(spec).map(drop)
     }

@@ -350,7 +350,7 @@ pub enum PE {
 }
 
 #[derive(Clone, Debug)]
-enum Src {
+pub(crate) enum Src {
     Global(String),
     Cte(usize),
     Derived(usize),
@@ -358,62 +358,62 @@ enum Src {
 }
 
 #[derive(Clone, Debug)]
-struct PItem {
-    src: Src,
-    width: usize,
-    left: bool,
+pub(crate) struct PItem {
+    pub(crate) src: Src,
+    pub(crate) width: usize,
+    pub(crate) left: bool,
     /// A table function whose argument reads earlier items: evaluated per binding.
-    lateral: bool,
+    pub(crate) lateral: bool,
 }
 
 #[derive(Clone, Debug)]
-struct Probe {
-    cols: Vec<u16>,
-    col_affs: Vec<Aff>,
-    exprs: Vec<PE>,
-    expr_affs: Vec<Aff>,
+pub(crate) struct Probe {
+    pub(crate) cols: Vec<u16>,
+    pub(crate) col_affs: Vec<Aff>,
+    pub(crate) exprs: Vec<PE>,
+    pub(crate) expr_affs: Vec<Aff>,
 }
 
 #[derive(Clone, Debug)]
-struct AggSpec {
-    f: AggFn,
-    arg: Option<PE>,
-    sep: Option<PE>,
-    distinct: bool,
+pub(crate) struct AggSpec {
+    pub(crate) f: AggFn,
+    pub(crate) arg: Option<PE>,
+    pub(crate) sep: Option<PE>,
+    pub(crate) distinct: bool,
 }
 
 #[derive(Clone, Debug)]
-struct WinSpec {
-    partition: Vec<PE>,
-    order: Vec<(PE, bool)>,
+pub(crate) struct WinSpec {
+    pub(crate) partition: Vec<PE>,
+    pub(crate) order: Vec<(PE, bool)>,
 }
 
 #[derive(Clone, Debug)]
-struct PSelect {
-    items: Vec<PItem>,
-    probes: Vec<Option<Probe>>,
+pub(crate) struct PSelect {
+    pub(crate) items: Vec<PItem>,
+    pub(crate) probes: Vec<Option<Probe>>,
     /// Per item, the branch probes of an OR conjunct (candidates = union of the lookups).
-    or_probes: Vec<Option<Vec<Probe>>>,
+    pub(crate) or_probes: Vec<Option<Vec<Probe>>>,
     /// Conjuncts tested once all of items[..=i] are bound (inner items; ON of left items).
-    level: Vec<Vec<PE>>,
+    pub(crate) level: Vec<Vec<PE>>,
     /// WHERE conjuncts whose last item is a left-joined item i (after null extension).
-    post: Vec<Vec<PE>>,
+    pub(crate) post: Vec<Vec<PE>>,
     /// Conjuncts with no item reference.
-    konst: Vec<PE>,
-    grouped: bool,
-    group_by: Vec<PE>,
-    aggs: Vec<AggSpec>,
-    having: Option<PE>,
-    wins: Vec<WinSpec>,
-    proj: Vec<PE>,
+    pub(crate) konst: Vec<PE>,
+    pub(crate) grouped: bool,
+    pub(crate) group_by: Vec<PE>,
+    pub(crate) aggs: Vec<AggSpec>,
+    pub(crate) having: Option<PE>,
+    pub(crate) wins: Vec<WinSpec>,
+    pub(crate) proj: Vec<PE>,
     /// ORDER BY keys of a simple query, evaluated at projection time.
-    order_keys: Vec<PE>,
-    distinct: bool,
-    out: Schema,
+    pub(crate) order_keys: Vec<PE>,
+    pub(crate) distinct: bool,
+    pub(crate) out: Schema,
 }
 
 #[derive(Clone, Debug)]
-enum PBody {
+pub(crate) enum PBody {
     Select(Box<PSelect>),
     Compound(Box<PBody>, SetOp, Box<PBody>, Schema),
 }
@@ -427,35 +427,35 @@ impl PBody {
 }
 
 #[derive(Clone, Debug)]
-enum PCte {
+pub(crate) enum PCte {
     Plain { slot: usize, q: PQuery },
     Recursive { slot: usize, batch: usize, init: Vec<PBody>, rec: Vec<PBody>, distinct: bool, schema: Schema },
 }
 
 #[derive(Clone, Debug)]
 pub struct PQuery {
-    ctes: Vec<PCte>,
-    body: PBody,
+    pub(crate) ctes: Vec<PCte>,
+    pub(crate) body: PBody,
     /// Sort keys: for a simple select, indices into the extra keys its projection appends;
     /// for a compound, output column indices.
-    order: Vec<(usize, bool)>,
-    order_on_output: bool,
-    limit: Option<PE>,
-    offset: Option<PE>,
+    pub(crate) order: Vec<(usize, bool)>,
+    pub(crate) order_on_output: bool,
+    pub(crate) limit: Option<PE>,
+    pub(crate) offset: Option<PE>,
     pub out: Schema,
 }
 
 #[derive(Clone, Debug)]
-struct SubPlan {
-    q: PQuery,
-    cacheable: bool,
+pub(crate) struct SubPlan {
+    pub(crate) q: PQuery,
+    pub(crate) cacheable: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct Statement {
-    root: PQuery,
-    subs: Vec<SubPlan>,
-    n_slots: usize,
+    pub(crate) root: PQuery,
+    pub(crate) subs: Vec<SubPlan>,
+    pub(crate) n_slots: usize,
     pub reads: Vec<String>,
 }
 impl Statement {

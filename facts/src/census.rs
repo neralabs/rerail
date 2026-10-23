@@ -185,6 +185,10 @@ pub fn run(dir: &Path, config: &Map<String, Json>, leaves: &mut dyn LeafCheck) -
     let mut classification = Vec::new();
     let mut orders = Vec::new();
     let mut compiled_n = 0;
+    // The pattern front end (I3): pattern inputs lowered to algebra over core relations, and the
+    // first construct refused per input otherwise.
+    let (mut pattern_inputs, mut lowered) = (0usize, 0usize);
+    let mut not_lowered: BTreeMap<String, usize> = BTreeMap::new();
     for p in &paths {
         let doc: Json = serde_json::from_slice(&std::fs::read(p).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         // The configuration's options that this document declares.
@@ -200,6 +204,20 @@ pub fn run(dir: &Path, config: &Map<String, Json>, leaves: &mut dyn LeafCheck) -
             let e = constructs.entry(normalise(&r.construct)).or_default();
             e.0 += 1;
             *e.1.entry(short.clone()).or_default() += 1;
+        }
+        for i in c.program.inputs.iter().filter(|i| matches!(i.kind, crate::ir::InputKind::Pattern { .. })) {
+            pattern_inputs += 1;
+            match &i.algebra {
+                Ok(_) => lowered += 1,
+                Err(e) => {
+                    // Drop the rule path (`rule/all/0/...: `) so equal constructs count together.
+                    let k = match e.split_once(": ") {
+                        Some((at, what)) if at.starts_with("rule") || at.starts_with("utils/") => what,
+                        _ => e.as_str(),
+                    };
+                    *not_lowered.entry(k.to_owned()).or_default() += 1
+                }
+            }
         }
         for r in &c.program.runtime_refusals {
             *runtime.entry(format!("{} ({short}/{})", r.construct, r.clause)).or_default() += 1;
@@ -271,7 +289,8 @@ pub fn run(dir: &Path, config: &Map<String, Json>, leaves: &mut dyn LeafCheck) -
                 found.extend(f.into_iter().map(|x| format!("query: {x}")));
             }
             let refused: Vec<String> = c.refusals.iter().filter(|r| r.clause == plan.clause && r.construct.starts_with("order-dependent")).map(|r| format!("{}: {}", r.at, r.construct)).collect();
-            orders.push(json!({ "rule": short, "clause": plan.clause, "constructs": found, "refused": refused }));
+            let marks: Vec<Json> = c.reports.iter().filter(|r| r.clause == plan.clause).flat_map(|r| r.order.iter()).map(|o| json!({ "at": o.at, "construct": o.construct, "total": format!("{:?}", o.total).to_lowercase() })).collect();
+            orders.push(json!({ "rule": short, "clause": plan.clause, "constructs": found, "refused": refused, "marks": marks }));
         }
         rules.push(json!({
             "rule": short,
@@ -310,6 +329,7 @@ pub fn run(dir: &Path, config: &Map<String, Json>, leaves: &mut dyn LeafCheck) -
         "runtime_refusals": runtime, "classification": classification, "exports": exports_json,
         "sharing": { "byte_identical_texts": shared_texts, "ir_digest_groups": shared_digests, "ir_shape_groups": shared_shapes },
         "repository_order": orders,
+        "pattern_front_end": { "pattern_inputs": pattern_inputs, "lowered": lowered, "not_lowered": not_lowered },
     });
     let markdown = render(&json);
     Ok(Census { json, markdown })
@@ -319,6 +339,14 @@ fn render(j: &Json) -> String {
     let mut m = String::new();
     let rules = j["rules"].as_array().unwrap();
     writeln!(m, "Compiled without refusal: **{} / {}** rules.\n", j["compiled"], j["total"]).unwrap();
+    let pf = &j["pattern_front_end"];
+    writeln!(m, "Pattern front end (matcher inputs as algebra over core relations): **{} / {}** pattern inputs of compiled clauses lowered.\n", pf["lowered"], pf["pattern_inputs"]).unwrap();
+    let mut nl: Vec<(&String, u64)> = pf["not_lowered"].as_object().unwrap().iter().map(|(k, v)| (k, v.as_u64().unwrap())).collect();
+    nl.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    for (k, v) in nl.iter().take(15) {
+        writeln!(m, "- {v} × {k}").unwrap();
+    }
+    writeln!(m).unwrap();
     writeln!(m, "| rule | forbid | budget | relational | disabled by `when` | per-file plans | repository plans | exports | refusals | runtime refusals | compiles |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|").unwrap();
     let mut tot = [0u64; 8];
     for r in rules {
@@ -383,11 +411,13 @@ fn render(j: &Json) -> String {
     writeln!(m, "| byte-identical stage text (whitespace-normalised) | {tg} | {ts} | {tr} |").unwrap();
     writeln!(m, "| equal IR digest (same algebra over the same inputs) | {dg} | {ds} | {dr} |").unwrap();
     writeln!(m, "| equal IR shape (same algebra, inputs abstracted to their columns) | {sg} | {ss} | {sr} |").unwrap();
-    writeln!(m, "\nOrder-dependent constructs left in repository plans (after the cut):\n").unwrap();
+    let all_marks: Vec<&Json> = j["repository_order"].as_array().unwrap().iter().flat_map(|o| o["marks"].as_array().unwrap().iter()).collect();
+    let proven = all_marks.iter().filter(|x| x["total"] == "proven").count();
+    writeln!(m, "\nOrder-dependent constructs in repository plans (after the cut): {} marked, {proven} `total: proven`, {} `total: checked` (a tie between distinct rows is a run-time refusal):\n", all_marks.len(), all_marks.len() - proven).unwrap();
     for o in j["repository_order"].as_array().unwrap() {
-        let cs: Vec<&str> = o["constructs"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
+        let ms: Vec<String> = o["marks"].as_array().unwrap().iter().map(|x| format!("{}: {} ({})", x["at"].as_str().unwrap(), x["construct"].as_str().unwrap(), x["total"].as_str().unwrap())).collect();
         let refused = o["refused"].as_array().unwrap().len();
-        writeln!(m, "- `{}`/`{}`: {}{}", o["rule"].as_str().unwrap(), o["clause"].as_str().unwrap(), if cs.is_empty() { "none".to_string() } else { cs.join("; ") }, if refused > 0 { format!(" (refused: {refused})") } else { String::new() }).unwrap();
+        writeln!(m, "- `{}`/`{}`: {}{}", o["rule"].as_str().unwrap(), o["clause"].as_str().unwrap(), if ms.is_empty() { "none".to_string() } else { ms.join("; ") }, if refused > 0 { format!(" (refused: {refused})") } else { String::new() }).unwrap();
     }
     m
 }

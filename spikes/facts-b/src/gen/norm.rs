@@ -23,7 +23,8 @@
 //! | `With` fixpoint, `UNION ALL` | refused: bag recursion |
 //! | reachability stage, directed | `Fix` over the edge relation, per path |
 use super::val::{self, Row};
-use rerail_facts::ir::{self, AggCall, Aff, Binding, CmpOp, Expr, Rel, RepoSource, Sink, StageDef, WindowFn, WindowKind};
+use rerail_facts::ir::{self, AggCall, Aff, Binding, CmpOp, Expr, Rel, RepoSource, Sink, StageDef, WindowKind};
+use rustc_hash::FxHashMap;
 use rerail_facts::sql::value::V;
 
 pub type X = Expr<RepoSource>;
@@ -101,6 +102,8 @@ struct Ctx<'a> {
     exported: &'a [ir::ExportedRelation],
     locals: Vec<(u32, Local)>,
     at: String,
+    /// Hash-consing: operator signature → node.
+    seen: FxHashMap<String, NodeId>,
 }
 
 pub fn col(c: usize) -> X {
@@ -300,11 +303,19 @@ fn rel_width(r: &Rel<RepoSource>, ctx: &Ctx) -> usize {
 // Graph building
 
 impl<'a> Ctx<'a> {
+    /// Adds a node, or returns the identical node already added (operators are pure, so equal
+    /// operator trees are one node: one collection, one arrangement per key).
     fn add(&mut self, op: Op, width: usize, poison: Vec<usize>) -> NodeId {
+        let sig = format!("{op:?}|{width}|{poison:?}");
+        if let Some(&n) = self.seen.get(&sig) {
+            return n;
+        }
         self.g.nodes.push(op);
         self.g.widths.push(width);
         self.g.poison.push(poison);
-        self.g.nodes.len() - 1
+        let n = self.g.nodes.len() - 1;
+        self.seen.insert(sig, n);
+        n
     }
 
     fn width(&self, n: NodeId) -> usize {
@@ -408,7 +419,7 @@ impl<'a> Ctx<'a> {
                 let c = self.add(Op::Concat { inputs: vec![l, r] }, w, Vec::new());
                 Ok(if *all { c } else { self.add(Op::Distinct { input: c }, w, Vec::new()) })
             }
-            Rel::Sort { input, keys, limit, offset } => {
+            Rel::Sort { input, keys, limit, offset, .. } => {
                 let n = self.rel(input)?;
                 if limit.is_none() && offset.is_none() {
                     return Ok(n);
@@ -503,12 +514,11 @@ impl<'a> Ctx<'a> {
     /// Group by correlation keys compared with `=` under their affinities (scalar subqueries).
     fn group_eq(&mut self, n: NodeId, keys: Key, aggs: Vec<AggCall<RepoSource>>) -> R<NodeId> {
         let w = self.width(n);
-        let g = self.group(n, Vec::new(), aggs)?;
-        let Op::Group { aggs, .. } = std::mem::replace(&mut self.g.nodes[g], Op::Const(Vec::new())) else { unreachable!() };
+        // The keyless group checks the aggregates (refusals); the node built is keyed. Nodes are
+        // shared (hash-consed), so the checked node is never patched in place.
+        self.group(n, Vec::new(), aggs.clone())?;
         let poison: Vec<usize> = (0..w).filter(|c| !keys.iter().any(|(k, _)| matches!(k, Expr::Col { depth: 0, col } if *col as usize == *c))).collect();
-        self.g.nodes[g] = Op::Group { input: n, keyless: keys.is_empty(), keys, aggs, width: w };
-        self.g.poison[g] = poison;
-        Ok(g)
+        Ok(self.add(Op::Group { input: n, keyless: keys.is_empty(), keys, aggs: aggs.clone(), width: w }, w + aggs.len(), poison))
     }
 
     fn join(&mut self, l: NodeId, r: NodeId, on: Option<&X>, left_outer: bool) -> R<NodeId> {
@@ -712,11 +722,16 @@ impl<'a> Ctx<'a> {
                     // e IN s is true iff some s row equals e (NULLs never equal): a semijoin.
                     return Ok(self.add(Op::Semi { l: n, r: b, lk, rk, anti: false }, w, p));
                 }
-                // e NOT IN s is true iff e is not NULL, no s row equals e, and s holds no NULL.
-                let notnull = self.add(Op::Filter { input: n, pred: Expr::IsNull { e: Box::new(e), negated: true } }, w, p.clone());
+                // e NOT IN s (SQLite): with e not NULL, true iff no s row equals e and s holds no
+                // NULL; with e NULL, true iff s is empty (`NULL NOT IN ()` = 1). s is the body
+                // restricted to the row's correlation keys.
+                let notnull = self.add(Op::Filter { input: n, pred: Expr::IsNull { e: Box::new(e.clone()), negated: true } }, w, p.clone());
                 let a = self.add(Op::Semi { l: notnull, r: b, lk, rk, anti: true }, w, p.clone());
                 let nulls = self.add(Op::Filter { input: b, pred: Expr::IsNull { e: Box::new(f), negated: false } }, self.width(b), self.g.poison[b].clone());
-                Ok(self.add(Op::Semi { l: a, r: nulls, lk: corr_l, rk: corr_r, anti: true }, w, p))
+                let kept = self.add(Op::Semi { l: a, r: nulls, lk: corr_l.clone(), rk: corr_r.clone(), anti: true }, w, p.clone());
+                let isnull = self.add(Op::Filter { input: n, pred: Expr::IsNull { e: Box::new(e), negated: false } }, w, p.clone());
+                let empty = self.add(Op::Semi { l: isnull, r: b, lk: corr_l, rk: corr_r, anti: true }, w, p.clone());
+                Ok(self.add(Op::Concat { inputs: vec![kept, empty] }, w, p))
             }
         }
     }
@@ -807,7 +822,7 @@ impl<'a> Ctx<'a> {
                 }
                 let keyed = self.add(Op::Map { input: b, exprs: ck.iter().cloned().chain((0..wb).map(col)).collect() }, ck.len() + wb, self.g.poison[b].iter().map(|c| c + ck.len()).collect());
                 let gk: Key = corr.iter().enumerate().map(|(i, (_, _, (_, fi)))| (col(i), KeyMode::Eq(*fi))).collect();
-                let aggs2: Vec<AggCall<RepoSource>> = aggs.iter().map(|a| AggCall { f: a.f, arg: a.arg.as_ref().map(|e| shift(e, ck.len() as isize)), sep: a.sep.as_ref().map(|e| shift(e, ck.len() as isize)), distinct: a.distinct }).collect();
+                let aggs2: Vec<AggCall<RepoSource>> = aggs.iter().map(|a| AggCall { f: a.f, arg: a.arg.as_ref().map(|e| shift(e, ck.len() as isize)), sep: a.sep.as_ref().map(|e| shift(e, ck.len() as isize)), distinct: a.distinct, total: a.total }).collect();
                 let g = self.group_eq(keyed, gk, aggs2)?;
                 // The value per group: HAVING then the projection, both over (rep ++ aggs) of the
                 // original aggregate, i.e. columns shifted by the correlation keys.
@@ -834,7 +849,7 @@ impl<'a> Ctx<'a> {
                 let empty = super::scalar::eval(&ev, &empty_row, &[]).map_err(|m| Refused { at: self.at.clone(), construct: format!("scalar subquery empty value: {m}") })?;
                 self.attach(n, wn, pn, vals, &corr, empty)
             }
-            Rel::Sort { input, keys, limit: Some(l), offset: None } if matches!(super::scalar::eval(l, &[], &[]), Ok(V::Int(1))) => {
+            Rel::Sort { input, keys, limit: Some(l), offset: None, .. } if matches!(super::scalar::eval(l, &[], &[]), Ok(V::Int(1))) => {
                 // (SELECT first FROM (SELECT sel…, keys… FROM corr-filtered) ORDER BY keys LIMIT 1):
                 // per correlation key, the row first in the (checked total) order.
                 let (sel, inner) = match &**input {
@@ -895,7 +910,7 @@ impl<'a> Ctx<'a> {
 
 /// Normalise one repository plan. Refusals name the construct and the stage.
 pub fn plan(p: &ir::Plan<RepoSource>, exported: &[ir::ExportedRelation]) -> Result<Graph, Vec<Refused>> {
-    let mut ctx = Ctx { g: Graph::default(), stages: Vec::new(), exported, locals: Vec::new(), at: String::new() };
+    let mut ctx = Ctx { g: Graph::default(), stages: Vec::new(), exported, locals: Vec::new(), at: String::new(), seen: FxHashMap::default() };
     let mut refused = Vec::new();
     for (si, st) in p.stages.iter().enumerate() {
         ctx.at = format!("{}/{}", p.clause, st.name);

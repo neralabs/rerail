@@ -17,13 +17,13 @@ export type HarnessEngine = CodeRuleDslEngine | "facts";
 
 export interface FactsCall { id: number; policy: unknown; files: { path: string; source: string }[] }
 
-/** A call's result in the shape of the native engine's report pages; spans carry the line only. */
+/** A call's result in the shape of the native engine's report pages; spans carry the line only, `column` the 1-based code-point column when the engine reports one. */
 export interface FactsResult {
-  violations: { code: string; path: string; message: string; clauseId: string; span: { startByte: number; startLine: number; startColumn: number } }[];
+  violations: { code: string; path: string; message: string; clauseId: string; span: { startByte: number; startLine: number; startColumn: number }; column: number | null }[];
   failures: { code: string; message: string; path?: string }[];
 }
 
-const findingSchema = z.object({ check: z.string(), clause: z.string(), path: z.string(), line: z.number(), code: z.string() });
+const findingSchema = z.object({ check: z.string(), clause: z.string(), path: z.string(), line: z.number(), code: z.string(), column: z.number().nullable().optional() });
 const failureSchema = z.object({ check: z.string(), clause: z.string(), path: z.string(), message: z.string() });
 const responseSchema = z.union([
   z.object({ id: z.number(), compile_error: z.string() }),
@@ -46,7 +46,7 @@ function facts(args: string[]): void {
 
 export function toResult(findings: z.infer<typeof findingSchema>[], failures: z.infer<typeof failureSchema>[]): FactsResult {
   return {
-    violations: findings.map(f => ({ code: f.code, path: f.path, message: "", clauseId: f.clause, span: { startByte: -1, startLine: f.line - 1, startColumn: -1 } })),
+    violations: findings.map(f => ({ code: f.code, path: f.path, message: "", clauseId: f.clause, span: { startByte: -1, startLine: f.line - 1, startColumn: -1 }, column: f.column ?? null })),
     failures: failures.map(f => ({ code: "facts-failure", message: `${f.check}/${f.clause}: ${f.message}`, path: f.path })),
   };
 }
@@ -73,11 +73,12 @@ export function runFactsCalls(calls: FactsCall[]): Map<number, { result: FactsRe
 }
 
 /**
- * The repository suite through the facts engine's parallel repository run (`facts-a repo`): the recording's files are
- * written under a temporary root and evaluated with the policies' production configuration. Returns findings keyed as
- * `suite.ts` keys them ([ruleId, path, line, code]) and the failures.
+ * The repository suite through the facts engine's parallel repository run (`facts-a repo --checks …`): the recording's
+ * files are written under a temporary root and evaluated with the selected checks' production configuration. Returns
+ * findings keyed as `suite.ts` keys them ([ruleId, path, line, code]) and the failures; a policy the engine refuses, or a
+ * Rust file a rule selects, is a failure.
  */
-export function runFactsRepository(files: { path: string; source: string }[], policies: string, threads = 4): { keys: string[]; failures: unknown[]; results: unknown } {
+export function runFactsRepository(files: { path: string; source: string }[], policies: string, checks: string[], threads = 4): { keys: string[]; failures: unknown[]; results: unknown } {
   const dir = mkdtempSync(join(tmpdir(), "facts-repo-"));
   try {
     const root = join(dir, "root"), out = join(dir, "out");
@@ -87,7 +88,7 @@ export function runFactsRepository(files: { path: string; source: string }[], po
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, file.source);
     }
-    facts(["repo", "--root", root, "--threads", String(threads), "--policies", resolve(policies), "--out-dir", out]);
+    facts(["repo", "--root", root, "--threads", String(threads), "--policies", resolve(policies), "--checks", checks.join(","), "--out-dir", out]);
     const results = z.object({ findings: z.array(z.tuple([z.string(), z.string(), z.number(), z.string()])), failures: z.array(failureSchema), files: z.number() })
       .passthrough().parse(JSON.parse(readFileSync(join(out, "results.json"), "utf8")));
     if (results.files !== files.filter(file => file.path.endsWith(".py")).length) throw new Error(`facts engine walked ${results.files} files of ${files.length}`);

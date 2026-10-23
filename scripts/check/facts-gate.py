@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The facts engine's gate (Phase 2 deliverable 5, G2.6); run it through `facts-gate.sh` / `just facts-gate`.
 
-Checks (clean build, `FACTS_MUTANT` unset), in four concurrent lanes:
+Checks (clean build, `FACTS_MUTANT` unset), in six concurrent lanes:
 
   a  a-replay         facts-a replay of batch 6's recordings (1,259 calls): 0 FP, every call replayed, every
                       miss or failure accepted residue (RESIDUE, empty now).
@@ -15,6 +15,8 @@ Checks (clean build, `FACTS_MUTANT` unset), in four concurrent lanes:
                       against their from-scratch oracle over the 1,111-event edit script.
   g  b-generated      facts-b greplay: the delta-plan generator over IR plans against
                       rerail_facts::reference, same events.
+  t  b-ties           facts-b greplay --plans rt --limit 200: S3's constructed-tie vector; every tie under a
+                      `Total::Checked` order is refused at run time (expected_refusals met), 0 differences.
   c  rerail-facts-lib cargo test -p rerail-facts --lib (rewrite differential tests, classifier, audit,
                       reference evaluator).
      classifier-leak  cargo test -p rerail-facts leak: a per-file plan reading cross-file state is refused.
@@ -22,15 +24,24 @@ Checks (clean build, `FACTS_MUTANT` unset), in four concurrent lanes:
      explain-stable   facts-a explain over the pack: byte-identical across two runs and per-rule processes.
      harness-replay   Jeremy's replay.ts --engine facts: same acceptance as a-replay.
      views-derived    S4's facts-a derived-check --shard 0/4: schema views equal the policies' stage texts.
+  h  harness-b1..b5   Jeremy's replay.ts --engine facts over batch n's recordings and probes (BATCH_RECORDINGS).
+     suite-b1..b5     suite.ts --engine facts --cold-only over batch n's repository oracle (SUITES/suite-b<n>.json).
+                      Per check: exact, differs (FP/FN) or refused (any failure: compile error, unsupported
+                      construct, panic, Rust source). Passes when every check in GATED is exact; the rest
+                      is measured and reported, so the summary line is the per-batch parity table.
+     explain-physical facts-a explain --physical --root <subset> --audit, twice: byte-identical runs, every
+                      subset file printed, each clause's plan block one text in every file (audit lines
+                      informational).
 
 The subset is deterministic: every corpus file whose sha256(relative path)[0] % 8 == 0, plus every file
 holding an oracle finding (1,150 files of 9,010). It is hard-linked under SUBSET.
 
 Mutants (`--mutants`): MUTANTS (1-3 S2's interim A3 views, 4-6 S3's delta generator, 7 the classifier,
-8 the plan audit) plus one per rewrite registered in docs/facts/REWRITES.md; each runs the checks of its
-family with `FACTS_MUTANT=<n>` and is killed when one of them detects it (a3-check: the FACTS_A3_CHECK
-panic; a-reference: findings differ from the clean reference; b-*: an exactness difference; cargo
-checks: a failing test, named in failed-tests.txt). A registered rewrite without a mutant fails the gate.
+8 the plan audit, 9 S3's runtime tie check, 10 the order-totality proof) plus one per rewrite registered
+in docs/facts/REWRITES.md; each runs the checks of its family with `FACTS_MUTANT=<n>` and is killed when
+one of them detects it (a3-check: the FACTS_A3_CHECK panic; a-reference: findings differ from the clean
+reference; b-*: an exactness difference or a missed expected refusal; cargo checks: a failing test,
+named in failed-tests.txt). A registered rewrite without a mutant fails the gate.
 
 Output (stdout), one line per event, every line prefixed `facts-gate: `:
 
@@ -75,8 +86,43 @@ BATCH6 = ["serverplan_bypass", "serverplan_steps", "serverplan_state_tripwires",
 RESIDUE: list[tuple[str, str, str]] = []
 THREADS = "4"
 
+# Batches 1-5 through Jeremy's harness with `--engine facts`: each batch's recordings for replay.ts (as
+# /tmp/dl60/replay-all.sh combines them) and its repository oracle for suite.ts (recorded by
+# data_layer_suite_record.py at 2b1504adc, copied from /tmp/dl60 with SHA256SUMS beside them).
+PORT = "fixtures/host/data-layer-port"
+BATCH_RECORDINGS = {
+    1: ["batch-01-recording.json"],
+    2: ["batch-02-recording.json", "batch-02-probes.json"],
+    3: ["batch-03-recording.json", "batch-03-probes.json"],
+    4: ["batch-04-recording.json", "batch-04-probes.json"],
+    5: ["batch-05-recording.json", "batch-05-probes.json", "batch-05-graph-probes.json",
+        "batch-05-remaining-graph-probes.json", "batch-05-relational-probes.json"],
+}
+SUITES = BENCH / "facts/phase-2/s5-gate/suites"
+# The batch 1-5 checks the gate holds exact through the harness (replay: 0 FP, 0 FN, 0 failures, at least
+# one positive and one clean call; suite: 0 FP, 0 FN, 0 failures; refusals are failures). A check joins
+# when S6's leaf constructs make it exact, and never leaves: the list is a ratchet. Every other check is
+# measured and reported, not gated.
+GATED: set[str] = {
+    # exact in both at 7d23ab4a7 (run 20261022T204421-gate)
+    "removed_compat_surfaces", "versioned_lifecycle_legacy_surfaces", "no_api_root_imports", "serverplan_grammar_surface",
+    "conn_or_txn_union", "render_fstrings",
+    # exact in both at c176eefc7, S6's 39d33188c and 8bdf55063 merged (run 20261022T213016-gate)
+    "backend_type_strings", "hasattr_async", "no_source_inspection", "serverplan_name_inference", "no_blanket_grammar_bypass",
+    "permission_error",
+    "dynamic_module_loading", "forwardref", "unresolved_forward_refs", "classvar_check", "type_safety_patterns", "async_executor",
+    "async_patterns", "async_sync_boundary", "admin_async_purity",
+    "plan_scope_side_effects", "plan_scope_ownership", "transaction_closures", "transaction_callback_wrappers",
+    "transaction_patterns", "lazy_result_usage", "swallowed_exceptions", "error_handling", "module_level_caches", "connection_caches",
+    "render_raw_strings", "regex_sql_parsing", "grammar_render_methods", "grammar_str_params", "grammar_allowlist_burndown",
+    "rust_sql_grammar_boundary",
+    "missing_async_pairs", "sync_async_signatures", "async_sync_delegation", "data_layer_facade_purity", "data_layer_compat_aliases",
+    "layer_violations", "backend_coupling",
+}
+
 # The generic mutants: (number, name, crate, site, what it breaks, the checks that run against it). They
-# target components, not rules: the delta generator (S3), the classifier and the plan audit (S1). Rewrite
+# target components, not rules: the delta generator (S3), the classifier, the plan audit and the
+# order-totality proof (S1). Rewrite
 # mutants come from docs/facts/REWRITES.md (`rewrite_mutants`), one per registered rewrite; 1-3 are the
 # interim mutants of S2's A3 views (gone with subst.rs). Numbering: REWRITES.md § Numbers.
 MUTANTS = [
@@ -88,6 +134,8 @@ MUTANTS = [
     (6, "delta-fixpoint-early", "facts-b", "gen: fixpoint (lower.rs)", "the fixpoint stops early (rounds >= 2 dropped)", ["b-generated"]),
     (7, "classifier-membership", "rerail-facts", "classify::file_source", "a per-content plan reaching a membership relation is accepted", ["classifier-leak", "rerail-facts-lib"]),
     (8, "planner-inner-scan", "rerail-facts", "phys.rs plan audit", "the plan audit admits an inner scan", ["planner-audit", "rerail-facts-lib"]),
+    (9, "tie-detection-off", "facts-b", "gen: runtime tie check", "a tie between distinct rows under a Checked order is not refused", ["b-ties"]),
+    (10, "order-proven-total", "rerail-facts", "classify.rs::KeyEnv::total", "every order is marked proven total (no runtime tie check)", ["rerail-facts-lib"]),
 ]
 REWRITES = ROOT / "docs/facts/REWRITES.md"
 
@@ -126,8 +174,10 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
     return out, problems
 
 
+BATCH_CHECKS = [f"harness-b{n}" for n in BATCH_RECORDINGS] + [f"suite-b{n}" for n in BATCH_RECORDINGS]
 LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"], "g": ["b-generated"],
-         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay", "views-derived"]}
+         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay", "views-derived"],
+         "h": [*BATCH_CHECKS, "explain-physical"], "t": ["b-ties"]}
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
 
 print_lock = threading.Lock()
@@ -352,22 +402,48 @@ def check_a_reference(d: Path, env: dict, gate_dir: Path) -> tuple[bool, str, di
     return compare_reference(compiled, d / "results.json")
 
 
-def check_b(d: Path, env: dict, sub: str, fail_fast: bool = False) -> tuple[bool, str, dict]:
+def check_b(d: Path, env: dict, sub: str, fail_fast: bool = False, plans: str | None = None, limit: int | None = None) -> tuple[bool, str, dict]:
     """`facts-b <sub> --events E`: `replay` (Spike B's hand-written delta rules, the generator's test
-    vectors) or `greplay` (the delta-plan generator over IR plans, against rerail_facts::reference)."""
-    cmd = [binary("facts-b"), sub, "--events", str(EVENTS), "--run-dir", str(d), *(["--fail-fast"] if fail_fast else [])]
+    vectors) or `greplay` (the delta-plan generator over IR plans, against rerail_facts::reference;
+    `plans`/`limit` select plans and a prefix of the events). A run-time refusal passes only on a plan
+    whose refusals the run expects (`expected_refusals`, S3's constructed-tie vector `rt`); an expected
+    refusal the dataflow misses (`missing_expected_refusals`) is a detection, like a difference."""
+    cmd = [binary("facts-b"), sub, "--events", str(EVENTS), "--run-dir", str(d), *(["--fail-fast"] if fail_fast else []),
+           *(["--plans", plans] if plans else []), *(["--limit", str(limit)] if limit else [])]
     status, _ = run(cmd, d, env)
     if status != 0 or not (d / "results.json").exists():
         return False, f"exit {status}", {"detected": False}
     r = json.loads((d / "results.json").read_text())
     x = r["exactness"]
-    want = sum(1 for l in EVENTS.read_text().splitlines() if l.strip())
+    want = limit or sum(1 for l in EVENTS.read_text().splitlines() if l.strip())
     refusals = r.get("runtime_refusals", {})
-    plans = ",".join(p["plan"] for p in r.get("plans", [])) or "R1-R3 (hand-written)"
-    ok = x["differences"] == 0 and x["checks"] > 0 and r["events"] == want and not refusals
+    expected = r.get("expected_refusals", {})
+    missing = r.get("missing_expected_refusals", 0)
+    seen = {k.split(":", 1)[0] for k in r.get("runtime_refusals_seen", {})} if "runtime_refusals_seen" in r else ({"?"} if refusals else set())
+    unexpected = sorted(seen - set(expected))
+    names = ",".join(p["plan"] for p in r.get("plans", [])) or "R1-R3 (hand-written)"
+    ok = x["differences"] == 0 and x["checks"] > 0 and r["events"] == want and not unexpected and missing == 0
     return ok, (f"{x['differences']} differences in {x['checks']} checkpoints, {x['worktree_checks']} worktree checks, "
-                f"{r['events']}/{want} events, plans {plans}" + (f", runtime refusals {refusals}" if refusals else "")), \
-        {"exactness": x, "detected": x["differences"] > 0}
+                f"{r['events']}/{want} events, plans {names}"
+                + "".join(f", expected refusals {p} {e['refused']}/{e['expected']}" for p, e in expected.items())
+                + (f", MISSING expected refusals {missing}" if missing else "")
+                + (f", unexpected runtime refusals on {','.join(unexpected)}: {refusals}" if unexpected else "")), \
+        {"exactness": x, "expected_refusals": expected, "missing_expected_refusals": missing, "unexpected_refusals": unexpected,
+         "detected": x["differences"] > 0 or missing > 0}
+
+
+TIES_LIMIT = 200
+
+
+def check_ties(d: Path, env: dict) -> tuple[bool, str, dict]:
+    """S3's constructed-tie vector: `facts-b greplay --plans rt` over the first TIES_LIMIT events. `rt`
+    ties in every worktree, so every worktree's tie must be refused at run time (expected refusals all
+    met), with 0 differences against the reference (which refuses the same ties, `tie: …`)."""
+    ok, summary, det = check_b(d, env, "greplay", plans="rt", limit=TIES_LIMIT)
+    met = det.get("expected_refusals", {}).get("rt")
+    if ok and not (met and met["expected"] > 0):
+        return False, summary + ", NO expected refusals reported for rt", det
+    return ok, summary, det
 
 
 def cargo_test(d: Path, env: dict, *names: str) -> tuple[int, int, list[str]]:
@@ -417,6 +493,59 @@ def check_explain(d: Path, env: dict) -> tuple[bool, str, dict]:
                                         + ("identical across 2 runs and per-rule processes" if same else "TEXT DIFFERS")), {}
 
 
+def check_explain_physical(d: Path, env: dict) -> tuple[bool, str, dict]:
+    """Physical EXPLAIN per file (S1's `facts-a explain --physical --root <subset> --audit`), twice in
+    fresh processes: the two outputs are byte-identical, every subset file is printed, and every
+    clause's block (`clause <check>/<clause>` up to the next header) is the same text in every file
+    that prints it. The ~400 MB outputs are hashed and deleted; one text per clause is kept
+    (`clauses.txt`). Inner scans the audit reports are counted, not failed (informational)."""
+    root = subset_root()
+    want = len((SUBSET.parent / "subset-8.list").read_text().splitlines())
+    digests: list[str] = []
+    blocks: dict[str, dict[str, list]] = {}
+    files = inner = 0
+    for i in (1, 2):
+        rd = d / f"run-{i}"
+        status, _ = run([binary("facts-a"), "explain", "--physical", "--root", str(root), "--audit"], rd, env)
+        out = rd / "stdout.txt"
+        if status != 0:
+            return False, f"explain --physical exit {status}", {}
+        h, files, inner = hashlib.sha256(), 0, 0
+        clause: str | None = None
+        block: list[str] = []
+
+        def close() -> None:
+            if clause is not None and i == 1:
+                text = "".join(block)
+                blocks.setdefault(clause, {}).setdefault(hashlib.sha256(text.encode()).hexdigest(), [0, text])[0] += 1
+
+        with open(out, encoding="utf-8") as f:
+            for line in f:
+                h.update(line.encode())
+                if line.startswith("== file ") or line.startswith("clause "):
+                    close()
+                    clause, block = (line.strip(), []) if line.startswith("clause ") else (None, [])
+                    files += line.startswith("== file ")
+                elif clause is not None:
+                    block.append(line)
+                    inner += line.lstrip().startswith("! ")
+            close()
+        digests.append(h.hexdigest())
+        size = out.stat().st_size
+        out.write_text(f"sha256 {digests[-1]}, {size} bytes, {files} files; deleted after checking (re-run command.txt to reproduce)\n")
+    varying = {c: len(v) for c, v in blocks.items() if len(v) > 1}
+    with open(d / "clauses.txt", "w") as f:
+        for c in sorted(blocks):
+            for n, text in blocks[c].values():
+                f.write(f"{c}  ({n} files)\n{text}")
+    same = digests[0] == digests[1]
+    ok = same and files == want and not varying and bool(blocks)
+    return ok, (f"{files}/{want} files, {len(blocks)} clauses, sha256 {digests[0][:16]}, "
+                + ("identical across 2 runs" if same else "RUNS DIFFER")
+                + (f", clauses varying across files: {', '.join(sorted(varying))}" if varying else ", each clause one text in every file")
+                + f"; {inner} inner-scan lines (audit, informational)"), {"digests": digests, "varying": varying, "inner_scan_lines": inner}
+
+
 def check_views(d: Path, env: dict) -> tuple[bool, str, dict]:
     """S4's views differential (`facts-a derived-check`): the schema's SQL views over the syntactic core
     against the policies' own stage texts, shard 0 of 4 (2,253 files, every stage text and clause)."""
@@ -450,6 +579,100 @@ def check_harness_replay(d: Path, env: dict) -> tuple[bool, str, dict]:
                 + ("" if not bad else f", unaccepted: {'; '.join(bad[:5])}")), {"unaccepted": bad}
 
 
+def batch_checks(n: int) -> list[str]:
+    return json.loads((ROOT / PORT / "batches.json").read_text())["batches"][n - 1]["checks"]
+
+
+def batch_verdict(n: int, per: dict[str, dict], unattributed: list[str]) -> tuple[bool, str, dict]:
+    """Per-check status (exact / uncovered / differs / refused) for batch `n`; passes when every gated
+    check of the batch is exact and nothing unattributed failed while one is gated. A failure of any kind
+    (compile error, unsupported construct, panic, Rust source) is a refusal and counts against
+    exactness; a replayed check without both a positive and a clean call is uncovered."""
+    status = {c: ("refused" if v["failures"] else "differs" if v["fp"] or v["fn"] else
+                  "uncovered" if v.get("positive") == 0 or v.get("clean") == 0 else "exact") for c, v in per.items()}
+    gated = [c for c in per if c in GATED]
+    bad = [c for c in gated if status[c] != "exact"] + (["unattributed failures"] if unattributed and gated else [])
+    by = {s: [c for c in per if status[c] == s] for s in ("exact", "uncovered", "differs", "refused")}
+    summary = (f"b{n}: {len(by['exact'])}/{len(per)} checks exact, {sum(v['fp'] for v in per.values())} FP, "
+               f"{sum(v['fn'] for v in per.values())} FN, {sum(v['failures'] for v in per.values()) + len(unattributed)} failures; "
+               f"gated {len(gated) - len(bad)}/{len(gated)} exact"
+               + "".join(f"; {s}: {','.join(by[s])}" for s in ("uncovered", "differs", "refused") if by[s])
+               + (f"; unattributed failures {len(unattributed)}" if unattributed else "")
+               + (f"; GATED NOT EXACT: {', '.join(bad)}" if bad else ""))
+    return not bad, summary, {"checks": per, "status": status, "unattributed": unattributed[:20], "gated_failing": bad}
+
+
+def check_harness_batch(d: Path, env: dict, n: int) -> tuple[bool, str, dict]:
+    """`replay.ts --engine facts` over batch `n`'s recordings; per check: calls, exact calls, FP, FN,
+    failures (the first messages kept)."""
+    if not (ROOT / "node_modules" / "tsx").exists():
+        return False, "node_modules missing in the checkout", {}
+    out = d / "results.json"
+    cmd = ["node", "--import", "tsx", "conformance/data-layer/replay.ts",
+           *sum((["--recording", f"{PORT}/{r}"] for r in BATCH_RECORDINGS[n]), []), "--output", str(out), "--engine", "facts"]
+    status, _ = run(cmd, d, {**env, "FACTS_ENGINE_BIN": binary("facts-a")})
+    if not out.exists():
+        return False, f"exit {status}", {}
+    r = json.loads(out.read_text())
+    blank = {"calls": 0, "exact_calls": 0, "positive": 0, "clean": 0, "fp": 0, "fn": 0, "failures": 0, "messages": []}
+    per: dict[str, dict] = {c: {**blank, "messages": []} for c in batch_checks(n)}
+    for row in r["rows"]:
+        v = per.setdefault(row["check"], {**blank, "messages": []})
+        fails = row["engineFailures"] + row["statelessFailures"]
+        v["calls"] += 1
+        v["positive" if row["positive"] else "clean"] += 1
+        v["fp"] += len(row["falsePositives"])
+        v["fn"] += len(row["falseNegatives"])
+        v["failures"] += len(fails)
+        v["exact_calls"] += not (row["falsePositives"] or row["falseNegatives"] or fails or row["executionPathDifferences"])
+        for f in fails:
+            if f["message"] not in v["messages"] and len(v["messages"]) < 3:
+                v["messages"].append(f["message"][:200])
+    ok, summary, det = batch_verdict(n, per, [])
+    calls = f"{sum(v['exact_calls'] for v in per.values())}/{r['replayedCalls']} calls exact"
+    return ok, summary.replace(f"b{n}: ", f"b{n}: {calls}, ", 1), {**det, "replayed_calls": r["replayedCalls"],
+                                                                    "facts_calls": r["factsCalls"], "host_guard_calls": r["hostGuardCalls"]}
+
+
+def check_suite_batch(d: Path, env: dict, n: int) -> tuple[bool, str, dict]:
+    """`suite.ts --engine facts --cold-only` over batch `n`'s repository oracle (SUITES/suite-b<n>.json);
+    per check: oracle findings, FP, FN, failures. The incremental phases are from-scratch reruns for the
+    facts engine (report § 5.2), so the gate runs the cold pass only."""
+    if not (ROOT / "node_modules" / "tsx").exists():
+        return False, "node_modules missing in the checkout", {}
+    oracle = SUITES / f"suite-b{n}.json"
+    if not oracle.exists():
+        return False, f"missing oracle {oracle}", {}
+    out = d / "results.json"
+    cmd = ["node", "--import", "tsx", "conformance/data-layer/suite.ts", "--recording", str(oracle), "--output", str(out),
+           "--engine", "facts", "--cold-only"]
+    status, _ = run(cmd, d, {**env, "FACTS_ENGINE_BIN": binary("facts-a")})
+    if not out.exists():
+        err = (d / "stderr.txt").read_text(errors="replace")
+        why = next((l.strip() for l in err.splitlines() if "panicked" in l or l.startswith("Error")), "")
+        return False, f"exit {status}" + (f": {why[:200]}" if why else ""), {}
+    r = json.loads(out.read_text())
+    rule = lambda key: json.loads(key)[0].removeprefix("data-layer-").replace("-", "_")
+    per: dict[str, dict] = {c: {"expected": 0, "fp": 0, "fn": 0, "failures": 0, "messages": []} for c in batch_checks(n)}
+    for e in json.loads(oracle.read_text())["events"]:
+        per[e["check"]]["expected"] += len(e["findings"])
+    for key in r["falsePositives"]:
+        per[rule(key)]["fp"] += 1
+    for key in r["falseNegatives"]:
+        per[rule(key)]["fn"] += 1
+    unattributed = []
+    for f in r["failures"]:
+        if f["check"] not in per:
+            unattributed.append(f"{f['path']}: {f['message'][:160]}")
+            continue
+        v = per[f["check"]]
+        v["failures"] += 1
+        if f["message"] not in v["messages"] and len(v["messages"]) < 3:
+            v["messages"].append(f["message"][:200])
+    return batch_verdict(n, per, unattributed)
+
+
+
 # ---------------------------------------------------------------------------------------------------
 # Driver
 
@@ -470,6 +693,8 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
         return check_b(d, env, "replay")
     if cid == "b-generated":
         return check_b(d, env, "greplay")
+    if cid == "b-ties":
+        return check_ties(d, env)
     if cid == "rerail-facts-lib":
         return check_cargo(d, env, "lib tests (rewrite differentials, classifier, audit, reference)", "--lib")
     if cid == "classifier-leak":
@@ -478,10 +703,16 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
         return check_cargo(d, env, "plan audit tests", "phys::tests::audit")
     if cid == "explain-stable":
         return check_explain(d, env)
+    if cid == "explain-physical":
+        return check_explain_physical(d, env)
     if cid == "harness-replay":
         return check_harness_replay(d, env)
     if cid == "views-derived":
         return check_views(d, env)
+    if cid.startswith("harness-b"):
+        return check_harness_batch(d, env, int(cid.removeprefix("harness-b")))
+    if cid.startswith("suite-b"):
+        return check_suite_batch(d, env, int(cid.removeprefix("suite-b")))
     raise ValueError(cid)
 
 
@@ -503,6 +734,8 @@ def run_mutant_check(n: int, cid: str, gate_dir: Path) -> str:
         return "survived" if same else "killed"
     elif cid in ("b-exactness", "b-generated"):
         ok, _, det = check_b(d, env, "replay" if cid == "b-exactness" else "greplay", fail_fast=True)
+    elif cid == "b-ties":
+        ok, _, det = check_ties(d, env)
     elif cid in ("rerail-facts-lib", "classifier-leak", "planner-audit"):
         names = {"rerail-facts-lib": ["--lib"], "classifier-leak": ["leak"], "planner-audit": ["phys::tests::audit"]}[cid]
         ok, _, det = check_cargo(d, env, "tests", *names)

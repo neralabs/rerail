@@ -5,6 +5,8 @@ mod facts;
 mod factfile;
 mod fstring;
 mod leaf;
+mod patcheck;
+mod physplan;
 mod volume;
 use rerail_facts::policy;
 mod pyvalue;
@@ -38,6 +40,14 @@ const BATCH6: &[&str] = &[
     "legacy_execution_surfaces",
 ];
 
+/// Runs `f`, turning a panic into its message: the harness paths report a panic as a failure of the
+/// call, file or rule it hit (I9: refused by name, never an answer, never a lost batch).
+fn caught<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|p| {
+        p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "non-string panic".into())
+    })
+}
+
 fn arg(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
 }
@@ -65,6 +75,7 @@ fn main() {
         Some("xexport") => xexport::main(&args),
         Some("explain") => explain(&args),
         Some("export-volume") => volume::run(&args),
+        Some("pattern-check") => patcheck::run(&args),
         Some("parse") => {
             let path = &args[2];
             let source = Arc::new(std::fs::read_to_string(path).unwrap());
@@ -100,14 +111,23 @@ fn calls(args: &[String]) {
         let key = serde_json::to_string(policy).unwrap();
         let rules = compiled
             .entry(key)
-            .or_insert_with(|| eval::Rule::compile(policy, &Map::new(), None, &facts::GRAMMAR).map(|r| Rc::new(vec![r])))
+            .or_insert_with(|| {
+                caught(|| eval::Rule::compile(policy, &Map::new(), None, &facts::GRAMMAR))
+                    .unwrap_or_else(|panic| Err(format!("compiler panic: {panic}")))
+                    .map(|r| Rc::new(vec![r]))
+            })
             .clone();
         let result = match rules {
             Err(e) => json!({"id": call["id"], "compile_error": e}),
             Ok(rules) => {
                 let files: Vec<(String, Arc<String>)> = call["files"].as_array().expect("files").iter().map(|f| (f["path"].as_str().unwrap().to_owned(), Arc::new(f["source"].as_str().unwrap().to_owned()))).collect();
                 let t = Instant::now();
-                let o = evaluate(&rules, &files);
+                // A panic is a failure of this call, its findings discarded; it never loses the batch.
+                let o = caught(|| evaluate(&rules, &files)).unwrap_or_else(|panic| {
+                    let mut o = eval::Output::default();
+                    o.failures.push(eval::Failure { check: rules[0].check.clone(), clause: String::new(), path: String::new(), message: format!("engine panic: {panic}") });
+                    o
+                });
                 json!({"id": call["id"], "ms": t.elapsed().as_secs_f64() * 1e3, "findings": o.findings, "failures": o.failures})
             }
         };
@@ -305,6 +325,9 @@ fn census(args: &[String]) {
 /// (JSON object of option values, default `{}`), its logical plans printed as stable text;
 /// refusals listed after the plans.
 fn explain(args: &[String]) {
+    if args.iter().any(|a| a == "--physical") {
+        return physplan::run(args);
+    }
     let rules = arg(args, "--rules").unwrap_or_else(|| "packs/data-layer/candidates/rules".into());
     let only = arg(args, "--rule");
     let config: Map<String, Json> = arg(args, "--config").map(|c| serde_json::from_str(&c).expect("--config")).unwrap_or_default();

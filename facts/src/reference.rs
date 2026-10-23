@@ -55,6 +55,8 @@ pub fn eval_scalar<S>(e: &Expr<S>, row: &[V], outer: &[&[V]]) -> Result<V, Error
 pub struct Evaluator<'a, S> {
     source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>,
     locals: RefCell<Vec<(LocalId, Rc<Vec<Row>>)>>,
+    /// The content a per-file plan runs over (`path`, source text), for `source_text`.
+    content: Option<(&'a str, &'a str)>,
 }
 
 thread_local! {
@@ -192,6 +194,18 @@ pub fn width<S>(r: &Rel<S>) -> usize {
         Rel::Union { left, .. } => width(left),
         Rel::With { body, .. } => width(body),
     }
+}
+
+/// Refuses (`tie: …`, IR.md § Order) when two distinct rows of `rows`, sorted on `keys`, have equal
+/// keys: an order marked `Total::Checked` would otherwise break the tie by input order. Rows are
+/// compared whole, so a sort on a row's only column never ties.
+fn tie_free(rows: &[Row], keys: &[(usize, bool)], what: &str) -> Result<(), Error> {
+    for w in rows.windows(2) {
+        if row_cmp(&w[0], &w[1], keys) == Ordering::Equal && dkeys(&w[0]) != dkeys(&w[1]) {
+            return Err(format!("tie: {what} between distinct rows on equal keys"));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -393,7 +407,14 @@ fn printf(fmt: &str, args: &[V]) -> Result<String, Error> {
 
 impl<'a, S> Evaluator<'a, S> {
     pub fn new(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>) -> Self {
-        Self { source, locals: RefCell::new(Vec::new()) }
+        Self { source, locals: RefCell::new(Vec::new()), content: None }
+    }
+
+    /// An evaluator over one content: `source_text(p, s, e)` is the byte range `[s, e)` of
+    /// `text` when `p` is `path` (as the per-file executor: NULL for another path or a range
+    /// outside the text).
+    pub fn with_content(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>, path: &'a str, text: &'a str) -> Self {
+        Self { source, locals: RefCell::new(Vec::new()), content: Some((path, text)) }
     }
 
     fn local(&self, id: LocalId) -> Result<Rc<Vec<Row>>, Error> {
@@ -510,11 +531,20 @@ impl<'a, S> Evaluator<'a, S> {
             }
             Rel::Aggregate { input, keys, aggs } => {
                 let w = width(input);
-                let rows = self.rel(input, outer)?;
+                // An ordered aggregate whose order is not proven total: its input rows paired with the
+                // keys of the Sort they come from (as S3's generator orders it), tie-checked per group.
+                let ordered = aggs.iter().any(|a| a.total == Total::Checked && matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray));
+                let (rows, sort_keys) = if ordered {
+                    let (rows, k) = self.keyed(input, outer)?;
+                    (rows, Some(k))
+                } else {
+                    (self.rel(input, outer)?, None)
+                };
+                let mut tied: HashMap<(Vec<DKey>, Vec<DKey>), Vec<DKey>> = HashMap::new();
                 // Groups in first-seen order of their keys.
                 let mut order: Vec<Vec<DKey>> = Vec::new();
                 let mut groups: HashMap<Vec<DKey>, (Vec<Agg>, Option<Row>, Option<Row>)> = HashMap::new();
-                for row in &rows {
+                for (i, row) in rows.iter().enumerate() {
                     let mut k = Vec::with_capacity(keys.len());
                     let mut vals: Vec<(Option<V>, Option<V>)> = Vec::with_capacity(aggs.len());
                     with(row, &mut |s| {
@@ -528,6 +558,12 @@ impl<'a, S> Evaluator<'a, S> {
                         }
                         Ok(())
                     })?;
+                    if let Some(sk) = &sort_keys {
+                        let first = tied.entry((k.clone(), dkeys(&sk[i]))).or_insert_with(|| dkeys(row));
+                        if *first != dkeys(row) {
+                            return Err("tie: ordered aggregate (group_concat/json_group_array) between distinct rows of one group on equal sort keys".into());
+                        }
+                    }
                     let g = groups.entry(k.clone()).or_insert_with(|| {
                         order.push(k);
                         (aggs.iter().map(|_| Agg::default()).collect(), None, None)
@@ -589,6 +625,14 @@ impl<'a, S> Evaluator<'a, S> {
                                 let keys: Vec<(usize, bool)> = f.order.iter().enumerate().map(|(i, (_, d))| (i, *d)).collect();
                                 // Total order: order keys, then input position.
                                 m.sort_by(|&a, &b| row_cmp(&ord[a], &ord[b], &keys).then(a.cmp(&b)));
+                                if f.total == Total::Checked {
+                                    // Not proven total: distinct rows on equal keys would be numbered by input order.
+                                    for w in m.windows(2) {
+                                        if row_cmp(&ord[w[0]], &ord[w[1]], &keys) == Ordering::Equal && dkeys(&rows[w[0]]) != dkeys(&rows[w[1]]) {
+                                            return Err("tie: row_number() between distinct rows on equal partition and order keys".into());
+                                        }
+                                    }
+                                }
                                 for (n, i) in m.into_iter().enumerate() {
                                     col[i] = V::Int(n as i64 + 1);
                                 }
@@ -637,10 +681,14 @@ impl<'a, S> Evaluator<'a, S> {
                 let mut seen = HashSet::new();
                 Ok(rows.into_iter().filter(|row| seen.insert(dkeys(row))).collect())
             }
-            Rel::Sort { input, keys, limit, offset } => {
+            Rel::Sort { input, keys, limit, offset, total } => {
                 let mut rows = self.rel(input, outer)?;
                 let keys: Vec<(usize, bool)> = keys.iter().map(|(c, d)| (*c as usize, *d)).collect();
                 rows.sort_by(|a, b| row_cmp(a, b, &keys));
+                if *total == Total::Checked && (limit.is_some() || offset.is_some()) {
+                    // As S3's dataflow: any two distinct rows on equal sort keys, wherever the cut falls.
+                    tie_free(&rows, &keys, "ORDER BY … LIMIT/OFFSET")?;
+                }
                 let constant = |e: &Option<Expr<S>>| -> Result<Option<i64>, Error> {
                     let Some(e) = e else { return Ok(None) };
                     let mut v = V::Null;
@@ -707,6 +755,62 @@ impl<'a, S> Evaluator<'a, S> {
             }
         }
         Ok(result)
+    }
+
+    /// An ordered aggregate's input rows and, per row, the keys that order it: those of a `Sort`
+    /// reached through `Project`/`Filter` only (each row keeps its source row's keys). With no such
+    /// `Sort` the order is input order and every row's keys are empty, so any two distinct rows of
+    /// a group tie.
+    fn keyed(&self, r: &Rel<S>, outer: &[&[V]]) -> Result<(Vec<Row>, Vec<Vec<V>>), Error> {
+        let frame = |row: &[V], f: &mut dyn FnMut(&[&[V]]) -> Result<(), Error>| -> Result<(), Error> {
+            let mut stack: Vec<&[V]> = Vec::with_capacity(outer.len() + 1);
+            stack.push(row);
+            stack.extend_from_slice(outer);
+            f(&stack)
+        };
+        match r {
+            Rel::Sort { keys, .. } => {
+                let rows = self.rel(r, outer)?;
+                let k = rows.iter().map(|row| keys.iter().map(|(c, _)| row[*c as usize].clone()).collect()).collect();
+                Ok((rows, k))
+            }
+            Rel::Filter { input, pred } => {
+                let (rows, keys) = self.keyed(input, outer)?;
+                let (mut out, mut out_keys) = (Vec::new(), Vec::new());
+                for (row, k) in rows.into_iter().zip(keys) {
+                    let mut keep = false;
+                    frame(&row, &mut |s| {
+                        keep = sv::truth(&self.expr(pred, s)?) == Some(true);
+                        Ok(())
+                    })?;
+                    if keep {
+                        out.push(row);
+                        out_keys.push(k);
+                    }
+                }
+                Ok((out, out_keys))
+            }
+            Rel::Project { input, exprs, .. } => {
+                let (rows, keys) = self.keyed(input, outer)?;
+                let mut out = Vec::with_capacity(rows.len());
+                for row in &rows {
+                    let mut p = Vec::with_capacity(exprs.len());
+                    frame(row, &mut |s| {
+                        for e in exprs {
+                            p.push(self.expr(e, s)?);
+                        }
+                        Ok(())
+                    })?;
+                    out.push(p);
+                }
+                Ok((out, keys))
+            }
+            _ => {
+                let rows = self.rel(r, outer)?;
+                let n = rows.len();
+                Ok((rows, vec![Vec::new(); n]))
+            }
+        }
     }
 
     /// A scalar expression; `stack[0]` is the current row, `stack[d]` the row `d` levels out.
@@ -961,7 +1065,16 @@ impl<'a, S> Evaluator<'a, S> {
                 let (V::Text(p), V::Text(by)) = (a(1)?, a(2)?) else { return Err("rx_replace pattern and replacement must be text".into()) };
                 V::text(&regex(&p)?.replace_all(&t, &*by))
             }
-            Func::SourceText => return Err("reference: source_text reads a content's text; repository plans have none (IR.md § 7)".into()),
+            Func::SourceText => {
+                let Some((path, text)) = self.content else {
+                    return Err("reference: source_text reads a content's text; repository plans have none (IR.md § 7)".into());
+                };
+                match (a(0)?, a(1)?, a(2)?) {
+                    (V::Text(p), V::Int(s), V::Int(e)) if &*p == path && s >= 0 && e >= s => text.get(s as usize..e as usize).map_or(V::Null, V::text),
+                    (p, _, _) if !matches!(p, V::Text(_) | V::Null) => return Err("source_text path must be text".into()),
+                    _ => V::Null,
+                }
+            }
             Func::JsonArray => {
                 let mut items = Vec::with_capacity(args.len());
                 for i in 0..args.len() {
@@ -1156,11 +1269,11 @@ mod tests {
     fn aggregate_count_and_representative() {
         let src = |_: &RepoSource| rows(vec![vec![t("m"), V::Int(1)], vec![t("n"), V::Int(2)], vec![t("m"), V::Int(3)]]);
         let ev = Evaluator::new(&src);
-        let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![col(0)], aggs: vec![AggCall { f: AggFn::CountStar, arg: None, sep: None, distinct: false }] };
+        let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![col(0)], aggs: vec![AggCall { f: AggFn::CountStar, arg: None, sep: None, distinct: false, total: Total::InputOrder }] };
         assert_eq!(texts(&ev.rel(&q, &[]).unwrap()), ["m|3|2", "n|2|1"]);
         let empty = |_: &RepoSource| rows(vec![]);
         let ev = Evaluator::new(&empty);
-        let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![], aggs: vec![AggCall { f: AggFn::Count, arg: Some(col(1)), sep: None, distinct: false }] };
+        let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![], aggs: vec![AggCall { f: AggFn::Count, arg: Some(col(1)), sep: None, distinct: false, total: Total::InputOrder }] };
         assert_eq!(texts(&ev.rel(&q, &[]).unwrap()), ["NULL|NULL|0"]);
     }
 
@@ -1169,10 +1282,46 @@ mod tests {
     fn row_number_ties_and_not_in_null() {
         let src = |_: &RepoSource| rows(vec![vec![t("p"), V::Int(2)], vec![t("p"), V::Int(1)], vec![t("p"), V::Int(1)]]);
         let ev = Evaluator::new(&src);
-        let q = Rel::Window { input: Box::new(scan(0, 2)), funcs: vec![WindowFn { kind: WindowKind::RowNumber, partition: vec![col(0)], order: vec![(col(1), false)] }] };
+        let q = Rel::Window { input: Box::new(scan(0, 2)), funcs: vec![WindowFn { kind: WindowKind::RowNumber, partition: vec![col(0)], order: vec![(col(1), false)], total: Total::InputOrder }] };
         assert_eq!(texts(&ev.rel(&q, &[]).unwrap()), ["p|2|3", "p|1|1", "p|1|2"]);
         let e: Expr<RepoSource> = Expr::InList { e: Box::new(Expr::Lit(Lit::Int(3))), list: vec![(Expr::Lit(Lit::Int(1)), (Aff::None, Aff::None)), (Expr::Lit(Lit::Null), (Aff::None, Aff::None))], negated: true };
         assert!(eval_scalar(&e, &[], &[]).unwrap().is_null());
+    }
+
+    /// `Total::Checked` orders refuse a tie between distinct rows (`tie: …`) and accept a tie
+    /// between identical rows; `InputOrder` and an unlimited `Sort` never check.
+    #[test]
+    fn checked_orders_refuse_ties() {
+        let run = |data: Vec<Vec<V>>, q: &Rel<RepoSource>| {
+            let src = move |_: &RepoSource| rows(data.clone());
+            let ev = Evaluator::new(&src);
+            ev.rel(q, &[])
+        };
+        let tie = |r: Result<Vec<Row>, Error>| matches!(r, Err(e) if e.starts_with("tie:"));
+        // row_number() over (partition c0, order c1).
+        let rn = |total| Rel::Window { input: Box::new(scan(0, 3)), funcs: vec![WindowFn { kind: WindowKind::RowNumber, partition: vec![col(0)], order: vec![(col(1), false)], total }] };
+        assert!(tie(run(vec![vec![t("p"), V::Int(1), t("a")], vec![t("p"), V::Int(1), t("b")]], &rn(Total::Checked))));
+        assert!(run(vec![vec![t("p"), V::Int(1), t("a")], vec![t("p"), V::Int(1), t("a")]], &rn(Total::Checked)).is_ok());
+        assert!(run(vec![vec![t("p"), V::Int(1), t("a")], vec![t("q"), V::Int(1), t("b")]], &rn(Total::Checked)).is_ok());
+        assert!(run(vec![vec![t("p"), V::Int(1), t("a")], vec![t("p"), V::Int(1), t("b")]], &rn(Total::InputOrder)).is_ok());
+        // ORDER BY c0 LIMIT 1: any tie between distinct rows, wherever the cut falls.
+        let sort = |limit: Option<i64>| Rel::Sort { input: Box::new(scan(0, 2)), keys: vec![(0, false)], limit: limit.map(|l| Expr::Lit(Lit::Int(l))), offset: None, total: Total::Checked };
+        assert!(tie(run(vec![vec![V::Int(2), t("a")], vec![V::Int(2), t("b")], vec![V::Int(1), t("c")]], &sort(Some(1)))));
+        assert!(run(vec![vec![V::Int(1), t("a")], vec![V::Int(1), t("a")], vec![V::Int(2), t("b")]], &sort(Some(1))).is_ok());
+        assert!(run(vec![vec![V::Int(1), t("a")], vec![V::Int(1), t("b")]], &sort(None)).is_ok());
+        // group_concat(v) GROUP BY g over (SELECT g, v FROM s ORDER BY k): ties within a group on k.
+        let concat = |input: Rel<RepoSource>| Rel::Aggregate { input: Box::new(input), keys: vec![col(0)], aggs: vec![AggCall { f: AggFn::GroupConcat, arg: Some(col(1)), sep: None, distinct: false, total: Total::Checked }] };
+        let sorted = || Rel::Project {
+            input: Box::new(Rel::Sort { input: Box::new(scan(0, 3)), keys: vec![(1, false)], limit: None, offset: None, total: Total::Checked }),
+            exprs: vec![col(0), col(2)],
+            schema: vec![Column::new("g", Aff::None), Column::new("v", Aff::None)],
+        };
+        assert!(tie(run(vec![vec![t("g"), V::Int(1), t("x")], vec![t("g"), V::Int(1), t("y")]], &concat(sorted()))));
+        let ok = run(vec![vec![t("g"), V::Int(2), t("x")], vec![t("g"), V::Int(1), t("y")], vec![t("h"), V::Int(1), t("z")]], &concat(sorted())).unwrap();
+        assert_eq!(texts(&ok), ["g|x|y,x", "h|z|z"]);
+        // No Sort below: input order, so any two distinct rows of a group tie.
+        assert!(tie(run(vec![vec![t("g"), t("x")], vec![t("g"), t("y")]], &concat(scan(0, 2)))));
+        assert!(run(vec![vec![t("g"), t("x")], vec![t("g"), t("x")], vec![t("h"), t("y")]], &concat(scan(0, 2))).is_ok());
     }
 
     #[test]
