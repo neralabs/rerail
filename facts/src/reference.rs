@@ -16,7 +16,8 @@ use crate::ir::*;
 use crate::sql::value::{self as sv, Aff, DKey, V};
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 pub type Row = Vec<V>;
@@ -199,6 +200,27 @@ pub fn width<S>(r: &Rel<S>) -> usize {
     }
 }
 
+/// Whether `r` is an aggregate, possibly under `Filter`s (its HAVING): a `Project` over it reads
+/// the bare columns.
+fn over_aggregate<S>(r: &Rel<S>) -> bool {
+    match r {
+        Rel::Aggregate { .. } => true,
+        Rel::Filter { input, .. } => over_aggregate(input),
+        _ => false,
+    }
+}
+
+/// Exact identity of two values: storage class and value (NULL is NULL).
+fn identical(a: &V, b: &V) -> bool {
+    match (a, b) {
+        (V::Null, V::Null) => true,
+        (V::Int(x), V::Int(y)) => x == y,
+        (V::Real(x), V::Real(y)) => x == y,
+        (V::Text(x), V::Text(y)) => x == y,
+        _ => false,
+    }
+}
+
 /// Refuses (`tie: …`, IR.md § Order) when two distinct rows of `rows`, sorted on `keys`, have equal
 /// keys: an order marked `Total::Checked` would otherwise break the tie by input order. Rows are
 /// compared whole, so a sort on a row's only column never ties.
@@ -294,7 +316,9 @@ impl Agg {
                     }
                 }
             }
-            AggFn::Sum | AggFn::Total => match (&v, self.sum_f) {
+            // SQLite's sum() adds an integer, or a text reading as one, as an integer
+            // (`sqlite3_value_numeric_type`); anything else makes the sum a REAL.
+            AggFn::Sum | AggFn::Total => match (&sv::compare_affinity(&v, Aff::Numeric), self.sum_f) {
                 (V::Int(i), None) => {
                     let s = self.sum_i.unwrap_or(0).checked_add(*i).ok_or("integer overflow")?;
                     self.sum_i = Some(s);
@@ -388,7 +412,7 @@ impl<'a, S> Evaluator<'a, S> {
                     })
                 });
             }
-            Rel::Filter { input, pred } => {
+            Rel::Filter { input, pred } if !over_aggregate(input) => {
                 return self.stream(input, outer, &mut |row| {
                     let mut stack: Vec<&[V]> = Vec::with_capacity(outer.len() + 1);
                     stack.push(row);
@@ -396,7 +420,7 @@ impl<'a, S> Evaluator<'a, S> {
                     if sv::truth(&self.expr(pred, &stack)?) == Some(true) { f(row) } else { Ok(true) }
                 });
             }
-            Rel::Project { input, exprs, .. } => {
+            Rel::Project { input, exprs, .. } if !over_aggregate(input) => {
                 return self.stream(input, outer, &mut |row| {
                     let mut stack: Vec<&[V]> = Vec::with_capacity(outer.len() + 1);
                     stack.push(row);
@@ -499,6 +523,30 @@ impl<'a, S> Evaluator<'a, S> {
                 }
                 Ok(out)
             }
+            // An aggregate's select list and HAVING read its representative row's columns (the
+            // bare columns, `aggregate`).
+            Rel::Project { input, exprs, .. } if over_aggregate(input) => {
+                let mut bare = BTreeSet::new();
+                for e in exprs {
+                    cols_read(e, &mut |c| {
+                        bare.insert(c);
+                    });
+                }
+                let mut out = Vec::new();
+                for row in self.aggregate_read(input, outer, Some(bare))? {
+                    let mut p = Vec::with_capacity(exprs.len());
+                    with(&row, &mut |s| {
+                        for e in exprs {
+                            p.push(self.expr(e, s)?);
+                        }
+                        Ok(())
+                    })?;
+                    out.push(p);
+                }
+                Ok(out)
+            }
+            Rel::Filter { input, .. } if over_aggregate(input) => self.aggregate_read(r, outer, None),
+            Rel::Aggregate { .. } => self.aggregate(r, outer, None),
             Rel::Filter { .. } | Rel::Project { .. } if self.shared.is_some() => {
                 let mut out = Vec::new();
                 self.stream(r, outer, &mut |row| {
@@ -532,71 +580,6 @@ impl<'a, S> Evaluator<'a, S> {
                         Ok(())
                     })?;
                     out.push(p);
-                }
-                Ok(out)
-            }
-            Rel::Aggregate { input, keys, aggs } => {
-                let w = width(input);
-                // An ordered aggregate whose order is not proven total: its input rows paired with the
-                // keys of the Sort they come from (as S3's generator orders it), tie-checked per group.
-                let ordered = aggs.iter().any(|a| a.total == Total::Checked && matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray));
-                let (rows, sort_keys) = if ordered {
-                    let (rows, k) = self.keyed(input, outer)?;
-                    (rows, Some(k))
-                } else {
-                    (self.rel(input, outer)?, None)
-                };
-                let mut tied: HashMap<(Vec<DKey>, Vec<DKey>), Vec<DKey>> = HashMap::new();
-                // Groups in first-seen order of their keys.
-                let mut order: Vec<Vec<DKey>> = Vec::new();
-                let mut groups: HashMap<Vec<DKey>, (Vec<Agg>, Option<Row>, Option<Row>)> = HashMap::new();
-                for (i, row) in rows.iter().enumerate() {
-                    let mut k = Vec::with_capacity(keys.len());
-                    let mut vals: Vec<(Option<V>, Option<V>)> = Vec::with_capacity(aggs.len());
-                    with(row, &mut |s| {
-                        for e in keys {
-                            k.push(sv::dkey(&self.expr(e, s)?));
-                        }
-                        for a in aggs {
-                            let v = a.arg.as_ref().map(|e| self.expr(e, s)).transpose()?;
-                            let sep = a.sep.as_ref().map(|e| self.expr(e, s)).transpose()?;
-                            vals.push((v, sep));
-                        }
-                        Ok(())
-                    })?;
-                    if let Some(sk) = &sort_keys {
-                        let first = tied.entry((k.clone(), dkeys(&sk[i]))).or_insert_with(|| dkeys(row));
-                        if *first != dkeys(row) {
-                            return Err("tie: ordered aggregate (group_concat/json_group_array) between distinct rows of one group on equal sort keys".into());
-                        }
-                    }
-                    let g = groups.entry(k.clone()).or_insert_with(|| {
-                        order.push(k);
-                        (aggs.iter().map(|_| Agg::default()).collect(), None, None)
-                    });
-                    let mut picked = false;
-                    for ((state, a), (v, sep)) in g.0.iter_mut().zip(aggs).zip(vals) {
-                        picked |= state.add(a.f, a.distinct, v, sep, json_subtype(a.arg.as_ref()))?;
-                    }
-                    if picked {
-                        g.1 = Some(row.clone());
-                    }
-                    g.2 = Some(row.clone());
-                }
-                if rows.is_empty() && keys.is_empty() {
-                    order.push(Vec::new());
-                    groups.insert(Vec::new(), (aggs.iter().map(|_| Agg::default()).collect(), None, None));
-                }
-                // Representative row: the row a lone min/max picked, else the group's last row.
-                let lone = aggs.len() == 1 && matches!(aggs[0].f, AggFn::Min | AggFn::Max);
-                let mut out = Vec::with_capacity(order.len());
-                for k in order {
-                    let (states, picked, last) = groups.remove(&k).unwrap();
-                    let mut row = if lone { picked.or(last) } else { last }.unwrap_or_else(|| vec![V::Null; w]);
-                    for (s, a) in states.into_iter().zip(aggs) {
-                        row.push(s.finish(a.f));
-                    }
-                    out.push(row);
                 }
                 Ok(out)
             }
@@ -678,14 +661,34 @@ impl<'a, S> Evaluator<'a, S> {
                 let mut seen = HashSet::new();
                 Ok(self.rel(input, outer)?.into_iter().filter(|row| seen.insert(dkeys(&row[..*prefix as usize]))).collect())
             }
+            // A set union keeps one row per distinctness class, in first-seen position: the right
+            // arm's first row of the class when the right arm holds it, else the left side's
+            // (itself so chosen when it is a set union, its first row otherwise). SQLite 3.53.2
+            // keeps that row of two equal values of different storage classes (`2`, `2.0`).
             Rel::Union { all, left, right } => {
                 let mut rows = self.rel(left, outer)?;
+                let n_left = rows.len();
                 rows.extend(self.rel(right, outer)?);
                 if *all {
                     return Ok(rows);
                 }
-                let mut seen = HashSet::new();
-                Ok(rows.into_iter().filter(|row| seen.insert(dkeys(row))).collect())
+                let mut slot: HashMap<Vec<DKey>, usize> = HashMap::new();
+                let mut rep: Vec<usize> = Vec::new();
+                for (r, row) in rows.iter().enumerate() {
+                    match slot.entry(dkeys(row)) {
+                        Entry::Vacant(e) => {
+                            e.insert(rep.len());
+                            rep.push(r);
+                        }
+                        Entry::Occupied(e) => {
+                            let s = *e.get();
+                            if rep[s] < n_left && r >= n_left {
+                                rep[s] = r;
+                            }
+                        }
+                    }
+                }
+                Ok(rep.into_iter().map(|r| std::mem::take(&mut rows[r])).collect())
             }
             Rel::Sort { input, keys, limit, offset, total } => {
                 let mut rows = self.rel(input, outer)?;
@@ -724,6 +727,129 @@ impl<'a, S> Evaluator<'a, S> {
                 result
             }
         }
+    }
+
+    /// An aggregate under the `Filter`s (HAVING) over it: their rows, with the bare columns the
+    /// filters and `reads` (the select list above them; `None`: an unknown reader, every column)
+    /// read.
+    fn aggregate_read(&self, r: &Rel<S>, outer: &[&[V]], mut reads: Option<BTreeSet<u16>>) -> Result<Vec<Row>, Error> {
+        let Rel::Filter { input, pred } = r else { return self.aggregate(r, outer, reads.as_ref()) };
+        if let Some(b) = reads.as_mut() {
+            cols_read(pred, &mut |c| {
+                b.insert(c);
+            });
+        }
+        let mut out = Vec::new();
+        for row in self.aggregate_read(input, outer, reads)? {
+            let mut stack: Vec<&[V]> = Vec::with_capacity(outer.len() + 1);
+            stack.push(&row);
+            stack.extend_from_slice(outer);
+            if sv::truth(&self.expr(pred, &stack)?) == Some(true) {
+                out.push(row);
+            }
+        }
+        Ok(out)
+    }
+
+    /// `Rel::Aggregate`: groups in first-seen order of their keys, each the representative row
+    /// then the aggregates. `bare`: the representative's columns its readers read (`None`: all).
+    ///
+    /// Bare columns (the decider's ruling, SQLite 3.53.2): with exactly one `min()`/`max()`
+    /// aggregate (others alongside), the representative is the row it chose (the group's last
+    /// when it chose none: every argument NULL), as SQLite documents. Otherwise SQLite reads an
+    /// arbitrary row, so the answer is exact only when every row of a group agrees on each bare
+    /// column read (same storage class and value); two distinct values are a refusal (`bare
+    /// column: …`), and the representative is the group's last row.
+    fn aggregate(&self, r: &Rel<S>, outer: &[&[V]], bare: Option<&BTreeSet<u16>>) -> Result<Vec<Row>, Error> {
+        let Rel::Aggregate { input, keys, aggs } = r else { unreachable!("aggregate of a non-aggregate") };
+        let with = |row: &[V], f: &mut dyn FnMut(&[&[V]]) -> Result<(), Error>| -> Result<(), Error> {
+            let mut stack: Vec<&[V]> = Vec::with_capacity(outer.len() + 1);
+            stack.push(row);
+            stack.extend_from_slice(outer);
+            f(&stack)
+        };
+        let w = width(input);
+        // An ordered aggregate whose order is not proven total: its input rows paired with the
+        // keys of the Sort they come from (as S3's generator orders it), tie-checked per group.
+        let ordered = aggs.iter().any(|a| a.total == Total::Checked && matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray));
+        let (rows, sort_keys) = if ordered {
+            let (rows, k) = self.keyed(input, outer)?;
+            (rows, Some(k))
+        } else {
+            (self.rel(input, outer)?, None)
+        };
+        // The one min()/max(): SQLite folds identical calls into one aggregate; calls over the
+        // same column are recognised as identical, any other two calls count as two.
+        let extrema: Vec<usize> = (0..aggs.len()).filter(|&i| matches!(aggs[i].f, AggFn::Min | AggFn::Max)).collect();
+        let same_call = |i: usize, j: usize| {
+            let (a, b) = (&aggs[i], &aggs[j]);
+            i == j || (a.f == b.f && a.distinct == b.distinct && matches!((&a.arg, &b.arg), (Some(Expr::Col { depth: d1, col: c1 }), Some(Expr::Col { depth: d2, col: c2 })) if d1 == d2 && c1 == c2))
+        };
+        let one = extrema.first().copied().filter(|&i| extrema.iter().all(|&j| same_call(i, j)));
+        let checked: Vec<usize> = if one.is_some() {
+            Vec::new()
+        } else {
+            match bare {
+                Some(b) => b.iter().map(|&c| c as usize).filter(|&c| c < w).collect(),
+                None => (0..w).collect(),
+            }
+        };
+        let mut tied: HashMap<(Vec<DKey>, Vec<DKey>), Vec<DKey>> = HashMap::new();
+        // Groups in first-seen order of their keys: states, the extremum's row, the last row.
+        let mut order: Vec<Vec<DKey>> = Vec::new();
+        let mut groups: HashMap<Vec<DKey>, (Vec<Agg>, Option<usize>, usize)> = HashMap::new();
+        for (i, row) in rows.iter().enumerate() {
+            let mut k = Vec::with_capacity(keys.len());
+            let mut vals: Vec<(Option<V>, Option<V>)> = Vec::with_capacity(aggs.len());
+            with(row, &mut |s| {
+                for e in keys {
+                    k.push(sv::dkey(&self.expr(e, s)?));
+                }
+                for a in aggs {
+                    let v = a.arg.as_ref().map(|e| self.expr(e, s)).transpose()?;
+                    let sep = a.sep.as_ref().map(|e| self.expr(e, s)).transpose()?;
+                    vals.push((v, sep));
+                }
+                Ok(())
+            })?;
+            if let Some(sk) = &sort_keys {
+                let first = tied.entry((k.clone(), dkeys(&sk[i]))).or_insert_with(|| dkeys(row));
+                if *first != dkeys(row) {
+                    return Err("tie: ordered aggregate (group_concat/json_group_array) between distinct rows of one group on equal sort keys".into());
+                }
+            }
+            let g = groups.entry(k.clone()).or_insert_with(|| {
+                order.push(k);
+                (aggs.iter().map(|_| Agg::default()).collect(), None, i)
+            });
+            if let Some(&c) = checked.iter().find(|&&c| !identical(&rows[g.2][c], &row[c])) {
+                return Err(format!("bare column: column {c} of an aggregate's input takes two distinct values in one group ({:?}, {:?}), and SQLite reads an arbitrary row", rows[g.2][c], row[c]));
+            }
+            let mut picked = false;
+            for (n, ((state, a), (v, sep))) in g.0.iter_mut().zip(aggs).zip(vals).enumerate() {
+                let took = state.add(a.f, a.distinct, v, sep, json_subtype(a.arg.as_ref()))?;
+                picked |= took && one.is_some() && extrema.contains(&n);
+            }
+            if picked {
+                g.1 = Some(i);
+            }
+            g.2 = i;
+        }
+        let mut out = Vec::with_capacity(order.len().max(1));
+        if rows.is_empty() && keys.is_empty() {
+            let mut row = vec![V::Null; w];
+            row.extend(aggs.iter().map(|a| Agg::default().finish(a.f)));
+            out.push(row);
+        }
+        for k in order {
+            let (states, picked, last) = groups.remove(&k).unwrap();
+            let mut row = rows[picked.unwrap_or(last)].clone();
+            for (s, a) in states.into_iter().zip(aggs) {
+                row.push(s.finish(a.f));
+            }
+            out.push(row);
+        }
+        Ok(out)
     }
 
     /// `WITH RECURSIVE` level by level: each round evaluates every step arm with `Local(id)` bound
@@ -1319,13 +1445,32 @@ mod tests {
         assert_eq!(texts(&ev.rel(&q, &[]).unwrap()), ["c", "b", "a", "d"]);
     }
 
-    /// Group count with first-seen group order and the last row as representative.
+    /// Group count with first-seen group order; bare columns read the one min()/max()'s row, and
+    /// otherwise refuse when a group's rows disagree on one (exactly: storage class and value).
     #[test]
-    fn aggregate_count_and_representative() {
-        let src = |_: &RepoSource| rows(vec![vec![t("m"), V::Int(1)], vec![t("n"), V::Int(2)], vec![t("m"), V::Int(3)]]);
+    fn aggregate_count_and_bare_columns() {
+        let src = |_: &RepoSource| rows(vec![vec![t("m"), V::Int(1), t("a")], vec![t("n"), V::Int(2), t("b")], vec![t("m"), V::Int(0), t("c")], vec![t("m"), V::Real(1.0), t("a")]]);
         let ev = Evaluator::new(&src);
-        let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![col(0)], aggs: vec![AggCall { f: AggFn::CountStar, arg: None, sep: None, distinct: false, total: Total::InputOrder }] };
-        assert_eq!(texts(&ev.rel(&q, &[]).unwrap()), ["m|3|2", "n|2|1"]);
+        let count = || AggCall { f: AggFn::CountStar, arg: None, sep: None, distinct: false, total: Total::InputOrder };
+        let select = |aggs: Vec<AggCall<RepoSource>>, exprs: Vec<Expr<RepoSource>>| {
+            let schema = (0..exprs.len()).map(|i| Column::new(&format!("c{i}"), Aff::None)).collect();
+            Rel::Project { input: Box::new(Rel::Aggregate { input: Box::new(scan(0, 3)), keys: vec![col(0)], aggs }), exprs, schema }
+        };
+        // SELECT c0, count(*) … GROUP BY c0: no bare column but the key, equal in each group.
+        assert_eq!(texts(&ev.rel(&select(vec![count()], vec![col(0), col(3)]), &[]).unwrap()), ["m|3", "n|1"]);
+        // SELECT c0, c1, count(*): c1 is 1 and 0 (and 1.0) in group m.
+        let bare = |r: Result<Vec<Row>, Error>| matches!(r, Err(e) if e.starts_with("bare column"));
+        assert!(bare(ev.rel(&select(vec![count()], vec![col(0), col(1), col(3)]), &[])));
+        // SELECT c0, c2, min(c1), count(*): the row min() chose.
+        let min = AggCall { f: AggFn::Min, arg: Some(col(1)), sep: None, distinct: false, total: Total::InputOrder };
+        assert_eq!(texts(&ev.rel(&select(vec![min.clone(), count()], vec![col(0), col(2), col(3), col(4)]), &[]).unwrap()), ["m|c|0|3", "n|b|2|1"]);
+        // HAVING reads a bare column too: c2 is a and c in group m.
+        let having = Rel::Project {
+            input: Box::new(Rel::Filter { input: Box::new(Rel::Aggregate { input: Box::new(scan(0, 3)), keys: vec![col(0)], aggs: vec![count()] }), pred: Expr::IsNull { e: Box::new(col(2)), negated: true } }),
+            exprs: vec![col(0)],
+            schema: vec![Column::new("c0", Aff::None)],
+        };
+        assert!(bare(ev.rel(&having, &[])));
         let empty = |_: &RepoSource| rows(vec![]);
         let ev = Evaluator::new(&empty);
         let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![], aggs: vec![AggCall { f: AggFn::Count, arg: Some(col(1)), sep: None, distinct: false, total: Total::InputOrder }] };
@@ -1364,8 +1509,13 @@ mod tests {
         assert!(tie(run(vec![vec![V::Int(2), t("a")], vec![V::Int(2), t("b")], vec![V::Int(1), t("c")]], &sort(Some(1)))));
         assert!(run(vec![vec![V::Int(1), t("a")], vec![V::Int(1), t("a")], vec![V::Int(2), t("b")]], &sort(Some(1))).is_ok());
         assert!(run(vec![vec![V::Int(1), t("a")], vec![V::Int(1), t("b")]], &sort(None)).is_ok());
-        // group_concat(v) GROUP BY g over (SELECT g, v FROM s ORDER BY k): ties within a group on k.
-        let concat = |input: Rel<RepoSource>| Rel::Aggregate { input: Box::new(input), keys: vec![col(0)], aggs: vec![AggCall { f: AggFn::GroupConcat, arg: Some(col(1)), sep: None, distinct: false, total: Total::Checked }] };
+        // SELECT g, group_concat(v) … GROUP BY g over (SELECT g, v FROM s ORDER BY k): ties within
+        // a group on k.
+        let concat = |input: Rel<RepoSource>| Rel::Project {
+            input: Box::new(Rel::Aggregate { input: Box::new(input), keys: vec![col(0)], aggs: vec![AggCall { f: AggFn::GroupConcat, arg: Some(col(1)), sep: None, distinct: false, total: Total::Checked }] }),
+            exprs: vec![col(0), col(2)],
+            schema: vec![Column::new("g", Aff::None), Column::new("c", Aff::None)],
+        };
         let sorted = || Rel::Project {
             input: Box::new(Rel::Sort { input: Box::new(scan(0, 3)), keys: vec![(1, false)], limit: None, offset: None, total: Total::Checked }),
             exprs: vec![col(0), col(2)],
@@ -1373,7 +1523,7 @@ mod tests {
         };
         assert!(tie(run(vec![vec![t("g"), V::Int(1), t("x")], vec![t("g"), V::Int(1), t("y")]], &concat(sorted()))));
         let ok = run(vec![vec![t("g"), V::Int(2), t("x")], vec![t("g"), V::Int(1), t("y")], vec![t("h"), V::Int(1), t("z")]], &concat(sorted())).unwrap();
-        assert_eq!(texts(&ok), ["g|x|y,x", "h|z|z"]);
+        assert_eq!(texts(&ok), ["g|y,x", "h|z"]);
         // No Sort below: input order, so any two distinct rows of a group tie.
         assert!(tie(run(vec![vec![t("g"), t("x")], vec![t("g"), t("y")]], &concat(scan(0, 2)))));
         assert!(run(vec![vec![t("g"), t("x")], vec![t("g"), t("x")], vec![t("h"), t("y")]], &concat(scan(0, 2))).is_ok());
@@ -1386,5 +1536,328 @@ mod tests {
         assert!(sv::printf("%q", &[]).is_err());
         let e: Expr<RepoSource> = Expr::Func(Func::JsonArray, vec![Expr::Lit(Lit::Text("a".into())), Expr::Lit(Lit::Int(1)), Expr::Lit(Lit::Null)]);
         assert_eq!(sv::to_text(&eval_scalar(&e, &[], &[]).unwrap()).unwrap().as_ref(), r#"["a",1,null]"#);
+    }
+}
+
+/// The front end's typing and the reference's evaluation against the SQLite the native engine
+/// bundles (3.53.2, rusqlite 0.40.2 `bundled`), on the decider's four rulings: (a) the `UNION`
+/// representative, (b) BLOB affinity of untyped columns, (c) aggregate bare columns, (d) compound
+/// column affinity (`sqlite3SubqueryColumnTypes`) and the REAL read conversion. Rows compare as
+/// sorted multisets with their storage classes rendered (`I2` and `R2` differ).
+#[cfg(test)]
+mod sqlite_differential {
+    use super::*;
+    use crate::front::sql::{Catalog, lower_query, lower_stage};
+    use crate::sql::parse;
+    use rusqlite::types::Value as Sv;
+
+    fn render(v: &V) -> String {
+        match v {
+            V::Null => "N".into(),
+            V::Int(i) => format!("I{i}"),
+            V::Real(f) => format!("R{f}"),
+            V::Text(s) => format!("T{s}"),
+        }
+    }
+
+    fn sorted(rows: &[Row]) -> Vec<String> {
+        let mut v: Vec<String> = rows.iter().map(|r| r.iter().map(render).collect::<Vec<_>>().join(",")).collect();
+        v.sort();
+        v
+    }
+
+    /// Tables in SQLite and the same tables as the reference reads them (`AnySource::Input(i)`,
+    /// rows stored under their declared affinity).
+    struct Db {
+        conn: rusqlite::Connection,
+        catalog: Catalog,
+        tables: Vec<Vec<Row>>,
+    }
+
+    impl Db {
+        fn new() -> Db {
+            Db { conn: rusqlite::Connection::open_in_memory().unwrap(), catalog: Catalog::default(), tables: Vec::new() }
+        }
+
+        fn table(&mut self, name: &str, cols: &[(&str, &str)], rows: &[Vec<V>]) {
+            let decl = cols.iter().map(|(c, t)| format!("{c} {t}")).collect::<Vec<_>>().join(", ");
+            self.conn.execute(&format!("CREATE TABLE {name}({decl})"), []).unwrap();
+            let marks = (1..=cols.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ");
+            for r in rows {
+                let sql_v = |v: &V| match v {
+                    V::Null => Sv::Null,
+                    V::Int(i) => Sv::Integer(*i),
+                    V::Real(f) => Sv::Real(*f),
+                    V::Text(s) => Sv::Text(s.to_string()),
+                };
+                self.conn.execute(&format!("INSERT INTO {name} VALUES ({marks})"), rusqlite::params_from_iter(r.iter().map(sql_v))).unwrap();
+            }
+            let schema: Vec<Column> = cols.iter().map(|(c, t)| Column::new(c, Aff::of_type(t))).collect();
+            let stored = rows.iter().map(|r| r.iter().zip(&schema).map(|(v, c)| sv::apply_affinity(v.clone(), c.aff)).collect()).collect();
+            self.catalog.insert(name, AnySource::Input(self.tables.len() as u32), schema);
+            self.tables.push(stored);
+        }
+
+        fn sqlite(&self, sql: &str) -> Result<Vec<String>, String> {
+            let mut stmt = self.conn.prepare(sql).map_err(|e| e.to_string())?;
+            let w = stmt.column_count();
+            let rows: Vec<Row> = stmt
+                .query_map([], |row| {
+                    Ok((0..w)
+                        .map(|i| match row.get::<_, Sv>(i).unwrap() {
+                            Sv::Null => V::Null,
+                            Sv::Integer(i) => V::Int(i),
+                            Sv::Real(f) => V::Real(f),
+                            Sv::Text(s) => V::text(&s),
+                            Sv::Blob(_) => unreachable!("no blob values"),
+                        })
+                        .collect())
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<_, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(sorted(&rows))
+        }
+
+        /// `CREATE TABLE s AS <sql>`, read back.
+        fn sqlite_ctas(&self, sql: &str) -> Result<Vec<String>, String> {
+            self.conn.execute(&format!("CREATE TABLE ctas AS {sql}"), []).map_err(|e| e.to_string())?;
+            let r = self.sqlite("SELECT * FROM ctas");
+            self.conn.execute("DROP TABLE ctas", []).unwrap();
+            r
+        }
+
+        fn source(&self) -> impl Fn(&AnySource) -> Result<Vec<Row>, Error> + '_ {
+            |s| match s {
+                AnySource::Input(i) => Ok(self.tables[*i as usize].clone()),
+                s => Err(format!("unexpected source {s:?}")),
+            }
+        }
+
+        /// `sql` lowered as a statement, or (`stage`) as a stage.
+        fn lower(&self, sql: &str, stage: bool) -> Result<(Rel<AnySource>, Vec<Column>), String> {
+            let q = parse::parse_query(sql)?;
+            if stage { lower_stage(&q, &self.catalog, &mut 0) } else { lower_query(&q, &self.catalog, &mut 0) }
+        }
+
+        fn reference(&self, sql: &str) -> Result<Vec<String>, String> {
+            let (rel, _) = self.lower(sql, false)?;
+            let src = self.source();
+            Ok(sorted(&Evaluator::new(&src).rel(&rel, &[])?))
+        }
+
+        /// `sql` as a stage: stored with its columns' affinities (CTAS).
+        fn reference_stage(&self, sql: &str) -> Result<Vec<String>, String> {
+            let (rel, schema) = self.lower(sql, true)?;
+            let (done, refusal) = evaluate_stages(&[Stage { name: "s".into(), schema, def: StageDef::Query { rel } }], |_| None, &self.source());
+            match refusal {
+                Some(e) => Err(e),
+                None => Ok(sorted(&done[0])),
+            }
+        }
+    }
+
+    /// The decider's probes, one per rule, with SQLite 3.53.2's rows written out: the reference
+    /// returns them (or, for a bare column SQLite reads from an arbitrary row, refuses).
+    #[test]
+    fn rulings_probes() {
+        let mut db = Db::new();
+        let (i, r, t) = (V::Int, V::Real, V::text);
+        db.table("t", &[("a", "")], &[vec![i(2)], vec![r(2.0)], vec![r(1.0)], vec![i(1)]]);
+        db.table("ai", &[("v", "INT")], &[vec![i(3)], vec![i(2)], vec![r(0.5)], vec![i(2)]]);
+        db.table("bb", &[("k", "REAL"), ("v", "TEXT")], &[vec![V::Null, t("1")], vec![r(10.0), t("2")], vec![r(2.0), t("3")]]);
+        db.table("r", &[("v", "REAL")], &[vec![r(2.0)]]);
+        db.table("nn", &[("k", "NUMERIC")], &[vec![i(1)], vec![i(4)], vec![t("b")]]);
+        db.table("u", &[("k", "")], &[vec![i(1)], vec![i(4)], vec![t("b")]]);
+        db.table("tt", &[("s", "TEXT"), ("i", "INT")], &[vec![t("1"), i(1)]]);
+        db.table("g", &[("g", ""), ("k", ""), ("v", "")], &[vec![i(1), t("a"), V::Null], vec![i(1), t("c"), V::Null], vec![i(2), t("x"), i(5)], vec![i(2), t("z"), i(3)], vec![i(2), t("w"), i(3)]]);
+        let probes: &[(&str, &str)] = &[
+            // (a) The right arm's first row of a class it holds, else the left side's.
+            ("SELECT 2 UNION SELECT 2.0", "R2"),
+            ("SELECT 2.0 UNION SELECT 2", "I2"),
+            ("SELECT a FROM t UNION SELECT a FROM t", "I2;R1"),
+            ("SELECT v FROM ai UNION ALL SELECT k FROM bb UNION SELECT v FROM bb", "I3;I2;N;R0.5;R10;T1;T2;T3"),
+            ("SELECT v FROM ai UNION SELECT k FROM bb UNION SELECT a FROM t ORDER BY 1", "N;R0.5;I2;R1;I3;R10"),
+            // (b) TEXT against BLOB (an untyped column, through a CTE, a scalar subquery, IN
+            // (SELECT), CASE) converts nothing; against an expression it converts.
+            ("SELECT s = k FROM tt, u WHERE u.k = 1", "I0"),
+            ("SELECT s = k + 0 FROM tt, u WHERE u.k = 1", "I1"),
+            ("WITH c AS (SELECT k FROM u) SELECT s = c.k FROM tt, c WHERE c.k = 1", "I0"),
+            ("SELECT s = (SELECT k FROM u) FROM tt", "I0"),
+            ("SELECT s IN (SELECT k FROM u) FROM tt", "I0"),
+            ("SELECT CASE s WHEN (SELECT k FROM u) THEN 1 ELSE 0 END FROM tt", "I0"),
+            ("SELECT s IN (SELECT k + 0 FROM u) FROM tt", "I1"),
+            // (c) One min()/max() (others alongside): its row; all NULL: the group's last.
+            ("SELECT g, k, min(v) FROM g GROUP BY g", "I1,Tc,N;I2,Tz,I3"),
+            ("SELECT g, k, count(*), max(v) FROM g GROUP BY g", "I1,Tc,I2,N;I2,Tx,I3,I5"),
+            ("SELECT k, min(v) FROM g WHERE g = 9", "N,N"),
+            // (d) Compound columns: arms walked past none, demoted to BLOB, REAL read converted.
+            ("SELECT x FROM (SELECT v AS x FROM r UNION ALL SELECT k FROM nn)", "R2;R1;R4;Tb"),
+            ("SELECT x FROM (SELECT v AS x FROM r UNION ALL SELECT k FROM u)", "R2;I1;I4;Tb"),
+            ("SELECT x FROM (SELECT 1 AS x UNION ALL SELECT v FROM r)", "R1;R2"),
+            ("SELECT x FROM (SELECT 1 AS x UNION ALL SELECT 'a' UNION ALL SELECT v FROM r)", "I1;Ta;R2"),
+            ("SELECT x FROM (SELECT 1 AS x UNION ALL SELECT k FROM u UNION ALL SELECT v FROM r)", "I1;I1;I4;Tb;R2"),
+            ("WITH c AS (SELECT 1 AS x UNION ALL SELECT v FROM r) SELECT x FROM c", "R1;R2"),
+            ("SELECT x, x = '3' FROM (SELECT CAST(v AS REAL) AS x FROM r UNION ALL SELECT 3)", "R2,I0;I3,I1"),
+            ("SELECT (SELECT 1 UNION ALL SELECT v FROM r)", "I1"),
+            ("SELECT '2' IN (SELECT 1 UNION ALL SELECT v FROM r)", "I1"),
+            ("SELECT '2' IN (SELECT v FROM r UNION ALL SELECT 1)", "I0"),
+            ("WITH RECURSIVE w(x, n) AS (SELECT v, 0 FROM r UNION ALL SELECT 1, n + 1 FROM w WHERE n < 2) SELECT x, n FROM w", "R2,I0;R1,I1;R1,I2"),
+            ("WITH RECURSIVE w(x, n) AS (SELECT 1, 0 UNION ALL SELECT v, n + 1 FROM w, r WHERE n < 2) SELECT x, n FROM w", "R1,I0;R2,I1;R2,I2"),
+            ("WITH RECURSIVE w(x, n) AS (SELECT s, 0 FROM tt UNION ALL SELECT x, n + 1 FROM w WHERE n < 1) SELECT x, x = 1 + 0 FROM w", "T1,I1;T1,I1"),
+            ("WITH RECURSIVE w(x, n) AS (SELECT s, 0 FROM tt UNION ALL SELECT k, n + 1 FROM w, u WHERE n < 1 AND u.k = 1) SELECT x, x = 1 + 0 FROM w", "T1,I0;I1,I1"),
+        ];
+        let mut failures = Vec::new();
+        for (q, want) in probes {
+            let mut want: Vec<String> = want.split(';').map(str::to_owned).collect();
+            want.sort();
+            let sqlite = db.sqlite(q).unwrap();
+            assert_eq!(sqlite, want, "SQLite: {q}");
+            let got = db.reference(q);
+            if got.as_ref() != Ok(&want) {
+                failures.push(format!("{q}: reference {got:?}, SQLite {want:?}"));
+            }
+        }
+        // (c) Without one min()/max(), a bare column whose rows disagree in a group is refused.
+        for q in ["SELECT g, k FROM g GROUP BY g", "SELECT g, k, min(v), max(v) FROM g GROUP BY g", "SELECT g FROM g GROUP BY g HAVING k > 'a'"] {
+            if !matches!(db.reference(q), Err(e) if e.starts_with("bare column")) {
+                failures.push(format!("{q}: not refused"));
+            }
+        }
+        // (d) CTAS: a compound column typed REAL stores 1 as 1.0; a FLEXNUM column is refused.
+        assert_eq!(db.sqlite_ctas("SELECT 1 AS x UNION ALL SELECT v FROM r").unwrap(), ["R1", "R2"]);
+        if db.reference_stage("SELECT 1 AS x UNION ALL SELECT v FROM r") != Ok(vec!["R1".into(), "R2".into()]) {
+            failures.push("CTAS SELECT 1 UNION ALL SELECT v FROM r".into());
+        }
+        if !matches!(db.lower("SELECT CAST(v AS INT) AS x FROM r UNION ALL SELECT 4.0", true), Err(e) if e.contains("FLEXNUM")) {
+            failures.push("FLEXNUM stage column not refused".into());
+        }
+        assert!(failures.is_empty(), "{} probes differ:\n{}", failures.len(), failures.join("\n"));
+    }
+
+    /// Which result a query of a rule may give: SQLite's rows, or (`Bare`) SQLite's rows or the
+    /// bare-column refusal, or (`Stage`) SQLite's CTAS rows or the FLEXNUM refusal.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Expect {
+        Exact,
+        Bare,
+        Stage,
+    }
+
+    /// Random tables `a`, `b` (columns `k`, `v`, `p` of random declared types, none included;
+    /// values mixing integers, integral and fractional reals, numeric and other texts, NULLs);
+    /// per rule, queries whose reference rows must be SQLite's.
+    #[test]
+    fn rulings_match_sqlite() {
+        use Expect::*;
+        let queries: &[(&str, Expect, &str)] = &[
+            ("a", Exact, "SELECT v FROM a UNION SELECT v FROM b"),
+            ("a", Exact, "SELECT k, v FROM a UNION SELECT v, k FROM b UNION SELECT p, v FROM a"),
+            ("a", Exact, "SELECT v FROM a UNION SELECT k FROM b ORDER BY 1"),
+            ("a", Exact, "SELECT v FROM a UNION ALL SELECT k FROM b UNION SELECT v FROM b"),
+            ("a", Exact, "SELECT k FROM b UNION ALL SELECT v FROM a UNION SELECT k FROM b ORDER BY 1 DESC"),
+            ("a", Exact, "SELECT v FROM a UNION SELECT v FROM a WHERE k IS NOT NULL"),
+            ("a", Exact, "SELECT k + 0 FROM a UNION SELECT v FROM b UNION SELECT CAST(p AS REAL) FROM a"),
+            ("b", Exact, "WITH t AS (SELECT v, v || '' AS s, k + 0 AS n FROM a) SELECT t.v, b.v FROM t JOIN b ON b.v = t.s"),
+            ("b", Exact, "WITH t AS (SELECT v FROM a) SELECT t.v, b.k FROM t JOIN b ON b.k = t.v"),
+            ("b", Exact, "SELECT a.k, b.k FROM a, b WHERE a.v = b.k"),
+            ("b", Exact, "SELECT a.k, b.k FROM a, b WHERE a.v = b.k + 0"),
+            ("b", Exact, "SELECT a.k FROM a WHERE a.v IN (SELECT k FROM b)"),
+            ("b", Exact, "SELECT a.k FROM a WHERE a.v IN (SELECT k || '' FROM b)"),
+            ("b", Exact, "SELECT a.k, b.k, CASE a.v WHEN b.k THEN 1 ELSE 0 END FROM a, b"),
+            ("b", Exact, "SELECT a.k, b.k FROM a, b WHERE CAST(a.v AS TEXT) = b.v"),
+            ("b", Exact, "SELECT a.k, b.k FROM a, b WHERE a.v = b.v || ''"),
+            ("b", Exact, "SELECT a.k, a.v = (SELECT b.v FROM b) FROM a"),
+            ("b", Exact, "SELECT a.k, a.v IN (SELECT k FROM b UNION ALL SELECT v FROM b) FROM a"),
+            ("b", Exact, "SELECT a.k, a.v = (SELECT k FROM b UNION ALL SELECT v FROM b) FROM a"),
+            ("b", Exact, "SELECT a.k, a.v IN ('1', 1, 2.0, 'a') FROM a"),
+            ("c", Exact, "SELECT a.p, a.k, min(a.v) FROM a GROUP BY a.p"),
+            ("c", Exact, "SELECT a.p, a.k, max(a.v), count(*) FROM a GROUP BY a.p"),
+            ("c", Exact, "SELECT a.k, a.v, min(a.k) FROM a"),
+            ("c", Exact, "SELECT b.p, b.v, max(b.k), sum(b.k) FROM b GROUP BY b.p HAVING max(b.k) IS NOT NULL"),
+            ("c", Bare, "SELECT a.v, count(*) FROM a GROUP BY a.v"),
+            ("c", Bare, "SELECT a.p, a.k FROM a GROUP BY a.p"),
+            ("c", Bare, "SELECT a.p, a.k, min(a.v), max(a.v) FROM a GROUP BY a.p"),
+            ("c", Bare, "SELECT k || ':' || v, count(*) FROM a GROUP BY k || ':' || v"),
+            ("c", Bare, "SELECT a.p, count(*) FROM a GROUP BY a.p HAVING a.k IS NOT NULL"),
+            ("c", Bare, "SELECT a.k, count(*) FROM a"),
+            ("d", Exact, "SELECT x FROM (SELECT v AS x FROM a UNION ALL SELECT k FROM b)"),
+            ("d", Exact, "SELECT x, x = '1', x = 1 FROM (SELECT v AS x FROM a UNION ALL SELECT k FROM b)"),
+            ("d", Exact, "SELECT x FROM (SELECT 1 AS x UNION ALL SELECT v FROM a)"),
+            ("d", Exact, "SELECT x FROM (SELECT NULL AS x UNION ALL SELECT k FROM a UNION ALL SELECT 2)"),
+            ("d", Exact, "WITH t AS (SELECT k AS x FROM a UNION SELECT v FROM b) SELECT x, x = '1', x = 1 + 0 FROM t"),
+            ("d", Exact, "SELECT t.x, b.v FROM (SELECT v AS x FROM a UNION ALL SELECT 'a' UNION ALL SELECT k FROM b) AS t, b WHERE t.x = b.v"),
+            ("d", Exact, "SELECT x, x = '1' FROM (SELECT CAST(v AS REAL) AS x FROM a UNION ALL SELECT k FROM b)"),
+            ("d", Exact, "SELECT x, x = b.v FROM (SELECT CAST(k AS INT) AS x FROM a UNION ALL SELECT 4.0) AS t, b"),
+            ("d", Exact, "SELECT x FROM (SELECT k + 0 AS x FROM a UNION ALL SELECT v FROM b UNION ALL SELECT p FROM a)"),
+            ("d", Exact, "SELECT x FROM (SELECT x FROM (SELECT v AS x FROM a UNION ALL SELECT k FROM b) WHERE x IS NOT NULL)"),
+            ("d", Exact, "WITH RECURSIVE w(x, n) AS (SELECT v, 0 FROM a UNION ALL SELECT x, n + 1 FROM w WHERE n < 2) SELECT x, n, x = '1', x = 1 + 0 FROM w"),
+            ("d", Exact, "WITH RECURSIVE w(x, n) AS (SELECT 1, 0 UNION ALL SELECT a.v, n + 1 FROM w, a WHERE n < 1) SELECT x, n, x = '1' FROM w"),
+            ("d", Exact, "WITH RECURSIVE w(x, y, n) AS (SELECT k, v, 0 FROM a UNION ALL SELECT y, x, n + 1 FROM w WHERE n < 2) SELECT x, y, n, x = 1 + 0, y = 1 + 0 FROM w"),
+            ("d", Exact, "WITH RECURSIVE w(x, n) AS (SELECT k, 0 FROM a UNION SELECT b.v, n + 1 FROM w, b WHERE n < 2) SELECT x, n FROM w"),
+            ("d", Stage, "SELECT v AS x FROM a UNION ALL SELECT k FROM b"),
+            ("d", Stage, "SELECT 1 AS x UNION ALL SELECT v FROM a"),
+            ("d", Stage, "SELECT k AS x, v AS y FROM a UNION SELECT v, 'z' FROM b"),
+            ("d", Stage, "SELECT CAST(v AS INT) AS x FROM a UNION ALL SELECT 4.0"),
+            ("d", Stage, "SELECT v AS x, v || '' AS y, CAST(k AS REAL) AS z FROM a"),
+        ];
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let types = ["", "INT", "TEXT", "REAL", "NUMERIC"];
+        let mut failures: Vec<String> = Vec::new();
+        let (mut exact, mut refused) = (0usize, 0usize);
+        for round in 0..120 {
+            let mut db = Db::new();
+            let mut desc = String::new();
+            for name in ["a", "b"] {
+                let decl: Vec<&str> = (0..3).map(|_| types[rnd(5) as usize]).collect();
+                let value = |rnd: &mut dyn FnMut(u64) -> u64| match rnd(9) {
+                    0 => V::Null,
+                    1..=3 => V::Int(rnd(4) as i64),
+                    4 => V::Real(rnd(4) as f64),
+                    5 => V::Real(rnd(8) as f64 / 2.0),
+                    6 => V::text(&rnd(4).to_string()),
+                    7 => V::text(&format!("{}.5", rnd(3))),
+                    _ => V::text(["a", "b", "", "x1", "1e0", " 2"][rnd(6) as usize]),
+                };
+                let rows: Vec<Row> = (0..rnd(7))
+                    .map(|_| {
+                        let p = [V::Null, V::Int(1), V::text("1"), V::Real(1.0), V::text("p")][rnd(5) as usize].clone();
+                        vec![value(&mut rnd), value(&mut rnd), p]
+                    })
+                    .collect();
+                desc.push_str(&format!("{name}{decl:?} {:?}; ", rows.iter().map(|r| r.iter().map(render).collect::<Vec<_>>().join(",")).collect::<Vec<_>>()));
+                db.table(name, &[("k", decl[0]), ("v", decl[1]), ("p", decl[2])], &rows);
+            }
+            for (rule, expect, q) in queries {
+                let (want, got) = match expect {
+                    Stage => (db.sqlite_ctas(q), db.reference_stage(q)),
+                    _ => (db.sqlite(q), db.reference(q)),
+                };
+                let want = want.unwrap_or_else(|e| panic!("SQLite: {q}: {e}"));
+                let ok = match (&got, expect) {
+                    (Ok(g), _) => *g == want,
+                    (Err(e), Bare) => e.starts_with("bare column"),
+                    (Err(e), Stage) => e.contains("FLEXNUM"),
+                    (Err(_), Exact) => false,
+                };
+                match &got {
+                    Ok(_) => exact += 1,
+                    Err(_) => refused += 1,
+                }
+                if !ok {
+                    failures.push(format!("({rule}) round {round}: {q}\n  reference {got:?}\n  SQLite    {want:?}\n  {desc}"));
+                }
+            }
+        }
+        let by_rule = |r: &str| failures.iter().filter(|f| f.starts_with(&format!("({r})"))).count();
+        assert!(failures.is_empty(), "{} mismatches (a {}, b {}, c {}, d {}); first:\n{}", failures.len(), by_rule("a"), by_rule("b"), by_rule("c"), by_rule("d"), failures.iter().take(6).cloned().collect::<Vec<_>>().join("\n"));
+        // The bare-column queries are compared, not only refused.
+        assert!(exact > refused, "compared {exact}, refused {refused}");
     }
 }

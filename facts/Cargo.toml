@@ -18,3 +18,7 @@ serde_json = "1.0"
 globset = "=0.4.20"
 regex = "=1.13.1"
 blake3 = "1"
+
+[dev-dependencies]
+# The bundled SQLite (3.53.2) the native engine runs: the reference's differential tests.
+rusqlite = { version = "=0.40.2", features = ["bundled"] }

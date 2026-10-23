@@ -311,7 +311,7 @@ impl Views {
     fn lower(&mut self, sql: &'static str, stages: &mut Vec<Stage<AnySource>>, next_local: &mut LocalId) -> Result<(&'static str, u32), String> {
         let mut last = Err("empty view".to_string());
         for (name, text) in view_stages(sql) {
-            let (rel, schema) = lower_sql(&text, &self.catalog, next_local).map_err(|e| format!("views/{name}: {e}"))?;
+            let (rel, schema) = lower_stage_sql(&text, &self.catalog, next_local).map_err(|e| format!("views/{name}: {e}"))?;
             let id = stages.len() as u32;
             self.catalog.insert(name, AnySource::Stage(id), schema.clone());
             stages.push(Stage { name: format!("views/{name}"), schema, def: StageDef::Query { rel } });
@@ -334,7 +334,7 @@ impl Views {
             Ok(list.to_string().replace('\'', "''"))
         };
         let scope_sql = format!("SELECT 'include' AS kind, value AS glob FROM json_each('{}') UNION ALL SELECT 'exclude', value FROM json_each('{}')", globs("include")?, globs("exclude")?);
-        let (rel, schema) = lower_sql(&scope_sql, &self.catalog, next_local).map_err(|e| format!("views/rule_scope: {e}"))?;
+        let (rel, schema) = lower_stage_sql(&scope_sql, &self.catalog, next_local).map_err(|e| format!("views/rule_scope: {e}"))?;
         self.catalog.insert("rule_scope", AnySource::Stage(stages.len() as u32), schema.clone());
         stages.push(Stage { name: "views/rule_scope".into(), schema, def: StageDef::Query { rel } });
         let ("module_of", id) = self.lower(MODULE_PATH_SQL, stages, next_local)? else { return Err("module_path.sql must end with the stage module_of".into()) };
@@ -540,6 +540,12 @@ fn closure_stages(v: &Json) -> Result<Vec<ClosureStage>, String> {
 fn lower_sql(text: &str, catalog: &Catalog, next_local: &mut LocalId) -> Result<(Rel<AnySource>, Vec<Column>), String> {
     let q = parse::parse_query(text).map_err(|e| format!("SQL: {e}"))?;
     sql::lower_query(&q, catalog, next_local).map_err(|e| format!("SQL: {e}"))
+}
+
+/// A stage's query (`sql::lower_stage`: stored as CTAS stores it).
+fn lower_stage_sql(text: &str, catalog: &Catalog, next_local: &mut LocalId) -> Result<(Rel<AnySource>, Vec<Column>), String> {
+    let q = parse::parse_query(text).map_err(|e| format!("SQL: {e}"))?;
+    sql::lower_stage(&q, catalog, next_local).map_err(|e| format!("SQL: {e}"))
 }
 
 /// The front end over one document under `config`.
@@ -842,7 +848,7 @@ fn relational(f: &mut Front, ctx: &mut Ctx<'_>, id: &str, r: &Json, viol: Violat
                 let schema = vec![Column::new("__path", Aff::Text), Column::new("root", Aff::None), Column::new("node", Aff::None)];
                 return Ok(Stage { name: name.clone(), schema, def: StageDef::Reach { roots, edges: edges.map(|e| e.0), graph } });
             }
-            let (rel, schema) = lower_sql(so.get("query").and_then(Json::as_str).ok_or("stage query")?, &catalog, &mut f.next_local)?;
+            let (rel, schema) = lower_stage_sql(so.get("query").and_then(Json::as_str).ok_or("stage query")?, &catalog, &mut f.next_local)?;
             let Some(d) = so.get("deferred").and_then(Json::as_object) else {
                 return Ok(Stage { name: name.clone(), schema, def: StageDef::Query { rel } });
             };

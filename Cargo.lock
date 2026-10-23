@@ -2663,6 +2663,7 @@ dependencies = [
  "blake3",
  "globset",
  "regex",
+ "rusqlite",
  "serde",
  "serde_json",
 ]
