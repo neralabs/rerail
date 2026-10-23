@@ -82,12 +82,17 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 
 - **I1 pinned to SQLite 3.53.2** (what native bundles). Rulings on S8b's probes: no-affinity (BLOB) columns compare without conversion against TEXT; `UNION`'s representative follows 3.53.2 (first row of the class in the right-most arm holding it); bare `GROUP BY` columns are exact only when FD-determined by the key or taken from the lone min()/max() row, otherwise `Total::Checked` (runtime refusal on distinct values within a group), never "first row" emulation; compound FROM-subquery/CTE columns take 3.53.2's affinity rule. Reference evaluator and IR typing must agree with the engine (S8b owns `reference.rs` and `front/sql.rs` for this; S3-5 informed because the generator compiles from the typing).
 
+- **G2.3 restated at the measured floor.** After S7/S7b/S8/S8b the generic path measures 89.0–90.7 s CPU on the batch-6 corpus (decider's runs at load ≤ 3.4; S8b's quiet pair 89.0 / 89.6 s with the flat-id fix), parity 173/173, with every remaining cost scattered (index builds 13%, `descendants` seeds select, `reach`'s distinct, `ownership`'s per-row probes; R19 gave no gain). That is 23% of native and 10.0 ms per file mean for the 10 heaviest rules, which is the per-file figure the gate was defined to express. G2.3 is recorded as **met at 90 s** once S8c's gated runs confirm it; the stretch (≤ 40 s) stays a Phase 3 item for the cold corpus only, since per-edit cost is the product target.
+- **Reference-ahead discipline:** the reference evaluator is truth (I1); when a ruling lands in the reference first, the engine must catch up before merge, and `a-vs-reference` is the check. S8b's branch is in that state (reference has (a)–(d), engine (a),(b)); S8cEngine finishes (c),(d) before the gate.
+
 ## Open questions
 
 - Which batch-6 rules depend on facts outside the syntactic schema: answered by the census, 41 of 775 units (decoded strings, f-string and annotation sub-grammars, line splitting); the annotation classifier is the only one that blocks a recorded call.
 - Divergence of the 47 worktrees from a common base (B reports it; it sets per-worktree state).
 
 ## Log
+
+- S8bTree done (1 h 38 min): R18 tree closure (−1 s on `descendants`), R19 no gain, flat ids for text kinds (`quality-conditional-1` regression fixed), engine rulings (a),(b); reference and IR typing rulings (a)–(d) with a random differential against 3.53.2 (1,057 mismatches before the fix). Not gated (budget). S8cEngine launched to finish engine (c),(d) and gate.
 
 - S8PerFile done (2 h 19 min): levers 1 and 2a; merged `8e712ad65`, gated 28/28, 26/26 by decider; quiet timing 90.2 s median. S8b (tree operators, SQLite rulings) and S3-5 (decorrelation rewrites, exports through the engine, protocol rows) launched.
 

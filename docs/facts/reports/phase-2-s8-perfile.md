@@ -80,3 +80,41 @@ Neither shows in the corpus (parity 173/173), but both are exactness gaps for th
 3. **Then the tree operators** (§ 5), each as a registered rewrite with a mutant (27/R18 onward from S5Gate-3), measured with `tools/ab.sh base l2d <new>` (waits for load < 6).
 4. Owed rows: a third G2.3 run; `pattern-check --shard k/8` on two shards; G2.5 memory from the L2d runs' `stderr.txt`; `just facts-gate --mutants --only facts-a-unit,a-subset,a-unrewritten` once S5's gate (with `facts-a-unit`) is on integration.
 5. Tools: `~/rerail-bench/facts/phase-2/s8-perfile/tools/{ab.sh,sub.sh,prof.sh,residue.py,sample_incl.py,sample_callers.py}`.
+
+## 9. S8b (wave 5): tree operators R18/R19, SQLite rulings — status at hand-off
+
+Branch `Moti-Velz/facts-engine-s8b-tree`, worktree `.worktrees/s8b-tree`. Runs `~/rerail-bench/facts/phase-2/s8b-tree/runs/`, binaries `…/bin/facts-a-{base,s1,s2,s3,s4}` (base = integration `8e712ad65`). **G2.3 is not closed with margin; the gate was not run on this tree** (stopped at the request budget).
+
+### 9.1 Gate rows
+
+| Id | Target | Measured | Pass/fail | Run dir |
+|---|---|---|---|---|
+| G2.3 | ≤ 90 s CPU, 3 runs, margin | quiet pair (load 1.8–2.9): base 89.79 / 90.63 → s1 89.04 / 89.62; noisy window (1-min load 3.9–4.8, 15-min 10–11, a sibling compiling): s1 94.80 / 93.54, s3 95.81 / 94.20, s4 94.45 / 93.90 | **fail / not measured quietly**: the three final quiet runs were not taken | `20261023T063105`…`063230` (pair 1); `20261023T0729{12,41}`, `0730{11,40}`, `0731{08,36}` |
+| Parity | 173/173, 0/0/0 | 173/173, 0 FP/FN/failures on all 14 runs (base, s1, s2, s3, s4) | pass | `parity.json` per run |
+| R18/R19 differentials, mutants 27/29 | killed | `rewrite_tree_closure_equals_closure` fails under `FACTS_MUTANT=27`, `rewrite_walk_equals_levels` under `=29`; mutant 0: all 5 engine tests pass; 25/26 still killed by `key_cells_match_sqlite` | pass | `cargo test --release -p facts-a --features mutants --bin facts-a sql::engine` |
+| SQLite rulings 1, 2 (engine) | rows = SQLite 3.53.2 | `key_cells_match_sqlite` extended (untyped columns in `b`, 13 new statements); fails with the BLOB rule disabled (round 1, `CAST(a.v AS TEXT) = b.v`) and with first-seen / last-seen UNION representatives | pass | same command |
+| `facts-gate --mutants` | green | **not run** | open | — |
+| `pattern-check --shard 0/8, 1/8` | 0 mismatches | **not run** | open | — |
+
+### 9.2 Per-step A/B (s, mean of each pair; process CPU in the noisy window is within noise)
+
+| step | binary | change | stage effect (corpus, 4 threads) | CPU |
+|---|---|---|---|---|
+| 1 | s1 vs base | `Column::tid` takes the flat form for text kinds naming an existing symbol (`facts::lookup`, once per distinct text): `quality-conditional-1` is a repository clause whose spilled kinds are texts, so its ids fell back to lazy `Column::Tid` (diagnosed: 7 fallbacks on sub200, all in that clause) | sub200 1 thread, `quality-conditional-1` total 1.067 → 0.858 s (`ownership` 0.261 → 0.153, `returns` 0.063 → 0.032) | 90.21 → 89.33 (quiet pair) |
+| 2 | s3 vs s1 | R18 tree closure (+ the closure's lookup cache keyed by node key, not node class: `5`/`5.0` key differently under TEXT) | `descendants` 5.37 → 4.22 s | 94.17 → 95.00 (noisy) |
+| 3 | s3 | R19 reference walk | `ownership` 5.19 → 5.27 s: **no gain** (its cost is per-row probes and CASE conditions, which R19 keeps) | — |
+| 4 | s4 vs s3 | rulings 1, 2 | neutral | 95.00 → 94.18 (noisy) |
+
+### 9.3 What changed (`spikes/facts-a/src/sql/engine.rs`)
+
+- R18 `Exec::tree_walk`, R19 `Exec::walk` + `Column::Pick` (gathers over a pick compose), both behind `PCte::Recursive::tree` (= planner `rewrites`, off under `FACTS_REWRITES=0`); registry rows R18/R19 in `REWRITES.md` (mutants 27, 29; `mutant.rs`); SQLite pin 3.53.2 recorded in `REWRITES.md`'s header.
+- Ruling 1: planner tracks BLOB affinity (`ScopeItem::blob`, `PSelect/PQuery::out_blob`, `stored_blob`, `Planner::blob`); `blob_comparison_affinity` for comparisons, CASE operand, IN (SELECT).
+- Ruling 2: `Exec::body` UNION keeps, per class, the right-most arm's first row (SQLite 3.53.2; Python's 3.51 keeps the last), `Distinct::slot`.
+
+### 9.4 Resume notes (S8b)
+
+1. **Decider's extended ruling (2026-10-23) is only partly done.** Engine still owes (c) bare columns in aggregates: exact under one min()/max() (any aggregates alongside; the engine's current `lone_extremum` requires it to be the only aggregate) or FD-determined, else runtime refusal when a bare column takes two distinct values (class + value) in a group; and (d) compound FROM-subquery/CTE/CTAS column affinity (left-most arm's, BLOB when `m` disagrees per `sqlite3SubqueryColTypeAndCollation`, Int→Real on read under REAL), each with a differential vs SQLite 3.53.2 and a mutant (odd numbers 31+). 3.53.2 facts: `SELECT a, min(k), count(*), b … GROUP BY a` reads the min row; `SELECT x FROM (SELECT v AS x FROM r UNION ALL SELECT k FROM nn)` (r.v REAL, nn.k NUMERIC 1) → 1.0.
+2. Subagent `S8bTree.FactsTyping` was launched on the same worktree for (a)–(d) in `facts/src/reference.rs` and `facts/src/front/sql.rs` (commit prefix `s8b-facts:`, informs S3CrossFile-5); check its result/commit before building.
+3. Then: `just facts-gate --mutants` (a-vs-reference may flag the reference/engine rulings until FactsTyping lands), three quiet `run-repo.sh` runs, `pattern-check --shard 0/8` and `1/8`.
+4. Toward G2.3: R19 as built does not pay; the remaining measured costs are index builds (13% of sub200 samples; `Index::build`'s hash map is not pre-sized: rehash 11% of build time), the seeds select of `descendants` (`kind NOT IN (…)` compares symbol names per element), the `quality-contracts-1` reachability roots UNION (Distinct 43% of `reach`), and `ownership`'s per-row probes.
+5. Tools: `~/rerail-bench/facts/phase-2/s8b-tree/tools/{ab.sh,prof.sh,sample_incl.py,sample_children.py,sample_callers.py}`.
