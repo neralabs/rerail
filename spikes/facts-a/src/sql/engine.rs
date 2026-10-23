@@ -820,7 +820,15 @@ impl<'c> Planner<'c> {
                 Ok((Src::JsonEach(arg), schema, f.clone()))
             }
             Source::Sub(q) => {
-                let id = self.subquery(q)?;
+                // SQLite scoping: a FROM subquery sees the enclosing select's outer scopes, never
+                // this select's own (sibling) items, and runs with the enclosing select's outer
+                // frame (`table_of`), so its outer references count depth from there. The
+                // select's partial scope is hidden while the subquery is planned (mutant 22 keeps
+                // it visible).
+                let own = (!crate::mutant::on(22)).then(|| self.scopes.pop().expect("source_schema runs inside a select scope"));
+                let id = self.subquery(q);
+                self.scopes.extend(own);
+                let id = id?;
                 let schema = self.subs[id].q.out.clone();
                 Ok((Src::Derived(id), schema, String::new()))
             }
@@ -842,8 +850,8 @@ impl<'c> Planner<'c> {
     }
 
     fn select(&mut self, s: &parse::Select, order: &[(Expr, bool)]) -> Result<PSelect, String> {
-        // FROM items are resolved in the enclosing scope first (derived tables cannot see this
-        // select's own items), then pushed one by one.
+        // FROM items are pushed one by one; a derived table is planned with this select's scope
+        // hidden (`source_schema`), a lateral `json_each` sees the items before it.
         self.scopes.push(Scope { items: Vec::new(), aliases: Vec::new(), aggs: Vec::new(), wins: Vec::new(), allow_agg: false });
         let mut items = Vec::new();
         for fi in &s.from {
@@ -2996,5 +3004,60 @@ impl AggState {
             AggFn::Total => V::Real(self.sum_f.unwrap_or(self.sum_i.unwrap_or(0) as f64)),
             AggFn::JsonGroupArray => V::text(&format!("[{}]", self.json.unwrap_or_default())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(db: &Db<'_>, catalog: &Catalog, sql: &str) -> Result<Vec<Vec<V>>, String> {
+        let stmt = plan(sql, catalog)?;
+        let t = execute(db, &stmt)?;
+        Ok((0..t.len()).map(|r| t.row(r)).collect())
+    }
+
+    /// A FROM subquery's outer references resolve and evaluate as in SQLite: past the enclosing
+    /// select (whose FROM siblings it cannot see) to that select's outer rows, at every nesting
+    /// depth. Expected rows are SQLite 3.51's for the same statements and tables. Kills mutant 22.
+    #[test]
+    fn derived_table_correlation_follows_sqlite_scoping() {
+        let mut catalog = Catalog::new();
+        let mut db = Db::new("", "");
+        let schema = |cols: &[&str]| Schema { cols: cols.iter().map(|c| c.to_string()).collect(), affs: vec![Aff::None; cols.len()] };
+        let (t, i) = (V::text, V::Int);
+        for (name, s, rows) in [
+            ("d", schema(&["id"]), vec![vec![t("a")], vec![t("b")], vec![t("c")]]),
+            ("p", schema(&["sym", "name", "pos"]), vec![vec![t("a"), t("y"), i(2)], vec![t("a"), t("x"), i(1)], vec![t("b"), t("z"), i(1)]]),
+        ] {
+            catalog.insert(name.into(), s.clone());
+            db.tables.insert(name.into(), Rc::new(Table::from_rows(s, rows.into_iter().map(Vec::into_boxed_slice).collect())));
+        }
+        // `V` has no `PartialEq` (SQL equality is not structural); rows compare by their Debug text.
+        let per_id = |sql: &str| format!("{:?}", run(&db, &catalog, sql).unwrap());
+        let expect = |a: V, b: V, c: V| format!("{:?}", [[t("a"), a], [t("b"), b], [t("c"), c]]);
+        // The traits stage's shape (public_api_triples): a scalar subquery over a derived table
+        // correlated to the outermost row.
+        assert_eq!(
+            per_id("SELECT d.id, (SELECT json_group_array(name) FROM (SELECT name FROM p WHERE p.sym=d.id ORDER BY p.pos)) FROM d ORDER BY d.id"),
+            expect(t(r#"["x","y"]"#), t(r#"["z"]"#), t("[]")),
+        );
+        // The derived table as a later FROM item: earlier siblings do not shift its depth.
+        assert_eq!(
+            per_id("SELECT d.id, (SELECT count(*) FROM d AS s, (SELECT name FROM p WHERE p.sym = d.id) AS q WHERE s.id <> d.id) FROM d ORDER BY d.id"),
+            expect(i(4), i(2), i(0)),
+        );
+        // An unqualified name skips the invisible sibling `s` and binds the outer row.
+        assert_eq!(
+            per_id("SELECT d.id, (SELECT count(*) FROM d AS s, (SELECT name FROM p WHERE p.sym = id) AS q) FROM d ORDER BY d.id"),
+            expect(i(6), i(3), i(0)),
+        );
+        // Derived tables nested two deep.
+        assert_eq!(
+            per_id("SELECT d.id, (SELECT json_group_array(n) FROM (SELECT n FROM (SELECT p.name AS n, p.pos AS k FROM p WHERE p.sym = d.id) ORDER BY k)) FROM d ORDER BY d.id"),
+            expect(t(r#"["x","y"]"#), t(r#"["z"]"#), t("[]")),
+        );
+        // A FROM sibling is not in scope (SQLite: `no such column: s.id`).
+        assert!(plan("SELECT (SELECT count(*) FROM d AS s, (SELECT 1 FROM p WHERE p.sym = s.id)) FROM d", &catalog).is_err());
     }
 }
