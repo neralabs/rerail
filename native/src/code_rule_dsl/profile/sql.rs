@@ -1,6 +1,8 @@
 //! Complete executed-query trace. Callbacks only read SQLite counters; EXPLAIN runs later,
 //! outside callbacks and timed spans, while the connection's schema still exists.
 
+#[path = "sql/coverage.rs"]
+mod coverage;
 #[path = "sql/timing.rs"]
 mod timing;
 use rusqlite::{Connection, ffi};
@@ -120,6 +122,8 @@ struct State {
     sql_time: Timing,
     error: Option<String>,
     events: usize,
+    sql_started: usize,
+    sql_completed: usize,
     enabled: bool,
     writer: Option<BufWriter<File>>,
 }
@@ -212,6 +216,7 @@ impl Profiler {
                 (&mut *this as *mut Self).cast(),
             );
         }
+        coverage::record(&this.stem, "opened")?;
         Ok(this)
     }
 
@@ -304,7 +309,9 @@ impl Profiler {
         let data = json!({"version":1,"pid":std::process::id(),"events":state.events,
             "clock":"process monotonic nanoseconds","originUnixUs":ORIGIN.1,"cpuClock":if cfg!(unix) {"thread CPU"} else {"unavailable"},
             "writtenAtUnixMs":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis(),
-            "queries":state.queries,"error":state.error});
+            "queries":state.queries,"error":state.error,
+            "executionCoverage":{"source":"code-rule-dsl","fromSessionStart":true,
+                "started":state.sql_started,"completed":state.sql_completed,"running":state.running.len()}});
         let file = File::create(self.stem.with_extension("json")).map_err(io_error)?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer(&mut writer, &data)
@@ -326,6 +333,8 @@ impl Drop for Profiler {
         }
         if let Err(error) = self.save() {
             eprintln!("SQL profile write failed: {error}");
+        } else if let Err(error) = coverage::record(&self.stem, "closed") {
+            eprintln!("SQL profile coverage write failed: {error}");
         }
     }
 }
@@ -440,6 +449,7 @@ unsafe extern "C" fn trace(
                 }
                 let sql = unsafe { CStr::from_ptr(sql) }.to_string_lossy();
                 let query = state.query(&sql, "sql");
+                state.sql_started += 1;
                 let context = state.context.clone();
                 let counters = STATUSES.map(|status| unsafe {
                     i64::from(ffi::sqlite3_stmt_status(pointer, status, 0))
@@ -469,6 +479,7 @@ unsafe extern "C" fn trace(
                 let Some(running) = state.running.remove(&key) else {
                     return;
                 };
+                state.sql_completed += 1;
                 ACTIVE.set(ACTIVE.get().saturating_sub(1));
                 let elapsed = running.started.elapsed();
                 state.sql_time.add(elapsed);

@@ -74,6 +74,12 @@ fn captures_helpers_cached_parameters_and_explains_without_executing() {
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     let queries = catalogue["queries"].as_array().unwrap();
+    // Each body in execute_batch and each cached execution consumes one invocation.
+    // The enclosing native operator and diagnostic EXPLAIN do not consume another.
+    assert_eq!(catalogue["executionCoverage"]["started"], 8);
+    assert_eq!(catalogue["executionCoverage"]["completed"], 8);
+    assert_eq!(catalogue["executionCoverage"]["running"], 0);
+    assert_eq!(catalogue["executionCoverage"]["fromSessionStart"], true);
     for query in queries.iter().filter(|q| q["kind"] == "sql") {
         if query["sql"].as_str().unwrap().starts_with("CREATE TABLE") {
             // Deferred EXPLAIN cannot recreate a table that now exists. Retain the reason.
@@ -133,6 +139,16 @@ fn captures_helpers_cached_parameters_and_explains_without_executing() {
     connection
         .execute("INSERT INTO data VALUES (9)", [])
         .unwrap();
+    let lifecycle: Vec<Value> =
+        std::fs::read_to_string(directory.join(format!("coverage-{}.jsonl", std::process::id())))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+    assert_eq!(lifecycle.len(), 2);
+    assert_eq!(lifecycle[0]["event"], "opened");
+    assert_eq!(lifecycle[1]["event"], "closed");
+    assert_eq!(lifecycle[0]["session"], lifecycle[1]["session"]);
     std::fs::remove_dir_all(directory).unwrap();
 }
 

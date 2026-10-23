@@ -1,0 +1,146 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { executionBudget, requireExecutionBudget, sqlCategory } from "../../benchmark/sql-profile/execution-budget.mjs";
+import { buildReport } from "../../benchmark/sql-profile/report.mjs";
+
+const hash = "a".repeat(64);
+const parity = () => ({ format: "rerail.data-layer-parity/v1", commit: "b".repeat(40), nativeSha256: hash,
+  nativeCalls: 2, hostGuardCalls: 0, replayedCalls: 2, positiveCalls: 1, cleanCalls: 1,
+  falsePositives: 0, falseNegatives: 0, engineFailures: 0, executionPathDifferences: 0, missingCoverage: [],
+  nativeCoverage: [{ check: "rule", positive: 1, clean: 1 }], rows: [
+    { execution: "native", positive: true, expected: 1, actual: 1, falsePositives: [], falseNegatives: [], engineFailures: [], statelessFailures: [], executionPathDifferences: [] },
+    { execution: "native", positive: false, expected: 0, actual: 0, falsePositives: [], falseNegatives: [], engineFailures: [], statelessFailures: [], executionPathDifferences: [] },
+  ] });
+const job = (counts = [25, 25, 25, 25]) => ({
+  sessions: counts.length, captureCoverage: { complete: true, problems: [] },
+  queries: [{ kind: "sql", sql: "SELECT 1", runs: counts.reduce((sum, n) => sum + n, 0) }],
+  executionCoverage: counts.map((n, i) => ({ session: `worker-${i}`, pid: 42, source: "code-rule-dsl",
+    fromSessionStart: true, started: n, completed: n, running: 0, observed: n })),
+  workload: { executor: "relational", nativeSha256: hash, results: { parity: true, exitCode: 0, timedOut: false, conformance: parity() } },
+});
+
+test("100 covers the complete job, across workers and batches, without a configurable reset", () => {
+  assert.equal(requireExecutionBudget(job()).observed, 100);
+  assert.throws(() => requireExecutionBudget(job([25, 25, 25, 26])), /101\/100; budget-exceeded/);
+  assert.throws(() => requireExecutionBudget(job([100, 100, 100, 100])), /400\/100/);
+  const report = job([101]); report.limit = 1000; report.workload.config = { executionBudget: 1000, batchSize: 1 };
+  assert.equal(executionBudget(report).limit, 100);
+  assert.equal(executionBudget(report).accepted, false);
+});
+
+test("setup, DDL, transactions, helper SQL and cleanup count; enclosing operators do not count twice", () => {
+  const report = job([100]);
+  report.queries = [
+    { kind: "sql", sql: "CREATE TEMP TABLE f(k)", runs: 40 },
+    { kind: "sql", sql: "PRAGMA temp_store=MEMORY", runs: 1 },
+    { kind: "sql", sql: "BEGIN", runs: 1 }, { kind: "sql", sql: "COMMIT", runs: 1 },
+    { kind: "sql", sql: "DELETE FROM f", runs: 57 },
+    { kind: "operator", sql: "native publication", runs: 50000 },
+  ];
+  assert.deepEqual(requireExecutionBudget(report).categories, { setup: 41, transaction: 2, matchingAndCleanup: 57 });
+  assert.equal(sqlCategory("-- comment\n/* another */ CREATE INDEX keys ON f(k)"), "setup");
+});
+
+test("low counts fail closed on incomplete coverage, malformed counts, missing sessions or failed parity", () => {
+  const cases = [
+    r => { delete r.captureCoverage; }, r => { r.captureCoverage.complete = false; },
+    r => { delete r.executionCoverage; }, r => { r.executionCoverage[0].started++; },
+    r => { r.executionCoverage[0].observed--; }, r => { r.executionCoverage[0].running = 1; },
+    r => { r.executionCoverage[0].fromSessionStart = false; }, r => { r.executionCoverage[0].pid = 999; },
+    r => { r.sessions++; }, r => { r.queries[0].runs = -1; }, r => { r.queries[0].runs = 1.5; },
+    r => { r.queries = []; }, r => { r.workload.results.parity = false; },
+    r => { r.workload.results.timedOut = true; }, r => { r.workload.results.exitCode = 1; },
+    r => { r.workload.results.conformance.nativeSha256 = "wrong"; },
+    r => { r.workload.results.conformance.nativeCalls = 0; },
+    r => { r.workload.results.conformance.missingCoverage = [{ check: "missing" }]; },
+    r => { r.workload.results.conformance.rows[0].statelessFailures = [{}]; },
+    r => { r.workload.results.conformance.nativeCoverage[0].positive = 0; },
+    r => { r.queries.push({ kind: "operator", incomplete: 1 }); },
+  ];
+  for (const mutate of cases) {
+    const report = job([1, 1]); mutate(report);
+    assert.throws(() => requireExecutionBudget(report), /invalid-capture/, mutate.toString());
+  }
+});
+
+function rawJob(directory, counts) {
+  const raw = join(directory, "sql", "raw"); mkdirSync(raw, { recursive: true });
+  const lifecycle = [];
+  counts.forEach((count, i) => {
+    const session = `profile-42-${i}`;
+    const coverage = { source: "code-rule-dsl", fromSessionStart: true, started: count, completed: count, running: 0 };
+    writeFileSync(join(raw, `${session}.json`), JSON.stringify({ version: 1, pid: 42, events: count,
+      executionCoverage: coverage, queries: [{ id: 0, kind: "sql", sql: "SELECT 1", plan: [], bytecode: [] }] }));
+    writeFileSync(join(raw, `${session}.jsonl`), Array.from({ length: count }, (_, n) => JSON.stringify({
+      kind: "sql", query: 0, startNs: n * counts.length + i, wallNs: 1, cpuNs: 1, selfCpuNs: 1, selfWallNs: 1,
+      rows: 1, changes: 0, context: {}, thread: `worker-${i}`,
+    })).join("\n") + "\n");
+    for (const event of ["opened", "closed"]) lifecycle.push({ version: 1, pid: 42, session, event });
+  });
+  writeFileSync(join(raw, "coverage-42.jsonl"), lifecycle.map(JSON.stringify).join("\n") + "\n");
+  writeFileSync(join(directory, "profile.json"), JSON.stringify({ exitCode: 0, timedOut: false, targetExitCode: 0, targetTimedOut: false,
+    source: { nativeSha256: hash }, parity: parity(), native: { phaseMarkers: [] } }));
+  return raw;
+}
+
+test("the report counts every execution across sessions and locates execution 101", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-budget-"));
+  try {
+    const report = await buildReport(rawJob(directory, [51, 50]), join(directory, "sql"), job().workload);
+    assert.equal(report.executionBudget.observed, 101);
+    assert.equal(report.executionBudget.status, "budget-exceeded");
+    assert.equal(report.firstOverBudget.startNs, 100);
+    assert.equal(report.firstOverBudget.sql, "SELECT 1");
+    assert.equal(JSON.parse(readFileSync(join(directory, "sql", "execution-budget.json"))).accepted, false);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("removing an entire session or its close receipt invalidates a small capture", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-budget-missing-"));
+  try {
+    const raw = rawJob(directory, [1, 1]);
+    rmSync(join(raw, "profile-42-1.json")); rmSync(join(raw, "profile-42-1.jsonl"));
+    let report = await buildReport(raw, join(directory, "sql"), job().workload);
+    assert.equal(report.executionBudget.status, "invalid-capture");
+    assert.match(report.executionBudget.problems.join(" "), /lifecycle/i);
+    rawJob(directory, [1, 1]);
+    const ledger = join(raw, "coverage-42.jsonl");
+    const events = readFileSync(ledger, "utf8").trim().split("\n").map(JSON.parse);
+    writeFileSync(ledger, events.filter(e => e.session !== "profile-42-1" || e.event !== "closed").map(JSON.stringify).join("\n") + "\n");
+    report = await buildReport(raw, join(directory, "sql"), job().workload);
+    assert.equal(report.executionBudget.status, "invalid-capture");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("the ordinary SQL report command exits nonzero at 101 after preserving its evidence", () => {
+  for (const count of [100, 101]) {
+    const directory = mkdtempSync(join(tmpdir(), "rerail-budget-cli-"));
+    try {
+      rawJob(directory, [count]);
+      const child = spawnSync(process.execPath, ["scripts/profiling/sql-report.mjs", directory], { encoding: "utf8" });
+      assert.equal(child.status, count === 100 ? 0 : 1, child.stderr);
+      assert.equal(JSON.parse(readFileSync(join(directory, "sql", "execution-budget.json"))).observed, count);
+      if (count === 101) assert.match(child.stderr, /101\/100; budget-exceeded/);
+      const profile = join(directory, "profile.json");
+      writeFileSync(profile, JSON.stringify({ ...JSON.parse(readFileSync(profile)), exitCode: 1 }));
+      const again = spawnSync(process.execPath, ["scripts/profiling/sql-report.mjs", directory], { encoding: "utf8" });
+      assert.equal(again.status, count === 100 ? 0 : 1, again.stderr);
+      assert.equal(JSON.parse(readFileSync(join(directory, "sql", "profile.json"))).workload.results.parity, true);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  }
+});
+
+test("the CI workload refuses an existing output directory without rewriting its inputs", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-budget-reuse-"));
+  try {
+    const input = join(directory, "recording.json"); writeFileSync(input, "preserved");
+    const child = spawnSync(process.execPath, ["scripts/profiling/sql-budget.mjs", directory], { encoding: "utf8" });
+    assert.equal(child.status, 1);
+    assert.match(child.stderr, /EEXIST/);
+    assert.equal(readFileSync(input, "utf8"), "preserved");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});

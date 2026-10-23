@@ -231,6 +231,9 @@ export function summaryMarkdown(report) {
     `Recorded CPU: **${fmt(summary.budget.measuredCpuMs)} ms**. Profiled apply CPU: **${summary.budget.profiledApplyCpuMs === null ? "unavailable" : fmt(summary.budget.profiledApplyCpuMs) + " ms"}**.`,
     "", summary.budget.interpretation, "", "## Where recorded CPU goes", "",
     "| Work | CPU ms | Recorded CPU | Executions |", "|---|---:|---:|---:|"];
+  if (report.executionBudget) lines.splice(2, 0,
+    `SQL execution budget: **${report.executionBudget.status}** — **${report.executionBudget.observed}/${report.executionBudget.limit}** actual executions for the complete job.`, "",
+    ...report.executionBudget.problems.map(problem => `- ${problem}`), "");
   for (const cost of summary.costBreakdown) lines.push(`| ${cost.label} | ${fmt(cost.cpuMs)} | ${fmt(cost.measuredCpuPercent)}% | ${fmt(cost.executions)} |`);
   lines.push("", summary.budget.frameIndexCpuMs === null
     ? summary.budget.frameIndexBuilds ? "Frame index construction was not timed in this capture. Re-run with the current profiler to isolate this cost." : "No lazy frame index builds were observed inside SQL. Prepared structural indexes and SQL CREATE INDEX statements have separate attribution."

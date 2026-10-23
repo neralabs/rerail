@@ -114,6 +114,10 @@ jobs:
               - 'test/scripts/test_native_relations.py'
               - 'test/scripts/test_native_sql_plan.py'
               - 'scripts/profiling/producer-shape.mjs'
+              - 'scripts/profiling/sql-budget.mjs'
+              - 'scripts/profiling/sql-report.mjs'
+              - 'benchmark/sql-profile/**'
+              - 'test/scripts/sql-execution-budget.test.mjs'
               - 'test/engine/native/relational-batch.test.ts'
               - 'package.json'
               - '.github/workflows/ci.yml'
@@ -214,6 +218,26 @@ jobs:
         env:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:producer-shape
+
+      - name: Enforce 100 SQL executions for the complete cold job
+        if: matrix.task == 'test'
+        env:
+          RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
+        run: npm run test:sql-execution-budget -- "$RUNNER_TEMP/rerail-sql-budget"
+
+      - name: Preserve SQL execution budget evidence
+        if: always() && matrix.task == 'test'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sql-execution-budget
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/rerail-sql-budget/provenance.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/profile.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/parity.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/summary.txt
+            ${{ runner.temp }}/rerail-sql-budget/capture/sql/summary.md
+            ${{ runner.temp }}/rerail-sql-budget/capture/sql/execution-budget.json
 
       - name: Test SQL statement capture and deferred explanations
         if: matrix.task == 'test'

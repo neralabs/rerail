@@ -8,6 +8,66 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## SQL execution limit restored: 2026-10-23
+
+The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
+The earlier profiler import omitted its gate and started/completed coverage counters.
+The existing producer-shape gate measures selected native passes and never enforced that SQL limit.
+
+The restored gate counts the complete cold process across workers and connections.
+It includes compilation setup, schema DDL, publication, transactions, matching, and cleanup.
+Each execution inside `execute_batch` counts separately. Cached statement executions also count separately.
+Diagnostic EXPLAIN and enclosing native timing spans do not count.
+The gate reports failure after complete evaluation. It never truncates findings at execution 101.
+
+Connection-open and connection-close receipts detect missing whole sessions.
+Native started/completed counters detect incomplete statement streams.
+Missing coverage, incomplete operations, or failed parity prevent acceptance, including captures with small counts.
+Ordinary SQL capture and report commands preserve evidence and return nonzero when the gate fails.
+A mandatory CI step uses original positive and clean state-tripwire observations.
+
+The new [evidence](../fixtures/host/data-layer-port/profiling/sql-execution-budget-20261023.json) records a complete real acceptance attempt.
+Two original observations run through both snapshot and workspace paths in one cold process.
+Both observations pass parity, with one positive, one clean, and no engine or execution-path failures.
+The 136 connection lifecycles and their statement counts reconcile, without coverage errors.
+
+| Complete-job SQL category | Actual executions |
+| --- | ---: |
+| Setup, including DDL and ANALYZE | 17,686 |
+| Transactions | 168 |
+| Matching, publication, and cleanup | 6,305 |
+| Total | **24,159 / 100** |
+
+The trace contains 11,544 CREATEs and 5,508 DROPs.
+Execution 101 creates `syntax_21` during compilation schema validation, with an empty context on the main thread.
+This result identifies repeated session setup and schema construction in addition to the earlier candidate-preparation regression.
+Index publication also repeats SQL over kind catalogs, fields, terms, and files.
+The count includes 1,100 executions of `INSERT INTO kind` and 128 executions of `INSERT INTO field`.
+Those execution totals are not CPU attribution.
+
+The real workload exits nonzero because the fixed budget fails. Complete findings remain available.
+Two instrumented attempts complete in 62.872 and 88.896 seconds, within the 115-second bound.
+Both record the same 24,159 executions and complete parity.
+The second attempt also preserves separate target and acceptance exit codes, so offline reporting retains successful parity.
+Instrumentation and deferred explanations make its CPU unsuitable for an aggregate speed comparison.
+The measured addon has SHA-256 `bf671d4a7ade25aa484fa54994fd611d093c671129b17e043d18b6a2056b629f`.
+No rule algorithm or production execution option changes in this step.
+
+The [recovery workplan](sql-performance-recovery-workplan.md) orders accounting, eligibility, publication, sharing, bounded SQL, failure correction, and aggregate acceptance.
+WP1 remains pending and starts within recovery step R4 in this same worktree.
+The restored acceptance failure is not waived while that work proceeds.
+
+Tool checks pass 21 Node tests, 75 Python tests, and six production-tracer tests through the standalone host.
+The standalone tracer Clippy check and repository typecheck/static checks pass.
+The broad native Clippy command reaches the 112-second controller deadline and remains incomplete.
+The focused native library Clippy check passes with the profiling feature.
+The existing producer-shape checks also pass, separately from the failing SQL execution gate.
+The standalone host gains its missing test-only `tempfile` dependency. Existing dependency versions remain unchanged.
+The initial gate-test invocation fails before implementation because its module is absent.
+The first standalone native invocation exposes that missing dependency rather than a behavioral test result.
+
+Local captures and validation reports remain under `.rerail/profiles/sql-budget-recovery-20261023/`.
+
 ## Aggregate optimization checkpoint: 2026-10-23
 
 Status: repository comparisons are complete, with substantial CPU regressions and failed broader gates.
