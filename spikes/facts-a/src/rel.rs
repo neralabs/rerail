@@ -266,12 +266,49 @@ pub struct RelPlan {
     /// table, and a duplicate counts in `bounds_unproven` (the content's class is then the
     /// fallback). Set by `eval::Rule::compile` from `physplan::clause_cost`.
     pub checked_keys: Vec<(String, Vec<u16>)>,
+    /// x5 (disposable): the clause declares `references`; `reference_edges` is read from the
+    /// table `FACTS_X5_EDGES` names (`x5_edges`) instead of being refused.
+    pub edges: bool,
+}
+
+/// x5: the `reference_edges` schema (relational.rs:633-678).
+fn x5_edges_schema() -> Schema {
+    let cols = ["__path", "__start", "__end", "target_path", "target_start", "target_end", "source_name", "target_name", "target_class"];
+    let affs = [Aff::Text, Aff::Integer, Aff::Integer, Aff::Text, Aff::Integer, Aff::Integer, Aff::Text, Aff::Text, Aff::Integer];
+    Schema { cols: cols.iter().map(|c| c.to_string()).collect(), affs: affs.to_vec() }
+}
+
+thread_local! {
+    static X5_EDGES: std::cell::OnceCell<Rc<Table>> = const { std::cell::OnceCell::new() };
+}
+
+/// x5: `reference_edges` from the TSV `FACTS_X5_EDGES` names (native's ground-truth columns
+/// `__path, __start, target_path, target_start, target_end, target_class`, or all nine).
+pub fn x5_edges() -> Rc<Table> {
+    X5_EDGES.with(|c| {
+        c.get_or_init(|| {
+            let p = std::env::var("FACTS_X5_EDGES").expect("FACTS_X5_EDGES");
+            let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{p}: {e}"));
+            let int = |s: &str| s.parse::<i64>().map(V::Int).unwrap_or(V::Null);
+            let rows = text.lines().filter(|l| !l.is_empty()).map(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                let r: Vec<V> = if f.len() == 6 {
+                    vec![V::text(f[0]), int(f[1]), V::Null, V::text(f[2]), int(f[3]), int(f[4]), V::Null, V::Null, int(f[5])]
+                } else {
+                    (0..9).map(|i| if [1, 2, 4, 5, 8].contains(&i) { int(f[i]) } else { V::text(f[i]) }).collect()
+                };
+                r.into_boxed_slice()
+            }).collect();
+            Rc::new(Table::from_rows(x5_edges_schema(), rows))
+        }).clone()
+    })
 }
 
 impl RelPlan {
     pub fn compile(rel: &Json, inputs: Vec<(String, usize, Vec<String>)>, grammar: &rerail_engine::code_rule_dsl::tape::Grammar) -> Result<Self, String> {
         let o = rel.as_object().ok_or("relational")?;
-        if o.contains_key("references") {
+        let edges = o.contains_key("references");
+        if edges && std::env::var_os("FACTS_X5_EDGES").is_none() {
             return Err("references unsupported".into());
         }
         let per_file = matches!(o.get("partitionBy").and_then(Json::as_str), Some("file"));
@@ -289,6 +326,9 @@ impl RelPlan {
             for (n, sc) in s.schemas() {
                 catalog.insert(n.to_ascii_lowercase(), sc);
             }
+        }
+        if edges {
+            catalog.insert("reference_edges".into(), x5_edges_schema());
         }
         let mut stages = Vec::new();
         for st in o.get("stages").and_then(Json::as_array).into_iter().flatten() {
@@ -341,7 +381,7 @@ impl RelPlan {
         let key = o.get("key").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
         let code = o.get("code").and_then(Json::as_str).map(str::to_owned);
         let locations = o.get("locations").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, release: Vec::new(), checked_keys: Vec::new() })
+        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, release: Vec::new(), checked_keys: Vec::new(), edges })
     }
 
     /// Computes `release` from every statement's reads (stages and deferred columns); the
@@ -592,6 +632,9 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
         trace.push(name, &t);
         check_keys(plan, name, &t);
         db.tables.insert(name.to_ascii_lowercase(), t);
+    }
+    if plan.edges {
+        db.tables.insert("reference_edges".into(), x5_edges());
     }
     let mut syntax_tables_present = false;
     if let Some(spec) = &plan.syntax {
