@@ -17,13 +17,13 @@ export type HarnessEngine = CodeRuleDslEngine | "facts";
 
 export interface FactsCall { id: number; policy: unknown; files: { path: string; source: string }[] }
 
-/** A call's result in the shape of the native engine's report pages; spans carry the line only. */
+/** A call's result in the shape of the native engine's report pages; spans carry the line only, `column` the 1-based code-point column when the engine reports one. */
 export interface FactsResult {
-  violations: { code: string; path: string; message: string; clauseId: string; span: { startByte: number; startLine: number; startColumn: number } }[];
+  violations: { code: string; path: string; message: string; clauseId: string; span: { startByte: number; startLine: number; startColumn: number }; column: number | null }[];
   failures: { code: string; message: string; path?: string }[];
 }
 
-const findingSchema = z.object({ check: z.string(), clause: z.string(), path: z.string(), line: z.number(), code: z.string() });
+const findingSchema = z.object({ check: z.string(), clause: z.string(), path: z.string(), line: z.number(), code: z.string(), column: z.number().nullable().optional() });
 const failureSchema = z.object({ check: z.string(), clause: z.string(), path: z.string(), message: z.string() });
 const responseSchema = z.union([
   z.object({ id: z.number(), compile_error: z.string() }),
@@ -46,7 +46,7 @@ function facts(args: string[]): void {
 
 export function toResult(findings: z.infer<typeof findingSchema>[], failures: z.infer<typeof failureSchema>[]): FactsResult {
   return {
-    violations: findings.map(f => ({ code: f.code, path: f.path, message: "", clauseId: f.clause, span: { startByte: -1, startLine: f.line - 1, startColumn: -1 } })),
+    violations: findings.map(f => ({ code: f.code, path: f.path, message: "", clauseId: f.clause, span: { startByte: -1, startLine: f.line - 1, startColumn: -1 }, column: f.column ?? null })),
     failures: failures.map(f => ({ code: "facts-failure", message: `${f.check}/${f.clause}: ${f.message}`, path: f.path })),
   };
 }

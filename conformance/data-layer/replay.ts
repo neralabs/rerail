@@ -28,7 +28,9 @@ const recordingSchema = z.object({
 });
 const resultSchema = z.object({
   violations: z.array(z.object({ code: z.string(), path: z.string(), message: z.string(), clauseId: z.string(),
-    span: z.object({ startByte: z.number(), startLine: z.number(), startColumn: z.number() }) })),
+    span: z.object({ startByte: z.number(), startLine: z.number(), startColumn: z.number() }),
+    // The facts engine's 1-based code-point column, when it reports one (it has no byte spans).
+    column: z.number().nullable().optional() })),
   failures: z.array(z.object({ code: z.string(), message: z.string(), path: z.string().optional() })),
 });
 const pageSchema = resultSchema.extend({ done: z.boolean(), cursor: z.number() });
@@ -67,16 +69,17 @@ function replayRow(event: ReplayedEvent, execution: ReplayRow["execution"], resu
     if (event.compare_clause && finding.tag == null) throw new Error(`Missing diagnostic tag: ${event.test}`);
     return JSON.stringify([finding.path, finding.line, finding.code, ...(columns ? [finding.column] : []), ...(event.compare_clause ? [finding.tag] : [])]);
   });
-  // The facts engine reports lines, not byte spans: a call compared by column is refused, never guessed.
-  const failures = facts && columns
-    ? [...result.failures, { code: "facts-unsupported", message: "facts engine: findings carry no column; backend_type_strings compares columns" }]
+  // The facts engine reports lines and, where it can, a code-point column; a column-compared call with a finding
+  // that has no column is refused, never guessed.
+  const failures = facts && columns && result.violations.some(finding => finding.column == null)
+    ? [...result.failures, { code: "facts-unsupported", message: "facts engine: a finding carries no column; backend_type_strings compares columns" }]
     : result.failures;
   const actual = (result: Result): string[] => result.violations.map(finding => {
     const file = event.files.find(file => file.path === finding.path)!;
     const bytes = Buffer.from(file?.source ?? "");
     const prefix = bytes.subarray(finding.span.startByte - finding.span.startColumn, finding.span.startByte).toString("utf8");
     const category = event.check === "connection_caches" ? finding.clauseId.replace(/-file-\d+$/, "") : finding.clauseId;
-    return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(columns ? [facts ? null : [...prefix].length + 1] : []), ...(event.compare_clause ? [category] : [])]);
+    return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(columns ? [facts ? finding.column ?? null : [...prefix].length + 1] : []), ...(event.compare_clause ? [category] : [])]);
   });
   const observed = actual(result);
   return { execution, test: event.test, call: event.call, check: event.check,

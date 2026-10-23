@@ -32,7 +32,7 @@ The subset is deterministic: every corpus file whose sha256(relative path)[0] % 
 holding an oracle finding (1,150 files of 9,010). It is hard-linked under SUBSET.
 
 Mutants (`--mutants`): MUTANTS (1-3 S2's interim A3 views, 4-6 S3's delta generator, 7 the classifier,
-8 the plan audit) plus one per rewrite registered in docs/facts/REWRITES.md; each runs the checks of its
+8 the plan audit, 10 the order-totality proof) plus one per rewrite registered in docs/facts/REWRITES.md; each runs the checks of its
 family with `FACTS_MUTANT=<n>` and is killed when one of them detects it (a3-check: the FACTS_A3_CHECK
 panic; a-reference: findings differ from the clean reference; b-*: an exactness difference; cargo
 checks: a failing test, named in failed-tests.txt). A registered rewrite without a mutant fails the gate.
@@ -104,7 +104,8 @@ GATED: set[str] = {
 }
 
 # The generic mutants: (number, name, crate, site, what it breaks, the checks that run against it). They
-# target components, not rules: the delta generator (S3), the classifier and the plan audit (S1). Rewrite
+# target components, not rules: the delta generator (S3), the classifier, the plan audit and the
+# order-totality proof (S1). Rewrite
 # mutants come from docs/facts/REWRITES.md (`rewrite_mutants`), one per registered rewrite; 1-3 are the
 # interim mutants of S2's A3 views (gone with subst.rs). Numbering: REWRITES.md § Numbers.
 MUTANTS = [
@@ -116,6 +117,7 @@ MUTANTS = [
     (6, "delta-fixpoint-early", "facts-b", "gen: fixpoint (lower.rs)", "the fixpoint stops early (rounds >= 2 dropped)", ["b-generated"]),
     (7, "classifier-membership", "rerail-facts", "classify::file_source", "a per-content plan reaching a membership relation is accepted", ["classifier-leak", "rerail-facts-lib"]),
     (8, "planner-inner-scan", "rerail-facts", "phys.rs plan audit", "the plan audit admits an inner scan", ["planner-audit", "rerail-facts-lib"]),
+    (10, "order-proven-total", "rerail-facts", "classify.rs::KeyEnv::total", "every order is marked proven total (no runtime tie check)", ["rerail-facts-lib"]),
 ]
 REWRITES = ROOT / "docs/facts/REWRITES.md"
 
