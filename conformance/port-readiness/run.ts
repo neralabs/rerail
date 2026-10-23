@@ -285,7 +285,7 @@ function method(manifest: PackManifest): GatesReport["method"] {
   return {
     "tool-pack": {
       pins: "gates.yaml upstream.version, recording.json pins and conformance.json tools[].version agree, and every runtime pin file the recording names (package.json, pyproject.toml, .python-version, composer.json, .php-version, PHP's extensions.txt, rust-toolchain.toml) has the committed file's sha256",
-      license: "the licence kept under licenses/<project>/ (every LICENSE or LICENCE file, in name order) has the sha256 of upstream's licence at the pinned commit, as recorded (rerail's pack checks 5 and 6 cover the rest of the licence contract)",
+      license: "the licence kept under licenses/<project>/ (every LICENSE or LICENCE file, in name order) has the sha256 of upstream's licence at the pinned commit, as recorded, and every licence gates.yaml records is on scripts/check/licence-allowlist.json; the summary reports these, and declared-license where an adapter records it, as the port readiness licence step (rerail's pack checks 5 and 6 cover the pack's packaging)",
       effect: "a failing tool-pack check fails every shipped rule of the tool-pack: the recording is stale",
     },
     "upstream-status": {

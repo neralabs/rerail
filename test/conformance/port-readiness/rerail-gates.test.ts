@@ -157,6 +157,19 @@ describe("location-based blocking", () => {
     assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.stoppedAt, entry.why]), [["b", "linter-checks", "bundled-load: Duplicate bundled rule id: x"]]);
   });
 
+  it("a failing licence check stops every port of the linter at the licence step, before the other tool-pack checks", () => {
+    const toolPackChecks = { pass: false, checks: [
+      { id: "corpus-pins", ok: false, detail: "corpus.json was recorded on other corpus pins" },
+      { id: "license-allowed", ok: false, detail: "upstream's licence GPL-3.0-only names GPL-3.0-only, which is not on scripts/check/licence-allowlist.json" },
+    ] };
+    const blocked = { ...rule("a", "shipped"), pass: false, blockedBy: "corpus-pins: ...; license-allowed: ..." };
+    const summary = summarize([{ ...report([blocked]), toolPackChecks }], []);
+    assert.deepEqual(summary.failing.map((entry) => [entry.id, entry.stoppedAt, entry.check]), [["a", "licence", "license-allowed"]]);
+    assert.equal(stepLabel("licence"), "Port readiness > Upstream licence kept and allowed");
+    const recording = summarize([{ ...report([blocked]), toolPackChecks: { pass: false, checks: toolPackChecks.checks.slice(0, 1) } }], []);
+    assert.deepEqual(recording.failing.map((entry) => [entry.stoppedAt, entry.check, entry.why]), [["linter-checks", "corpus-pins", "corpus-pins: corpus.json was recorded on other corpus pins"]]);
+  });
+
   it("a listed known gap that does not hold, or excused nothing, blocks", () => {
     const knownGaps: GatesReport["knownGaps"] = [
       { id: "used", proven: true, kind: "valid-source", excused: 2 },

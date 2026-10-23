@@ -54,8 +54,14 @@ steps, in this order:
    so no port readiness gate can run on it. The verdict gives the `unmapped` reason.
 2. **Set up for its upstream linter:** its upstream tool has no `gates.yaml` yet (node's `eslint-plugin-n`), so no port
    readiness gate can run on it. A shipped one fails: keep it in `candidates/` until the tool has a `gates.yaml`.
-3. **Upstream linter checks:** the tool-pack checks below.
-4. **Applies to the files upstream lints:** `loads`'s `in-scope` check, which judges the port, not the document.
+3. **Upstream licence kept and allowed:** a port may only come from an upstream whose licence Rerail keeps and allows.
+   The licence kept under `licenses/<project>/` is upstream's at the pinned commit (`license-sha256`); the installed
+   package declares the licence `gates.yaml` records, where the adapter reads one (`declared-license`); and every
+   licence `gates.yaml` records is on `scripts/check/licence-allowlist.json` (`license-allowed`). It fails every port of
+   that linter. The pack contract (`conformance/pack-validation.ts`, check 6) still checks the pack's packaging: each
+   `UPSTREAM.md`'s licence line and text, `package.json`'s licence, and that every copied file is listed.
+4. **Upstream linter checks:** the other tool-pack checks below.
+5. **Applies to the files upstream lints:** `loads`'s `in-scope` check, which judges the port, not the document.
 
 Then `not-overfit` and `matches-upstream-tests`.
 
@@ -70,7 +76,7 @@ Then `not-overfit` and `matches-upstream-tests`.
 
 Tool-pack checks judge the tool-pack, not a rule. When one fails, every rule of the tool-pack fails with it: a shipped
 rule blocks and a candidate is not ready to promote. In a verdict they come after conformance and before the other
-port readiness gates. They fail when the recording is stale (`corpus-pins` and the recording checks),
+port readiness gates, the licence checks (above) first. The others fail when the recording is stale (`corpus-pins` and the recording checks),
 when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
 corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).

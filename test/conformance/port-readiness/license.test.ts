@@ -11,7 +11,7 @@ import { test } from "vitest";
 
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
-import { keptLicenseDirectory, licenseBytes, licenseFiles, upstreamLicenseText } from "../../../conformance/port-readiness/recorded-adapter.js";
+import { keptLicenseDirectory, licenseAllowedCheck, licenseBytes, licenseFiles, upstreamLicenseText } from "../../../conformance/port-readiness/recorded-adapter.js";
 import { gatedToolPacks } from "../../../conformance/port-readiness/run.js";
 
 function directoryWith(files: Record<string, string>): { directory: string; cleanup: () => void } {
@@ -62,5 +62,18 @@ test("every gated tool-pack keeps upstream's licence under licenses/<project>/",
   for (const { pack, tool } of gatedToolPacks(PACKAGE_ROOT)) {
     const kept = join(PACKAGE_ROOT, keptLicenseDirectory(readGatesManifest(PACKAGE_ROOT, pack, tool)));
     assert.notEqual(licenseFiles(kept).length, 0, `${pack}/${tool}: ${kept} has no LICENSE or LICENCE file`);
+  }
+});
+
+test("license-allowed holds every licence gates.yaml records to the repository's licence allowlist", () => {
+  assert.equal(licenseAllowedCheck("MIT").ok, true);
+  assert.equal(licenseAllowedCheck("MIT OR Apache-2.0").ok, true);
+  assert.equal(licenseAllowedCheck("MIT", new Set(["ISC"])).ok, false);
+  const check = licenseAllowedCheck("MIT OR GPL-3.0-only");
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /names GPL-3\.0-only, which is not on scripts\/check\/licence-allowlist\.json/u);
+  for (const { pack, tool } of gatedToolPacks(PACKAGE_ROOT)) {
+    const manifest = readGatesManifest(PACKAGE_ROOT, pack, tool);
+    assert.equal(licenseAllowedCheck(manifest.upstream.license).ok, true, `${pack}/${tool}`);
   }
 });

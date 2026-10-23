@@ -34,8 +34,10 @@ first step of `STEPS` the rule fails, and every count it and the pull request co
 those verdicts, so each rule is counted once. The steps are `origin` (the document declares its origin; one declared
 nowhere stops there, fail-closed, and a pack's origins.json that is wrong fails the conformance report's `origins` pack
 check), the conformance gates, then, for a port: `mapping` (a conformance.json entry maps it; a port origins.json
-declares stops here, with its `unmapped` reason), `set-up` (its tool has a gates.yaml; a shipped port of a tool without one fails), the
-tool-pack checks, `loads`'s `in-scope` check (it compares a rule with the files upstream lints, so it judges the port),
+declares stops here, with its `unmapped` reason), `set-up` (its tool has a gates.yaml; a shipped port of a tool without
+one fails), `licence` (the tool-pack checks about upstream's licence, recorded-adapter.ts `LICENSE_CHECKS`: the kept
+licence is upstream's, the package declares it, and it is on the repository's allowlist), the other tool-pack checks,
+`loads`'s `in-scope` check (it compares a rule with the files upstream lints, so it judges the port),
 `not-overfit` and `matches-upstream-tests`. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
 fix belongs in the engine. It also includes `no-real-code-gap`: a rule `gates.yaml` lists under

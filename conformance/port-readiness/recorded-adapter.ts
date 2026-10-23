@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join, posix, resolve } from "node:path";
 
+import { PACKAGE_ROOT } from "../../src/engine/index.js";
 import { checkoutPinned, type CorpusFile } from "./corpus.js";
 import { fileTypeOf } from "./engine.js";
 import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "./manifest.js";
@@ -54,6 +55,35 @@ const SPAN_UNITS: Record<GatesRecording["adapter"], (source: string, startByte: 
  * pack keeps each under the same name in licenses/<project>/.
  */
 const LICENSE_FILE = /^licen[cs]e(?:[.-].*)?$/iu;
+
+/**
+ * The tool-pack checks about upstream's licence, which the summary reports as their own port readiness step:
+ * `license-sha256` (the kept licence is upstream's at the pinned commit), `declared-license` (the installed package
+ * declares the licence gates.yaml records; the adapters that read one record it) and `license-allowed` (every licence
+ * gates.yaml records is on the repository's licence allowlist).
+ */
+export const LICENSE_CHECKS: readonly string[] = ["license-sha256", "declared-license", "license-allowed"];
+
+/** The repository's licence allowlist, the one scripts/check/check-licenses.mjs and the pack contract enforce. */
+export const LICENSE_ALLOWLIST = "scripts/check/licence-allowlist.json";
+
+/** The SPDX ids an SPDX expression names: `MIT OR Apache-2.0` names MIT and Apache-2.0. */
+const spdxIds = (expression: string): string[] => expression.split(/\s+(?:AND|OR|WITH)\s+|[()]/u).map((part) => part.trim()).filter((part) => part.length > 0);
+
+/** The licences on the repository's allowlist: a policy of the repository the gates run in, not of the tree they judge. */
+export function allowedLicenses(): ReadonlySet<string> {
+  return new Set(JSON.parse(readFileSync(join(PACKAGE_ROOT, LICENSE_ALLOWLIST), "utf8")) as string[]);
+}
+
+/** Every licence `license` (gates.yaml's `upstream.license`) names is on the repository's licence allowlist. */
+export function licenseAllowedCheck(license: string, allowed: ReadonlySet<string> = allowedLicenses()): Check {
+  const outside = spdxIds(license).filter((id) => !allowed.has(id));
+  return {
+    id: "license-allowed",
+    ok: outside.length === 0,
+    detail: outside.length === 0 ? `upstream's licence ${license} is on ${LICENSE_ALLOWLIST}` : `upstream's licence ${license} names ${outside.join(", ")}, which ${outside.length === 1 ? "is" : "are"} not on ${LICENSE_ALLOWLIST}: a port may only come from an upstream under an allowed licence`,
+  };
+}
 
 /** The licence files' names (LICENSE_FILE) as non-cone sparse-checkout patterns, for a checkout of upstream's root. */
 export const LICENSE_SPARSE_PATTERNS = ["/[Ll][Ii][Cc][Ee][Nn][CcSs][Ee]", "/[Ll][Ii][Cc][Ee][Nn][CcSs][Ee][.-]*"];
@@ -283,6 +313,7 @@ export function toolPackChecks(
       ? `${keptLabel} is upstream's licence at the pinned commit (sha256 ${licenseSha.slice(0, 12)})`
       : `${keptLabel} ${licenseSha === null ? "" : `has sha256 ${licenseSha.slice(0, 12)}, `}upstream's recorded licence ${recording.licenseSha256.slice(0, 12)}: ${stale}`,
   });
+  checks.push(licenseAllowedCheck(manifest.upstream.license));
 
   // Upstream's answers are pinned by the lock, so the sources they were recorded on must be too: an edited case source
   // would be judged against answers upstream gave on other bytes.
