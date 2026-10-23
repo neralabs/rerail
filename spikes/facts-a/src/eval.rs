@@ -1,5 +1,6 @@
 //! One policy set compiled for a call configuration, and its evaluation over one file's facts.
 use crate::ast::{self, Bound, Compiler, Env, Name, Names, Query};
+use crate::counts::{Counts, InputCounts, StageCounts};
 use crate::facts::Facts;
 use crate::policy::{self, Scope};
 use crate::rel::{self, RelPlan};
@@ -208,6 +209,8 @@ pub struct Rule {
     /// `define.report_when.count.gt`: the rule's findings are reported only when there are more
     /// than this many over the evaluation (native eval/mod.rs `evaluate_code_rule`).
     pub report_count_gt: Option<u64>,
+    /// Per clause, its plan digest (`crate::memo::digest`): the memo's key for its results.
+    pub digests: Vec<[u8; 32]>,
 }
 
 /// Compiled rules are one immutable object per process, shared by every worker (G2.5).
@@ -420,16 +423,59 @@ impl Rule {
             };
             clauses.push(Clause { id: cid, kind, viol });
         }
-        let mut last_use = vec![0; inputs.len()];
-        for (ci, c) in clauses.iter().enumerate() {
-            match &c.kind {
-                Kind::ForbidAst { input } | Kind::Budget { input, .. } => last_use[*input] = ci,
-                Kind::Relational(plan) => plan.inputs.iter().for_each(|(_, i)| last_use[*i] = ci),
-                Kind::ForbidRegex(_) => {}
-            }
+        let last_use = last_use(&clauses, inputs.len());
+        // Plan digests (`crate::memo`): the rule without its clauses, its `define` clauses, the
+        // call's scope, then per clause its resolved text, its inputs' physical plans, and its
+        // stages' physical EXPLAIN.
+        let mut rule_level = doc.clone();
+        if let Some(o) = rule_level.as_object_mut() {
+            o.remove("clauses");
         }
-        Ok(Rule { id, check, scope, clauses, inputs, names, last_use, preds, report_count_gt })
+        let all = doc["clauses"].as_array().unwrap();
+        let defines: Vec<&Json> = all.iter().filter(|c| c.get("define").is_some()).collect();
+        let input_text = |i: usize| match &inputs[i].phys {
+            Ok(p) => p.digest_text(&preds),
+            Err(e) => format!("leaf executor: {e}"),
+        };
+        let digests = all
+            .iter()
+            .filter(|c| c.get("define").is_none())
+            .zip(&clauses)
+            .map(|(cj, c)| {
+                let (reads, stages): (Vec<usize>, Vec<String>) = match &c.kind {
+                    Kind::ForbidAst { input } | Kind::Budget { input, .. } => (vec![*input], Vec::new()),
+                    Kind::ForbidRegex(_) => (Vec::new(), Vec::new()),
+                    Kind::Relational(plan) => (plan.inputs.iter().map(|(_, i)| *i).collect(), crate::physplan::clause(plan).iter().map(|(n, p)| format!("{n}\n{}", rerail_facts::phys::explain(p))).collect()),
+                };
+                crate::memo::digest(&rule_level, &defines, scope_override, cj, &reads.into_iter().map(input_text).collect::<Vec<_>>(), &stages)
+            })
+            .collect();
+        Ok(Rule { id, check, scope, clauses, inputs, names, last_use, preds, report_count_gt, digests })
     }
+
+    /// Keeps only the clauses `keep` selects (by id), with their digests; inputs no kept clause
+    /// reads are never evaluated (`last_use` recomputed). The bench runs one clause this way.
+    pub fn retain_clauses(&mut self, keep: impl Fn(&str) -> bool) {
+        let sel: Vec<bool> = self.clauses.iter().map(|c| keep(&c.id)).collect();
+        let mut s = sel.iter();
+        self.digests.retain(|_| *s.next().unwrap());
+        let mut s = sel.iter();
+        self.clauses.retain(|_| *s.next().unwrap());
+        self.last_use = last_use(&self.clauses, self.inputs.len());
+    }
+}
+
+/// Per input, the last clause that reads it.
+fn last_use(clauses: &[Clause], inputs: usize) -> Vec<usize> {
+    let mut last = vec![0; inputs];
+    for (ci, c) in clauses.iter().enumerate() {
+        match &c.kind {
+            Kind::ForbidAst { input } | Kind::Budget { input, .. } => last[*input] = ci,
+            Kind::Relational(plan) => plan.inputs.iter().for_each(|(_, i)| last[*i] = ci),
+            Kind::ForbidRegex(_) => {}
+        }
+    }
+    last
 }
 
 /// An input's rows for one file.
@@ -439,6 +485,8 @@ pub struct Rows {
     pub anchors: Vec<(u32, u32, u32)>,
     pub witnesses: Vec<(u32, u32)>,
     pub unsupported: Option<String>,
+    /// The evaluation's counts (`crate::counts`).
+    pub counts: crate::counts::InputCounts,
 }
 
 pub struct FileCtx<'a> {
@@ -453,7 +501,8 @@ fn line_of(f: &Facts, byte: u32) -> u32 {
 
 impl Input {
     pub fn rows(&self, ctx: &FileCtx<'_>, schema: &Schema, memo: &ast::FileMemo, source: &Rc<str>) -> Rows {
-        let mut out = Rows { table: Rc::new(Table::empty(schema.clone())), anchors: Vec::new(), witnesses: Vec::new(), unsupported: None };
+        let mut out = Rows { table: Rc::new(Table::empty(schema.clone())), anchors: Vec::new(), witnesses: Vec::new(), unsupported: None, counts: Default::default() };
+        out.counts.nodes = ctx.f.len() as u64;
         // Columns: path, start, end, then the projections; a capture's text is its node's byte
         // range of the source (`Column::Text`), read when a stage reads it; offsets and lines are
         // 4 bytes a row, kinds symbols, file-level values stored once.
@@ -492,6 +541,7 @@ impl Input {
         let each_is_group = self.each.is_some_and(|e| !self.query_binds(e));
         for root in ev.roots() {
             let Some(env) = ev.match_root(root) else { continue };
+            out.counts.roots += 1;
             let mut emit = |env: Env, groups: &[(Name, (u32, u32), String)]| {
                 let witness = (f.start[root as usize], f.end[root as usize]);
                 let span = match &self.anchor {
@@ -617,6 +667,7 @@ impl Input {
             })
             .collect();
         out.table = Rc::new(Table::new(schema.clone(), cols, n));
+        out.counts.rows = n as u64;
         out
     }
 
@@ -752,6 +803,34 @@ pub struct Output {
     pub input_ns: BTreeMap<(usize, usize), (u64, u64)>,
     /// (rule index, clause index, SQL stage name) -> (executions, nanoseconds).
     pub stage_ns: BTreeMap<(usize, usize, String), (u64, u64)>,
+    /// (rule index, clause index) -> counts (`crate::counts`), summed over files and the
+    /// repository phase.
+    pub clause_counts: BTreeMap<(usize, usize), Counts>,
+    /// (rule index, clause index, stage name) -> its counts summed over runs (`<final>`: the
+    /// final query).
+    pub stage_counts: BTreeMap<(usize, usize, String), StageCounts>,
+    /// (rule index, input index) -> its evaluations' counts, physical ones included.
+    pub input_counts: BTreeMap<(usize, usize), InputCounts>,
+    /// When set, each clause's counts per file evaluation are also pushed here, in order (the
+    /// caller drains it per file: `repo`'s memo stores them).
+    pub file_counts: Option<Vec<((usize, usize), Counts)>>,
+    /// (rule index, clause index) of clauses `eval_file` does not evaluate: their results for the
+    /// current file come from elsewhere (`repo`'s memo).
+    pub skip: rustc_hash::FxHashSet<(usize, usize)>,
+}
+
+/// Adds `b` into `a`: rows and physical work, fixpoint rounds round by round.
+pub fn add_stage_counts(a: &mut StageCounts, b: &StageCounts) {
+    a.rows += b.rows;
+    if a.fix.len() < b.fix.len() {
+        a.fix.resize(b.fix.len(), 0);
+    }
+    for (x, y) in a.fix.iter_mut().zip(&b.fix) {
+        *x += y;
+    }
+    for (x, y) in a.phys.iter_mut().zip(&b.phys) {
+        *x += y;
+    }
 }
 
 impl Output {
@@ -760,6 +839,24 @@ impl Output {
             let e = self.stage_ns.entry((ri, ci, name)).or_default();
             e.0 += 1;
             e.1 += ns;
+        }
+    }
+    /// A clause's counts for one evaluation (`file`: a per-file one, kept for `file_counts`).
+    fn add_counts(&mut self, ri: usize, ci: usize, c: Counts, file: bool) {
+        *self.clause_counts.entry((ri, ci)).or_default() += &c;
+        if file {
+            if let Some(v) = self.file_counts.as_mut() {
+                v.push(((ri, ci), c));
+            }
+        }
+    }
+    /// The last `rel::run`'s counts into `c` and the stage totals.
+    fn add_run(&mut self, ri: usize, ci: usize, c: &mut Counts) {
+        let r = rel::last_counts();
+        c.leaf_rows += r.leaf_rows;
+        for (name, s) in r.stages {
+            c.add_stage(&s);
+            add_stage_counts(self.stage_counts.entry((ri, ci, name)).or_default(), &s);
         }
     }
     /// Folds another worker's output in (findings and failures are multisets; order is free).
@@ -781,6 +878,15 @@ impl Output {
             let e = self.stage_ns.entry(k).or_default();
             e.0 += n;
             e.1 += ns;
+        }
+        for (k, c) in other.clause_counts {
+            *self.clause_counts.entry(k).or_default() += &c;
+        }
+        for (k, s) in other.stage_counts {
+            add_stage_counts(self.stage_counts.entry(k).or_default(), &s);
+        }
+        for (k, c) in other.input_counts {
+            *self.input_counts.entry(k).or_default() += &c;
         }
     }
 }
@@ -827,11 +933,16 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
             let e = out.input_ns.entry((ri, i)).or_default();
             e.0 += 1;
             e.1 += t0.elapsed().as_nanos() as u64;
+            *out.input_counts.entry((ri, i)).or_default() += &r.counts;
             cache.borrow_mut().insert(i, r.clone());
             Some(r)
         };
         for (ci, clause) in rule.clauses.iter().enumerate() {
+            if out.skip.contains(&(ri, ci)) {
+                continue;
+            }
             let t0 = Instant::now();
+            let mut c = Counts::default();
             if std::env::var_os("FACTS_MEMTRACE").is_some() {
                 crate::repo::thread_peak_reset();
             }
@@ -848,8 +959,10 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         ast::SyntaxMode::Invalid if !f.syntax_errors => {}
                         _ => {
                             let ev = ast::Eval::shared(f, ctx.path, &inp.query, &memo);
+                            c.match_nodes = f.len() as u64;
                             for root in ev.roots() {
                                 let Some(env) = ev.match_root(root) else { continue };
+                                c.match_roots += 1;
                                 let witness = (f.start[root as usize], f.end[root as usize]);
                                 let mut envs = Vec::new();
                                 match clause.viol.each {
@@ -857,6 +970,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                                     None => envs.push(env),
                                 }
                                 let groups = inp.first_groups(f, root);
+                                c.input_rows += envs.len() as u64;
                                 for e in envs {
                                     let span = match &clause.viol.anchor {
                                         Anchor::Span => witness,
@@ -882,6 +996,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                 }
                 Kind::Budget { input, group, filter, closure, .. } => {
                     if let Some(rows) = get(*input, out) {
+                        c.add_input(&rows.counts);
                         if let Some(u) = &rows.unsupported {
                             fail(out, format!("unsupported: {u}"));
                         }
@@ -917,6 +1032,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                     for (k, (_, idx)) in plan.inputs.iter().enumerate() {
                         match get(*idx, out) {
                             Some(rows) => {
+                                c.add_input(&rows.counts);
                                 if rows.unsupported.is_some() {
                                     unsupported = rows.unsupported.clone();
                                 }
@@ -938,6 +1054,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                     } else if plan.per_file {
                         let r = rel::run(plan, rel::Partition { inputs: tables, anchors, facts: Some((ctx.f, ctx.path)), source: ctx.source, path: ctx.path });
                         out.add_stages(ri, ci, r.stage_ns);
+                        out.add_run(ri, ci, &mut c);
                         if let Some(m) = r.failure {
                             fail(out, m);
                         }
@@ -951,6 +1068,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                     }
                 }
             }
+            out.add_counts(ri, ci, c, true);
             let ns = t0.elapsed().as_nanos() as u64;
             let e = out.clause_ns.entry((ri, ci)).or_default();
             e.0 += 1;
@@ -1064,6 +1182,9 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
             let inputs = plan.input_schemas.iter().zip(input_rows).map(|(s, rows)| Rc::new(Table::from_rows(s.clone(), rows))).collect();
             let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "" });
             out.add_stages(ri, ci, r.stage_ns);
+            let mut c = Counts::default();
+            out.add_run(ri, ci, &mut c);
+            out.add_counts(ri, ci, c, false);
             if let Some(m) = r.failure {
                 out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: String::new(), message: m });
             }

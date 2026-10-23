@@ -5,6 +5,7 @@
 //! subqueries probe the same indexes; uncorrelated ones run once per statement execution.
 use super::parse::{self, Body, Expr, JoinKind, Query, SelItem, SetOp, Source};
 use super::value::{self as sv, Aff, DKey, Key, V};
+use crate::counts::Phys;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -2865,6 +2866,8 @@ pub struct Exec<'d, 'a> {
     pub error: RefCell<Option<String>>,
     /// The statement's text literals as values, materialised on first use.
     texts: Vec<std::cell::OnceCell<V>>,
+    /// Physical work counts of this execution (`crate::counts`), flushed when it ends.
+    ph: crate::counts::Cells,
 }
 
 enum SubResult {
@@ -3189,6 +3192,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             keep: Default::default(),
             error: RefCell::new(None),
             texts: (0..stmt.texts.len()).map(|_| std::cell::OnceCell::new()).collect(),
+            ph: Default::default(),
         }
     }
 }
@@ -3196,6 +3200,7 @@ impl<'d, 'a> Exec<'d, 'a> {
 pub fn execute(db: &Db<'_>, stmt: &Statement) -> Result<Table, String> {
     let ex = Exec::new(db, stmt);
     let t = ex.query(&stmt.root, None);
+    ex.ph.flush();
     if let Some(e) = ex.error.borrow_mut().take() {
         return Err(e);
     }
@@ -3214,6 +3219,7 @@ pub fn eval_scalar_rows(db: &Db<'_>, stmt: &Statement, pe: &PE, t: &Table) -> Re
             return Err(e);
         }
     }
+    ex.ph.flush();
     Ok(out)
 }
 
@@ -3226,6 +3232,19 @@ impl<'d, 'a> Exec<'d, 'a> {
     }
     fn failed(&self) -> bool {
         self.error.borrow().is_some()
+    }
+
+    /// Records a fixpoint's admitted rows per round (`crate::counts`, algebraic) when it runs
+    /// outside every expression subquery (`outer` is `None`), where the reference evaluates it once
+    /// too. Every round is counted up to the first that admits nothing, as semi-naive evaluation
+    /// runs it (an operator that stops a round early still ends on that empty round).
+    fn fix_rounds(&self, outer: Option<&Frame<'_>>, mut rounds: Vec<u64>) {
+        if outer.is_none() && !self.failed() {
+            if rounds.last().is_some_and(|&n| n > 0) {
+                rounds.push(0);
+            }
+            crate::counts::fix(&rounds);
+        }
     }
 
     fn query(&self, q: &PQuery, outer: Option<&Frame<'_>>) -> Table {
@@ -3437,6 +3456,7 @@ impl<'d, 'a> Exec<'d, 'a> {
         let mut expands: Vec<Option<bool>> = vec![None; seed_rows.len()];
         let mut all: Vec<(u32, u32)> = Vec::new();
         let mut steps = 0usize;
+        let mut rounds = vec![level.len() as u64];
         while !level.is_empty() {
             if self.failed() {
                 break;
@@ -3476,6 +3496,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                 let hits = *hits_of.entry((pid as u64) << 32 | nk as u64).or_insert_with(|| {
                     let mut pk: Vec<KCell<'_>> = probe_keys[pid as usize].clone();
                     pk.insert(pos_nj, node_keys.keys[nk as usize].0.clone().expect("a non-NULL node key"));
+                    self.ph.add(Phys::Probes, 1);
                     ix.get(&pk)
                 });
                 let Some(hits) = hits else { continue };
@@ -3497,8 +3518,10 @@ impl<'d, 'a> Exec<'d, 'a> {
                 }
             }
             all.append(&mut level);
+            rounds.push(next.len() as u64);
             level = next;
         }
+        self.fix_rounds(outer, rounds);
         Some(closure_table(schema, &seeds, &e, (nj, dst), &seed_rows, &all))
     }
 
@@ -3732,6 +3755,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             key.clear();
             key.extend(probe_keys[pid as usize].iter().cloned());
             key.insert(pos_nj, nk);
+            self.ph.add(Phys::Probes, 1);
             let Some(g) = ix.group(&key) else { continue };
             let (lo, hi, d) = match group_parent[g as usize] {
                 NONE => (span[g as usize].0, span[g as usize].1, 0),
@@ -3745,8 +3769,10 @@ impl<'d, 'a> Exec<'d, 'a> {
             active.push((sr as u32, lo, hi, d));
         }
         // Level by level: per active seed its slice of the next depth's bucket.
+        let mut rounds = vec![rows.len() as u64];
         while !active.is_empty() && all.len() <= 50_000_000 {
             let mut next = Vec::with_capacity(active.len());
+            let before = all.len();
             for &(sr, lo, hi, d) in &active {
                 if d as usize >= max_depth {
                     continue;
@@ -3759,11 +3785,13 @@ impl<'d, 'a> Exec<'d, 'a> {
                 all.extend(b[a..z].iter().map(|&p| (sr, order[p as usize])));
                 next.push((sr, lo, hi, d + 1));
             }
+            rounds.push((all.len() - before) as u64);
             active = next;
         }
         if all.len() > 50_000_000 {
             self.fail("recursive CTE exceeded 50M rows".into());
         }
+        self.fix_rounds(outer, rounds);
         #[cfg(test)]
         tests::TREE_WALKS.with(|c| c.set(c.get() + 1));
         Some((rows, all))
@@ -3799,6 +3827,7 @@ impl<'d, 'a> Exec<'d, 'a> {
         let mut tag: Vec<Vec<u16>> = (0..w).map(|j| vec![j as u16; n0]).collect();
         let mut row: Vec<Vec<u32>> = (0..w).map(|_| (0..n0 as u32).collect()).collect();
         let (mut lo, mut hi, mut steps) = (0usize, n0, 0usize);
+        let mut rounds = vec![n0 as u64];
         let mut slot_refs: Vec<&WalkRef<'_>> = Vec::with_capacity(n_slots);
         fn collect<'r, 'p>(r: &'r WalkRef<'p>, out: &mut Vec<&'r WalkRef<'p>>) {
             match r {
@@ -3867,7 +3896,9 @@ impl<'d, 'a> Exec<'d, 'a> {
                 row[j].append(&mut next_row[j]);
             }
             (lo, hi) = (hi, tag.first().map_or(hi, Vec::len));
+            rounds.push((hi - lo) as u64);
         }
+        self.fix_rounds(outer, rounds);
         #[cfg(test)]
         tests::WALKS.with(|c| c.set(c.get() + 1));
         let snap: Rc<[Rc<Column>]> = srcs.as_slice().into();
@@ -3931,6 +3962,8 @@ impl<'d, 'a> Exec<'d, 'a> {
             admit(self.body(arm, outer), &mut queue);
         }
         let mut levels: Vec<Table> = Vec::new();
+        let queued = |q: &[Table]| q.iter().map(|t| t.len() as u64).sum::<u64>();
+        let mut rounds = vec![queued(&queue)];
         let mut steps = 0usize;
         while !queue.is_empty() {
             if self.failed() {
@@ -3948,10 +3981,12 @@ impl<'d, 'a> Exec<'d, 'a> {
             for arm in rec {
                 admit(self.body(arm, outer), &mut queue);
             }
+            rounds.push(queued(&queue));
             self.indexes.borrow_mut().retain(|k, _| k.0 != Rc::as_ptr(&t) as usize);
             self.slots.borrow_mut()[batch] = None;
             levels.push(Rc::try_unwrap(t).unwrap_or_else(|rc| Table { schema: rc.schema.clone(), cols: rc.cols.clone(), len: rc.len }));
         }
+        self.fix_rounds(outer, rounds);
         concat(schema.clone(), width, &levels)
     }
 
@@ -4029,6 +4064,8 @@ impl<'d, 'a> Exec<'d, 'a> {
         let shared = if global { self.db.indexes.borrow().get(&dk).map(|(_, ix)| ix.clone()) } else { None };
         let ix = shared.unwrap_or_else(|| {
             let ix = Rc::new(Index::build(t, &p.cols, &p.col_affs));
+            self.ph.add(Phys::IndexBuilds, 1);
+            self.ph.add(Phys::IndexRows, t.len() as u64);
             if global {
                 self.db.indexes.borrow_mut().insert(dk, (t.clone(), ix.clone()));
             } else {
@@ -4048,6 +4085,8 @@ impl<'d, 'a> Exec<'d, 'a> {
             return ix.clone();
         }
         let ix = RangeIndex::build(t, eq, r.col, r.col_aff).map(Rc::new);
+        self.ph.add(Phys::RangeBuilds, 1);
+        self.ph.add(Phys::RangeRows, t.len() as u64);
         // The key holds the table's address: keep the table alive while the statement runs.
         self.keep.borrow_mut().push(t.clone());
         self.range_indexes.borrow_mut().insert(k, ix.clone());
@@ -4142,6 +4181,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             return ControlFlow::Break(());
         }
         if i == s.items.len() {
+            self.ph.add(Phys::RowsJoined, 1);
             let f = Frame { rows: rows.as_slice(), parent: outer };
             return sink(&f);
         }
@@ -4175,6 +4215,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                 (Some(branches), Some(ixs), _, _) => {
                     let mut c: Vec<u32> = Vec::new();
                     for (p, ix) in branches.iter().zip(ixs) {
+                        self.ph.add(Phys::Probes, 1);
                         if let Some(hits) = self.probe_key(p, &ctx).and_then(|k| ix.get(&k)) {
                             c.extend_from_slice(hits);
                         }
@@ -4187,6 +4228,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                 (_, _, p, eq) if indexes.range[i].is_some() => {
                     // R14: the equality group (if any), then the rows within the bounds.
                     let (rp, rix) = (s.ranges[i].as_ref().expect("range probe"), indexes.range[i].as_ref().unwrap());
+                    self.ph.add(Phys::Probes, 1 + (p.is_some() && eq.is_some()) as u64);
                     let group = match (p, eq) {
                         (Some(p), Some(ix)) => self.probe_key(p, &ctx).and_then(|k| ix.group(&k)),
                         _ => Some(0),
@@ -4217,11 +4259,15 @@ impl<'d, 'a> Exec<'d, 'a> {
                         _ => Some(&[][..]),
                     }
                 }
-                (_, _, Some(p), Some(ix)) => Some(self.probe_key(p, &ctx).and_then(|k| ix.get(&k)).map_or(&[][..], |h| &h[..])),
+                (_, _, Some(p), Some(ix)) => {
+                    self.ph.add(Phys::Probes, 1);
+                    Some(self.probe_key(p, &ctx).and_then(|k| ix.get(&k)).map_or(&[][..], |h| &h[..]))
+                }
                 _ => None,
             }
         };
         let n = cands.map_or(t.len(), |c| c.len());
+        self.ph.add(Phys::RowsScanned, n as u64);
         let mut matched = false;
         for k in 0..n {
             let r = cands.map_or(k as u32, |c| c[k]);
@@ -4441,6 +4487,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             });
         }
         let t = out.finish(&tables, s.out.clone());
+        self.ph.add(Phys::RowsOut, t.len() as u64);
         if s.distinct {
             let mut seen = Distinct::new(s.proj.len());
             let keep: Vec<u32> = (0..t.len()).filter(|&r| seen.insert(&t, r)).map(|r| r as u32).collect();
@@ -4458,6 +4505,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                 return r.clone();
             }
         }
+        self.ph.add(Phys::SubqueryRuns, 1);
         let frame = ctx.frame;
         let r = match want {
             SubWant::Exists => {

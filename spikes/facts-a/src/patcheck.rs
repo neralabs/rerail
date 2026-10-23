@@ -19,7 +19,7 @@ use crate::facts::{self, Facts};
 use crate::sql::engine::Schema;
 use crate::sql::value::{Aff, V};
 use crate::{arg, leaf, lowered, views};
-use rerail_facts::ir::{Anchor, CoreRel, FileSource, InputDef, InputKind, Projection};
+use rerail_facts::ir::{Anchor, CoreRel, FileSource, InputDef, InputKind, Projection, Rel};
 use rerail_facts::reference::{Evaluator, Row};
 use serde_json::{Map, Value as Json};
 use std::collections::BTreeMap;
@@ -44,7 +44,23 @@ struct Stat {
     phys_mismatches: u64,
     ref_files: u64,
     ref_mismatches: u64,
+    /// Evaluations whose matcher counts (`crate::counts::InputCounts`: nodes, roots, rows) were
+    /// compared (leaf vs physical on every file, the reference too where it runs), and the
+    /// differences.
+    counts_compared: u64,
+    count_mismatches: u64,
     examples: Vec<String>,
+}
+
+/// The lowered input's selection `Filter(file ⋈ node, keep)` (`front::pattern`), under its
+/// projection and capture joins: its rows are the matcher's roots.
+fn selection(r: &Rel<FileSource>) -> Option<&Rel<FileSource>> {
+    match r {
+        Rel::Filter { input, .. } if format!("{input:?}") == format!("{:?}", rerail_facts::front::pattern::nodes()) => Some(r),
+        Rel::Project { input, .. } | Rel::Filter { input, .. } | Rel::Sort { input, .. } | Rel::Distinct { input, .. } => selection(input),
+        Rel::Join { left, .. } => selection(left),
+        _ => None,
+    }
 }
 
 fn cases(rules: &str, config: &Map<String, Json>) -> (Vec<Case>, BTreeMap<String, Vec<String>>) {
@@ -211,6 +227,14 @@ pub fn run(args: &[String]) {
                             // The physical plan, on every file.
                             if let Some(b) = plans[k].as_ref().ok().and_then(|plan| lowered::rows(plan, &preds, &mut phys_state, &schema, &rc)) {
                                 st.phys_files += 1;
+                                let (ca, cb) = (&a.counts, &b.counts);
+                                if a.unsupported.is_none() && b.unsupported.is_none() {
+                                    st.counts_compared += 1;
+                                    if (ca.nodes, ca.roots, ca.rows) != (cb.nodes, cb.roots, cb.rows) {
+                                        st.count_mismatches += 1;
+                                        note(st, path, format!("counts leaf {:?} vs physical {:?}", (ca.nodes, ca.roots, ca.rows), (cb.nodes, cb.roots, cb.rows)));
+                                    }
+                                }
                                 let why = if a.unsupported != b.unsupported {
                                     Some(format!("refusal leaf {:?} vs physical {:?}", a.unsupported, b.unsupported))
                                 } else if a.unsupported.is_some() {
@@ -250,6 +274,16 @@ pub fn run(args: &[String]) {
                                 (None, None) => match ev.rel(&lowered.rows, &[]) {
                                     Err(e) => Some(format!("reference error: {e}")),
                                     Ok(rows_b) => {
+                                        // The reference's matcher counts: the `node` rows the selection ranges over,
+                                        // the selection's rows, the input's rows.
+                                        let roots = selection(&lowered.rows).map(|s| ev.rel(s, &[]).map(|r| r.len() as u64));
+                                        let nodes = core.as_ref().map_or(0, |m| m[&CoreRel::Node].len() as u64);
+                                        st.counts_compared += 1;
+                                        let want = (a.counts.nodes, a.counts.roots, a.counts.rows);
+                                        if !matches!(roots, Some(Ok(r)) if (nodes, r, rows_b.len() as u64) == want) {
+                                            st.count_mismatches += 1;
+                                            note(st, path, format!("counts leaf {want:?} vs reference nodes {nodes} roots {roots:?} rows {}", rows_b.len()));
+                                        }
                                         let rows_b: Vec<Vec<String>> = rows_b.iter().map(|r| r.iter().map(show).collect()).collect();
                                         if rows_a.len() != rows_b.len() {
                                             Some(format!("{} rows vs reference {}", rows_a.len(), rows_b.len()))
@@ -283,12 +317,16 @@ pub fn run(args: &[String]) {
             t.phys_mismatches += s.phys_mismatches;
             t.ref_files += s.ref_files;
             t.ref_mismatches += s.ref_mismatches;
+            t.counts_compared += s.counts_compared;
+            t.count_mismatches += s.count_mismatches;
             t.examples.extend(s.examples);
         }
     }
     let per: BTreeMap<String, Stat> = keep.iter().zip(&total).map(|(&i, s)| (names[i].clone(), s.clone())).collect();
     let phys_mismatches: u64 = total.iter().map(|s| s.phys_mismatches).sum();
     let ref_mismatches: u64 = total.iter().map(|s| s.ref_mismatches).sum();
+    let counts_compared: u64 = total.iter().map(|s| s.counts_compared).sum();
+    let count_mismatches: u64 = total.iter().map(|s| s.count_mismatches).sum();
     let rows: u64 = total.iter().map(|s| s.rows).sum();
     let planned = total.iter().filter(|s| s.physical.as_deref() == Some("planned")).count();
     let mut not_planned: BTreeMap<String, u64> = BTreeMap::new();
@@ -307,19 +345,23 @@ pub fn run(args: &[String]) {
         "rows": rows,
         "phys_mismatches": phys_mismatches,
         "ref_mismatches": ref_mismatches,
+        "counts_compared": counts_compared,
+        "count_mismatches": count_mismatches,
         "not_lowered": refused,
         "not_planned": not_planned,
         "per_input": per,
     });
     std::fs::write(Path::new(&out_dir).join("pattern-check.json"), serde_json::to_string_pretty(&report).unwrap()).unwrap();
     println!(
-        "pattern-check: {} inputs ({} planned), {} files, {} rows, {} physical mismatches, {} reference mismatches ({} files over --max-nodes skipped by the reference)",
+        "pattern-check: {} inputs ({} planned), {} files, {} rows, {} physical mismatches, {} reference mismatches ({} files over --max-nodes skipped by the reference); counts {} compared, {} mismatches",
         keep.len(),
         planned,
         paths.len(),
         rows,
         phys_mismatches,
         ref_mismatches,
-        skipped.load(Ordering::Relaxed)
+        skipped.load(Ordering::Relaxed),
+        counts_compared,
+        count_mismatches
     );
 }

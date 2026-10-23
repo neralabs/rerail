@@ -404,7 +404,9 @@ def check_a_replay(d: Path, env: dict) -> tuple[bool, str, dict]:
 
 
 def repo_cmd(d: Path, root: Path | None) -> list[str]:
-    return [binary("facts-a"), "repo", "--threads", THREADS, "--out-dir", str(d), *(["--root", str(root)] if root else [])]
+    """`facts-a repo` as the gate runs it: every clause evaluated (`--no-memo`; the digest memo is the
+    loop's, docs/facts/LOOP.md)."""
+    return [binary("facts-a"), "repo", "--threads", THREADS, "--no-memo", "--out-dir", str(d), *(["--root", str(root)] if root else [])]
 
 
 def failures_ok(results: dict) -> list[str]:

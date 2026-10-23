@@ -1,6 +1,7 @@
 //! Relational clauses: evidence inputs as tables, the `syntax` spec's node/edge/ownership tables
 //! from facts, SQL stages (CTAS semantics, deferred columns, reachability), and the final query's
 //! rows as findings with the native engine's anchoring and identity rules.
+use crate::counts::StageCounts;
 use crate::facts::{self, Facts};
 use crate::sql::engine::{self, Catalog, Db, PE, Schema, Statement, Table};
 use crate::sql::value::{self as sv, Aff, V};
@@ -470,10 +471,44 @@ impl TraceGuard<'_> {
     }
 }
 
+/// One `run`'s counts (`crate::counts`): the rows of the leaf tables it read and, per stage it
+/// computed (in order, `<final>` last), the stage's counts.
+#[derive(Default, Clone)]
+pub struct RunCounts {
+    pub leaf_rows: u64,
+    pub stages: Vec<(String, StageCounts)>,
+}
+
+thread_local! {
+    /// The last `run`'s counts on this thread, complete when it returns (and when its trace hook runs).
+    static LAST: std::cell::RefCell<RunCounts> = std::cell::RefCell::new(RunCounts::default());
+}
+
+/// The last `run`'s counts on this thread.
+pub fn last_counts() -> RunCounts {
+    LAST.with(|l| l.borrow().clone())
+}
+
+/// Measures one stage: its rows, its top-level fixpoints' rounds, the engine's physical work.
+struct StageMeter([u64; crate::counts::NPHYS]);
+
+impl StageMeter {
+    fn start() -> Self {
+        crate::counts::take_fix();
+        StageMeter(crate::counts::phys_now())
+    }
+    fn done(self, name: &str, rows: usize) {
+        let now = crate::counts::phys_now();
+        let c = StageCounts { rows: rows as u64, fix: crate::counts::take_fix(), phys: std::array::from_fn(|i| now[i] - self.0[i]) };
+        LAST.with(|l| l.borrow_mut().stages.push((name.to_owned(), c)));
+    }
+}
+
 pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
     let mut out = RelOutcome { findings: Vec::new(), failure: None, stage_ns: Vec::new() };
     let tracing = TRACE.with(|h| h.borrow().is_some());
     let mut trace = TraceGuard { plan, path: part.path.to_owned(), tables: tracing.then(Vec::new) };
+    LAST.with(|l| *l.borrow_mut() = RunCounts { leaf_rows: part.inputs.iter().map(|t| t.len() as u64).sum(), stages: Vec::new() });
     let mut db = Db::new(part.source, part.path);
     for ((name, _), t) in plan.inputs.iter().zip(part.inputs) {
         trace.push(name, &t);
@@ -491,6 +526,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                 }
                 for (n, t) in spec.tables(f, path) {
                     let t = Rc::new(t);
+                    LAST.with(|l| l.borrow_mut().leaf_rows += t.len() as u64);
                     trace.push(&n, &t);
                     db.tables.insert(n.to_ascii_lowercase(), t);
                 }
@@ -507,6 +543,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
     }
     for (si, st) in plan.stages.iter().enumerate() {
         let t0 = std::time::Instant::now();
+        let meter = StageMeter::start();
         match st {
             StagePlan::Query { name, stmt, deferred, schema } => {
                 let t = match engine::execute(&db, stmt) {
@@ -544,10 +581,12 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     }
                 }
                 memtrace(&name, &t, &db);
+                let rows = t.len();
                 let t = Rc::new(t);
                 trace.push(name, &t);
                 db.tables.insert(name.to_ascii_lowercase(), t);
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
+                meter.done(name, rows);
             }
             StagePlan::Reach { name, roots, edges, forest, syntax } => {
                 let r = match reach(&db, roots, edges.as_ref(), *forest, if *syntax { part.facts.filter(|_| syntax_tables_present) } else { None }, plan.syntax.as_ref(), *syntax) {
@@ -558,6 +597,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     }
                 };
                 let r = Rc::new(r);
+                meter.done(name, r.len());
                 trace.push(name, &r);
                 db.tables.insert(name.to_ascii_lowercase(), r);
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
@@ -568,6 +608,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
         }
     }
     let t0 = std::time::Instant::now();
+    let meter = StageMeter::start();
     let fin = match engine::execute(&db, &plan.fin) {
         Ok(t) => t,
         Err(e) => {
@@ -576,6 +617,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
         }
     };
     out.stage_ns.push(("<final>".into(), t0.elapsed().as_nanos() as u64));
+    meter.done("<final>", fin.len());
     let sch = fin.schema.clone();
     let ci = |n: &str| sch.cols.iter().position(|c| c == n);
     let (pi, si, ei) = (ci("path").unwrap(), ci("start_byte").unwrap(), ci("end_byte").unwrap());

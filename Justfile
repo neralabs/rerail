@@ -95,6 +95,14 @@ facts-gate *args:
 facts-t0 *args:
     @python3 scripts/check/facts-loop.py t0 {{ args }}
 
+# The loop's T1 (docs/facts/LOOP.md, before every milestone and A/B, <= 2 min): the same build, then sub200 against benchmark/facts/sub200-reference.json (findings and failures per clause; the digest memo re-evaluates only changed plans), the 50 files of benchmark/facts/ref50.list through stage-check against rerail_facts::reference (algebraic counts included), the 100-event edit replays when facts-b changed (--replay: always), and the archetype bench. --rebase NOTE rewrites the reference from this run, recording NOTE.
+facts-t1 *args:
+    @python3 scripts/check/facts-loop.py t1 {{ args }}
+
+# The archetype bench (docs/facts/LOOP.md § Bench): one rule per archetype of benchmark/facts/archetypes.json (all, or the named ones) on sub200, single thread, work counts first (algebraic, then physical), wall-clock second (not calibrated). An A/B is two runs: the second with --compare <first run dir> prints the count differences; --serial runs one archetype at a time.
+facts-bench *args:
+    @python3 scripts/check/facts-loop.py bench {{ args }}
+
 # Dashboard history load: seed a throwaway database with N audits, then time each history read, a poll, and /healthz under polling (--audits 4000).
 rerail-dashboard-history *args:
     @node --import tsx benchmark/dashboard-history.ts {{ args }}

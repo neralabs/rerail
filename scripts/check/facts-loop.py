@@ -280,6 +280,121 @@ def check_ref50(d: Path) -> tuple[bool, str, dict]:
 
 
 # ---------------------------------------------------------------------------------------------------
+# The archetype bench
+
+
+ARCHETYPES = ROOT / "benchmark/facts/archetypes.json"
+# facts-a's counts (spikes/facts-a/src/counts.rs), algebraic first.
+ALGEBRAIC = ["leaf_rows", "stage_rows", "fix_rounds", "fix_rows", "match_nodes", "match_roots", "input_rows"]
+PHYSICAL = ["index_builds", "index_rows", "range_builds", "range_rows", "probes", "rows_scanned", "rows_joined", "rows_out", "subquery_runs"]
+# facts-b's (FACTS_PROFILE, gen/prof.rs): records sent and arranged by its dataflow operators.
+DATAFLOW = ["nodes", "records_sent", "records_arranged"]
+
+
+def timing(d: Path) -> tuple[float, float]:
+    """(wall, CPU) seconds from a run directory's `/usr/bin/time -l` output."""
+    for line in (d / "stderr.txt").read_text(errors="replace").splitlines():
+        w = line.split()
+        if len(w) >= 6 and w[1] == "real" and w[3] == "user":
+            return float(w[0]), float(w[2]) + float(w[4])
+    return 0.0, 0.0
+
+
+def bench_one(a: dict, d: Path) -> dict:
+    """One archetype's run: its counts (algebraic, then physical), findings, failures, wall and CPU."""
+    row = {"archetype": a["name"], "check": a["check"], "clause": a["clause"]}
+    if a.get("engine") == "greplay":
+        d.mkdir(parents=True, exist_ok=True)
+        spec = d / "spec.json"
+        spec.write_text(json.dumps([{"rule": str(ROOT / a["rule"]), "clauses": [a["clause"]], "exports": os.path.expanduser(a["exports"])}]))
+        status, _ = gate.run([gate.binary("facts-b"), "greplay", "--plans", "none", "--real", str(spec), "--no-oracle", "--limit", str(a["events"]),
+                              "--events", str(gate.EVENTS), "--run-dir", str(d / "run")], d, {"FACTS_PROFILE": "1"})
+        prof = d / "run" / "profile.json"
+        if status != 0 or not prof.exists():
+            return {**row, "error": f"exit {status}"}
+        nodes = json.loads(prof.read_text())["nodes"]
+        row["counts"] = {"nodes": len(nodes), "records_sent": sum(n["sent"] for n in nodes), "records_arranged": sum(n["arranged"] for n in nodes)}
+        row["events"] = a["events"]
+    else:
+        status, _ = gate.run([gate.binary("facts-a"), "repo", "--threads", "1", "--no-memo", "--checks", a["check"], "--clauses", a["clause"],
+                              "--root", str(SUB200), "--out-dir", str(d)], d)
+        if status != 0 or not (d / "results.json").exists():
+            return {**row, "error": f"exit {status}"}
+        r = json.loads((d / "results.json").read_text())
+        row["counts"] = next(c["counts"] for rule in r["rules"] for c in rule["clauses"] if c["clause"] == a["clause"])
+        row["findings"] = sum(1 for f in r["clause_findings"] if f[1] == a["clause"])
+        row["failures"] = sum(1 for f in r["failures"] if f["clause"] == a["clause"])
+    row["wall_s"], row["cpu_s"] = timing(d)
+    return row
+
+
+def count_text(c: dict) -> str:
+    keys = [k for k in ALGEBRAIC + PHYSICAL + DATAFLOW if k in c]
+    return " ".join(f"{k}={c[k]}" for k in keys)
+
+
+def delta_text(c: dict, base: dict) -> str:
+    """The counts that differ from `base`'s, `k a->b (+x%)`."""
+    out = []
+    for k in [k for k in ALGEBRAIC + PHYSICAL + DATAFLOW if k in c or k in base]:
+        a, b = base.get(k, 0), c.get(k, 0)
+        if a != b:
+            out.append(f"{k} {a}->{b}" + (f" ({(b - a) / a * 100:+.1f}%)" if a else ""))
+    return ", ".join(out) or "no count differs"
+
+
+def run_bench(rd: Path, names: list[str], serial: bool) -> tuple[bool, list[dict]]:
+    spec = json.loads(ARCHETYPES.read_text())["archetypes"]
+    unknown = [n for n in names if n not in {a["name"] for a in spec}]
+    if unknown:
+        raise SystemExit(f"facts-loop: unknown archetypes {unknown}; known: {[a['name'] for a in spec]}")
+    chosen = [a for a in spec if not names or a["name"] in names]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1 if serial else len(chosen)) as pool:
+        rows = list(pool.map(lambda a: bench_one(a, rd / a["name"]), chosen))
+    (rd / "bench.json").write_text(json.dumps({"format": "rerail.facts-bench/v1", "commit": gate.commit(), "env": {k: v for k, v in os.environ.items() if k.startswith("FACTS_")},
+                                               "serial": serial, "archetypes": rows}, indent=1))
+    return all("error" not in r for r in rows), rows
+
+
+def bench_line(r: dict, base: dict | None) -> str:
+    if "error" in r:
+        return f"bench {r['archetype']} {r['check']}/{r['clause']} FAIL {r['error']}"
+    head = f"bench {r['archetype']} {r['check']}/{r['clause']}" + (f" findings {r['findings']} failures {r['failures']}" if "findings" in r else f" events {r['events']}")
+    if base is not None:
+        return f"{head} | vs base: {delta_text(r['counts'], base['counts'])} | wall {base['wall_s']:.1f}s->{r['wall_s']:.1f}s (not calibrated)"
+    return f"{head} | {count_text(r['counts'])} | wall {r['wall_s']:.1f}s cpu {r['cpu_s']:.1f}s (not calibrated)"
+
+
+def check_bench(d: Path) -> tuple[bool, str, dict]:
+    """T1's bench: every archetype, counts first."""
+    d.mkdir(parents=True, exist_ok=True)
+    ok, rows = run_bench(d, [], serial=False)
+    for r in rows:
+        say(bench_line(r, None))
+    return ok, f"{len(rows)} archetypes, counts in {d}/bench.json", {"archetypes": rows}
+
+
+def bench(args) -> int:
+    """`just facts-bench [archetype…] [--compare RUN_DIR]`: the archetypes' counts, then wall-clock;
+    an A/B is two runs (the second with `--compare` the first's run directory)."""
+    rd = Path(args.run_dir) if args.run_dir else RUNS / (datetime.datetime.now().strftime("%Y%m%dT%H%M%S") + "-bench")
+    rd.mkdir(parents=True, exist_ok=True)
+    say(f"run {rd} commit {gate.commit()} load {gate.load1()} env {' '.join(f'{k}={v}' for k, v in sorted(os.environ.items()) if k.startswith('FACTS_')) or '-'}")
+    if not args.no_build:
+        ok, info, _ = build(rd)
+        if not ok:
+            say(f"FAILED: build failed, see {rd}/build*")
+            return 1
+    base = {r["archetype"]: r for r in json.loads((Path(args.compare) / "bench.json").read_text())["archetypes"]} if args.compare else {}
+    t = time.monotonic()
+    ok, rows = run_bench(rd, args.archetypes, args.serial)
+    for r in rows:
+        say(bench_line(r, base.get(r["archetype"]) if args.compare else None))
+    say(f"{'passed' if ok else 'FAILED'} {time.monotonic() - t:.0f}s: {len(rows)} archetypes, {rd}/bench.json")
+    return 0 if ok else 1
+
+
+# ---------------------------------------------------------------------------------------------------
 # Tiers
 
 
@@ -379,7 +494,7 @@ def t1(args) -> int:
     facts_b = [f for f in changed if f.startswith("spikes/facts-b/")]
     report.update({"base": {"ref": args.base, "merge_base": base}, "changed": changed})
     say(f"changed {len(changed)} files since {base[:9]} ({args.base}); facts-b {'changed' if facts_b else 'unchanged'}")
-    jobs: dict[str, tuple] = {"sub200-parity": (check_sub200, args), "ref50-vs-reference": (check_ref50,)}
+    jobs: dict[str, tuple] = {"sub200-parity": (check_sub200, args), "ref50-vs-reference": (check_ref50,), "bench": (check_bench,)}
     if facts_b or args.replay:
         jobs["b-exactness"] = (lambda d: gate.check_b(d, {}, "replay", limit=T1_EDITS),)
         jobs["b-generated"] = (lambda d: gate.check_b(d, {}, "greplay", limit=T1_EDITS),)
@@ -401,17 +516,22 @@ def main() -> int:
     p1 = sub.add_parser("t1", help="sub200 parity, 50 files against the reference, the edit replays when facts-b changed, the archetype bench (<= 2 min)")
     p1.add_argument("--rebase", metavar="NOTE", help="rewrite benchmark/facts/sub200-reference.json from this run, recording NOTE (why the findings changed)")
     p1.add_argument("--replay", action="store_true", help=f"run the {T1_EDITS}-event edit replays even when facts-b is unchanged")
-    for p in (p0, p1):
-        p.add_argument("--base", default=os.environ.get("FACTS_LOOP_BASE", BASE), help=f"merge-base ref (default {BASE})")
+    pb = sub.add_parser("bench", help="the archetype bench: counts first, wall second")
+    pb.add_argument("archetypes", nargs="*", help="archetype names (default: all of benchmark/facts/archetypes.json)")
+    pb.add_argument("--compare", metavar="RUN_DIR", help="print each archetype's count differences from that bench run (an A/B)")
+    pb.add_argument("--serial", action="store_true", help="one archetype at a time (wall-clock with less contention)")
+    for p in (p0, p1, pb):
         p.add_argument("--no-build", action="store_true", help="reuse the last loop build")
         p.add_argument("--run-dir", help=f"run directory (default {RUNS}/<ts>-<tier>)")
+    for p in (p0, p1):
+        p.add_argument("--base", default=os.environ.get("FACTS_LOOP_BASE", BASE), help=f"merge-base ref (default {BASE})")
         p.add_argument("--jobs", type=int, default=8, help="concurrent checks and mutant cells (default 8)")
     try:
         args = ap.parse_args()
     except SystemExit as e:
         return 2 if e.code else 0
     LOOP.mkdir(parents=True, exist_ok=True)
-    return {"t0": t0, "t1": t1}[args.tier](args)
+    return {"t0": t0, "t1": t1, "bench": bench}[args.tier](args)
 
 
 if __name__ == "__main__":
