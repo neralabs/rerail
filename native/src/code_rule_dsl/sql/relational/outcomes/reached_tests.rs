@@ -61,7 +61,14 @@ pub(super) fn reached(
                 let trace = super::super::tests::ExecutionTrace::start(db);
                 let result = (|| {
                     let mut rows = statement.query([])?;
-                    while rows.next()?.is_some() {}
+                    while let Some(row) = rows.next()? {
+                        if compiled.relations["failureColumn"].is_number() {
+                            let tag: i64 = row.get(4)?;
+                            if let Some(limit) = super::super::failure::decode(tag) {
+                                return Err(rusqlite::Error::ModuleError(format!("{limit:?}")));
+                            }
+                        }
+                    }
                     Ok::<_, rusqlite::Error>(())
                 })();
                 executions = trace.count();

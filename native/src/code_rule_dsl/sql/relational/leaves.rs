@@ -65,9 +65,11 @@ pub(in crate::code_rule_dsl::sql) fn register(
             let rows = super::super::terminals::with_scopes(file, file_data, || {
                 term.verdicts
                     .rows(node_at(&file_data.root, node), &Default::default())
-            })
-            .map_err(Error::ModuleError)?;
-            Ok(rows.first().map_or(0, |r| if r.unknown { 2 } else { 1 }))
+            });
+            match rows {
+                Ok(rows) => Ok(rows.first().map_or(0i64, |r| if r.unknown { 2 } else { 1 })),
+                Err(error) => super::failure::encode(&error).ok_or(Error::ModuleError(error)),
+            }
         },
     )?;
     // Atomic structural equality, with native capture semantics. No rule composition runs here.

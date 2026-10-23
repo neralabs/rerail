@@ -1,7 +1,10 @@
 use super::super::ir::Set;
 #[path = "ordered.rs"]
 mod ordered;
+#[path = "publication.rs"]
+mod publication;
 use super::{Axis, Op, Plan, Slot, Slots};
+pub(super) use publication::compile_jobs;
 use serde_json::{Value, json};
 
 pub(super) struct Demand {
@@ -107,6 +110,9 @@ impl Sql {
                 true,
             ),
             Op::Not(child) => {
+                if child.fallible() {
+                    return Ok(None);
+                }
                 let Some((expression, node)) = Self::scalar(child, input)? else {
                     return Ok(None);
                 };
@@ -197,7 +203,7 @@ impl Sql {
                 let demand = self.input(child, input, "1");
                 let output = self.emit(child, &demand)?;
                 format!(
-                    "SELECT k,CASE truth WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE 2 END AS truth FROM {}",
+                    "SELECT k,CASE truth WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE truth END AS truth FROM {}",
                     output.name
                 )
             }
@@ -300,7 +306,7 @@ impl Sql {
                 .map(|slot| format!("d.u{slot}"))
                 .collect::<Vec<_>>();
             let filter = format!(
-                "d.truth<>0 AND NOT ({})",
+                "d.truth>0 AND NOT ({})",
                 if blocked.is_empty() {
                     "0".into()
                 } else {
@@ -318,7 +324,7 @@ impl Sql {
                 let withheld: String = plan.node_writes.iter().map(|slot| if child.node_writes.contains(slot) {
                     format!(",(d.u{slot} OR COALESCE(d.tested=2,0) OR (d.tested IS NULL AND d.truth<>0)) AS u{slot}")
                 } else {format!(",d.u{slot}")}).collect();
-                state.name=self.relation("conjunction scalar barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
+                state.name=self.relation("conjunction scalar barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
                 continue;
             }
             if self.correlated {
@@ -331,7 +337,7 @@ impl Sql {
                     }
                 });
                 let withheld:String=plan.node_writes.iter().map(|slot|if child.node_writes.contains(slot){format!(",(d.u{slot} OR COALESCE(d.tested=2,0) OR (d.tested IS NULL AND d.truth<>0)) AS u{slot}")}else{format!(",d.u{slot}")}).collect();
-                state.name=self.relation("correlated conjunction barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
+                state.name=self.relation("correlated conjunction barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
                 continue;
             }
             let reached = self.input(child, &state, &filter);
@@ -356,7 +362,7 @@ impl Sql {
                     }
                 })
                 .collect();
-            state.name = self.relation("conjunction sequencing barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR o.truth=0 THEN 0 WHEN d.truth=2 OR o.truth=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {} d LEFT JOIN {} o ON o.k=d.k",state.name,output.name),true,"k,file,node,truth,live bindings,withheld flags");
+            state.name = self.relation("conjunction sequencing barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<0 THEN d.truth WHEN o.truth<0 THEN o.truth WHEN d.truth=0 OR o.truth=0 THEN 0 WHEN d.truth=2 OR o.truth=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {} d LEFT JOIN {} o ON o.k=d.k",state.name,output.name),true,"k,file,node,truth,live bindings,withheld flags");
         }
         // Bindings are observable only on true; callers keep their input on false/unknown.
         let columns = fields(&plan.writes, |slot| format!("s.c{slot}"));
@@ -395,7 +401,7 @@ impl Sql {
                     }
                 });
                 let strict = usize::from(!child.writes.is_empty());
-                state.name=self.relation("alternative scalar barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
+                state.name=self.relation("alternative scalar barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
                 continue;
             }
             if self.correlated {
@@ -408,7 +414,7 @@ impl Sql {
                     }
                 });
                 let strict = usize::from(!child.writes.is_empty());
-                state.name=self.relation("correlated alternative barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
+                state.name=self.relation("correlated alternative barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
                 continue;
             }
             let reached = self.input(child, &state, "d.truth=0");
@@ -421,7 +427,7 @@ impl Sql {
                 }
             });
             let strict = usize::from(!child.writes.is_empty());
-            state.name = self.relation("ordered alternative barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<>0 THEN d.truth WHEN o.truth=1 THEN 1 WHEN o.truth=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(o.truth=2,0)) AS open{columns} FROM {} d LEFT JOIN {} o ON o.k=d.k",state.name,output.name),true,"k,file,node,truth,open,live bindings");
+            state.name = self.relation("ordered alternative barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<>0 THEN d.truth WHEN o.truth<0 THEN o.truth WHEN o.truth=1 THEN 1 WHEN o.truth=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(o.truth=2,0)) AS open{columns} FROM {} d LEFT JOIN {} o ON o.k=d.k",state.name,output.name),true,"k,file,node,truth,open,live bindings");
         }
         // Bindings are observable only on true; callers keep their input on false/unknown.
         let columns = fields(&plan.writes, |slot| format!("s.c{slot}"));
@@ -504,6 +510,9 @@ pub(super) fn compile(
     slots: &[Slot],
     applies: bool,
 ) -> Result<(String, Value), String> {
+    if plan.fallible() {
+        return compile_jobs(&[(plan, slots, applies)]);
+    }
     let mut sql = Sql {
         definitions: vec![],
         profile: vec![],

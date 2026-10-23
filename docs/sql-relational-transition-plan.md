@@ -444,27 +444,56 @@ At inner widths 16, 64, and 256, early matches require 2,363 VM instructions and
 Other dimensions grow linearly; the journal records exact counts and typed return copies.
 These results establish this bounded kernel, not whole-job performance or the 100-execution gate.
 
+## Failure publication status
+
+The bounded workspace kernel now publishes typed failures by clause and file.
+Reached atomic limits propagate through negation, conjunctions, alternatives, searches, counts, and nested stops.
+False and unknown remain separate from failure.
+Unexpected host or SQLite errors still abort the statement.
+
+A fallible clause sequences roots within each file and stops that pair after its first failure.
+Total clauses retain set composition.
+The final failure filter suppresses all matches from a failed pair, including earlier provisional matches.
+Healthy files and sibling clauses continue in the same matching statement.
+Captures remain typed until the final JSON projection.
+The public diagnostic decoder uses the existing limit messages and `budget-exceeded` code.
+
+Native differential cases cover reversed file and clause order, multiple failures, empty files, withheld failures, and exact captures.
+A native workspace test also confirms suppression through public rendering after a real value-budget failure.
+Stateless snapshot evaluation has a different contract: a file limit discards the entire clause result.
+That aggregation remains the caller's responsibility; this kernel implements workspace-local publication.
+
+The first publication shape repeated a shared failure query under each final clause arm.
+At 32 clauses, that caused 116 ms of preparation for about 2.5 ms of execution.
+The accepted shape materializes one typed publication relation and applies one failure filter.
+The first comparison reduced preparation to about 11 ms, with slightly lower VM work.
+The journal records final measurements and the rejected shape.
+
+This kernel admits up to 32 clauses and 256 KB of generated SQL.
+These are internal admission limits for the semantic proof, not runtime switches or complete-job batching policy.
+The fixtures use TypeScript and admit every supplied file to each clause.
+Mixed-dialect batches and per-clause file selection remain integration work.
+The replacement remains test-only until the remaining transition gates pass.
+
 ## Next implementation action
 
-Define and test failure publication across files and clauses before broadening production admission.
-Start with two files and two clauses, with a reached value failure after an earlier successful match.
-Place another match after the failure, then repeat with that failing leaf behind a decisive branch.
-Record native results, captures, diagnostic codes, order, and suppression scope.
-Repeat with the file order and clause order reversed.
+Prove native work-budget accounting through the typed child boundary.
+Start with two clauses over two files containing three value-bearing roots.
+Measure native charges with allowances just below, at, and above the successful threshold.
+Repeat with a decisive alternative, an unknown operand, a count, and a nested traversal.
+Compare reached calls, the first failure, exact captures, published matches, and public diagnostics.
 
-Specify whether failure suppresses one root, one clause/file pair, or the whole call from those observations.
-Represent that contract explicitly in typed outcomes and final publication SQL.
-Do not let SQLite's immediate statement abort silently select the public failure policy.
-If an atomic leaf must return an error tag, preserve its native error payload and avoid repeating the evaluation.
-Require exact published results and diagnostics, one matching execution for this fixture, and no frame publications.
+Return the remaining work allowance with each reached atomic result and carry it through SQL composition.
+Each clause/file pair owns its allowance; sibling pairs cannot consume it.
+Utility-entry and count charges must remain explicit during lowering, even when SQL removes their control structure.
+Do not use VM instructions or visited SQL rows as a substitute for native semantic charges.
+Require one matching execution and no frame publications for these fixtures.
 
-The current reached tests compare atomic calls through the first failure.
-They do not establish full-job diagnostic order or partial-result handling.
-Native work budgets, general recursion, enumeration, catalog coverage, and the complete-job execution gate remain open.
-The latest same-binary B023 check passes at 1.96052 times the reference, with unchanged SQL and VM work.
-The earlier 2.02919 combined ratio remains recorded; repeat the timing gate during subsequent integration.
+Native stack/depth rules, deadlines, decisions, enumeration, general recursion, catalog coverage, and production integration remain separate gates.
+The complete cold job must still prove the 100-execution limit.
+Repeat the frozen B023 work and timing gates after each compiler change.
 
-Keep the remaining local cost visible while completing these semantics.
-The nested shape still materializes several single-demand Boolean barriers and emits three traversal states per candidate.
-Measure their VM and copy costs before removing barriers; each rewrite must retain exact atomic-call traces.
-The journal records each accepted or rejected rewrite and its measurement artifact.
+The remaining physical costs are visible in the profiles.
+Early failures still enumerate candidate keys, although later value calls are suppressed.
+Nested execution still creates single-demand Boolean materializations and three traversal states per candidate.
+Remove these costs only with measured SQL rewrites and exact reached-call regression tests.

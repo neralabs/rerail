@@ -5,6 +5,7 @@ mod emit;
 mod local;
 mod lower;
 mod nested_tests;
+mod publication_tests;
 mod reached_tests;
 mod tests;
 
@@ -83,4 +84,30 @@ impl Plan {
             _ => false,
         }
     }
+}
+
+/// Bounded workspace publication kernel. Terminal IDs share one batch namespace.
+pub(super) fn compile_job(grammars: &[&GrammarMatcher]) -> Result<Compiled, String> {
+    let mut terminals = vec![];
+    let mut plans = vec![];
+    for grammar in grammars {
+        if grammar.transform.is_some() {
+            return Err("publication: transforms need their publication contract".into());
+        }
+        let mut lower = lower::Lower::new(grammar.language);
+        lower.pure.program.terminals = terminals;
+        let plan = lower.plan(&grammar.matcher)?;
+        terminals = lower.pure.program.terminals;
+        plans.push((plan, lower.slots, grammar.applies));
+    }
+    let borrowed: Vec<_> = plans
+        .iter()
+        .map(|(plan, slots, applies)| (plan, slots.as_slice(), *applies))
+        .collect();
+    let (sql, relations) = emit::compile_jobs(&borrowed)?;
+    Ok(Compiled {
+        sql,
+        relations,
+        terminals,
+    })
 }

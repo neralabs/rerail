@@ -41,6 +41,9 @@ impl Local<'_> {
                 )
             }
             Op::Not(child) => {
+                if child.fallible() {
+                    return Ok(None);
+                }
                 let Some(test) = self.scalar(child, bound)? else {
                     return Ok(None);
                 };
@@ -59,7 +62,7 @@ impl Local<'_> {
         if let Op::Not(child) = &plan.op {
             let output = self.emit(child, input)?;
             // A negation's binding column is unobservable: every parent retains its own input.
-            return Ok(self.relation(format!("SELECT CASE truth WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE 2 END AS truth,0 AS bound FROM {output}")));
+            return Ok(self.relation(format!("SELECT CASE truth WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE truth END AS truth,0 AS bound FROM {output}")));
         }
         let (items, all) = match &plan.op {
             Op::All(items) => (items, true),
@@ -75,7 +78,7 @@ impl Local<'_> {
             let writes = self.mask(&child.writes);
             let node_writes = self.mask(&child.node_writes);
             let reached = if all {
-                format!("s.truth<>0 AND (s.withheld&{mentions})=0")
+                format!("s.truth>0 AND (s.withheld&{mentions})=0")
             } else {
                 "s.truth=0".into()
             };
@@ -117,7 +120,7 @@ impl Local<'_> {
             let (truth, withheld, open) = if all {
                 (
                     format!(
-                        "CASE WHEN s.truth=0 OR {test}=0 THEN 0 WHEN s.truth=2 OR {test}=2 THEN 2 ELSE 1 END"
+                        "CASE WHEN s.truth<0 THEN s.truth WHEN {test}<0 THEN {test} WHEN s.truth=0 OR {test}=0 THEN 0 WHEN s.truth=2 OR {test}=2 THEN 2 ELSE 1 END"
                     ),
                     format!(
                         "s.withheld|CASE WHEN {test}=2 OR ({test} IS NULL AND s.truth<>0) THEN {node_writes} ELSE 0 END"
@@ -127,7 +130,7 @@ impl Local<'_> {
             } else {
                 (
                     format!(
-                        "CASE WHEN s.truth<>0 THEN s.truth WHEN {test}=1 THEN 1 WHEN {test}=2 AND {writes}<>0 THEN 2 ELSE 0 END"
+                        "CASE WHEN s.truth<>0 THEN s.truth WHEN {test}<0 THEN {test} WHEN {test}=1 THEN 1 WHEN {test}=2 AND {writes}<>0 THEN 2 ELSE 0 END"
                     ),
                     "0".into(),
                     format!("s.open OR COALESCE({test}=2,0)"),

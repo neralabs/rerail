@@ -39,7 +39,7 @@ fn check_depth(plan: &Plan, walks: usize) -> Result<(), String> {
 }
 
 /// The outer SELECT binds w, n, and (for caller captures) d. Inner CTE names have lexical scope.
-fn program(
+pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     plan: &Plan,
     input: &Demand,
     fresh: bool,
@@ -80,7 +80,10 @@ fn program(
         json!({"relations":sql.profile,"exports":exports,"singleReachedDemand":true}),
     ))
 }
-fn bridge(query: &str, width: usize) -> String {
+pub(in crate::code_rule_dsl::sql::relational::outcomes) fn bridge(
+    query: &str,
+    width: usize,
+) -> String {
     let columns = (0..width)
         .map(|i| format!("r.c{i}"))
         .collect::<Vec<_>>()
@@ -149,8 +152,17 @@ pub(super) fn emit(
     } else {
         "w.own=1".into()
     };
+    let decisive = format!("w.own<0 OR w.stopped<0 OR ({decisive})");
     let body_phase = usize::from(!child);
-    let (body, body_profile) = program(rule, input, false, "1", &exports, "w.file", "n.id")?;
+    let (body, body_profile) = program(
+        rule,
+        input,
+        false,
+        "w.stopped>=0",
+        &exports,
+        "w.file",
+        "n.id",
+    )?;
     let (stop_sql, stop_profile) = if let Some(stop) = stop {
         program(
             stop,
@@ -205,7 +217,11 @@ pub(super) fn emit(
         } else {
             String::new()
         };
-        let own = if body_test { "r.c0" } else { "w.own" };
+        let own = if body_test {
+            "COALESCE(r.c0,0)"
+        } else {
+            "w.own"
+        };
         let stopped = if body_test {
             "w.stopped"
         } else if stop.is_some() {
@@ -233,7 +249,7 @@ pub(super) fn emit(
     profile["childPrograms"] = json!({"body":body_profile,"stop":stop_profile});
     profile["recursiveColumns"] = json!(10 + exports.len());
     profile["typedReturnColumns"] = json!(1 + exports.len());
-    let terminal=sql.relation("completed nested traversal",format!("SELECT w.k,{low} AS low,{uncertain} AS uncertain,{open} AS open{keep_values} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND (({decisive}) OR ({next}) IS NULL)"),true,"k,low,uncertain,open,observable exports");
+    let terminal=sql.relation("completed nested traversal",format!("SELECT w.k,CASE WHEN w.own<0 THEN w.own WHEN w.stopped<0 THEN w.stopped ELSE 0 END AS failure,{low} AS low,{uncertain} AS uncertain,{open} AS open{keep_values} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND (({decisive}) OR ({next}) IS NULL)"),true,"k,failure,low,uncertain,open,observable exports");
     let low = "COALESCE(t.low,0)";
     let high = "(COALESCE(t.low,0)+COALESCE(t.uncertain,0))";
     let closed = "NOT COALESCE(t.open,0)";
@@ -261,7 +277,7 @@ pub(super) fn emit(
             fields(&exports, |slot| format!("t.v{slot}")),
         )
     };
-    Ok(Output{name:sql.relation("nested traversal outcome",format!("SELECT d.k,{verdict} AS truth{columns} FROM {} d LEFT JOIN {terminal} t ON t.k=d.k",input.name),true,"k,truth,observable capture or count exports")})
+    Ok(Output{name:sql.relation("nested traversal outcome",format!("SELECT d.k,CASE WHEN t.failure<0 THEN t.failure ELSE {verdict} END AS truth{columns} FROM {} d LEFT JOIN {terminal} t ON t.k=d.k",input.name),true,"k,truth,observable capture or count exports")})
 }
 
 impl Sql {

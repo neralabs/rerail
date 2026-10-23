@@ -3662,3 +3662,131 @@ python3 benchmark/relational-complete-spike.py /tmp/rerail-b023-relational-20261
 The output directories must be new.
 Compiler artifact names can change; use the executable path reported by the build.
 The evidence includes the temporary wrapper contents needed to reproduce this diagnostic build.
+
+### Milestone 2: failure publication — started 2026-10-22
+
+This phase tests two files and two clauses with successful roots before and after an injected value failure.
+The native clause runner stops further roots in the failed clause/file pair.
+Workspace reporting discards all witnesses from that pair, including earlier successful roots.
+Other files and clauses remain independent.
+The public diagnostic uses `budget-exceeded` and the native limit message.
+
+The stateless snapshot evaluator has a different aggregation contract.
+It discards the entire clause result after a file limit and stops that query's file scan.
+The replacement matching kernel will expose typed failures by clause/file pair.
+Workspace publication can then preserve healthy pairs without confusing this contract with stateless query aggregation.
+The phase must record this distinction and test each claimed boundary.
+
+The planned SQL shape sequences roots only within each clause/file pair.
+Each root invokes its compiled SQL child through the existing typed row boundary.
+Negative outcome tags carry reached limits through Boolean and traversal composition.
+A final failure relation excludes every successful root from a failed pair.
+No host retry, per-root SQL execution, or mutable failure side table supplies composition.
+
+The first differential run passed the existing kernels but found two mistakes in the new fixtures.
+The helper selected dialect variants from the first clause instead of selecting each clause's TypeScript matcher.
+A count fixture also omitted the required maximum for a zero minimum.
+The corrected harness checks the number of clauses and compares every clause/file pair.
+
+A separate native workspace test uses a real value-budget failure, without fault injection.
+Its failed file retains one provisional witness internally, but reporting publishes none from that clause/file pair.
+The healthy file and the sibling clause still publish their witnesses.
+A stateless API test confirms that its failure discards the whole clause result instead.
+
+The first correct publication shape used a separate final output arm for each clause.
+Each arm referenced the shared failure query.
+At 2, 8, and 32 clauses, preparation took 0.869, 7.924, and 116.319 ms.
+Execution took 0.105, 0.449, and 2.480 ms, with linear VM work.
+This is unacceptable preparation amplification for a small workload.
+The rejected shape and its source hashes remain in `/tmp/rerail-publication-20261022-final`.
+
+The next rewrite unions typed provisional outputs before one failure filter.
+Columns are clause, file, node, outcome, and the maximum observed capture width in this bounded batch.
+Capture positions follow each clause's published name order.
+Only the final projection converts count values to text and constructs JSON.
+A fallible root stream has one consumer and no join back to its root demand for output identity.
+Its recursive relation can use a coroutine instead of forced materialization.
+The shared typed publication relation is materialized because the failure filter and final results both read it.
+This materialization has an explicit consumer contract and a measurable width.
+
+### Failure publication — accepted kernel and profiles
+
+The final shape passes 69 relational tests and the native workspace publication test.
+The B023 selection adds nine fixtures, one adversarial case, and one frozen-corpus case: 81 unique tests pass.
+Formatting and both required Clippy configurations pass.
+The evidence contains 27 publication traces, including file/clause reversals and multiple failures.
+
+The compiler uses one failure representation and one publication contract for workspace-local matching.
+Atomic value limits return negative integer tags instead of raising a SQLite statement error.
+Composition propagates the tag and suppresses later reached work.
+Unexpected terminal or SQL errors remain statement errors.
+The decoder uses the existing public diagnostic code, native message, clause ID, and path.
+Public diagnostic order uses the existing result-order function.
+
+Reached failure tests exercise `Value` limits.
+Encoding tests cover all four native limit tags, but do not establish their budget-trigger parity.
+The normal single-clause fallible compiler now uses the same publication kernel as the batch compiler.
+There is no runtime switch or host retry loop.
+The replacement remains test-only.
+
+| Dimension | Sizes | Final VM instructions | Atomic value calls | Typed return rows / cells |
+| --- | --- | --- | --- | --- |
+| Roots, two clauses | 4 / 16 / 64 | 3,597 / 13,449 / 52,857 | 8 / 32 / 128 | 8/16, 32/64, 128/256 |
+| Roots after first failure, two clauses | 4 / 16 / 64 | 1,668 / 3,396 / 10,308 | 2 / 2 / 2 | 2/4 at every size |
+| Files, two clauses | 4 / 16 / 64 | 3,981 / 15,369 / 60,921 | 8 / 32 / 128 | 8/16, 32/64, 128/256 |
+| Clauses, one root/file | 2 / 8 / 32 | 1,134 / 4,448 / 18,068 | 2 / 8 / 32 | 2/4, 8/16, 32/64 |
+
+All 12 profiles have exact native outputs, one traced matching execution, and zero frame publications.
+The five-column typed publication relation carries one capture in these workloads.
+Typed return counts measure physical cursor inputs, not all SQLite temporary writes.
+
+At 32 clauses, final preparation takes 10.455 ms versus 116.319 ms for the rejected shape: about 11.1 times lower.
+VM work falls from 19,233 to 18,068, a 6.1% reduction.
+The final statement is 80,154 bytes.
+These are diagnostic shape measurements, not a whole-job speedup claim.
+At 64 roots, automatic-index entries fall from 253 to 126 after removal of the root-output join.
+
+EXPLAIN still materializes the recursive root states, despite leaving that choice to SQLite.
+Removing forced materialization did not establish streaming execution.
+The accepted improvements are the shared failure filter, typed publication boundary, and removed root-output join.
+Candidate-key construction still grows after an early failure, although value calls remain constant.
+Preparation still dominates small jobs with many clauses; the profiler flags that cost.
+
+The new correctness contract adds work to existing fallible kernels.
+All 30 prior reached, capture, and nested profiles retain exact outputs, atomic call counts, one execution, and zero frame publications.
+Their VM counts rise by approximately 5–32% for error propagation and root sequencing.
+The known-first nested case rises from 2,363 to 2,759 instructions and remains constant across inner widths.
+At 256 independent roots, the nested case rises from 564,638 to 654,029 instructions and remains linear.
+The control run overlapped Clippy, so only its deterministic counters are used.
+This overhead remains visible as a future physical-planning target.
+
+The final B023 run retains its exact two matches across 138 files.
+Its SQL SHA-256 remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+All three samples use 2,812,255 VM instructions.
+Median cold kernel CPU is 115.236 ms generated versus 61.790 ms reference, a 1.86498 ratio.
+Both B023 gates pass.
+The earlier publication draft also passed at 1.69508; neither ratio implies a cross-build speedup.
+
+The fixtures admit all supplied TypeScript files to each clause.
+Mixed-dialect batches and per-clause file selection remain integration work.
+The kernel admits at most 32 clauses and 256 KB of SQL before a measured partitioning policy is required.
+Native work accounting is the next semantic phase, followed by the remaining depth, enumeration, recursion, and production gates.
+The complete cold job still must prove the 100-execution budget.
+
+Artifacts:
+
+- [Reproduction driver](../benchmark/relational-publication.py).
+- [Accepted profiles, rejected-shape comparison, traces, and source hashes](../benchmark/sql-relational-publication-evidence.json).
+- [Accepted 32-clause SQL](../benchmark/sql-relational-publication.sql).
+- [Rejected 32-clause SQL](../benchmark/sql-relational-publication-rejected.sql).
+- Raw accepted profiles: `/tmp/rerail-publication-20261022-accepted`.
+- Raw rejected profiles: `/tmp/rerail-publication-20261022-final`.
+- Frozen regression: `/tmp/rerail-publication-b023-20261022-accepted`.
+
+The evidence records the diagnostic allocator and test-only LTO wrapper used in the preceding phase.
+Production build settings are unchanged.
+Reproduce with a fresh output directory and the executable path reported by that build:
+
+```sh
+python3 benchmark/relational-publication.py /tmp/new-publication-profile --binary target/loop/deps/rerail_engine-11d3550fad116d17
+```

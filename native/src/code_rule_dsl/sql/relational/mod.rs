@@ -4,6 +4,7 @@ mod analysis;
 mod answers;
 mod demand;
 mod emit;
+mod failure;
 mod ir;
 pub(super) mod leaves;
 mod lower;

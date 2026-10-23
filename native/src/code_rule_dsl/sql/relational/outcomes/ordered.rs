@@ -4,7 +4,7 @@ use super::{Axis, Demand, Op, Output, Plan, Sql};
 #[path = "candidate.rs"]
 mod candidate;
 #[path = "nested.rs"]
-mod nested;
+pub(super) mod nested;
 
 type Bounds = (i64, Option<i64>, Option<(usize, i64)>);
 
@@ -62,7 +62,7 @@ fn truth(plan: &Plan, depth: usize) -> Result<String, String> {
         Op::Unknown(term) => format!("CASE WHEN node_regex({term},n.file,n.id) THEN 2 ELSE 1 END"),
         Op::Value(term) => format!("relation_value({term},n.file,n.id)"),
         Op::Not(child) => format!(
-            "CASE ({}) WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE 2 END",
+            "(WITH neg AS MATERIALIZED (SELECT {} AS t) SELECT CASE t WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE t END FROM neg)",
             truth(child, depth + 1)?
         ),
         Op::All(items) | Op::Any(items) => {
@@ -77,7 +77,7 @@ fn truth(plan: &Plan, depth: usize) -> Result<String, String> {
                     continue;
                 }
                 expression = format!(
-                    "(WITH prior AS MATERIALIZED (SELECT {expression} AS t) SELECT CASE WHEN t={decisive} THEN {decisive} ELSE (WITH following AS MATERIALIZED (SELECT {next} AS v) SELECT CASE WHEN v={decisive} THEN {decisive} WHEN v=2 OR prior.t=2 THEN 2 ELSE v END FROM following) END FROM prior)"
+                    "(WITH prior AS MATERIALIZED (SELECT {expression} AS t) SELECT CASE WHEN t<0 THEN t WHEN t={decisive} THEN {decisive} ELSE (WITH following AS MATERIALIZED (SELECT {next} AS v) SELECT CASE WHEN v<0 THEN v WHEN v={decisive} THEN {decisive} WHEN v=2 OR prior.t=2 THEN 2 ELSE v END FROM following) END FROM prior)"
                 );
             }
             expression
@@ -119,7 +119,11 @@ impl Sql {
             })
             .transpose()?
             .unwrap_or("0".into());
-        let own = if strict { "(w.own&3)" } else { "w.own" };
+        let own = if strict {
+            "(CASE WHEN w.own<0 THEN w.own ELSE w.own&3 END)"
+        } else {
+            "w.own"
+        };
         let child = matches!(axis, Axis::Child);
         let first = match axis {
             Axis::Child => "CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END",
@@ -164,6 +168,7 @@ impl Sql {
         } else {
             format!("{own}=1")
         };
+        let decisive = format!("w.own<0 OR w.stopped<0 OR ({decisive})");
         let first_test = if child {
             body.as_str()
         } else {
@@ -172,7 +177,7 @@ impl Sql {
         let second_test = if child {
             format!("CASE WHEN {decisive} THEN 0 ELSE {stop_test} END")
         } else {
-            body.clone()
+            format!("CASE WHEN w.stopped<0 THEN 0 ELSE {body} END")
         };
         let walk = format!("outcome{}", self.definitions.len());
         self.relation("ordered reached traversal",format!(
@@ -184,12 +189,12 @@ impl Sql {
         let (witness, schema) = if strict {
             (
                 ",w.node AS witness,w.own AS captured",
-                "k,witness,captured,low,uncertain,open",
+                "k,witness,captured,failure,low,uncertain,open",
             )
         } else {
-            ("", "k,low,uncertain,open")
+            ("", "k,failure,low,uncertain,open")
         };
-        let terminal=self.relation("completed ordered traversal",format!("SELECT w.k{witness},{low} AS low,{uncertain} AS uncertain,{open} AS open FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND (({decisive}) OR ({next}) IS NULL)"),true,schema);
+        let terminal=self.relation("completed ordered traversal",format!("SELECT w.k{witness},CASE WHEN w.own<0 THEN w.own WHEN w.stopped<0 THEN w.stopped ELSE 0 END AS failure,{low} AS low,{uncertain} AS uncertain,{open} AS open FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND (({decisive}) OR ({next}) IS NULL)"),true,schema);
         let low = "COALESCE(t.low,0)";
         let high = "(COALESCE(t.low,0)+COALESCE(t.uncertain,0))";
         let closed = "NOT COALESCE(t.open,0)";
@@ -217,6 +222,6 @@ impl Sql {
                 captured.as_ref().map_or(String::new(),|candidate| candidate.bits.iter().filter(|(slot,_)|rule.writes.contains(slot)).map(|(slot,bit)|format!(",CASE WHEN (t.captured&{})<>0 THEN t.witness ELSE {} END AS c{slot}",bit<<2,super::value(input,"d",*slot))).collect()),
             )
         };
-        Ok(Output{name:self.relation("ordered traversal outcome",format!("SELECT d.k,{verdict} AS truth{columns} FROM {} d LEFT JOIN {terminal} t ON t.k=d.k",input.name),true,"k,truth,observable capture or count exports")})
+        Ok(Output{name:self.relation("ordered traversal outcome",format!("SELECT d.k,CASE WHEN t.failure<0 THEN t.failure ELSE {verdict} END AS truth{columns} FROM {} d LEFT JOIN {terminal} t ON t.k=d.k",input.name),true,"k,truth,observable capture or count exports")})
     }
 }

@@ -3414,3 +3414,69 @@ fn index_labels_a_basename_by_its_longest_listed_suffix_shorter_than_the_basenam
     assert_eq!(label("views/.blade.php").as_deref(), Some("php"));
     assert_eq!(label("app/.php"), None);
 }
+
+#[test]
+fn relational_publication_native_workspace_discards_only_the_failed_pair() {
+    // A real value budget failure also exercises production rendering, without thread-local injection.
+    let mut capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
+    capabilities["limits"]["maxVisitedNodes"] = json!(3000);
+    let clauses = vec![
+        clause(
+            "value",
+            json!({"kind":"binary_expression","value":{"gt":1000}}),
+        ),
+        clause("sibling", json!({"kind":"number"})),
+    ];
+    let compiled = CodeRuleDslRuntime::compile(
+        json!({"format":"rerail.policy/v1","id":"publication","revision":1,"mode":"steer","clauses":clauses}).to_string(),
+        "json".into(), capabilities.to_string(),
+    ).unwrap();
+    let source = format!("1000+1;\n{};\n1000+2;", vec!["1"; 200].join("+"));
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let mut workspace = CodeRuleDslWorkspace::with_options(Some(super::api::WorkspaceOptions {
+        engine: Some("native".into()),
+        sql_batch_size: None,
+    }))
+    .unwrap();
+    workspace.add_code_rule(&compiled, None).unwrap();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state), closed: Arc::clone(&workspace.closed),
+        request_json: json!({"revision":1,"files":[{"path":"bad.ts","language":"typescript","source":source},{"path":"good.ts","language":"typescript","source":"1000+3;"}],"removed":[]}).to_string(),
+        request_buffer: None, request_direct: None,
+    };
+    let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+    let evaluation = &result["evaluation"];
+    let failures = evaluation["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{evaluation}");
+    assert_eq!(failures[0]["path"], "bad.ts");
+    assert_eq!(failures[0]["clauseId"], "value");
+    assert_eq!(
+        failures[0]["message"],
+        crate::code_rule_dsl::matcher::UtilLimit::Value.message()
+    );
+    let violations = evaluation["violations"].as_array().unwrap();
+    assert_eq!(
+        violations
+            .iter()
+            .filter(|v| v["clauseId"] == "value")
+            .count(),
+        1
+    );
+    assert!(
+        violations
+            .iter()
+            .filter(|v| v["clauseId"] == "value")
+            .all(|v| v["path"] == "good.ts")
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v["clauseId"] == "sibling" && v["path"] == "bad.ts")
+    );
+    let state = workspace.state.lock().unwrap();
+    assert_eq!(
+        state.files["bad.ts"].witnesses.get(&(0, 0)).unwrap().len(),
+        1,
+        "earlier provisional match exists but is not published"
+    );
+}
