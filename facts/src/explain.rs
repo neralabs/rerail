@@ -1,7 +1,7 @@
 //! `EXPLAIN` for compiled plans: stable text (no addresses, no hash-map order), identical for
 //! every file of a rule since plans are compiled once per rule. This prints the logical plan;
 //! the physical plan's printer joins it once S2's operator set is fixed.
-use crate::ir::{AggFn, Binding, Column, Expr, FileSource, Lit, Plan, Program, Rel, RepoSource, Sink, StageDef, WindowKind};
+use crate::ir::{AggFn, Binding, Column, Expr, FileSource, Lit, Plan, Program, Rel, RepoSource, Sink, StageDef, Total, WindowKind};
 use std::fmt::Write;
 
 pub trait SourceName {
@@ -13,6 +13,7 @@ impl SourceName for FileSource {
             FileSource::Input(i) => format!("input:{i}"),
             FileSource::Syntax(t) => format!("syntax:{t:?}"),
             FileSource::Stage(s) => format!("stage:{s}"),
+            FileSource::Core(c) => format!("core:{}", c.name()),
         }
     }
 }
@@ -22,6 +23,14 @@ impl SourceName for RepoSource {
             RepoSource::Exported(e) => format!("exported:{e}"),
             RepoSource::Stage(s) => format!("stage:{s}"),
         }
+    }
+}
+
+fn total(t: Total) -> &'static str {
+    match t {
+        Total::InputOrder => "input-order",
+        Total::Proven => "proven",
+        Total::Checked => "checked",
     }
 }
 
@@ -120,7 +129,8 @@ impl Printer {
                     .iter()
                     .map(|a| {
                         let arg = a.arg.as_ref().map(|e| self.expr(e, indent)).unwrap_or_else(|| if a.f == AggFn::CountStar { "*".into() } else { String::new() });
-                        format!("{:?}({}{arg})", a.f, if a.distinct { "DISTINCT " } else { "" })
+                        let t = if matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray) { format!(" total: {}", total(a.total)) } else { String::new() };
+                        format!("{:?}({}{arg}){t}", a.f, if a.distinct { "DISTINCT " } else { "" })
                     })
                     .collect();
                 format!("Aggregate keys ({}) aggs ({})", ks.join(", "), ags.join(", "))
@@ -136,18 +146,20 @@ impl Printer {
                         };
                         let p: Vec<String> = w.partition.iter().map(|e| self.expr(e, indent)).collect();
                         let o: Vec<String> = w.order.iter().map(|(e, d)| format!("{}{}", self.expr(e, indent), if *d { " DESC" } else { "" })).collect();
-                        format!("{k} partition ({}) order ({})", p.join(", "), o.join(", "))
+                        let t = if matches!(w.kind, WindowKind::RowNumber) { format!(" total: {}", total(w.total)) } else { String::new() };
+                        format!("{k} partition ({}) order ({}){t}", p.join(", "), o.join(", "))
                     })
                     .collect();
                 format!("Window {}", fs.join("; "))
             }
             Rel::Distinct { prefix, .. } => format!("Distinct prefix {prefix}"),
             Rel::Union { all, .. } => format!("Union{}", if *all { " all" } else { "" }),
-            Rel::Sort { keys, limit, offset, .. } => format!(
-                "Sort ({}){}{}",
+            Rel::Sort { keys, limit, offset, total: t, .. } => format!(
+                "Sort ({}){}{}{}",
                 keys.iter().map(|(c, d)| format!("#{c}{}", if *d { " DESC" } else { "" })).collect::<Vec<_>>().join(", "),
                 limit.as_ref().map(|e| format!(" limit {}", self.expr(e, indent))).unwrap_or_default(),
-                offset.as_ref().map(|e| format!(" offset {}", self.expr(e, indent))).unwrap_or_default()
+                offset.as_ref().map(|e| format!(" offset {}", self.expr(e, indent))).unwrap_or_default(),
+                if limit.is_some() || offset.is_some() { format!(" total: {}", total(*t)) } else { String::new() }
             ),
             Rel::With { bindings, .. } => format!("With {}", bindings.iter().map(|(id, b)| format!("{id}{}", if matches!(b, Binding::Fix { set: true, .. }) { ":fix-set" } else if matches!(b, Binding::Fix { .. }) { ":fix-bag" } else { "" })).collect::<Vec<_>>().join(", ")),
         };

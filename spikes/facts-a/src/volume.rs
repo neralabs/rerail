@@ -27,7 +27,7 @@ fn inputs_of(r: &Rel<FileSource>, stages: &[rerail_facts::ir::Stage<FileSource>]
                     }
                 }
             },
-            FileSource::Syntax(_) => {}
+            FileSource::Syntax(_) | FileSource::Core(_) => {}
         }
         Ok::<_, ()>(s)
     })

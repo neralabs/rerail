@@ -55,6 +55,8 @@ pub fn eval_scalar<S>(e: &Expr<S>, row: &[V], outer: &[&[V]]) -> Result<V, Error
 pub struct Evaluator<'a, S> {
     source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>,
     locals: RefCell<Vec<(LocalId, Rc<Vec<Row>>)>>,
+    /// The content a per-file plan runs over (`path`, source text), for `source_text`.
+    content: Option<(&'a str, &'a str)>,
 }
 
 thread_local! {
@@ -393,7 +395,14 @@ fn printf(fmt: &str, args: &[V]) -> Result<String, Error> {
 
 impl<'a, S> Evaluator<'a, S> {
     pub fn new(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>) -> Self {
-        Self { source, locals: RefCell::new(Vec::new()) }
+        Self { source, locals: RefCell::new(Vec::new()), content: None }
+    }
+
+    /// An evaluator over one content: `source_text(p, s, e)` is the byte range `[s, e)` of
+    /// `text` when `p` is `path` (as the per-file executor: NULL for another path or a range
+    /// outside the text).
+    pub fn with_content(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>, path: &'a str, text: &'a str) -> Self {
+        Self { source, locals: RefCell::new(Vec::new()), content: Some((path, text)) }
     }
 
     fn local(&self, id: LocalId) -> Result<Rc<Vec<Row>>, Error> {
@@ -637,7 +646,7 @@ impl<'a, S> Evaluator<'a, S> {
                 let mut seen = HashSet::new();
                 Ok(rows.into_iter().filter(|row| seen.insert(dkeys(row))).collect())
             }
-            Rel::Sort { input, keys, limit, offset } => {
+            Rel::Sort { input, keys, limit, offset, .. } => {
                 let mut rows = self.rel(input, outer)?;
                 let keys: Vec<(usize, bool)> = keys.iter().map(|(c, d)| (*c as usize, *d)).collect();
                 rows.sort_by(|a, b| row_cmp(a, b, &keys));
@@ -961,7 +970,16 @@ impl<'a, S> Evaluator<'a, S> {
                 let (V::Text(p), V::Text(by)) = (a(1)?, a(2)?) else { return Err("rx_replace pattern and replacement must be text".into()) };
                 V::text(&regex(&p)?.replace_all(&t, &*by))
             }
-            Func::SourceText => return Err("reference: source_text reads a content's text; repository plans have none (IR.md § 7)".into()),
+            Func::SourceText => {
+                let Some((path, text)) = self.content else {
+                    return Err("reference: source_text reads a content's text; repository plans have none (IR.md § 7)".into());
+                };
+                match (a(0)?, a(1)?, a(2)?) {
+                    (V::Text(p), V::Int(s), V::Int(e)) if &*p == path && s >= 0 && e >= s => text.get(s as usize..e as usize).map_or(V::Null, V::text),
+                    (p, _, _) if !matches!(p, V::Text(_) | V::Null) => return Err("source_text path must be text".into()),
+                    _ => V::Null,
+                }
+            }
             Func::JsonArray => {
                 let mut items = Vec::with_capacity(args.len());
                 for i in 0..args.len() {
@@ -1156,11 +1174,11 @@ mod tests {
     fn aggregate_count_and_representative() {
         let src = |_: &RepoSource| rows(vec![vec![t("m"), V::Int(1)], vec![t("n"), V::Int(2)], vec![t("m"), V::Int(3)]]);
         let ev = Evaluator::new(&src);
-        let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![col(0)], aggs: vec![AggCall { f: AggFn::CountStar, arg: None, sep: None, distinct: false }] };
+        let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![col(0)], aggs: vec![AggCall { f: AggFn::CountStar, arg: None, sep: None, distinct: false, total: Total::InputOrder }] };
         assert_eq!(texts(&ev.rel(&q, &[]).unwrap()), ["m|3|2", "n|2|1"]);
         let empty = |_: &RepoSource| rows(vec![]);
         let ev = Evaluator::new(&empty);
-        let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![], aggs: vec![AggCall { f: AggFn::Count, arg: Some(col(1)), sep: None, distinct: false }] };
+        let q = Rel::Aggregate { input: Box::new(scan(0, 2)), keys: vec![], aggs: vec![AggCall { f: AggFn::Count, arg: Some(col(1)), sep: None, distinct: false, total: Total::InputOrder }] };
         assert_eq!(texts(&ev.rel(&q, &[]).unwrap()), ["NULL|NULL|0"]);
     }
 
@@ -1169,7 +1187,7 @@ mod tests {
     fn row_number_ties_and_not_in_null() {
         let src = |_: &RepoSource| rows(vec![vec![t("p"), V::Int(2)], vec![t("p"), V::Int(1)], vec![t("p"), V::Int(1)]]);
         let ev = Evaluator::new(&src);
-        let q = Rel::Window { input: Box::new(scan(0, 2)), funcs: vec![WindowFn { kind: WindowKind::RowNumber, partition: vec![col(0)], order: vec![(col(1), false)] }] };
+        let q = Rel::Window { input: Box::new(scan(0, 2)), funcs: vec![WindowFn { kind: WindowKind::RowNumber, partition: vec![col(0)], order: vec![(col(1), false)], total: Total::InputOrder }] };
         assert_eq!(texts(&ev.rel(&q, &[]).unwrap()), ["p|2|3", "p|1|1", "p|1|2"]);
         let e: Expr<RepoSource> = Expr::InList { e: Box::new(Expr::Lit(Lit::Int(3))), list: vec![(Expr::Lit(Lit::Int(1)), (Aff::None, Aff::None)), (Expr::Lit(Lit::Null), (Aff::None, Aff::None))], negated: true };
         assert!(eval_scalar(&e, &[], &[]).unwrap().is_null());
