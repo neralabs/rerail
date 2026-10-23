@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "vitest";
 
 import { COMMENT_LIMIT, COMMENT_MARKER, renderComment, renderJobSummary } from "../../../conformance/port-readiness/comment.js";
 import { failureLabel, failurePoint } from "../../../conformance/port-readiness/failure-points.js";
-import { SUMMARY_FORMAT, type OtherFailure, type RuleVerdict, type StepId, type Summary } from "../../../conformance/port-readiness/summary.js";
+import { readRecordingSummaries, SUMMARY_FORMAT, type OtherFailure, type RuleVerdict, type StepId, type Summary } from "../../../conformance/port-readiness/summary.js";
 
 /** The check a rule stopping at each step fails in these tests. */
 const CHECKS: Partial<Record<StepId, string>> = { compact: "no-combinatorial-expansion", "passes-conformance": "catches-something", mapping: "conformance-entry", "not-overfit": "no-fixture-only-names", "matches-upstream-tests": "identical-results" };
@@ -135,4 +138,49 @@ test("a failure is named by the check that failed, in plain words with its fix; 
   assert.equal(failureLabel("passes-conformance", "no-unexplained-false-positives"), "Conformance: Flags code its test fixtures say is fine");
   assert.equal(failureLabel("licence", "license-allowed"), "Port readiness: Upstream's licence isn't on Rerail's licence allowlist");
   assert.deepEqual(failurePoint("not-overfit", "a-new-check"), { what: "Not overfit to upstream's tests (a-new-check)", fix: "see the detail" });
+});
+
+test("the recording summaries a run's legs wrote are read beside the reports, sorted by tool-pack", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-comment-"));
+  try {
+    writeFileSync(join(directory, "recording-sql--sqlfluff.md"), "## Port readiness recordings: ✅ re-recorded, and upstream answers the same\n");
+    writeFileSync(join(directory, "recording-python--ruff.md"), "## Port readiness recordings: 1 tool-pack moved\n");
+    writeFileSync(join(directory, "python--ruff.json"), "{}\n");
+    writeFileSync(join(directory, "recording-notes.md"), "not a leg's summary\n");
+    assert.deepEqual(readRecordingSummaries(directory).map((entry) => entry.toolPack), ["python/ruff", "sql/sqlfluff"]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a tool-pack this run recorded gets its per-rule summary in the comment, between the shipped and candidate summaries", () => {
+  const markdown = [
+    "## Port readiness recordings: 1 tool-pack moved",
+    "",
+    "Upstream's recorded answers are not in the diff.",
+    "",
+    "### `python/ruff`",
+    "",
+    "| Upstream rule | | Expected findings | Corpus files | Facts |",
+    "| --- | --- | --- | --- | --- |",
+    "| `E501` | changed | +2 / −0 | — | — |",
+    "",
+  ].join("\n");
+  const text = renderComment(summary(sample()), { recordings: [{ toolPack: "python/ruff", markdown }] });
+  const start = text.indexOf("### Recorded by this run");
+  assert.ok(text.indexOf("### ❌ Shipped Rule Summary") < start && start < text.indexOf("### Candidate Rule Summary"));
+  const section = text.slice(start, text.indexOf("### Candidate Rule Summary"));
+  assert.match(section, /<summary>python\/ruff: 1 tool-pack moved<\/summary>/u);
+  assert.match(section, /^\| `E501` \| changed \| \+2 \/ −0 \| — \| — \|$/mu);
+  assert.doesNotMatch(section, /^## Port readiness recordings/mu);
+  assert.doesNotMatch(renderComment(summary(sample())), /Recorded by this run/u);
+});
+
+test("recording summaries are cut to fit, and the tool-packs past the budget are named", () => {
+  const long = `## Port readiness recordings: 1 tool-pack moved\n\n${"| `X` | changed | +1 / −0 | — | — |\n".repeat(1000)}`;
+  const recordings = ["a/one", "b/two", "c/three", "d/four"].map((toolPack) => ({ toolPack, markdown: long }));
+  const text = renderComment(summary(sample()), { recordings });
+  assert.ok(text.length <= COMMENT_LIMIT, `${text.length} characters`);
+  assert.match(text, /Cut short: the leg's job summary has all of it\./u);
+  assert.match(text, /^Also recorded, too long to show here \(see each leg's job summary\): c\/three, d\/four\.$/mu);
 });

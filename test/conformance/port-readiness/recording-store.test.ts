@@ -1,22 +1,21 @@
 /**
- * The recordings outside git: the committed `recording.lock`, the cache they are fetched into, and what happens when
- * the bytes are not the ones the lock names. That last one is the whole point of the manifest — a pull request that
- * writes its own recording must fail, because the gates take only an attested recording or one CI records from the
- * commit itself, and cannot tell a true recording from a flattering one by its bytes.
+ * The recordings outside git: the committed `recording.lock`, the cache they are read from, and what happens when the
+ * bytes are not the ones the lock names. That last one is the whole point of the manifest — a pull request that writes
+ * its own recording must fail, because the gates take only the bytes the lock names, which CI records from the commit
+ * itself on a cache miss, and cannot tell a true recording from a flattering one by anything but its digest.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, test, vi } from "vitest";
+import { test } from "vitest";
 
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
-import { fetchToolPackRecordings, LIFTED_ASSETS, MissingRecordingError } from "../../../conformance/port-readiness/recording/fetch.js";
 import { diffRecordings, renderRecordingChanges, type RecordedPair } from "../../../conformance/port-readiness/recording/diff.js";
 import {
-  assetName, buildRecordingLock, gzipRecording, LIFTED_CASE_SOURCES, LIFTED_RUNTIMES, readCachedRecording, readRecordingLock, recordingFromAsset,
-  recordingLockSchema, recordingLockText, writeCachedRecording, RECORDING_LOCK, type RecordingLock,
+  buildRecordingLock, readCachedRecording, readRecordingLock, recordingCachePath, recordingLockSchema, recordingLockText, writeCachedRecording, RECORDING_LOCK,
+  type RecordingLock,
 } from "../../../conformance/port-readiness/recording/store.js";
 import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-readiness/manifest.js";
 import { gatesCorpusSchema, gatesRecordingSchema, CORPUS_FORMAT, RECORDING_FORMAT, recordingText } from "../../../conformance/port-readiness/recording/schema.js";
@@ -71,18 +70,17 @@ function corpusOf(findings: Record<string, [number, number | null, number | null
 function toolPack(texts: { "recording.json": string; "corpus.json": string }) {
   const root = mkdtempSync(join(tmpdir(), "port-readiness-store-"));
   mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
-  const lock = buildRecordingLock("demo", "bandit", "port-readiness-recordings", PINS, { "bandit-1.9.4": { "pyproject.toml": "d".repeat(64) } }, texts);
+  const lock = buildRecordingLock("bandit", PINS, { "bandit-1.9.4": { "pyproject.toml": "d".repeat(64) } }, texts);
   writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(lock));
   return { root, lock, cacheRoot: join(root, "cache"), cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 const TEXTS = { "recording.json": recordingText(recordingOf({ B301: rule([[1, 0, 1, 17]]) })), "corpus.json": recordingText(corpusOf({ B301: [[3, 0, 3, 9]] })) };
 
-test("a lock names each recording by its own digest, under a content-addressed asset name", () => {
+test("a lock names each recording by its own digest", () => {
   const { lock, cleanup } = toolPack(TEXTS);
   try {
     assert.equal(lock.files["recording.json"].sha256, digest(TEXTS["recording.json"]));
-    assert.equal(lock.files["recording.json"].asset, assetName("demo", "bandit", "recording.json", digest(TEXTS["recording.json"])));
     assert.equal(lock.files["recording.json"].format, RECORDING_FORMAT);
     assert.equal(lock.files["corpus.json"].format, CORPUS_FORMAT);
     // The lock is small enough to review as data, which is the point of taking 71 MB of JSON out of the tree.
@@ -94,175 +92,33 @@ test("a lock names each recording by its own digest, under a content-addressed a
   }
 });
 
-test("a fetch caches by digest, and a second fetch on the same commit downloads nothing", async () => {
-  const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
+test("a lock still naming a release and its assets is refused: the recordings come from the cache or the recorder", () => {
+  const { root, lock, cleanup } = toolPack(TEXTS);
   try {
-    let downloads = 0;
-    const download = async (asset: { asset: string }) => {
-      downloads += 1;
-      return gzipRecording(asset.asset === lock.files["recording.json"].asset ? TEXTS["recording.json"] : TEXTS["corpus.json"]);
-    };
-    // Every downloaded recording's attestation is checked, on the text whose sha256 the lock names.
-    const verified: string[] = [];
-    const verify = async (text: string, asset: { sha256: string }) => {
-      assert.equal(digest(text), asset.sha256);
-      verified.push(asset.sha256);
-    };
-    const first = await fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify });
-    assert.deepEqual(first.map((entry) => entry.cached), [false, false]);
-    assert.equal(downloads, 2);
-    assert.deepEqual(verified, [lock.files["recording.json"].sha256, lock.files["corpus.json"].sha256]);
-    assert.equal(readCachedRecording(cacheRoot, lock.files["recording.json"].sha256), TEXTS["recording.json"]);
-
-    const second = await fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify });
-    assert.deepEqual(second.map((entry) => entry.cached), [true, true]);
-    assert.equal(downloads, 2);
+    const v1 = { ...lock, format: "rerail.port-readiness-recording-lock/v1", release: "port-readiness-recordings" };
+    writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(v1 as RecordingLock));
+    assert.throws(() => readRecordingLock(root, "demo", "bandit"), /recording\.lock: \/format: .*\/: Unrecognized key.*release/su);
   } finally {
     cleanup();
   }
 });
 
-test("an asset whose sha256 is not the one the manifest names fails the fetch, and is not cached", async () => {
-  const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
+test("a flattering recording cached under the digest the lock names is never read", async () => {
+  const { cacheRoot, lock, cleanup } = toolPack(TEXTS);
   try {
-    // A recording that says upstream expects nothing: the shape a pull request would want for a rule that finds nothing.
+    // What a pull request would want for a rule that finds nothing, put where the lock's recording would be: the cache
+    // key names the digest, so restoring it is all a poisoned cache entry could do.
     const flattering = recordingText(recordingOf({ B301: rule([]) }));
-    await assert.rejects(
-      fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download: async () => gzipRecording(flattering) }),
-      /has sha256 [0-9a-f]{12}, and recording\.lock names [0-9a-f]{12}/u,
-    );
-    assert.equal(existsSync(join(cacheRoot, "recordings")), false);
-    // And the bytes the lock does name still read back.
-    assert.equal(recordingFromAsset(gzipRecording(TEXTS["recording.json"]), lock.files["recording.json"], "demo/bandit"), TEXTS["recording.json"]);
-  } finally {
-    cleanup();
-  }
-});
-
-test("a hand-edited manifest naming a hash the release does not hold fails as a missing recording", async () => {
-  const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
-  try {
-    // What a fork pull request would commit: a lock pointing at a recording nobody uploaded.
-    const forged = { ...lock, files: { ...lock.files, "recording.json": { ...lock.files["recording.json"], sha256: "f".repeat(64), asset: assetName("demo", "bandit", "recording.json", "f".repeat(64)) } } };
-    writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(forged));
-    const release = new Set([lock.files["recording.json"].asset, lock.files["corpus.json"].asset]);
-    const download = async (asset: { asset: string }) => {
-      if (!release.has(asset.asset)) throw new MissingRecordingError("port-readiness-recordings", "neralabs/rerail", asset.asset);
-      return gzipRecording(TEXTS["recording.json"]);
-    };
-    // A missing recording is told apart from every other failure: it is the one a gate leg answers by recording.
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download }), (error: unknown) =>
-      error instanceof MissingRecordingError && /has no asset demo-bandit-recording-f{64}\.json\.gz: the recording this commit names was never uploaded/u.test(error.message));
-  } finally {
-    cleanup();
-  }
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-test("only a release that lacks the asset is a missing recording; an API error is not", async () => {
-  const { root, cacheRoot, cleanup } = toolPack(TEXTS);
-  try {
-    const answering = (status: number, body: unknown) => vi.stubGlobal("fetch", async () => new Response(JSON.stringify(body), { status }));
-    answering(200, { assets: [{ name: "another-asset.json.gz", url: "https://api.github.com/assets/1", size: 1 }] });
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit"), MissingRecordingError);
-    answering(502, { message: "Bad Gateway" });
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit"), (error: unknown) =>
-      error instanceof Error && !(error instanceof MissingRecordingError) && /answered 502/u.test(error.message));
-  } finally {
-    cleanup();
-  }
-});
-
-test("a release lookup that answers 404 is a plain error, not a missing recording", async () => {
-  const { root, cacheRoot, cleanup } = toolPack(TEXTS);
-  try {
-    // GitHub answers 404 for a tag with no release, a repository the token cannot read, and a wrong repository: none
-    // is a recording a gate leg should record itself.
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 }));
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { repository: "someone/elsewhere" }), (error: unknown) =>
-      error instanceof Error && !(error instanceof MissingRecordingError)
-      && /release \S+ of someone\/elsewhere cannot be read .*answered 404/u.test(error.message));
-    assert.equal(existsSync(join(cacheRoot, "recordings")), false);
-  } finally {
-    cleanup();
-  }
-});
-
-test("an asset with the right bytes that the record workflow did not attest fails the fetch, and is not cached", async () => {
-  const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
-  try {
-    // What anyone who can write here could upload by hand: the digest the lock names, and no attestation.
-    const download = async (asset: { asset: string }) => gzipRecording(asset.asset === lock.files["recording.json"].asset ? TEXTS["recording.json"] : TEXTS["corpus.json"]);
-    const verify = async () => {
-      throw new Error("no attestation from port-readiness-record.yml");
-    };
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify }), /no attestation from port-readiness-record\.yml/u);
-    assert.equal(existsSync(join(cacheRoot, "recordings")), false);
-  } finally {
-    cleanup();
-  }
-});
-
-test("an asset uploaded by hand before the record workflow ran from main is taken without an attestation, and only that one", async () => {
-  const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
-  try {
-    const download = async (asset: { asset: string }) => gzipRecording(asset.asset === lock.files["recording.json"].asset ? TEXTS["recording.json"] : TEXTS["corpus.json"]);
-    const verified: string[] = [];
-    const verify = async (_text: string, asset: { asset: string }) => {
-      verified.push(asset.asset);
-      throw new Error("no attestation from port-readiness-record.yml");
-    };
-    // Only the recording was uploaded by hand: it is cached unverified, and the corpus beside it still has to be attested.
-    const lifted = new Set([lock.files["recording.json"].asset]);
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify, lifted }), /no attestation from port-readiness-record\.yml/u);
-    assert.deepEqual(verified, [lock.files["corpus.json"].asset]);
+    const path = recordingCachePath(cacheRoot, lock.files["recording.json"].sha256);
+    mkdirSync(join(cacheRoot, "recordings"), { recursive: true });
+    writeFileSync(path, flattering);
+    assert.equal(readCachedRecording(cacheRoot, lock.files["recording.json"].sha256), undefined);
+    // The bytes the lock does name read back.
+    await writeCachedRecording(cacheRoot, TEXTS["recording.json"]);
     assert.equal(readCachedRecording(cacheRoot, lock.files["recording.json"].sha256), TEXTS["recording.json"]);
-    assert.equal(readCachedRecording(cacheRoot, lock.files["corpus.json"].sha256), undefined);
   } finally {
     cleanup();
   }
-});
-
-test("a lock that names an asset other than its own tool-pack's recording of that digest is refused before any download", async () => {
-  const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
-  try {
-    // The same bytes under another tool-pack's name: the digest matches, so only the name gives it away.
-    const misnamed = { ...lock, files: { ...lock.files, "recording.json": { ...lock.files["recording.json"], asset: assetName("demo", "ruff", "recording.json", lock.files["recording.json"].sha256) } } };
-    writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(misnamed));
-    let downloads = 0;
-    const download = async () => {
-      downloads += 1;
-      return gzipRecording(TEXTS["recording.json"]);
-    };
-    await assert.rejects(
-      fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify: async () => undefined }),
-      /\/files\/recording\.json\/asset is demo-ruff-recording-[0-9a-f]{64}\.json\.gz, and this tool-pack's recording of sha256 [0-9a-f]{12} is demo-bandit-recording-[0-9a-f]{64}\.json\.gz/u,
-    );
-    assert.equal(downloads, 0);
-  } finally {
-    cleanup();
-  }
-});
-
-test("every asset taken without an attestation is one a committed lock still names", () => {
-  // The hand-uploaded assets: an entry whose tool-pack has an attested recording since must go.
-  const named = new Set<string>();
-  for (const pack of readdirSync(join(PACKAGE_ROOT, "packs"))) {
-    const upstream = join(PACKAGE_ROOT, "packs", pack, "upstream");
-    if (!existsSync(upstream)) continue;
-    for (const tool of readdirSync(upstream)) {
-      if (!existsSync(join(upstream, tool, RECORDING_LOCK))) continue;
-      for (const locked of Object.values(readRecordingLock(PACKAGE_ROOT, pack, tool).files)) named.add(locked.asset);
-    }
-  }
-  assert.deepEqual([...LIFTED_ASSETS].filter((asset) => !named.has(asset)), []);
-});
-
-test("every hand-uploaded recording whose case sources are pinned together is a hand-uploaded asset, so its pin goes with it", () => {
-  assert.deepEqual([...LIFTED_CASE_SOURCES.keys()].filter((asset) => !LIFTED_ASSETS.has(asset) || /-corpus-[0-9a-f]{64}\.json\.gz$/u.test(asset)), []);
 });
 
 /** Every committed lock, with the runtimes the gates.yaml beside it installs. */
@@ -279,25 +135,14 @@ function committedLocks(): { label: string; lock: RecordingLock; runtimes: strin
   return locks;
 }
 
-test("every committed lock pins exactly the runtimes its gates.yaml installs, a hand-uploaded recording's LIFTED_RUNTIMES included", () => {
-  // What pins-agree checks on every run, here without fetching a recording: a gates.yaml that names a runtime its lock
+test("every committed lock pins exactly the runtimes its gates.yaml installs", () => {
+  // What pins-agree checks on every run, here without reading a recording: a gates.yaml that names a runtime its lock
   // doesn't (a new environment, or one moved to another runtime directory) needs the tool-pack recorded again.
   const mismatched = committedLocks().flatMap(({ label, lock, runtimes }) => {
-    const pinned = Object.keys({ ...LIFTED_RUNTIMES.get(lock.files["recording.json"].asset), ...lock.runtimes }).sort();
+    const pinned = Object.keys(lock.runtimes).sort();
     return pinned.join(", ") === runtimes.join(", ") ? [] : [`${label}: gates.yaml installs ${runtimes.join(", ")}, the lock pins ${pinned.join(", ")}`];
   });
   assert.deepEqual(mismatched, []);
-});
-
-test("every LIFTED_RUNTIMES entry is a hand-uploaded recording a committed lock names, and pins only runtimes that lock doesn't", () => {
-  const byAsset = new Map(committedLocks().map(({ lock }) => [lock.files["recording.json"].asset, lock]));
-  const wrong = [...LIFTED_RUNTIMES].flatMap(([asset, runtimes]) => {
-    if (!LIFTED_ASSETS.has(asset) || !/-recording-[0-9a-f]{64}\.json\.gz$/u.test(asset)) return [`${asset} is not a hand-uploaded recording.json`];
-    const lock = byAsset.get(asset);
-    if (lock === undefined) return [`${asset} is named by no committed lock: its tool-pack was recorded again, so the entry goes`];
-    return Object.keys(runtimes).filter((runtime) => runtime in lock.runtimes).map((runtime) => `${asset}: its lock already pins ${runtime}`);
-  });
-  assert.deepEqual(wrong, []);
 });
 
 test("a recording whose cached bytes were tampered with reads as absent, not as a recording", async () => {

@@ -1,1 +1,0 @@
-test('should fail', () => tester.request(123));

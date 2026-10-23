@@ -1,1 +1,0 @@
-const [a, ...[b]] = array; alert(a);

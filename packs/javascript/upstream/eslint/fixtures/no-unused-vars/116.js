@@ -1,1 +1,0 @@
-try {} catch ({ foo, ...bar }) { console.log(bar); }

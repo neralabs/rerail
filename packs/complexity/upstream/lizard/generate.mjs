@@ -1,15 +1,16 @@
 // Records lizard 1.24.0's cyclomatic complexity for the complexity rule pack's parity corpus
 // (fixtures/ beside this file) into lizard-1.24.0.tsv beside this file, which
-// test/complexity-rules.test.ts reads. Run by hand after changing the corpus:
-//   node packs/complexity/upstream/lizard/generate.mjs
-// It needs uv on PATH. lizard is never a runtime or CI dependency: the TSV is checked in.
+// test/engine/code-rule/complexity-rules.test.ts reads. `npm run fixtures:derive -- --pack complexity` runs it after
+// the corpus changes; it needs uv on PATH. lizard is never a runtime dependency; CI runs it only to derive the TSV. The
+// corpus is authored pack test data, in S3; the TSV is derived, never committed (CONTRIBUTING.md, "Pack test data").
 import { spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { packFixturesWritten, requirePackFixture } from "../../../../scripts/s3/pack-fixtures.mjs";
 
 const LIZARD = "lizard==1.24.0";
-const corpus = fileURLToPath(new URL("fixtures/", import.meta.url));
+const corpus = requirePackFixture(fileURLToPath(new URL("fixtures/", import.meta.url)));
 const target = new URL("lizard-1.24.0.tsv", import.meta.url);
 
 /** lizard's CSV over the corpus; `-m` is its modified count, where a whole switch or match adds 1 instead of 1 per case. */
@@ -64,3 +65,4 @@ if (rows.length === 0) throw new Error("lizard scored no functions in the corpus
 const header = `# Recorded by packs/complexity/upstream/lizard/generate.mjs with ${LIZARD}, ccn = min(standard, -m); paths are relative to fixtures/ beside this file.\npath\tfunction\tline\tccn\n`;
 await writeFile(target, header + rows.map(row => `${row.path}\t${row.name}\t${row.line}\t${row.ccn}\n`).join(""));
 console.log(`lizard: ${rows.length} functions -> ${relative(process.cwd(), fileURLToPath(target))}`);
+console.log(packFixturesWritten([fileURLToPath(target)]));

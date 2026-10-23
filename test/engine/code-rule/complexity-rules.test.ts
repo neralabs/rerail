@@ -15,11 +15,14 @@ import { describe, expect, it } from "vitest";
 import { languageFor } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../src/engine/native/native.js";
 import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
+import { requirePackFixture } from "../../../scripts/s3/pack-fixtures.mjs";
 import { repositoryPath } from "../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../native/src/code_rule_dsl/", import.meta.url));
 const LIZARD = repositoryPath("packs", "complexity", "upstream", "lizard");
-const CORPUS = repositoryPath("packs", "complexity", "upstream", "lizard", "fixtures");
+// Pack test data, not in git (the corpus authored, in S3; the TSV derived): a checkout without it fails here, saying to
+// run `npm run fixtures:pull` and `npm run fixtures:derive`.
+const CORPUS = requirePackFixture(repositoryPath("packs", "complexity", "upstream", "lizard", "fixtures"));
 const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 
@@ -79,7 +82,7 @@ const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | n
 ];
 
 const lizardRowSchema = z.object({ path: z.string().min(1), name: z.string().min(1), line: z.number().int().positive(), ccn: z.number().int().positive() });
-const lizardRows = readFileSync(join(LIZARD, "lizard-1.24.0.tsv"), "utf8")
+const lizardRows = readFileSync(requirePackFixture(join(LIZARD, "lizard-1.24.0.tsv")), "utf8")
   .split("\n")
   .filter(line => line !== "" && !line.startsWith("#"))
   .slice(1)

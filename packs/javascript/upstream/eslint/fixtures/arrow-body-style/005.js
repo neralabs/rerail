@@ -1,3 +1,0 @@
-var foo = () => {
- /* do nothing */ 
-};

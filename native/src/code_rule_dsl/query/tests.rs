@@ -1,6 +1,6 @@
 use super::regex_matches;
 use crate::code_rule_dsl::budget::{MatchBudget, set_shortcuts_off};
-use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
+use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file, pack_test_data};
 use crate::code_rule_dsl::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use regex::Regex;
 use serde_json::{Value, json};
@@ -56,8 +56,7 @@ fn agreeing(compile: &dyn Fn() -> CompiledCodeRuleDsl, path: &str, source: &str)
 /// `with` targets, redefinitions and dotted imports.
 #[test]
 fn python_shortcuts_change_no_pack_result() {
-    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/python/upstream/ruff/fixtures");
+    let fixtures = pack_test_data("packs/python/upstream/ruff/fixtures");
     let mut files = Vec::new();
     let mut pending = vec![fixtures];
     while let Some(directory) = pending.pop() {

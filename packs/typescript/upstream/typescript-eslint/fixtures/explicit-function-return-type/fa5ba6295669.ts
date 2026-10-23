@@ -1,5 +1,0 @@
-
-function fn() {
-  return function () {};
-}
-      

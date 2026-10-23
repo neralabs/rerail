@@ -1,1 +1,0 @@
-<template><div><div v-for="x in list" v-if="list.length&gt;0"></div></div></template>

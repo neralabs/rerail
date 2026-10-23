@@ -1,1 +1,0 @@
-takeThing(void 0);

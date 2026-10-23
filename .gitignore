@@ -22,9 +22,24 @@ conformance/recorders/port-readiness/runtimes/*/package-lock.json
 conformance/recorders/port-readiness/runtimes/*/uv.lock
 conformance/recorders/port-readiness/runtimes/*/composer.lock
 
-# The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming the one its rules
-# are judged against, and the bytes live in a GitHub release (conformance/port-readiness/recording/store.ts). The recorder and
-# `npm run port-readiness -- fetch` put them in .rerail/port-readiness/recordings/; committing one again would put 71 MB of generated
-# JSON back in the history, where it stays forever.
+# The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming, by sha256, the one
+# its rules are judged against (conformance/port-readiness/recording/store.ts). Each is an object of its own in S3
+# (s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json, written once); the recorder and
+# `node scripts/s3/pack-fixtures.mjs recordings` put them in .rerail/port-readiness/recordings/, and CI keeps copies in its
+# Actions cache. Committing one again would put 71 MB of generated JSON back in the history, where it stays forever.
 packs/*/upstream/*/recording.json
 packs/*/upstream/*/corpus.json
+
+# Pack test data (PACK_FIXTURE_PATTERNS, scripts/s3/pack-fixtures.mjs), each tool's test cases and its recorded answers
+# on them, is never in git. Each tool-pack's data is one archive in S3, which its tracked test-data.lock names by sha256;
+# `npm run fixtures:pull` fetches and extracts it. A pull request adds new or changed files with `git add -f`, and a
+# maintainer archives them with `npm run fixtures:push` and untracks them before merge (CONTRIBUTING.md, "Pack test
+# data"). The archives are cached under .rerail/pack-data/archives/, which .rerail/ covers.
+packs/*/upstream/*/fixtures/
+packs/*/upstream/*/tests/
+packs/*/upstream/*/*.expected.json
+packs/*/upstream/*/cases.json
+packs/*/upstream/*/*.cases.json
+packs/*/upstream/*/fixtures.upstream-check.json
+packs/*/upstream/*/lizard-*.tsv
+packs/*/upstream/*/authored/

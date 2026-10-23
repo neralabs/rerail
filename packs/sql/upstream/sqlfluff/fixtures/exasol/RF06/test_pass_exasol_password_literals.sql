@@ -1,1 +1,0 @@
-ALTER USER user_1 IDENTIFIED BY "h22_xhz" REPLACE "h12_xhz";

@@ -42,6 +42,7 @@ export const ROOTS = Object.freeze([
   ".github/workflows/ci.yml",
   ".github/workflows/port-readiness.yml",
   ".github/actions/**",
+  "scripts/s3/**",
 ]);
 
 /**

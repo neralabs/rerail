@@ -1,1 +1,0 @@
-var process_ = process.getBuiltinModule('process'); process_.exit(0)

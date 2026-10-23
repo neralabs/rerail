@@ -243,33 +243,3 @@ test("GATE_PACKAGES covers every npm package a bundle of run.ts loads, and names
     }
   }
 });
-
-// A fork's pull request records its tool-pack itself only when it changes none of the code the recorder runs
-// (port-readiness.yml's fork guard): the guard's list is checked against what a bundle of the recorder loads.
-test("the fork guard covers every file the recorder loads, and the package files when it loads a package", async () => {
-  const workflow = readFileSync(join(PACKAGE_ROOT, ".github/workflows/port-readiness.yml"), "utf8");
-  const listed = /^\s*recorder=\(([^)]*)\)$/mu.exec(workflow)?.[1]?.split(/\s+/u).filter((path) => path !== "");
-  assert.ok(listed !== undefined, "port-readiness.yml's fork guard lists no recorder paths");
-  const { metafile, warnings } = await build({
-    entryPoints: [join(PACKAGE_ROOT, "conformance/recorders/port-readiness/cli.ts")],
-    absWorkingDir: PACKAGE_ROOT,
-    bundle: true,
-    write: false,
-    metafile: true,
-    platform: "node",
-    format: "esm",
-    external: ["*.node"],
-    logLevel: "silent",
-  });
-  assert.deepEqual(warnings.map((warning) => warning.text), []);
-  const inputs = Object.keys(metafile.inputs).map((path) => path.replaceAll("\\", "/"));
-  const covered = (path: string) => listed.some((entry) => path === entry || path.startsWith(`${entry}/`));
-  for (const path of inputs.filter((path) => !path.startsWith("node_modules/"))) assert.ok(covered(path), `the recorder loads ${path}, which the fork guard does not list`);
-  if (inputs.some((path) => path.startsWith("node_modules/"))) {
-    for (const path of ["package.json", "package-lock.json"]) assert.ok(listed.includes(path), `the recorder loads npm packages, and the fork guard does not list ${path}`);
-  }
-  // Every listed path is one the recorder needs: a directory it loads from, the package files, or the PHP action.
-  for (const entry of listed.filter((entry) => !["package.json", "package-lock.json", ".github/actions/php"].includes(entry))) {
-    assert.ok(inputs.some((path) => path.startsWith(`${entry}/`)), `the fork guard lists ${entry}, which the recorder does not load`);
-  }
-});

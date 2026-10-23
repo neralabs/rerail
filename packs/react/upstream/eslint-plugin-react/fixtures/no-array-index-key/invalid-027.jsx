@@ -1,1 +1,0 @@
-foo.find((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })

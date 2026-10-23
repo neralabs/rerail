@@ -1,5 +1,6 @@
 """Records Bandit 1.9.4 for the Python pack's ported tests (rerail/packs/python/conformance.json).
-Run offline, never in CI, under CPython 3.14 (Bandit itself runs from its own install, on CPython 3.13):
+Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request CI),
+under CPython 3.14 (Bandit itself runs from its own install, on CPython 3.13):
 
     python3.14 generate.py fixtures <Bandit checkout at tag 1.9.4> <bandit executable, 1.9.4>
     python3.14 generate.py corpus <bandit executable, 1.9.4> <name>=<corpus checkout> [...]

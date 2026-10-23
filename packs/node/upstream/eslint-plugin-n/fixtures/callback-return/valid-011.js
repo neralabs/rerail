@@ -1,1 +1,0 @@
-function x(cb) { cb && cb(); }

@@ -1,6 +1,7 @@
 // Records eslint-plugin-unicorn for the JavaScript pack's unicorn ports (packs/javascript/conformance.json), in the
 // format rerail/conformance/languages/pack.ts reads: eslint-plugin-unicorn/fixtures.expected.json.
-// Run offline by a maintainer, never in CI:
+// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
+// test-data.lock reproduces):
 //   node generate.mjs --tools <dir> --unicorn <checkout>
 // <dir> holds node_modules with the runtime nera-rule-validation pins for eslint-plugin-unicorn 76.0.0
 // (validation/upstream/eslint-plugin-unicorn-76.0.0): eslint 10.11.0, eslint-plugin-unicorn 76.0.0,

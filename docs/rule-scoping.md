@@ -101,10 +101,10 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 
 **MCP caller.** The MCP bridge sends `x-rerail-caller-cwd` on every request: the URI-encoded real path of the folder its session started in. The daemon resolves it to the caller's checkout and folder; a malformed header is a JSON-RPC `-32602` error. A direct MCP client without the header must name a target.
 
-**Dashboard.** The rules page for a repository is `<origin>/?repository=<key>&checkout=<path>#rules`; `rerail manage`, `/rerail-manage` and the status line build it. Without a scope the dashboard lists repositories to pick from.
+**Dashboard.** The dashboard link for a repository is `<origin>/?repository=<key>&checkout=<path>#rules`, which opens its Overview (`#rules` is the pre-v8 name the dashboard still resolves; its own is `#overview`); `rerail manage`, `/rerail-manage` and the status line build it. Without a scope the dashboard lists repositories to pick from.
 
 ## Export and import
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset` deletes only the current repository's execution history.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
 
 Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `suppressions`, `onFrom`, `modeFrom` and `suppressionsFrom` for each folder (audits recorded before `suppressions` existed lack those two). Later edits don't rewrite past audits.

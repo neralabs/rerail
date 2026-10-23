@@ -1,1 +1,0 @@
-type NormalType = () => void;

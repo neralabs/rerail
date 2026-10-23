@@ -49,6 +49,50 @@ export interface CommentContext {
   commit?: string;
   /** The workflow run, linked for the full job summary and reports. */
   runUrl?: string;
+  /** The per-rule summaries of the tool-packs this run's legs recorded (readRecordingSummaries), sorted by tool-pack. */
+  recordings?: RecordingSummary[];
+}
+
+/** One gate leg's recording summary: what `port-readiness:record --changes` wrote as recording-<pack>--<tool>.md. */
+export interface RecordingSummary {
+  toolPack: string;
+  markdown: string;
+}
+
+/** At most this many characters of one tool-pack's recording summary, and of all of them together. */
+const RECORDING_LENGTH = 8_000;
+const RECORDINGS_LENGTH = 24_000;
+
+/**
+ * The recording summaries as collapsed sections, one per tool-pack, under a heading that says this run's recorder made
+ * them: a leg records when its pull request changes the tool-pack's recording.lock (or nothing held the recordings), so
+ * these are computed by CI from the pinned upstream, not taken from the pull request. Each is cut at RECORDING_LENGTH,
+ * and the tool-packs past RECORDINGS_LENGTH are only named.
+ */
+function recordingSections(recordings: RecordingSummary[]): string[] {
+  if (recordings.length === 0) return [];
+  const lines = [
+    "### Recorded by this run",
+    "",
+    "This run recorded these tool-packs from their pinned upstream with the pull request's recorder, and each recording had to match the committed `recording.lock`. What upstream answers differently from the recording the base's lock names:",
+    "",
+  ];
+  let used = 0;
+  const omitted: string[] = [];
+  for (const { toolPack, markdown } of recordings) {
+    const [first = "", ...rest] = markdown.trimEnd().split("\n");
+    const headline = first.replace(/^## Port readiness recordings: /u, "");
+    const body = rest.join("\n").trim();
+    const shown = body.length <= RECORDING_LENGTH ? body : `${body.slice(0, RECORDING_LENGTH - 1)}…\n\nCut short: the leg's job summary has all of it.`;
+    if (used + shown.length > RECORDINGS_LENGTH) {
+      omitted.push(toolPack);
+      continue;
+    }
+    used += shown.length;
+    lines.push(...details(`${toolPack}: ${headline}`, [shown]));
+  }
+  if (omitted.length > 0) lines.push(`Also recorded, too long to show here (see each leg's job summary): ${omitted.join(", ")}.`, "");
+  return lines;
 }
 
 const NOT_DECLARED = "not declared";
@@ -230,7 +274,13 @@ function header(summary: Summary, context: CommentContext): string[] {
 
 function render(summary: Summary, context: CommentContext, limits: Limits, marker: boolean): string {
   const options = { limits, why: shortener(limits) };
-  const lines = [...(marker ? [COMMENT_MARKER] : []), ...header(summary, context), ...shippedSection(summary, options), ...candidateSection(summary, options)];
+  const lines = [
+    ...(marker ? [COMMENT_MARKER] : []),
+    ...header(summary, context),
+    ...shippedSection(summary, options),
+    ...recordingSections(context.recordings ?? []),
+    ...candidateSection(summary, options),
+  ];
   return `${lines.join("\n").trimEnd()}\n`;
 }
 

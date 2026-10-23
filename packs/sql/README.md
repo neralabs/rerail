@@ -19,7 +19,7 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `candidates/rules/` | The 3 candidate code-rule documents: AL05, AM02 and RF01 |
 | `conformance.json` | Every port (shipped and candidate): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool and the pinned corpora |
 | `divergences.json` | Declared disagreements with SQLFluff |
-| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`); the port readiness gates' `gates.yaml`, `recording.lock` and `goldens.tsv` |
+| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`); the port readiness gates' `gates.yaml`, `recording.lock` and `goldens.tsv`. The tests, Rerail's cases and the recordings are pack test data, not in git: one archive in S3, which `test-data.lock` names and `npm run fixtures:pull` fetches |
 | `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Rules that start off
@@ -116,11 +116,14 @@ are off in SQLFluff's default configuration (`force_enable = False`), so they sh
 
 ## Re-recording and scoring
 
-Re-recording runs offline against the pinned SQLFluff 4.4.0, in the venv that `fixtures/sql/common.py` documents:
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/sql.ts`) runs `upstream/sqlfluff/generate.py`, in `fixtures` mode and then `corpus` mode,
+against the pinned SQLFluff 4.4.0, in the venv that `fixtures/sql/common.py` pins:
 
 ```sh
-.rerail/tools/sql/venv/bin/python packs/sql/upstream/sqlfluff/generate.py fixtures
-.rerail/tools/sql/venv/bin/python packs/sql/upstream/sqlfluff/generate.py corpus
+npm run fixtures:derive -- --pack sql
+npm run fixtures:push -- --pack sql     # on your own branch: archive it and rewrite its test-data.lock
 ```
 
 Scoring one rule with every false positive and false negative printed:

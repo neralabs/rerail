@@ -1,1 +1,0 @@
-<template><div><custom v-bind:my-prop="prop"></custom></div></template>

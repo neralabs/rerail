@@ -1,9 +1,0 @@
-SELECT *
-FROM
-    table1 AS tbl1
-INNER JOIN tbl2 AS tbl2
-WHERE TRUE
-QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY tbl1.col1
-    ORDER BY tbl2.col3
-    ) = 1

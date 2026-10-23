@@ -1,5 +1,0 @@
-
-interface I {
-  constructor(): '';
-}
-      

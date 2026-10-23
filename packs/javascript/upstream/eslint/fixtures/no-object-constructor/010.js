@@ -1,1 +1,0 @@
-Object() instanceof Object;

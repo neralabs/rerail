@@ -8,7 +8,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { renderComment, renderJobSummary } from "./comment.js";
+import { renderComment, renderJobSummary, type RecordingSummary } from "./comment.js";
 import { CONFORMANCE_REPORT_FILE, CONFORMANCE_REPORT_FORMAT, type ConformanceReport } from "./conformance-gates.js";
 import { LEFT_TO_CONFORMANCE_JOB } from "./checks/passes-conformance.js";
 import { LICENSE_CHECKS } from "./recorded-adapter.js";
@@ -112,6 +112,18 @@ export function readConformanceReport(directory: string): ConformanceReport | nu
   if (!existsSync(path)) return null;
   const report = JSON.parse(readFileSync(path, "utf8")) as ConformanceReport;
   return report.format === CONFORMANCE_REPORT_FORMAT ? report : null;
+}
+
+/**
+ * Every `recording-<pack>--<tool>.md` in `directory`, sorted by tool-pack: the per-rule summary a gate leg that recorded
+ * its tool-pack wrote beside its report (port-readiness.yml). Every shard of a sharded tool-pack writes the same name.
+ */
+export function readRecordingSummaries(directory: string): RecordingSummary[] {
+  return readdirSync(directory)
+    .map((name) => /^recording-([a-z0-9-]+)--([A-Za-z0-9._-]+)\.md$/u.exec(name))
+    .filter((match): match is RegExpExecArray => match !== null)
+    .map(([name, pack, tool]) => ({ toolPack: `${pack}/${tool}`, markdown: readFileSync(join(directory, name), "utf8") }))
+    .sort((a, b) => byText(a.toolPack, b.toolPack));
 }
 
 /**
@@ -280,14 +292,14 @@ export function summarize(reports: GatesReport[], gated: { pack: string; tool: s
  * `gates summary <dir> [--planned <json>]`: write summary.{md,json} and the pull request comment (comment.md) from the
  * tool-pack reports and the conformance report (CONFORMANCE_REPORT_FILE) in `dir`, append the job summary to the step
  * summary, return the summary. Without `planned`, every gated upstream linter needs a report; the conformance report is
- * always needed. The comment names the commit in PORT_READINESS_COMMIT and links the run in PORT_READINESS_RUN_URL when
- * CI sets them.
+ * always needed. The comment names the commit in PORT_READINESS_COMMIT, links the run in PORT_READINESS_RUN_URL when CI
+ * sets them, and carries the recording summaries of the legs that recorded.
  */
 export async function writeSummary(root: string, directory: string, planned?: { pack: string; tool: string }[]): Promise<Summary> {
   if (!existsSync(directory)) throw new Error(`${directory} does not exist`);
   const gated = gatedToolPacks(root);
   const summary = summarize(readReports(directory), gated, planned ?? gated, readConformanceReport(directory));
-  const context = { commit: process.env.PORT_READINESS_COMMIT ?? "", runUrl: process.env.PORT_READINESS_RUN_URL ?? "" };
+  const context = { commit: process.env.PORT_READINESS_COMMIT ?? "", runUrl: process.env.PORT_READINESS_RUN_URL ?? "", recordings: readRecordingSummaries(directory) };
   const markdown = renderJobSummary(summary, context);
   await writeFile(join(directory, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   await writeFile(join(directory, "summary.md"), markdown);

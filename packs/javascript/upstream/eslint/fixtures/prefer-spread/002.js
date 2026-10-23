@@ -1,1 +1,0 @@
-obj.foo.apply(null, args);

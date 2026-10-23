@@ -1,1 +1,0 @@
-var a = function() { return () => this; }.bind(b)

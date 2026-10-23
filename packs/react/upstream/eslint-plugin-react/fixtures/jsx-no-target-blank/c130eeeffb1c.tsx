@@ -1,2 +1,0 @@
-<Link target="_blank" to={ dynamicLink }></Link>
-// features: [], parser: @typescript-eslint/parser, options: [{"enforceDynamicLinks":"always"}], settings: {"linkComponents":{"name":"Link","linkAttribute":"to"}}

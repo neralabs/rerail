@@ -1,1 +1,0 @@
-(class { set foo(val) { var foo = function(val) { return 1; } } })

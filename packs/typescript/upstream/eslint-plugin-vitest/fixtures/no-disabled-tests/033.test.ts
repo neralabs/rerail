@@ -1,1 +1,0 @@
-it("contains a call to pending", function () { pending() })

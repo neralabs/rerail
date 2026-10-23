@@ -1,1 +1,0 @@
-<template><div><custom :my-age.sync="prop"></custom></div></template>

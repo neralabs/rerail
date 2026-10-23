@@ -1,1 +1,0 @@
-@enderror($some, $args)

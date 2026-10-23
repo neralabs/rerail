@@ -1,1 +1,0 @@
-const [a, ...rest] = foo; alert(a);

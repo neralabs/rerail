@@ -1,1 +1,0 @@
-<template><div v-for="x in foo" :[x]></div></template>

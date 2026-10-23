@@ -7,88 +7,56 @@
     <title>Rerail</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/tokens.generated.css" />
-    <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/sheet.css" />
+    <link rel="stylesheet" href="/css/overview.css" />
+    <link rel="stylesheet" href="/css/pack.css" />
+    <link rel="stylesheet" href="/css/packs.css" />
+    <link rel="stylesheet" href="/css/create.css" />
+    <link rel="stylesheet" href="/css/history.css" />
+    <link rel="stylesheet" href="/css/sessions.css" />
+    <link rel="stylesheet" href="/css/settings.css" />
+    <link rel="stylesheet" href="/css/no-repo.css" />
+    <link rel="stylesheet" href="/css/missing.css" />
+    <link rel="stylesheet" href="/css/not-set-up.css" />
     <script>
-      // Apply the persisted theme and panel width before first paint so the page never flashes.
+      // Apply the persisted theme and sidebar before first paint so the page never flashes.
       try {
         const t = localStorage.getItem("rerail-ui-theme");
         if (t) document.documentElement.dataset.theme = t;
-        if (localStorage.getItem("rerail-panel-wide") === "1") document.documentElement.dataset.wide = "1";
+        if (localStorage.getItem("rerail-nav-hidden") === "1") document.documentElement.dataset.nav = "hidden";
       } catch {}
     </script>
   </head>
-  <body data-view="rules">
+  <body data-view="overview">
     <div class="canvas" aria-hidden="true"></div>
     <div class="frame">
-      <div class="shell">
-        <header class="topbar">
+      <header class="topbar">
+        <div class="tbin">
+          <button class="navtoggle" id="navToggle" data-act="navtoggle" aria-controls="sidenav" aria-pressed="true" title="Hide the menu">
+            <svg class="ico" viewBox="0 0 256 256" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M216,36H40A20,20,0,0,0,20,56V200a20,20,0,0,0,20,20H216a20,20,0,0,0,20-20V56A20,20,0,0,0,216,36ZM44,60H92V196H44Zm168,136H116V60h96Z"/></svg>
+            <span class="lbl">Hide menu</span>
+          </button>
           <h1>Rerail</h1>
-          <span class="repoid" id="repoId" hidden></span>
-          <button class="btn sm ghost" id="changeRepo" data-act="changerepo" hidden>Change repository</button>
-          <nav class="views" aria-label="Views">
-            <button data-view="rules" aria-current="page">Rules</button>
-            <button data-view="activity">Activity</button>
-            <button data-view="sessions">Sessions</button>
-          </nav>
+          <div class="repopick" id="repopick"></div>
           <div class="status" id="status" role="status" aria-live="polite">
             <span class="dot" aria-hidden="true"></span>
             <span id="statusText">Connecting…</span>
           </div>
-          <button class="gearbtn" data-view="settings" title="Settings">
-            <svg viewBox="0 0 256 256" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M128,76a52,52,0,1,0,52,52A52.06,52.06,0,0,0,128,76Zm0,80a28,28,0,1,1,28-28A28,28,0,0,1,128,156Zm113.86-49.57A12,12,0,0,0,236,98.34L208.21,82.49l-.11-31.31a12,12,0,0,0-4.25-9.12,116,116,0,0,0-38-21.41,12,12,0,0,0-9.68.89L128,37.27,99.83,21.53a12,12,0,0,0-9.7-.9,116.06,116.06,0,0,0-38,21.47,12,12,0,0,0-4.24,9.1l-.14,31.34L20,98.35a12,12,0,0,0-5.85,8.11,110.7,110.7,0,0,0,0,43.11A12,12,0,0,0,20,157.66l27.82,15.85.11,31.31a12,12,0,0,0,4.25,9.12,116,116,0,0,0,38,21.41,12,12,0,0,0,9.68-.89L128,218.73l28.14,15.74a12,12,0,0,0,9.7.9,116.06,116.06,0,0,0,38-21.47,12,12,0,0,0,4.24-9.1l.14-31.34,27.81-15.84a12,12,0,0,0,5.85-8.11A110.7,110.7,0,0,0,241.86,106.43Zm-22.63,33.18-26.88,15.28a11.94,11.94,0,0,0-4.55,4.59c-.54,1-1.11,1.93-1.7,2.88a12,12,0,0,0-1.83,6.31L184.13,199a91.83,91.83,0,0,1-21.07,11.87l-27.15-15.19a12,12,0,0,0-5.86-1.53h-.29c-1.14,0-2.3,0-3.44,0a12.08,12.08,0,0,0-6.14,1.51L93,210.82A92.27,92.27,0,0,1,71.88,199l-.11-30.24a12,12,0,0,0-1.83-6.32c-.58-.94-1.16-1.91-1.7-2.88A11.92,11.92,0,0,0,63.7,155L36.8,139.63a86.53,86.53,0,0,1,0-23.24l26.88-15.28a12,12,0,0,0,4.55-4.58c.54-1,1.11-1.94,1.7-2.89a12,12,0,0,0,1.83-6.31L71.87,57A91.83,91.83,0,0,1,92.94,45.17l27.15,15.19a11.92,11.92,0,0,0,6.15,1.52c1.14,0,2.3,0,3.44,0a12.08,12.08,0,0,0,6.14-1.51L163,45.18A92.27,92.27,0,0,1,184.12,57l.11,30.24a12,12,0,0,0,1.83,6.32c.58.94,1.16,1.91,1.7,2.88A11.92,11.92,0,0,0,192.3,101l26.9,15.33A86.53,86.53,0,0,1,219.23,139.61Z"/></svg>
-            <span>Settings</span>
-          </button>
-        </header>
-        <div id="banners"></div>
-        <div class="rollup" id="overview"></div>
-        <div class="controls" id="controls">
-          <div class="crow">
-            <div class="search">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
-              <input id="q" type="search" placeholder="Search rules, ids or descriptions" aria-label="Search rules" />
-            </div>
-            <div class="addmore">
-              <button class="btn sm" data-act="catalog" title="Every rule pack that comes with Rerail: see what is added, add more, or remove one">
-                <svg viewBox="0 0 256 256" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z"/></svg>Add rule packs
-              </button>
-              <button class="btn sm" data-act="newrule" title="Rules are created with your coding agent. Shows the command to type.">
-                <svg viewBox="0 0 256 256" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z"/></svg>Create a rule
-              </button>
-            </div>
-            <span class="ownerctl" id="ownerCtl" hidden>
-              <span>Changes apply to</span>
-              <span class="seg2" role="group" aria-label="Changes apply to">
-                <button data-act="owner" data-i="checkout" aria-pressed="true">This worktree</button>
-                <button data-act="owner" data-i="repository" aria-pressed="false">Repository</button>
-              </span>
-            </span>
-          </div>
-          <div class="crow">
-            <div class="chips" id="chips">
-              <button class="chip" data-f="all" aria-pressed="true">All</button>
-              <button class="chip" data-f="mine" aria-pressed="false">Created by you</button>
-              <button class="chip" data-f="rerail" aria-pressed="false">By Rerail</button>
-              <button class="chip" data-f="on" aria-pressed="false">On</button>
-              <button class="chip" data-f="off" aria-pressed="false">Off</button>
-              <button class="chip" data-f="fired" aria-pressed="false">Has violations</button>
-            </div>
-            <span class="grow"></span>
-            <button class="btn sm ghost link" id="foldAll" data-act="foldall">Collapse all groups</button>
-            <label class="sortctl"><span>Sort</span>
-              <select id="sort" aria-label="Sort">
-                <option value="violations">Most violations logged</option>
-                <option value="recent">Most recent violations logged</option>
-                <option value="az">A to Z</option>
-              </select>
-            </label>
-          </div>
         </div>
-        <div class="main">
-          <div id="content"></div>
+      </header>
+      <div class="shell">
+        <div class="cwrap">
+          <nav class="sidenav" id="sidenav" aria-label="Navigator"></nav>
+          <main class="cmain">
+            <div id="content"></div>
+          </main>
         </div>
       </div>
+      <div class="scrim" id="scrim" data-act="close" aria-hidden="true"></div>
       <aside class="panel" id="panel" aria-label="Detail"></aside>
     </div>
+    <div id="repolayer"></div>
     <output class="toast" id="toast"></output>
     <script type="module" src="/app.js"></script>
   </body>

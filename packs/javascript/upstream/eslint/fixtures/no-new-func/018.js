@@ -1,1 +1,0 @@
-var a = Function.bind(null, "b", "c", "return b+c")();

@@ -10,6 +10,7 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { packFixtureAbsence } from "../../../scripts/s3/pack-fixtures.mjs";
 
 import { corpusRecordingPath, loadPack, loadRecording } from "../../languages/pack.js";
 import type { RuleRow } from "../../languages/report.js";
@@ -56,7 +57,7 @@ export async function packConformance(root: string, pack: string): Promise<PackC
     for (const rule of loaded.pack.rules) {
       const path = corpusRecordingPath(loaded, rule.upstream.tool, corpus.name);
       if (!existsSync(path)) {
-        add(uncovered, rule.id, `the pack pins corpus ${corpus.name}, and ${rule.upstream.tool} has no recording of it`);
+        add(uncovered, rule.id, packFixtureAbsence(path) ?? `the pack pins corpus ${corpus.name}, and ${rule.upstream.tool} has no recording of it`);
         continue;
       }
       if (!loadRecording(path).source.rules.includes(rule.upstream.rule)) add(uncovered, rule.id, `the ${rule.upstream.tool} recording of corpus ${corpus.name} does not cover ${rule.upstream.rule}`);

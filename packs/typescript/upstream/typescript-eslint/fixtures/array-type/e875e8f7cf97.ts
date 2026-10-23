@@ -1,1 +1,0 @@
-type Conditional<T> = Array<T extends string ? string : number>;

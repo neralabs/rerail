@@ -1,1 +1,0 @@
-declare function foo<E extends Readonly<string[]>>(extra: E): E;

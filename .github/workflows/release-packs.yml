@@ -11,7 +11,9 @@ name: Release packs
 #   published under `next` instead, so the hold stays. The dist-tags job then lists each published pack's dist-tags in
 #   the run summary and fails if one is not where it was published. A pack never published at all needs its first
 #   publish by hand; the run reports it and fails after publishing the others.
-# A pull request touching packs runs the validation and packing as a dry run and publishes nothing.
+# A pull request touching packs runs the validation and packing as a dry run and publishes nothing. Its paths see only
+# the git diff, not the packs' test data: a change to that data is a change to a tool-pack's test-data.lock, under
+# packs/**, and a pull request that checks data in adds it there too (CONTRIBUTING.md).
 # `workflow_dispatch` points `latest` at released pack versions, to put one back: naming a pack and an older version
 # puts it back and holds it there (`held`), and naming the pack alone, at its package.json version, promotes it again
 # and releases the hold. With no inputs, every pack whose released version is not `latest` yet, less any pack held.
@@ -29,6 +31,8 @@ on:
       - "conformance/pack-validation.ts"
       - "scripts/release/**"
       - ".github/workflows/release-packs.yml"
+      - ".github/actions/pack-test-data/**"
+      - "scripts/s3/**"
   workflow_dispatch:
     inputs:
       pack:
@@ -90,14 +94,55 @@ jobs:
           NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && secrets.NPM_PACKS_READ_TOKEN || '' }}
         run: node scripts/release/packs-plan.mjs ${{ github.event_name == 'pull_request' && '--all' || '' }}
 
+  # Fills the Actions cache with every pack's test data for the pack job (.github/actions/pack-test-data,
+  # `fetch: "true"`): from S3 under an OIDC token on a miss, which GitHub gives no fork's or Dependabot's pull request
+  # (those run no dry run). It runs nothing but the pull and never extracts a cache entry.
+  test-data:
+    name: Pack test data
+    needs: plan
+    if: >-
+      ${{
+        needs.plan.outputs.publish != '' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # id-token: the archives from S3 on a cache miss, with credentials only the action's pull step holds.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "true"
+
   # The publish gate and the tarballs. The pack tests need the release native engine; as in ci.yml's build job, main's
-  # cached build is reused when the engine's inputs are unchanged.
+  # cached build is reused when the engine's inputs are unchanged. The pack validation reads every pack's test data,
+  # restored from what the test-data job saved; this job restores caches, so it holds no OIDC token.
   pack:
     name: Validate and pack
-    needs: plan
-    if: needs.plan.outputs.publish != ''
+    needs: [plan, test-data]
+    if: >-
+      ${{
+        needs.plan.outputs.publish != '' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -106,6 +151,10 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
 
       - id: rust-toolchain
         name: Read pinned Rust toolchain
@@ -293,7 +342,9 @@ jobs:
 
       # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
       - name: Authenticate npm to read the packs
-        run: printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+        run: |
+          # shellcheck disable=SC2016 # npm expands ${NODE_AUTH_TOKEN} itself; the file must not hold the token.
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
 
       - id: plan
         name: List released pack versions to promote

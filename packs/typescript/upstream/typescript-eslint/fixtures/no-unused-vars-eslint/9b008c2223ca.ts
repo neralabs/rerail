@@ -1,6 +1,0 @@
-
-function foo(a, _b, c) {
-  return a;
-}
-foo();
-      

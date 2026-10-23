@@ -1,1 +1,0 @@
-print?.call(<Foo>{ bar: 5 });

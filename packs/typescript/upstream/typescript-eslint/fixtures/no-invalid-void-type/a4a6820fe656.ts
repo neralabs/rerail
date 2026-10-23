@@ -1,1 +1,0 @@
-type AllowedVoid = Ex . Mx . Tx<void>;

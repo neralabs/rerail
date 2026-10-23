@@ -1,1 +1,0 @@
-export function a() { console.log(o); var o; return o; }
