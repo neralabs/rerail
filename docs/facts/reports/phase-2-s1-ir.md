@@ -400,27 +400,57 @@ Order-dependent constructs left in repository plans (after the cut):
 - **Row order of exports.** An `ordered` export is read in path order with rows in content order. That equals the repository evaluation's order for these file-local subtrees because their leftmost leaf is path-ordered (IR.md § 7). S5's reference evaluator checks it.
 - `json_each` over objects: keys sorted, as in Phase 1.
 
+## 8. Wave 2
+
+Base: integration `caceb656f`; merged integration `8960a5db7` (S6's leaf constructs) at `5b9c25823`. Runs under `~/rerail-bench/facts/phase-2/s1-ir/runs/`. No timing gate is owned by S1; every number below is a count or an exactness result (load 9–35 during the runs, irrelevant to them).
+
+### 8.1 Results
+
+| Item | Target | Measured | Pass/fail | Run dir |
+|---|---|---|---|---|
+| Rewrites R6–R11 registered (S2 retires `subst.rs` with them) | each with side conditions in code, justification, differential test, mutant | 6 rows in `REWRITES.md`, `rerail_facts::rewrite`; tests `rewrite::tests::rewrite_*` (random preorder trees / relations, reference evaluator); mutants 16–21 each fail exactly their test; clean 26/26 | **pass** | command: `FACTS_MUTANT=<n> cargo test -p rerail-facts --features mutants --lib` |
+| R1–R5 vs the new rows | stated | R2 = column-level case of R6 (view inlining); R4 = R8 (projection pruning) at the export boundary; R1, R3, R5 are distinct | — | `REWRITES.md` |
+| `ir::equi_keys`, `ir::semi_join` for S3 | merged and used by S3 | `9eba4764f`; differential: 8 semijoin shapes × 300 seeds, equi-key split × 200 seeds; found S3's `NOT IN` NULL bug (fixed by S3); S3 switching after its NARROWINGS commit | **delivered; use by S3 pending** | — |
+| Order constructs in repository plans (decider ruling) | `total: proven | checked` on the IR node, in EXPLAIN and census | `ir::Total {InputOrder, Proven, Checked}` on `WindowFn`, `Sort`, `AggCall`; classifier marks instead of refusing; proofs K1, K2, K3/K4 (pins), K6; mutant 10. IR-level census: 23 constructs, **2 proven, 21 checked** (with S6's leaf executor: 15, 2 proven, 13 checked) | **pass** (mark); proofs limited by input keys, § 8.3 | `20261022T214030-census` |
+| Physical EXPLAIN per file | per-file text, stable | `facts-a explain --physical --root|--file [--audit]` over subset-8: 1,150 files, 199,291 stage plans, 50 clauses each with exactly one plan text across all files, two runs byte-identical (sha256 `560fc844…`) | **pass** | `20261022T213002-explain-physical` |
+| Inner-scan audit over physical plans | report | 1,233 inner scans = 2 stage plans in every file: `quality-conditional-1/block_results` (correlated NOT EXISTS whose item 0 scans `contract_blocks`), `legacy-execution-graphs/function_symbols` (correlated derived table over `classes`). Audit fix: correlation now followed through operators above a subquery's pipeline (wave 1 printed 0 because of it) | **found 2** (S2 informed) | same |
+| Pattern front end for S4's `raw_strings_*` | the three inputs lowered over `node` + `string_value` | lowered (`front/pattern.rs`, `InputDef.algebra`); differential `facts-a pattern-check` vs `ast.rs`: raw_strings inputs **0 mismatches** in every run: subset-8 ≤ 600 nodes default config (294 files, 224 rows), ≤ 1,500 nodes `scan_project_sources` (608 files, 15,138 rows), oracle/no-source config (608 files, 6 rows), l2070 sample ≤ 3,000 nodes (502 files, 34 rows) | **pass, weak on value tests**: state-tripwires' `raw_strings_0..2` produced 0 rows wherever the value test is active (gates false on small files) | `20261022T214120-…`, `20261022T214209-…`, `20261022T215716-…`, `20261022T215735-pattern-check-raw-strings-l2070` |
+| Census with S6's leaf executor | numbers with run dir | **55/60** rules compile (wave 1: 20/60). Refusals: 5 bag recursions (`public-api-triples`, `serverplan-quality`, `serverplan-state-tripwires`), 4 `binds` (S6), 1 `no such table raw_module_names` (follows from a refused input). IR level: 55/60 (`reference_edges`, `calls`, 8 bag recursions). Pattern front end lowers 65/622 pattern inputs | **pass** (G2.1 as written) | `20261022T214030-census` (`census*.md/json`) |
+| Export volume | current | unchanged from wave 1: default 100 exports (76 distinct, 43 ordered), leaf witness rows `quality-conditional-1` 1,419,253, `required-contracts` 103,306; `scan_project_sources` 166 exports, `state-flow-project-1`/`state-flow-1` 4,983,106, `state-projection-recovery-2` 266,099 | — | `20261022T214131-export-volume-default`, `20261022T214149-export-volume-sps` |
+
+### 8.2 Interface changes
+
+- `ir`: `FileSource::Core(CoreRel)` (core relations of one content, SCHEMA § 1.2/1.3 incl. `string_value`, `string_value_unknown`, `file`, `syntax_error`); `InputDef.algebra: Result<Lowered, String>`; `Lowered { rows, refuse_if }`; `Total` on `WindowFn.total`, `Rel::Sort { total }`, `AggCall.total`; `Key`, `equi_keys`, `SemiJoin`, `semi_join`, `conjuncts`, `conjoin`, `cols_read`, `reads_outer`, `rel_reads_outer`, `has_subquery`, `each_subexpr`, `rel_exprs`, `children_mut`.
+- `classify::ClauseReport.order: Vec<OrderMark>`; order constructs no longer refused (bag recursion and aggregate bare columns still are).
+- `front::rule::LeafCheck::known_field` (default `None`); `front::pattern::lower_input`.
+- `reference::Evaluator::with_content(scan, path, source)` (`source_text` over one content; S5's file, small addition).
+- `rewrite::{inline_views, fuse_union, prune_columns, reach_to_interval, order_observed, or_probe, OrProbe::matches, share_selection, subtree_closed}`.
+- `phys::audit` follows correlation through non-pipeline operators.
+- facts-a: `pattern-check`, `explain --physical`; visibility only: `sql/engine.rs` plan structs `pub(crate)` (`b099448a5`), `repo::compile_batch6` `pub(crate)` (S5 replaced it by `compile_checks` on its branch; keep S5's version on merge); facts-b `gen/norm.rs` patched mechanically for `Total` (S3 owns it).
+
+### 8.3 Risks and limits
+
+- **R9/R11 do not fire on the current pack.** Their side conditions need the tree from I2's declared structure (core `node`), but the dump clauses rebuild the tree in SQL from matcher inputs with text ids; the pattern front end refuses the dump inputs' ancestor captures under relations (180 inputs: "metavariable under any/not/relation"), so `subst.rs` cannot be retired by the logical rewrites alone (S2 reports the per-clause gap from the generic executor's speed instead).
+- **Pattern front end coverage 65/622.** Next constructs by count: captures under relations (180), stop rules (150), `inside` with `field` (42), `precedes` (31), value tests off the root chain (27).
+- **Pattern-check is slow**: the naive reference re-scans the core relations per correlated subquery (O(n²) per relation search); runs are limited to files ≤ 600–3,000 nodes. The value-test/`\N{...}` path is unexercised by rows on the corpus sample.
+- **Input keys.** Native guarantees one row per witness node (identity (path, node id), not carried by the row); (`__path,__start,__end`) is not a guaranteed key (S4: 492 same-kind collisions, all anonymous `yield`; 0 for named kinds, measured not guaranteed). No input key is declared, so 21 of 23 order constructs stay `checked`.
+- **Not run: `just facts-gate --mutants` on this branch** (budget). Mutants 10 and 16–21 and the lib tests were run individually (above); S5 merged `f1edf7edc` and runs the gate on its branch.
+
 ## 7. Resume notes
 
-- **Commits** (local):
-  - `43bd9c048`: crate and move;
-  - `ef5d43adc`: IR interface;
-  - `e2aece9c0`: front ends, classifier, compile, leak tests, census;
-  - `02b49ed65`: registry and mutants;
-  - `862ccb7c4`: EXPLAIN, physical nodes, audit;
-  - `3da66020f`, `0912ab1eb`, `b32aa901a`: census passes, order audit, export volume;
-  - `7d7cab646`: report, IR.md § 7/7a; `693828e43`: merge of integration `2b111331b`;
-  - `9e2861b87`: key inference from declared syntax keys and export path columns.
-- **Interfaces:**
-  - `docs/facts/IR.md`, `facts/src/ir.rs`;
-  - `rerail_facts::compile::{compile, compile_report}`;
-  - `rerail_facts::front::rule::LeafCheck`;
-  - `docs/facts/REWRITES.md`;
-  - `facts/src/phys.rs` (S2 constructs, S1 prints and audits);
-  - `facts/src/mutant.rs`.
+- **Commits** (local): wave 1 as listed in git (`43bd9c048` … `9e2861b87`); wave 2:
+  - `b099448a5` engine plan structs `pub(crate)` (visibility only);
+  - `9eba4764f` `ir::equi_keys`, `ir::semi_join`, tests;
+  - `0ea181a84` `Total` marks + proofs K1 K2 K3/K4 K6 + mutant 10; `FileSource::Core`; pattern front end; `pattern-check`; reference `source_text`;
+  - `a40a2bcbb` rewrites R6–R11, registry, mutants 16–21;
+  - `f1edf7edc` physical EXPLAIN per file, audit fix;
+  - `dab01fd35` census pattern-front-end counts;
+  - `5b9c25823` merge of integration `8960a5db7`.
+- **Interfaces:** § 8.2; `docs/facts/REWRITES.md`; `facts/src/{ir,rewrite,phys,front/pattern}.rs`.
+- **Temporary:** `.worktrees/s1-census` (detached, s1-ir + s6-leaf) and `target-census/` were used for the census; removed.
 - **Next, in order:**
-  1. I2 metadata in the IR: declared keys, FDs, the preorder interval and cardinalities from SCHEMA § 1.2.1, used by the order audit's key inference and by rewrites.
-  2. The planned rewrites in REWRITES.md, each with its test and mutant (CSE by digest first: § 5.7 sizes it).
-  3. The pattern front end into the algebra (I3), or the leaf-executor gaps of § 6 with S2.
-  4. A definition of `reference_edges` and `calls` over exported facts, with S3, or a narrowing with Jeremy.
-  5. True export volumes once S2 executes `Plan<FileSource>`.
+  1. Run `just facts-gate --mutants` on this branch; add mutant 10 to the gate's fixed list (S5 told).
+  2. Pattern front end: captures bound under relations (ancestor captures `any[inside{all[X, pattern $A], stopBy: X}, …]`) and stop rules, so the dump inputs lower to algebra over `node`; then origin tracing through text ids (`kind||':'||start||':'||end` is injective given node uniqueness) so R6–R9/R11 fire on dump clauses — the route to deleting `subst.rs` by rewrites rather than by executor speed.
+  3. A cheaper check for `pattern-check` (memoised reference or S2's executor over `InputDef.algebra`) and a corpus run that exercises value tests with rows.
+  4. Input span keys only with a per-content check that refuses on violation (S4's recommendation), then re-count proven vs checked.
+  5. S3: confirm `equi_keys`/`semi_join` adoption; definitions of `reference_edges` and `calls` over exported facts.
