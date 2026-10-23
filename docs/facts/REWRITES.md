@@ -17,6 +17,7 @@ Numbers:
 - 4–6: S3's delta generator;
 - 7: classifier;
 - 8: planner audit;
+- 9: S3's runtime tie detection (windows and `LIMIT` not provably total; a tie between distinct rows is a runtime refusal);
 - 11 upward: rewrites.
 
 ## Implemented
