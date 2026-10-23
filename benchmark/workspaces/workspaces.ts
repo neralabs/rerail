@@ -26,7 +26,7 @@ import {
   REPOSITORY_INDEX_OPTIONS,
   resolveNativeBindingPath,
 } from "../../src/engine/index.js";
-import { runFacts } from "./facts.js";
+import { compareFindings, runFacts } from "./facts.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rerailRoot = resolve(here, "../..");
@@ -917,6 +917,7 @@ try {
   else if (command === "setup") setup(rest);
   else if (command === "compare") process.exitCode = compare(rest) ? 0 : 1;
   else if (command === "prod-path") prodPath(rest);
+  else if (command === "compare-findings") process.exitCode = compareFindings(rest[0]!, rest[1]!, rest[2]!) ? 0 : 1;
   else throw new UsageError(`unknown command ${command ?? "(none)"}: setup | run | compare | prod-path`);
 } catch (error) {
   if (!(error instanceof UsageError)) throw error;

@@ -361,8 +361,10 @@ impl Engine {
         let rules = &*self.rules;
         let memo = &*self.memo;
         let jobs: Vec<(Arc<str>, SourceId, Option<Arc<Vec<u8>>>)> = todo.iter().map(|&(p, c)| (self.paths[p as usize].clone(), self.contents[c as usize].source, fresh.get(&c).cloned())).collect();
-        // One pair: its rules over every thread. Many: pairs over the threads, rules in order.
-        let (outer, inner) = if jobs.len() == 1 { (1, self.threads) } else { (self.threads.min(jobs.len()), 1) };
+        // Pairs over the threads; when there are fewer pairs than threads, each pair's rules over
+        // the threads left (a large file's rules in parallel).
+        let outer = self.threads.min(jobs.len()).max(1);
+        let inner = (self.threads / outer).max(1);
         let next = AtomicUsize::new(0);
         let run = || {
             let mut done = Vec::new();
