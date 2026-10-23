@@ -589,21 +589,48 @@ Typed return cells remain at 12 across two files. Materialization sites fall fro
 The 81 preceding-phase controls retain identical SQL, output, and VM counts.
 The journal records the qualification gates and measured source hashes.
 
+## Nested value-utility replay: bounded outcome milestone
+
+Utility answers now survive calls through nested value-bearing utility bodies at one root.
+The outer miss runs in the existing dependency chain and records its entry charge plus all reached body work.
+An outer replay consumes the complete measured cost and omits the body when a valid replay proof exists.
+Inner typed answers remain available after the outer call, including false and unknown answers.
+Optional body calls do not export replay proofs.
+
+Native execution confirmed the initial boundary before implementation.
+Allowance nine fails. Ten succeeds with zero remaining and one value read per file.
+A false outer call followed by its inner utility needs five charges, even with a warm value cache.
+A three-level shared-call fixture needs 33 charges and one value read.
+The seven new tests cover 704 comparison jobs, including 15 profiles.
+Changed keys, rolled-back captures, count exports, utility identity, reached failures, and bounded storage have native comparisons.
+
+The physical pass reduces the seven-level fixture from 4,987 to 3,825 VM instructions across two files.
+EXPLAIN materialization sites fall from 57 to 36. Typed return cells stay at 12.
+All 96 preceding-phase controls retain identical SQL, output, and VM counts.
+The frozen B023 VM gate passes, but the CPU gate fails at 2.02845× with unchanged SQL and VM counts.
+The journal retains this failed gate, full qualification results, and measured source hashes.
+Performance qualification remains open. The bounded kernel remains test-only.
+
 ## Next implementation action
 
-Extend the same answer lifetime through nested value-bearing utility bodies at one root.
-Start with `inner = value(gt: 0)` and `outer = all(matches(inner), not(not(matches(inner))))`.
-The root repeats `outer` across double negation.
-First measure native execution and retain the compiler's current rejection as the failing admission gate.
-The expected boundary is allowance nine failing and ten succeeding, with one value-leaf call and zero remaining work.
+Extend value-utility answer lifetime through ordered traversal, starting with repeated visits to the same candidate.
+Use `v = value(gt: 0)` and an `arguments` root with two identical descendant searches.
+Each search body is `all(kind(number), matches(v))`, so irrelevant node kinds do not charge the utility.
+Use `f(1,2);` and compare finite native allowances before changing the traversal admission gate.
+The expected boundary is three failing and four succeeding, with one value read.
 
-The outer miss must charge its entry, evaluate its body in the shared scope, and record the complete measured cost.
-An outer replay must charge that stored cost without executing the body again.
-Answers from reached inner calls must remain available after the outer utility returns.
-A false outer call followed by a direct inner call must replay the inner cost, including a warm value cache.
-Prove unknowns, changed captures, rolled-back exports, and failures before removing the nested-utility boundary.
-Keep utility identity distinct from shared body shape.
+Then use `f(g(1));` so two root demands reach the same number node.
+The expected job boundary is seven failing and eight succeeding, with two matches and one value read.
+First confirm those numbers with native execution.
+This second fixture prevents an incorrect reset of memo answers between roots.
+A warm value cache must not reduce the stored utility cost on a later root.
 
-Cross-traversal and cross-root memo lifetimes remain separate gates.
-Repeat the frozen B023 gates and existing work-count controls after these changes.
+Design the answer lifetime at clause/file scope before admitting these programs.
+Keys must contain utility identity, file, candidate node, and all incoming captures.
+Reached failures and unknowns must retain traversal order and provisional-publication behavior.
+Measure repeated candidates, disjoint candidates, overlapping roots, changed captures, and decisive early stops.
+Keep answers outside recursive traversal frames where possible, and profile materialization and state width before selecting the shape.
+Do not remove the admission gate until both fixtures and their failure cases match native execution.
+
+Repeat the frozen B023 gates and existing work-count controls.
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

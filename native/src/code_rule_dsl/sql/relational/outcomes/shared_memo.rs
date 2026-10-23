@@ -3,12 +3,17 @@
 //! SQLite. Each sequencing barrier therefore references its predecessor once.
 use super::super::{Demand, Op, Output, Plan, Slots, Sql, fields, value};
 use super::Local;
+#[path = "nested_utility.rs"]
+mod nested_utility;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn calls(plan: &Plan, counts: &mut BTreeMap<usize, usize>) {
     match &plan.op {
-        Op::Charge(id, body) if body.reads_value() => *counts.entry(*id).or_default() += 1,
+        Op::Charge(id, body) if body.reads_value() => {
+            *counts.entry(*id).or_default() += 1;
+            calls(body, counts);
+        }
         Op::All(items) | Op::Any(items) => {
             for item in items {
                 calls(item, counts);
@@ -23,6 +28,9 @@ fn calls(plan: &Plan, counts: &mut BTreeMap<usize, usize>) {
 /// necessary only when a utility occurs in different child subtrees, at least
 /// one of which is nested. Deeper sharing stays inside its own child program.
 pub(in super::super) fn region(plan: &Plan) -> bool {
+    if let Op::Charge(_, body) = &plan.op {
+        return body.uses_memo();
+    }
     let (Op::All(items) | Op::Any(items)) = &plan.op else {
         return false;
     };
@@ -31,7 +39,10 @@ pub(in super::super) fn region(plan: &Plan) -> bool {
         let mut counts = BTreeMap::new();
         calls(item, &mut counts);
         for id in counts.keys() {
-            let nested = !matches!(item.op, Op::Charge(..));
+            let nested = match &item.op {
+                Op::Charge(direct, body) => direct != id || body.uses_memo(),
+                _ => true,
+            };
             if let Some(previous) = seen.insert(*id, nested)
                 && (previous || nested)
             {
@@ -108,7 +119,8 @@ impl Shared<'_> {
             .map(|s| format!(",{} AS {s}", expression(s)))
             .collect::<String>();
         let carried = self.memo.carry("d");
-        if 4 + self.demand.slots.len() + self.live.len() + carried.matches(',').count() > 512 {
+        let width = 4 + self.demand.slots.len() + self.live.len() + carried.matches(',').count();
+        if width > 512 {
             return Err("utility memo: shared sequencing state exceeds 512 typed columns".into());
         }
         self.demand.name = self.sql.relation(
@@ -121,6 +133,7 @@ impl Shared<'_> {
             materialize,
             "one predecessor,live bindings,Boolean state,live typed answers",
         );
+        self.sql.profile.last_mut().unwrap()["typedStateColumns"] = json!(width);
         Ok(())
     }
 
@@ -146,6 +159,9 @@ impl Shared<'_> {
         guard: &str,
     ) -> Result<(String, Option<(usize, usize)>), String> {
         match &plan.op {
+            Op::Charge(id, body) if body.uses_memo() && !self.memo.proven.contains_key(id) => {
+                self.utility(*id, body, guard)
+            }
             Op::All(items) | Op::Any(items) => self.boolean(plan, items, guard),
             Op::Not(child) => {
                 // Double negation changes neither outcomes nor charges. Bindings must
@@ -185,6 +201,15 @@ impl Shared<'_> {
                 } else {
                     self.sql.correlated_step(&self.demand, plan, guard)?
                 };
+                if let Op::Charge(_, body) = &plan.op
+                    && body.uses_memo()
+                {
+                    let mut skipped = BTreeMap::new();
+                    calls(body, &mut skipped);
+                    for (id, count) in skipped {
+                        *self.memo.remaining.get_mut(&id).expect("skipped utility") -= count;
+                    }
+                }
                 let mut updates: BTreeMap<_, _> = plan
                     .writes
                     .iter()

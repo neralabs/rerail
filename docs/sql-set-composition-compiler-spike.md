@@ -4308,3 +4308,128 @@ These remain test-only admission bounds, not production workload limits.
 The next transition extends the same answer lifetime through nested value-bearing utility bodies at one root.
 The transition plan specifies the initial fixture and its expected finite-allowance boundary.
 Cross-traversal sharing, production integration, broader semantic gates, and the complete cold-job 100-execution gate remain open.
+
+
+### 2026-10-23 — Nested value-utility answers
+
+This phase starts from `4391fb57` and extends answer lifetime through utility bodies at one root.
+The first fixture repeats an outer utility whose body repeats an inner value utility.
+The expected native boundary is nine charges failing and ten succeeding, with one value read.
+The existing compiler rejects nested value-bearing utilities.
+The first check records native execution and that admission failure before changing the compiler.
+
+The intended shape keeps the existing single dependency chain.
+An outer miss charges its entry, runs its body in that scope, and stores the total measured cost.
+An outer replay consumes that cost without repeating the body.
+Inner answers remain available after the outer call, including false and unknown answers.
+Traversal and cross-root sharing remain separate gates.
+
+
+Native execution confirms the boundary: allowance nine fails with `Work`, and ten publishes one match with zero work remaining.
+Both runs read the value once.
+The compiler then fails with its nested-utility admission error, as expected.
+The rejected run is retained in `/tmp/rerail-nested-memo-rejected.log`.
+
+
+The first implementation passes five new tests and 669 native-comparison jobs.
+All 15 profiles use one matching statement and zero frame publications.
+Across two files, eight outer calls use 3,076 VM instructions and 12 typed return cells.
+Seven nested utility levels use 4,987 VM instructions and the same 12 return cells.
+The skipped-first profiles retain 16 return cells as the call count grows.
+
+EXPLAIN shows redundant materializations around utility entry and return.
+The next physical pass inlines first-miss lookup projections because they only copy constants and input work.
+Dynamic key lookups remain materialized.
+Outcome and answer projections inline into the materialized return boundary.
+That boundary limits expression expansion across nested utilities.
+Profiles also record the typed column count at each sequencing projection.
+
+
+#### Final evidence and qualification
+
+The final implementation passes 116 unique tests.
+These include 104 relational tests, one workspace publication test, nine B023 fixtures, one adversarial test, and one corpus test.
+The seven new tests record 704 native-comparison jobs, including 15 profiles.
+The full relational suite records 2,317 publication traces.
+Formatting and both default and `code-rule-profile` Clippy configurations pass.
+
+The initial allowance boundary remains exact: nine fails, while ten succeeds with zero work remaining and one value read per file.
+The false-outer fixture needs five charges before its direct inner replay can finish.
+A warm value cache does not reduce the recorded utility cost.
+The three-level shared-call fixture fails at 32 and succeeds at 33, with one value read per file.
+Capture rollback, changed keys, unknowns, count exports, distinct utility identities, and reached failures retain native parity.
+Oversized nested answer storage fails during compilation.
+
+The compiler activates the shared scope at the smallest caller that spans the relevant utility calls.
+An outer miss snapshots only bindings its body can write.
+It records input work before the entry charge and subtracts remaining work after the reached body finishes.
+The difference is the complete reusable cost.
+Inner answers stay in the dependency chain after the outer return.
+Proofs from optional body calls do not escape their utility boundary.
+A proven outer replay omits the body and updates compile-time use counts for its skipped inner calls.
+There is no runtime option or native composition fallback.
+
+All 15 profiles use one matching SQL statement and zero frame publications.
+Across two files, the final work counts are:
+
+| Fixture | First-chain VM | Final VM | First-chain return cells | Final return cells |
+| --- | ---: | ---: | ---: | ---: |
+| Eight outer calls | 3,076 | 3,010 | 12 | 12 |
+| Eight inner calls per outer body | 3,172 | 3,106 | 12 | 12 |
+| Eight roots, two outer calls each | 15,720 | 15,192 | 96 | 96 |
+| Seven nested utility levels | 4,987 | 3,825 | 12 | 12 |
+| Eight calls, first skipped | 4,232 | 4,064 | 16 | 16 |
+
+The seven-level fixture uses 23% fewer VM instructions than the first correct chain.
+EXPLAIN materialization sites fall from 57 to 36.
+SQL size falls from 24,971 to 24,698 bytes, including the final newline.
+Its widest materialized sequencing projection has 40 typed columns. The widest projection has 43.
+These widths describe generated columns, not runtime row counts.
+Its preparation sample is 4.472 ms, versus 4.175 ms for the first chain.
+The VM reduction does not establish a preparation-time improvement.
+
+Repeated outer calls and repeated inner calls retain one value read per root.
+Typed return cells stay constant per root in all five profile families.
+The larger depth improvement comes from removing redundant entry and return materializations at each nested level.
+Capture-sensitive dynamic lookups still have guarded miss bodies and conservative answer-storage limits.
+Broader replay proofs across those boundaries remain a possible physical optimization.
+
+All 96 preceding-phase controls retain identical SQL, output, and VM counts.
+These include the prior 81 controls and 15 shared-Boolean memo profiles.
+The frozen B023 corpus retains 138 files, two matches, and 2,812,255 generated-query VM instructions in every pair.
+Its query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+The VM gate passes.
+The CPU gate fails: 124.463 ms generated versus 61.358 ms reference, or 2.02845× against the 2× limit.
+The preceding phase measured 1.96580× with the same SQL and VM counts.
+The failed run is retained without repeating it to obtain a passing sample.
+The unchanged query does not establish either a B023 speedup or a structural regression from this phase.
+Performance qualification remains open.
+
+Committed evidence:
+
+- `benchmark/relational-nested-utility-memo.py`: pinned-source profiling driver with value-call, return-cell, and state-width summaries.
+- `benchmark/sql-relational-nested-utility-memo-evidence.json`: 704 traces, 15 profiles, native admission failure, shape comparisons, 96 controls, and B023 gates.
+- `benchmark/sql-relational-nested-utility-memo.sql`: final eight-call query.
+- `benchmark/sql-relational-nested-utility-memo-depth.sql`: final seven-level query.
+- `benchmark/sql-relational-nested-utility-memo-skipped.sql`: final query with an earlier skipped call.
+- `benchmark/sql-relational-nested-utility-memo-first-chain.sql`: seven-level query before physical simplification.
+
+Raw profiles are in `/tmp/rerail-nested-memo-20261023-{chain,final}`.
+The frozen B023 run is in `/tmp/rerail-nested-memo-b023-20261023-final`.
+The recorded revision is the parent commit. Source hashes identify the measured working tree.
+The build retains the diagnostic allocator shim and test-only local-LTO wrapper.
+
+Reproduce these profiles with a new output directory:
+
+```sh
+python3 benchmark/relational-nested-utility-memo.py /tmp/new-nested-memo-profile --binary target/loop/deps/rerail_engine-11d3550fad116d17
+```
+
+This completes nested value-utility support for the bounded outcome kernel.
+The memo limit remains eight allocated answer entries and 512 typed columns.
+Shared sequencing state also has a 512-column limit.
+The kernel remains test-only, and the failed frozen CPU gate remains visible.
+The next transition addresses repeated candidate visits through traversal and overlapping roots.
+Its answer lifetime must span a clause/file pair rather than reset at each root.
+The transition plan specifies two failing fixtures and their expected allowance boundaries for native confirmation.
+Production integration, broader semantic gates, and the complete cold-job 100-execution gate remain open.

@@ -5,38 +5,38 @@ use super::{Demand, Op, Plan, Slots, Sql, value};
 use serde_json::json;
 use std::collections::BTreeMap;
 
-/// Traversal and nested utility keys still need a separate demand lifetime contract.
+/// Traversal keys still need a separate demand lifetime contract.
 pub(in crate::code_rule_dsl::sql::relational::outcomes) fn admit(
     plan: &Plan,
 ) -> Result<(), String> {
-    fn visit(plan: &Plan, moved: bool, utility: bool) -> Result<(), String> {
+    fn visit(plan: &Plan, moved: bool) -> Result<(), String> {
         match &plan.op {
             Op::Charge(_, body) => {
-                if body.reads_value() && (moved || utility) {
-                    return Err("utility memo: cross-root, traversal, or nested utility reuse requires a shared demand contract".into());
+                if body.reads_value() && moved {
+                    return Err("utility memo: cross-root or traversal utility reuse requires a shared demand contract".into());
                 }
-                visit(body, moved, true)?;
+                visit(body, moved)?;
             }
             Op::All(items) | Op::Any(items) => {
                 for item in items {
-                    visit(item, moved, utility)?;
+                    visit(item, moved)?;
                 }
             }
-            Op::Not(child) => visit(child, moved, utility)?,
+            Op::Not(child) => visit(child, moved)?,
             Op::Search(_, _, child, stop)
             | Op::Count {
                 rule: child, stop, ..
             } => {
-                visit(child, true, utility)?;
+                visit(child, true)?;
                 if let Some(stop) = stop {
-                    visit(stop, true, utility)?;
+                    visit(stop, true)?;
                 }
             }
             _ => {}
         }
         Ok(())
     }
-    visit(plan, false, false)
+    visit(plan, false)
 }
 
 #[path = "shared_memo.rs"]
@@ -91,6 +91,25 @@ impl Local {
             .map(|c| format!(",{alias}.{c}"))
             .collect()
     }
+    fn allocate(&mut self, utility: usize, exports: &Slots) -> Result<usize, String> {
+        let id = self.entries.len();
+        let mut columns = vec![format!("m{id}truth"), format!("m{id}cost")];
+        columns.extend(self.keys.iter().map(|s| format!("m{id}i{s}")));
+        columns.extend(exports.iter().map(|s| format!("m{id}o{s}")));
+        if id >= 8
+            || self.entries.iter().map(|e| e.columns.len()).sum::<usize>() + columns.len() > 512
+        {
+            return Err("utility memo: local answer storage exceeds eight key versions or 512 typed columns".into());
+        }
+        self.entries.push(Entry {
+            utility,
+            version: self.versions.values().copied().collect(),
+            exports: exports.clone(),
+            columns,
+        });
+        Ok(id)
+    }
+
     pub(super) fn step(
         &mut self,
         sql: &mut Sql,
@@ -208,30 +227,16 @@ impl Local {
         if last {
             return Ok(Some(tested));
         }
-        let id = self.entries.len();
-        let mut columns = vec![format!("m{id}truth"), format!("m{id}cost")];
+        let id = self.allocate(*utility, &body.writes)?;
         let mut projected = format!(
             ",CASE WHEN d.tested>=0 THEN d.tested END AS m{id}truth,d.work-d.remaining AS m{id}cost"
         );
         for slot in &self.keys {
-            columns.push(format!("m{id}i{slot}"));
             projected.push_str(&format!(",{} AS m{id}i{slot}", value(input, "d", *slot)));
         }
         for slot in &body.writes {
-            columns.push(format!("m{id}o{slot}"));
             projected.push_str(&format!(",d.e{slot} AS m{id}o{slot}"));
         }
-        if id >= 8
-            || self.entries.iter().map(|e| e.columns.len()).sum::<usize>() + columns.len() > 512
-        {
-            return Err("utility memo: local answer storage exceeds eight key versions or 512 typed columns".into());
-        }
-        self.entries.push(Entry {
-            utility: *utility,
-            version,
-            exports: body.writes.clone(),
-            columns,
-        });
         let answer = sql.relation(
             "typed utility answer and semantic cost",
             format!("SELECT d.*{projected} FROM {tested} d"),

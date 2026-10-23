@@ -5,6 +5,7 @@ mod capture_walk_tests;
 mod emit;
 mod lower;
 mod memo_tests;
+mod nested_memo_tests;
 mod nested_tests;
 mod pruning_tests;
 mod publication_tests;
