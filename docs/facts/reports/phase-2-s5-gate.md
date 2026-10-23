@@ -236,12 +236,60 @@ Replay: `replay.ts --engine facts` over the batch's recordings and probes (as `/
 - `rerail_facts::reference`: under `Total::Checked`, a tie between distinct rows is `Err("tie: …")` — row_number (equal partition and order keys), `Sort` with LIMIT/OFFSET (any tie, wherever the cut falls), group_concat/json_group_array (keys of the Sort reached through Project/Filter; none: any two distinct rows of a group). Mirrors S3's dataflow; test `reference::tests::checked_orders_refuse_ties`.
 - Gate: lanes h (`harness-b1..b5`, `suite-b1..b5`, `explain-physical`) and t (`b-ties`); `GATED` (44 checks) is the ratchet; `check_b` accepts run-time refusals only on plans in `expected_refusals` and counts `missing_expected_refusals` as a detection; fixed mutants 9 and 10; REWRITES § Numbers lists 9 and 10.
 
-## 8. Resume notes
+## 9. Wave 3 (S5Gate-3)
 
-- **State:** `3e7bee330` on `Moti-Velz/facts-engine-s5-gate` (integration `8960a5db7`, S1 `f1edf7edc`, S3 tie vector, S6 `8bdf55063` merged); gate passes 25/25 checks, 21/21 mutants (`20261022T214833-gate`). Nothing half-done.
+Base: integration `165080410`; merged since: S6 `31d76fa73`, S6b `2431fa338`/`030a4f3be`, S7 `4dcfc9ae0`/`53251bff4`/`de16dd1c9`, S7b `299fb8942`/`b63025e9c`/`12930ad01`/`daee6baaa`, integration (S7b on it). S5 commits on `Moti-Velz/facts-engine-s5-gate`: `17f2f1d4e` time; `1e7e1559f` GATED +3; `b9572916d` facts-a-unit, rewrite mutants on the corpus, per-lane mutant cells; `0abe8b9d1` `facts-a stage-check`; `bfd5dc5df` re-pointing after `subst.rs`; `8ccfa81b0` integration merge; then the a-vs-reference bounds and the reference's JSON subtype (see `git log`).
+
+### 9.1 Results
+
+| Gate row | Target | Measured | Pass/fail | Run dir |
+|---|---|---|---|---|
+| G2.6 strength, merged tree with S7b (`8ccfa81b0`+) | every mutant caught | **27/27 checks, 23/23 mutants killed** (1–3 R12/R13, 4–10, 11–21, 22 S6b, 23 R14). Kill matrix § 9.3 | **pass** | `20261023T034203-gate` |
+| `a-vs-reference` (new, decider) | engine stages = `rerail_facts::reference` | 0 mismatches: recorded batches 1–5, 1,838 calls, 836 stages; subset 0/4 (288 files), 10,831 stages in 48 clauses; 2,109 stages not compared, by reason (repository runs > 2,000 input rows, files > 2,000 nodes, reference refusals: syntax reachability, `source_text` in repository plans). Mutant 22 killed by it (139 stage mismatches, first `public_api_triples/exported-families` stage `traits`) | **pass** | same |
+| G2.6 time | ≤ 10 min, load ≤ 8 | **median 323 s** (317 / 323 / 323) on the final tree. Before: 1,059 s (Integrate2). After the time fixes, at `17f2f1d4e` (25 checks, 21 mutants): 318 s (load 9.9), 406 s (7.7), 405 s (19.9), 468 s (18.8). With a-pattern/a-vs-reference added, `20261023T034203-gate`: 727 s (load 4.0; a-pattern's mutant cells ~100 s each in lane a): trimmed (a-pattern own lane, clean only; mutant 22 without the batch-5 lanes). Three locked runs of the final tree: § 9.2 | **pass** | `20261023T035444-gate`, `…040001-gate`, `…040524-gate`; history: `20261022T231023-gate`, `…232006-gate`, `…232652-gate`, `…233337-gate`, `20261023T034203-gate` |
+| GATED | ratchet | **48** checks: +`sql_grammar_escape_hatches`, `grammar_callable_constructors`, `grammar_fragment_usage` (S6 `31d76fa73`, 573/573), +`public_api_triples` (S6b `2431fa338`) | gated | `20261022T234304-gate` |
+
+Time changes. `views-derived` ran shard 0/4 (2,253 files) as intended; it grew from 105 s to 779 s because S4's wave-2 `derived-check` added the § 2.4 view-side inputs through the reference evaluator (2,560 s CPU of 2,879). It is now a fixed shard **0/8** (every 8th file of the sorted walk, 1,127 files), 8 workers, files taken largest first (same set, same results; `derived_check.rs::run`): 306–341 s. The edit replays use the first **300 events** (every single-file edit kind, one new worktree, one 200-file bulk replace; none of the 51 real commits): 75–105 s each; `--full` replays all 1,111 (`20261022T231553-gate`: 0 differences, 228/231 s).
+
+### 9.2 Locked timing, final tree
+
+`just facts-gate --mutants --no-build` under `bench-lock`, commit `907a2caa3`; each 27/27 checks, 23/23 mutants.
+
+| run | wall (s) | load start → end | a-repo / a-unrewritten / a-pattern / a-vs-reference / b-exactness / b-generated / suite-b5 / views-derived (s) |
+|---|--:|---|---|
+| `20261023T035444-gate` | **317** | 4.9 → 10.9 | 58 / 11 / 151 / 20 / 107 / 110 / 212 / 316 |
+| `20261023T040001-gate` | 323 | 10.9 → 11.9 (untrusted) | 60 / 12 / 158 / 21 / 111 / 114 / 216 / 323 |
+| `20261023T040524-gate` | 323 | 11.9 → 10.8 (untrusted) | 60 / 12 / 157 / 21 / 111 / 114 / 219 / 323 |
+
+Median **323 s** (≤ 10 min: **pass**); only the first started under load 8. The critical path is lane v (`views-derived`).
+
+### 9.3 Kill matrix (`20261023T034203-gate`)
+
+| n | site | killed by | survived |
+|--:|---|---|---|
+| 1, 3 | R12 `lowered.rs` (stop rule; descendants from `id + 2`) | `facts-a-unit` | `a-unrewritten`, `a-pattern` (subset sees no difference) |
+| 2 | R13 (last disjunct dropped) | `facts-a-unit`, `a-unrewritten`, `a-pattern` (37,380 physical mismatches) | |
+| 4–6 | S3 generator | `b-generated` | |
+| 7, 8 | classifier, plan audit | `classifier-leak`/`planner-audit`, `rerail-facts-lib` | |
+| 9 | tie detection | `b-ties` | |
+| 10 | order proofs | `rerail-facts-lib` | |
+| 11–21 | R1–R11 | `rerail-facts-lib` | `a-unrewritten` (facts-a's per-file path does not run these logical rewrites yet) |
+| 22 | spike SQL derived-table scoping | `facts-a-unit`, `a-vs-reference` (also `harness-b5`, `suite-b5` in `…034203-gate`; those cells were dropped from its family for time) | |
+| 23 | R14 range probe | `facts-a-unit` | `a-unrewritten`, `a-pattern` |
+
+Findings: the reference evaluator quoted a `json_array(...)` argument of `json_group_array`/`json_array` (SQLite embeds JSON-subtype values): `a-vs-reference` showed it as 100 clean mismatches on `public_api_triples`; fixed in `reference.rs` (`json_subtype`, `json_elem`), matching the engine's planner. Batch 5 at S6 `31d76fa73`: `public_api_triples` differed without refusing (I9), reported to S6, fixed by S6b.
+
+### 9.4 Interface changes
+
+- `facts-a stage-check --out-dir D [--recording R]… [--root DIR --checks … --sample k/n --threads N] [--max-nodes N] [--max-input-rows N]` (`stagecheck.rs`); `rel::TRACE` / `rel::Traced` (thread-local hook, no effect unset); `reference::evaluate_stages`.
+- Gate: `--full`; `EDITS_PREFIX` 300; `VIEWS_SHARD` 0/8; checks `a-unrewritten` (replaces `a3-check`), `a-pattern`, `a-vs-reference` (replaces `a-reference`), `facts-a-unit`; lanes p, r, v; registry parser reads every rewrite table (`mutant (facts-a)` included, `;`-separated cells); facts-a's `mutants` feature turns on `rerail-facts/mutants`.
+
+## 10. Resume notes
+
+- **State:** `Moti-Velz/facts-engine-s5-gate` at the last S5 commit (integration with S7b merged); gate green, § 9.
 - **Successor's next steps:**
-  1. **S2's `subst.rs` deletion (not yet landed; S2 will message the switch names).** Re-point `a-subset`/`a3-check`/`a-reference` to rewritten vs unrewritten vs `reference::evaluate_plan`, drop mutants 1–3 from `MUTANTS` (and REWRITES § Numbers), and add `a-reference`/the new differential to the rewrite mutants' families (11–21) so they are also killed on the corpus, not only by unit differentials.
-  2. When S6 unblocks the remaining 6 checks (closure evidence, `binds`, `printf`), run `just facts-gate --only harness-b4,harness-b5,suite-b4,suite-b5`, add the exact ones to `GATED`, refresh § 7.2.
-  3. When S3 lands ordered aggregates in the generator, extend `b-ties` (or the tie vector) to cover them; the reference side is done.
-  4. Ask the decider for a quiet-machine timing run (3 × `--mutants --no-build`); every timing above is untrusted.
-  5. When S3 registers the 8 real repository plans, confirm `b-generated` runs them (`--plans` if needed); runtime refusals on real plans fail the gate unless the run declares them expected.
+  1. Rewrite mutants 11–21 and 23 and mutants 1, 3 die by unit tests only; the corpus differential (`a-unrewritten`) and `a-pattern` do not see them on the subset. Seed corpus-visible variants or accept unit-level kills with the decider.
+  2. `a-vs-reference` skips batch 6's recordings (> 20 min in the nested-loop reference) and repository runs over 2,000 input rows: a hash-join reference (or per-clause sampling) would let them in.
+  3. Batch 5: `internal_dead_code`, `imperative_private_functions` still refused (S3's `calls`, `file.module`, `references`); add to `GATED` when exact.
+  4. When S3 lands the narrowed repository clauses on the engine, add them as a check (`facts-b greplay --plans … --limit 300`, results fields `exactness.differences`, `runtime_refusals`, `refused_static`, `missing_expected_refusals`; S3 agreed).
+  5. Decider quiet-machine timing (3 × `--mutants --no-build`).
