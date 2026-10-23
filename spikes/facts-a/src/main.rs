@@ -5,6 +5,7 @@ mod facts;
 mod factfile;
 mod fstring;
 mod leaf;
+mod patcheck;
 mod volume;
 use rerail_facts::policy;
 mod pyvalue;
@@ -73,6 +74,7 @@ fn main() {
         Some("xexport") => xexport::main(&args),
         Some("explain") => explain(&args),
         Some("export-volume") => volume::run(&args),
+        Some("pattern-check") => patcheck::run(&args),
         Some("parse") => {
             let path = &args[2];
             let source = Arc::new(std::fs::read_to_string(path).unwrap());

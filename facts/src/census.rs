@@ -271,7 +271,8 @@ pub fn run(dir: &Path, config: &Map<String, Json>, leaves: &mut dyn LeafCheck) -
                 found.extend(f.into_iter().map(|x| format!("query: {x}")));
             }
             let refused: Vec<String> = c.refusals.iter().filter(|r| r.clause == plan.clause && r.construct.starts_with("order-dependent")).map(|r| format!("{}: {}", r.at, r.construct)).collect();
-            orders.push(json!({ "rule": short, "clause": plan.clause, "constructs": found, "refused": refused }));
+            let marks: Vec<Json> = c.reports.iter().filter(|r| r.clause == plan.clause).flat_map(|r| r.order.iter()).map(|o| json!({ "at": o.at, "construct": o.construct, "total": format!("{:?}", o.total).to_lowercase() })).collect();
+            orders.push(json!({ "rule": short, "clause": plan.clause, "constructs": found, "refused": refused, "marks": marks }));
         }
         rules.push(json!({
             "rule": short,
@@ -383,11 +384,13 @@ fn render(j: &Json) -> String {
     writeln!(m, "| byte-identical stage text (whitespace-normalised) | {tg} | {ts} | {tr} |").unwrap();
     writeln!(m, "| equal IR digest (same algebra over the same inputs) | {dg} | {ds} | {dr} |").unwrap();
     writeln!(m, "| equal IR shape (same algebra, inputs abstracted to their columns) | {sg} | {ss} | {sr} |").unwrap();
-    writeln!(m, "\nOrder-dependent constructs left in repository plans (after the cut):\n").unwrap();
+    let all_marks: Vec<&Json> = j["repository_order"].as_array().unwrap().iter().flat_map(|o| o["marks"].as_array().unwrap().iter()).collect();
+    let proven = all_marks.iter().filter(|x| x["total"] == "proven").count();
+    writeln!(m, "\nOrder-dependent constructs in repository plans (after the cut): {} marked, {proven} `total: proven`, {} `total: checked` (a tie between distinct rows is a run-time refusal):\n", all_marks.len(), all_marks.len() - proven).unwrap();
     for o in j["repository_order"].as_array().unwrap() {
-        let cs: Vec<&str> = o["constructs"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
+        let ms: Vec<String> = o["marks"].as_array().unwrap().iter().map(|x| format!("{}: {} ({})", x["at"].as_str().unwrap(), x["construct"].as_str().unwrap(), x["total"].as_str().unwrap())).collect();
         let refused = o["refused"].as_array().unwrap().len();
-        writeln!(m, "- `{}`/`{}`: {}{}", o["rule"].as_str().unwrap(), o["clause"].as_str().unwrap(), if cs.is_empty() { "none".to_string() } else { cs.join("; ") }, if refused > 0 { format!(" (refused: {refused})") } else { String::new() }).unwrap();
+        writeln!(m, "- `{}`/`{}`: {}{}", o["rule"].as_str().unwrap(), o["clause"].as_str().unwrap(), if ms.is_empty() { "none".to_string() } else { ms.join("; ") }, if refused > 0 { format!(" (refused: {refused})") } else { String::new() }).unwrap();
     }
     m
 }
