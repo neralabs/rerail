@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v2",
+  "format": "rerail.port-readiness-recording-lock/v3",
   "tool": "phpstan",
   "pins": {
     "repository": "https://github.com/phpstan/phpstan-src",
@@ -24,10 +24,11 @@
       "size": 1604241,
       "format": "rerail.port-readiness-recording/v2"
     },
-    "corpus.json": {
-      "sha256": "82b4728b88c631ca9d69167cde3f26d08958f38746da557e4df7f370db616cfd",
-      "size": 1138,
-      "format": "rerail.port-readiness-corpus/v2"
+    "corpus.tar.zst": {
+      "sha256": "ac47e3ffa92939757d8700744c0777a194d4915b57baadcf6e2381b86ec493f1",
+      "files": 1,
+      "bytes": 1157,
+      "format": "rerail.port-readiness-corpus-answers/v1"
     }
   }
 }

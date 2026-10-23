@@ -117,10 +117,12 @@ For each tool-pack, by default every one the commit tracks pack test data for, o
   that tracks none fails;
 - archives the result, lists the files it dropped from the lock's archive, uploads it unless S3 holds it, and reads it
   back and verifies it against the new lock;
-- puts every recording the commit's `recording.lock` names in S3 as
-  `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json`, from
-  `.rerail/port-readiness/recordings/<sha256>.json`: a copy whose sha256 is the one the lock names is uploaded by a
-  conditional write, unless S3 holds it, then read back and verified. A recording S3 already holds needs no local copy;
+- puts both recordings the commit's `recording.lock` names in S3, recording.json as
+  `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json` from
+  `.rerail/port-readiness/recordings/<sha256>.json`, and the corpus answers archive as
+  `…/<pack>/<tool>/corpus/<sha256>.tar.zst` from `.rerail/port-readiness/recordings/<sha256>.tar.zst`: a copy that is
+  what the lock names is uploaded by a conditional write, unless S3 holds it, then read back and verified. A recording
+  S3 already holds needs no local copy;
   one in neither stops the push, naming its sha256 and how to get it;
 - prints the new `test-data.lock` and the git commands to run in a checkout of the pull request's branch: write the
   lock, `git add` it, and `git rm -r -q --cached --` the tracked data the archive now holds.
@@ -194,7 +196,7 @@ npm run port-readiness:record -- --pack <id> --tool <tool>       # a gated tool-
 git add -f -- packs/<id>/upstream/<tool> packs/<id>/licenses
 git commit -m "Derive <id>/<tool>"
 git bundle create pr-<n>-derived.bundle HEAD
-# Copy out pr-<n>-derived.bundle and .rerail/port-readiness/recordings/*.json.
+# Copy out pr-<n>-derived.bundle, .rerail/port-readiness/recordings/*.json and .rerail/port-readiness/recordings/*.tar.zst.
 
 # 3. In the trusted worktree, with the recordings copied into .rerail/port-readiness/recordings/:
 git fetch <path to>/pr-<n>-derived.bundle HEAD:pr-<n>-derived
@@ -230,11 +232,22 @@ nor the answers are taken on the bump run's word. A maintainer reviews and merge
 merges itself. When one tool-pack's gates fail, merge the others without its commit; closing the pull request unmerged
 declines the releases it carried until newer ones appear ([docs/port-readiness.md](docs/port-readiness.md#bump-pull-requests)).
 The port readiness recordings are not pack test data and not in its archives: each is an object of its own in S3,
-written once at
-`s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json`, which `recording.lock` names by sha256, and
-the Actions cache holds copies for CI. `node scripts/s3/pack-fixtures.mjs recordings [--pack <id> [--tool <tool>]]`
-fetches the ones the checkout's locks name into `.rerail/port-readiness/recordings/`
+written once — recording.json at `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json`, and
+upstream's answers on the goldens' corpus files, one file per rule and file, as one canonical archive at
+`…/<pack>/<tool>/corpus/<sha256>.tar.zst` — which `recording.lock` names by sha256, and the Actions cache holds copies
+for CI. `node scripts/s3/pack-fixtures.mjs recordings [--pack <id> [--tool <tool>]]` fetches the ones the checkout's
+locks name into `.rerail/port-readiness/recordings/` and extracts the archive's tree beside it
 ([docs/port-readiness.md](docs/port-readiness.md#the-recordings-are-not-in-the-tree)).
+
+A corpus answer is filed under the upstream configuration and the golden file's content, so importing goldens, moving a
+corpus or editing `corpus-tasks.json` leaves every other answer valid: `npm run port-readiness:record -- --pack <id>
+--tool <tool> --corpus` asks upstream only for the answers the archive lacks (the gates' `corpus-answers` check names
+them), `--full` records them all from nothing, and `--prune` drops answers no golden names
+([docs/port-readiness.md](docs/port-readiness.md#goldens)). An answer the archive holds is never asked again, so when
+the nightly `--check` finds upstream now answers otherwise, record as it says: `--corpus --full`, or `--full` when
+recording.json is stale too. Locks from before the archive (v2, with a `corpus.json`)
+are rewritten once, without running upstream, by `npm run port-readiness:record -- --migrate-corpus [--pack <id>
+[--tool <tool>]]`, which reads each locked corpus.json from the cache.
 
 ## Licence of contributions
 

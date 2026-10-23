@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v2",
+  "format": "rerail.port-readiness-recording-lock/v3",
   "tool": "clippy",
   "pins": {
     "repository": "https://github.com/rust-lang/rust-clippy",
@@ -18,10 +18,11 @@
       "size": 1064311,
       "format": "rerail.port-readiness-recording/v2"
     },
-    "corpus.json": {
-      "sha256": "4adfaf09297383f9273cfd1522a8d0db12d9a51dcd45cf197c49ea7565060252",
-      "size": 62020,
-      "format": "rerail.port-readiness-corpus/v2"
+    "corpus.tar.zst": {
+      "sha256": "1fae40a2f2521bfb897ccc6920734f22a5c12dbbf84daf281c7426dbfe4aad18",
+      "files": 3938,
+      "bytes": 100129,
+      "format": "rerail.port-readiness-corpus-answers/v1"
     }
   }
 }

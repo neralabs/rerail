@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v2",
+  "format": "rerail.port-readiness-recording-lock/v3",
   "tool": "eslint-plugin-next",
   "pins": {
     "repository": "https://github.com/vercel/next.js",
@@ -24,10 +24,11 @@
       "size": 255587,
       "format": "rerail.port-readiness-recording/v2"
     },
-    "corpus.json": {
-      "sha256": "a6cbf7bc426147b135e67a9e60b8c681b7da5b0098c69d0b9bd0bdb6fee677b3",
-      "size": 32839,
-      "format": "rerail.port-readiness-corpus/v2"
+    "corpus.tar.zst": {
+      "sha256": "8e85b935bad1d726bb99001b800f3a6b4b081b10a291c13a2c87f2ffc441b0d6",
+      "files": 2179,
+      "bytes": 49801,
+      "format": "rerail.port-readiness-corpus-answers/v1"
     }
   }
 }

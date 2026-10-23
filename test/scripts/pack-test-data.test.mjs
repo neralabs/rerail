@@ -1,6 +1,7 @@
 // scripts/s3/pack-fixtures.mjs: which paths are pack test data and which of it is authored, and pull, push (from the
-// data on disk, or from a pull request's commit), pack, upload, recordings, check and the CI cache entry against a
-// temporary git checkout with a fake `aws` whose bucket is a local directory.
+// data on disk, or from a pull request's commit), pack, upload, recordings (the pull of recording.json and the corpus
+// answers archive, and recordings push), check and the CI cache entry against a temporary git checkout with a fake
+// `aws` whose bucket is a local directory.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
@@ -16,6 +17,10 @@ import {
   authoredListing,
   BUCKET,
   check,
+  corpusCacheFile,
+  CORPUS_TREE_MARKER,
+  corpusKey,
+  corpusTreeDirectory,
   isPackFixture,
   PACK_FIXTURE_PATTERNS,
   pack,
@@ -26,6 +31,7 @@ import {
   RECORDING_CACHE,
   recordingKey,
   recordings,
+  recordingsPush,
   readLock,
   requireAws,
   upload,
@@ -633,81 +639,267 @@ describe("an archive that is not the canonical archive of its tool directory's p
     expect(message).toContain("gh cache delete");
     expect(existsSync(cached)).toBe(false);
   });
+
+  it("a dry run deletes no corrupt cached archive, and says it would", () => {
+    const { root, aws } = published();
+    fresh(root, true);
+    const cached = archiveCachePath(root, U, readLock(root, U).sha256);
+    writeFileSync(cached, "not zstd");
+    const printed = [];
+    pull({ root, aws, dryRun: true, log: (line) => printed.push(line) });
+    expect(readFileSync(cached, "utf8")).toBe("not zstd");
+    expect(printed.join("\n")).toContain(`would delete ${relative(root, cached)}`);
+  });
 });
 
-/** The two recordings a recording.lock names, by file name. */
-const RECORDINGS = { "corpus.json": '{"corpus":true}\n', "recording.json": '{"recording":true}\n' };
+const RECORDING_TEXT = '{"recording":true}\n';
+/** A corpus answers tree, as archive path → content, in corpus-answers.ts's layout. */
+const ANSWERS = {
+  "config/c0.json": '{\n  "format": 1\n}\n',
+  "answers/c0/no-null/rerail~vscode/src/a.js@0f.json": '{\n  "findings": [\n    [1, 1, 1, 5]\n  ]\n}\n',
+  "answers/c0/no-null/rerail~vscode/src/b.js@1e.json": '{\n  "findings": []\n}\n',
+  "verdicts/v0/0f.js.json": "[]\n",
+};
 
 /**
- * Writes, with `write`, a recording.lock naming `texts` into `toolPack`'s directory; returns the recordings sorted by
- * name, each as `{ name, text, sha256, key }`.
+ * Writes, with `write`, a v3 recording.lock into `toolPack`'s directory naming a recording.json and the canonical
+ * archive of `answers`, or `archive` when given (truthfully: its tar's sha256, file count and bytes); returns
+ * `recording` and `corpus`, each as `{ name, bytes, sha256, key, local(root) }` with `bytes` as stored (the archive
+ * compressed), the corpus with its extracted `tree(root)`, and both as `named`.
  */
-function lockRecordings(write, toolPack = T, texts = RECORDINGS) {
-  const named = Object.keys(texts)
-    .sort()
-    .map((name) => ({ name, text: texts[name], sha256: sha256(Buffer.from(texts[name])) }));
-  const locked = Object.fromEntries(named.map(({ name, text, sha256: digest }) => [name, { sha256: digest, size: Buffer.byteLength(text), format: "rerail.port-readiness/v2" }]));
-  write(`${toolPack.directory}/recording.lock`, `${JSON.stringify({ format: "rerail.port-readiness-recording-lock/v2", tool: toolPack.tool, files: locked }, null, 2)}\n`);
-  return named.map((recording) => ({ ...recording, key: recordingKey(toolPack, recording.sha256) }));
+function lockRecordings(write, toolPack = T, answers = ANSWERS, archive = buildArchive(Object.entries(answers).map(([path, content]) => ({ path, bytes: Buffer.from(content) })))) {
+  const text = Buffer.from(RECORDING_TEXT);
+  const digest = sha256(text);
+  const recording = { name: "recording.json", bytes: text, sha256: digest, key: recordingKey(toolPack, digest), local: (root) => join(root, RECORDING_CACHE, `${digest}.json`) };
+  const corpus = {
+    name: "corpus.tar.zst",
+    bytes: compressArchive(archive.tar),
+    sha256: archive.sha256,
+    key: corpusKey(toolPack, archive.sha256),
+    local: (root) => corpusCacheFile(root, archive.sha256),
+    tree: (root) => corpusTreeDirectory(root, archive.sha256),
+  };
+  const locked = {
+    "recording.json": { sha256: digest, size: text.length, format: "rerail.port-readiness-recording/v2" },
+    "corpus.tar.zst": { sha256: archive.sha256, files: archive.files, bytes: archive.bytes, format: "rerail.port-readiness-corpus-answers/v1" },
+  };
+  write(`${toolPack.directory}/recording.lock`, `${JSON.stringify({ format: "rerail.port-readiness-recording-lock/v3", tool: toolPack.tool, files: locked }, null, 2)}\n`);
+  return { recording, corpus, named: [recording, corpus] };
 }
 
-/** Where the checkout at `root` keeps a recording. */
-const localRecording = (root, recording) => join(root, RECORDING_CACHE, `${recording.sha256}.json`);
+/**
+ * An archive holding two corpus answers whose paths differ only by case, which buildArchive refuses to make: each
+ * file's canonical tar, the first without its end blocks, then the second.
+ */
+function caseCollidingArchive() {
+  const content = Buffer.from('{\n  "findings": []\n}\n');
+  const [upper, lower] = ["A", "a"].map((name) => buildArchive([{ path: `answers/c0/no-null/rerail~vscode/src/${name}.js@0f.json`, bytes: content }]).tar);
+  const tar = Buffer.concat([upper.subarray(0, upper.length - 1024), lower]);
+  return { tar, sha256: sha256(tar), files: 2, bytes: 2 * content.length };
+}
+
 const keys = (named) => named.map((recording) => recording.key).sort();
+/** What a pull extracted for `corpus`, as path → content (the marker aside): ANSWERS when it extracted the whole archive. */
+const extractedTree = (root, corpus) => Object.fromEntries(files(corpus.tree(root)).filter((path) => path !== CORPUS_TREE_MARKER).map((path) => [path, readFileSync(join(corpus.tree(root), path), "utf8")]));
+const treeLabel = (root, corpus) => relative(root, corpus.tree(root)).split("\\").join("/");
 
 describe("recordings", () => {
   const quiet = () => {};
-  /** published, with a recording.lock for packs/p/upstream/t. */
-  function locked() {
-    const context = published();
-    return { ...context, named: lockRecordings(context.write) };
+  /** withData, with a recording.lock for packs/p/upstream/t naming the archive of `answers`, or `archive`. */
+  function locked(answers = ANSWERS, archive = undefined) {
+    const context = withData();
+    return { ...context, ...lockRecordings(context.write, T, answers, archive) };
   }
 
-  it("fetches each locked recording from S3 into the recordings cache, verified", () => {
-    const { root, aws, object, called, named } = locked();
-    for (const recording of named) putFile(object(recording.key), recording.text);
-    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: [], downloaded: keys(named), missing: [] });
-    for (const recording of named) expect(readFileSync(localRecording(root, recording), "utf8")).toBe(recording.text);
+  it("fetches recording.json and the corpus archive from S3, verified, and extracts the archive's tree", () => {
+    const { root, aws, object, called, named, recording, corpus } = locked();
+    for (const each of named) putFile(object(each.key), each.bytes);
+    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: [], downloaded: keys(named), missing: [], extracted: [treeLabel(root, corpus)] });
+    expect(readFileSync(recording.local(root))).toEqual(recording.bytes);
+    expect(readFileSync(corpus.local(root))).toEqual(corpus.bytes);
+    expect(extractedTree(root, corpus)).toEqual(ANSWERS);
+    // The marker names the tar the tree was extracted from.
+    expect(readFileSync(join(corpus.tree(root), CORPUS_TREE_MARKER), "utf8")).toBe(`${corpus.sha256}\n`);
     expect(called("cp")).toHaveLength(2);
-    expect(files(join(root, RECORDING_CACHE))).toEqual(named.map((recording) => `${recording.sha256}.json`).sort());
   });
 
-  it("keeps a valid local copy, calling no aws", () => {
-    const { root, aws, calls, named } = locked();
-    for (const recording of named) putFile(localRecording(root, recording), recording.text);
-    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: keys(named), downloaded: [], missing: [] });
+  it("keeps valid local copies and extracts the cached archive, calling no aws", () => {
+    const { root, aws, calls, named, corpus } = locked();
+    for (const each of named) putFile(each.local(root), each.bytes);
+    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: keys(named), downloaded: [], missing: [], extracted: [treeLabel(root, corpus)] });
+    expect(extractedTree(root, corpus)).toEqual(ANSWERS);
     expect(calls).toEqual([]);
   });
 
-  it("replaces a corrupt local copy with S3's", () => {
-    const { root, aws, object, named } = locked();
-    const [corpus, recording] = named;
-    for (const each of named) putFile(object(each.key), each.text);
-    putFile(localRecording(root, corpus), '{"corp');
-    putFile(localRecording(root, recording), recording.text);
-    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: [recording.key], downloaded: [corpus.key], missing: [] });
-    expect(readFileSync(localRecording(root, corpus), "utf8")).toBe(corpus.text);
+  it("keeps a complete tree without its archive, and extracts again a tree missing a file", () => {
+    const { root, aws, calls, named, corpus } = locked();
+    for (const each of named) putFile(each.local(root), each.bytes);
+    recordings({ root, aws, log: quiet });
+    rmSync(corpus.local(root));
+    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: keys(named), downloaded: [], missing: [], extracted: [] });
+
+    putFile(corpus.local(root), corpus.bytes);
+    rmSync(join(corpus.tree(root), "verdicts/v0/0f.js.json"));
+    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, corpus)]);
+    expect(extractedTree(root, corpus)).toEqual(ANSWERS);
+    expect(calls).toEqual([]);
   });
 
-  it("notes a recording S3 does not hold, naming its sha256 and key, and succeeds", () => {
-    const { root, aws, named } = locked();
-    const printed = [];
-    expect(recordings({ root, aws, log: (line) => printed.push(line) })).toEqual({ kept: [], downloaded: [], missing: keys(named) });
-    for (const recording of named) {
-      expect(printed.join("\n")).toContain(recording.sha256);
-      expect(printed.join("\n")).toContain(`s3://${BUCKET}/${recording.key}`);
-    }
+  it("extracts again a tree whose marker names another archive, though its files and bytes count the same", () => {
+    const { root, aws, named, corpus } = locked();
+    for (const each of named) putFile(each.local(root), each.bytes);
+    recordings({ root, aws, log: quiet });
+    writeFileSync(join(corpus.tree(root), "verdicts/v0/0f.js.json"), "{}\n");
+    writeFileSync(join(corpus.tree(root), CORPUS_TREE_MARKER), `${"0".repeat(64)}\n`);
+    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, corpus)]);
+    expect(extractedTree(root, corpus)).toEqual(ANSWERS);
+    // A tree without a marker is no finished extraction either.
+    rmSync(join(corpus.tree(root), CORPUS_TREE_MARKER));
+    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, corpus)]);
+    expect(existsSync(join(corpus.tree(root), CORPUS_TREE_MARKER))).toBe(true);
+  });
+
+  it("fills the recording cache it is given, the recorder's --cache, rather than the checkout's", () => {
+    const { root, aws, object, named, corpus } = locked();
+    for (const each of named) putFile(object(each.key), each.bytes);
+    const cache = join(root, "elsewhere", "recordings");
+    expect(recordings({ root, cache, aws, log: quiet }).downloaded).toEqual(keys(named));
+    expect(files(cache)).toContain(`${corpus.sha256}.tar.zst`);
+    expect(files(cache)).toContain(`corpus/${corpus.sha256}/${CORPUS_TREE_MARKER}`);
     expect(files(join(root, RECORDING_CACHE))).toEqual([]);
   });
 
-  it("refuses an object whose sha256 is not the locked one, naming the lock and key, and writes nothing", () => {
-    const { root, aws, object, named } = locked();
-    const [corpus] = named;
-    putFile(object(corpus.key), "tampered\n");
+  it("replaces a corrupt local recording.json with S3's", () => {
+    const { root, aws, object, recording, corpus } = locked();
+    putFile(object(recording.key), recording.bytes);
+    putFile(recording.local(root), '{"rec');
+    putFile(corpus.local(root), corpus.bytes);
+    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: [corpus.key], downloaded: [recording.key], missing: [], extracted: [treeLabel(root, corpus)] });
+    expect(readFileSync(recording.local(root))).toEqual(recording.bytes);
+  });
+
+  it("notes recordings S3 does not hold, naming each sha256, key and the command that records it, and succeeds", () => {
+    const { root, aws, named, corpus } = locked();
+    const printed = [];
+    expect(recordings({ root, aws, log: (line) => printed.push(line) })).toEqual({ kept: [], downloaded: [], missing: keys(named), extracted: [] });
+    for (const each of named) {
+      expect(printed.join("\n")).toContain(each.sha256);
+      expect(printed.join("\n")).toContain(`s3://${BUCKET}/${each.key}`);
+    }
+    expect(printed.join("\n")).toContain("npm run port-readiness:record -- --pack p --tool t --corpus --full");
+    expect(files(join(root, RECORDING_CACHE))).toEqual([]);
+    expect(existsSync(corpus.tree(root))).toBe(false);
+  });
+
+  it("refuses a recording.json object whose sha256 is not the locked one, naming the lock and key, and writes nothing", () => {
+    const { root, aws, object, recording } = locked();
+    putFile(object(recording.key), "tampered\n");
     const message = failure(() => recordings({ root, aws, log: quiet }));
     expect(message).toContain("packs/p/upstream/t/recording.lock");
-    expect(message).toContain(`s3://${BUCKET}/${corpus.key}`);
+    expect(message).toContain(`s3://${BUCKET}/${recording.key}`);
     expect(files(join(root, RECORDING_CACHE))).toEqual([]);
+  });
+
+  const corrupt = [
+    ["is not zstd", () => locked(), () => Buffer.from("not zstd"), "is not a zstd archive of the size the lock allows"],
+    ["holds another tar than the locked one", () => locked(), () => compressArchive(buildArchive([{ path: "config/c0.json", bytes: Buffer.from("{}\n") }]).tar), "holds a tar whose sha256 is"],
+    ["holds a file outside config/, answers/ and verdicts/", () => locked({ ...ANSWERS, "run.sh": "rm -rf /\n" }), (corpus) => corpus.bytes, "not corpus answers (under config/, answers/, verdicts/), e.g. run.sh"],
+    ["holds two files that differ only by case", () => locked(ANSWERS, caseCollidingArchive()), (corpus) => corpus.bytes, "which differ only in case"],
+  ];
+  it.each(corrupt)("refuses a corpus archive in S3 that %s, naming the lock and key, and extracts nothing", (_, make, stored, reason) => {
+    const { root, aws, object, recording, corpus } = make();
+    putFile(object(recording.key), recording.bytes);
+    putFile(object(corpus.key), stored(corpus));
+    const message = failure(() => recordings({ root, aws, log: quiet }));
+    for (const text of [reason, "packs/p/upstream/t/recording.lock", `s3://${BUCKET}/${corpus.key}`]) expect(message).toContain(text);
+    expect(existsSync(corpus.local(root))).toBe(false);
+    expect(existsSync(join(root, RECORDING_CACHE, "corpus"))).toBe(false);
+  });
+
+  it("deletes a corrupt cached archive, and says to delete the Actions cache entry when S3 cannot be read", () => {
+    const { root, recording, corpus } = locked();
+    putFile(recording.local(root), recording.bytes);
+    putFile(corpus.local(root), "not zstd");
+    const signedOut = () => ({ status: 255, stderr: "\nUnable to locate credentials\n" });
+    const message = failure(() => recordings({ root, aws: signedOut, log: quiet }));
+    expect(message).toContain(relative(root, corpus.local(root)));
+    expect(message).toContain("gh cache delete");
+    expect(existsSync(corpus.local(root))).toBe(false);
+    expect(existsSync(corpus.tree(root))).toBe(false);
+  });
+
+  it("refuses a recording.lock of the old format, which names corpus.json", () => {
+    const { root, aws, write } = withData();
+    const old = { format: "rerail.port-readiness-recording-lock/v2", tool: "t", files: { "corpus.json": { sha256: sha256(Buffer.from("{}")), size: 2 }, "recording.json": { sha256: sha256(Buffer.from("{}")), size: 2 } } };
+    write("packs/p/upstream/t/recording.lock", `${JSON.stringify(old)}\n`);
+    const message = failure(() => recordings({ root, aws, log: quiet }));
+    expect(message).toContain("packs/p/upstream/t/recording.lock");
+    expect(message).toContain("not rerail.port-readiness-recording-lock/v3");
+  });
+
+  it("--dry-run names what it would fetch, and fetches, extracts and deletes nothing", () => {
+    const { root, aws, calls, named, recording, corpus } = locked();
+    putFile(recording.local(root), '{"rec');
+    putFile(corpus.local(root), "not zstd");
+    const printed = [];
+    expect(recordings({ root, aws, dryRun: true, log: (line) => printed.push(line) })).toEqual({ kept: [], downloaded: [], missing: [], extracted: [] });
+    for (const each of named) expect(printed.join("\n")).toContain(`would fetch s3://${BUCKET}/${each.key}`);
+    for (const each of named) expect(printed.join("\n")).toContain(`would delete ${relative(root, each.local(root))}`);
+    expect(calls).toEqual([]);
+    expect(readFileSync(recording.local(root), "utf8")).toBe('{"rec');
+    expect(readFileSync(corpus.local(root), "utf8")).toBe("not zstd");
+    expect(existsSync(corpus.tree(root))).toBe(false);
+  });
+});
+
+describe("recordings push", () => {
+  const quiet = () => {};
+  /** withData, with a recording.lock for packs/p/upstream/t. */
+  function locked() {
+    const context = withData();
+    return { ...context, ...lockRecordings(context.write) };
+  }
+
+  it("puts both recordings from the recordings cache, reads them back, and puts nothing when run again", () => {
+    const { root, aws, object, called, named } = locked();
+    for (const each of named) putFile(each.local(root), each.bytes);
+    const printed = [];
+    expect(recordingsPush({ root, pack: "p", aws, log: (line) => printed.push(line) })).toEqual({ uploaded: keys(named), locks: ["packs/p/upstream/t/recording.lock"] });
+    for (const each of named) expect(readFileSync(object(each.key))).toEqual(each.bytes);
+    expect(printed.at(-1)).toContain("git add -- packs/p/upstream/t/recording.lock");
+
+    const again = [];
+    expect(recordingsPush({ root, pack: "p", aws, log: (line) => again.push(line) }).uploaded).toEqual([]);
+    expect(again.filter((line) => line.includes("S3 already holds"))).toHaveLength(2);
+    expect(called("put-object")).toHaveLength(2);
+  });
+
+  it("refuses when neither the recordings cache nor S3 holds the corpus archive, naming it and both remedies, before putting anything", () => {
+    const { root, aws, bucket, called, recording, corpus } = locked();
+    putFile(recording.local(root), recording.bytes);
+    const message = failure(() => recordingsPush({ root, pack: "p", tool: "t", aws, log: quiet }));
+    for (const text of [
+      "packs/p/upstream/t/recording.lock",
+      corpus.sha256,
+      `s3://${BUCKET}/${corpus.key}`,
+      "npm run port-readiness:record -- --pack p --tool t --corpus",
+      "gh run download <run-id> -n recordings-p--t -D .rerail/port-readiness/recordings",
+    ]) {
+      expect(message).toContain(text);
+    }
+    expect(called("put-object")).toEqual([]);
+    expect(files(bucket)).toEqual([]);
+  });
+
+  it("refuses a cached corpus archive that is not the locked one, calling no aws", () => {
+    const { root, aws, bucket, calls, recording, corpus } = locked();
+    putFile(recording.local(root), recording.bytes);
+    putFile(corpus.local(root), compressArchive(buildArchive([{ path: "config/c0.json", bytes: Buffer.from("{}\n") }]).tar));
+    const message = failure(() => recordingsPush({ root, pack: "p", aws, log: quiet }));
+    expect(message).toContain(relative(root, corpus.local(root)));
+    expect(message).toContain("packs/p/upstream/t/recording.lock");
+    expect(calls).toEqual([]);
+    expect(files(bucket)).toEqual([]);
   });
 });
 
@@ -717,39 +909,36 @@ describe("upload with recordings", () => {
   function packed() {
     const context = withData();
     pack({ root: context.root, log: quiet });
-    return { ...context, named: lockRecordings(context.write) };
+    return { ...context, ...lockRecordings(context.write) };
   }
   const putKeys = (called) => called("put-object").map((args) => args[args.indexOf("--key") + 1]);
 
   it("uploads each local recording under its sha256 and reads it back", () => {
     const { root, aws, object, called, named } = packed();
-    for (const recording of named) putFile(localRecording(root, recording), recording.text);
+    for (const each of named) putFile(each.local(root), each.bytes);
     const { uploaded } = upload({ root, pack: "p", tool: "t", aws, log: quiet });
     expect(uploaded).toEqual([archiveKey(T, readLock(root, T).sha256), ...keys(named)]);
-    for (const recording of named) expect(readFileSync(object(recording.key), "utf8")).toBe(recording.text);
-    expect(called("cp").map((args) => args[2])).toEqual(expect.arrayContaining(named.map((recording) => `s3://${BUCKET}/${recording.key}`)));
+    for (const each of named) expect(readFileSync(object(each.key))).toEqual(each.bytes);
+    expect(called("cp").map((args) => args[2])).toEqual(expect.arrayContaining(named.map((each) => `s3://${BUCKET}/${each.key}`)));
   });
 
   it("does not upload a recording S3 holds, whether or not there is a local copy", () => {
-    const { root, aws, object, called, named } = packed();
-    const [corpus, recording] = named;
-    putFile(object(corpus.key), corpus.text);
-    putFile(object(recording.key), recording.text);
-    putFile(localRecording(root, recording), recording.text);
+    const { root, aws, object, called, named, recording } = packed();
+    for (const each of named) putFile(object(each.key), each.bytes);
+    putFile(recording.local(root), recording.bytes);
     const archive = archiveKey(T, readLock(root, T).sha256);
     expect(upload({ root, pack: "p", tool: "t", aws, log: quiet }).uploaded).toEqual([archive]);
     expect(putKeys(called)).toEqual([archive]);
   });
 
   it("fails on a recording in neither place, naming its sha256, its key and both remedies, before putting anything", () => {
-    const { root, aws, bucket, called, named } = packed();
-    const [corpus, recording] = named;
-    putFile(localRecording(root, recording), recording.text);
+    const { root, aws, bucket, called, recording, corpus } = packed();
+    putFile(corpus.local(root), corpus.bytes);
     const message = failure(() => upload({ root, pack: "p", tool: "t", aws, log: quiet }));
     for (const text of [
       "packs/p/upstream/t/recording.lock",
-      corpus.sha256,
-      `s3://${BUCKET}/${corpus.key}`,
+      recording.sha256,
+      `s3://${BUCKET}/${recording.key}`,
       "npm run port-readiness:record -- --pack p --tool t",
       "gh run download <run-id> -n recordings-p--t -D .rerail/port-readiness/recordings",
     ]) {
@@ -760,13 +949,12 @@ describe("upload with recordings", () => {
   });
 
   it("refuses a local recording that is not the locked bytes, calling no aws", () => {
-    const { root, aws, bucket, calls, named } = packed();
-    const [corpus, recording] = named;
-    putFile(localRecording(root, corpus), "tampered\n");
-    putFile(localRecording(root, recording), recording.text);
+    const { root, aws, bucket, calls, recording, corpus } = packed();
+    putFile(recording.local(root), "tampered\n");
+    putFile(corpus.local(root), corpus.bytes);
     const message = failure(() => upload({ root, pack: "p", tool: "t", aws, log: quiet }));
     expect(message).toContain("packs/p/upstream/t/recording.lock");
-    expect(message).toContain(corpus.sha256);
+    expect(message).toContain(recording.sha256);
     expect(calls).toEqual([]);
     expect(files(bucket)).toEqual([]);
   });
@@ -909,10 +1097,10 @@ describe("push --from", () => {
 
   it("--into writes the new locks into a checkout of the commit, prints only git commands, and uploads its recordings", () => {
     const { root, pr, aws, object, data, changes } = pullRequest();
-    const named = lockRecordings((path, content) => putFile(join(pr, path), content));
+    const { named } = lockRecordings((path, content) => putFile(join(pr, path), content));
     git(pr, "add", "--", "packs/p/upstream/t/recording.lock");
     git(pr, "commit", "-qm", "recording");
-    for (const recording of named) putFile(localRecording(root, recording), recording.text);
+    for (const each of named) putFile(each.local(root), each.bytes);
     const printed = [];
     const result = push({ root, aws, from: "feature", into: pr, log: (line) => printed.push(line) });
 
@@ -920,7 +1108,7 @@ describe("push --from", () => {
     expect(result.script).toBe("git add -- packs/p/upstream/t/test-data.lock packs/q/upstream/u/test-data.lock\ngit rm -r -q --cached -- packs/p/upstream/t/fixtures packs/q/upstream/u/authored");
     expect(printed.at(-1).endsWith(`:\n${result.script}`)).toBe(true);
     expect(result.uploaded).toEqual([...[T, U].map((toolPack) => archiveKey(toolPack, readLock(pr, toolPack).sha256)), ...keys(named)]);
-    for (const recording of named) expect(readFileSync(object(recording.key), "utf8")).toBe(recording.text);
+    for (const each of named) expect(readFileSync(object(each.key))).toEqual(each.bytes);
     for (const toolPack of [T, U]) expect(archived(object, pr, toolPack)).toEqual(overlaid(data, changes, toolPack));
     execFileSync("sh", ["-c", result.script], { cwd: pr });
     expect(staged(pr)).toEqual(STAGED);
@@ -996,8 +1184,8 @@ describe("check", () => {
   /** published, with a recording.lock for packs/p/upstream/t whose recordings S3 holds. */
   function locked() {
     const context = published();
-    const named = lockRecordings(context.write);
-    for (const recording of named) putFile(context.object(recording.key), recording.text);
+    const { named } = lockRecordings(context.write);
+    for (const recording of named) putFile(context.object(recording.key), recording.bytes);
     return { ...context, named };
   }
   const archiveKeys = (root) => [T, { pack: "p", tool: "w", directory: "packs/p/upstream/w" }, U].map((toolPack) => archiveKey(toolPack, readLock(root, toolPack).sha256));
@@ -1010,7 +1198,7 @@ describe("check", () => {
 
   it("fails listing each missing archive and recording with its lock and remedy, downloading nothing", () => {
     const { root, aws, object, calls, named } = locked();
-    const [corpus, recording] = named;
+    const [recording, corpus] = named;
     const archive = archiveKey(U, readLock(root, U).sha256);
     rmSync(object(archive));
     rmSync(object(corpus.key));
@@ -1018,7 +1206,7 @@ describe("check", () => {
     expect(message.split("\n")).toEqual([
       'S3 lacks 2 of the 5 object(s) the locks name (CONTRIBUTING.md, "Pack test data"):',
       `  packs/q/upstream/u/test-data.lock names s3://${BUCKET}/${archive}, which S3 does not hold: a maintainer archives the pull request's pack test data with \`npm run fixtures:push -- --from <ref> --pack q --tool u\``,
-      `  packs/p/upstream/t/recording.lock names corpus.json at s3://${BUCKET}/${corpus.key}, which S3 does not hold: a maintainer downloads the pull request's CI recordings with \`gh run download <run> -n recordings-p--t -D .rerail/port-readiness/recordings\`, then puts them in S3 with \`npm run fixtures:push -- --from <ref> --pack p --tool t\``,
+      `  packs/p/upstream/t/recording.lock names corpus.tar.zst at s3://${BUCKET}/${corpus.key}, which S3 does not hold: a maintainer downloads the pull request's CI recordings with \`gh run download <run> -n recordings-p--t -D .rerail/port-readiness/recordings\`, then puts them in S3 with \`npm run fixtures:push -- --from <ref> --pack p --tool t\``,
     ]);
     expect(message).not.toContain(recording.key);
     expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);

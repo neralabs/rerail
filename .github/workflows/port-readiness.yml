@@ -7,10 +7,12 @@ name: Port readiness
 # which only the test-data job holds: it pulls each planned tool-pack's test data (upstream's copied tests, the case
 # sources, the recorded answers) with .github/actions/pack-test-data, the archive its test-data.lock names, into the
 # Actions cache, from S3 on a miss under an OIDC token GitHub gives no fork's or Dependabot's pull request, and does the
-# same for the tool-pack's recordings (recording.json and corpus.json, which packs/<id>/upstream/<tool>/recording.lock
-# names by sha256; s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json); it runs nothing else. A
-# gate leg can run upstream's code (the recorder, below), and any of its steps could mint a token and assume the read
-# role, so the legs hold none: they restore the archives (`fetch: "false"`) and recordings the test-data job saved.
+# same for the tool-pack's recordings (recording.json, by the sha256 of its bytes, and the corpus answers archive
+# corpus.tar.zst, by its tar's sha256, which packs/<id>/upstream/<tool>/recording.lock names;
+# s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json and .../corpus/<sha256>.tar.zst); it runs
+# nothing else. A gate leg can run upstream's code (the recorder, below), and any of its steps could mint a token and
+# assume the read role, so the legs hold none: they restore the archives (`fetch: "false"`) and recordings the test-data
+# job saved, and extract the corpus answers archive the gates read.
 #
 # Only a pull request's leg records its tool-pack. It records when neither the cache nor S3 holds the recordings the
 # lock names, and always when the pull request changes the tool-pack's recording.lock against its base: then the
@@ -204,15 +206,20 @@ jobs:
               echo "$BASE has no $lock: the legs record $PACK/$TOOL for the first time"
               exit 0
             fi
+            if [ -z "$(jq -r '.files["corpus.tar.zst"].sha256 // empty' "$lock")" ]; then
+              rm -f "$lock"
+              echo "$BASE's $lock is from before the corpus answers archive: the legs record $PACK/$TOOL's corpus answers from none"
+              exit 0
+            fi
           fi
           [ -f "$lock" ] || exit 0
           recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
           {
             echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
             echo "paths<<EOF"
             echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -244,9 +251,10 @@ jobs:
           node-version: "24"
           package-manager-cache: false
 
-      # Each recording the lock names, from s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json,
-      # verified against its sha256. S3 lacks a recording only before a maintainer pushed it; the script says so, and a
-      # pull request's legs record it while a push's or a nightly's fail. Saved only when both are here.
+      # Each recording the lock names, from s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/ (<sha256>.json and
+      # corpus/<sha256>.tar.zst), verified against the lock. S3 lacks a recording only before a maintainer pushed it; the
+      # script says so, and a pull request's legs record it while a push's or a nightly's fail. Saved only when both are
+      # here.
       - id: recordings-download
         name: Download the recordings from S3
         if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
@@ -315,8 +323,9 @@ jobs:
         with:
           built: "true"
 
-      # The recordings are not in the tree (docs/port-readiness.md): the lock names each by the sha256 of its text, and
-      # the cache holds them at .rerail/port-readiness/recordings/<sha256>.json under a key naming both digests, saved by
+      # The recordings are not in the tree (docs/port-readiness.md): the lock names recording.json by the sha256 of its
+      # text and the corpus answers archive by its tar's sha256, and the cache holds them at
+      # .rerail/port-readiness/recordings/<sha256>.json and <sha256>.tar.zst under a key naming both digests, saved by
       # the test-data job from S3 or by an earlier leg of the same pull request that recorded them.
       - id: lock
         name: Read the recordings this commit's lock names
@@ -328,12 +337,12 @@ jobs:
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           [ -f "$lock" ] || { echo "::error::$lock is missing: run npm run port-readiness:record -- --pack $PACK --tool $TOOL and commit it"; exit 1; }
           recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
           {
             echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
             echo "paths<<EOF"
             echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -374,10 +383,11 @@ jobs:
           fi
           echo "record=true" >> "$GITHUB_OUTPUT"
 
-      # What a recording made here is compared with: the pull request's base (its merge commit's first parent, from the
-      # plan). The checkout keeps no credentials, so it is fetched with the token, as the report job fetches; the
-      # recording summary goes without the comparison when it cannot be fetched. The base lock's recordings are restored
-      # from the cache, where the test-data job put them from S3 for a `rerecord` leg.
+      # What a recording made here builds on and is compared with: the pull request's base (its merge commit's first
+      # parent, from the plan). The checkout keeps no credentials, so it is fetched with the token, as the report job
+      # fetches; the recording summary goes without the comparison when it cannot be fetched. The base lock's recordings
+      # are restored from the cache, where the test-data job put them from S3 for a `rerecord` leg. A base from before the
+      # corpus answers archive names none, and the record starts from no answers.
       - id: base
         name: Fetch the commit to record against
         if: steps.source.outputs.record == 'true'
@@ -399,15 +409,18 @@ jobs:
           echo "sha=$base" >> "$GITHUB_OUTPUT"
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           if [ -n "$base" ] && git show "$base:$lock" > "$RUNNER_TEMP/base-recording.lock" 2> /dev/null; then
-            recording="$(jq -r '.files["recording.json"].sha256' "$RUNNER_TEMP/base-recording.lock")"
-            corpus="$(jq -r '.files["corpus.json"].sha256' "$RUNNER_TEMP/base-recording.lock")"
-            {
-              echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
-              echo "paths<<EOF"
-              echo ".rerail/port-readiness/recordings/$recording.json"
-              echo ".rerail/port-readiness/recordings/$corpus.json"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
+            # A base from before the corpus answers archive names none; its recordings are not restored.
+            recording="$(jq -r '.files["recording.json"].sha256 // empty' "$RUNNER_TEMP/base-recording.lock")"
+            corpus="$(jq -r '.files["corpus.tar.zst"].sha256 // empty' "$RUNNER_TEMP/base-recording.lock")"
+            if [ -n "$recording" ] && [ -n "$corpus" ]; then
+              {
+                echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
+                echo "paths<<EOF"
+                echo ".rerail/port-readiness/recordings/$recording.json"
+                echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Restore the recordings the base's lock names
@@ -460,8 +473,9 @@ jobs:
       # recorder added. No maintainer's recording run posts a per-rule summary for this commit, so the leg writes one into
       # its job summary and its report artifact, from which the report job puts it in the pull request comment: against
       # the recording the base's lock names, put in the commit's lock's place while the recorder runs, or as a first
-      # recording when the base has no lock. The recorder runs upstream's code and the Composer packages it resolves, so
-      # the step gets no token.
+      # recording when the base has no lock. With the base's lock in place the record builds on the corpus answers
+      # archive it names, as the maintainer's did; when no cache holds that archive the recorder stops and says to record
+      # with --full. The recorder runs upstream's code and the Composer packages it resolves, so the step gets no token.
       - id: record
         name: Record this tool-pack
         if: steps.source.outputs.record == 'true'
@@ -491,17 +505,18 @@ jobs:
             # What the recorder made, beside the report, so the difference from the committed lock can be read.
             mkdir -p "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL"
             cp "$lock" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
-            jq -r '.files[].sha256' "$lock" | while read -r digest; do
-              cp ".rerail/port-readiness/recordings/$digest.json" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
-            done
+            recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
+            corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
+            cp ".rerail/port-readiness/recordings/$recording.json" ".rerail/port-readiness/recordings/$corpus.tar.zst" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
             echo "::error::the recorder wrote files this commit does not have; record $PACK/$TOOL again and commit them (the report artifact holds what it recorded). A case source it wrote comes from the tool-pack's test data archive (test-data.lock): a maintainer derives it again and pushes it with npm run fixtures:push -- --from <ref> (CONTRIBUTING.md, \"Pack test data\"), and the pull request commits the lock:"
             sed -n '1,200p' "$RUNNER_TEMP/written.diff"
             exit 1
           fi
 
-      # Only the two recordings, and only once the recorder made exactly the lock this commit has: what upstream's code
-      # left anywhere else under .rerail/ is not saved (the corpus and results saves below skip this leg too). A
-      # `rerecord` leg saves nothing: no run restores the recordings of a lock its pull request changes.
+      # Only the two recordings (recording.json and the corpus answers archive, not the tree it extracts to), and only
+      # once the recorder made exactly the lock this commit has: what upstream's code left anywhere else under .rerail/
+      # is not saved (the corpus and results saves below skip this leg too). A `rerecord` leg saves nothing: no run
+      # restores the recordings of a lock its pull request changes.
       - name: Save the recordings
         if: steps.source.outputs.record == 'true' && !matrix.rerecord
         uses: actions/cache/save@v6
@@ -510,7 +525,8 @@ jobs:
           key: ${{ steps.lock.outputs.key }}
 
       # The two recordings the lock names, restored or recorded here, for the maintainer who pushes a pull request's
-      # recording.lock to S3 (gh run download <run-id> -n recordings-<pack>--<tool> -D .rerail/port-readiness/recordings;
+      # recording.lock to S3 (gh run download <run-id> -n recordings-<pack>--<tool> -D .rerail/port-readiness/recordings,
+      # then node scripts/s3/pack-fixtures.mjs recordings push --pack <pack> --tool <tool>;
       # CONTRIBUTING.md, "Pack test data"). The first shard of a sharded tool-pack uploads them, since every shard has the
       # same two. A leg whose recorder failed has none.
       - name: Upload the recordings
@@ -545,6 +561,15 @@ jobs:
           key: port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-run-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-run-
+
+      # The gates read upstream's answers on the corpus from the tree the corpus answers archive extracts to
+      # (.rerail/port-readiness/recordings/corpus/<sha256>/), which no cache holds: the archive restored or recorded above
+      # is verified against the lock and extracted here, with no credentials, since both recordings are already local.
+      - name: Extract the corpus answers
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: node scripts/s3/pack-fixtures.mjs recordings --pack "$PACK" --tool "$TOOL"
 
       - id: gates
         name: Run the gates

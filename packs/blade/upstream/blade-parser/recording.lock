@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v2",
+  "format": "rerail.port-readiness-recording-lock/v3",
   "tool": "blade-parser",
   "pins": {
     "repository": "https://github.com/stillat/blade-parser",
@@ -24,10 +24,11 @@
       "size": 291529,
       "format": "rerail.port-readiness-recording/v2"
     },
-    "corpus.json": {
-      "sha256": "d272ef949b50f7529ebf62e26f058fcbbb6de7793b139822861ba1afba3e6e5c",
-      "size": 1372,
-      "format": "rerail.port-readiness-corpus/v2"
+    "corpus.tar.zst": {
+      "sha256": "95ca623c2c9578a761d42c9e1bb4da446b63259a6c5072273995eca9156aabde",
+      "files": 1,
+      "bytes": 1146,
+      "format": "rerail.port-readiness-corpus-answers/v1"
     }
   }
 }

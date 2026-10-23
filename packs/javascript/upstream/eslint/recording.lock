@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v2",
+  "format": "rerail.port-readiness-recording-lock/v3",
   "tool": "eslint",
   "pins": {
     "repository": "https://github.com/eslint/eslint",
@@ -21,10 +21,11 @@
       "size": 15725388,
       "format": "rerail.port-readiness-recording/v2"
     },
-    "corpus.json": {
-      "sha256": "4e955069b420e258c368e99c0cba326b987ade51c0232c19fca8cbef2bb2cee4",
-      "size": 3205,
-      "format": "rerail.port-readiness-corpus/v2"
+    "corpus.tar.zst": {
+      "sha256": "310d4c075d357c09e953e7cfb4e6affe422a4d1fd90ad4e5d8db3b08bed86eec",
+      "files": 1,
+      "bytes": 1068,
+      "format": "rerail.port-readiness-corpus-answers/v1"
     }
   }
 }

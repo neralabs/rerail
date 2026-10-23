@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v2",
+  "format": "rerail.port-readiness-recording-lock/v3",
   "tool": "eslint-plugin-vitest",
   "pins": {
     "repository": "https://github.com/vitest-dev/eslint-plugin-vitest",
@@ -21,10 +21,11 @@
       "size": 410652,
       "format": "rerail.port-readiness-recording/v2"
     },
-    "corpus.json": {
-      "sha256": "2062b527fbdb0816a05de3ddd8cb88f5dc8bea720acdf757a1c9011d693d0084",
-      "size": 892,
-      "format": "rerail.port-readiness-corpus/v2"
+    "corpus.tar.zst": {
+      "sha256": "0573c5658adcacf80ea0b00a45b205604155853ccc197886b1dbd273dbfed182",
+      "files": 1,
+      "bytes": 1256,
+      "format": "rerail.port-readiness-corpus-answers/v1"
     }
   }
 }

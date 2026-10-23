@@ -22,11 +22,11 @@ conformance/recorders/port-readiness/runtimes/*/package-lock.json
 conformance/recorders/port-readiness/runtimes/*/uv.lock
 conformance/recorders/port-readiness/runtimes/*/composer.lock
 
-# The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming, by sha256, the one
-# its rules are judged against (conformance/port-readiness/recording/store.ts). Each is an object of its own in S3
-# (s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json, written once); the recorder and
+# The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming, by sha256, the
+# recording.json and the corpus answers archive its rules are judged against (conformance/port-readiness/recording/store.ts).
+# Both are objects in S3 (s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/, written once); the recorder and
 # `node scripts/s3/pack-fixtures.mjs recordings` put them in .rerail/port-readiness/recordings/, and CI keeps copies in its
-# Actions cache. Committing one again would put 71 MB of generated JSON back in the history, where it stays forever.
+# Actions cache. corpus.json is the answers' format before the archive; a stale copy on disk must not be committed either.
 packs/*/upstream/*/recording.json
 packs/*/upstream/*/corpus.json
 

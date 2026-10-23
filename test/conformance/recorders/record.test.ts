@@ -7,10 +7,11 @@ import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-readiness/manifest.js";
-import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
-import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
+import { cachedCorpusTree, CONTEXT_FILES, treeFiles } from "../../../conformance/port-readiness/recording/corpus-answers.js";
+import { gatesRecordingSchema, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
+import { readCachedRecording, recordingLockSchema, recordingLockText } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, listedCopies, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources } from "../../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, committedSources, diffRecording, listedCopies, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources } from "../../../conformance/recorders/port-readiness/record.js";
 import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies, withoutMachinePaths } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
@@ -74,12 +75,12 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
       { id: "ruff-f401", upstream: { tool: "ruff", rule: "F401" }, policy: "rules/ruff-f401.json" },
     ] }));
     const corpusFile: CorpusFile = { task: "demo-task", repository: "demo/demo", path: "app.py", source: SOURCE, sha256: "b".repeat(64) };
+    const goldens = [corpusFile];
     const options = {
       root, pack: "demo", tool: "bandit", cacheRoot: join(root, "cache"), runner: { run: () => Promise.reject(new Error("no commands")) },
       adapters: { bandit: fakeAdapter },
       upstreamBytes: () => Buffer.from(SOURCE, "utf8"),
-      corpusFiles: async () => [corpusFile],
-      tasksSha256: "c".repeat(64),
+      corpusFiles: async () => goldens,
       runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
     };
     const recorded = await recordToolPack(options);
@@ -113,12 +114,20 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     assert.equal(recording.parserVerdicts.length, 1);
     assert.equal(recording.corpus.extensions.includes(".py"), true);
 
-    const corpus = gatesCorpusSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["corpus.json"].sha256)!));
-    assert.deepEqual(corpus.files.map((file) => [file.task, file.path, Object.keys(file.findings)]), [["demo-task", "app.py", ["B301"]]]);
+    // The corpus answers are an archive in the cache, extracted to a tree of one file per answer.
+    const archive = lock.files["corpus.tar.zst"];
+    const tree = treeFiles(cachedCorpusTree(join(root, "cache"), archive, "demo")!);
+    const answers = [...tree.keys()].filter((path) => path.startsWith("answers/"));
+    assert.deepEqual(answers.map((path) => path.split("/").slice(2).join("/")), [`B301/demo-task/app.py@${"b".repeat(64)}.json`]);
+    assert.equal(tree.get(answers[0]!)!.toString("utf8"), '{\n  "findings": [\n    [1, 0, null, 17]\n  ]\n}\n');
+    assert.equal([...tree.keys()].filter((path) => path.startsWith("verdicts/")).length, 1);
+    assert.equal(archive.files, tree.size);
     assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/fixtures/pickle_deserialize.py"), "utf8"), SOURCE);
     assert.match(readFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "utf8"), /\| `upstream\/bandit\/fixtures\/pickle_deserialize\.py` \| `examples\/pickle_deserialize\.py` \| verbatim \|/u);
 
+    // A second record has every answer already: upstream is asked nothing, and the archive is the same.
     const again = await recordToolPack(options);
+    assert.deepEqual(again.corpus.asked, { answers: 0, verdicts: 0 });
     assert.deepEqual(diffRecording(root, "demo", "bandit", again, join(root, "cache")), { changed: [], corpusNote: null, missing: [], conflicting: [] });
     // The lock is what a commit pins, so a lock naming other bytes is what the stale check sees.
     writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...lock, files: { ...lock.files, "recording.json": { ...lock.files["recording.json"], sha256: "e".repeat(64) } } }));
@@ -131,30 +140,175 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     const compared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
     assert.equal(compared.changes.unavailable, null);
     assert.deepEqual(compared.changes.rules, []);
-
-    // A locked corpus.json recorded over more files than the goldens name (before the recorder narrowed to them) still
-    // holds while it answers the goldens' files as a fresh recording does; --check reads it from the cache.
-    const current = recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
-    const lockCorpus = async (value: typeof corpus) => {
-      const digest = await writeCachedRecording(join(root, "cache"), recordingText(value));
-      writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...current, files: { ...current.files, "corpus.json": { ...current.files["corpus.json"], sha256: digest } } }));
-    };
-    const extra = { ...corpus.files[0]!, task: "other-task", findings: {} };
-    await lockCorpus({ ...corpus, files: [...corpus.files, extra] });
-    const superset = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
-    assert.deepEqual(superset.changed, []);
-    assert.match(superset.corpusNote!, /answers all 1 file\(s\) the goldens name, as a fresh recording does, and 1 more/u);
-    await lockCorpus({ ...corpus, files: [{ ...corpus.files[0]!, findings: {} }, extra] });
-    const differs = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
-    assert.deepEqual(differs.changed, ["corpus.json"]);
-    assert.match(differs.corpusNote!, /no longer holds: 1 of the 1 file\(s\) the goldens name are answered differently or not at all, e\.g\. demo-task\/app\.py/u);
-    // Without the locked recording in the cache nothing is compared, and the check never calls it current.
-    writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...current, files: { ...current.files, "corpus.json": { ...current.files["corpus.json"], sha256: "f".repeat(64) } } }));
-    const unread = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
-    assert.deepEqual(unread.changed, ["corpus.json"]);
-    assert.match(unread.corpusNote!, /could not be compared: .* not in the cache/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** A tool-pack directory for the fake Bandit, recording B301 and B302. */
+function demoToolPack(): string {
+  const root = mkdtempSync(join(tmpdir(), "port-readiness-record-"));
+  mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
+  mkdirSync(join(root, "packs/demo/licenses/bandit"), { recursive: true });
+  writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST);
+  writeFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "# Bandit\n\n| File | Upstream path | Copy |\n|---|---|---|\n| `upstream/bandit/fixtures/assert.py` | `examples/assert.py` | verbatim |\n");
+  writeFileSync(join(root, "packs/demo/conformance.json"), JSON.stringify({ rules: [{ id: "bandit-b301", upstream: { tool: "bandit", rule: "B301" }, policy: "rules/bandit-b301.json" }] }));
+  return root;
+}
+
+test("a record asks upstream only for the answers the locked archive lacks, and records what a full record does", async () => {
+  const root = demoToolPack();
+  try {
+    const asked: string[] = [];
+    const counting: AdapterFactory = async (...args) => ({
+      ...(await fakeAdapter(...args)),
+      lintCorpus: async (files: CorpusFile[], names: string[]): Promise<UpstreamFile[]> => {
+        asked.push(...files.map((file) => `${names.join(",")} ${file.path}`));
+        return files.map((file) => ({ file, excluded: null, findings: new Map([["B301", file.path === "b.py" ? [] : [span]]]) }));
+      },
+    });
+    const file = (path: string, sha: string): CorpusFile => ({ task: "demo-task", repository: "demo/demo", path, source: SOURCE, sha256: sha.repeat(64) });
+    let goldens = [file("a.py", "1")];
+    const options = {
+      root, pack: "demo", tool: "bandit", cacheRoot: join(root, "cache"), runner: { run: () => Promise.reject(new Error("no commands")) },
+      adapters: { bandit: counting },
+      upstreamBytes: () => Buffer.from(SOURCE, "utf8"),
+      corpusFiles: async () => goldens,
+      runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
+    };
+    await writeRecording(root, "demo", "bandit", await recordToolPack(options), { cacheRoot: join(root, "cache") });
+    assert.deepEqual(asked, ["B301 a.py"]);
+    // --corpus files new answers under the locked recording's runtimes, so it refuses when the runtime pins moved.
+    await assert.rejects(recordToolPack({ ...options, corpus: { only: true }, runtimeDigests: () => ({ "pyproject.toml": "e".repeat(64) }) }), /the runtime pins of bandit-1\.9\.4, python moved since recording\.json was recorded/u);
+
+    // A new golden, and an old golden whose file changed: only those two are asked, and only for their rules.
+    asked.length = 0;
+    goldens = [file("a.py", "1"), file("b.py", "2"), file("c.py", "3")];
+    const incremental = await recordToolPack({ ...options, corpus: { only: true } });
+    assert.deepEqual(asked, ["B301 b.py", "B301 c.py"]);
+    assert.deepEqual(incremental.corpus.asked, { answers: 2, verdicts: 2 });
+    assert.deepEqual(incremental.sources, []);
+    // The proof that incremental == full: the same goldens recorded from no answers make the same archive.
+    asked.length = 0;
+    const full = await recordToolPack({ ...options, corpus: { full: true } });
+    assert.equal(asked.length, 3);
+    assert.equal(full.corpus.packed.sha256, incremental.corpus.packed.sha256);
+    await writeRecording(root, "demo", "bandit", incremental, { cacheRoot: join(root, "cache") });
+
+    // An answer no golden names any more stays, until --prune drops it.
+    goldens = [file("a.py", "1")];
+    const kept = await recordToolPack({ ...options, corpus: { only: true } });
+    assert.equal([...kept.corpus.tree.keys()].filter((path) => path.startsWith("answers/")).length, 3);
+    const pruned = await recordToolPack({ ...options, corpus: { only: true, prune: true } });
+    assert.equal([...pruned.corpus.tree.keys()].filter((path) => path.startsWith("answers/")).length, 1);
+
+    // --check asks every answer again and holds the locked archive to them: an answer upstream now gives otherwise is
+    // stale, while answers the locked archive keeps for no golden are not.
+    goldens = [file("a.py", "1"), file("b.py", "2")];
+    const check = await recordToolPack({ ...options, corpus: { full: true } });
+    assert.deepEqual(diffRecording(root, "demo", "bandit", check, join(root, "cache")).changed, []);
+    const quiet: AdapterFactory = async (...args) => ({ ...(await counting(...args)), lintCorpus: async (files: CorpusFile[]) => files.map((one) => ({ file: one, excluded: null, findings: new Map() })) });
+    const moved = diffRecording(root, "demo", "bandit", await recordToolPack({ ...options, adapters: { bandit: quiet }, corpus: { full: true } }), join(root, "cache"));
+    assert.deepEqual(moved.changed, ["corpus.tar.zst"]);
+    assert.match(moved.corpusNote!, /lacks or differs on 1 of the 4 answer\(s\) and verdict\(s\) just recorded, e\.g\. answers\/[0-9a-f]{64}\/B301\/demo-task\/a\.py@1{64}\.json/u);
+    // A lock from before the archive (v2) is no base: everything is asked, and the summary says it could not compare.
+    const v2 = JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")) as { format: string };
+    writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), JSON.stringify({ ...v2, format: "rerail.port-readiness-recording-lock/v2" }));
+    asked.length = 0;
+    const fromV2 = await recordToolPack(options);
+    assert.equal(asked.length, 2);
+    assert.match((await writeRecording(root, "demo", "bandit", fromV2, { cacheRoot: join(root, "cache") })).changes.unavailable!, /does not match its schema/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an adapter whose answers depend on the batch is asked about every file of a task at once, for every rule, and keys the answers by the batch", async () => {
+  const root = demoToolPack();
+  try {
+    writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST.replace("adapter: bandit", "adapter: phpstan"));
+    const asked: string[] = [];
+    // An answer that depends on what else upstream analysed: the span ends at the number of files in the batch.
+    const batched: AdapterFactory = async (...args) => ({
+      ...(await fakeAdapter(...args)),
+      cases: () => [{ fixture: "tests/PHPStan/Rules/data/pickle.php", variant: "default", path: "pickle.php", source: SOURCE, skipped: null, expected: [span], markup: null }],
+      inCorpus: (path) => path.endsWith(".php"),
+      lintCorpus: async (files: CorpusFile[], names: string[]): Promise<UpstreamFile[]> => {
+        asked.push(`${names.join(",")} ${files.map((file) => `${file.task}/${file.path}`).join(",")}`);
+        return files.map((file) => ({ file, excluded: null, findings: new Map([["B301", [{ ...span, endCol: files.length }]]]) }));
+      },
+    });
+    const file = (task: string, path: string, sha: string): CorpusFile => ({ task, repository: "demo/demo", path, source: SOURCE, sha256: sha.repeat(64) });
+    let goldens = [file("t1", "a.php", "1")];
+    const options = {
+      root, pack: "demo", tool: "bandit", cacheRoot: join(root, "cache"), runner: { run: () => Promise.reject(new Error("no commands")) },
+      adapters: { phpstan: batched },
+      upstreamBytes: () => Buffer.from(SOURCE, "utf8"),
+      corpusFiles: async () => goldens,
+      runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
+    };
+    await writeRecording(root, "demo", "bandit", await recordToolPack(options), { cacheRoot: join(root, "cache") });
+    assert.deepEqual(asked, ["B301 t1/a.php"]);
+
+    // A new golden in t1 is a new batch for all of t1; t2 is a batch of its own.
+    asked.length = 0;
+    goldens = [file("t1", "a.php", "1"), file("t1", "b.php", "2"), file("t2", "c.php", "3")];
+    const incremental = await recordToolPack({ ...options, corpus: { only: true } });
+    assert.deepEqual(asked, ["B301 t1/a.php,t1/b.php", "B301 t2/c.php"]);
+    assert.deepEqual(incremental.corpus.asked, { answers: 3, verdicts: 2 });
+    const answers = (recorded: typeof incremental) => [...recorded.corpus.tree].filter(([path]) => path.startsWith("answers/") && recorded.corpus.needed.answers.some((answer) => answer.path === path));
+    assert.deepEqual(answers(incremental).map(([, bytes]) => spanOf(JSON.parse(bytes.toString("utf8")).findings[0]).endCol), [2, 2, 1]);
+    // The same goldens recorded from no answers make the same answers.
+    asked.length = 0;
+    const full = await recordToolPack({ ...options, corpus: { full: true } });
+    assert.deepEqual(asked, ["B301 t1/a.php,t1/b.php", "B301 t2/c.php"]);
+    assert.deepEqual(answers(full), answers(incremental));
+    await writeRecording(root, "demo", "bandit", incremental, { cacheRoot: join(root, "cache") });
+
+    // A golden added to t2 asks t2 again, whole, and leaves t1's answers as they are.
+    asked.length = 0;
+    goldens = [...goldens, file("t2", "d.php", "4")];
+    await recordToolPack({ ...options, corpus: { only: true } });
+    assert.deepEqual(asked, ["B301 t2/c.php,t2/d.php"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a rule new to the recording is asked alone, except of an adapter whose answer depends on the rules asked with it", async () => {
+  for (const [adapter, fixture, expected] of [["bandit", "examples/demo.py", "B302 t/a.blade.php"], ["blade-parser", "tests/Validation/DemoTest.php#1", "B301,B302 t/a.blade.php"]] as const) {
+    const root = demoToolPack();
+    try {
+      writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST.replace("adapter: bandit", `adapter: ${adapter}`));
+      const asked: string[] = [];
+      const twoRules: AdapterFactory = async (...args) => ({
+        ...(await fakeAdapter(...args)),
+        rule: (name) => (name === "B301" || name === "B302" ? { name, implementation: ["x"], tests: ["y"], deprecation: null, recommended: null, notOnRealCode: null } : undefined),
+        cases: () => [{ fixture, variant: "default", path: "1.blade.php", source: SOURCE, skipped: null, expected: [span], markup: null }],
+        inCorpus: (path) => path.endsWith(".blade.php"),
+        lintCorpus: async (files: CorpusFile[], names: string[]): Promise<UpstreamFile[]> => {
+          asked.push(`${names.join(",")} ${files.map((file) => `${file.task}/${file.path}`).join(",")}`);
+          return files.map((file) => ({ file, excluded: null, findings: new Map(names.map((name) => [name, [span]])) }));
+        },
+      });
+      const options = {
+        root, pack: "demo", tool: "bandit", cacheRoot: join(root, "cache"), runner: { run: () => Promise.reject(new Error("no commands")) },
+        adapters: { [adapter]: twoRules },
+        upstreamBytes: () => Buffer.from(SOURCE, "utf8"),
+        corpusFiles: async () => [{ task: "t", repository: "demo/demo", path: "a.blade.php", source: SOURCE, sha256: "1".repeat(64) }],
+        runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
+      };
+      await writeRecording(root, "demo", "bandit", await recordToolPack(options), { cacheRoot: join(root, "cache") });
+      // The pack names B302 too: its answer on a.blade.php is all that is missing.
+      const rules = [{ id: "b301", upstream: { tool: "bandit", rule: "B301" }, policy: "rules/b301.json" }, { id: "b302", upstream: { tool: "bandit", rule: "B302" }, policy: "rules/b302.json" }];
+      writeFileSync(join(root, "packs/demo/conformance.json"), JSON.stringify({ rules }));
+      asked.length = 0;
+      const again = await recordToolPack(options);
+      assert.deepEqual(asked, [expected], adapter);
+      assert.deepEqual(again.corpus.asked.answers, expected.startsWith("B301,") ? 2 : 1, adapter);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 
@@ -180,7 +334,6 @@ test("a case from an upstream path the pack's UPSTREAM.md lists as not copied is
       adapters: { bandit: twoCases },
       upstreamBytes: () => Buffer.from(SOURCE, "utf8"),
       corpusFiles: async () => [],
-      tasksSha256: "c".repeat(64),
       runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
     });
     const [refused, copied] = recorded.recording.rules.B301!.cases;

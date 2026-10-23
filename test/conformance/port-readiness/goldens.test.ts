@@ -7,7 +7,7 @@ import { test } from "vitest";
 import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import type { CompiledPolicy, Engine } from "../../../conformance/port-readiness/engine.js";
 import { GOLDENS_FILE, parseGoldens, readGoldens, serializeGoldens, SYSTEMATIC_FILES, type Golden, type Goldens } from "../../../conformance/port-readiness/goldens.js";
-import { goldensGate, realCodeGapCheck } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
+import { goldensGate, realCodeGapCheck, recordMissingAnswers } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
 import { goldenListLines } from "../../../conformance/port-readiness/run.js";
 import type { PackAdapter, Span } from "../../../conformance/port-readiness/types.js";
 
@@ -151,11 +151,13 @@ test("a golden fails outside the document's scope with upstream findings, or whe
   assert.deepEqual(result.results.map((entry) => entry.status), ["mismatch", "agree", "mismatch", "mismatch"]);
   assert.match(result.results[2]!.reason, /^the pinned corpus has no t1\/src\/gone\.ts with sha256 0+$/u);
   assert.match(result.results[3]!.reason, /upstream's own parser rejects it/u);
-  // A golden corpus.json does not answer says so, so the fix (re-record) is plain.
+  // A golden whose answer is not recorded says so, with the command that records just the missing answers.
   const unrecorded = goldensGate(engine, adapter, "no-debugger", compiled({}), [
-    { golden: golden("t1", "src/new.ts"), file: corpusFile("t1", "src/new.ts"), expected: null, excluded: "corpus.json has no answer for it with this sha256: re-record the tool-pack" },
+    { golden: golden("t1", "src/new.ts"), file: corpusFile("t1", "src/new.ts"), expected: null, excluded: `upstream's answer on it is not recorded: ${recordMissingAnswers("demo", "eslint")}` },
   ]);
-  assert.equal(unrecorded.results[0]!.reason, "it has no expected answer: corpus.json has no answer for it with this sha256: re-record the tool-pack");
+  assert.equal(unrecorded.results[0]!.status, "mismatch");
+  assert.ok(unrecorded.results[0]!.reason.includes(recordMissingAnswers("demo", "eslint")), unrecorded.results[0]!.reason);
+  assert.match(recordMissingAnswers("demo", "eslint"), /npm run port-readiness:record -- --pack demo --tool eslint --corpus$/u);
 });
 
 test("a golden the engine could not fully read is an engine gap, which does not fail the rule", () => {

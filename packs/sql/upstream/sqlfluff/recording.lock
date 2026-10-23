@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v2",
+  "format": "rerail.port-readiness-recording-lock/v3",
   "tool": "sqlfluff",
   "pins": {
     "repository": "https://github.com/sqlfluff/sqlfluff",
@@ -23,10 +23,11 @@
       "size": 1161352,
       "format": "rerail.port-readiness-recording/v2"
     },
-    "corpus.json": {
-      "sha256": "50a00c5af8d6dc3ce3d2e3e088a11246984c14e493616572dfdb9b09ddc7ce97",
-      "size": 88404,
-      "format": "rerail.port-readiness-corpus/v2"
+    "corpus.tar.zst": {
+      "sha256": "1fa1e6cd6bf26feea267dbed3dae65dffd5a188b71f2b7dec1d3b4571ec4608d",
+      "files": 6394,
+      "bytes": 143162,
+      "format": "rerail.port-readiness-corpus-answers/v1"
     }
   }
 }

@@ -767,7 +767,7 @@ jobs:
             if [ "${#recording_locks[@]}" -gt 0 ]; then
               {
                 echo
-                echo "Each recording below was recorded by the bump run, then uploaded to S3 and read back, as \`s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json\`:"
+                echo "Each recording below was recorded by the bump run, then uploaded to S3 and read back, as \`s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json\` (recording.json) or \`.../corpus/<sha256>.tar.zst\` (the corpus answers archive):"
                 echo
               } >> "$section/test-data.md"
             fi
@@ -801,7 +801,7 @@ jobs:
                 read -r pack tool <<< "$tool_pack"
                 selector="--pack $pack --tool $tool"
                 if git cat-file -e "$COMMIT:packs/$pack/upstream/$tool/gates.yaml" 2> /dev/null; then
-                  echo "npm run fixtures:derive -- $selector --update && npm run port-readiness:record -- $selector && npm run fixtures:push -- $selector"
+                  echo "npm run fixtures:derive -- $selector --update && npm run port-readiness:record -- $selector --full && npm run fixtures:push -- $selector"
                 else
                   echo "npm run fixtures:derive -- $selector --update && npm run fixtures:push -- $selector"
                 fi
@@ -951,8 +951,9 @@ jobs:
 
       # The commits the compose job made, which must end in the tree it named; of what they change, only the
       # test-data.lock and recording.lock files reach the checkout, and of the composed legs' archives and recordings
-      # only those they name: each recording, checked against its sha256, into .rerail/port-readiness/recordings/, where
-      # `upload` reads it.
+      # only those they name, into .rerail/port-readiness/recordings/, where `upload` reads them: recording.json checked
+      # here against its sha256, and the corpus answers archive (named by its tar's sha256, not its compressed bytes') by
+      # `upload`, which verifies every local copy against its lock before it puts anything.
       - id: locks
         name: Take the locks, their archives and their recordings from the bumps
         env:
@@ -1006,27 +1007,33 @@ jobs:
             echo "$lock $sha" >> "$RUNNER_TEMP/locks.txt"
             echo "$pack $tool" >> "$RUNNER_TEMP/tool-packs.txt"
           done
-          # A recording no leg holds may already be in S3 (`upload` checks); one a leg holds must be what its name says.
+          # A recording no leg holds may already be in S3 (`upload` checks); one a leg holds must be what the lock names.
           mapfile -t recording_locks < <(git diff --name-only --no-renames HEAD "$TREE" | grep -E '^packs/[a-z0-9-]+/upstream/[a-z0-9._-]+/recording\.lock$' || true)
           for lock in "${recording_locks[@]}"; do
             IFS=/ read -r _ pack _ tool _ <<< "$lock"
             git show "$TREE:$lock" > "$lock"
-            mapfile -t shas < <(jq -r '.files | to_entries[] | .value.sha256' "$lock")
-            for sha in "${shas[@]}"; do
+            recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
+            corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
+            for sha in "$recording" "$corpus"; do
               if ! [[ "$sha" =~ ^[0-9a-f]{64}$ ]]; then
                 echo "::error::$lock names '$sha', which is not a sha256"
                 exit 1
               fi
-              recording="$(from_legs "recordings/$sha.json")"
-              if [ -n "$recording" ]; then
-                if [ "$(sha256sum < "$recording" | cut -d ' ' -f 1)" != "$sha" ]; then
-                  echo "::error::a composed leg's recordings/$sha.json is not the recording $lock names"
-                  exit 1
-                fi
-                install -D -m 0644 "$recording" ".rerail/port-readiness/recordings/$sha.json"
-              fi
-              echo "$lock $sha" >> "$RUNNER_TEMP/recordings.txt"
             done
+            file="$(from_legs "recordings/$recording.json")"
+            if [ -n "$file" ]; then
+              if [ "$(sha256sum < "$file" | cut -d ' ' -f 1)" != "$recording" ]; then
+                echo "::error::a composed leg's recordings/$recording.json is not the recording $lock names"
+                exit 1
+              fi
+              install -D -m 0644 "$file" ".rerail/port-readiness/recordings/$recording.json"
+            fi
+            archive="$(from_legs "recordings/$corpus.tar.zst")"
+            if [ -n "$archive" ]; then
+              install -D -m 0644 "$archive" ".rerail/port-readiness/recordings/$corpus.tar.zst"
+            fi
+            echo "$lock $recording" >> "$RUNNER_TEMP/recordings.txt"
+            echo "$lock $corpus" >> "$RUNNER_TEMP/recordings.txt"
             echo "$pack $tool" >> "$RUNNER_TEMP/tool-packs.txt"
           done
           sort -u -o "$RUNNER_TEMP/tool-packs.txt" "$RUNNER_TEMP/tool-packs.txt"

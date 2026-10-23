@@ -8,15 +8,16 @@ import { upstreamStatusChecks, defaultOn } from "./checks/upstream-status.js";
 import { loadAsBundled, loadsGate } from "./checks/loads.js";
 import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
-import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
-import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, outsideInScope, provenGaps, realCodeGapCheck, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
-import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedPlaces, type CorpusFile, type CorpusTask } from "./corpus.js";
+import { compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
+import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, outsideInScope, provenGaps, realCodeGapCheck, recordMissingAnswers, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
+import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedKey, wantedPlaces, type CorpusFile, type CorpusTask } from "./corpus.js";
 import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity } from "./engine.js";
 import { byText, readGoldens, SYSTEMATIC_FILES, type Goldens } from "./goldens.js";
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
-import { createRecordedAdapter, readRecordedInputs, staleMessage } from "./recorded-adapter.js";
-import { CORPUS_FILE, RECORDING_FILE } from "./recording/schema.js";
+import { createRecordedAdapter, readRecordedInputs } from "./recorded-adapter.js";
+import { adapterSourcesDigest, CONTEXT_FILES, CORPUS_ARCHIVE } from "./recording/corpus-answers.js";
+import { RECORDING_FILE } from "./recording/schema.js";
 import { shardOf, type Shard } from "./shard.js";
 import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type RealCodeGap, type UpstreamCase, type UpstreamFile } from "./types.js";
 
@@ -98,6 +99,8 @@ interface CachedPack {
   corpus: GatesReport["corpus"];
   /** The passing corpus-complete check of the run that cached it, replayed as is so a cached shard and a judged one agree. */
   corpusComplete: Check;
+  /** The corpus-answers check of the run that cached it, replayed as is: its inputs (the archive, goldens, pins, adapter code) are in the key. */
+  corpusAnswers: Check;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -113,7 +116,8 @@ export function isCachedRule(value: unknown): value is CachedRule {
 /** Whether a cached value has the shape of a tool-pack's shared result. */
 export function isCachedPack(value: unknown): value is CachedPack {
   return isRecord(value) && Array.isArray(value.integrity) && Array.isArray(value.knownGaps) && isRecord(value.corpus) && Array.isArray(value.corpus.tasks)
-    && isRecord(value.corpusComplete) && value.corpusComplete.id === "corpus-complete" && value.corpusComplete.ok === true && typeof value.corpusComplete.detail === "string";
+    && isRecord(value.corpusComplete) && value.corpusComplete.id === "corpus-complete" && value.corpusComplete.ok === true && typeof value.corpusComplete.detail === "string"
+    && isRecord(value.corpusAnswers) && value.corpusAnswers.id === "corpus-answers" && typeof value.corpusAnswers.ok === "boolean" && typeof value.corpusAnswers.detail === "string";
 }
 
 export interface GatesReport {
@@ -302,7 +306,7 @@ function method(manifest: PackManifest): GatesReport["method"] {
       flag: `more than ${SIZE_FLAG_BYTES} bytes as shipped`,
       rewrite: `a flagged rule goes back when ${(REPEATED_SHARE_LIMIT * 100).toFixed(1)}% or more of its clauses is structure written out over and over, or one node kind definitely occurs ${NESTING_RUN_LIMIT} or more times along a single nesting path`,
     },
-    "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files is read from the tool-pack's recording.json, and on each golden from corpus.json (joined to the fetched file by task, path and sha256), both recorded by the gates recorder at the pinned upstream" },
+    "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files is read from the tool-pack's recording.json, and on each golden from the corpus answers archive (the answer filed under this branch's upstream configuration, the rule and the fetched file's task, path and sha256), both recorded by the gates recorder at the pinned upstream" },
     "passes-conformance": {
       check: "the pack contract's own check (test:conformance, conformance/languages/): the pack's fixtures tier over every rule, shipped or candidate, each in its own workspace as the check runs them",
       fails: "an unexplained FP or FN on the fixtures (upstream's cases and Rerail's probes, after the pack's divergences.json), no true positive without pack.json examples, an engine failure, a stale divergence, or a pinned corpus whose recording does not cover the rule: what the check fails a shipped rule on",
@@ -321,12 +325,12 @@ async function gapReports(adapter: PackAdapter, files: UnparsedFile[]): Promise<
 
 /** Evaluate one rule through every gate. */
 async function evaluateRule(
-  context: { engine: Engine; adapter: PackAdapter; pack: string; scratch: string; goldens: Goldens; realCodeGaps: Map<string, RealCodeGap>; corpusFiles: Map<string, UpstreamFile>; cases: Map<string, UpstreamCase[]>; gaps: Awaited<ReturnType<typeof provenGaps>> },
+  context: { engine: Engine; adapter: PackAdapter; pack: string; tool: string; scratch: string; goldens: Goldens; realCodeGaps: Map<string, RealCodeGap>; corpusFiles: Map<string, UpstreamFile>; cases: Map<string, UpstreamCase[]>; gaps: Awaited<ReturnType<typeof provenGaps>> },
   rule: PackRule,
   location: Location,
   on: boolean | null,
 ): Promise<CachedRule> {
-  const { engine, adapter, goldens, realCodeGaps, corpusFiles, cases, gaps } = context;
+  const { engine, adapter, pack, tool, goldens, realCodeGaps, corpusFiles, cases, gaps } = context;
   const name = rule.rule;
   const id = rule.id ?? rule.file;
   const integrity: string[] = [];
@@ -380,7 +384,14 @@ async function evaluateRule(
       const entry = corpusFiles.get(`${golden.task}\0${golden.path}`);
       const file: CorpusFile | undefined = entry?.file.sha256 === golden.sha256 ? entry.file : undefined;
       if (file === undefined) integrity.push(`golden ${id} ${golden.task}/${golden.path}: the pinned corpus has no such file with sha256 ${golden.sha256}`);
-      return { golden, file, expected: entry === undefined || entry.excluded !== null ? null : entry.findings.get(name) ?? [], excluded: entry?.excluded ?? null };
+      const unanswered = entry?.unanswered?.has(name) === true;
+      const excluded = entry === undefined ? null : entry.excludedFor?.get(name) ?? entry.excluded;
+      return {
+        golden,
+        file,
+        expected: entry === undefined || excluded !== null || unanswered ? null : entry.findings.get(name) ?? [],
+        excluded: unanswered ? `upstream's answer on it is not recorded: ${recordMissingAnswers(pack, tool)}` : excluded,
+      };
     });
     const onGoldens = goldensGate(engine, adapter, name, compiled.compiled, ruleGoldens);
     for (const file of onGoldens.unparsed) unparsed.set(`${file.gate}:${file.file}`, file);
@@ -467,7 +478,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   const listedWithoutDocument = entries.filter((entry) => entry.upstream.tool === tool && !present.has(entry.path)).length;
   const names = [...new Set(mine.map((document) => document.entry.upstream.rule))].sort(byText);
 
-  const inputs = readRecordedInputs(root, cacheRoot, pack, tool, names);
+  const inputs = await readRecordedInputs(root, cacheRoot, pack, tool, names);
   const adapter = createRecordedAdapter(inputs, { cacheRoot, runner: options.runner });
   const manifest = inputs.manifest;
   const on = packOn(root, pack);
@@ -476,9 +487,6 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   const corpora = await readRerailCorpora(root, pack);
   const corpusTasksText = readFileSync(CORPUS_TASKS, "utf8");
   const pinChecks: Check[] = [...adapter.packChecks];
-  const recordedPins = adapter.recordedCorpusPins;
-  const corpusPinsOk = recordedPins !== null && recordedPins.tasks === sha256(corpusTasksText) && canonicalJson(recordedPins.corpora) === canonicalJson(corpora);
-  pinChecks.push({ id: "corpus-pins", ok: corpusPinsOk, detail: corpusPinsOk ? "corpus.json was recorded on this branch's pinned tasks and corpora" : `corpus.json was recorded on other corpus pins: ${staleMessage(pack, tool)}` });
 
   // bundled-load: rerail loads every document in the pack's rules/ together, whatever its upstream tool, so a conflict
   // between them (a duplicate id) fails here, where each rule's own loads check reads one document. It runs on every
@@ -503,7 +511,8 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     gatesYaml: sha256(readOr(GATES_MANIFEST)),
     // The recordings are not in the tree: the lock's digests are what they are, and the lock is what the commit pins.
     recordingJson: inputs.lock?.files[RECORDING_FILE].sha256 ?? "",
-    corpusJson: inputs.lock?.files[CORPUS_FILE].sha256 ?? "",
+    corpusArchive: inputs.lock?.files[CORPUS_ARCHIVE].sha256 ?? "",
+    adapterSources: adapterSourcesDigest(manifest.adapter),
     corpusTasks: sha256(corpusTasksText),
     corpora: JSON.stringify(corpora),
   };
@@ -552,21 +561,25 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   if (misses.length === 0 && packCached !== undefined) {
     packResult = packCached;
     // The caching run's check word for word: a shard that judges writes the same one, and merge compares them.
-    pinChecks.push(packCached.corpusComplete);
+    pinChecks.push(packCached.corpusComplete, packCached.corpusAnswers);
   } else {
     // not-overfit reads every upstream test text: fetched at the pinned commit only when a rule is evaluated.
     await adapter.loadFixtureTexts();
-    // Only the files the goldens name are fetched and read: no rule runs over the rest of the corpus.
+    // Only the files the goldens name are fetched and read, with the files upstream's answer on them depends on
+    // (CONTEXT_FILES), which name the answers: no rule runs over the rest of the corpus.
     const named = [...goldens.values()].flat();
-    const wanted = wantedPlaces(named);
+    const goldenPlaces = wantedPlaces(named);
+    const wanted = wantedPlaces([...named, ...named.flatMap((golden) => CONTEXT_FILES[manifest.adapter](golden.path).map((path) => ({ task: golden.task, path })))]);
     const catalog = await buildCorpus(cacheRoot, (path) => adapter.inCorpus(path), options.runner, wanted);
     const rerailCorpus = await buildRerailCorpora(corpora, cacheRoot, (path) => adapter.inCorpus(path), options.runner, wanted);
-    const corpusFiles = [...catalog.files, ...rerailCorpus.files];
+    const fetched = [...catalog.files, ...rerailCorpus.files];
     const complete = corpusCompleteCheck(named, [...catalog.tasks, ...rerailCorpus.tasks]);
-    pinChecks.push(complete);
+    const answers = adapter.corpusAnswers(fetched, named);
+    pinChecks.push(complete, answers);
     // Results judged with a golden's task unfetched are reported (and fail through corpus-complete) but never cached.
     const save = options.writeCache && complete.ok;
-    const upstreamFiles = await adapter.lintCorpus(corpusFiles, names);
+    // The context files go to upstream beside the goldens' files, as the recorder gave them: they name the answers.
+    const upstreamFiles = (await adapter.lintCorpus(fetched, names)).filter((entry) => goldenPlaces.has(wantedKey(entry.file.task, entry.file.path)));
     const byPlace = new Map<string, UpstreamFile>(upstreamFiles.map((entry) => [`${entry.file.task}\0${entry.file.path}`, entry]));
     const cases = new Map<string, UpstreamCase[]>(names.filter((name) => adapter.rule(name) !== undefined).map((name) => [name, adapter.cases(name)]));
     const gaps = await provenGaps(engine, manifest.known_gaps, [...cases.values()].flat(), (files) => adapter.parserVerdicts(files));
@@ -574,7 +587,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     const scratch = mkdtempSync(join(cacheRoot, "tmp", "gates-"));
     const integrity = [...gaps.problems];
     try {
-      const context = { engine, adapter, pack, scratch, goldens, realCodeGaps, corpusFiles: byPlace, cases, gaps };
+      const context = { engine, adapter, pack, tool, scratch, goldens, realCodeGaps, corpusFiles: byPlace, cases, gaps };
       for (const entry of misses) {
         const result = await evaluateRule(context, entry.rule, entry.location, entry.location === "shipped" ? (on.get(entry.path) ?? true) : null);
         results.set(entry.key, result);
@@ -593,6 +606,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
       knownGaps: manifest.known_gaps.map((gap) => ({ id: gap.id, proven: gaps.proven.has(gap.id), kind: gaps.kinds.get(gap.id) ?? null, excused: gapUses[gap.id] ?? 0 })),
       corpus: { tasks: [...catalog.tasks, ...rerailCorpus.tasks], files: upstreamFiles.length, excluded: upstreamFiles.filter((entry) => entry.excluded !== null).length },
       corpusComplete: complete,
+      corpusAnswers: answers,
     };
     if (save) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
   }

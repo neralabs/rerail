@@ -1,15 +1,15 @@
 /**
  * The recording contract between the gates recorder (conformance/recorders/port-readiness/, run on a maintainer machine and
- * nightly) and the gates (conformance/port-readiness/, run in PR CI): what a live adapter answers, written as two files
- * the tool-pack's `recording.lock` names (store.ts) so the gates can read it back through a recorded adapter without
- * running upstream.
+ * nightly) and the gates (conformance/port-readiness/, run in PR CI): what a live adapter answers, written as the two
+ * things the tool-pack's `recording.lock` names (store.ts) so the gates can read it back through a recorded adapter
+ * without running upstream.
  *
- * - `recording.json` (`rerail.port-readiness-recording/v2`) holds every PackAdapter answer the gates read except
- *   upstream's answers on the corpus: identity, tool-pack checks, the license digest, the words and names `not-overfit`
- *   reads, every upstream rule's facts, name sources, span parts and cases, and independent parsers' verdicts on every
- *   case source.
- * - `corpus.json` (`rerail.port-readiness-corpus/v2`) holds `lintCorpus`'s answers: upstream's findings on every corpus
- *   file, and independent parsers' verdicts on each.
+ * - `recording.json` (`rerail.port-readiness-recording/v2`, this module) holds every PackAdapter answer the gates read
+ *   except upstream's answers on the corpus: identity, tool-pack checks, the license digest, the words and names
+ *   `not-overfit` reads, every upstream rule's facts, name sources, span parts and cases, and independent parsers'
+ *   verdicts on every case source.
+ * - `corpus.tar.zst` (`rerail.port-readiness-corpus-answers/v1`, corpus-answers.ts) holds `lintCorpus`'s answers: one
+ *   file per upstream rule and golden corpus file, and independent parsers' verdicts on each golden's content.
  *
  * Each PackAdapter member and where its recorded answer is:
  *   identity → `identity`; packChecks → `packChecks`; licenseText → `licenseText` and its digest `licenseSha256` (the kept
@@ -20,17 +20,16 @@
  *   committed source of every case (`cases[].file`); keywords → `keywords`;
  *   commentVocabulary → `commentVocabulary`; inScopeSamples → `inScopeSamples`; cases(name) → `rules[name].cases`,
  *   each source read from its `file` and checked against its `sha256`; toSpan(name) → span-units/<adapter>.ts with `rules[name].spanParts`; inCorpus →
- *   `corpus`; lintCorpus → corpus.json `files`; parserVerdicts → `parserVerdicts` here and corpus.json
- *   `files[].verdicts`, looked up by path, script and the source's sha256.
+ *   `corpus`; lintCorpus → the archive's `answers/`; parserVerdicts → `parserVerdicts` here, looked up by path, script
+ *   and the source's sha256, and the archive's `verdicts/`, by the source's sha256, file type and script.
  *
- * Both files name their independent parsers once, in `parsers`, and leave `verdicts` off an entry no parser objected
- * to: nine of ten corpus files are such an entry, and writing the same silent list on each of them was most of both
- * files. An entry still keeps its identity — its path and its sha256 — because an entry that is there without
+ * recording.json names its independent parsers once, in `parsers`, and leaves `verdicts` off an entry no parser
+ * objected to. An entry still keeps its identity — its path and its sha256 — because an entry that is there without
  * `verdicts` and an entry that is not there at all say different things: the first is every parser silent, the second
  * is a source that was never recorded, for which the gates have no verdict and draw no conclusion.
  *
- * Both files are deterministic: every list the schema calls sorted is sorted in code-unit order, objects are written
- * with sorted keys (`recordingText`), and nothing in them names a machine path, a date or a cache directory.
+ * Both are deterministic: every list the schema calls sorted is sorted in code-unit order, objects are written with
+ * sorted keys (`canonicalText`), and nothing in them names a machine path, a date or a cache directory.
  */
 import { createHash } from "node:crypto";
 
@@ -40,11 +39,9 @@ import { ADAPTERS } from "../manifest.js";
 import type { ParserVerdict, Span } from "../types.js";
 
 export const RECORDING_FORMAT = "rerail.port-readiness-recording/v2";
-export const CORPUS_FORMAT = "rerail.port-readiness-corpus/v2";
 
-/** The two recordings' file names: the keys of a lock's `files`, and the stems of their asset names (store.ts). */
+/** recording.json's file name: a key of a lock's `files`, and the stem of its asset name (store.ts). */
 export const RECORDING_FILE = "recording.json";
-export const CORPUS_FILE = "corpus.json";
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -74,6 +71,16 @@ export function spanOf([startLine, startCol, endLine, endCol]: RecordedSpan): Sp
 
 export function spanTuple(span: Span): RecordedSpan {
   return [span.startLine, span.startCol, span.endLine, span.endCol];
+}
+
+/** Spans by position, a part upstream does not report (null) first: the order every recorded span list is written in. */
+export function compareSpans(a: RecordedSpan, b: RecordedSpan): number {
+  for (let index = 0; index < 4; index += 1) {
+    const left = a[index] ?? -1;
+    const right = b[index] ?? -1;
+    if (left !== right) return left - right;
+  }
+  return 0;
 }
 
 const checkSchema = z.strictObject({
@@ -118,7 +125,7 @@ const nameSourceSchema = z.strictObject({
   regexes: z.array(regexSchema),
 });
 
-const parserVerdictSchema = z.strictObject({
+export const parserVerdictSchema = z.strictObject({
   /** The parser and its version, e.g. `cpython 3.14.8`, `@babel/parser 7.28.5`. */
   parser: nonEmpty,
   /** Errors that stopped it building a tree. */
@@ -375,72 +382,12 @@ export const gatesRecordingSchema = z.strictObject({
 
 export type GatesRecording = z.infer<typeof gatesRecordingSchema>;
 
-const corpusFileSchema = z.strictObject({
-  /** The catalog task the file comes from, or `rerail:<corpus>` for a corpus the pack pins (CorpusFile.task). */
-  task: nonEmpty,
-  /** The file's path in its repository (CorpusFile.path). */
-  path: relativePath,
-  /** sha256 of the file's text, UTF-8 (CorpusFile.sha256); the gates join a fetched file to its answer by it. */
-  sha256,
-  /** Why upstream gives no ground truth for the file (its own parser rejects it), or null (UpstreamFile.excluded). */
-  excluded: z.string().nullable(),
-  /**
-   * Upstream's findings on the file for each rule of `rules` that has any, each sorted by position; a rule of `rules`
-   * absent here has none. Empty for an excluded file.
-   */
-  findings: z.record(nonEmpty, z.array(recordedSpanSchema).min(1)),
-  /**
-   * Independent parsers' verdicts on the file, read at its path as a module, in `parsers`' order; absent when they
-   * were all silent, as most of a real-code corpus is. The file's entry is kept either way, because a corpus file
-   * with no entry has no ground truth at all (lintCorpus excludes it).
-   */
-  verdicts: z.array(parserVerdictSchema).min(1).optional(),
-});
-
-export type RecordedCorpusFile = z.infer<typeof corpusFileSchema>;
-
-export const gatesCorpusSchema = z.strictObject({
-  format: z.literal(CORPUS_FORMAT),
-  /** The tool, as in recording.json. */
-  tool: nonEmpty,
-  /** The pins of the corpus upstream was run on; a fetched corpus with other pins is not this recording's. */
-  pins: z.strictObject({
-    /** sha256 of conformance/port-readiness/corpus-tasks.json's bytes: the pinned catalog tasks. */
-    tasks: sha256,
-    /** The corpora the pack pins in its conformance manifests, sorted by name, as readRerailCorpora reads them. */
-    corpora: z.array(z.strictObject({
-      name: nonEmpty,
-      repository: nonEmpty,
-      commit,
-      paths: sortedStrings(nonEmpty),
-      exclude: sortedStrings(nonEmpty),
-    })),
-  }),
-  /** The rules upstream was asked about on every file (lintCorpus's names), sorted. */
-  rules: sortedStrings(nonEmpty),
-  /** The independent parsers every verdict list in the file names, in the live adapter's order, as in recording.json. */
-  parsers: z.array(parserSchema).min(1),
-  /** Every corpus file of a type upstream lints, sorted by task then path. */
-  files: z.array(corpusFileSchema),
-}).superRefine((recording, context) => {
-  const issue = (path: (string | number)[], message: string) => context.addIssue({ code: "custom", path, message });
-  checkVerdicts(recording.parsers, recording.files, (index) => ["files", index, "verdicts"], issue);
-  const places = recording.files.map((file) => `${file.task}\0${file.path}`);
-  if (!places.every((place, index) => index === 0 || byText(places[index - 1]!, place) < 0)) issue(["files"], "sorted by task then path, each file once");
-  const rules = new Set(recording.rules);
-  recording.files.forEach((file, index) => {
-    for (const rule of Object.keys(file.findings)) if (!rules.has(rule)) issue(["files", index, "findings"], `has findings of ${rule}, which rules lacks`);
-    if (file.excluded !== null && Object.keys(file.findings).length > 0) issue(["files", index, "findings"], "an excluded file has no findings");
-  });
-});
-
-export type GatesCorpusRecording = z.infer<typeof gatesCorpusSchema>;
-
 /**
- * A recording's text, the same on every machine: objects with their keys in code-unit order, two-space indentation, a
- * span tuple on one line, and a final newline.
+ * A value's text, the same on every machine: objects with their keys in code-unit order, two-space indentation, a
+ * list of numbers (a span tuple) on one line, and a final newline. A recording, an answer and a verdict file are all
+ * written this way, so there is one way to record a given answer and its bytes are its identity.
  */
-export function recordingText(value: GatesRecording | GatesCorpusRecording): string {
+export function canonicalText(value: unknown): string {
   const write = (node: unknown, indent: string): string => {
     if (node === null || typeof node !== "object") return JSON.stringify(node);
     const inner = `${indent}  `;
@@ -449,7 +396,7 @@ export function recordingText(value: GatesRecording | GatesCorpusRecording): str
       if (node.every((item) => item === null || typeof item === "number")) return `[${node.map((item) => JSON.stringify(item)).join(", ")}]`;
       return `[\n${node.map((item) => `${inner}${write(item, inner)}`).join(",\n")}\n${indent}]`;
     }
-    const keys = Object.keys(node).sort(byText);
+    const keys = Object.keys(node).filter((key) => (node as Record<string, unknown>)[key] !== undefined).sort(byText);
     if (keys.length === 0) return "{}";
     return `{\n${keys.map((key) => `${inner}${JSON.stringify(key)}: ${write((node as Record<string, unknown>)[key], inner)}`).join(",\n")}\n${indent}}`;
   };

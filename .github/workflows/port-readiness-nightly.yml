@@ -106,8 +106,9 @@ jobs:
           retention-days: 1
 
   # The drift check's test data and recordings: each gated tool-pack's archive (.github/actions/pack-test-data) and the
-  # two recordings its recording.lock names, into this run's cache before record-check starts. This job holds the OIDC
-  # token and runs only this commit's scripts/s3/pack-fixtures.mjs (the pull and the recordings), never upstream's;
+  # two recordings its recording.lock names (recording.json and the corpus answers archive), into this run's cache before
+  # record-check starts. This job holds the OIDC token and runs only this commit's scripts/s3/pack-fixtures.mjs (the
+  # pull and the recordings), never upstream's;
   # id-token: on a cache miss it reads them from S3, and only the steps that download them hold the credentials.
   record-check-test-data:
     name: Test data for the drift check (${{ matrix.pack }} · ${{ matrix.tool }})
@@ -182,12 +183,12 @@ jobs:
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           [ -f "$lock" ] || exit 0
           recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
           {
             echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
             echo "paths<<EOF"
             echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -318,8 +319,8 @@ jobs:
           components: clippy
 
       # The recordings the lock names, from the cache record-check-test-data and port-readiness.yml's test-data job save
-      # into (the same key): when a fresh corpus.json differs from the locked one, --check compares the two, and without
-      # it says it could not.
+      # into (the same key): --check compares what it records afresh with them (the recorder extracts the corpus answers
+      # archive itself), and without them says it could not.
       - id: lock
         name: Read the recordings the lock names
         env:
@@ -329,12 +330,12 @@ jobs:
           set -euo pipefail
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
           {
             echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
             echo "paths<<EOF"
             echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 

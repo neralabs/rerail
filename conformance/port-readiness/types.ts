@@ -148,7 +148,18 @@ export interface UpstreamFile {
   file: CorpusFile;
   /** Why upstream gives no ground truth for the file (its own parser rejects it), or null. */
   excluded: string | null;
+  /**
+   * Where the recorded answers of the file's rules disagree about it (a recorded adapter's; a live one excludes a file
+   * for every rule or none): the rules whose answer excludes it, by reason. Such a rule has no expected answer, while
+   * the others keep theirs and `excluded` is null.
+   */
+  excludedFor?: ReadonlyMap<string, string>;
   findings: Map<string, Span[]>;
+  /**
+   * The asked rules whose answer on the file a recording lacks (a recorded adapter's; a live one answers every rule):
+   * the file has no expected answer for them, which is never read as upstream being silent.
+   */
+  unanswered?: ReadonlySet<string>;
 }
 
 /** Everything the gates need from one upstream linter: a live adapter (recorders/port-readiness/adapters/) or its recording. */

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 
 import { bladestanSpan, templateLineSpan, BLADESTAN_SPAN_PARTS } from "../../../../conformance/port-readiness/span-units/bladestan.js";
-import { CASE_LAYOUTS, CONTEXT_FILES } from "../../../../conformance/recorders/port-readiness/record.js";
+import { CONTEXT_FILES } from "../../../../conformance/port-readiness/recording/corpus-answers.js";
+import { CASE_LAYOUTS } from "../../../../conformance/recorders/port-readiness/record.js";
 
 // A multibyte character on line 1, a CRLF line end, a lone CR inside line 2, then an `@if` on line 3 of the template.
 const SOURCE = "<p>é\u{1F600}</p>\r\n{{ $a }}\r{{ $b }}\n@if (true)\n";

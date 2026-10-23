@@ -232,7 +232,7 @@ describe("engine-reads-goldens", () => {
 });
 
 describe("cache keys", () => {
-  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingJson: "j", corpusJson: "c", corpusTasks: "t", corpora: "[]" };
+  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingJson: "j", corpusArchive: "c", adapterSources: "a", corpusTasks: "t", corpora: "[]" };
   const rules = {
     a: { engine: "e", document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"] },
     b: { engine: "e", document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"] },
@@ -251,8 +251,8 @@ describe("cache keys", () => {
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
 
-  it("a gate-code, dependency or recording change changes every key", () => {
-    for (const part of ["gateCode", "dependencies", "recordingJson", "corpusJson"] as const) {
+  it("a gate-code, dependency, recording or recorder adapter change changes every key", () => {
+    for (const part of ["gateCode", "dependencies", "recordingJson", "corpusArchive", "adapterSources"] as const) {
       const changed = { ...shared, [part]: "changed" };
       assert.notEqual(ruleKey(changed, rules.a), ruleKey(shared, rules.a));
       assert.notEqual(ruleKey(changed, rules.b), ruleKey(shared, rules.b));
@@ -306,12 +306,16 @@ describe("cached results", () => {
     }
   });
 
-  it("a tool-pack entry replays the passing corpus-complete check it was cached with; one without it is a miss", () => {
+  it("a tool-pack entry replays the corpus-complete and corpus-answers checks it was cached with; one without them is a miss", () => {
     const complete = { id: "corpus-complete", ok: true, detail: "all 3 recorded corpus file(s) were fetched with their recorded sha256" };
-    const pack = { integrity: [], knownGaps: [], corpus: { tasks: [], files: 3, excluded: 0 }, corpusComplete: complete };
+    const answers = { id: "corpus-answers", ok: false, detail: "lacks 1 of 6 answer(s)" };
+    const pack = { integrity: [], knownGaps: [], corpus: { tasks: [], files: 3, excluded: 0 }, corpusComplete: complete, corpusAnswers: answers };
     assert.ok(isCachedPack(pack));
     const { corpusComplete: _complete, ...older } = pack;
     assert.equal(isCachedPack(older), false);
+    // An entry cached before the corpus answers archive has no corpus-answers check to replay.
+    const { corpusAnswers: _answers, ...beforeArchive } = pack;
+    assert.equal(isCachedPack(beforeArchive), false);
     assert.equal(isCachedPack({ ...pack, corpusComplete: { ...complete, ok: false } }), false);
   });
 });

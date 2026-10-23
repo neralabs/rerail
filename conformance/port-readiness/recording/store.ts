@@ -1,20 +1,22 @@
 /**
  * Where a recording's bytes live now that they are not in the tree: each tool-pack commits a `recording.lock` naming,
- * by the sha256 of its text, exactly the one its rules are judged against, and the bytes are an object in S3.
+ * by sha256, exactly the recording its rules are judged against — `recording.json`, and `corpus.tar.zst`, the archive
+ * of upstream's answers on the golden corpus files (corpus-answers.ts) — and the bytes are objects in S3.
  *
  * The recordings were 96% of the branch that added the gates — 71 MB over 16 files, every one of them generated — and
  * git keeps every version of each of them forever, so re-recording a pack after an upstream bump cost another few
  * megabytes of history that nobody can ever read. The lock is a few hundred bytes and reviews as data; the bytes it
- * names are checked against its sha256 on every read, so a commit still pins exactly one recording.
+ * names are checked against it on every read, so a commit still pins exactly one recording.
  *
- * Locally the recorder writes them into `.rerail/port-readiness/recordings/<sha256>.json`, where the gates read them.
- * Their durable store is S3, written once at s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json by
- * the maintainer's `fixtures:push` or the bump's publish workflow; `node scripts/s3/pack-fixtures.mjs recordings`
- * fetches the ones a checkout's locks name into that directory. In CI the directory is restored from the GitHub
- * Actions cache, keyed by the tool-pack and the lock's two digests (port-readiness.yml), which the test-data job fills
- * from S3; a gate leg that finds them in neither records the tool-pack from its own commit's recorder, which must write
- * the lock the commit has, then saves the two recordings. Whatever the source, a recording is bytes with the digest
- * the lock names, or it is absent.
+ * Locally the recorder writes them into `.rerail/port-readiness/recordings/`: `<sha256>.json`, `<sha256>.tar.zst` and
+ * the archive's extracted tree `corpus/<sha256>/`, where the gates read them. Their durable store is S3, written once
+ * at s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json and …/corpus/<sha256>.tar.zst by
+ * `node scripts/s3/pack-fixtures.mjs recordings push` or the bump's publish workflow; `node scripts/s3/pack-fixtures.mjs
+ * recordings` fetches the ones a checkout's locks name into that directory. In CI the directory is restored from the
+ * GitHub Actions cache, keyed by the tool-pack and the lock's two digests (port-readiness.yml), which the test-data job
+ * fills from S3; a gate leg that finds them in neither records the tool-pack from its own commit's recorder, which must
+ * write the lock the commit has. Whatever the source, a recording is bytes with the digest the lock names, or it is
+ * absent.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -24,29 +26,42 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { toolPackDirectory } from "../manifest.js";
-import { CORPUS_FILE, CORPUS_FORMAT, RECORDING_FILE, RECORDING_FORMAT } from "./schema.js";
+import { CORPUS_ANSWERS_FORMAT, CORPUS_ARCHIVE, type CorpusArchivePin } from "./corpus-answers.js";
+import { RECORDING_FILE, RECORDING_FORMAT } from "./schema.js";
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
 /** The committed manifest's file name in a tool-pack's directory. */
 export const RECORDING_LOCK = "recording.lock";
 
-export const RECORDING_LOCK_FORMAT = "rerail.port-readiness-recording-lock/v2";
+export const RECORDING_LOCK_FORMAT = "rerail.port-readiness-recording-lock/v3";
 
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/u, "a sha256 in lowercase hex");
 const nonEmpty = z.string().min(1);
+const count = z.number().int().nonnegative();
 
-/** One recording: what it is and how big. */
-const lockedFileSchema = z.strictObject({
+/** recording.json: what it is and how big. */
+const lockedRecordingSchema = z.strictObject({
   /** sha256 of the recording's text, UTF-8: the name it is cached under, and what every read checks. */
   sha256: digestSchema,
   /** The text's length in bytes. */
   size: z.number().int().positive(),
   /** The recording's own `format`, so a v2 reader never parses a v3 recording. */
-  format: z.enum([RECORDING_FORMAT, CORPUS_FORMAT]),
+  format: z.literal(RECORDING_FORMAT),
 });
 
-export type LockedFile = z.infer<typeof lockedFileSchema>;
+/** corpus.tar.zst: its tar's sha256, which it is cached and stored under, and what the tar holds. */
+const lockedCorpusSchema = z.strictObject({
+  sha256: digestSchema,
+  /** How many answer, verdict and config files the tar holds: none for a tool-pack without goldens. */
+  files: count,
+  /** Their total size in bytes. */
+  bytes: count,
+  format: z.literal(CORPUS_ANSWERS_FORMAT),
+});
+
+export type LockedRecording = z.infer<typeof lockedRecordingSchema>;
+export type LockedCorpus = z.infer<typeof lockedCorpusSchema>;
 
 export const recordingLockSchema = z.strictObject({
   format: z.literal(RECORDING_LOCK_FORMAT),
@@ -63,8 +78,8 @@ export const recordingLockSchema = z.strictObject({
   pins: z.strictObject({ repository: nonEmpty, commit: z.string().regex(/^[0-9a-f]{40}$/u), version: nonEmpty, runtime: nonEmpty }),
   /** The runtimes' committed pin digests, as recording.json records them, for the same reason. */
   runtimes: z.record(z.string().regex(/^[a-z0-9._-]+$/u), z.record(z.string().regex(/^[A-Za-z0-9._-]+$/u), digestSchema)),
-  /** Both recordings, by their file name. */
-  files: z.strictObject({ [RECORDING_FILE]: lockedFileSchema, [CORPUS_FILE]: lockedFileSchema }),
+  /** recording.json and the corpus answers archive, by their file name. */
+  files: z.strictObject({ [RECORDING_FILE]: lockedRecordingSchema, [CORPUS_ARCHIVE]: lockedCorpusSchema }),
 });
 
 export type RecordingLock = z.infer<typeof recordingLockSchema>;
@@ -118,25 +133,22 @@ export async function writeCachedRecording(cacheRoot: string, text: string): Pro
   return digest;
 }
 
-/** The lock for a tool-pack whose two recordings have just been written. */
+/** The lock for a tool-pack whose recording.json and corpus answers archive have just been written. */
 export function buildRecordingLock(
   tool: string,
   pins: RecordingLock["pins"],
   runtimes: RecordingLock["runtimes"],
-  texts: { [RECORDING_FILE]: string; [CORPUS_FILE]: string },
+  recording: string,
+  corpus: CorpusArchivePin,
 ): RecordingLock {
-  const locked = (text: string, format: LockedFile["format"]): LockedFile => {
-    const digest = sha256(Buffer.from(text, "utf8"));
-    return { sha256: digest, size: Buffer.byteLength(text), format };
-  };
   return recordingLockSchema.parse({
     format: RECORDING_LOCK_FORMAT,
     tool,
     pins,
     runtimes,
     files: {
-      [RECORDING_FILE]: locked(texts[RECORDING_FILE], RECORDING_FORMAT),
-      [CORPUS_FILE]: locked(texts[CORPUS_FILE], CORPUS_FORMAT),
+      [RECORDING_FILE]: { sha256: sha256(Buffer.from(recording, "utf8")), size: Buffer.byteLength(recording), format: RECORDING_FORMAT },
+      [CORPUS_ARCHIVE]: { sha256: corpus.sha256, files: corpus.files, bytes: corpus.bytes, format: CORPUS_ANSWERS_FORMAT },
     },
   });
 }

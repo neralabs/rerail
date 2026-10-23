@@ -138,12 +138,12 @@ jobs:
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           [ -f "$lock" ] || exit 0
           recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
           {
             echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
             echo "paths<<EOF"
             echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -246,8 +246,9 @@ jobs:
 
       # The recordings the current lock names, from the cache the recordings leg and the gate legs save into
       # (port-readiness.yml, the same key), read before the bump moves the lock: the recorder compares the new recording
-      # with them, so the pull request's per-rule summary says what upstream now answers differently. When neither the
-      # cache nor S3 holds them, the summary says "not compared".
+      # with them, so the pull request's per-rule summary says what upstream now answers differently. The record below
+      # is --full, so they are only compared with, never built on: when the cache lacks them (this job holds no S3
+      # credentials), the summary says "not compared".
       - id: base-lock
         name: Read the recordings the current lock names
         if: hashFiles(format('packs/{0}/upstream/{1}/recording.lock', matrix.pack, matrix.tool)) != ''
@@ -258,12 +259,12 @@ jobs:
           set -euo pipefail
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
           {
             echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
             echo "paths<<EOF"
             echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -295,17 +296,20 @@ jobs:
           for leg in "${legs[@]}"; do
             read -r pack tool <<< "$leg"
             # The test data first, from the new pins (the recorder refuses a tool-pack whose test data is absent), then
-            # the recording, then the archive of both.
+            # the recording, then the archive of both. The recording is --full: the bump moves every config id it
+            # records (the pins, or the runtime pins), so no locked answer would be reused, and this job could not
+            # fetch the other tool-packs' archives without S3 credentials anyway.
             npm run fixtures:derive -- --pack "$pack" --tool "$tool" --update
             if [ -f "packs/$pack/upstream/$tool/gates.yaml" ]; then
-              npm run port-readiness:record -- --pack "$pack" --tool "$tool" --changes "$RUNNER_TEMP/bump/changes/$pack--$tool.md"
+              npm run port-readiness:record -- --pack "$pack" --tool "$tool" --full --changes "$RUNNER_TEMP/bump/changes/$pack--$tool.md"
             fi
             node scripts/s3/pack-fixtures.mjs pack --pack "$pack" --tool "$tool"
           done
 
       # Only what git tracks: the pins, and the recording.lock and test-data.lock files. The test data itself is never
       # committed: each changed test-data.lock's archive goes beside the patch, as archives/<pack>/<tool>/<sha256>.tar.zst,
-      # and each recording a changed recording.lock names as recordings/<sha256>.json, for the publish workflow's upload.
+      # and the two recordings each changed recording.lock names as recordings/<sha256>.json (recording.json) and
+      # recordings/<sha256>.tar.zst (the corpus answers archive, by its tar's sha256), for the publish workflow's upload.
       - name: Keep the bump as a patch, with its archives and recordings
         run: |
           set -euo pipefail
@@ -324,9 +328,10 @@ jobs:
             mkdir -p "$RUNNER_TEMP/bump/recordings"
           fi
           for lock in "${recording_locks[@]}"; do
-            jq -r '.files[].sha256' "$lock" | while read -r digest; do
-              cp ".rerail/port-readiness/recordings/$digest.json" "$RUNNER_TEMP/bump/recordings/$digest.json"
-            done
+            recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
+            corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
+            cp ".rerail/port-readiness/recordings/$recording.json" "$RUNNER_TEMP/bump/recordings/$recording.json"
+            cp ".rerail/port-readiness/recordings/$corpus.tar.zst" "$RUNNER_TEMP/bump/recordings/$corpus.tar.zst"
           done
 
       - name: Upload the bump

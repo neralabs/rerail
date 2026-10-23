@@ -29,16 +29,24 @@
 //       UPSTREAM.md stopped listing as Rerail's (--replace: the tracked data alone, no archive under it), upload, and
 //       print the git commands that commit the new locks and untrack the data in a checkout of the pull request (or
 //       write the locks into --into <dir>)
-//   node scripts/s3/pack-fixtures.mjs recordings [--pack <id> [--tool <tool>]]
-//       put the recordings each recording.lock names into RECORDING_CACHE from S3, verified
+//   node scripts/s3/pack-fixtures.mjs recordings [--pack <id> [--tool <tool>]] [--dry-run]
+//       put the recordings each recording.lock names into RECORDING_CACHE from S3, verified, and extract its corpus
+//       answers archive into RECORDING_CACHE/corpus/<sha256>/
+//   node scripts/s3/pack-fixtures.mjs recordings push [--pack <id> [--tool <tool>]]
+//       maintainer: put the recordings each recording.lock names from RECORDING_CACHE into S3 unless it holds them, read
+//       them back, and print the `git add` for the locks
 //   node scripts/s3/pack-fixtures.mjs check [--pack <id> [--tool <tool>]]
 //       fail, listing each with its remedy, unless S3 holds every archive and recording the locks name (head-object
 //       only)
 //
-// A tool-pack's two port-readiness recordings, which its recording.lock names by sha256, live in the same bucket at
-// s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json (written once, never overwritten), so a gate
-// leg that misses its cache can fetch them instead of recording. `upload` (and so `push`) puts the selected tool-packs'
-// recordings there from RECORDING_CACHE.
+// A tool-pack's two port-readiness recordings, which its recording.lock names, live in the same bucket and are written
+// once, never overwritten, so a gate leg that misses its cache can fetch them instead of recording: recording.json at
+// s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json, by the sha256 of its bytes, and upstream's
+// answers on the corpus, one file per answer (conformance/port-readiness/recording/corpus-answers.ts), as one canonical
+// archive like a test data archive at s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/corpus/<sha256>.tar.zst,
+// by its tar's sha256, file count and bytes. A pull keeps the archive at RECORDING_CACHE/<sha256>.tar.zst and the gates
+// read the tree it extracts. `upload` (and so `push`) puts the selected tool-packs' recordings there from
+// RECORDING_CACHE too.
 //
 // The consumers (the conformance runner, pack validation, the recorders and generators, the Rust tests) report a
 // missing file with missingPackFixture, so a checkout without the data says to pull instead of failing on ENOENT.
@@ -60,15 +68,32 @@ export const REGION = "us-east-2";
 export const ARCHIVE_PREFIX = "rerail/archives/";
 /** Where a pull keeps the archives it fetched (and CI restores them from its cache), under the same relative keys. */
 export const ARCHIVE_CACHE = ".rerail/pack-data/archives";
-/** Every recording's key is this prefix plus `<pack>/<tool>/<sha256>.json`, the sha256 of the recording's own bytes. */
+/**
+ * Every recording's key is this prefix plus `<pack>/<tool>/<sha256>.json` (recording.json, by the sha256 of its bytes)
+ * or `<pack>/<tool>/corpus/<sha256>.tar.zst` (the corpus answers archive, by its tar's sha256).
+ */
 export const RECORDING_PREFIX = "rerail/recordings/";
 /**
- * Where the recorder writes recordings and the gates read them, each as `<sha256>.json` (recordingCachePath in
- * conformance/port-readiness/recording/store.ts); CI restores it from its cache.
+ * Where the recorder writes recordings and the gates read them: recording.json as `<sha256>.json`, the corpus answers
+ * archive as `<sha256>.tar.zst` and the tree extracted from it as `corpus/<sha256>/` (recordingCachePath in
+ * conformance/port-readiness/recording/store.ts, corpusArchiveCachePath and corpusTreeDirectory in corpus-answers.ts);
+ * CI restores the two files from its cache. The recorder's `--cache <dir>` reads `<dir>/recordings` instead, and
+ * `recordings` takes it as `cache`.
  */
 export const RECORDING_CACHE = ".rerail/port-readiness/recordings";
-/** A tool-pack's manifest of its two recordings, by sha256 and size (conformance/port-readiness/recording/store.ts). */
+/** A tool-pack's manifest of its two recordings (recordingLockSchema in conformance/port-readiness/recording/store.ts). */
 export const RECORDING_LOCK = "recording.lock";
+/** The recording.lock format this script reads; a lock in another format is recorded again, never read. */
+export const RECORDING_LOCK_FORMAT = "rerail.port-readiness-recording-lock/v3";
+/** The lock's entry for the recording of upstream's own tests, named by the sha256 and size of its bytes. */
+export const RECORDING_FILE = "recording.json";
+/**
+ * The lock's entry for upstream's answers on the corpus: the canonical tar (test-data-archive.mjs) of one file per
+ * answer, named like a test data archive by the tar's sha256, file count and bytes, and stored zstd-compressed.
+ */
+export const CORPUS_ARCHIVE = "corpus.tar.zst";
+/** Every path in a corpus answers archive is under one of these (conformance/port-readiness/recording/corpus-answers.ts). */
+const CORPUS_TREE_ROOTS = Object.freeze(["config/", "answers/", "verdicts/"]);
 
 /**
  * Where a contributor's code corpus and its ground truth go when the corpus is no public repository a pin can name:
@@ -394,18 +419,44 @@ export function recordingKey({ pack, tool }, digest) {
   return `${RECORDING_PREFIX}${pack}/${tool}/${digest}.json`;
 }
 
+/** The paths a recording cache directory (RECORDING_CACHE, or the recorder's `<--cache>/recordings`) keeps recordings at. */
+function cachePaths(cache) {
+  return {
+    recording: (digest) => join(cache, `${digest}.json`),
+    corpus: (digest) => join(cache, `${digest}.tar.zst`),
+    tree: (digest) => join(cache, "corpus", digest),
+  };
+}
+
 /** Where the checkout at `root` keeps the recording whose sha256 is `digest` (RECORDING_CACHE/<sha256>.json). */
 export function recordingCacheFile(root, digest) {
-  return join(root, RECORDING_CACHE, `${digest}.json`);
+  return cachePaths(join(root, RECORDING_CACHE)).recording(digest);
+}
+
+/** A tool-pack's corpus answers archive's S3 key, for its tar's sha256 `digest`. */
+export function corpusKey({ pack, tool }, digest) {
+  return `${RECORDING_PREFIX}${pack}/${tool}/corpus/${digest}.tar.zst`;
+}
+
+/** Where the checkout at `root` keeps the corpus answers archive whose tar's sha256 is `digest` (RECORDING_CACHE/<sha256>.tar.zst). */
+export function corpusCacheFile(root, digest) {
+  return cachePaths(join(root, RECORDING_CACHE)).corpus(digest);
+}
+
+/** Where the checkout at `root` keeps that archive extracted, the tree the gates and the recorder read (RECORDING_CACHE/corpus/<sha256>/). */
+export function corpusTreeDirectory(root, digest) {
+  return cachePaths(join(root, RECORDING_CACHE)).tree(digest);
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/u;
+const isSha256 = (value) => typeof value === "string" && SHA256_HEX.test(value);
+const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
 
 /**
- * The recordings a recording.lock's `text` names, as `{ name, sha256, size }` sorted by name; throws, naming `label`
- * (the lock's repository path), when it names none, or one without a sha256 and a positive size. The lock's full schema
- * is recordingLockSchema in conformance/port-readiness/recording/store.ts; this reads only what fetching and uploading
- * the recordings need.
+ * What a recording.lock's `text` names: `recording`, as `{ name, sha256, size }`, and `corpus`, the archive as
+ * `{ name, label, sha256, files, bytes }` (a lock for verifiedCorpus); throws, naming `label` (the lock's repository
+ * path), on a lock of another format or one that names anything else. The lock's full schema is recordingLockSchema in
+ * conformance/port-readiness/recording/store.ts; this reads only what fetching and uploading the recordings need.
  */
 export function lockedRecordings(text, label) {
   let value;
@@ -414,25 +465,34 @@ export function lockedRecordings(text, label) {
   } catch (error) {
     throw new Error(`${label} is not JSON (${error instanceof Error ? error.message : String(error)})`);
   }
-  const files = value !== null && typeof value === "object" ? value.files : undefined;
-  if (files === null || typeof files !== "object" || Array.isArray(files) || Object.keys(files).length === 0) {
-    throw new Error(`${label} is malformed: its "files" names no recordings`);
+  const format = value !== null && typeof value === "object" ? value.format : undefined;
+  if (format !== RECORDING_LOCK_FORMAT) {
+    throw new Error(`${label} is format ${JSON.stringify(format)}, not ${RECORDING_LOCK_FORMAT}: record the tool-pack again (npm run port-readiness:record), which writes it`);
   }
-  return Object.entries(files)
-    .sort(([a], [b]) => byBytes(a, b))
-    .map(([name, file]) => {
-      if (typeof file?.sha256 !== "string" || !SHA256_HEX.test(file.sha256) || !Number.isSafeInteger(file.size) || file.size <= 0) {
-        throw new Error(`${label} is malformed: files.${name} needs a sha256 of 64 lowercase hex digits and a positive size`);
-      }
-      return { name, sha256: file.sha256, size: file.size };
-    });
+  const files = value.files;
+  const names = files !== null && typeof files === "object" && !Array.isArray(files) ? Object.keys(files).sort(byBytes) : [];
+  if (names.length !== 2 || names[0] !== CORPUS_ARCHIVE || names[1] !== RECORDING_FILE) {
+    throw new Error(`${label} is malformed: its "files" must name exactly ${CORPUS_ARCHIVE} and ${RECORDING_FILE}, not ${names.join(", ") || "nothing"}`);
+  }
+  const recording = files[RECORDING_FILE];
+  if (!isSha256(recording?.sha256) || !Number.isSafeInteger(recording.size) || recording.size <= 0) {
+    throw new Error(`${label} is malformed: files.${RECORDING_FILE} needs a sha256 of 64 lowercase hex digits and a positive size`);
+  }
+  const corpus = files[CORPUS_ARCHIVE];
+  if (!isSha256(corpus?.sha256) || !isCount(corpus.files) || !isCount(corpus.bytes)) {
+    throw new Error(`${label} is malformed: files.${CORPUS_ARCHIVE} needs a sha256 of 64 lowercase hex digits, a file count and a byte total`);
+  }
+  return {
+    recording: { name: RECORDING_FILE, sha256: recording.sha256, size: recording.size },
+    corpus: { name: CORPUS_ARCHIVE, label, sha256: corpus.sha256, files: corpus.files, bytes: corpus.bytes },
+  };
 }
 
-/** A tool-pack's recording.lock in the checkout at `root`, as `{ label, recordings }`; undefined when it has none. */
+/** A tool-pack's recording.lock in the checkout at `root`, as `{ label, recording, corpus }`; undefined when it has none. */
 export function readRecordingLock(root, toolPack) {
   const label = `${toolPack.directory}/${RECORDING_LOCK}`;
   if (!existsSync(join(root, label))) return undefined;
-  return { label, recordings: lockedRecordings(readFileSync(join(root, label), "utf8"), label) };
+  return { label, ...lockedRecordings(readFileSync(join(root, label), "utf8"), label) };
 }
 
 /** Undefined when `bytes` are the locked `recording`; otherwise what they hold instead. */
@@ -443,13 +503,12 @@ function recordingProblem(bytes, recording) {
 }
 
 /**
- * The entries of the compressed archive at `key` once it is the one `lock` names for the tool directory `directory`;
- * throws, naming the lock and key, otherwise. Beyond the sha256, file count and bytes, every entry must be pack test
- * data of that directory (so an archive can never put a generator, gates.yaml or a lock in place), and the tar must be
- * the canonical one of its own entries (no duplicate, unsorted or extra record); decompression stops at the size the
- * lock allows.
+ * The entries of the compressed archive at `key` once it is the one `lock` (`{ label, sha256, files, bytes }`) names;
+ * throws, naming the lock and key, otherwise. Beyond the sha256, file count and bytes, every entry's path must satisfy
+ * `belongs` (`kind` says what such a path is), and the tar must be the canonical one of its own entries (no duplicate,
+ * unsorted or extra record); decompression stops at the size the lock allows.
  */
-export function verifiedEntries(compressed, lock, key, directory) {
+function verifiedArchive(compressed, lock, key, belongs, kind) {
   const object = `s3://${BUCKET}/${key}`;
   let tar;
   try {
@@ -465,15 +524,15 @@ export function verifiedEntries(compressed, lock, key, directory) {
   try {
     entries = readArchive(tar);
   } catch (error) {
-    throw new Error(`${lock.label}: ${object} is not a test data archive (${error instanceof Error ? error.message : String(error)}); nothing was extracted`);
+    throw new Error(`${lock.label}: ${object} is not an archive of ${kind} (${error instanceof Error ? error.message : String(error)}); nothing was extracted`);
   }
   const bytes = entries.reduce((total, entry) => total + entry.bytes.length, 0);
   if (entries.length !== lock.files || bytes !== lock.bytes) {
     throw new Error(`${lock.label}: ${object} holds ${entries.length} file(s) of ${bytes} byte(s), but the lock says ${lock.files} of ${lock.bytes}: the lock was edited by hand; nothing was extracted`);
   }
-  const foreign = entries.filter((entry) => !isPackFixture(`${directory}/${entry.path}`)).map((entry) => entry.path);
+  const foreign = entries.filter((entry) => !belongs(entry.path)).map((entry) => entry.path);
   if (foreign.length > 0) {
-    throw new Error(`${lock.label}: ${object} holds ${foreign.length} file(s) that are not pack test data of ${directory}, e.g. ${foreign.slice(0, 3).join(", ")}; nothing was extracted`);
+    throw new Error(`${lock.label}: ${object} holds ${foreign.length} file(s) that are not ${kind}, e.g. ${foreign.slice(0, 3).join(", ")}; nothing was extracted`);
   }
   let canonical;
   try {
@@ -485,6 +544,79 @@ export function verifiedEntries(compressed, lock, key, directory) {
     throw new Error(`${lock.label}: ${object} is not the canonical archive of its own files (${canonical}); nothing was extracted`);
   }
   return entries;
+}
+
+/**
+ * verifiedArchive for the test data archive `lock` names for the tool directory `directory`: every entry must be pack
+ * test data of that directory, so an archive can never put a generator, gates.yaml or a lock in place.
+ */
+export function verifiedEntries(compressed, lock, key, directory) {
+  return verifiedArchive(compressed, lock, key, (path) => isPackFixture(`${directory}/${path}`), `pack test data of ${directory}`);
+}
+
+/**
+ * verifiedArchive for the corpus answers archive a recording.lock names (`lock`, lockedRecordings' `corpus`): every
+ * entry must be under the tree's config/, answers/ or verdicts/. readArchive already refuses two paths that differ only
+ * by case, which a case-insensitive file system (macOS's) would extract as one file (checkTreePaths in corpus-answers.ts
+ * checks the same).
+ */
+export function verifiedCorpus(compressed, lock, key) {
+  return verifiedArchive(compressed, lock, key, (path) => CORPUS_TREE_ROOTS.some((root) => path.startsWith(root)), `corpus answers (under ${CORPUS_TREE_ROOTS.join(", ")})`);
+}
+
+/**
+ * The file an extracted corpus answers tree holds besides the archive's: the tar's sha256 and a newline, written into
+ * the partial directory last, so a tree that has it was extracted whole from a verified copy of that archive.
+ * corpus-answers.ts reads and writes trees through corpusTreeReady and extractCorpusTree too.
+ */
+export const CORPUS_TREE_MARKER = ".tar-sha256";
+
+/**
+ * Whether `directory` is the extracted tree of the archive `lock` (`{ sha256, files, bytes }`) names: its marker names
+ * that tar, and it still holds as many regular files and bytes besides the marker (none deleted or cut short since).
+ */
+export function corpusTreeReady(directory, lock) {
+  const marker = join(directory, CORPUS_TREE_MARKER);
+  if (!existsSync(marker) || readFileSync(marker, "utf8") !== `${lock.sha256}\n`) return false;
+  let files = 0;
+  let bytes = 0;
+  for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || (entry.parentPath === directory && entry.name === CORPUS_TREE_MARKER)) continue;
+    files += 1;
+    bytes += statSync(join(entry.parentPath, entry.name)).size;
+  }
+  return files === lock.files && bytes === lock.bytes;
+}
+
+/**
+ * Writes verified `entries` of the archive `lock` names, and the marker, into this process's own partial directory,
+ * then renames it into place as `directory`, so a tree is never half there. Another process that extracted the same
+ * archive first wins: its tree is this one. A tree there that is not that archive's is replaced.
+ */
+export function extractCorpusTree(directory, entries, lock) {
+  const partial = `${directory}.${process.pid}.partial`;
+  rmSync(partial, { recursive: true, force: true });
+  try {
+    mkdirSync(partial, { recursive: true });
+    for (const entry of entries) {
+      const absolute = join(partial, entry.path);
+      mkdirSync(dirname(absolute), { recursive: true });
+      writeFileSync(absolute, entry.bytes);
+    }
+    writeFileSync(join(partial, CORPUS_TREE_MARKER), `${lock.sha256}\n`);
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        renameSync(partial, directory);
+        return;
+      } catch (error) {
+        if (corpusTreeReady(directory, lock)) return;
+        if (attempt > 1) throw error;
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  } finally {
+    rmSync(partial, { recursive: true, force: true });
+  }
 }
 
 const NOT_FOUND = /\(404\)|Not Found|NoSuchKey|does not exist/u;
@@ -533,13 +665,13 @@ function untrackPaths(tracked) {
 }
 
 /**
- * The entries of the archive `lock` names, from ARCHIVE_CACHE: `entries` is undefined when the cache does not hold it,
- * and `discarded` names a cached copy whose tar is not the locked one, which is deleted. A cached copy whose tar is the
- * locked one decides: a lock whose file or byte count disagrees with it was edited, and fetching the same bytes again
- * (with credentials a cache hit in CI does not have) changes nothing, so verifiedEntries throws.
+ * The entries of the compressed archive at `cached` that `lock` names, as `verify` returns them: `entries` is undefined
+ * when there is no such file, and `discarded` names a cached copy whose tar is not the locked one, which is deleted
+ * (left in place on a dry run, which deletes nothing). A cached copy whose tar is the locked one decides: a lock whose
+ * file or byte count disagrees with it was edited, and fetching the same bytes again (with credentials a cache hit in
+ * CI does not have) changes nothing, so `verify` throws.
  */
-function cachedArchive(root, toolPack, lock) {
-  const cached = archiveCachePath(root, toolPack, lock.sha256);
+function cachedEntries(root, cached, lock, verify, dryRun) {
   if (!existsSync(cached)) return { entries: undefined, discarded: undefined };
   const compressed = readFileSync(cached);
   let digest;
@@ -548,9 +680,14 @@ function cachedArchive(root, toolPack, lock) {
   } catch {
     digest = undefined;
   }
-  if (digest === lock.sha256) return { entries: verifiedEntries(compressed, lock, archiveKey(toolPack, lock.sha256), toolPack.directory), discarded: undefined };
-  rmSync(cached, { force: true });
+  if (digest === lock.sha256) return { entries: verify(compressed), discarded: undefined };
+  if (!dryRun) rmSync(cached, { force: true });
   return { entries: undefined, discarded: relative(root, cached) };
+}
+
+/** cachedEntries for the test data archive `lock` names, from ARCHIVE_CACHE. */
+function cachedArchive(root, toolPack, lock, dryRun) {
+  return cachedEntries(root, archiveCachePath(root, toolPack, lock.sha256), lock, (compressed) => verifiedEntries(compressed, lock, archiveKey(toolPack, lock.sha256), toolPack.directory), dryRun);
 }
 
 /** Downloads the archive `lock` names into ARCHIVE_CACHE through a partial file that must verify first; its entries. */
@@ -596,14 +733,14 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
   const discarded = [];
   const fetched = [];
   for (const { toolPack, lock } of locked) {
-    const fromCache = cachedArchive(root, toolPack, lock);
+    const fromCache = cachedArchive(root, toolPack, lock, dryRun);
     if (fromCache.discarded !== undefined) discarded.push(fromCache.discarded);
     let entries = fromCache.entries;
     let source = "cache";
     if (entries === undefined) {
       source = "S3";
       if (dryRun) {
-        log(`would fetch s3://${BUCKET}/${archiveKey(toolPack, lock.sha256)} (${lock.label})`);
+        log(`${fromCache.discarded === undefined ? "" : `would delete ${fromCache.discarded}, which is not the archive ${lock.label} names, and `}would fetch s3://${BUCKET}/${archiveKey(toolPack, lock.sha256)} (${lock.label})`);
         continue;
       }
       if (!signedIn) {
@@ -663,53 +800,108 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
 }
 
 /**
- * Puts the recordings each selected tool-pack's recording.lock names into RECORDING_CACHE, each verified against its
- * sha256 and size: a valid local copy is kept; anything else is fetched from S3 through a partial file that must verify
- * first (an invalid local copy is deleted). A recording S3 does not hold is a note, not a failure: CI records the
- * tool-pack on a cache miss. aws is needed only when something must be fetched.
+ * Puts the recordings each selected tool-pack's recording.lock names into the recording cache (`cache`, by default
+ * RECORDING_CACHE), verified, and extracts the corpus answers archive into `<cache>/corpus/<sha256>/`. recording.json
+ * is verified against its sha256 and size; the archive as a pull verifies a test data archive (verifiedCorpus), and
+ * only then extracted (extractCorpusTree). A valid local copy is kept, and a tree whose marker names the archive needs
+ * no archive; anything else is fetched from S3 through a partial file that must verify first (an invalid local copy is
+ * deleted, except on a dry run, which deletes and writes nothing). A recording S3 does not hold is a note, not a
+ * failure: CI records the tool-pack on a cache miss. aws is needed only when something must be fetched.
  */
-export function recordings({ root = ROOT, pack: packId, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+export function recordings({ root = ROOT, pack: packId, tool, cache = join(root, RECORDING_CACHE), dryRun = false, aws = runAws, log = console.log } = {}) {
+  const paths = cachePaths(cache);
+  const shown = (path) => relative(root, path).split(sep).join("/");
   const kept = [];
   const downloaded = [];
   const missing = [];
+  const extracted = [];
+  const discarded = [];
   let signedIn = false;
+  const signIn = () => {
+    if (signedIn) return;
+    try {
+      requireAws(aws);
+    } catch (error) {
+      // As in pull: CI restores the recordings from its cache with no credentials, so a cached copy that is not the
+      // locked one is a poisoned or corrupt cache entry, which the next run would restore again.
+      if (discarded.length === 0) throw error;
+      throw new Error(`${discarded.join(", ")} was not the recording its lock names (a corrupt or poisoned cache entry) and was deleted, and S3 cannot be read here: ${error instanceof Error ? error.message : String(error)}. In CI, delete the Actions cache entry that restored it (gh cache delete <key>) and run the job again.`);
+    }
+    signedIn = true;
+  };
+  /** Downloads `key` into `file` through this process's partial file `check` must accept first; false, logging `absent`, when S3 does not hold it. */
+  const fetch = (key, file, check, absent) => {
+    signIn();
+    mkdirSync(dirname(file), { recursive: true });
+    const partial = `${file}.${process.pid}.partial`;
+    rmSync(partial, { force: true });
+    try {
+      if (!download(aws, key, partial)) {
+        missing.push(key);
+        log(absent);
+        return false;
+      }
+      check(readFileSync(partial));
+      renameSync(partial, file);
+      downloaded.push(key);
+      return true;
+    } finally {
+      rmSync(partial, { force: true });
+    }
+  };
   for (const toolPack of selectToolPacks(root, packId, tool)) {
     const locked = readRecordingLock(root, toolPack);
     if (locked === undefined) continue;
-    for (const recording of locked.recordings) {
-      const key = recordingKey(toolPack, recording.sha256);
-      const object = `s3://${BUCKET}/${key}`;
-      const file = recordingCacheFile(root, recording.sha256);
-      if (existsSync(file) && recordingProblem(readFileSync(file), recording) === undefined) {
-        kept.push(key);
-        continue;
+    const record = `npm run port-readiness:record -- --pack ${toolPack.pack} --tool ${toolPack.tool}`;
+    const { recording, corpus } = locked;
+
+    const key = recordingKey(toolPack, recording.sha256);
+    const file = paths.recording(recording.sha256);
+    const fileProblem = existsSync(file) ? recordingProblem(readFileSync(file), recording) : "is not there";
+    if (fileProblem === undefined) {
+      kept.push(key);
+    } else if (dryRun) {
+      log(`${existsSync(file) ? `would delete ${shown(file)}, which ${fileProblem}, and ` : ""}would fetch s3://${BUCKET}/${key} (${locked.label}: ${recording.name})`);
+    } else {
+      if (existsSync(file)) {
+        rmSync(file);
+        discarded.push(shown(file));
       }
-      if (dryRun) {
-        log(`would fetch ${object} (${locked.label}: ${recording.name})`);
-        continue;
-      }
-      if (!signedIn) requireAws(aws);
-      signedIn = true;
-      rmSync(file, { force: true });
-      mkdirSync(dirname(file), { recursive: true });
-      const partial = `${file}.partial`;
-      try {
-        if (!download(aws, key, partial)) {
-          missing.push(key);
-          log(`${locked.label}: ${recording.name} ${recording.sha256} is in neither ${RECORDING_CACHE}/ nor ${object}; CI records the tool-pack on a cache miss, or record it here with \`npm run port-readiness:record -- --pack ${toolPack.pack} --tool ${toolPack.tool}\``);
-          continue;
-        }
-        const problem = recordingProblem(readFileSync(partial), recording);
-        if (problem !== undefined) throw new Error(`${locked.label}: ${object} (${recording.name}) ${problem}; nothing was written`);
-        renameSync(partial, file);
-        downloaded.push(key);
-      } finally {
-        rmSync(partial, { force: true });
-      }
+      const check = (bytes) => {
+        const problem = recordingProblem(bytes, recording);
+        if (problem !== undefined) throw new Error(`${locked.label}: s3://${BUCKET}/${key} (${recording.name}) ${problem}; nothing was written`);
+      };
+      fetch(key, file, check, `${locked.label}: ${recording.name} ${recording.sha256} is in neither ${shown(cache)}/ nor s3://${BUCKET}/${key}; CI records the tool-pack on a cache miss, or record it here with \`${record} --full\``);
     }
+
+    const archive = corpusKey(toolPack, corpus.sha256);
+    const tree = paths.tree(corpus.sha256);
+    if (corpusTreeReady(tree, corpus)) {
+      kept.push(archive);
+      continue;
+    }
+    const cached = paths.corpus(corpus.sha256);
+    const fromCache = cachedEntries(root, cached, corpus, (compressed) => verifiedCorpus(compressed, corpus, archive), dryRun);
+    if (fromCache.discarded !== undefined) discarded.push(fromCache.discarded);
+    let entries = fromCache.entries;
+    if (entries !== undefined) {
+      kept.push(archive);
+    } else if (dryRun) {
+      log(`${fromCache.discarded === undefined ? "" : `would delete ${fromCache.discarded}, which is not the archive ${locked.label} names, and `}would fetch s3://${BUCKET}/${archive} (${locked.label}: ${corpus.name}) and extract it into ${shown(tree)}`);
+      continue;
+    } else {
+      const absent = `${locked.label}: ${corpus.name} ${corpus.sha256} is in neither ${shown(cache)}/ nor s3://${BUCKET}/${archive}; CI records the tool-pack on a cache miss, or record its corpus here from no answers with \`${record} --corpus --full\``;
+      if (!fetch(archive, cached, (bytes) => (entries = verifiedCorpus(bytes, corpus, archive)), absent)) continue;
+    }
+    if (dryRun) {
+      log(`would extract ${shown(cached)} into ${shown(tree)}`);
+      continue;
+    }
+    extractCorpusTree(tree, entries, corpus);
+    extracted.push(shown(tree));
   }
-  log(`${RECORDING_CACHE}: ${kept.length} recording(s) kept, ${downloaded.length} fetched from S3, ${missing.length} in neither`);
-  return { kept: kept.sort(byBytes), downloaded: downloaded.sort(byBytes), missing: missing.sort(byBytes) };
+  log(`${dryRun ? "dry run: " : ""}${shown(cache)}: ${kept.length} recording(s) kept, ${downloaded.length} fetched from S3, ${missing.length} in neither; ${extracted.length} corpus answers tree(s) extracted`);
+  return { kept: kept.sort(byBytes), downloaded: downloaded.sort(byBytes), missing: missing.sort(byBytes), extracted: extracted.sort(byBytes) };
 }
 
 /**
@@ -777,26 +969,47 @@ function archivePlans(root, locked) {
 }
 
 /**
- * What uploading the recordings a recording.lock (`locked`, `{ label, recordings }`) names asks of the checkout at
- * `root`: one plan per recording for uploadObjects, with its local copy in RECORDING_CACHE when there is one. A local
- * copy that is not the locked bytes is refused.
+ * What uploading the two recordings a recording.lock (`locked`, readRecordingLock's `{ label, recording, corpus }`)
+ * names asks of the checkout at `root`: one plan each for uploadObjects, with its local copy in RECORDING_CACHE when
+ * there is one. A local copy that is not what the lock names is refused, so nothing else is ever put under its key.
  */
 function recordingPlans(root, toolPack, locked) {
-  return locked.recordings.map((recording) => {
-    const key = recordingKey(toolPack, recording.sha256);
-    const path = recordingCacheFile(root, recording.sha256);
-    const local = existsSync(path);
-    const localProblem = local ? recordingProblem(readFileSync(path), recording) : undefined;
-    if (localProblem !== undefined) {
-      throw new Error(`${locked.label}: ${relative(root, path)} (${recording.name}, for s3://${BUCKET}/${key}) ${localProblem}, so it is not the recording the lock names; delete it and record or download it again. Nothing was uploaded`);
+  const { recording, corpus } = locked;
+  const record = `npm run port-readiness:record -- --pack ${toolPack.pack} --tool ${toolPack.tool}`;
+  const fromCi = `download the pull request's CI recordings with \`gh run download <run-id> -n recordings-${toolPack.pack}--${toolPack.tool} -D ${RECORDING_CACHE}\``;
+
+  const key = recordingKey(toolPack, recording.sha256);
+  const path = recordingCacheFile(root, recording.sha256);
+  const local = existsSync(path);
+  const localProblem = local ? recordingProblem(readFileSync(path), recording) : undefined;
+  if (localProblem !== undefined) {
+    throw new Error(`${locked.label}: ${relative(root, path)} (${recording.name}, for s3://${BUCKET}/${key}) ${localProblem}, so it is not the recording the lock names; delete it and record or download it again. Nothing was uploaded`);
+  }
+  const check = (bytes) => {
+    const problem = recordingProblem(bytes, recording);
+    if (problem !== undefined) throw new Error(`${locked.label}: s3://${BUCKET}/${key} (${recording.name}) ${problem}`);
+  };
+  const absent = `${locked.label} names ${recording.name} ${recording.sha256}, which is in neither ${RECORDING_CACHE}/${recording.sha256}.json nor s3://${BUCKET}/${key}: record it with \`${record}\`, or ${fromCi}`;
+
+  const archive = corpusKey(toolPack, corpus.sha256);
+  const archivePath = corpusCacheFile(root, corpus.sha256);
+  const archiveLocal = existsSync(archivePath);
+  const archiveCheck = (bytes) => {
+    verifiedCorpus(bytes, corpus, archive);
+  };
+  if (archiveLocal) {
+    try {
+      archiveCheck(readFileSync(archivePath));
+    } catch (error) {
+      throw new Error(`${relative(root, archivePath)} is not the ${corpus.name} ${locked.label} names (${error instanceof Error ? error.message : String(error)}); delete it and record the corpus again with \`${record} --corpus\`, or download it again. Nothing was uploaded`);
     }
-    const check = (bytes) => {
-      const problem = recordingProblem(bytes, recording);
-      if (problem !== undefined) throw new Error(`${locked.label}: s3://${BUCKET}/${key} (${recording.name}) ${problem}`);
-    };
-    const absent = `${locked.label} names ${recording.name} ${recording.sha256}, which is in neither ${RECORDING_CACHE}/${recording.sha256}.json nor s3://${BUCKET}/${key}: record it with \`npm run port-readiness:record -- --pack ${toolPack.pack} --tool ${toolPack.tool}\`, or download the pull request's CI recordings with \`gh run download <run-id> -n recordings-${toolPack.pack}--${toolPack.tool} -D ${RECORDING_CACHE}\``;
-    return { directory: toolPack.directory, label: locked.label, what: recording.name, key, path, local, check, absent };
-  });
+  }
+  const archiveAbsent = `${locked.label} names ${corpus.name} ${corpus.sha256}, which is in neither ${RECORDING_CACHE}/${corpus.sha256}.tar.zst nor s3://${BUCKET}/${archive}: record it with \`${record} --corpus\`, or ${fromCi}`;
+
+  return [
+    { directory: toolPack.directory, label: locked.label, what: recording.name, key, path, local, check, absent },
+    { directory: toolPack.directory, label: locked.label, what: corpus.name, key: archive, path: archivePath, local: archiveLocal, check: archiveCheck, absent: archiveAbsent },
+  ];
 }
 
 /**
@@ -835,13 +1048,36 @@ export function upload({ root = ROOT, pack: packId, tool, aws = runAws, log = co
   const selected = selectToolPacks(root, packId, tool);
   const plans = [
     ...archivePlans(root, selected.map((toolPack) => ({ toolPack, lock: readLock(root, toolPack) }))),
-    ...selected.flatMap((toolPack) => {
-      const locked = readRecordingLock(root, toolPack);
-      return locked === undefined ? [] : recordingPlans(root, toolPack, locked);
-    }),
+    ...lockedRecordingPlans(root, selected).flatMap(({ plans: recorded }) => recorded),
   ];
   requireAws(aws);
   return { uploaded: uploadObjects(aws, plans, log) };
+}
+
+/** recordingPlans for each of `selected` (tool-packs) that has a recording.lock, as `{ label, plans }`. */
+function lockedRecordingPlans(root, selected) {
+  return selected.flatMap((toolPack) => {
+    const locked = readRecordingLock(root, toolPack);
+    return locked === undefined ? [] : [{ label: locked.label, plans: recordingPlans(root, toolPack, locked) }];
+  });
+}
+
+/**
+ * Maintainer: `upload`'s recordings alone. Puts the recording.json and the corpus answers archive each selected
+ * tool-pack's recording.lock names from RECORDING_CACHE into S3 unless S3 holds them already (the same conditional put,
+ * so an object is never overwritten), reads each back and verifies it against the lock, then prints the `git add` that
+ * commits the locks. Run again, it puts nothing ("S3 already holds"). One in neither RECORDING_CACHE nor S3 fails it,
+ * before anything is put.
+ */
+export function recordingsPush({ root = ROOT, pack: packId, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+  if (dryRun) throw new Error("recordings push has no --dry-run");
+  const locked = lockedRecordingPlans(root, selectToolPacks(root, packId, tool));
+  if (locked.length === 0) throw new Error(`no selected tool-pack has a ${RECORDING_LOCK}: record one with \`npm run port-readiness:record -- --pack <id> --tool <tool>\``);
+  requireAws(aws);
+  const uploaded = uploadObjects(aws, locked.flatMap(({ plans }) => plans), log);
+  const locks = locked.map(({ label }) => label);
+  log(`S3 holds the recordings the lock(s) name; commit them:\n  git add -- ${locks.map(shellQuoted).join(" ")}`);
+  return { uploaded, locks };
 }
 
 /** A tool directory's file whose change selects its tool-pack for push --from: a lock, or the UPSTREAM.md listing its authored files. */
@@ -1003,7 +1239,7 @@ function pushFrom({ root, from, pack: packId, tool, into, replace, aws, log }) {
     const lock = { label, sha256: archive.sha256, files: archive.files, bytes: archive.bytes };
     const recordingLabel = `${toolPack.directory}/${RECORDING_LOCK}`;
     const recordingsAt = tree.has(recordingLabel)
-      ? recordingPlans(root, toolPack, { label: `${recordingLabel} at ${from}`, recordings: lockedRecordings(blob(recordingLabel).toString("utf8"), `${recordingLabel} at ${from}`) })
+      ? recordingPlans(root, toolPack, { label: `${recordingLabel} at ${from}`, ...lockedRecordings(blob(recordingLabel).toString("utf8"), `${recordingLabel} at ${from}`) })
       : [];
     const text = lockText(archive);
     if (intoRoot !== undefined) {
@@ -1098,13 +1334,13 @@ export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = con
         key: archive,
         missing: `${lock.label} names s3://${BUCKET}/${archive}, which S3 does not hold: a maintainer archives the pull request's pack test data with \`${push}\``,
       },
-      ...(recorded?.recordings ?? []).map((recording) => {
-        const key = recordingKey(toolPack, recording.sha256);
-        return {
-          key,
-          missing: `${recorded.label} names ${recording.name} at s3://${BUCKET}/${key}, which S3 does not hold: a maintainer downloads the pull request's CI recordings with \`gh run download <run> -n recordings-${toolPack.pack}--${toolPack.tool} -D ${RECORDING_CACHE}\`, then puts them in S3 with \`${push}\``,
-        };
-      }),
+      ...(recorded === undefined ? [] : [
+        { name: recorded.recording.name, key: recordingKey(toolPack, recorded.recording.sha256) },
+        { name: recorded.corpus.name, key: corpusKey(toolPack, recorded.corpus.sha256) },
+      ]).map(({ name, key }) => ({
+        key,
+        missing: `${recorded.label} names ${name} at s3://${BUCKET}/${key}, which S3 does not hold: a maintainer downloads the pull request's CI recordings with \`gh run download <run> -n recordings-${toolPack.pack}--${toolPack.tool} -D ${RECORDING_CACHE}\`, then puts them in S3 with \`${push}\``,
+      })),
     ];
   });
   requireAws(aws);
@@ -1127,12 +1363,17 @@ const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [
   pack        archive the selected tool-packs' data on disk into ${ARCHIVE_CACHE} and rewrite their locks (no network)
   upload      put the locked archives from ${ARCHIVE_CACHE}, and the locked recordings from ${RECORDING_CACHE}, into S3
               unless it holds them, and read them back
-  recordings  fetch the recordings the selected tool-packs' recording.lock files name into ${RECORDING_CACHE}, verified
+  recordings  fetch the recordings the selected tool-packs' recording.lock files name into ${RECORDING_CACHE}, verified,
+              and extract each corpus answers archive into ${RECORDING_CACHE}/corpus/<sha256>/
+              recordings push: maintainer: put those recordings from ${RECORDING_CACHE} into S3 unless it holds them,
+              read them back, and print the git add for the locks (no --dry-run)
   check       fail, listing each with its remedy, unless S3 holds every archive and recording the selected tool-packs'
               locks name (head-object only; nothing is downloaded)
   cache       CI: the Actions cache key and paths for the selected tool-packs' archives, as JSON`;
 
 const COMMANDS = { pull, push, pack, upload, recordings, check, cache: (options) => console.log(JSON.stringify(archiveCache(options))) };
+/** Commands with a subcommand, as `<command> <subcommand>`. */
+const SUBCOMMANDS = { "recordings push": recordingsPush };
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   let parsed;
@@ -1154,7 +1395,9 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(p
     process.exitCode = 2;
   }
   const [command, ...extra] = parsed?.positionals ?? [];
-  if (parsed !== undefined && (!Object.hasOwn(COMMANDS, command ?? "") || extra.length > 0)) {
+  const name = [command, ...extra].join(" ");
+  const run = Object.hasOwn(SUBCOMMANDS, name) ? SUBCOMMANDS[name] : extra.length === 0 && Object.hasOwn(COMMANDS, command ?? "") ? COMMANDS[command] : undefined;
+  if (parsed !== undefined && run === undefined) {
     console.error(USAGE);
     process.exitCode = 2;
   } else if (parsed !== undefined && command !== "push" && (parsed.values.from !== undefined || parsed.values.into !== undefined || parsed.values.replace)) {
@@ -1163,9 +1406,9 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(p
   } else if (parsed !== undefined) {
     try {
       const { pack: packId, tool, "dry-run": dryRun, from, into, replace } = parsed.values;
-      COMMANDS[command]({ pack: packId, tool, dryRun, ...(command === "push" ? { from, into, replace } : {}) });
+      run({ pack: packId, tool, dryRun, ...(command === "push" ? { from, into, replace } : {}) });
     } catch (error) {
-      console.error(`fixtures:${command}: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`fixtures:${name}: ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 1;
     }
   }

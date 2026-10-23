@@ -5,7 +5,7 @@ import { join } from "node:path";
 /**
  * One golden test of `matches-upstream-tests`: a real-code file whose source is the pinned corpus file at `task`/`path`
  * (a catalog task, or a rerail corpus as `rerail:<name>`), checked against `sha256`. Its expected answer is not stored
- * here: it is the pinned upstream's findings on that file, in the tool-pack's corpus.json.
+ * here: it is the pinned upstream's findings on that file, in the tool-pack's corpus answers archive.
  */
 export interface Golden {
   task: string;

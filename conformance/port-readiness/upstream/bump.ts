@@ -713,7 +713,7 @@ export function renderBump(bump: Bump): string {
     ...bump.record.map((id) => {
       const [pack, tool] = id.split("/");
       const selector = `--pack ${pack!} --tool ${tool!}`;
-      return `npm run fixtures:derive -- ${selector} --update && npm run port-readiness:record -- ${selector} && npm run fixtures:push -- ${selector}`;
+      return `npm run fixtures:derive -- ${selector} --update && npm run port-readiness:record -- ${selector} --full && npm run fixtures:push -- ${selector}`;
     }),
     "```",
     "",

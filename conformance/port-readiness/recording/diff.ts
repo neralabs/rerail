@@ -4,12 +4,12 @@
  * Until the recordings left the tree, a re-record showed up in review as tens of thousands of changed JSON lines,
  * which nobody read and which said nothing about whether upstream's answers had actually moved. The recordings are
  * not in the diff at all now, so this is what takes their place: for each rule, how many expected findings upstream
- * gained or lost on its own tests, how many corpus files it now answers differently for, and which of its facts
- * changed. A rule that is absent here did not move, and a change in it is a reason to look at the rule.
+ * gained or lost on its own tests, which answer files on corpus files it gained, lost or answers differently in the
+ * corpus answers archive, and which of its facts changed. A rule that is absent here did not move, and a change in it is a reason to look at the rule.
  */
 
 import { canonicalJson } from "../checks/compact.js";
-import type { GatesCorpusRecording, GatesRecording, RecordedSpan } from "./schema.js";
+import type { GatesRecording, RecordedSpan } from "./schema.js";
 
 /** How one upstream rule's recorded answers moved. */
 export interface RuleChange {
@@ -19,8 +19,14 @@ export interface RuleChange {
   /** Expected findings on upstream's own test files that the rule gained and lost. */
   expectedAdded: number;
   expectedRemoved: number;
-  /** Corpus files whose findings for the rule differ, in either direction. */
-  corpusFilesChanged: number;
+  /**
+   * The rule's answer files in the corpus answers archive (corpus-answers.ts) that the new tree has and the old one
+   * lacks, that the old one has and the new one lacks, and that both have with other content. They are compared
+   * whatever config id they are filed under, so a re-record after a pin bump shows which answers moved.
+   */
+  answersAdded: number;
+  answersRemoved: number;
+  answersChanged: number;
   /**
    * The fields of `rule().facts` whose values differ, sorted (`deprecation`, `recommended`, `tests`). Objects are
    * compared by value, whatever order their keys are in: a locked recording is read back from its key-sorted text, and
@@ -45,7 +51,7 @@ export interface RecordingChanges {
   /** Every rule whose answers moved, sorted by name. */
   rules: RuleChange[];
   /** Totals, so a reader sees the shape of the recording even when no rule moved. */
-  totals: { rules: number; cases: number; corpusFiles: number };
+  totals: { rules: number; cases: number; corpusAnswers: number };
   /**
    * The Composer runtimes the recorder installed, each with the packages it resolved. Nothing locks their transitive
    * packages, so they are listed here, where a drift between two recordings shows, and not in the recording or its
@@ -102,20 +108,23 @@ function caseFindings(recording: GatesRecording, rule: string): Map<string, Reco
 }
 
 /**
- * A rule's corpus findings on the files both recordings answer. A file one of them does not answer is not a change in
- * upstream's answer: the recorder answers only the files goldens name, so a file drops out when no golden names it.
+ * A tree's answer files by rule segment (the rule as its directory names it), each keyed by the rest of its path
+ * (`<task>/<path>@<key>.json`) with its text. The config id is left out: answers are compared across configs.
  */
-function corpusFindings(corpus: GatesCorpusRecording | null, rule: string, shared: Set<string>): Map<string, string> {
-  const found = new Map<string, string>();
-  for (const file of corpus?.files ?? []) {
-    const place = `${file.task}\0${file.path}\0${file.sha256}`;
-    const spans = file.findings[rule];
-    if (shared.has(place) && spans !== undefined) found.set(place, JSON.stringify(spans));
+function answersByRule(answers: ReadonlyMap<string, Buffer> | null): Map<string, Map<string, string>> {
+  const byRule = new Map<string, Map<string, string>>();
+  for (const [path, bytes] of answers ?? []) {
+    const [top, , rule, ...rest] = path.split("/");
+    if (top !== "answers" || rule === undefined) continue;
+    const files = byRule.get(rule) ?? new Map<string, string>();
+    files.set(rest.join("/"), bytes.toString("utf8"));
+    byRule.set(rule, files);
   }
-  return found;
+  return byRule;
 }
 
-export type RecordedPair = { recording: GatesRecording; corpus: GatesCorpusRecording | null };
+/** A recording: recording.json, and the files of its corpus answers tree (null when it has none). */
+export type RecordedPair = { recording: GatesRecording; corpus: ReadonlyMap<string, Buffer> | null };
 
 /** A recording the committed lock names that could not be read, and why. */
 export type UnreadRecording = { unavailable: string };
@@ -135,7 +144,7 @@ export function diffRecordings(
   const totals = {
     rules: Object.keys(after.recording.rules).length,
     cases: Object.values(after.recording.rules).reduce((count, rule) => count + rule.cases.length, 0),
-    corpusFiles: after.corpus?.files.length ?? 0,
+    corpusAnswers: [...(after.corpus?.keys() ?? [])].filter((path) => path.startsWith("answers/")).length,
   };
   if (before === null) {
     return {
@@ -144,7 +153,7 @@ export function diffRecordings(
       pinsChanged: [],
       first: true,
       unavailable: null,
-      rules: Object.keys(after.recording.rules).sort(byText).map((rule) => ({ rule, status: "added", expectedAdded: 0, expectedRemoved: 0, corpusFilesChanged: 0, factsChanged: [] })),
+      rules: Object.keys(after.recording.rules).sort(byText).map((rule) => ({ rule, status: "added", expectedAdded: 0, expectedRemoved: 0, answersAdded: 0, answersRemoved: 0, answersChanged: 0, factsChanged: [] })),
       totals,
       resolved,
     };
@@ -154,15 +163,14 @@ export function diffRecordings(
     .filter((field) => before.recording.pins[field] !== after.recording.pins[field])
     .map((field) => `${field} ${before.recording.pins[field]} → ${after.recording.pins[field]}`);
 
-  const placesOf = (corpus: GatesCorpusRecording | null) => new Set((corpus?.files ?? []).map((file) => `${file.task}\0${file.path}\0${file.sha256}`));
-  const afterPlaces = placesOf(after.corpus);
-  const shared = new Set([...placesOf(before.corpus)].filter((place) => afterPlaces.has(place)));
+  const beforeAnswers = answersByRule(before.corpus);
+  const afterAnswers = answersByRule(after.corpus);
   const rules: RuleChange[] = [];
   for (const rule of [...new Set([...Object.keys(before.recording.rules), ...Object.keys(after.recording.rules)])].sort(byText)) {
     const was = before.recording.rules[rule];
     const now = after.recording.rules[rule];
     if (was === undefined || now === undefined) {
-      rules.push({ rule, status: now === undefined ? "removed" : "added", expectedAdded: 0, expectedRemoved: 0, corpusFilesChanged: 0, factsChanged: [] });
+      rules.push({ rule, status: now === undefined ? "removed" : "added", expectedAdded: 0, expectedRemoved: 0, answersAdded: 0, answersRemoved: 0, answersChanged: 0, factsChanged: [] });
       continue;
     }
     const wasCases = caseFindings(before.recording, rule);
@@ -172,15 +180,17 @@ export function diffRecordings(
       const delta = expectedDelta(wasCases.get(place) ?? [], nowCases.get(place) ?? []);
       return { added: total.added + delta.added, removed: total.removed + delta.removed };
     }, { added: 0, removed: 0 });
-    const wasCorpus = corpusFindings(before.corpus, rule, shared);
-    const nowCorpus = corpusFindings(after.corpus, rule, shared);
-    const corpusFilesChanged = [...new Set([...wasCorpus.keys(), ...nowCorpus.keys()])].filter((place) => wasCorpus.get(place) !== nowCorpus.get(place)).length;
+    const wasAnswers = beforeAnswers.get(rule.replaceAll("/", "~")) ?? new Map<string, string>();
+    const nowAnswers = afterAnswers.get(rule.replaceAll("/", "~")) ?? new Map<string, string>();
+    const answersAdded = [...nowAnswers.keys()].filter((path) => !wasAnswers.has(path)).length;
+    const answersRemoved = [...wasAnswers.keys()].filter((path) => !nowAnswers.has(path)).length;
+    const answersChanged = [...nowAnswers].filter(([path, text]) => wasAnswers.has(path) && wasAnswers.get(path) !== text).length;
     const factsChanged = (Object.keys(now.facts) as (keyof typeof now.facts)[])
       .filter((field) => factText(was.facts[field]) !== factText(now.facts[field]))
       .map(String)
       .sort(byText);
-    if (expected.added + expected.removed + corpusFilesChanged + factsChanged.length === 0) continue;
-    rules.push({ rule, status: "changed", expectedAdded: expected.added, expectedRemoved: expected.removed, corpusFilesChanged, factsChanged });
+    if (expected.added + expected.removed + answersAdded + answersRemoved + answersChanged + factsChanged.length === 0) continue;
+    rules.push({ rule, status: "changed", expectedAdded: expected.added, expectedRemoved: expected.removed, answersAdded, answersRemoved, answersChanged, factsChanged });
   }
   return { pack, tool, pinsChanged, first: false, unavailable: null, rules, totals, resolved };
 }
@@ -207,7 +217,7 @@ export function renderRecordingChanges(changes: RecordingChanges[]): string {
   ];
   for (const entry of changes) {
     const label = `\`${entry.pack}/${entry.tool}\``;
-    const shape = `${entry.totals.rules} rules, ${entry.totals.cases} upstream cases, ${entry.totals.corpusFiles} corpus files`;
+    const shape = `${entry.totals.rules} rules, ${entry.totals.cases} upstream cases, ${entry.totals.corpusAnswers} corpus answers`;
     if (entry.unavailable !== null) {
       lines.push(
         `### ${label}: ⚠️ not compared`,
@@ -223,13 +233,13 @@ export function renderRecordingChanges(changes: RecordingChanges[]): string {
       lines.push(`### ${label}`, "", `${shape}.`, "");
       if (entry.pinsChanged.length > 0) lines.push(`Pins moved: ${entry.pinsChanged.map((pin) => `\`${pin}\``).join(", ")}.`, "");
       lines.push(
-        "| Upstream rule | | Expected findings | Corpus files | Facts |",
+        "| Upstream rule | | Expected findings | Corpus answers | Facts |",
         "| --- | --- | --- | --- | --- |",
         ...entry.rules.slice(0, ROW_LIMIT).map((rule) => [
           `\`${rule.rule}\``,
           rule.status,
           rule.expectedAdded + rule.expectedRemoved === 0 ? "—" : `+${rule.expectedAdded} / −${rule.expectedRemoved}`,
-          rule.corpusFilesChanged === 0 ? "—" : String(rule.corpusFilesChanged),
+          rule.answersAdded + rule.answersRemoved + rule.answersChanged === 0 ? "—" : `+${rule.answersAdded} / −${rule.answersRemoved} / ~${rule.answersChanged}`,
           rule.factsChanged.length === 0 ? "—" : rule.factsChanged.map((field) => `\`${field}\``).join(", "),
         ].join(" | ")).map((row) => `| ${row} |`),
         ...(entry.rules.length > ROW_LIMIT ? [`| … | ${entry.rules.length - ROW_LIMIT} more | | | |`] : []),
