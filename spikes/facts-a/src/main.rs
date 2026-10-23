@@ -26,6 +26,7 @@ mod stagecheck;
 mod sql;
 mod trits;
 mod xexport;
+mod x6dump;
 mod typedefs;
 mod views;
 

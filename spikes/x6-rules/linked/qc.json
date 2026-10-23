@@ -1,0 +1,1848 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "data-layer-serverplan-quality",
+ "revision": 1,
+ "mode": "log",
+ "description": "x6-rules: declared-facts pack (disposable exploration).",
+ "scope": {
+  "include": [
+   "**/*.py"
+  ],
+  "exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/tmp/**",
+   "**/__pycache__/**"
+  ]
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "options": {
+     "oracleAnalyzer": {
+      "type": "boolean",
+      "default": false
+     },
+     "entryPoint": {
+      "type": "string",
+      "default": "all"
+     },
+     "sourceProvided": {
+      "type": "boolean",
+      "default": true
+     }
+    },
+    "language": "python",
+    "utils": {
+     "state-flow-source": {
+      "all": [
+       {
+        "kind": "module"
+       },
+       {
+        "any": [
+         {
+          "filePath": {
+           "regex": "(?:^|/)(?:impl/common/l2070_server_plan/|impl/common/l2070_server_plan/backend_profiles\\.py$)"
+          }
+         },
+         {
+          "has": {
+           "any": [
+            {
+             "any": [
+              {
+               "all": [
+                {
+                 "kind": "function_definition"
+                },
+                {
+                 "has": {
+                  "any": [
+                   {
+                    "all": [
+                     {
+                      "kind": "identifier"
+                     },
+                     {
+                      "regex": "^(?:compile|lower|post_op|pre_op|preprocess)$"
+                     }
+                    ]
+                   },
+                   {
+                    "all": [
+                     {
+                      "kind": "identifier"
+                     },
+                     {
+                      "regex": "_lazy$"
+                     }
+                    ]
+                   },
+                   {
+                    "any": [
+                     {
+                      "all": [
+                       {
+                        "kind": "identifier"
+                       },
+                       {
+                        "regex": "^(?:pending_pipeline_effects)$"
+                       }
+                      ]
+                     },
+                     {
+                      "all": [
+                       {
+                        "kind": "identifier"
+                       },
+                       {
+                        "regex": "^apply_.*_effect$"
+                       }
+                      ]
+                     }
+                    ]
+                   }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "name"
+                 }
+                }
+               ]
+              },
+              {
+               "all": [
+                {
+                 "kind": "function_definition"
+                },
+                {
+                 "inside": {
+                  "all": [
+                   {
+                    "kind": "decorated_definition"
+                   },
+                   {
+                    "has": {
+                     "all": [
+                      {
+                       "kind": "decorator"
+                      },
+                      {
+                       "has": {
+                        "any": [
+                         {
+                          "all": [
+                           {
+                            "kind": "identifier"
+                           },
+                           {
+                            "regex": "^(?:pure_lazy)$"
+                           }
+                          ]
+                         },
+                         {
+                          "all": [
+                           {
+                            "kind": "attribute"
+                           },
+                           {
+                            "has": {
+                             "all": [
+                              {
+                               "kind": "identifier"
+                              },
+                              {
+                               "regex": "^(?:pure_lazy)$"
+                              }
+                             ],
+                             "stopBy": "neighbor",
+                             "field": "attribute"
+                            }
+                           }
+                          ]
+                         }
+                        ],
+                        "stopBy": "neighbor"
+                       }
+                      }
+                     ],
+                     "stopBy": "neighbor"
+                    }
+                   }
+                  ],
+                  "stopBy": "neighbor"
+                 }
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "all": [
+              {
+               "kind": "function_definition"
+              },
+              {
+               "any": [
+                {
+                 "has": {
+                  "all": [
+                   {
+                    "kind": "identifier"
+                   },
+                   {
+                    "regex": "^(?:preprocess)$"
+                   }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "name"
+                 }
+                },
+                {
+                 "has": {
+                  "regex": "sql_builder$",
+                  "stopBy": "neighbor",
+                  "field": "name"
+                 }
+                },
+                {
+                 "has": {
+                  "has": {
+                   "any": [
+                    {
+                     "all": [
+                      {
+                       "kind": "identifier"
+                      },
+                      {
+                       "regex": "^(?:runtime_refs)$"
+                      }
+                     ]
+                    },
+                    {
+                     "regex": "RuntimeBuilderSpec"
+                    }
+                   ],
+                   "stopBy": "end"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "parameters"
+                 }
+                },
+                {
+                 "has": {
+                  "all": [
+                   {
+                    "kind": "call"
+                   },
+                   {
+                    "has": {
+                     "any": [
+                      {
+                       "all": [
+                        {
+                         "kind": "identifier"
+                        },
+                        {
+                         "regex": "^(?:CompiledStep)$"
+                        }
+                       ]
+                      },
+                      {
+                       "all": [
+                        {
+                         "kind": "attribute"
+                        },
+                        {
+                         "has": {
+                          "all": [
+                           {
+                            "kind": "identifier"
+                           },
+                           {
+                            "regex": "^(?:CompiledStep)$"
+                           }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                         }
+                        }
+                       ]
+                      }
+                     ],
+                     "stopBy": "neighbor",
+                     "field": "function"
+                    }
+                   }
+                  ],
+                  "stopBy": "end"
+                 }
+                }
+               ]
+              }
+             ]
+            }
+           ],
+           "stopBy": "end"
+          }
+         }
+        ]
+       }
+      ]
+     },
+     "state-function-source": {
+      "any": [
+       {
+        "all": [
+         {
+          "kind": "module"
+         },
+         {
+          "regex": "CompilationContext|CompiledStep|Hydrator|PipelineLifecycleEffect|PlanExecutor|ResolvedRefs|RuntimeBuilderName|RuntimeBuilderSpec|_lazy|_serverplan_runtime_txn|_serverplan_sql_conn|active_pipeline_txn_for_callbacks|builder_name|convert_row_to_model|create_usearch_index_class|def\\ compile|def\\ lower|def\\ post_op|def\\ pre_op|def\\ preprocess|deserialize_embedding|execute_runtime|execute_runtime_nested_steps|get_similarity_function|json\\.dumps|materialized_pipeline|np\\.array|pending_pipeline_effects|post_op_with_refs|pre_op_with_refs|runtime_builder|runtime_builder_post_op|runtime_hydrator|runtime_ref|runtime_refs"
+         }
+        ]
+       },
+       {
+        "all": [
+         {
+          "kind": "module"
+         },
+         {
+          "filePath": {
+           "regex": "^impl/common/l2070_server_plan/backend_profiles\\.py$"
+          }
+         }
+        ]
+       }
+      ]
+     },
+     "state-project-source": {
+      "all": [
+       {
+        "kind": "module"
+       },
+       {
+        "regex": "CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|def\\ compile|execute_runtime|execute_runtime_nested_steps|grammar_|in_server_plan_execution|pending_pipeline_effects|post_op|pre_op|preprocess|runtime_builder|runtime_ref|runtime_result"
+       }
+      ]
+     },
+     "quality-conditional-1-selected": {
+      "any": [
+       {
+        "kind": "module"
+       },
+       {
+        "kind": "class_definition"
+       },
+       {
+        "kind": "function_definition"
+       },
+       {
+        "kind": "decorated_definition"
+       },
+       {
+        "all": [
+         {
+          "kind": "argument_list"
+         },
+         {
+          "inside": {
+           "kind": "class_definition",
+           "stopBy": "neighbor"
+          }
+         }
+        ]
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "kind": "argument_list"
+          },
+          {
+           "inside": {
+            "kind": "class_definition",
+            "stopBy": "neighbor"
+           }
+          }
+         ],
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "inside": {
+         "any": [
+          {
+           "kind": "import_statement"
+          },
+          {
+           "kind": "import_from_statement"
+          }
+         ],
+         "stopBy": "end"
+        }
+       },
+       {
+        "kind": "import_statement"
+       },
+       {
+        "kind": "import_from_statement"
+       },
+       {
+        "inside": {
+         "any": [
+          {
+           "all": [
+            {
+             "kind": "function_definition"
+            },
+            {
+             "any": [
+              {
+               "has": {
+                "all": [
+                 {
+                  "kind": "identifier"
+                 },
+                 {
+                  "regex": "^(?:_lower_conditional_step|compile_sql_conditional_step|require_sql_physical_conditional)$"
+                 }
+                ],
+                "stopBy": "neighbor",
+                "field": "name"
+               }
+              },
+              {
+               "all": [
+                {
+                 "filePath": {
+                  "regex": "^(?:l2070_batching/conditional_step|impl/common/l2070_server_plan/steps/sql_conditional)\\.py$"
+                 }
+                },
+                {
+                 "has": {
+                  "all": [
+                   {
+                    "kind": "identifier"
+                   },
+                   {
+                    "regex": "^(?:compile|execution_role|level)$"
+                   }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "name"
+                 }
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "all": [
+            {
+             "kind": "function_definition"
+            },
+            {
+             "has": {
+              "regex": "\\bCallable\\b",
+              "stopBy": "neighbor",
+              "field": "parameters"
+             }
+            }
+           ]
+          }
+         ],
+         "stopBy": "end",
+         "field": "parameters"
+        }
+       },
+       {
+        "all": [
+         {
+          "any": [
+           {
+            "kind": "assignment"
+           },
+           {
+            "kind": "augmented_assignment"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "all": [
+              {
+               "kind": "attribute"
+              },
+              {
+               "has": {
+                "all": [
+                 {
+                  "kind": "identifier"
+                 },
+                 {
+                  "regex": "^(?:self)$"
+                 }
+                ],
+                "stopBy": "neighbor",
+                "field": "object"
+               }
+              }
+             ],
+             "stopBy": "neighbor",
+             "field": "left"
+            }
+           },
+           {
+            "has": {
+             "regex": "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps",
+             "stopBy": "neighbor",
+             "field": "right"
+            }
+           },
+           {
+            "all": [
+             {
+              "kind": "assignment"
+             },
+             {
+              "has": {
+               "pattern": "$_",
+               "stopBy": "neighbor",
+               "field": "type"
+              }
+             },
+             {
+              "regex": "\\bCallable\\b"
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "any": [
+            {
+             "kind": "assignment"
+            },
+            {
+             "kind": "augmented_assignment"
+            }
+           ]
+          },
+          {
+           "any": [
+            {
+             "has": {
+              "all": [
+               {
+                "kind": "attribute"
+               },
+               {
+                "has": {
+                 "all": [
+                  {
+                   "kind": "identifier"
+                  },
+                  {
+                   "regex": "^(?:self)$"
+                  }
+                 ],
+                 "stopBy": "neighbor",
+                 "field": "object"
+                }
+               }
+              ],
+              "stopBy": "neighbor",
+              "field": "left"
+             }
+            },
+            {
+             "has": {
+              "regex": "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps",
+              "stopBy": "neighbor",
+              "field": "right"
+             }
+            },
+            {
+             "all": [
+              {
+               "kind": "assignment"
+              },
+              {
+               "has": {
+                "pattern": "$_",
+                "stopBy": "neighbor",
+                "field": "type"
+               }
+              },
+              {
+               "regex": "\\bCallable\\b"
+              }
+             ]
+            }
+           ]
+          }
+         ],
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "kind": "assignment"
+          },
+          {
+           "has": {
+            "pattern": "$_",
+            "stopBy": "neighbor",
+            "field": "type"
+           }
+          },
+          {
+           "regex": "\\bCallable\\b"
+          }
+         ],
+         "stopBy": "end"
+        }
+       },
+       {
+        "all": [
+         {
+          "kind": "for_statement"
+         },
+         {
+          "has": {
+           "regex": "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps",
+           "stopBy": "neighbor",
+           "field": "right"
+          }
+         }
+        ]
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "kind": "for_statement"
+          },
+          {
+           "has": {
+            "regex": "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps",
+            "stopBy": "neighbor",
+            "field": "right"
+           }
+          }
+         ],
+         "stopBy": "end",
+         "field": "left"
+        }
+       },
+       {
+        "all": [
+         {
+          "any": [
+           {
+            "kind": "if_statement"
+           },
+           {
+            "kind": "elif_clause"
+           },
+           {
+            "kind": "conditional_expression"
+           },
+           {
+            "kind": "match_statement"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+             "stopBy": "neighbor",
+             "field": "condition"
+            }
+           },
+           {
+            "has": {
+             "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+             "stopBy": "neighbor",
+             "field": "subject"
+            }
+           },
+           {
+            "all": [
+             {
+              "kind": "conditional_expression"
+             },
+             {
+              "regex": "\\b(?:backend_type|is_sql_backend)\\b"
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "any": [
+            {
+             "kind": "if_statement"
+            },
+            {
+             "kind": "elif_clause"
+            },
+            {
+             "kind": "conditional_expression"
+            },
+            {
+             "kind": "match_statement"
+            }
+           ]
+          },
+          {
+           "any": [
+            {
+             "has": {
+              "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+              "stopBy": "neighbor",
+              "field": "condition"
+             }
+            },
+            {
+             "has": {
+              "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+              "stopBy": "neighbor",
+              "field": "subject"
+             }
+            },
+            {
+             "all": [
+              {
+               "kind": "conditional_expression"
+              },
+              {
+               "regex": "\\b(?:backend_type|is_sql_backend)\\b"
+              }
+             ]
+            }
+           ]
+          }
+         ],
+         "stopBy": "end",
+         "field": "condition"
+        }
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "any": [
+            {
+             "kind": "if_statement"
+            },
+            {
+             "kind": "elif_clause"
+            },
+            {
+             "kind": "conditional_expression"
+            },
+            {
+             "kind": "match_statement"
+            }
+           ]
+          },
+          {
+           "any": [
+            {
+             "has": {
+              "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+              "stopBy": "neighbor",
+              "field": "condition"
+             }
+            },
+            {
+             "has": {
+              "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+              "stopBy": "neighbor",
+              "field": "subject"
+             }
+            },
+            {
+             "all": [
+              {
+               "kind": "conditional_expression"
+              },
+              {
+               "regex": "\\b(?:backend_type|is_sql_backend)\\b"
+              }
+             ]
+            }
+           ]
+          }
+         ],
+         "stopBy": "end",
+         "field": "subject"
+        }
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "kind": "conditional_expression"
+          },
+          {
+           "all": [
+            {
+             "any": [
+              {
+               "kind": "if_statement"
+              },
+              {
+               "kind": "elif_clause"
+              },
+              {
+               "kind": "conditional_expression"
+              },
+              {
+               "kind": "match_statement"
+              }
+             ]
+            },
+            {
+             "any": [
+              {
+               "has": {
+                "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+                "stopBy": "neighbor",
+                "field": "condition"
+               }
+              },
+              {
+               "has": {
+                "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+                "stopBy": "neighbor",
+                "field": "subject"
+               }
+              },
+              {
+               "all": [
+                {
+                 "kind": "conditional_expression"
+                },
+                {
+                 "regex": "\\b(?:backend_type|is_sql_backend)\\b"
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ],
+         "stopBy": "end"
+        }
+       },
+       {
+        "all": [
+         {
+          "kind": "call"
+         },
+         {
+          "has": {
+           "any": [
+            {
+             "all": [
+              {
+               "kind": "identifier"
+              },
+              {
+               "regex": "^(?:compile)$"
+              }
+             ]
+            },
+            {
+             "all": [
+              {
+               "kind": "attribute"
+              },
+              {
+               "has": {
+                "all": [
+                 {
+                  "kind": "identifier"
+                 },
+                 {
+                  "regex": "^(?:compile)$"
+                 }
+                ],
+                "stopBy": "neighbor",
+                "field": "attribute"
+               }
+              }
+             ]
+            }
+           ],
+           "stopBy": "neighbor",
+           "field": "function"
+          }
+         }
+        ]
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "kind": "call"
+          },
+          {
+           "has": {
+            "any": [
+             {
+              "all": [
+               {
+                "kind": "identifier"
+               },
+               {
+                "regex": "^(?:compile)$"
+               }
+              ]
+             },
+             {
+              "all": [
+               {
+                "kind": "attribute"
+               },
+               {
+                "has": {
+                 "all": [
+                  {
+                   "kind": "identifier"
+                  },
+                  {
+                   "regex": "^(?:compile)$"
+                  }
+                 ],
+                 "stopBy": "neighbor",
+                 "field": "attribute"
+                }
+               }
+              ]
+             }
+            ],
+            "stopBy": "neighbor",
+            "field": "function"
+           }
+          }
+         ],
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "kind": "function_definition"
+          },
+          {
+           "any": [
+            {
+             "has": {
+              "all": [
+               {
+                "kind": "identifier"
+               },
+               {
+                "regex": "^(?:_lower_conditional_step|compile_sql_conditional_step|require_sql_physical_conditional)$"
+               }
+              ],
+              "stopBy": "neighbor",
+              "field": "name"
+             }
+            },
+            {
+             "all": [
+              {
+               "filePath": {
+                "regex": "^(?:l2070_batching/conditional_step|impl/common/l2070_server_plan/steps/sql_conditional)\\.py$"
+               }
+              },
+              {
+               "has": {
+                "all": [
+                 {
+                  "kind": "identifier"
+                 },
+                 {
+                  "regex": "^(?:compile|execution_role|level)$"
+                 }
+                ],
+                "stopBy": "neighbor",
+                "field": "name"
+               }
+              }
+             ]
+            }
+           ]
+          }
+         ],
+         "stopBy": "end"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "quality-conditional-1",
+   "relational": {
+    "inputs": {
+     "py_nodes": {
+      "evidence": {
+       "as": "row",
+       "query": {
+        "ast": {
+         "language": "python",
+         "syntax": "valid",
+         "rule": {
+          "all": [
+           {
+            "not": {
+             "any": [
+              {
+               "kind": "comment"
+              },
+              {
+               "kind": "string_start"
+              },
+              {
+               "kind": "string_content"
+              },
+              {
+               "kind": "string_end"
+              },
+              {
+               "kind": "escape_sequence"
+              },
+              {
+               "kind": "line_continuation"
+              }
+             ]
+            }
+           },
+           {
+            "pattern": "$NODE"
+           },
+           {
+            "any": [
+             {
+              "inside": {
+               "pattern": "$PARENT",
+               "stopBy": "neighbor"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$NAME",
+               "stopBy": "neighbor",
+               "field": "name"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$LEFT",
+               "stopBy": "neighbor",
+               "field": "left"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$RIGHT",
+               "stopBy": "neighbor",
+               "field": "right"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$VALUE",
+               "stopBy": "neighbor",
+               "field": "value"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$TYPE",
+               "stopBy": "neighbor",
+               "field": "type"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$FUNCTION",
+               "stopBy": "neighbor",
+               "field": "function"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$ARGUMENTS",
+               "stopBy": "neighbor",
+               "field": "arguments"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$OBJECT",
+               "stopBy": "neighbor",
+               "field": "object"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$ATTRIBUTE",
+               "stopBy": "neighbor",
+               "field": "attribute"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$BODY",
+               "stopBy": "neighbor",
+               "field": "body"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$PARAMETERS",
+               "stopBy": "neighbor",
+               "field": "parameters"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$RETURN_TYPE",
+               "stopBy": "neighbor",
+               "field": "return_type"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$CONDITION",
+               "stopBy": "neighbor",
+               "field": "condition"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$SUBJECT",
+               "stopBy": "neighbor",
+               "field": "subject"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$ALIAS",
+               "stopBy": "neighbor",
+               "field": "alias"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           },
+           {
+            "any": [
+             {
+              "has": {
+               "pattern": "$MODULE_NAME",
+               "stopBy": "neighbor",
+               "field": "module_name"
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           }
+          ]
+         }
+        }
+       },
+       "project": {
+        "kind": "capture.NODE.kind",
+        "text": "capture.NODE",
+        "line": "capture.NODE.startLine",
+        "parent_start": "capture.PARENT.startByte",
+        "parent_end": "capture.PARENT.endByte",
+        "parent_kind": "capture.PARENT.kind",
+        "name_start": "capture.NAME.startByte",
+        "name_end": "capture.NAME.endByte",
+        "name_kind": "capture.NAME.kind",
+        "name_source": "capture.NAME",
+        "left_start": "capture.LEFT.startByte",
+        "left_end": "capture.LEFT.endByte",
+        "left_kind": "capture.LEFT.kind",
+        "right_start": "capture.RIGHT.startByte",
+        "right_end": "capture.RIGHT.endByte",
+        "right_kind": "capture.RIGHT.kind",
+        "right_source": "capture.RIGHT",
+        "value_start": "capture.VALUE.startByte",
+        "value_end": "capture.VALUE.endByte",
+        "value_kind": "capture.VALUE.kind",
+        "type_start": "capture.TYPE.startByte",
+        "type_end": "capture.TYPE.endByte",
+        "type_kind": "capture.TYPE.kind",
+        "function_start": "capture.FUNCTION.startByte",
+        "function_end": "capture.FUNCTION.endByte",
+        "function_kind": "capture.FUNCTION.kind",
+        "arguments_start": "capture.ARGUMENTS.startByte",
+        "arguments_end": "capture.ARGUMENTS.endByte",
+        "arguments_kind": "capture.ARGUMENTS.kind",
+        "object_start": "capture.OBJECT.startByte",
+        "object_end": "capture.OBJECT.endByte",
+        "object_kind": "capture.OBJECT.kind",
+        "object_source": "capture.OBJECT",
+        "attribute_start": "capture.ATTRIBUTE.startByte",
+        "attribute_end": "capture.ATTRIBUTE.endByte",
+        "attribute_kind": "capture.ATTRIBUTE.kind",
+        "attribute_source": "capture.ATTRIBUTE",
+        "body_start": "capture.BODY.startByte",
+        "body_end": "capture.BODY.endByte",
+        "body_kind": "capture.BODY.kind",
+        "parameters_start": "capture.PARAMETERS.startByte",
+        "parameters_end": "capture.PARAMETERS.endByte",
+        "parameters_kind": "capture.PARAMETERS.kind",
+        "return_type_start": "capture.RETURN_TYPE.startByte",
+        "return_type_end": "capture.RETURN_TYPE.endByte",
+        "return_type_kind": "capture.RETURN_TYPE.kind",
+        "condition_start": "capture.CONDITION.startByte",
+        "condition_end": "capture.CONDITION.endByte",
+        "condition_kind": "capture.CONDITION.kind",
+        "subject_start": "capture.SUBJECT.startByte",
+        "subject_end": "capture.SUBJECT.endByte",
+        "subject_kind": "capture.SUBJECT.kind",
+        "alias_start": "capture.ALIAS.startByte",
+        "alias_end": "capture.ALIAS.endByte",
+        "alias_kind": "capture.ALIAS.kind",
+        "alias_source": "capture.ALIAS",
+        "module_name_start": "capture.MODULE_NAME.startByte",
+        "module_name_end": "capture.MODULE_NAME.endByte",
+        "module_name_kind": "capture.MODULE_NAME.kind",
+        "module_name_source": "capture.MODULE_NAME"
+       }
+      }
+     },
+     "sel_qc": {
+      "evidence": {
+       "as": "row",
+       "query": {
+        "ast": {
+         "language": "python",
+         "syntax": "valid",
+         "rule": {
+          "all": [
+           {
+            "not": {
+             "any": [
+              {
+               "kind": "comment"
+              },
+              {
+               "kind": "string_start"
+              },
+              {
+               "kind": "string_content"
+              },
+              {
+               "kind": "string_end"
+              },
+              {
+               "kind": "escape_sequence"
+              },
+              {
+               "kind": "line_continuation"
+              }
+             ]
+            }
+           },
+           {
+            "$option": "entryPoint",
+            "cases": {
+             "all": {
+              "filePath": {
+               "regex": "(?s).*"
+              }
+             },
+             "conditional_architecture_findings": {
+              "filePath": {
+               "regex": "(?s).*"
+              }
+             }
+            },
+            "default": {
+             "filePath": {
+              "regex": "\\b\\B"
+             }
+            }
+           },
+           {
+            "matches": "quality-conditional-1-selected"
+           },
+           {
+            "pattern": "$NODE"
+           },
+           {
+            "any": [
+             {
+              "inside": {
+               "all": [
+                {
+                 "matches": "quality-conditional-1-selected"
+                },
+                {
+                 "pattern": "$ANCESTOR"
+                }
+               ],
+               "stopBy": {
+                "matches": "quality-conditional-1-selected"
+               }
+              }
+             },
+             {
+              "pattern": "$_"
+             }
+            ]
+           }
+          ]
+         }
+        }
+       },
+       "project": {
+        "kind": "capture.NODE.kind",
+        "ancestor_start": "capture.ANCESTOR.startByte",
+        "ancestor_end": "capture.ANCESTOR.endByte",
+        "ancestor_kind": "capture.ANCESTOR.kind"
+       }
+      }
+     }
+    },
+    "stages": [
+     {
+      "name": "syntax_rows",
+      "query": "SELECT x.__path,x.__start,x.__end,x.kind,CASE WHEN x.grp IN (4) THEN '' ELSE x.text END AS text,x.line,x.parent_start,x.parent_end,x.parent_kind,x.ancestor_start,x.ancestor_end,x.ancestor_kind,CASE WHEN x.grp IN (3,4) THEN x.name_start END AS name_start,CASE WHEN x.grp IN (3,4) THEN x.name_source END AS name_source,CASE WHEN x.grp IN (3,4) THEN x.left_start END AS left_start,CASE WHEN x.grp IN (3,4) THEN x.left_end END AS left_end,CASE WHEN x.grp IN (3,4) THEN x.left_kind END AS left_kind,CASE WHEN x.grp IN (3,4) THEN x.right_start END AS right_start,CASE WHEN x.grp IN (3,4) THEN x.right_end END AS right_end,CASE WHEN x.grp IN (3,4) THEN x.right_kind END AS right_kind,CASE WHEN x.grp IN (3,4) THEN x.right_source END AS right_source,CASE WHEN x.grp IN (3,4) THEN x.type_start END AS type_start,CASE WHEN x.grp IN (3,4) THEN x.type_end END AS type_end,CASE WHEN x.grp IN (3,4) THEN x.type_kind END AS type_kind,CASE WHEN x.grp IN (1,3) THEN x.function_start END AS function_start,CASE WHEN x.grp IN (1,3) THEN x.function_end END AS function_end,CASE WHEN x.grp IN (1,3) THEN x.function_kind END AS function_kind,CASE WHEN x.grp IN (2,3) THEN x.object_start END AS object_start,CASE WHEN x.grp IN (2,3) THEN x.object_end END AS object_end,CASE WHEN x.grp IN (2,3) THEN x.object_kind END AS object_kind,CASE WHEN x.grp IN (2,3) THEN x.object_source END AS object_source,CASE WHEN x.grp IN (2,3) THEN x.attribute_start END AS attribute_start,CASE WHEN x.grp IN (2,3) THEN x.attribute_source END AS attribute_source,CASE WHEN x.grp IN (3,4) THEN x.body_start END AS body_start,CASE WHEN x.grp IN (3,4) THEN x.body_end END AS body_end,CASE WHEN x.grp IN (3,4) THEN x.body_kind END AS body_kind,CASE WHEN x.grp IN (3,4) THEN x.parameters_start END AS parameters_start,CASE WHEN x.grp IN (3,4) THEN x.parameters_end END AS parameters_end,CASE WHEN x.grp IN (3,4) THEN x.parameters_kind END AS parameters_kind,CASE WHEN x.grp IN (3,4) THEN x.condition_start END AS condition_start,CASE WHEN x.grp IN (3,4) THEN x.condition_end END AS condition_end,CASE WHEN x.grp IN (3,4) THEN x.condition_kind END AS condition_kind,CASE WHEN x.grp IN (3,4) THEN x.subject_start END AS subject_start,CASE WHEN x.grp IN (3,4) THEN x.subject_end END AS subject_end,CASE WHEN x.grp IN (3,4) THEN x.subject_kind END AS subject_kind,CASE WHEN x.grp IN (3) THEN x.alias_source END AS alias_source,CASE WHEN x.grp IN (3) THEN x.module_name_start END AS module_name_start,CASE WHEN x.grp IN (3) THEN x.module_name_source END AS module_name_source FROM (SELECT n.__path,n.__start,n.__end,n.kind,n.text,n.line,n.parent_start,n.parent_end,n.parent_kind,s.ancestor_start AS ancestor_start,s.ancestor_end AS ancestor_end,s.ancestor_kind AS ancestor_kind,n.name_start,n.name_source,n.left_start,n.left_end,n.left_kind,n.right_start,n.right_end,n.right_kind,n.right_source,n.type_start,n.type_end,n.type_kind,n.function_start,n.function_end,n.function_kind,n.object_start,n.object_end,n.object_kind,n.object_source,n.attribute_start,n.attribute_source,n.body_start,n.body_end,n.body_kind,n.parameters_start,n.parameters_end,n.parameters_kind,n.condition_start,n.condition_end,n.condition_kind,n.subject_start,n.subject_end,n.subject_kind,n.alias_source,n.module_name_start,n.module_name_source,CASE WHEN n.kind IN ('identifier','concatenated_string','string') THEN 0 WHEN n.kind IN ('call') THEN 1 WHEN n.kind IN ('attribute') THEN 2 WHEN n.kind IN ('argument_list','assignment','augmented_assignment','block','case_clause','class_definition','decorated_definition','elif_clause','else_clause','expression_statement','for_statement','function_definition','if_statement','keyword_argument','match_statement','module','return_statement') THEN 4 ELSE 3 END AS grp FROM sel_qc s JOIN py_nodes n ON n.__path=s.__path AND n.__start=s.__start AND n.__end=s.__end AND n.kind=s.kind) x"
+     },
+     {
+      "name": "node_ordinals",
+      "query": "SELECT __path,__start,__end,kind,row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1 AS ordinal FROM syntax_rows",
+      "indexes": [
+       [
+        "__path",
+        "__start",
+        "__end",
+        "kind"
+       ]
+      ]
+     },
+     {
+      "name": "nodes",
+      "query": "SELECT n.*,n.kind||':'||n.__start||':'||n.__end AS id,\n n.parent_kind||':'||n.parent_start||':'||n.parent_end AS parent,\n n.ancestor_kind||':'||n.ancestor_start||':'||n.ancestor_end AS edge_parent,o.ordinal\n FROM syntax_rows n JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ],
+       [
+        "__path",
+        "parent"
+       ],
+       [
+        "__path",
+        "kind"
+       ],
+       [
+        "__path",
+        "__start",
+        "__end"
+       ]
+      ]
+     },
+     {
+      "name": "edges",
+      "query": "SELECT __path,edge_parent AS src,id AS dst,ordinal FROM nodes WHERE edge_parent IS NOT NULL",
+      "indexes": [
+       [
+        "__path",
+        "src",
+        "dst"
+       ]
+      ]
+     },
+     {
+      "name": "functions",
+      "query": "SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='function_definition'",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ],
+       [
+        "__path",
+        "name"
+       ]
+      ]
+     },
+     {
+      "name": "ownership",
+      "query": "WITH RECURSIVE owned(__path,id,fn,cls,top_fn) AS (\n SELECT n.__path,n.id,CASE WHEN n.kind='function_definition' THEN n.id END,CASE WHEN n.kind='class_definition' THEN n.id END,CASE WHEN n.kind='function_definition' THEN n.id END FROM nodes n\n LEFT JOIN nodes parent ON parent.__path=n.__path AND parent.id=n.edge_parent WHERE parent.id IS NULL\n UNION ALL SELECT child.__path,child.id,CASE WHEN child.kind='function_definition' THEN child.id ELSE owned.fn END,CASE WHEN child.kind='class_definition' THEN child.id ELSE owned.cls END,CASE WHEN owned.top_fn IS NULL AND child.kind='function_definition' THEN child.id ELSE owned.top_fn END\n FROM owned JOIN edges e ON e.__path=owned.__path AND e.src=owned.id\n JOIN nodes child ON child.__path=e.__path AND child.id=e.dst) SELECT * FROM owned",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ],
+       [
+        "__path",
+        "fn"
+       ]
+      ]
+     },
+     {
+      "name": "classes",
+      "query": "SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='class_definition'",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ],
+       [
+        "__path",
+        "name"
+       ]
+      ]
+     },
+     {
+      "name": "attributes",
+      "query": "SELECT n.*,n.attribute_source AS attr,n.object_kind||':'||n.object_start||':'||n.object_end AS object,n.object_source AS object_text FROM nodes n WHERE n.kind='attribute'",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ]
+      ]
+     },
+     {
+      "name": "calls",
+      "query": "SELECT n.*,f.id AS callee_id,f.kind AS callee_kind,f.text AS full_callee,coalesce(a.attr,f.text) AS callee,a.object AS receiver FROM nodes n JOIN nodes f ON f.__path=n.__path AND f.id=n.function_kind||':'||n.function_start||':'||n.function_end LEFT JOIN attributes a ON a.__path=f.__path AND a.id=f.id WHERE n.kind='call'",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ],
+       [
+        "__path",
+        "callee"
+       ]
+      ]
+     },
+     {
+      "name": "descendant_roots",
+      "query": "SELECT __path,id FROM (WITH RECURSIVE roots(__path,id) AS (SELECT __path,id FROM nodes WHERE kind='type' OR kind='assignment' AND type_start IS NOT NULL OR kind='function_definition' AND (name_source='require_sql_physical_conditional' OR name_source='compile_sql_conditional_step' OR name_source='compile' AND rx_matches(__path,'(?:^|/)l2070_batching/conditional_step\\.py$')) UNION SELECT __path,left_kind||':'||left_start||':'||left_end FROM nodes WHERE kind IN ('assignment','for_statement') UNION SELECT __path,condition_kind||':'||condition_start||':'||condition_end FROM nodes WHERE kind IN ('if_statement','elif_clause') UNION SELECT __path,subject_kind||':'||subject_start||':'||subject_end FROM nodes WHERE kind='match_statement' UNION SELECT child.__path,child.id FROM nodes parent JOIN nodes child ON child.__path=parent.__path AND child.parent=parent.id AND child.ordinal=1 WHERE parent.kind='conditional_expression') SELECT __path,id FROM roots) WHERE __path IS NOT NULL AND id IS NOT NULL",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ]
+      ]
+     },
+     {
+      "name": "descendants",
+      "reachability": {
+       "roots": "SELECT __path,id FROM descendant_roots",
+       "edges": "WITH RECURSIVE demanded(__path,id) AS (SELECT __path,id FROM descendant_roots UNION SELECT d.__path,e.dst FROM demanded d CROSS JOIN edges e ON e.__path=d.__path AND e.src=d.id) SELECT e.__path,e.src,e.dst FROM demanded d CROSS JOIN edges e ON e.__path=d.__path AND e.src=d.id",
+       "graph": "forest"
+      }
+     },
+     {
+      "name": "returns",
+      "query": "SELECT n.*,v.id AS value,v.kind AS expr_kind,v.text AS expr_text,o.fn FROM nodes n JOIN nodes v ON v.__path=n.__path AND v.parent=n.id LEFT JOIN ownership o ON o.__path=n.__path AND o.id=n.id WHERE n.kind='return_statement'",
+      "indexes": [
+       [
+        "__path",
+        "fn"
+       ],
+       [
+        "__path",
+        "value"
+       ],
+       [
+        "__path",
+        "__start",
+        "__end"
+       ]
+      ]
+     },
+     {
+      "name": "assignments",
+      "query": "SELECT n.*,l.id AS target,l.kind AS target_kind,l.text AS target_text,r.id AS value,r.kind AS expr_kind,r.text AS expr_text,o.fn FROM nodes n JOIN nodes l ON l.__path=n.__path AND l.id=n.left_kind||':'||n.left_start||':'||n.left_end LEFT JOIN nodes r ON r.__path=n.__path AND r.id=n.right_kind||':'||n.right_start||':'||n.right_end LEFT JOIN ownership o ON o.__path=n.__path AND o.id=n.id WHERE n.kind IN ('assignment','augmented_assignment')",
+      "indexes": [
+       [
+        "__path",
+        "fn",
+        "target_text"
+       ],
+       [
+        "__path",
+        "id"
+       ],
+       [
+        "__path",
+        "value"
+       ]
+      ]
+     },
+     {
+      "name": "parameters",
+      "query": "SELECT f.__path,f.id AS fn,p.id,p.kind,p.text,n.text AS name,p.type_kind||':'||p.type_start||':'||p.type_end AS annotation,\n row_number() OVER(PARTITION BY f.__path,f.id ORDER BY p.__start)-1 AS position FROM functions f JOIN nodes p ON p.__path=f.__path AND p.parent=f.parameters_kind||':'||f.parameters_start||':'||f.parameters_end JOIN nodes n ON n.__path=p.__path AND (n.id=p.id AND p.kind='identifier' OR n.parent=p.id AND n.ordinal=0 AND n.kind='identifier')\n WHERE p.kind IN ('identifier','typed_parameter','default_parameter','typed_default_parameter')",
+      "indexes": [
+       [
+        "__path",
+        "fn",
+        "name"
+       ]
+      ]
+     },
+     {
+      "name": "module_names",
+      "query": "SELECT __path,replace(rx_extract(__path,'(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$',1),'/','.') AS qualified FROM nodes WHERE kind='module' AND rx_matches(__path,'(?:^|/)(?:impl|l2070_batching|scripts)/') UNION SELECT __path,rx_extract(__path,'(?:^|/)([^/]+)\\.py$',1) FROM nodes WHERE kind='module' AND NOT rx_matches(__path,'(?:^|/)(?:impl|l2070_batching|scripts)/')",
+      "indexes": [
+       [
+        "__path"
+       ]
+      ]
+     },
+     {
+      "name": "aliases",
+      "query": "SELECT n.__path,n.__start,CASE WHEN n.kind='aliased_import' THEN n.alias_source WHEN parent.kind='import_statement' THEN rx_extract(n.text,'^([\\w]+)',1) ELSE n.text END AS local,CASE WHEN parent.kind='import_from_statement' THEN trim(parent.module_name_source,'.')||'.'||CASE WHEN n.kind='aliased_import' THEN n.name_source ELSE n.text END ELSE CASE WHEN n.kind='aliased_import' THEN n.name_source ELSE n.text END END AS origin FROM nodes n JOIN nodes parent ON parent.__path=n.__path AND parent.id=n.parent WHERE parent.kind IN ('import_statement','import_from_statement') AND n.kind IN ('dotted_name','aliased_import') AND n.__start!=coalesce(parent.module_name_start,-1)",
+      "indexes": [
+       [
+        "__path",
+        "local",
+        "__start"
+       ]
+      ]
+     },
+     {
+      "name": "conditional_classes",
+      "query": "WITH latest AS MATERIALIZED (SELECT __path,name,max(__start) AS __start FROM classes GROUP BY __path,name) SELECT c.*,module.qualified||'.'||c.name AS qualified_name,1 AS chosen FROM latest w JOIN classes c ON c.__path=w.__path AND c.name=w.name AND c.__start=w.__start JOIN module_names module ON module.__path=c.__path",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ],
+       [
+        "qualified_name"
+       ]
+      ]
+     },
+     {
+      "name": "class_bases",
+      "query": "SELECT c.__path,c.id AS cls,coalesce((SELECT alias.origin FROM aliases alias WHERE alias.__path=c.__path AND alias.local=rx_extract(b.text,'^([\\w]+)',1) AND alias.__start<c.__start ORDER BY alias.__start DESC LIMIT 1),rx_extract(b.text,'^([\\w]+)',1))||coalesce(rx_extract(b.text,'^[\\w]+((?:\\.[\\w]+)*)',1),'') AS name FROM conditional_classes c JOIN nodes arg ON arg.__path=c.__path AND arg.parent=c.id AND arg.kind='argument_list' JOIN nodes b ON b.__path=arg.__path AND b.parent=arg.id WHERE b.kind IN ('identifier','attribute','call')",
+      "indexes": [
+       [
+        "__path",
+        "cls",
+        "name"
+       ]
+      ]
+     },
+     {
+      "name": "derived_conditionals",
+      "query": "WITH RECURSIVE derived(name) AS (SELECT 'l2070_batching.conditional_step.ConditionalStep' UNION SELECT c.qualified_name FROM conditional_classes c JOIN class_bases b ON b.__path=c.__path AND b.cls=c.id JOIN derived d ON d.name=b.name) SELECT * FROM derived",
+      "indexes": [
+       [
+        "name"
+       ]
+      ]
+     },
+     {
+      "name": "conditional_methods",
+      "query": "WITH latest AS MATERIALIZED (SELECT f.__path,own.cls,f.name,max(f.__start) AS __start FROM functions f JOIN ownership own ON own.__path=f.__path AND own.id=f.id JOIN conditional_classes c ON c.__path=f.__path AND c.id=own.cls GROUP BY f.__path,own.cls,f.name) SELECT f.*,c.id AS cls,c.name AS class_name,c.qualified_name,1 AS chosen FROM latest w JOIN functions f ON f.__path=w.__path AND f.name=w.name AND f.__start=w.__start JOIN conditional_classes c ON c.__path=w.__path AND c.id=w.cls",
+      "indexes": [
+       [
+        "__path",
+        "cls",
+        "name"
+       ],
+       [
+        "__path",
+        "id"
+       ]
+      ]
+     },
+     {
+      "name": "conditional_functions",
+      "query": "WITH latest AS MATERIALIZED (SELECT f.__path,f.name,max(f.__start) AS __start FROM functions f JOIN ownership own ON own.__path=f.__path AND own.id=f.id WHERE own.cls IS NULL GROUP BY f.__path,f.name) SELECT f.*,module.qualified||'.'||f.name AS qualified_name,1 AS chosen FROM latest w JOIN functions f ON f.__path=w.__path AND f.name=w.name AND f.__start=w.__start JOIN module_names module ON module.__path=f.__path",
+      "indexes": [
+       [
+        "qualified_name"
+       ]
+      ]
+     },
+     {
+      "name": "function_colors",
+      "query": "SELECT f.__path,f.id,EXISTS(SELECT 1 FROM descendants d JOIN nodes a ON a.__path=d.__path AND a.id=d.node WHERE d.__path=f.__path AND d.root=f.id AND a.kind='identifier' AND a.text='BackendType') OR EXISTS(SELECT 1 FROM descendants d JOIN attributes a ON a.__path=d.__path AND a.id=d.node WHERE d.__path=f.__path AND d.root=f.id AND a.attr IN ('backend_type','is_sql_backend','dialect')) AND EXISTS(SELECT 1 FROM descendants d JOIN nodes branch ON branch.__path=d.__path AND branch.id=d.node WHERE d.__path=f.__path AND d.root=f.id AND branch.kind IN ('if_statement','elif_clause','conditional_expression','match_statement')) AS backend_selection,EXISTS(SELECT 1 FROM descendants d JOIN nodes raised ON raised.__path=d.__path AND raised.id=d.node WHERE d.__path=f.__path AND d.root=f.id AND raised.kind='raise_statement' AND rx_matches(raised.text,'^raise\\s+TypeError(?:\\s*\\(|\\s*$)')) AS raises_type_error FROM functions f WHERE f.name='require_sql_physical_conditional' OR f.name='compile_sql_conditional_step' OR f.name='compile' AND rx_matches(f.__path,'(?:^|/)l2070_batching/conditional_step\\.py$')",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ]
+      ]
+     },
+     {
+      "name": "contract_blocks",
+      "query": "SELECT n.*,row_number() OVER(PARTITION BY n.__path ORDER BY n.__end-n.__start,n.__start) AS sequence FROM nodes n JOIN ownership own ON own.__path=n.__path AND own.id=n.id JOIN conditional_methods m ON m.__path=own.__path AND m.id=own.fn WHERE n.kind='block' AND m.name='require_sql_physical_conditional'",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ],
+       [
+        "__path",
+        "sequence"
+       ]
+      ]
+     },
+     {
+      "name": "callable_names",
+      "query": "SELECT n.* FROM nodes n LEFT JOIN nodes parent ON parent.__path=n.__path AND parent.id=n.parent WHERE n.kind='identifier' AND n.text='Callable' AND NOT (parent.kind='attribute' AND parent.attribute_start=n.__start) AND NOT (parent.kind IN ('keyword_argument','function_definition','class_definition') AND parent.name_start=n.__start) AND parent.kind NOT IN ('parameters','lambda_parameters','list_splat_pattern','dictionary_splat_pattern')",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ]
+      ]
+     },
+     {
+      "name": "callable_parameters",
+      "query": "SELECT DISTINCT p.__path,p.fn,p.name FROM parameters p JOIN descendants d ON d.__path=p.__path AND d.root=p.annotation JOIN callable_names atom ON atom.__path=d.__path AND atom.id=d.node",
+      "indexes": [
+       [
+        "__path",
+        "fn",
+        "name"
+       ]
+      ]
+     },
+     {
+      "name": "block_results",
+      "query": "WITH RECURSIVE fold(__path,sequence,state) AS (SELECT DISTINCT __path,0,'{}' FROM contract_blocks UNION ALL SELECT b.__path,b.sequence,substr(fold.state,1,length(fold.state)-1)||CASE WHEN length(fold.state)>2 THEN ',' ELSE '' END||json_quote(b.id)||':'||CAST((EXISTS(SELECT 1 FROM nodes stmt WHERE stmt.__path=b.__path AND stmt.parent=b.id AND stmt.__start<=coalesce((SELECT min(barrier.__start) FROM nodes barrier WHERE barrier.__path=b.__path AND barrier.parent=b.id AND barrier.kind IN ('raise_statement','return_statement')),b.__end) AND (stmt.kind='raise_statement' AND rx_matches(stmt.text,'^raise\\s+TypeError(?:\\s*\\(|\\s*$)') OR stmt.kind='if_statement' AND EXISTS(SELECT 1 FROM nodes alternative WHERE alternative.__path=stmt.__path AND alternative.parent=stmt.id AND alternative.kind='else_clause') AND NOT EXISTS(SELECT 1 FROM contract_blocks child WHERE child.__path=stmt.__path AND (child.parent=stmt.id OR EXISTS(SELECT 1 FROM nodes arm WHERE arm.__path=child.__path AND arm.id=child.parent AND arm.parent=stmt.id AND arm.kind IN ('elif_clause','else_clause'))) AND coalesce(json_extract(fold.state,'$.\"'||child.id||'\"'),0)!=1) OR stmt.kind='match_statement' AND EXISTS(SELECT 1 FROM nodes arm WHERE arm.__path=stmt.__path AND arm.kind='case_clause' AND arm.__start>stmt.__start AND arm.__end<=stmt.__end) AND NOT EXISTS(SELECT 1 FROM contract_blocks child JOIN nodes arm ON arm.__path=child.__path AND arm.id=child.parent AND arm.kind='case_clause' WHERE arm.__path=stmt.__path AND arm.__start>stmt.__start AND arm.__end<=stmt.__end AND coalesce(json_extract(fold.state,'$.\"'||child.id||'\"'),0)!=1)))) AS TEXT)||'}' FROM fold JOIN contract_blocks b ON b.__path=fold.__path AND b.sequence=fold.sequence+1) SELECT __path,state FROM fold WHERE sequence=(SELECT max(b.sequence) FROM contract_blocks b WHERE b.__path=fold.__path)",
+      "indexes": [
+       [
+        "__path"
+       ]
+      ]
+     },
+     {
+      "name": "always_raises",
+      "query": "SELECT m.__path,m.id FROM conditional_methods m JOIN block_results b ON b.__path=m.__path WHERE m.name='require_sql_physical_conditional' AND json_extract(b.state,'$.\"'||m.body_kind||':'||m.body_start||':'||m.body_end||'\"')=1",
+      "indexes": [
+       [
+        "__path",
+        "id"
+       ]
+      ]
+     },
+     {
+      "name": "integer_returns",
+      "query": "SELECT m.__path,m.cls,m.name,n.kind,n.text,row_number() OVER(PARTITION BY m.__path,m.cls,m.name ORDER BY n.__start) AS ordinal FROM conditional_methods m JOIN returns r ON r.__path=m.__path AND r.__start>=m.__start AND r.__start<=m.__end AND r.__end<=m.__end JOIN nodes n ON n.__path=r.__path AND n.id=r.value AND n.kind IN ('integer','true','false')",
+      "indexes": [
+       [
+        "__path",
+        "cls",
+        "name"
+       ]
+      ]
+     },
+     {
+      "name": "branch_variables",
+      "query": "SELECT a.__path,m.id AS fn,name.text AS name,a.__start FROM conditional_methods m JOIN assignments a ON a.__path=m.__path AND a.__start>=m.__start AND a.__end<=m.__end JOIN descendants d ON d.__path=a.__path AND d.root=a.target JOIN nodes name ON name.__path=d.__path AND name.id=d.node AND name.kind='identifier' WHERE rx_matches(a.expr_text,'then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps') AND a.expr_kind IN ('identifier','attribute','call') UNION SELECT n.__path,m.id,name.text,n.__start FROM conditional_methods m JOIN nodes n ON n.__path=m.__path AND n.kind='for_statement' AND n.__start>=m.__start AND n.__end<=m.__end JOIN descendants d ON d.__path=n.__path AND d.root=n.left_kind||':'||n.left_start||':'||n.left_end JOIN nodes name ON name.__path=d.__path AND name.id=d.node AND name.kind='identifier' WHERE rx_matches(n.right_source,'then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps')",
+      "indexes": [
+       [
+        "__path",
+        "fn",
+        "name"
+       ]
+      ]
+     },
+     {
+      "name": "self_stores",
+      "query": "SELECT a.*,attr.attr,m.cls,m.name AS method,m.id AS method_id,1 AS occurrence FROM assignments a JOIN attributes attr ON attr.__path=a.__path AND attr.id=a.target AND attr.object_text='self' JOIN ownership own ON own.__path=a.__path AND own.id=a.id JOIN conditional_methods m ON m.__path=own.__path AND m.id=own.fn",
+      "indexes": [
+       [
+        "__path",
+        "cls"
+       ]
+      ]
+     },
+     {
+      "name": "conditional_findings_0",
+      "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'semantic-compile' AS detector FROM conditional_classes n  WHERE n.qualified_name='l2070_batching.conditional_step.ConditionalStep' AND NOT EXISTS(SELECT 1 FROM conditional_methods method WHERE method.__path=n.__path AND method.cls=n.id AND method.name='compile' AND (EXISTS(SELECT 1 FROM function_colors color WHERE color.__path=method.__path AND color.id=method.id AND color.raises_type_error))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'semantic-level' AS detector FROM conditional_classes n  WHERE n.qualified_name='l2070_batching.conditional_step.ConditionalStep' AND (NOT EXISTS(SELECT 1 FROM integer_returns r WHERE r.__path=n.__path AND r.cls=n.id AND r.name='level') OR EXISTS(SELECT 1 FROM integer_returns r WHERE r.__path=n.__path AND r.cls=n.id AND r.name='level' AND (r.kind='false' OR r.kind='integer' AND CAST(r.text AS INTEGER)<=0))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'executor-hook' AS detector FROM conditional_classes n  WHERE n.qualified_name='impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor' AND NOT EXISTS(SELECT 1 FROM conditional_methods method WHERE method.__path=n.__path AND method.cls=n.id AND method.name='_lower_conditional_step' AND (1)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'physical-level' AS detector FROM conditional_classes n  WHERE n.qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep' AND ((SELECT count(*) FROM integer_returns r WHERE r.__path=n.__path AND r.cls=n.id AND r.name='level')!=1 OR NOT EXISTS(SELECT 1 FROM integer_returns r WHERE r.__path=n.__path AND r.cls=n.id AND r.name='level' AND (r.kind='false' OR r.kind='integer' AND CAST(r.text AS INTEGER)=0))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'physical-role' AS detector FROM conditional_classes n  WHERE n.qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep' AND NOT EXISTS(SELECT 1 FROM conditional_methods method WHERE method.__path=n.__path AND method.cls=n.id AND method.name='execution_role' AND (EXISTS(SELECT 1 FROM returns r WHERE r.__path=method.__path AND r.__start>=method.__start AND r.__end<=method.__end AND r.expr_text='StepExecutionRole.SQL'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'physical-compile' AS detector FROM conditional_classes n  WHERE n.qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep' AND NOT EXISTS(SELECT 1 FROM conditional_methods method WHERE method.__path=n.__path AND method.cls=n.id AND method.name='compile' AND (EXISTS(SELECT 1 FROM calls call WHERE call.__path=method.__path AND call.__start>=method.__start AND call.__end<=method.__end AND (rx_matches(call.full_callee,'compile_sql_conditional_step$'))))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id||':'||n.occurrence AS identity,'runtime-state' AS detector FROM self_stores n  WHERE EXISTS(SELECT 1 FROM conditional_classes cls JOIN derived_conditionals d ON d.name=cls.qualified_name WHERE cls.__path=n.__path AND cls.id=n.cls) AND n.method!='__init__' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id||':'||n.occurrence AS identity,'runtime-callback' AS detector FROM self_stores n  WHERE EXISTS(SELECT 1 FROM conditional_classes cls JOIN derived_conditionals d ON d.name=cls.qualified_name WHERE cls.__path=n.__path AND cls.id=n.cls) AND n.method='__init__' AND (n.expr_kind='lambda' OR n.expr_kind='identifier' AND EXISTS(SELECT 1 FROM callable_parameters p WHERE p.__path=n.__path AND p.fn=n.method_id AND p.name=n.expr_text)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id||':'||atom.id AS identity,'declared-callback' AS detector FROM assignments n JOIN ownership own ON own.__path=n.__path AND own.id=n.id JOIN conditional_classes cls ON cls.__path=n.__path AND cls.id=own.cls JOIN descendants d ON d.__path=n.__path AND d.root=n.id JOIN callable_names atom ON atom.__path=d.__path AND atom.id=d.node WHERE n.fn IS NULL AND n.type_start IS NOT NULL AND cls.qualified_name IN (SELECT name FROM derived_conditionals) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'child-compilation' AS detector FROM calls n JOIN ownership own ON own.__path=n.__path AND own.id=n.id JOIN conditional_methods method ON method.__path=own.__path AND method.id=own.fn JOIN conditional_classes cls ON cls.__path=method.__path AND cls.id=method.cls WHERE n.callee='compile' AND cls.qualified_name IN (SELECT name FROM derived_conditionals) AND EXISTS(SELECT 1 FROM attributes a JOIN branch_variables b ON b.__path=a.__path AND b.fn=own.fn AND b.name=a.object_text AND b.__start<n.__start WHERE a.__path=n.__path AND a.id=n.callee_id) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,method.id||':'||n.line AS identity,'backend-control' AS detector FROM nodes n JOIN ownership own ON own.__path=n.__path AND own.id=n.id JOIN conditional_methods method ON method.__path=own.__path AND method.id=own.fn JOIN conditional_classes cls ON cls.__path=method.__path AND cls.id=method.cls WHERE n.kind IN ('if_statement','elif_clause','conditional_expression','match_statement') AND cls.qualified_name IN (SELECT name FROM derived_conditionals) AND EXISTS(SELECT 1 FROM descendants d JOIN attributes a ON a.__path=d.__path AND a.id=d.node WHERE d.__path=n.__path AND d.root=CASE WHEN n.kind='match_statement' THEN n.subject_kind||':'||n.subject_start||':'||n.subject_end WHEN n.kind='conditional_expression' THEN (SELECT child.id FROM nodes child WHERE child.__path=n.__path AND child.parent=n.id AND child.ordinal=1) ELSE n.condition_kind||':'||n.condition_start||':'||n.condition_end END AND a.attr IN ('backend_type','is_sql_backend')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'semantic-contract' AS detector FROM conditional_classes n  WHERE n.qualified_name='l2070_batching.conditional_step.ConditionalStep' AND (NOT EXISTS(SELECT 1 FROM conditional_methods method WHERE method.__path=n.__path AND method.cls=n.id AND method.name='require_sql_physical_conditional' AND (EXISTS(SELECT 1 FROM always_raises a WHERE a.__path=method.__path AND a.id=method.id)))) AND (EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM conditional_functions f WHERE f.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) UNION ALL SELECT 'l2070_batching/conditional_step.py' AS path,0 AS start_byte,0 AS end_byte,'SPQ-029' AS issue,'missing' AS identity,'semantic-contract' AS detector WHERE (EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM conditional_functions f WHERE f.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) AND NOT EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name='l2070_batching.conditional_step.ConditionalStep') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'physical-contract' AS detector FROM conditional_classes n  WHERE n.qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep' AND (n.qualified_name NOT IN (SELECT name FROM derived_conditionals) OR NOT EXISTS(SELECT 1 FROM conditional_methods method WHERE method.__path=n.__path AND method.cls=n.id AND method.name='require_sql_physical_conditional' AND (NOT EXISTS(SELECT 1 FROM always_raises a WHERE a.__path=method.__path AND a.id=method.id) AND NOT EXISTS(SELECT 1 FROM function_colors color WHERE color.__path=method.__path AND color.id=method.id AND color.backend_selection)))) AND (EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM conditional_functions f WHERE f.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) UNION ALL SELECT 'impl/common/l2070_server_plan/steps/sql_conditional.py' AS path,0 AS start_byte,0 AS end_byte,'SPQ-029' AS issue,'missing' AS identity,'physical-contract' AS detector WHERE (EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM conditional_functions f WHERE f.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) AND NOT EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'lowering-contract' AS detector FROM conditional_classes n  WHERE n.qualified_name='impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor' AND (NOT EXISTS(SELECT 1 FROM conditional_methods method WHERE method.__path=n.__path AND method.cls=n.id AND method.name='_lower_conditional_step' AND (EXISTS(SELECT 1 FROM calls call WHERE call.__path=method.__path AND call.__start>=method.__start AND call.__end<=method.__end AND (rx_matches(call.full_callee,'SqlConditionalStep\\.from_semantic$')))))) AND (EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM conditional_functions f WHERE f.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) UNION ALL SELECT 'impl/common/l2070_server_plan/sql_backend_executor.py' AS path,0 AS start_byte,0 AS end_byte,'SPQ-029' AS issue,'missing' AS identity,'lowering-contract' AS detector WHERE (EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM conditional_functions f WHERE f.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) AND NOT EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name='impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-029' AS issue,n.id AS identity,'compiler-contract' AS detector FROM conditional_functions n  WHERE n.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step' AND NOT (EXISTS(SELECT 1 FROM parameters p JOIN nodes ann ON ann.__path=p.__path AND ann.id=p.annotation WHERE p.__path=n.__path AND p.fn=n.id AND p.name='step' AND (coalesce((SELECT a.origin FROM aliases a WHERE a.__path=n.__path AND a.local=rx_extract(ann.text,'^([\\w]+)',1) AND a.__start<n.__start ORDER BY a.__start DESC LIMIT 1),rx_extract(ann.text,'^([\\w]+)',1))||coalesce(rx_extract(ann.text,'^[\\w]+((?:\\.[\\w]+)*)$',1),''))='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep') AND NOT EXISTS(SELECT 1 FROM function_colors c WHERE c.__path=n.__path AND c.id=n.id AND c.backend_selection) AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.__start>=n.__start AND call.__end<=n.__end AND call.full_callee='step.require_sql_physical_conditional' AND NOT EXISTS(SELECT 1 FROM calls strategy WHERE strategy.__path=n.__path AND strategy.__start>=n.__start AND strategy.__end<=n.__end AND rx_matches(strategy.full_callee,'_conditional_strategy$') AND strategy.line<=call.line))) AND (EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM conditional_functions f WHERE f.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) UNION ALL SELECT 'impl/common/l2070_server_plan/steps/_conditional_compile.py' AS path,0 AS start_byte,0 AS end_byte,'SPQ-029' AS issue,'missing' AS identity,'compiler-contract' AS detector WHERE (EXISTS(SELECT 1 FROM conditional_classes c WHERE c.qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM conditional_functions f WHERE f.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) AND NOT EXISTS(SELECT 1 FROM conditional_functions f WHERE f.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')"
+     }
+    ],
+    "query": {
+     "$option": "entryPoint",
+     "cases": {
+      "all": {
+       "$option": "oracleAnalyzer",
+       "cases": {
+        "true": "SELECT '' AS path,0 AS start_byte,0 AS end_byte,'' AS issue,'' AS identity,'' AS detector WHERE 0",
+        "false": "SELECT * FROM conditional_findings_0"
+       }
+      },
+      "conditional_architecture_findings": "SELECT * FROM conditional_findings_0"
+     },
+     "default": "SELECT * FROM (SELECT * FROM conditional_findings_0) WHERE 0"
+    },
+    "key": [
+     "detector",
+     "issue",
+     "identity"
+    ],
+    "code": "issue",
+    "locations": [
+     "l2070_batching/conditional_step.py",
+     "impl/common/l2070_server_plan/steps/sql_conditional.py",
+     "impl/common/l2070_server_plan/sql_backend_executor.py",
+     "impl/common/l2070_server_plan/steps/_conditional_compile.py"
+    ]
+   },
+   "violation": {
+    "code": "architecture",
+    "message": "Architecture contract violation",
+    "anchor": "witness.span"
+   }
+  }
+ ]
+}

@@ -1125,7 +1125,18 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                     if let Some(u) = unsupported {
                         fail(out, format!("unsupported: {u}"));
                     } else if plan.per_file {
-                        let r = rel::run(plan, rel::Partition { inputs: tables, anchors, facts: Some((ctx.f, ctx.path)), source: ctx.source, path: ctx.path, budget: Some((limits, c.match_nodes + c.input_rows)) });
+                        // x6-rules (disposable): `X6_STAGE_DUMP=DIR` appends this run's traced tables
+                        // (`x6dump::append`); `X6_NO_BUDGET=1` runs it without the content's budget.
+                        let dump = std::env::var("X6_STAGE_DUMP").ok();
+                        if let Some(dir) = dump.clone() {
+                            let label = format!("{}__{}", rule.check, clause.id);
+                            rel::TRACE.with(|h| *h.borrow_mut() = Some(Box::new(move |_: &RelPlan, p: &str, t: &rel::Traced| crate::x6dump::append(&dir, &label, p, t))));
+                        }
+                        let budget = (std::env::var_os("X6_NO_BUDGET").is_none()).then_some((limits, c.match_nodes + c.input_rows));
+                        let r = rel::run(plan, rel::Partition { inputs: tables, anchors, facts: Some((ctx.f, ctx.path)), source: ctx.source, path: ctx.path, budget });
+                        if dump.is_some() {
+                            rel::TRACE.with(|h| *h.borrow_mut() = None);
+                        }
                         out.add_stages(ri, ci, r.stage_ns);
                         out.add_run(ri, ci, &mut c);
                         if let Some(m) = r.failure {
@@ -1264,7 +1275,16 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
             }
             out.add_stages(ri, ci, vec![("spill:load".into(), t0.elapsed().as_nanos() as u64)]);
             let inputs = plan.input_schemas.iter().zip(input_rows).map(|(s, rows)| Rc::new(Table::from_rows(s.clone(), rows))).collect();
+            // x6-rules (disposable): `X6_STAGE_DUMP=DIR` writes this run's traced tables (`x6dump`).
+            let dump = std::env::var("X6_STAGE_DUMP").ok();
+            if let Some(dir) = dump.clone() {
+                let label = format!("{}__{}", rule.check, clause.id);
+                rel::TRACE.with(|h| *h.borrow_mut() = Some(Box::new(move |_: &RelPlan, _: &str, t: &rel::Traced| crate::x6dump::write(&dir, &label, t))));
+            }
             let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "", budget: None });
+            if dump.is_some() {
+                rel::TRACE.with(|h| *h.borrow_mut() = None);
+            }
             out.add_stages(ri, ci, r.stage_ns);
             let mut c = Counts::default();
             out.add_run(ri, ci, &mut c);
