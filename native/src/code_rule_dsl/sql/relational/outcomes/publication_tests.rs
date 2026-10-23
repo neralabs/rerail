@@ -120,7 +120,9 @@ pub(super) fn check_work(
         }
     }
     expected.sort_by_key(|row| (row[0].as_u64(), row[1].as_u64(), row[2].as_u64()));
+    let generation_start = std::time::Instant::now();
     let compiled = super::compile_job(&grammars, allowance).unwrap();
+    let generation_wall_ns = generation_start.elapsed().as_nanos();
     let (((actual, metrics), calls), budget_calls) = super::super::budget_leaf::trace(|| {
         value_probe::run_reached(fault, || {
             exec::with_terminals(
@@ -218,7 +220,7 @@ pub(super) fn check_work(
     diagnostics.sort_by_key(Value::to_string);
     actual_diagnostics.sort_by_key(Value::to_string);
     assert_eq!(actual_diagnostics, diagnostics);
-    let result = json!({"parity":true,"allowance":allowance,"budgetCalls":budget_calls,"output":actual,"nativeTraces":native_traces,"sqlCalls":calls,"metrics":metrics,"sql":compiled.sql,"relations":compiled.relations});
+    let result = json!({"parity":true,"allowance":allowance,"generationWallNs":generation_wall_ns,"budgetCalls":budget_calls,"output":actual,"nativeTraces":native_traces,"sqlCalls":calls,"metrics":metrics,"sql":compiled.sql,"relations":compiled.relations});
     println!(
         "PUBLICATION_TRACE {}",
         json!({"output":result["output"],"nativeTraces":result["nativeTraces"],"sqlCalls":result["sqlCalls"]})

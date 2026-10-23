@@ -62,7 +62,8 @@ fn keys(plan: &Plan, slots: &mut Slots) {
                 keys(child, slots);
             }
         }
-        Op::Not(child) | Op::Charge(_, child) => keys(child, slots),
+        Op::Not(child) => keys(child, slots),
+        Op::Charge(_, child) => keys(child, slots),
         Op::Search(_, _, child, stop)
         | Op::Count {
             rule: child, stop, ..

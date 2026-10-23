@@ -27,6 +27,49 @@ pub(super) struct Sql {
     memo_clause: Option<usize>,
 }
 
+/// Bound residual expansion before recursive SQL planning. Repeat grouping uses the
+/// same proof as emission; other calls conservatively count their complete bodies.
+pub(super) fn composition_operators(plan: &Plan) -> Result<usize, String> {
+    fn visit(plan: &Plan, repeats: bool, count: &mut usize) -> Result<(), String> {
+        *count += 1;
+        if *count > 256 {
+            return Err(
+                "outcome relations: composition operator count after repeat grouping exceeds 256"
+                    .into(),
+            );
+        }
+        match &plan.op {
+            Op::All(items) | Op::Any(items) => {
+                let mut index = 0;
+                while index < items.len() {
+                    visit(&items[index], repeats, count)?;
+                    index += if repeats {
+                        repeat_walk::length(&items[index..])
+                    } else {
+                        1
+                    };
+                }
+            }
+            Op::Not(child) => visit(child, repeats, count)?,
+            Op::Charge(_, child) => visit(child, repeats, count)?,
+            Op::Search(_, _, child, stop)
+            | Op::Count {
+                rule: child, stop, ..
+            } => {
+                visit(child, repeats, count)?;
+                if let Some(stop) = stop {
+                    visit(stop, repeats, count)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    let mut count = 0;
+    visit(plan, file_memo::needed(plan), &mut count)?;
+    Ok(count)
+}
+
 fn value(input: &Demand, alias: &str, slot: usize) -> String {
     if input.slots.contains(&slot) {
         format!("{alias}.c{slot}")

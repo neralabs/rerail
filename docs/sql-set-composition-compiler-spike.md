@@ -4704,3 +4704,97 @@ Artifacts:
 The next phase lowers each acyclic utility body once and retains its charge at every call site.
 It must expose distinct plan and terminal counts and prove the current expansion-limit failure before changing admission.
 Production integration, native depth limits, deadlines, general recursive outcomes, and the complete-job 100-execution gate remain open.
+
+### 2026-10-23 — Shared immutable utility plans
+
+This phase removes repeated utility-body lowering before SQL generation.
+The baseline fixture has 32 identical descendant searches in `all` or `any`.
+Its outer utility contains eight distinct regex predicates and one value-bearing inner utility.
+The expected native boundaries are 96 charges for true `all`, three for true `any`, six for false `all`, and 192 otherwise.
+The existing compiler must demonstrate its 256-expanded-operator rejection before implementation changes.
+
+The planned representation stores one immutable utility body per table identity and utility index within a clause.
+Every source call retains its own charge operation and metadata.
+Cached effect summaries prevent recursive analysis from expanding the shared graph again.
+A separate composition bound must reject excessive SQL expansion after the existing repeat-group proof applies.
+Distinct lowered operators, capture width, traversal depth, and SQL size retain explicit bounds.
+
+Baseline instrumentation now reports lowered operators, utility calls, distinct bodies, body lowerings, and atomic terminals.
+Compiler wall time is separate from SQL preparation and execution.
+Baseline semantic checks and profiles are pending.
+
+Native preflight passes at every expected boundary. One fewer charge fails in each case.
+All six wide 32-search fixtures fail compilation with `expanded operator count exceeds 256` before the change.
+The baseline retains 30 admitted profiles and the six admission failures.
+For 32 narrow searches, the frontend lowers 227 operators, enters 64 utility bodies, and registers 32 value terminals.
+For eight wide searches, it lowers 123 operators, enters 16 bodies, and registers 16 atomic terminals.
+
+The implementation stores completed utility bodies in immutable shared plans within each clause.
+Call sites retain their charges, capture metadata, and traversal filters. Incomplete bodies never enter the cache, preserving cycle rejection.
+Effect and walk-depth summaries combine immediate child summaries once during lowering.
+The single-clause entry point also reuses its lowered plan instead of lowering a fallible clause again.
+
+A preflight counts composition operators after the existing repeat-group proof applies and rejects counts above 256.
+Other utility calls conservatively count their full bodies. This bound does not claim that all possible compact plans are admitted.
+It prevents shared graphs from causing excessive expansion before SQL-size checks run.
+The 256-distinct-operator, 128-capture, traversal-depth, and 256,000-byte SQL limits remain explicit.
+Semantic and performance qualification is pending.
+
+The first comparison run passes all semantic cases and fails an unguarded cycle fixture at the policy parser.
+That fixture never reached SQL lowering. Traversal-guarded self and mutual cycles now exercise the SQL cycle check and pass.
+The initial log remains at `/tmp/rerail-utility-plan-first-tests.log`.
+
+All 133 relational tests pass. Six new tests include 750 comparison jobs, shared-body identity checks, and explicit admission limits.
+The suite retains 5,451 publication traces.
+All 36 profiles have one matching statement and zero legacy frame publications.
+
+| 32-search fixture | Before | After |
+| --- | ---: | ---: |
+| Narrow utility: lowered operators | 227 | 134 |
+| Narrow utility: body lowerings | 64 | 2 |
+| Narrow utility: value terminals | 32 | 1 |
+| Wide utility: admission | Rejected at 256 expanded operators | Accepted |
+| Wide utility: distinct lowered operators | Unavailable after rejection | 142 |
+| Wide utility: composition operators after grouping | Unavailable after rejection | 18 |
+| Wide utility: body lowerings | Unavailable after rejection | 2 |
+| Wide utility: atomic terminals | Unavailable after rejection | 9 |
+
+The wide true conjunction uses 14,799 SQL bytes, 3,994 VM instructions, and 32 typed return cells across two files.
+The wide unknown alternative uses 14,882 bytes, 6,628 instructions, and 52 cells.
+All dimensions retain constant return cells and at most one extra VM instruction across 2/8/32 searches.
+The 30 previously admitted fixtures retain identical SQL and VM counts.
+This phase removes frontend duplication and an admission failure. It does not claim faster execution for those existing queries.
+
+Final qualification passes 145 unique tests.
+These include 133 relational tests, one workspace test, nine B023 fixtures, one adversarial test, and one corpus test.
+All 159 preceding profiles retain identical VM counts, outputs, native charges, reached value calls, and typed return counts where recorded.
+Of these profiles, 141 retain exact SQL text. The other 18 differ only in terminal IDs within `node_regex` and `relation_value_budget` calls.
+The evidence retains these renumberings and both query hashes.
+Formatting and Clippy pass for workspace targets and the profiling feature.
+For example, a fallback regex moves from terminal 32 to terminal 1 after repeated value terminals disappear.
+
+The frozen B023 query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+It reports 138 files, two matches, and 2,812,255 generated VM instructions in all three pairs.
+The VM gate passes, but the CPU gate fails at **2.071611×**.
+Median generated CPU is 134,221,000 ns, versus 64,790,625 ns for the reference.
+The failed run remains recorded without a retry. Its unchanged SQL and VM counts do not establish a structural execution regression or improvement.
+This phase does not qualify B023 CPU performance.
+
+The compiler wall-time sample for the narrow 32-call true conjunction is 0.339 ms, versus 0.370 ms before sharing.
+The newly admitted wide counterpart takes 0.523 ms to compile.
+These are instrumented single samples on a shared machine, not a production speed claim.
+Policy parsing precedes this timer; SQL preparation and execution use separate counters.
+The driver accepts baseline and current profile counts by default. Its interning assertion validates all current sharing invariants.
+The profile run was repeated after this driver correction, with unchanged compiler sources and executable. The failed B023 timing gate was not rerun.
+
+Artifacts:
+
+- `benchmark/relational-utility-plans.py`: admission and semantic checks, compiler counters, EXPLAIN, and pinned source/binary hashes.
+- `benchmark/sql-relational-utility-plans-evidence.json`: six baseline rejections, 12 native boundary observations, 750 comparison traces, 36 profiles, prior controls, and frozen gates.
+- `benchmark/sql-relational-utility-plans.sql`: the formerly rejected 32-search true conjunction.
+- `benchmark/sql-relational-utility-plans-unknown.sql`: the formerly rejected 32-search unknown alternative.
+- Raw logs: `/tmp/rerail-utility-plan-20261023-{before,final,accepted}` and `/tmp/rerail-utility-plan-b023-20261023-final`.
+
+The next phase aligns composition admission with existing local memo sharing for direct node-local utility calls.
+The transition plan specifies the failing fixture, native charge boundaries, generation bound, and profile controls.
+The outcome kernel remains test-only. Production integration, native depth limits, deadlines, general recursive outcomes, and the complete-job 100-execution gate remain open.

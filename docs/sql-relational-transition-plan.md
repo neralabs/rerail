@@ -673,28 +673,47 @@ True, false, and unknown profiles retain constant return cells across 2/8/32 alt
 VM counts differ by at most one constant-initialization instruction.
 The journal records qualification and the frozen workload gates.
 
+## Shared immutable utility plans: bounded outcome milestone
+
+Each acyclic utility body now lowers once per clause, keyed by utility table identity and index.
+Each call retains a charge operation and its capture metadata.
+Traversal filters stay at call sites. Completed immutable bodies share storage, while active bodies remain outside the cache.
+Effect and walk-depth summaries combine immediate child summaries once during lowering.
+The single-clause compiler reuses its lowered plan for publication.
+
+Profiles report distinct lowered operators, utility call sites, completed body lowerings, atomic terminals, and composition operators.
+Compiler wall time includes lowering and SQL generation, with separate SQL preparation and execution counters.
+A separate composition preflight applies the existing repeat proof and conservatively counts every other utility body at each call.
+The limit remains 256 composition operators. Distinct lowered operators, capture width, traversal depth, and SQL size also retain their limits.
+
+Native preflight proves that all six wide 32-search fixtures succeed while the preceding compiler rejects them at 256 expanded operators.
+Those fixtures now lower 142 distinct operators and retain 18 composition operators after repeat grouping.
+They share two utility bodies and nine atomic terminals.
+The narrow 32-call fixture drops from 64 body lowerings to two, and from 32 value terminals to one.
+The 30 previously admitted profiles retain identical SQL and VM counts.
+The journal records semantic qualification, prior controls, and frozen workload results.
+
 ## Next implementation action
 
-Lower each acyclic utility body once per clause, and retain a charge operation at each call site.
-The current frontend expands bodies before repeat grouping and can reject a compact physical plan at 256 expanded operators.
-This is the next compiler limit to remove. Increasing the limit alone does not address the expansion.
+Align the composition bound with the existing local utility memo planner.
+The current preflight still expands bodies for direct node-local calls, even when SQL generation can share their answers.
+Do not increase the bound to bypass this mismatch.
 
-First record a failing fixture with 32 repeated searches and one utility containing eight distinct pure predicates plus a value-bearing utility call.
-Use the same fixture in `all` and `any`, with true, false, and unknown results.
-The existing frontend must reject it before the change. Native execution supplies charges and reached-call expectations.
+Start with 32 direct `matches(v)` operands inside `all` or `any` on a single candidate.
+Use the same eight-regex utility body and value-bearing inner utility from this phase.
+Use a number root in `1;` for true and false results, and an identifier root in `x;` for unknown.
+First record the current composition-bound rejection and native charges.
+Expected boundaries are 96 for true `all`, three for true `any`, three for false `all`, and 96 otherwise.
+Each fixture must read one value per file.
 
-Intern immutable utility plans by table identity and utility index.
-Keep incoming captures and candidate filters at their existing call sites.
-Retain one charge operation per call, dense utility identities, and the active-set cycle check.
-Cache the effect summaries needed by SQL generation so analysis does not re-expand the shared graph.
-Keep an explicit bound on distinct lowered operators and call sites, plus the existing SQL-size and capture-width bounds.
-Recursive utilities remain rejected until their separate component contract exists.
+Make admission use the same sharing decisions as SQL emission, including nested utility programs.
+Count emitted composition work through a shared generation budget, or a bounded schedule consumed by emission.
+Keep an early failure for a shared graph whose SQL still requires excessive expansion.
+Preserve the existing repeat proof, local memo keys, capture versions, failure tags, and work charges.
+Use one planner and no runtime options.
 
-Add profile counts for call sites, distinct utility bodies, lowered operators, and atomic terminals.
-Measure compiler time separately from SQL preparation and execution.
-Require constant terminal registration for repeated uses of the same utility body.
-The newly admitted repeat fixture must still emit one traversal group and one matching statement.
-Existing capture, failure, charge, and fallback traces must remain exact.
-
-Repeat the frozen B023 gates and existing controls, and explain any SQL or counter changes.
+Profile 2/8/32 calls for both operators and all three outcomes.
+Require constant atomic-terminal registration and one emitted miss body per proved shared answer.
+Measure SQL bytes, materialization sites, typed return cells, VM instructions, and compiler time.
+Repeat the existing controls and frozen B023 gates.
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

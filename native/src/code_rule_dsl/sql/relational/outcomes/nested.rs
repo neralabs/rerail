@@ -6,34 +6,11 @@ use super::{Axis, Bounds, Demand, Op, Output, Plan, Sql};
 use serde_json::{Value, json};
 
 pub(super) fn contains_walk(plan: &Plan) -> bool {
-    match &plan.op {
-        Op::Search(..) | Op::Count { .. } => true,
-        Op::Not(child) | Op::Charge(_, child) => contains_walk(child),
-        Op::All(items) | Op::Any(items) => items.iter().any(contains_walk),
-        _ => false,
-    }
+    plan.effects.walk_depth > 0
 }
 fn check_depth(plan: &Plan, walks: usize) -> Result<(), String> {
-    match &plan.op {
-        Op::Search(_, _, child, stop)
-        | Op::Count {
-            rule: child, stop, ..
-        } => {
-            if walks >= 4 {
-                return Err("nested ordered traversal depth exceeds 4".into());
-            }
-            check_depth(child, walks + 1)?;
-            if let Some(stop) = stop {
-                check_depth(stop, walks + 1)?;
-            }
-        }
-        Op::Not(child) | Op::Charge(_, child) => check_depth(child, walks)?,
-        Op::All(items) | Op::Any(items) => {
-            for child in items {
-                check_depth(child, walks)?;
-            }
-        }
-        _ => {}
+    if walks + plan.effects.walk_depth > 4 {
+        return Err("nested ordered traversal depth exceeds 4".into());
     }
     Ok(())
 }

@@ -5,13 +5,15 @@ use crate::code_rule_dsl::{
 };
 use ast_grep_core::{matcher::PatternNode, meta_var::MetaVariable};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 pub(super) struct Lower {
     pub pure: super::super::lower::Lowerer,
     pub slots: Vec<Slot>,
     active: HashSet<(usize, usize)>,
-    utilities: HashMap<(usize, usize), usize>,
+    utilities: HashMap<(usize, usize), (usize, Rc<Plan>)>,
     operators: usize,
+    utility_calls: usize,
     three_valued: bool,
 }
 
@@ -23,8 +25,13 @@ impl Lower {
             active: HashSet::new(),
             utilities: HashMap::new(),
             operators: 0,
+            utility_calls: 0,
             three_valued,
         }
+    }
+
+    pub fn profile(&self, terminal_base: usize) -> serde_json::Value {
+        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len(),"utilityBodyLowerings":self.utilities.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
     }
 
     fn slot(&mut self, name: &str, count: bool) -> Result<usize, String> {
@@ -70,7 +77,7 @@ impl Lower {
     pub fn plan(&mut self, matcher: &AstMatcher) -> Result<Plan, String> {
         self.operators += 1;
         if self.operators > 256 {
-            return Err("outcome relations: expanded operator count exceeds 256".into());
+            return Err("outcome relations: distinct lowered operator count exceeds 256".into());
         }
         let mut mentions = Slots::new();
         let mut writes = Slots::new();
@@ -207,23 +214,28 @@ impl Lower {
                 }
             }
             AstMatcher::Util(util) => {
+                self.utility_calls += 1;
                 let key = (util.table.as_ptr() as usize, util.index);
-                if !self.active.insert(key) {
-                    return Err(
-                        "outcome relations: recursive outcomes need a component contract".into(),
-                    );
-                }
-                let result = util
-                    .with_target(|rule| self.plan(rule))
-                    .ok_or("outcome relations: missing utility")?;
-                self.active.remove(&key);
-                let child = result?;
+                let (id, child) = if let Some((id, child)) = self.utilities.get(&key) {
+                    (*id, Rc::clone(child))
+                } else {
+                    if !self.active.insert(key) {
+                        return Err(
+                            "outcome relations: recursive outcomes need a component contract"
+                                .into(),
+                        );
+                    }
+                    let result = util.with_target(|rule| self.plan(rule));
+                    self.active.remove(&key);
+                    let child = Rc::new(result.ok_or("outcome relations: missing utility")??);
+                    let id = self.utilities.len();
+                    self.utilities.insert(key, (id, Rc::clone(&child)));
+                    (id, child)
+                };
                 mentions = child.mentions.clone();
                 writes = child.writes.clone();
                 node_writes = child.node_writes.clone();
-                let next = self.utilities.len();
-                let id = *self.utilities.entry(key).or_insert(next);
-                Op::Charge(id, Box::new(child))
+                Op::Charge(id, child)
             }
             _ => return Err(
                 "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
@@ -231,6 +243,7 @@ impl Lower {
             ),
         };
         Ok(Plan {
+            effects: super::effects::Effects::of(&op),
             op,
             mentions,
             writes,

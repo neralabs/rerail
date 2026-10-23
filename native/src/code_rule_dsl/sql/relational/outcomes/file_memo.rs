@@ -1,22 +1,11 @@
 //! Clause/file answer lifetime for utilities reached through traversal.
 //! SQL owns lookup, miss composition, charge replay, and completed-answer publication.
 use super::ordered::nested::{bridge, program};
-use super::{Demand, Op, Output, Plan, Sql, fields, value};
+use super::{Demand, Output, Plan, Sql, fields, value};
 use serde_json::json;
 
 pub(super) fn needed(plan: &Plan) -> bool {
-    fn moved(plan: &Plan, traversed: bool) -> bool {
-        match &plan.op {
-            Op::Charge(_, body) => (traversed && body.reads_value()) || moved(body, traversed),
-            Op::All(items) | Op::Any(items) => items.iter().any(|p| moved(p, traversed)),
-            Op::Not(p) => moved(p, traversed),
-            Op::Search(_, _, p, stop) | Op::Count { rule: p, stop, .. } => {
-                moved(p, true) || stop.as_ref().is_some_and(|p| moved(p, true))
-            }
-            _ => false,
-        }
-    }
-    moved(plan, false)
+    plan.effects.file_memo
 }
 
 impl Sql {
