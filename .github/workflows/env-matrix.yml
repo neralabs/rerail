@@ -1,0 +1,166 @@
+name: Environment matrix
+
+# Installs the package main would release on throwaway Azure VMs, one per environment in
+# scripts/host/azure/environments.json (Linux distributions on x64 and arm64, Windows 11 on x64 and arm64), the way a
+# user meets it: `npx @neralabs/rerail setup`, then the managed runtime, PATH in new shells, the coding-agent hooks,
+# daemon restart, and removal. scripts/host/azure/matrix.mjs drives each VM; docs/environment-matrix.md explains it.
+#
+# Runs after every push to main that can change what ships, and on demand (`environments` picks some ids). The
+# package comes from package.yml, the same build release.yml publishes. Environments expected to refuse set-up
+# (`"expect": "setup-fails"`) pass when set-up fails there and fail when it starts succeeding, so environments.json is
+# updated as support changes.
+#
+# Azure access is OIDC, no secret: scripts/host/azure/bootstrap.sh trusts pushes to main of this repository and gives
+# that identity Contributor on one resource group, and writes the repository variables read below.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  workflow_dispatch:
+    inputs:
+      environments:
+        description: Comma-separated ids from scripts/host/azure/environments.json; empty for all
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# One run at a time per ref, queued rather than cancelled: a cancelled job still deletes its VMs, but a queued run
+# costs nothing, and GitHub keeps only the newest one waiting.
+concurrency:
+  group: env-matrix-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package
+    uses: ./.github/workflows/package.yml
+
+  environments:
+    name: Environments
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ids: ${{ steps.list.outputs.ids }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - id: list
+        name: List environments
+        env:
+          ENVIRONMENTS: ${{ inputs.environments }}
+        run: echo "ids=$(node scripts/host/azure/matrix.mjs list --env "$ENVIRONMENTS")" >> "$GITHUB_OUTPUT"
+
+  install:
+    name: Install on ${{ matrix.environment }}
+    needs: [package, environments]
+    runs-on: ubuntu-24.04
+    # A Windows VM: ~2 min to create, ~5 to install Node and Git, ~10 to sign in and check; the driver gives up at 60.
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.environments.outputs.ids) }}
+    env:
+      RERAIL_AZURE_RESOURCE_GROUP: ${{ vars.RERAIL_AZURE_RESOURCE_GROUP }}
+    steps:
+      # A missing variable is a configuration error (run scripts/host/azure/bootstrap.sh --github), not a skip.
+      - name: Require the Azure variables
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          missing=()
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID RERAIL_AZURE_RESOURCE_GROUP; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::The environment matrix needs repository variable(s) ${missing[*]}: run scripts/host/azure/bootstrap.sh --github"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Download the package
+        uses: actions/download-artifact@v8
+        with:
+          name: rerail-package
+          path: release
+
+      - name: Sign in to Azure
+        uses: azure/login@053f7285eb20bf5469ef084617b0b24d3cec53fc # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install and check on ${{ matrix.environment }}
+        env:
+          ENVIRONMENT: ${{ matrix.environment }}
+          TARBALL: release/${{ needs.package.outputs.tarball }}
+          RUN_ID: gh${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/host/azure/matrix.mjs run --env "$ENVIRONMENT" --tarball "$TARBALL" --run-id "$RUN_ID" --out results
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: env-matrix-${{ matrix.environment }}
+          path: results
+          if-no-files-found: ignore
+
+  # Deletes what a cancelled or crashed run left behind (each environment deletes its own VM when it finishes).
+  sweep:
+    name: Sweep leftover VMs
+    needs: install
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RERAIL_AZURE_RESOURCE_GROUP: ${{ vars.RERAIL_AZURE_RESOURCE_GROUP }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Sign in to Azure
+        uses: azure/login@053f7285eb20bf5469ef084617b0b24d3cec53fc # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete resources older than 3 hours
+        run: node scripts/host/azure/matrix.mjs sweep --older-than-hours 3
