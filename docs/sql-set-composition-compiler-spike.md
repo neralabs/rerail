@@ -4524,3 +4524,90 @@ Artifacts:
 The scratch relation uses writes during SELECT evaluation. Materialized dependencies and reached-call comparisons establish the tested ordering contract.
 The test-only connection runs one matching job at a time. Interleaved jobs on a shared connection are outside this contract.
 Production integration, general recursive outcomes, native depth limits, deadlines, and the whole-job 100-execution gate remain open.
+
+### 2026-10-23 — Compiled repeated traversal groups
+
+The next phase removes duplicated traversal programs from adjacent identical searches in a conjunction.
+The first supported group has no capture effects or stop rule. Each candidate has a pure predicate prefix and one value-bearing utility call.
+Utility identity, prefix identity, traversal direction, and unchanged incoming captures establish equality between calls.
+
+The first traversal must run normally. It fills every reached utility answer in clause/file storage.
+Later calls visit the same candidates and replay those answers, so their semantic costs equal the first traversal's measured cost.
+False and failed first outcomes stop the conjunction. True and unknown outcomes permit repeated-cost replay.
+An insufficient replay allowance produces Work failure without entering another child program.
+The SQL must guard multiplication against signed integer overflow before subtracting the repeated cost.
+
+The proposed shape compiles one child program, materializes its two-column result once, and applies guarded cost replay.
+It must preserve exact charges, failure tags, reached leaves, provisional publication, and incoming captures.
+Unwrapped value leaves, captures, stops, counts, different utilities, and nonidentical prefixes remain outside the grouping proof.
+Native boundary checks and baseline profiles precede the compiler change. Results are pending.
+
+Native preflight confirms the boundaries for three calls before compiler changes:
+
+- A true search needs six charges and one value read per file.
+- A false search needs four charges, reads both candidates, and stops the conjunction after the first search.
+- An unknown search needs 12 charges and reads both candidates once.
+- Two overlapping roots need 12 charges and one value read. Exhaustion on the second root discards provisional matches.
+
+The first grouped implementation passes all seven new semantic tests.
+The repeat count becomes a SQL integer constant; it does not duplicate the traversal program.
+For 32 true searches across two files, SQL size falls from 184,607 to 8,671 bytes and VM instructions fall from 44,321 to 2,505.
+Typed return cells fall from 520 to 24.
+Two repetitions use one fewer VM instruction than eight or 32: SQLite reuses an existing constant register for the value one.
+The profiling assertion permits this single initialization instruction while requiring constant return cells and bounded SQL growth.
+
+The proof excludes unwrapped value leaves because warm-cache charges can differ.
+It also excludes changed prefixes, different utility identities, capture effects, counts, stop rules, and nonadjacent searches.
+Stable incoming captures are retained, and a binding between groups starts a separate group.
+Nested utility costs remain measured by the first traversal and replayed in full.
+Signed-limit SQL tests verify division before multiplication, including false and failed first outcomes.
+Final qualification is pending.
+
+Final qualification:
+
+- All 131 unique tests pass: 119 relational tests, one workspace test, nine B023 fixtures, one adversarial test, and one corpus test.
+- Seven new comparison tests cover 662 jobs, including 15 profiles. One additional SQL test covers signed-limit replay arithmetic.
+- The suite retains 3,728 publication traces. Formatting and both Clippy configurations pass.
+- All 111 preceding controls retain identical SQL, output, and VM counts.
+- All 15 traversal profiles from the preceding phase improve in VM work, with identical native outcomes, captures, charges, and reached value calls.
+- Every new profile executes one matching statement and publishes zero legacy frames. The whole-job execution budget remains unproved.
+
+| 32-call fixture, across two files | Before VM | After VM | Before return cells | After return cells | SQL bytes after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| True search | 44,321 | 2,505 | 520 | 24 | 8,671 |
+| Unknown search | 81,409 | 3,633 | 904 | 36 | 8,659 |
+| False search | 7,475 | 3,571 | 160 | 36 | 8,671 |
+| Two overlapping roots | 88,293 | 4,691 | 1,040 | 48 | 8,671 |
+| Stable incoming capture | 45,554 | 2,746 | 522 | 26 | 9,621 |
+
+True-search SQL falls from 184,607 to 8,671 bytes, a 95.3% reduction.
+VM work falls by 17.7×. EXPLAIN materialization sites fall from 623 to 35.
+The instrumented preparation sample falls from 56.21 ms to 2.32 ms; this is not a production CPU qualification result.
+The two-call group uses 2,504 VM instructions, while eight and 32 calls use 2,505. All three use 24 return cells.
+The three-byte SQL difference comes from the replay multiplier's extra digit at 32 calls.
+
+The preceding phase's 32-root overlap falls further from 111,423 to 70,270 instructions, with return cells falling from 1,280 to 768.
+Its 32 disjoint roots fall from 113,469 to 72,316 instructions.
+Eight capture changes fall from 32,021 to 19,421 instructions. Each changed key still gets its own answer and native value read.
+No group crosses a capture-changing operand.
+
+The frozen B023 query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+It reports 138 files, two matches, and 2,812,255 generated VM instructions in all three pairs.
+Both gates pass in this run. Median generated CPU is 131,297,750 ns versus 69,982,958 ns for the reference: **1.876139×**.
+The preceding 2.083039× failure remains recorded. Generated CPU is almost unchanged; the reference sample is slower.
+Unchanged SQL and VM counts do not support a structural B023 speedup or stable CPU qualification claim.
+The optimized test build uses the recorded jemalloc shim and disables local test-executable LTO.
+
+Artifacts:
+
+- `benchmark/relational-repeat-walk.py`: native comparisons, group-shape assertions, EXPLAIN, counters, and pinned source/binary hashes.
+- `benchmark/sql-relational-repeat-walk-evidence.json`: 662 traces, 15 before/after profiles, unchanged controls, improved traversal controls, and frozen gates.
+- `benchmark/sql-relational-repeat-walk.sql`: the 32-call true group.
+- `benchmark/sql-relational-repeat-walk-unknown.sql`: the 32-call unknown group.
+- `benchmark/sql-relational-repeat-walk-capture.sql`: stable incoming captures.
+- The previous full query remains in `benchmark/sql-relational-traversal-utility-memo-repeats.sql`.
+- Raw logs: `/tmp/rerail-repeat-walk-20261023-{before,final}` and `/tmp/rerail-repeat-walk-b023-20261023-final`.
+
+The next phase applies the same proof to alternatives, with a true outcome as the group's stop condition.
+The frontend still expands utility bodies and retains its 256-operator bound. SQL generation now avoids repeated child programs within the proved group.
+Production integration, native depth limits, deadlines, general recursive outcomes, and the complete-job 100-execution gate remain open.

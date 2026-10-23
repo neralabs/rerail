@@ -7,6 +7,8 @@ pub(super) mod memo;
 mod ordered;
 #[path = "publication.rs"]
 mod publication;
+#[path = "repeat_walk.rs"]
+mod repeat_walk;
 use super::{Axis, Op, Plan, Slot, Slots};
 pub(super) use publication::compile_jobs;
 use serde_json::{Value, json};
@@ -306,7 +308,11 @@ impl Sql {
             slots,
         };
         let mut memo = memo::Local::new(&state.slots, items);
+        let mut skip_until = 0;
         for (index, child) in items.iter().enumerate() {
+            if index < skip_until {
+                continue;
+            }
             if index > 0 {
                 memo.wrote(&items[index - 1]);
             }
@@ -339,7 +345,15 @@ impl Sql {
                 continue;
             }
             if self.correlated {
-                let tested = if let Some(tested) = memo.step(self, &state, child, &filter)? {
+                let repeats = if self.memo_clause.is_some() {
+                    repeat_walk::length(&items[index..])
+                } else {
+                    1
+                };
+                let tested = if repeats > 1 {
+                    skip_until = index + repeats;
+                    self.repeat_step(&state, child, &filter, repeats)?
+                } else if let Some(tested) = memo.step(self, &state, child, &filter)? {
                     tested
                 } else {
                     self.correlated_step(&state, child, &filter)?

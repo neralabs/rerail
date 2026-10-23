@@ -64,9 +64,9 @@ def main():
         assert storage['resets'] == 1
         expected_answers = expected_reads
         assert storage['publications'] == expected_answers
-        expected_lookups = {'repeats': 2 * sample['size'], 'overlap': 4 * sample['size'],
-                            'disjoint': 4 * sample['size'], 'changed-captures': 2 * (1 + 2 * sample['size']),
-                            'early-stop': 4}[sample['dimension']]
+        expected_lookups = {'repeats': 2, 'overlap': 2 * sample['size'],
+                            'disjoint': 2 * sample['size'], 'changed-captures': 2 * (1 + sample['size']),
+                            'early-stop': 2}[sample['dimension']]
         assert storage['lookups'] == expected_lookups
         assert storage['hits'] == expected_lookups - expected_answers
         flags.append('SQL controls composition and cost replay; an indexed scratch cursor stores integer keys and completed answers.')

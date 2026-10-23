@@ -632,24 +632,46 @@ This reduces those counts to 111,423 instructions and 1,280 cells, with unchange
 Counts and stop rules retain their required visits. The memo store adds no recursive state columns.
 The journal records qualification results and retained profiling failures.
 
+## Compiled repeated traversal groups: bounded outcome milestone
+
+Adjacent identical descendant searches in `all` now compile to one traversal program with guarded semantic-cost replay.
+The proof requires no capture effects or stop rule, and a pure predicate prefix followed by one value-bearing utility call.
+Incoming captures remain unchanged throughout the group. Different utility identities and prefixes form separate groups.
+The first traversal populates clause/file utility answers and measures its cost.
+False and failed first outcomes stop the group. True and unknown outcomes replay that cost for later calls.
+Division checks the remaining allowance before multiplication, preserving integer arithmetic at signed limits.
+
+Native preflight confirms three-call boundaries of six charges for true, four for false, and 12 for unknown.
+Two overlapping roots need 12 charges and one value read per file.
+Seven new comparison tests cover 662 jobs, including 15 profiles. A separate SQL test covers arithmetic near signed limits.
+
+At 32 repetitions across two files, SQL text falls from 184,607 to 8,671 bytes.
+VM work falls from 44,321 to 2,505 instructions, and typed return cells fall from 520 to 24.
+EXPLAIN materialization sites fall from 623 to 35.
+SQL size and return cells stay effectively constant from two through 32 repetitions.
+SQLite adds one constant-initialization instruction when the replay multiplier exceeds one.
+The journal records prior controls, full qualification, and frozen workload results.
+
 ## Next implementation action
 
-Reduce duplicated traversal programs in the repeated-search fixture.
-Thirty-two identical searches still emit about 185 KB of SQL, although they revisit one candidate per file.
-Begin with adjacent, capture-free descendant searches inside `all`, with no stop rule.
-Require a pure predicate prefix followed by one value-bearing utility call.
-The current 2/8/32-search profiles provide the baseline for SQL size, preparation, VM work, and materialization sites.
+Extend the same repeat-group proof to adjacent searches inside `any`.
+Use `v = value(gt: 0)` and an `arguments` root with three identical descendant searches.
+Each body remains `all(kind(number), matches(v))`, without captures or a stop rule.
+First confirm that `f(1,2);` needs two charges: the first true search must stop the group.
+Then use `v = value(eq: 99)`: three false searches should need 12 charges, with two value reads.
+For unknown results, search identifiers in `f(x,y);`. The expected boundary is also 12 charges.
+Append a total true alternative to expose remaining work after false and unknown groups.
+Verify all native boundaries before changing the compiler.
 
-Prove that the first completed traversal answer can supply later identical calls with its measured semantic cost.
-Every reached utility already has a clause/file answer, so repeated calls must replay its original cost.
-A successful or unknown traversal can be reused only with an identical input key and no intervening effect.
-An insufficient replay allowance must produce Work failure, retain provisional-publication rules, and make no value read.
-Do not reuse first-run costs for unwrapped value leaves: their warm-cache charges can differ.
+Generalize the replay projection's stop condition by Boolean operator at compile time.
+A true first outcome stops `any`; false and noncapturing unknown outcomes continue.
+Preserve the alternative's accumulated unknown flag, later fallbacks, reached failures, and clause/file publication.
+Use the same signature proof and child-program emission, with no runtime option or additional compiler path.
+Keep capture-changing, counted, stopped, and nonidentical operands outside the proof.
 
-First compare native allowances for true, false, and unknown bodies, including exhaustion on a later repetition.
-Then lower the proved repeat group to one traversal program and guarded cost replay.
-Require bounded SQL growth as repetitions increase. Preserve capture-changing, count, stop, and nonidentical controls.
-Keep the storage and scheduling choice inside SQL generation, with no runtime switch or native composition callback.
+Profile 2/8/32 alternatives for true, false, and unknown outcomes, with and without a later fallback.
+Require bounded SQL size and return cells, then compare VM instructions and preparation against the current engine.
+The frontend still expands utility bodies and retains its 256-operator bound; this remains a later normalization task.
 
 Repeat the frozen B023 gates and existing work-count controls.
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

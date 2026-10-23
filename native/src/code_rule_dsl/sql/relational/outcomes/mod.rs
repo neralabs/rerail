@@ -10,6 +10,7 @@ mod nested_tests;
 mod pruning_tests;
 mod publication_tests;
 mod reached_tests;
+mod repeat_walk_tests;
 mod shared_memo_tests;
 mod tests;
 mod traversal_memo_tests;
