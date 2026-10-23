@@ -1734,7 +1734,14 @@ pub fn plan(p: &ir::Plan<RepoSource>, exported: &[ir::ExportedRelation]) -> Resu
                     Rel::Project { schema, .. } => schema.iter().map(|c| c.name.clone()).collect(),
                     _ => Vec::new(),
                 };
-                ctx.g.outputs.push((p.clause.clone(), n, names))
+                ctx.g.outputs.push((p.clause.clone(), n, names));
+                // `FACTS_STAGE_OUTPUTS=1` (diagnosis): every stage's relation is an output too
+                // (`<clause>/stage/<name>`), so a parity run reports its rows.
+                if std::env::var_os("FACTS_STAGE_OUTPUTS").is_some() {
+                    for (st, n) in p.stages.iter().zip(ctx.stages.clone()) {
+                        ctx.g.outputs.push((format!("{}/stage/{}", p.clause, st.name), n, Vec::new()));
+                    }
+                }
             }
             Err(e) => refused.push(e),
         },
