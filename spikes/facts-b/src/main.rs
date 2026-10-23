@@ -62,6 +62,7 @@ fn main() {
                 },
                 check_every: arg(&args, "--check-every").map_or(1, |x| x.parse().unwrap()),
                 sweep: arg(&args, "--sweep").map(|x| x.parse().unwrap()),
+                recompute: arg(&args, "--recompute").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default(),
             },
         ),
         "edits" => edits::run(

@@ -45,6 +45,11 @@ pub struct Opts {
     pub check_every: usize,
     /// Worktrees checked at load and every 100 edits (evenly spaced); `None`: all.
     pub sweep: Option<usize>,
+    /// x3-choose: real plans recomputed per edit instead of maintained. They are not lowered into
+    /// the maintained dataflow; each is evaluated from scratch (`scratch`, that plan alone) over a
+    /// worktree's members at load and after every event whose changes alter one of the plan's
+    /// exported relations (the changed path's rows, as multisets, old against new content).
+    pub recompute: Vec<String>,
 }
 
 /// A plan's from-scratch view of one worktree: its runtime refusals when any (findings are then
@@ -79,6 +84,30 @@ fn scratch(worker: &mut timely::worker::Worker, graphs: &[(String, Rc<norm::Grap
         drop(b);
         worker.drop_dataflow(id);
         (outs, refs)
+    })
+}
+
+/// A recomputed plan's view of one worktree: per output its findings, per plan its live refusals.
+type Fresh = (BTreeMap<String, Result<BTreeMap<Row, i32>, String>>, BTreeMap<String, Result<Vec<String>, String>>);
+
+/// x3-choose: one recomputed plan from scratch over a worktree's members; the milliseconds it took.
+fn recompute(worker: &mut timely::worker::Worker, g: &(String, Rc<norm::Graph>), src: &Source, m: &Members) -> (Fresh, f64) {
+    let t = Instant::now();
+    let files: Vec<(Sym, Cid)> = m.iter().map(|(p, c)| (*p, *c)).collect();
+    let x = scratch(worker, std::slice::from_ref(g), src, &files);
+    (x, t.elapsed().as_secs_f64() * 1e3)
+}
+
+/// x3-choose: whether replacing `old` by `new` at `p` changes any of `exports` (rows as multisets;
+/// an absent content has none). Equal inputs give equal outputs, so an unchanged plan is skipped.
+fn alters(src: &Source, exports: &[u32], p: Sym, old: Option<Cid>, new: Option<Cid>) -> bool {
+    exports.iter().any(|&e| {
+        let rows = |c: Option<Cid>| -> Vec<Row> {
+            let mut v: Vec<Row> = c.map(|c| src(e, p, c).to_vec()).unwrap_or_default();
+            v.sort();
+            v
+        };
+        rows(old) != rows(new)
     })
 }
 
@@ -263,6 +292,17 @@ pub fn run(run_dir: &Path, opts: Opts) {
             }
             s.into_iter().collect()
         };
+        // x3-choose: recomputed plans leave the maintained dataflow; their exports stay resident
+        // (`exports` above covers every plan) as the inputs a recompute reads.
+        for r in &opts.recompute {
+            assert!(graphs.iter().any(|(n, _)| n == r), "--recompute {r}: no such plan");
+        }
+        let (rgraphs, graphs): (Vec<_>, Vec<_>) = graphs.into_iter().partition(|(n, _)| opts.recompute.contains(n));
+        let rexports: Vec<Vec<u32>> = rgraphs
+            .iter()
+            .map(|(_, g)| g.nodes.iter().filter_map(|op| if let norm::Op::Exported(e) = op { Some(*e) } else { None }).collect::<BTreeSet<_>>().into_iter().collect())
+            .collect();
+        let mreal: Vec<(String, Rc<norm::Graph>)> = real.as_ref().map(|r| r.graphs.iter().filter(|(n, _)| !opts.recompute.contains(n)).cloned().collect()).unwrap_or_default();
         let rss_store = rss();
         let cache = std::env::var("FACTS_ROW_CACHE").map_or(true, |v| v != "0");
         let facts = Rc::new(RefCell::new(Facts { world: world.clone(), real: real.clone(), rows: FxHashMap::default(), counts: FxHashMap::default(), exports, cache }));
@@ -361,6 +401,26 @@ pub fn run(run_dir: &Path, opts: Opts) {
             per_level_ms.push(json!([w, t0.elapsed().as_secs_f64() * 1e3]));
         }
         let load_s = t_build.elapsed().as_secs_f64();
+        // x3-choose: every recomputed plan over every worktree, held as its findings.
+        let t_rload = Instant::now();
+        let mut rheld: BTreeMap<(usize, W), Fresh> = BTreeMap::new();
+        // Per recomputed plan: [phase, event, worktree, members, ms].
+        let mut rsamples: Vec<Vec<serde_json::Value>> = vec![Vec::new(); rgraphs.len()];
+        let mut rpeak = rss();
+        for (w, m) in &members {
+            for (i, g) in rgraphs.iter().enumerate() {
+                let (x, ms) = recompute(worker, g, &src, m);
+                rheld.insert((i, *w), x);
+                rsamples[i].push(json!(["load", 0, w, m.len(), ms]));
+                let r = rss();
+                rpeak = (rpeak.0.max(r.0), rpeak.1.max(r.1));
+                eprintln!("recompute load {} w{w} {} members {ms:.1} ms rss {:.0} MB footprint {:.0} MB", g.0, m.len(), mb(r.0), mb(r.1));
+            }
+        }
+        let rload_s = t_rload.elapsed().as_secs_f64();
+        if !rgraphs.is_empty() {
+            eprintln!("recomputed {} plans over {} worktrees: {:.2}s", rgraphs.len(), members.len(), rload_s);
+        }
         let rss_loaded = rss();
         eprintln!("loaded: {:.2}s, rss {:.1} MB, resident (path, content) {}", load_s, mb(rss_loaded.0), resident.held());
 
@@ -389,9 +449,9 @@ pub fn run(run_dir: &Path, opts: Opts) {
             ordered.sort();
             // Real plans from scratch: one second dataflow per check, over every real plan.
             let fresh = match &real {
-                Some(r) if !reference_scratch => {
+                Some(_) if !reference_scratch && !mreal.is_empty() => {
                     let ts = Instant::now();
-                    let x = scratch(worker, &r.graphs, &src, &files);
+                    let x = scratch(worker, &mreal, &src, &files);
                     scratch_runs += 1;
                     scratch_s += ts.elapsed().as_secs_f64();
                     Some(x)
@@ -510,6 +570,9 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut fact_load_s = 0.0;
         let mut stopped = false;
         let mut events_done = 0usize;
+        // x3-choose: recomputed plans checked against a fresh recompute (all, and those the event
+        // skipped), and the milliseconds the checks took.
+        let (mut rchecks, mut rchecks_skipped, mut rcheck_ms) = (0usize, 0usize, 0.0f64);
         for ev in &events {
             if stopped {
                 break;
@@ -517,6 +580,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             let w = ev.worktree;
             let tl = Instant::now();
             let mut ups: Vec<((W, (Sym, Cid)), i32)> = Vec::new();
+            let mut changed: Vec<(Sym, Option<Cid>, Option<Cid>)> = Vec::new();
             if ev.group == "new_worktree" || ev.group == "commit_init" {
                 assert!(!members.contains_key(&w), "worktree {w} exists");
                 let weight = |p: Sym, c: Cid| facts.borrow_mut().weight(p, c);
@@ -542,6 +606,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
                         ups.push(((w, (p, c)), 1));
                         m.insert(p, c);
                     }
+                    changed.push((p, oldc, newc));
                 }
             }
             // Exported rows of contents the event introduces are made resident before the clock.
@@ -551,18 +616,36 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 }
             }
             fact_load_s += tl.elapsed().as_secs_f64();
+            // x3-choose: the recomputed plans this event alters (decided before the old content
+            // can be evicted; timed with the event).
+            let td = Instant::now();
+            let fresh_w = ev.group == "new_worktree" || ev.group == "commit_init";
+            let dirty: Vec<usize> = (0..rgraphs.len()).filter(|&i| fresh_w || changed.iter().any(|(p, o, n)| alters(&src, &rexports[i], *p, *o, *n))).collect();
+            let decide_ms = td.elapsed().as_secs_f64() * 1e3;
             let t0 = Instant::now();
             let rel = offer(&mut built, &mut resident, ups, &mut epoch, worker);
-            let ms_ = t0.elapsed().as_secs_f64() * 1e3;
+            let maint_ms = t0.elapsed().as_secs_f64() * 1e3;
             for (p, c) in rel {
                 facts.borrow_mut().evict(p, c);
             }
+            let mut rms = Vec::new();
+            for &i in &dirty {
+                let (x, ms) = recompute(worker, &rgraphs[i], &src, &members[&w]);
+                rheld.insert((i, w), x);
+                rsamples[i].push(json!([ev.group, ev.seq, w, members[&w].len(), ms]));
+                rms.push(json!([rgraphs[i].0, ms]));
+                let r = rss();
+                rpeak = (rpeak.0.max(r.0), rpeak.1.max(r.1));
+                eprintln!("recompute event {} {} w{w} {} members {ms:.1} ms rss {:.0} MB footprint {:.0} MB", ev.seq, rgraphs[i].0, members[&w].len(), mb(r.0), mb(r.1));
+            }
+            let ms_ = maint_ms + decide_ms + rms.iter().map(|x| x[1].as_f64().unwrap()).sum::<f64>();
             lat.entry(ev.group.clone()).or_default().push(ms_);
+            lat.entry(format!("maintained:{}", ev.group)).or_default().push(maint_ms);
             if ev.group == "edit" {
                 lat.entry(format!("edit:{}", ev.kind)).or_default().push(ms_);
                 edits_done += 1;
             }
-            per_event.push(json!([ev.seq, ev.group, ev.kind, w, ev.changes.len(), ms_]));
+            per_event.push(json!([ev.seq, ev.group, ev.kind, w, ev.changes.len(), ms_, maint_ms, decide_ms, rms]));
             events_done += 1;
             if opts.oracle {
                 let before = differences.len();
@@ -570,6 +653,18 @@ pub fn run(run_dir: &Path, opts: Opts) {
                     check(worker, w, &members, &built, ev.seq, &mut differences);
                     worktree_checks += 1;
                     checks += 1;
+                    // x3-choose: each recomputed plan's held view of w against a fresh one.
+                    for (i, g) in rgraphs.iter().enumerate() {
+                        let (x, ms) = recompute(worker, g, &src, &members[&w]);
+                        rcheck_ms += ms;
+                        if rheld.get(&(i, w)) != Some(&x) {
+                            differences.push(json!({"event": ev.seq, "worktree": w, "plan": g.0, "recomputed_differs": true, "skipped_here": !dirty.contains(&i)}));
+                        }
+                        rchecks += 1;
+                        if !dirty.contains(&i) {
+                            rchecks_skipped += 1;
+                        }
+                    }
                 }
                 if ev.group == "edit" && edits_done % 100 == 0 {
                     for ww in sweep(&members) {
@@ -597,6 +692,22 @@ pub fn run(run_dir: &Path, opts: Opts) {
         }
         let single: Vec<f64> = ["edit", "new_worktree_edit"].iter().flat_map(|k| lat.get(*k).cloned().unwrap_or_default()).collect();
         lat_summary.insert("single_file_all".into(), summary(&single));
+        let msingle: Vec<f64> = ["maintained:edit", "maintained:new_worktree_edit"].iter().flat_map(|k| lat.get(*k).cloned().unwrap_or_default()).collect();
+        lat_summary.insert("single_file_maintained".into(), summary(&msingle));
+        // x3-choose: per recomputed plan, its load and per-event recompute costs and live refusals.
+        let recomputed = json!({
+            "plans": rgraphs.iter().enumerate().map(|(i, (n, _))| {
+                let ms = |phase: &dyn Fn(&str) -> bool| -> Vec<f64> { rsamples[i].iter().filter(|s| phase(s[0].as_str().unwrap())).map(|s| s[4].as_f64().unwrap()).collect() };
+                let refused: Vec<serde_json::Value> = rheld.iter().filter(|((j, _), _)| *j == i).filter_map(|((_, w), (_, refs))| {
+                    let live: Vec<String> = refs.values().flat_map(|r| r.clone().unwrap_or_else(|e| vec![e])).collect();
+                    (!live.is_empty()).then(|| json!({"worktree": w, "refusals": live}))
+                }).collect();
+                json!({"plan": n, "load": summary(&ms(&|p| p == "load")), "single_file": summary(&ms(&|p| p == "edit" || p == "new_worktree_edit")), "all_events": summary(&ms(&|p| p != "load")), "samples": rsamples[i], "refusals_live": refused})
+            }).collect::<Vec<_>>(),
+            "load_seconds": rload_s,
+            "peak_after_recompute_mb": {"rss": mb(rpeak.0), "footprint": mb(rpeak.1)},
+            "checks": rchecks, "checks_where_skipped": rchecks_skipped, "check_ms": rcheck_ms,
+        });
         drop(check);
         let Refusals(runtime_refusals) = lower::refusals();
         // Live runtime refusals at the end, per plan and worktree.
@@ -644,6 +755,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
         };
         let out = json!({
             "arrangements": arrangements,
+            "recompute": recomputed,
             "construction": lower::construction(),
             "plans": graphs.iter().map(|(n, g)| json!({"plan": n, "nodes": g.nodes.len()})).collect::<Vec<_>>(),
             "refused_static": refusals_static,
