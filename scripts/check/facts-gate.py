@@ -244,6 +244,11 @@ VIEWS_SHARD = "0/8"
 # Lane v outlives every other lane, which finish within about 2 minutes, so it gets 8 workers.
 VIEWS_THREADS = "8"
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
+# One target dir per tree: the gate (T2) builds `release` into `target/release`; the loop (T0/T1,
+# `scripts/check/facts-loop.py`) sets PROFILE to `loop` (`target/loop`). Both carry the `mutants`
+# features (hooks env-gated by FACTS_MUTANT).
+TARGET = ROOT / "target"
+PROFILE = "release"
 
 print_lock = threading.Lock()
 
@@ -295,39 +300,39 @@ def workspace_packages() -> dict[str, dict]:
     return {p["name"]: p for p in meta["packages"]}
 
 
+def profile_args() -> list[str]:
+    return ["--release"] if PROFILE == "release" else ["--profile", PROFILE]
+
+
 def build(rd: Path) -> tuple[bool, dict]:
-    target = Path(os.environ["FACTS_GATE_TARGET"])
-    seed = ROOT / "target" / "release"
-    if not (target / "release").exists() and seed.is_dir():
-        # An APFS clone of the workspace's release build, so dependencies are not rebuilt.
-        target.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["cp", "-cR", str(seed), str(target / "release")], check=False)
+    """The gate's build: `release` with the `mutants` features, into the tree's own `target/release`
+    (the hooks are env-gated: free while `FACTS_MUTANT` is unset)."""
     pkgs = workspace_packages()
     present = [p for p in PACKAGES if p in pkgs]
     mutants = [p for p in present if "mutants" in pkgs[p].get("features", {})]
-    env = {"CARGO_TARGET_DIR": str(target)}
+    env = {"CARGO_TARGET_DIR": str(TARGET)}
     bins = [p for p in present if p in ("facts-a", "facts-b")]
     features = ["--features", ",".join(f"{p}/mutants" for p in bins if p in mutants)] if any(p in mutants for p in bins) else []
     t0 = time.monotonic()
-    status, _ = run(["cargo", "build", "--release", *sum((["-p", p] for p in bins), []), *features], rd / "build", env)
+    status, _ = run(["cargo", "build", *profile_args(), *sum((["-p", p] for p in bins), []), *features], rd / "build", env)
     if status == 0 and "rerail-facts" in present:
         f = ["--features", "rerail-facts/mutants"] if "rerail-facts" in mutants else []
-        status, _ = run(["cargo", "test", "--release", "-p", "rerail-facts", *f, "--no-run"], rd / "build-tests", env)
+        status, _ = run(["cargo", "test", *profile_args(), "-p", "rerail-facts", *f, "--no-run"], rd / "build-tests", env)
     if status == 0 and "facts-a" in present:
         f = ["--features", "facts-a/mutants"] if "facts-a" in mutants else []
-        status, _ = run(["cargo", "test", "--release", "-p", "facts-a", *f, "--bin", "facts-a", "--no-run"], rd / "build-tests-facts-a", env)
+        status, _ = run(["cargo", "test", *profile_args(), "-p", "facts-a", *f, "--bin", "facts-a", "--no-run"], rd / "build-tests-facts-a", env)
     if status == 0 and "facts-b" in present:
         f = ["--features", "facts-b/mutants"] if "facts-b" in mutants else []
-        status, _ = run(["cargo", "test", "--release", "-p", "facts-b", *f, "--bin", "facts-b", "--no-run"], rd / "build-tests-facts-b", env)
+        status, _ = run(["cargo", "test", *profile_args(), "-p", "facts-b", *f, "--bin", "facts-b", "--no-run"], rd / "build-tests-facts-b", env)
     info = {"seconds": round(time.monotonic() - t0, 1), "packages": present, "mutants_feature": mutants,
-            "target": str(target), "ok": status == 0}
+            "target": str(TARGET / PROFILE), "ok": status == 0}
     say(f"build {'ok' if status == 0 else 'FAIL'} {info['seconds']:.0f}s "
         + " ".join(p + ("[mutants]" if p in mutants else "") for p in present))
     return status == 0, info
 
 
 def binary(name: str) -> str:
-    return str(Path(os.environ["FACTS_GATE_TARGET"]) / "release" / name)
+    return str(TARGET / PROFILE / name)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -553,12 +558,12 @@ def check_ties(d: Path, env: dict) -> tuple[bool, str, dict]:
 
 
 def cargo_test(d: Path, env: dict, *names: str, package: str = "rerail-facts") -> tuple[int, int, list[str]]:
-    """`cargo test --release -p <package> [--features mutants] <names>`: (exit status, tests run,
+    """`cargo test <profile> -p <package> [--features mutants] <names>`: (exit status, tests run,
     failed tests)."""
     pkgs = workspace_packages()
     f = ["--features", f"{package}/mutants"] if "mutants" in pkgs[package].get("features", {}) else []
-    status, _ = run(["cargo", "test", "--release", "-p", package, *f, *names], d,
-                    {**env, "CARGO_TARGET_DIR": os.environ["FACTS_GATE_TARGET"]})
+    status, _ = run(["cargo", "test", *profile_args(), "-p", package, *f, *names], d,
+                    {**env, "CARGO_TARGET_DIR": str(TARGET)})
     out = (d / "stdout.txt").read_text(errors="replace")
     ran = sum(int(l.split()[1]) for l in out.splitlines() if l.startswith("running ") and l.split()[1].isdigit())
     failed = [l.split()[1] for l in out.splitlines() if l.startswith("test ") and l.rstrip().endswith("FAILED")]
