@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The facts engine's gate (Phase 2 deliverable 5, G2.6); run it through `facts-gate.sh` / `just facts-gate`.
 
-Checks (clean build, `FACTS_MUTANT` unset), in five concurrent lanes:
+Checks (clean build, `FACTS_MUTANT` unset), in six concurrent lanes:
 
   a  a-replay         facts-a replay of batch 6's recordings (1,259 calls): 0 FP, every call replayed, every
                       miss or failure accepted residue (RESIDUE, empty now).
@@ -15,6 +15,8 @@ Checks (clean build, `FACTS_MUTANT` unset), in five concurrent lanes:
                       against their from-scratch oracle over the 1,111-event edit script.
   g  b-generated      facts-b greplay: the delta-plan generator over IR plans against
                       rerail_facts::reference, same events.
+  t  b-ties           facts-b greplay --plans rt --limit 200: S3's constructed-tie vector; every tie under a
+                      `Total::Checked` order is refused at run time (expected_refusals met), 0 differences.
   c  rerail-facts-lib cargo test -p rerail-facts --lib (rewrite differential tests, classifier, audit,
                       reference evaluator).
      classifier-leak  cargo test -p rerail-facts leak: a per-file plan reading cross-file state is refused.
@@ -27,15 +29,19 @@ Checks (clean build, `FACTS_MUTANT` unset), in five concurrent lanes:
                       Per check: exact, differs (FP/FN) or refused (any failure: compile error, unsupported
                       construct, panic, Rust source). Passes when every check in GATED is exact; the rest
                       is measured and reported, so the summary line is the per-batch parity table.
+     explain-physical facts-a explain --physical --root <subset> --audit, twice: byte-identical runs, every
+                      subset file printed, each clause's plan block one text in every file (audit lines
+                      informational).
 
 The subset is deterministic: every corpus file whose sha256(relative path)[0] % 8 == 0, plus every file
 holding an oracle finding (1,150 files of 9,010). It is hard-linked under SUBSET.
 
 Mutants (`--mutants`): MUTANTS (1-3 S2's interim A3 views, 4-6 S3's delta generator, 7 the classifier,
-8 the plan audit, 10 the order-totality proof) plus one per rewrite registered in docs/facts/REWRITES.md; each runs the checks of its
-family with `FACTS_MUTANT=<n>` and is killed when one of them detects it (a3-check: the FACTS_A3_CHECK
-panic; a-reference: findings differ from the clean reference; b-*: an exactness difference; cargo
-checks: a failing test, named in failed-tests.txt). A registered rewrite without a mutant fails the gate.
+8 the plan audit, 9 S3's runtime tie check, 10 the order-totality proof) plus one per rewrite registered
+in docs/facts/REWRITES.md; each runs the checks of its family with `FACTS_MUTANT=<n>` and is killed when
+one of them detects it (a3-check: the FACTS_A3_CHECK panic; a-reference: findings differ from the clean
+reference; b-*: an exactness difference or a missed expected refusal; cargo checks: a failing test,
+named in failed-tests.txt). A registered rewrite without a mutant fails the gate.
 
 Output (stdout), one line per event, every line prefixed `facts-gate: `:
 
@@ -128,6 +134,7 @@ MUTANTS = [
     (6, "delta-fixpoint-early", "facts-b", "gen: fixpoint (lower.rs)", "the fixpoint stops early (rounds >= 2 dropped)", ["b-generated"]),
     (7, "classifier-membership", "rerail-facts", "classify::file_source", "a per-content plan reaching a membership relation is accepted", ["classifier-leak", "rerail-facts-lib"]),
     (8, "planner-inner-scan", "rerail-facts", "phys.rs plan audit", "the plan audit admits an inner scan", ["planner-audit", "rerail-facts-lib"]),
+    (9, "tie-detection-off", "facts-b", "gen: runtime tie check", "a tie between distinct rows under a Checked order is not refused", ["b-ties"]),
     (10, "order-proven-total", "rerail-facts", "classify.rs::KeyEnv::total", "every order is marked proven total (no runtime tie check)", ["rerail-facts-lib"]),
 ]
 REWRITES = ROOT / "docs/facts/REWRITES.md"
@@ -170,7 +177,7 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
 BATCH_CHECKS = [f"harness-b{n}" for n in BATCH_RECORDINGS] + [f"suite-b{n}" for n in BATCH_RECORDINGS]
 LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"], "g": ["b-generated"],
          "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay", "views-derived"],
-         "h": BATCH_CHECKS}
+         "h": [*BATCH_CHECKS, "explain-physical"], "t": ["b-ties"]}
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
 
 print_lock = threading.Lock()
@@ -395,22 +402,48 @@ def check_a_reference(d: Path, env: dict, gate_dir: Path) -> tuple[bool, str, di
     return compare_reference(compiled, d / "results.json")
 
 
-def check_b(d: Path, env: dict, sub: str, fail_fast: bool = False) -> tuple[bool, str, dict]:
+def check_b(d: Path, env: dict, sub: str, fail_fast: bool = False, plans: str | None = None, limit: int | None = None) -> tuple[bool, str, dict]:
     """`facts-b <sub> --events E`: `replay` (Spike B's hand-written delta rules, the generator's test
-    vectors) or `greplay` (the delta-plan generator over IR plans, against rerail_facts::reference)."""
-    cmd = [binary("facts-b"), sub, "--events", str(EVENTS), "--run-dir", str(d), *(["--fail-fast"] if fail_fast else [])]
+    vectors) or `greplay` (the delta-plan generator over IR plans, against rerail_facts::reference;
+    `plans`/`limit` select plans and a prefix of the events). A run-time refusal passes only on a plan
+    whose refusals the run expects (`expected_refusals`, S3's constructed-tie vector `rt`); an expected
+    refusal the dataflow misses (`missing_expected_refusals`) is a detection, like a difference."""
+    cmd = [binary("facts-b"), sub, "--events", str(EVENTS), "--run-dir", str(d), *(["--fail-fast"] if fail_fast else []),
+           *(["--plans", plans] if plans else []), *(["--limit", str(limit)] if limit else [])]
     status, _ = run(cmd, d, env)
     if status != 0 or not (d / "results.json").exists():
         return False, f"exit {status}", {"detected": False}
     r = json.loads((d / "results.json").read_text())
     x = r["exactness"]
-    want = sum(1 for l in EVENTS.read_text().splitlines() if l.strip())
+    want = limit or sum(1 for l in EVENTS.read_text().splitlines() if l.strip())
     refusals = r.get("runtime_refusals", {})
-    plans = ",".join(p["plan"] for p in r.get("plans", [])) or "R1-R3 (hand-written)"
-    ok = x["differences"] == 0 and x["checks"] > 0 and r["events"] == want and not refusals
+    expected = r.get("expected_refusals", {})
+    missing = r.get("missing_expected_refusals", 0)
+    seen = {k.split(":", 1)[0] for k in r.get("runtime_refusals_seen", {})} if "runtime_refusals_seen" in r else ({"?"} if refusals else set())
+    unexpected = sorted(seen - set(expected))
+    names = ",".join(p["plan"] for p in r.get("plans", [])) or "R1-R3 (hand-written)"
+    ok = x["differences"] == 0 and x["checks"] > 0 and r["events"] == want and not unexpected and missing == 0
     return ok, (f"{x['differences']} differences in {x['checks']} checkpoints, {x['worktree_checks']} worktree checks, "
-                f"{r['events']}/{want} events, plans {plans}" + (f", runtime refusals {refusals}" if refusals else "")), \
-        {"exactness": x, "detected": x["differences"] > 0}
+                f"{r['events']}/{want} events, plans {names}"
+                + "".join(f", expected refusals {p} {e['refused']}/{e['expected']}" for p, e in expected.items())
+                + (f", MISSING expected refusals {missing}" if missing else "")
+                + (f", unexpected runtime refusals on {','.join(unexpected)}: {refusals}" if unexpected else "")), \
+        {"exactness": x, "expected_refusals": expected, "missing_expected_refusals": missing, "unexpected_refusals": unexpected,
+         "detected": x["differences"] > 0 or missing > 0}
+
+
+TIES_LIMIT = 200
+
+
+def check_ties(d: Path, env: dict) -> tuple[bool, str, dict]:
+    """S3's constructed-tie vector: `facts-b greplay --plans rt` over the first TIES_LIMIT events. `rt`
+    ties in every worktree, so every worktree's tie must be refused at run time (expected refusals all
+    met), with 0 differences against the reference (which refuses the same ties, `tie: …`)."""
+    ok, summary, det = check_b(d, env, "greplay", plans="rt", limit=TIES_LIMIT)
+    met = det.get("expected_refusals", {}).get("rt")
+    if ok and not (met and met["expected"] > 0):
+        return False, summary + ", NO expected refusals reported for rt", det
+    return ok, summary, det
 
 
 def cargo_test(d: Path, env: dict, *names: str) -> tuple[int, int, list[str]]:
@@ -458,6 +491,59 @@ def check_explain(d: Path, env: dict) -> tuple[bool, str, dict]:
     digest = hashlib.sha256(texts[0]).hexdigest()[:16]
     return same and len(texts[0]) > 0, (f"{len(ids)} rules, {len(texts[0])} bytes, sha256 {digest}, "
                                         + ("identical across 2 runs and per-rule processes" if same else "TEXT DIFFERS")), {}
+
+
+def check_explain_physical(d: Path, env: dict) -> tuple[bool, str, dict]:
+    """Physical EXPLAIN per file (S1's `facts-a explain --physical --root <subset> --audit`), twice in
+    fresh processes: the two outputs are byte-identical, every subset file is printed, and every
+    clause's block (`clause <check>/<clause>` up to the next header) is the same text in every file
+    that prints it. The ~400 MB outputs are hashed and deleted; one text per clause is kept
+    (`clauses.txt`). Inner scans the audit reports are counted, not failed (informational)."""
+    root = subset_root()
+    want = len((SUBSET.parent / "subset-8.list").read_text().splitlines())
+    digests: list[str] = []
+    blocks: dict[str, dict[str, list]] = {}
+    files = inner = 0
+    for i in (1, 2):
+        rd = d / f"run-{i}"
+        status, _ = run([binary("facts-a"), "explain", "--physical", "--root", str(root), "--audit"], rd, env)
+        out = rd / "stdout.txt"
+        if status != 0:
+            return False, f"explain --physical exit {status}", {}
+        h, files, inner = hashlib.sha256(), 0, 0
+        clause: str | None = None
+        block: list[str] = []
+
+        def close() -> None:
+            if clause is not None and i == 1:
+                text = "".join(block)
+                blocks.setdefault(clause, {}).setdefault(hashlib.sha256(text.encode()).hexdigest(), [0, text])[0] += 1
+
+        with open(out, encoding="utf-8") as f:
+            for line in f:
+                h.update(line.encode())
+                if line.startswith("== file ") or line.startswith("clause "):
+                    close()
+                    clause, block = (line.strip(), []) if line.startswith("clause ") else (None, [])
+                    files += line.startswith("== file ")
+                elif clause is not None:
+                    block.append(line)
+                    inner += line.lstrip().startswith("! ")
+            close()
+        digests.append(h.hexdigest())
+        size = out.stat().st_size
+        out.write_text(f"sha256 {digests[-1]}, {size} bytes, {files} files; deleted after checking (re-run command.txt to reproduce)\n")
+    varying = {c: len(v) for c, v in blocks.items() if len(v) > 1}
+    with open(d / "clauses.txt", "w") as f:
+        for c in sorted(blocks):
+            for n, text in blocks[c].values():
+                f.write(f"{c}  ({n} files)\n{text}")
+    same = digests[0] == digests[1]
+    ok = same and files == want and not varying and bool(blocks)
+    return ok, (f"{files}/{want} files, {len(blocks)} clauses, sha256 {digests[0][:16]}, "
+                + ("identical across 2 runs" if same else "RUNS DIFFER")
+                + (f", clauses varying across files: {', '.join(sorted(varying))}" if varying else ", each clause one text in every file")
+                + f"; {inner} inner-scan lines (audit, informational)"), {"digests": digests, "varying": varying, "inner_scan_lines": inner}
 
 
 def check_views(d: Path, env: dict) -> tuple[bool, str, dict]:
@@ -607,6 +693,8 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
         return check_b(d, env, "replay")
     if cid == "b-generated":
         return check_b(d, env, "greplay")
+    if cid == "b-ties":
+        return check_ties(d, env)
     if cid == "rerail-facts-lib":
         return check_cargo(d, env, "lib tests (rewrite differentials, classifier, audit, reference)", "--lib")
     if cid == "classifier-leak":
@@ -615,6 +703,8 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
         return check_cargo(d, env, "plan audit tests", "phys::tests::audit")
     if cid == "explain-stable":
         return check_explain(d, env)
+    if cid == "explain-physical":
+        return check_explain_physical(d, env)
     if cid == "harness-replay":
         return check_harness_replay(d, env)
     if cid == "views-derived":
@@ -644,6 +734,8 @@ def run_mutant_check(n: int, cid: str, gate_dir: Path) -> str:
         return "survived" if same else "killed"
     elif cid in ("b-exactness", "b-generated"):
         ok, _, det = check_b(d, env, "replay" if cid == "b-exactness" else "greplay", fail_fast=True)
+    elif cid == "b-ties":
+        ok, _, det = check_ties(d, env)
     elif cid in ("rerail-facts-lib", "classifier-leak", "planner-audit"):
         names = {"rerail-facts-lib": ["--lib"], "classifier-leak": ["leak"], "planner-audit": ["phys::tests::audit"]}[cid]
         ok, _, det = check_cargo(d, env, "tests", *names)
