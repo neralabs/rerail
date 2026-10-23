@@ -367,6 +367,7 @@ pub fn decode(bytes: &[u8], source: Arc<String>) -> Result<Facts, String> {
         syntax_errors: rels.get("syntax_error").is_some_and(|r| r.rows > 0),
         tape: None,
         typedefs: Default::default(),
+        bindings: Default::default(),
     };
     facts::index(&mut f);
     Ok(f)

@@ -613,3 +613,102 @@ pub fn json_quote(v: &V) -> V {
         V::Text(s) => V::text(&serde_json::to_string(&**s).unwrap()),
     }
 }
+
+/// SQLite's `printf` for the conversions `%d %i %s %f %%` with flags `-`, `0`, `+`, ` `, a width
+/// and a precision; any other conversion is refused by name. A missing argument reads as NULL
+/// (0 for numbers, `''` for `%s`), as in SQLite. SQLite counts a `%s` width and precision in
+/// bytes (characters only under the `!` flag), so a non-ASCII `%s` argument with either is refused.
+/// Shared by the reference evaluator and Spike A's executor.
+pub fn printf(fmt: &str, args: &[V]) -> Result<String, String> {
+    let mut out = String::new();
+    let mut next = args.iter();
+    let mut chars = fmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        let (mut left, mut zero, mut plus, mut space) = (false, false, false, false);
+        while let Some(&f) = chars.peek() {
+            match f {
+                '-' => left = true,
+                '0' => zero = true,
+                '+' => plus = true,
+                ' ' => space = true,
+                _ => break,
+            }
+            chars.next();
+        }
+        let mut width = 0usize;
+        while let Some(d) = chars.peek().and_then(|c| c.to_digit(10)) {
+            width = width * 10 + d as usize;
+            chars.next();
+        }
+        let mut precision = None;
+        if chars.peek() == Some(&'.') {
+            chars.next();
+            let mut p = 0usize;
+            while let Some(d) = chars.peek().and_then(|c| c.to_digit(10)) {
+                p = p * 10 + d as usize;
+                chars.next();
+            }
+            precision = Some(p);
+        }
+        let conv = chars.next().ok_or("printf: format ends inside a conversion")?;
+        let mut arg = || next.next().cloned().unwrap_or(V::Null);
+        let (sign, body) = match conv {
+            '%' => {
+                out.push('%');
+                continue;
+            }
+            'd' | 'i' => {
+                let i = match cast(&arg(), Aff::Integer) {
+                    V::Int(i) => i,
+                    _ => 0,
+                };
+                let digits = i.unsigned_abs().to_string();
+                let digits = match precision {
+                    Some(p) if digits.len() < p => format!("{}{digits}", "0".repeat(p - digits.len())),
+                    _ => digits,
+                };
+                (if i < 0 { "-" } else if plus { "+" } else if space { " " } else { "" }, digits)
+            }
+            'f' => {
+                let f = match cast(&arg(), Aff::Real) {
+                    V::Real(f) => f,
+                    _ => 0.0,
+                };
+                let s = format!("{:.*}", precision.unwrap_or(6), f.abs());
+                (if f.is_sign_negative() && f != 0.0 { "-" } else if plus { "+" } else if space { " " } else { "" }, s)
+            }
+            's' => {
+                let s = to_text(&arg()).map(|t| t.to_string()).unwrap_or_default();
+                if (precision.is_some() || width > 0) && !s.is_ascii() {
+                    return Err("printf: %s with a width or precision over non-ASCII text (SQLite counts bytes) unsupported".into());
+                }
+                let s = match precision {
+                    Some(p) => s.chars().take(p).collect(),
+                    None => s,
+                };
+                ("", s)
+            }
+            other => return Err(format!("printf: conversion %{other} unsupported")),
+        };
+        let len = sign.chars().count() + body.chars().count();
+        let pad = width.saturating_sub(len);
+        if left {
+            out.push_str(sign);
+            out.push_str(&body);
+            out.push_str(&" ".repeat(pad));
+        } else if zero && conv != 's' {
+            out.push_str(sign);
+            out.push_str(&"0".repeat(pad));
+            out.push_str(&body);
+        } else {
+            out.push_str(&" ".repeat(pad));
+            out.push_str(sign);
+            out.push_str(&body);
+        }
+    }
+    Ok(out)
+}
