@@ -9,12 +9,12 @@ Slice: the matcher constructs of Spike A's leaf executor (`spikes/facts-a/src/as
 
 | item | value |
 |---|---|
-| Commits | `39d33188c` (milestone 1, gated), then milestone 2 (§ 7) |
+| Commits | `39d33188c` (milestone 1), `8bdf55063` (milestone 2), both gated |
 | Build | `cargo build --release -p facts-a` in the slice worktree (`target/release`); the gate builds its own `target/facts-gate` |
 | Machine | darwin arm64, shared with the other slices. Load 8–31 during the runs (noted per run). No timing row is owned by S6, and nothing below is a time |
 | Corpus | data-layer rules `packs/data-layer/candidates/rules` (60). Replay recordings `fixtures/host/data-layer-port/batch-0N-*.json`, the same recording and probe sets as `/tmp/dl60/replay-all.sh` |
 
-## 2. Results
+| G2.2 batch 6 stays exact | 0 FP/FN/failures | `facts-gate` 13/13 checks pass on both milestone commits (`39d33188c`: load 20.7, 836 s; `8bdf55063`: load 19.5, 498 s; each in a detached worktree at the commit). Replay b6: 1259/1259 calls exact on every build | **pass** | `20261022T211447-gate-39d33188c`, `20261022T212846-gate-8bdf55063`, `20261022T211917-replay-g4` |
 
 | id | target | measured | pass/fail | run dir (`~/rerail-bench/facts/phase-2/s6-leaf/runs/`) |
 |---|---|---|---|---|
@@ -132,13 +132,13 @@ Ordered by the rules each one unblocked in the census:
 
 **Branch state**
 - `39d33188c` is milestone 1. It holds all the leaf constructs and passed `facts-gate` 13/13 on the same tree (`20261022T210204-gate-m1`).
-- Milestone 2 is committed after it:
+- `8bdf55063` is milestone 2, gated 13/13 (`20261022T212846-gate-8bdf55063`). It adds:
   - budget `where`;
   - regex `column`;
   - regex clauses on `.rs` files;
   - the `lines` capture-anchor context fix.
 
-  Its gate is listed in the final message. The latest replay (b6 exact; b1–b5 as in § 2.1) is on that tree.
+  The latest replay (b6 exact; b1–b5 as in § 2.1) is on that tree.
 
 **Next**
 1. **S5:** compare `column` in `replay.ts`/`facts-engine.ts` for `backend_type_strings`, as agreed. This should close batch 1.
