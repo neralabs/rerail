@@ -13,7 +13,7 @@ Mutants are `crate::mutant::on(n)` at the rewrite's site, behind the `mutants` f
 
 Numbers:
 
-- 1–3: S2's interim A3 views;
+- 1–3: the physical matcher (R12, R13 below; `spikes/facts-a/src/lowered.rs`), re-seeded from S2's interim A3 views (wave 3); run by the gate's `MUTANTS` list against the corpus differential (default plan vs `FACTS_REWRITES=0`), not by the registry parser;
 - 4–6: S3's delta generator;
 - 7: classifier;
 - 8: planner audit (inner scans);
@@ -37,6 +37,15 @@ Numbers:
 | R10 | disjunctive-equality-to-union-of-lookups | an `ON` conjunct `d₁ OR … OR dₖ`, each `dᵢ` holding ≥ 1 equality between a left and a right expression → per left row, the union of one key lookup per disjunct, sorted and deduplicated (right-table order), the whole `ON` re-checked (`rewrite::or_probe`, `OrProbe::matches` is the operator's reference form; A2's OR-branch probes, generalised) | every disjunct has a key (`ir::equi_keys` on the disjunct; a disjunct without one would scan the right side); candidates deduplicated and in table order; `ON` re-checked | a right row satisfies the `OR` only if it satisfies some disjunct, hence matches that disjunct's keys (SQL `=`: NULL matches nothing), so the lookups' union is a superset of the matches; re-checking `ON` keeps exactly the matches; sorting by row position restores the nested loop's order, deduplication its multiplicity | `rewrite::tests::rewrite_disjunctive_lookups` (3 `ON` shapes × 200 random relations; a disjunct with only `<` is not probed) | 20 dropped side condition |
 | R11 | selection sharing by semijoin under subtree closure | a stage `v` over a selection stage `sel = Filter(X, p)` (X one row per node: `file ⋈ node`) whose anchor (left-most leaf) is `sel` and whose other `sel` leaves are reached from earlier ones by downward tree edges (`c.parent = x.id`, or `x.id < c.id < x.subtree_end`) → `v[sel → X]` with the anchor semijoined with `sel` (`rewrite::share_selection`); `v[sel → X]` is the same relation for every clause differing only in its selection (computed once per content, shared by digest) | `p` subtree-closed (`rewrite::subtree_closed`: constant in the node, `∧`/`∨` of closed predicates, `∃` ancestor-or-self `Q`, or `Q(n) ∨ ∃` proper ancestor `Q` — the pattern front end's `any[X, inside{X, stopBy: end}]`); `v` is joins/filters/projections over `sel` leaves only, every non-anchor leaf reached downward | with `sel` closed under descendants, every node reached downward from an anchor in `sel` is in `sel`, so over `X` the same rows are reached; restricting the anchor to `sel` (a semijoin keeps `X`'s order, `sel` being a subsequence of it) gives exactly `v`'s rows in `v`'s order. Otherwise the stage runs over the subset, exactly (INVARIANTS: no binding without the closure condition) | `rewrite::tests::rewrite_selection_sharing` (60 random trees; `kind = 'a'` alone is not closed and is not rewritten) | 21 dropped side condition |
 
+## Physical rewrites in the per-file backend (facts-a)
+
+Kept out of the table above on purpose: the gate parses the first registry table as `rerail-facts` mutants killed by its lib tests, while these live in facts-a and are killed by the corpus differential (`MUTANTS` 1–3 in `scripts/check/facts-gate.py`).
+
+| id | rewrite | pattern | side conditions (checked) | justification | differential test | mutant (facts-a) |
+|---|---|---|---|---|---|---|
+| R12 | matcher input to set-at-a-time operators | `front::pattern`'s lowered input `Project(LEFT JOIN node x ON x.id = (first candidate) … (Filter(file ⋈ node, keep)), exprs)` → `lowered::Plan`: `keep` as bitset operators over the file's nodes (kind postings; regex/text tests only on still-undecided nodes; `AND` narrows to not-FALSE, `OR` to not-TRUE), each `EXISTS` over a tree axis as one pass over its candidates (`FileState::{candidates, found}`), captures as per-root fact reads (`FileState::capture`), outputs as fact columns | each `EXISTS`'s axis predicate equals `pattern::axis_pred(axis)` structurally (I2: parent key, preorder interval, first child under a field, two-valued stop rule); verdicts three-valued only through `value` tests on string literals (`string_value`/`string_value_unknown`); a `\N{...}` refusal relation (`… AND escape`) admitted only where the content holds no `\N{` (checked per file; elsewhere the leaf executor runs the input); anything else refused at plan time (the input runs on the leaf executor) | the algebra's search semantics (TRUE if a candidate holds, NULL if only NULLs, else FALSE) evaluated per node instead of per correlated row gives the same verdict per node; captures take the same first candidate in search order; row order is node preorder as in `Filter(file ⋈ node)` | `facts-a pattern-check` (physical vs leaf on every file, reference vs leaf on files ≤ `--max-nodes`); gate differential default vs `FACTS_REWRITES=0` | 1 dropped side condition (a stop rule dropped); 3 wrong interval bound (descendants from `id + 2`) |
+| R13 | predicate CSE with a per-file memo (union of selections) | equal predicate sub-expressions of a rule's lowered inputs → one hash-consed `lowered::Pn`; its TRUE/NULL sets memoised per file over the nodes evaluated so far (`FileState::eval`), so a clause's member selections and shared gate are evaluated once per node | the predicate reads only its candidate row and its own subqueries (capture-free; no `each`); refusal-free on the file (R12's side condition) | a deterministic per-node function evaluated once per node equals its evaluation per use; the memo grows only by newly requested nodes | same | 2 lost union arm (an `OR`'s last disjunct dropped) |
+
 ## Planned (not implemented; no mutant yet)
 
 Each gets an R-number, side conditions from I2's fact metadata, a test and a mutant when it lands.
@@ -50,9 +59,9 @@ Each gets an R-number, side conditions from I2's fact metadata, a test and a mut
 
 | A3 kernel / substitution | generic replacement |
 |---|---|
-| dump groups (`syntax_N` inputs unioned by `syntax_rows_k`) | pattern front end (`front::pattern`, matcher inputs as algebra over `node`) + R7 (one pass over `node` for the arms) + R6 (the union stage read once by `nodes`) + R8 (unread capture columns not computed) |
-| `nodes`, `node_ordinals`, `edges` kernels | R6 + R8 over the lowered inputs; `row_number()` ordinals stay a window (input order is preorder) |
-| `descendants` kernel | R9 (interval join on I2's preorder) where the stage's order is unobserved, else the fixpoint as written |
+| dump groups (`syntax_N` inputs unioned by `syntax_rows_k`) | pattern front end (captures by relation searches, stop rules, `inside` with `field`, nested `value` tests with exact reach) + R12 + R13: every member's selection once per node per file, captures from the facts; `nodes` then runs as written (generic beats A3 since wave 3) |
+| `nodes`, `node_ordinals`, `edges` kernels | as written (SQL engine); R6/R8 over the lowered inputs need origin tracing through the text ids (`kind‖':'‖start‖':'‖end`), not done |
+| `descendants` kernel | the generic closure operator (wave 3: `(carried id, node id)` u64 keys, edge lookups cached per `(probe values, node)`); R9's interval form needs the same origin tracing |
 | `ownership` kernel | none yet: a bag fixpoint with level order observed by its readers; runs as written |
 | A2's OR-branch probes | R10 |
 | "bind this stage to that fact relation" (Spike A) | R11 (with S4's views as the shared `v[sel → X]`), only under subtree closure |

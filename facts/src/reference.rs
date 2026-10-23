@@ -54,6 +54,9 @@ pub fn eval_scalar<S>(e: &Expr<S>, row: &[V], outer: &[&[V]]) -> Result<V, Error
 /// source order.
 pub struct Evaluator<'a, S> {
     source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>,
+    /// Sources the caller holds and lends (`Some`), scanned by reference instead of copied per
+    /// scan; `None` for a source: `source` copies it.
+    shared: Option<&'a dyn Fn(&S) -> Option<Rc<Vec<Row>>>>,
     locals: RefCell<Vec<(LocalId, Rc<Vec<Row>>)>>,
     /// The content a per-file plan runs over (`path`, source text), for `source_text`.
     content: Option<(&'a str, &'a str)>,
@@ -407,14 +410,75 @@ fn printf(fmt: &str, args: &[V]) -> Result<String, Error> {
 
 impl<'a, S> Evaluator<'a, S> {
     pub fn new(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>) -> Self {
-        Self { source, locals: RefCell::new(Vec::new()), content: None }
+        Self { source, shared: None, locals: RefCell::new(Vec::new()), content: None }
     }
 
     /// An evaluator over one content: `source_text(p, s, e)` is the byte range `[s, e)` of
     /// `text` when `p` is `path` (as the per-file executor: NULL for another path or a range
     /// outside the text).
     pub fn with_content(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>, path: &'a str, text: &'a str) -> Self {
-        Self { source, locals: RefCell::new(Vec::new()), content: Some((path, text)) }
+        Self { source, shared: None, locals: RefCell::new(Vec::new()), content: Some((path, text)) }
+    }
+
+    /// As [`Evaluator::with_content`], with the sources `shared` lends scanned by reference
+    /// (a filter, an inner join without `ON`, a projection or an `EXISTS` over them reads the
+    /// rows in place and copies only the rows it keeps; `EXISTS` and a scalar subquery stop at
+    /// their first row, as SQLite does).
+    pub fn with_shared_content(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>, shared: &'a dyn Fn(&S) -> Option<Rc<Vec<Row>>>, path: &'a str, text: &'a str) -> Self {
+        Self { source, shared: Some(shared), locals: RefCell::new(Vec::new()), content: Some((path, text)) }
+    }
+
+    /// A relation's rows in IR order, each passed to `f` (`Ok(false)` stops the scan). Shared
+    /// scans, inner joins without `ON`, filters and projections stream; anything else is
+    /// evaluated by [`Evaluator::rel`] first. Returns whether the scan ran to the end.
+    fn stream(&self, r: &Rel<S>, outer: &[&[V]], f: &mut dyn FnMut(&[V]) -> Result<bool, Error>) -> Result<bool, Error> {
+        match r {
+            Rel::Scan { src, .. } => {
+                if let Some(rows) = self.shared.and_then(|s| s(src)) {
+                    for row in rows.iter() {
+                        if !f(row)? {
+                            return Ok(false);
+                        }
+                    }
+                    return Ok(true);
+                }
+            }
+            Rel::Join { kind: JoinKind::Inner, left, right, on: None } => {
+                let mut buf: Vec<V> = Vec::new();
+                return self.stream(left, outer, &mut |a| {
+                    self.stream(right, outer, &mut |b| {
+                        buf.clear();
+                        buf.extend_from_slice(a);
+                        buf.extend_from_slice(b);
+                        f(&buf)
+                    })
+                });
+            }
+            Rel::Filter { input, pred } => {
+                return self.stream(input, outer, &mut |row| {
+                    let mut stack: Vec<&[V]> = Vec::with_capacity(outer.len() + 1);
+                    stack.push(row);
+                    stack.extend_from_slice(outer);
+                    if sv::truth(&self.expr(pred, &stack)?) == Some(true) { f(row) } else { Ok(true) }
+                });
+            }
+            Rel::Project { input, exprs, .. } => {
+                return self.stream(input, outer, &mut |row| {
+                    let mut stack: Vec<&[V]> = Vec::with_capacity(outer.len() + 1);
+                    stack.push(row);
+                    stack.extend_from_slice(outer);
+                    let p = exprs.iter().map(|e| self.expr(e, &stack)).collect::<Result<Vec<V>, Error>>()?;
+                    f(&p)
+                });
+            }
+            _ => {}
+        }
+        for row in self.rel(r, outer)? {
+            if !f(&row)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn local(&self, id: LocalId) -> Result<Rc<Vec<Row>>, Error> {
@@ -499,6 +563,14 @@ impl<'a, S> Evaluator<'a, S> {
                         out.push(joined);
                     }
                 }
+                Ok(out)
+            }
+            Rel::Filter { .. } | Rel::Project { .. } if self.shared.is_some() => {
+                let mut out = Vec::new();
+                self.stream(r, outer, &mut |row| {
+                    out.push(row.to_vec());
+                    Ok(true)
+                })?;
                 Ok(out)
             }
             Rel::Filter { input, pred } => {
@@ -925,7 +997,23 @@ impl<'a, S> Evaluator<'a, S> {
                 let rows = self.rel(rel, stack)?;
                 in_values(&x, rows.into_iter().map(|r| (r.into_iter().next().unwrap_or(V::Null), *aff)), *negated)
             }
+            Expr::Exists { rel, negated } if self.shared.is_some() => {
+                let mut found = false;
+                self.stream(rel, stack, &mut |_| {
+                    found = true;
+                    Ok(false)
+                })?;
+                V::bool(found != *negated)
+            }
             Expr::Exists { rel, negated } => V::bool(self.rel(rel, stack)?.is_empty() == *negated),
+            Expr::Scalar(rel) if self.shared.is_some() => {
+                let mut first = V::Null;
+                self.stream(rel, stack, &mut |row| {
+                    first = row.first().cloned().unwrap_or(V::Null);
+                    Ok(false)
+                })?;
+                first
+            }
             Expr::Scalar(rel) => self.rel(rel, stack)?.into_iter().next().and_then(|r| r.into_iter().next()).unwrap_or(V::Null),
         })
     }

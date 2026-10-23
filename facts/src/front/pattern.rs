@@ -16,12 +16,19 @@
 //! - **Relations** over the preorder interval property (I2): `has` neighbour = the children (all
 //!   of them, named or not), `has … stopBy: end` = `(id, subtree_end)`, `inside` neighbour = the
 //!   parent, `inside … stopBy: end` = the ancestors (`a < id < subtree_end(a)`); `has` with a
-//!   `field` = the first child under the field (neighbour), or it and its descendants (`end`).
+//!   `field` = the first child under the field (neighbour), or it and its descendants (`end`);
+//!   `inside` with a `field` = an ancestor the walk entered through its first child under the
+//!   field. A stop rule `S` (two-valued) cuts the walk: a candidate is reached iff no node
+//!   strictly between it and the anchor satisfies `S` (`ast.rs` tests the candidate, then the stop).
+//! - **Captures** bound on the root chain: the root (`$X` conjuncts), and a relation search
+//!   binding one metavariable (`any[REL{… $X …}, $_]`, optional, or `REL{… $X …}`): the first
+//!   candidate in search order (preorder for `has`, nearest first for `inside`) where the inner
+//!   rule holds, as a key join `LEFT JOIN node x ON x.id = (first candidate)`.
 //! - **Run-time refusals** (the content fails, as the executor's `unsupported`): a `value` test
 //!   or a `DECODED` projection that decodes a literal holding a `\N{...}` escape, counted only
 //!   where the executor evaluates it (the reach of a conjunct in an `all` chain: every earlier
 //!   conjunct not FALSE); a query without `syntax` over a content with a syntax error.
-use crate::ir::{Anchor, CmpOp, CoreRel, Expr, FileSource, Func, InputDef, InputKind, JoinKind, Lit, Lowered, Projection, Rel};
+use crate::ir::{Anchor, ArithOp, CmpOp, Column, CoreRel, Expr, FileSource, Func, InputDef, InputKind, JoinKind, Lit, Lowered, Projection, Rel, Total};
 use crate::sql::value::Aff;
 use serde_json::{Map, Value as Json};
 use std::collections::BTreeMap;
@@ -55,6 +62,10 @@ const FIELD: u16 = 11;
 // `node` alone (no path column first).
 const N_ID: u16 = 0;
 const N_PARENT: u16 = 2;
+const N_KIND: u16 = 1;
+const N_START: u16 = 3;
+const N_END: u16 = 4;
+const N_START_LINE: u16 = 5;
 const N_SUBTREE_END: u16 = 7;
 const N_FIELD: u16 = 10;
 
@@ -69,12 +80,20 @@ enum Rule {
     /// `$X` (named) / `$$X`: binds the node; `named` requires a named node.
     Meta { name: Option<String>, named: bool },
     Literal { kind: String, text: String },
-    Rel { has: bool, field: Option<String>, end: bool, rule: Box<Rule> },
+    Rel { has: bool, field: Option<String>, stop: Stop, rule: Box<Rule> },
     FilePath { regex: Option<String>, not_regex: Option<String> },
     Value { eq: Option<String>, regex: Option<String> },
     /// `matches: id`, inlined (kept as a node for `root_kinds`' shared visited set).
     Util(String, Box<Rule>),
     Never,
+}
+
+/// A relation's `stopBy`.
+#[derive(Clone, Debug)]
+enum Stop {
+    Neighbor,
+    End,
+    Rule(Box<Rule>),
 }
 
 struct Front<'a> {
@@ -185,16 +204,15 @@ impl Front<'_> {
 
     fn relation(&mut self, rel: &Json, has: bool, at: &str) -> Result<Rule, String> {
         let o = obj(rel, at)?;
-        let end = match o.get("stopBy") {
-            None => false,
-            Some(Json::String(s)) if s == "neighbor" => false,
-            Some(Json::String(s)) if s == "end" => true,
-            Some(_) => return Err(format!("{at}/stopBy: a stop rule")),
+        // `ast.rs::Compiler::stop` compiles the stop rule before the relation's own rule.
+        let stop = match o.get("stopBy") {
+            None => Stop::Neighbor,
+            Some(Json::String(s)) if s == "neighbor" => Stop::Neighbor,
+            Some(Json::String(s)) if s == "end" => Stop::End,
+            Some(v @ Json::Object(_)) => Stop::Rule(Box::new(self.rule(v, &format!("{at}/stopBy"))?)),
+            Some(_) => return Err(format!("{at}/stopBy")),
         };
         let field = o.get("field").and_then(Json::as_str).map(str::to_owned);
-        if field.is_some() && !has {
-            return Err(format!("{at}: `inside` with `field`"));
-        }
         let mut nested = o.clone();
         nested.remove("stopBy");
         nested.remove("field");
@@ -209,7 +227,20 @@ impl Front<'_> {
                 None => self.fields.push(f.clone()),
             }
         }
-        Ok(Rule::Rel { has, field, end, rule: Box::new(inner) })
+        if let Stop::Rule(s) = &stop {
+            // The walk ends at an unknown stop verdict (`search_open`); a binding stop rule binds
+            // into a fresh environment. Neither is lowered.
+            if field.is_some() {
+                return Err(format!("{at}: `field` with a stop rule"));
+            }
+            if reads_values(s) || reads_values(&inner) {
+                return Err(format!("{at}: a `value` test under a stop-rule relation"));
+            }
+            if binds(s) {
+                return Err(format!("{at}/stopBy: a stop rule binding a metavariable"));
+            }
+        }
+        Ok(Rule::Rel { has, field, stop, rule: Box::new(inner) })
     }
 }
 
@@ -268,7 +299,8 @@ fn reads_values(r: &Rule) -> bool {
     match r {
         Rule::Value { .. } => true,
         Rule::All(v) | Rule::Any(v) => v.iter().any(reads_values),
-        Rule::Not(x) | Rule::Util(_, x) | Rule::Rel { rule: x, .. } => reads_values(x),
+        Rule::Not(x) | Rule::Util(_, x) => reads_values(x),
+        Rule::Rel { rule, stop, .. } => reads_values(rule) || matches!(stop, Stop::Rule(s) if reads_values(s)),
         _ => false,
     }
 }
@@ -283,38 +315,175 @@ fn binds(r: &Rule) -> bool {
     }
 }
 
+/// A root-chain capture by a relation search: the first candidate on the axis (search order)
+/// where `inner` holds binds `name`.
+struct Cap {
+    name: String,
+    has: bool,
+    field: Option<String>,
+    stop: Stop,
+    inner: Rule,
+}
+
+/// `REL{X}` where `X` binds exactly one metavariable as a top-level `$NAME` (alone, or a
+/// conjunct of an `all` whose other conjuncts bind nothing), two-valued, or `None`.
+fn capture_of(r: &Rule) -> Option<Cap> {
+    let Rule::Rel { has, field, stop, rule } = r else { return None };
+    if reads_values(rule) || matches!(stop, Stop::Rule(s) if binds(s) || reads_values(s)) {
+        return None;
+    }
+    let name = match &**rule {
+        Rule::Meta { name: Some(n), .. } => n.clone(),
+        Rule::All(items) => {
+            let mut found = None;
+            for it in items {
+                match it {
+                    Rule::Meta { name: Some(n), .. } if found.is_none() => found = Some(n.clone()),
+                    other if binds(other) => return None,
+                    _ => {}
+                }
+            }
+            found?
+        }
+        _ => return None,
+    };
+    Some(Cap { name, has: *has, field: field.clone(), stop: stop.clone(), inner: (**rule).clone() })
+}
+
 /// The metavariables a root-chain (`all` nested in `all`, utilities inlined) binds to the root,
-/// and the value tests on that chain with their reach (every earlier conjunct not FALSE).
-fn root_chain(r: &Rule, reach: &[E], bound: &mut Vec<String>, values: &mut Vec<(Vec<E>, Rule)>) -> Result<(), String> {
+/// the relation searches on it that bind one metavariable (`caps`), and the value tests on that
+/// chain with their reach (every earlier conjunct not FALSE).
+fn root_chain(r: &Rule, bound: &mut Vec<String>, caps: &mut Vec<Cap>) -> Result<(), String> {
     match r {
         Rule::All(items) => {
-            let mut reach = reach.to_vec();
             for it in items {
-                root_chain(it, &reach, bound, values)?;
-                // The next conjunct runs unless this one is FALSE (`match_all`: an unknown
-                // conjunct does not stop the chain).
-                reach.push(Expr::Is { left: Box::new(verdict(it)), right: Box::new(Expr::Lit(Lit::Int(0))), negated: true });
+                root_chain(it, bound, caps)?;
             }
             Ok(())
         }
-        Rule::Util(_, inner) => root_chain(inner, reach, bound, values),
+        Rule::Util(_, inner) => root_chain(inner, bound, caps),
         Rule::Meta { name: Some(n), .. } => {
             bound.push(n.clone());
             Ok(())
         }
-        Rule::Value { .. } => {
-            values.push((reach.to_vec(), r.clone()));
+        // `any[REL{… $X …}, $_]`: the search binds X when it finds a candidate; otherwise `$_`
+        // (a named root) holds and nothing is bound. `REL{… $X …}` alone binds or fails.
+        Rule::Any(items) if items.len() == 2 && matches!(items[1], Rule::Meta { name: None, named: true }) && capture_of(&items[0]).is_some() => {
+            caps.push(capture_of(&items[0]).unwrap());
+            Ok(())
+        }
+        Rule::Rel { .. } if binds(r) && capture_of(r).is_some() => {
+            caps.push(capture_of(r).unwrap());
             Ok(())
         }
         other => {
             if binds(other) {
                 return Err("a metavariable under `any`/`not`/a relation (captures are lowered on the root chain only)".into());
             }
-            if reads_values(other) {
-                return Err("a `value` test under `any`/`not`/a relation (its evaluation reach, which decides `\\N{...}` refusals, is lowered on the root chain only)".into());
+            Ok(())
+        }
+    }
+}
+
+/// `verdict IS v` (TRUE/FALSE, never NULL).
+fn is(e: E, v: i64, negated: bool) -> E {
+    Expr::Is { left: Box::new(e), right: Box::new(int(v)), negated }
+}
+
+/// Whether a two-valued rule holds only on string literals (its root kinds are string kinds).
+fn strings_only(r: &Rule) -> bool {
+    !reads_values(r) && root_kinds(r, &mut Vec::new()).is_some_and(|k| !k.is_empty() && k.iter().all(|k| STRING_KINDS.contains(&k.as_str())))
+}
+
+/// The reach of every `value` test (the nodes the executor evaluates it at, which decide its
+/// `\N{...}` refusals), as predicates over a `nodes()` row: `reach` is the reach of `r`. In an
+/// `all` a conjunct runs where every earlier one is not FALSE, in an `any` where every earlier
+/// one is not TRUE (capture-free: an unknown does not end it); a relation search tests its
+/// candidates in search order until the first TRUE one. `strings`: the node is a string literal
+/// wherever `r` runs (a test on any other expression decodes values the algebra does not hold).
+fn value_reach(r: &Rule, reach: E, strings: bool, out: &mut Vec<E>) -> Result<(), String> {
+    if !reads_values(r) {
+        return Ok(());
+    }
+    match r {
+        Rule::All(items) => {
+            let (mut cond, mut strings) = (vec![reach], strings);
+            for it in items {
+                value_reach(it, all_of(cond.clone()), strings, out)?;
+                strings |= strings_only(it);
+                cond.push(is(verdict(it), 0, true));
             }
             Ok(())
         }
+        Rule::Any(items) => {
+            let mut cond = vec![reach];
+            for it in items {
+                value_reach(it, all_of(cond.clone()), strings, out)?;
+                cond.push(is(verdict(it), 1, true));
+            }
+            Ok(())
+        }
+        Rule::Not(x) | Rule::Util(_, x) => value_reach(x, reach, strings, out),
+        Rule::Value { .. } => {
+            if !strings {
+                return Err("a `value` test on nodes that are not only string literals".into());
+            }
+            out.push(reach);
+            Ok(())
+        }
+        Rule::Rel { has, field, stop, rule } => {
+            // A candidate `x` (depth 1) is tested when some anchor `a` (depth 0) reaches it: `a`
+            // is reached, `x` is on `a`'s axis, and no candidate `d` of `a` before `x` holds.
+            let (axis, s) = axis_of(*has, field.as_deref(), stop);
+            let before = filter(
+                nodes(),
+                all_of(vec![
+                    axis_pred(&axis, s.as_ref()),
+                    cmp(if axis.upward() { CmpOp::Gt } else { CmpOp::Lt }, col(ID), up(2, ID)),
+                    is(verdict(rule), 1, false),
+                ]),
+            );
+            let anchor = filter(nodes(), all_of(vec![swap_rows(&axis_pred(&axis, s.as_ref()), 0), reach, Expr::Exists { rel: Box::new(before), negated: true }]));
+            value_reach(rule, exists(anchor), false, out)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// An axis predicate with its two rows swapped: written over (candidate depth 0, anchor depth
+/// 1) at subquery level `level`, returned over (anchor, candidate).
+fn swap_rows(e: &E, level: u16) -> E {
+    let sw = |d: u16| if d == level { level + 1 } else if d == level + 1 { level } else { d };
+    let b = |x: &E| Box::new(swap_rows(x, level));
+    match e {
+        Expr::Col { depth, col } => Expr::Col { depth: sw(*depth), col: *col },
+        Expr::Lit(l) => Expr::Lit(l.clone()),
+        Expr::Not(x) => Expr::Not(b(x)),
+        Expr::And(x, y) => Expr::And(b(x), b(y)),
+        Expr::Or(x, y) => Expr::Or(b(x), b(y)),
+        Expr::Cmp(op, x, y, a) => Expr::Cmp(*op, b(x), b(y), *a),
+        Expr::Is { left, right, negated } => Expr::Is { left: b(left), right: b(right), negated: *negated },
+        Expr::IsNull { e, negated } => Expr::IsNull { e: b(e), negated: *negated },
+        Expr::Func(f, args) => Expr::Func(*f, args.iter().map(|a| swap_rows(a, level)).collect()),
+        Expr::Case { operand, whens, else_ } => Expr::Case {
+            operand: operand.as_ref().map(|o| b(o)),
+            whens: whens.iter().map(|(w, t, a)| (swap_rows(w, level), swap_rows(t, level), *a)).collect(),
+            else_: else_.as_ref().map(|x| b(x)),
+        },
+        Expr::InList { e, list, negated } => Expr::InList { e: b(e), list: list.iter().map(|(x, a)| (swap_rows(x, level), *a)).collect(), negated: *negated },
+        Expr::Exists { rel, negated } => Expr::Exists { rel: Box::new(swap_rel(rel, level + 1)), negated: *negated },
+        Expr::Scalar(rel) => Expr::Scalar(Box::new(swap_rel(rel, level + 1))),
+        other => unreachable!("not in an axis predicate: {other:?}"),
+    }
+}
+
+fn swap_rel(r: &R, level: u16) -> R {
+    match r {
+        Rel::Scan { .. } => r.clone(),
+        Rel::Join { kind, left, right, on } => Rel::Join { kind: *kind, left: Box::new(swap_rel(left, level)), right: Box::new(swap_rel(right, level)), on: on.as_ref().map(|o| swap_rows(o, level)) },
+        Rel::Filter { input, pred } => Rel::Filter { input: Box::new(swap_rel(input, level)), pred: swap_rows(pred, level) },
+        Rel::Project { input, exprs, schema } => Rel::Project { input: Box::new(swap_rel(input, level)), exprs: exprs.iter().map(|e| swap_rows(e, level)).collect(), schema: schema.clone() },
+        other => unreachable!("not in an axis predicate: {other:?}"),
     }
 }
 
@@ -357,8 +526,9 @@ fn scan(c: CoreRel) -> R {
 fn filter(r: R, pred: E) -> R {
     Rel::Filter { input: Box::new(r), pred }
 }
-/// The candidate rows: `file ⋈ node`, in node order.
-fn nodes() -> R {
+/// The candidate rows: `file ⋈ node`, in node order (the schema every axis predicate and verdict
+/// reads: `path`, then `node`'s columns).
+pub fn nodes() -> R {
     Rel::Join { kind: JoinKind::Inner, left: Box::new(scan(CoreRel::File)), right: Box::new(scan(CoreRel::Node)), on: None }
 }
 /// The node's source text.
@@ -410,8 +580,9 @@ fn verdict(r: &Rule) -> E {
                 else_: Some(Box::new(int(0))),
             }
         }
-        Rule::Rel { has, field, end, rule } => {
-            let cands = candidates(*has, field.as_deref(), *end);
+        Rule::Rel { has, field, stop, rule } => {
+            let (axis, s) = axis_of(*has, field.as_deref(), stop);
+            let cands = filter(nodes(), axis_pred(&axis, s.as_ref()));
             let v = verdict(rule);
             if !reads_values(rule) {
                 return exists(filter(cands, v));
@@ -423,21 +594,84 @@ fn verdict(r: &Rule) -> E {
     }
 }
 
-/// The candidate rows of a relation search from the anchor (the enclosing row, depth 1).
-fn candidates(has: bool, field: Option<&str>, end: bool) -> R {
-    let pred = match (has, field, end) {
-        (true, None, false) => eq(col(PARENT), up(1, ID)),
-        (true, None, true) => and(cmp(CmpOp::Gt, col(ID), up(1, ID)), cmp(CmpOp::Lt, col(ID), up(1, SUBTREE_END))),
-        (false, None, false) => eq(col(ID), up(1, PARENT)),
-        (false, None, true) => and(cmp(CmpOp::Lt, col(ID), up(1, ID)), cmp(CmpOp::Gt, col(SUBTREE_END), up(1, ID))),
-        (true, Some(f), false) => {
-            // The first child under the field: no earlier sibling under it.
-            let earlier = filter(scan(CoreRel::Node), all_of(vec![eq(col(N_PARENT), up(1, PARENT)), eq(col(N_FIELD), text(f)), cmp(CmpOp::Lt, col(N_ID), up(1, ID))]));
-            all_of(vec![eq(col(PARENT), up(1, ID)), eq(col(FIELD), text(f)), Expr::Exists { rel: Box::new(earlier), negated: true }])
+/// A relation search's axis: which nodes it tests from the anchor, in search order (preorder
+/// for `has`, nearest first for `inside`). `*Until` carry a stop rule's verdict.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Axis {
+    /// `has` neighbour.
+    Children,
+    /// `has … stopBy: end`.
+    Descendants,
+    /// `has … stopBy: S`: descendants reached without passing a node where `S` holds.
+    DescendantsUntil,
+    /// `inside` neighbour.
+    Parent,
+    /// `inside … stopBy: end`.
+    Ancestors,
+    /// `inside … stopBy: S`: ancestors reached without passing a node where `S` holds.
+    AncestorsUntil,
+    /// `has` neighbour with `field`: the first child under the field.
+    FieldChild(String),
+    /// `has … stopBy: end` with `field`: that child and its descendants.
+    FieldSubtree(String),
+    /// `inside` neighbour with `field`: the parent, when the anchor is its first child under the field.
+    InsideField(String),
+    /// `inside … stopBy: end` with `field`: the ancestors entered through their first child under the field.
+    InsideFieldEnd(String),
+}
+
+impl Axis {
+    /// Whether the search walks towards the root (nearest candidate first).
+    pub fn upward(&self) -> bool {
+        matches!(self, Axis::Parent | Axis::Ancestors | Axis::AncestorsUntil | Axis::InsideField(_) | Axis::InsideFieldEnd(_))
+    }
+}
+
+fn axis_of(has: bool, field: Option<&str>, stop: &Stop) -> (Axis, Option<E>) {
+    match (has, field, stop) {
+        (true, None, Stop::Neighbor) => (Axis::Children, None),
+        (true, None, Stop::End) => (Axis::Descendants, None),
+        (true, None, Stop::Rule(s)) => (Axis::DescendantsUntil, Some(verdict(s))),
+        (false, None, Stop::Neighbor) => (Axis::Parent, None),
+        (false, None, Stop::End) => (Axis::Ancestors, None),
+        (false, None, Stop::Rule(s)) => (Axis::AncestorsUntil, Some(verdict(s))),
+        (true, Some(f), Stop::Neighbor) => (Axis::FieldChild(f.to_owned()), None),
+        (true, Some(f), Stop::End) => (Axis::FieldSubtree(f.to_owned()), None),
+        (false, Some(f), Stop::Neighbor) => (Axis::InsideField(f.to_owned()), None),
+        (false, Some(f), Stop::End) => (Axis::InsideFieldEnd(f.to_owned()), None),
+        (_, Some(_), Stop::Rule(_)) => unreachable!("refused in `relation`"),
+    }
+}
+
+/// The predicate selecting an axis's candidates: over the candidate row (`nodes()`, depth 0) and
+/// the anchor (a `nodes()` row, depth 1). `stop`: the stop rule's verdict over a `nodes()` row
+/// (`*Until` axes only).
+pub fn axis_pred(axis: &Axis, stop: Option<&E>) -> E {
+    let desc = || and(cmp(CmpOp::Gt, col(ID), up(1, ID)), cmp(CmpOp::Lt, col(ID), up(1, SUBTREE_END)));
+    let anc = || and(cmp(CmpOp::Lt, col(ID), up(1, ID)), cmp(CmpOp::Gt, col(SUBTREE_END), up(1, ID)));
+    // No earlier sibling of the node at depth `d` (a `nodes()` row) under field `f`.
+    let first_under = |f: &str, d: u16| Expr::Exists {
+        rel: Box::new(filter(scan(CoreRel::Node), all_of(vec![eq(col(N_PARENT), up(d, PARENT)), eq(col(N_FIELD), text(f)), cmp(CmpOp::Lt, col(N_ID), up(d, ID))]))),
+        negated: true,
+    };
+    match axis {
+        Axis::Children => eq(col(PARENT), up(1, ID)),
+        Axis::Descendants => desc(),
+        Axis::DescendantsUntil => {
+            // No `b` with anchor < b < candidate on the candidate's ancestor path where S(b).
+            let between = all_of(vec![cmp(CmpOp::Gt, col(ID), up(2, ID)), cmp(CmpOp::Lt, col(ID), up(1, ID)), cmp(CmpOp::Gt, col(SUBTREE_END), up(1, ID)), stop.expect("stop verdict").clone()]);
+            and(desc(), not(exists(filter(nodes(), between))))
         }
-        (true, Some(f), true) => {
-            // The first child under the field and its descendants: some first field child `d`
-            // of the anchor with d ≤ id < subtree_end(d).
+        Axis::Parent => eq(col(ID), up(1, PARENT)),
+        Axis::Ancestors => anc(),
+        Axis::AncestorsUntil => {
+            // No ancestor `b` of the anchor deeper than the candidate where S(b).
+            let between = all_of(vec![cmp(CmpOp::Gt, col(ID), up(1, ID)), cmp(CmpOp::Lt, col(ID), up(2, ID)), cmp(CmpOp::Gt, col(SUBTREE_END), up(2, ID)), stop.expect("stop verdict").clone()]);
+            and(anc(), not(exists(filter(nodes(), between))))
+        }
+        Axis::FieldChild(f) => all_of(vec![eq(col(PARENT), up(1, ID)), eq(col(FIELD), text(f)), first_under(f, 1)]),
+        Axis::FieldSubtree(f) => {
+            // Some first field child `d` of the anchor with d ≤ id < subtree_end(d).
             let earlier = filter(scan(CoreRel::Node), all_of(vec![eq(col(N_PARENT), up(1, N_PARENT)), eq(col(N_FIELD), text(f)), cmp(CmpOp::Lt, col(N_ID), up(1, N_ID))]));
             let first = filter(
                 scan(CoreRel::Node),
@@ -451,9 +685,13 @@ fn candidates(has: bool, field: Option<&str>, end: bool) -> R {
             );
             exists(first)
         }
-        (false, Some(_), _) => unreachable!("refused in `relation`"),
-    };
-    filter(nodes(), pred)
+        Axis::InsideField(f) => all_of(vec![eq(col(ID), up(1, PARENT)), eq(up(1, FIELD), text(f)), first_under(f, 2)]),
+        Axis::InsideFieldEnd(f) => {
+            // The candidate's child `c` on the path to the anchor is its first child under `f`.
+            let path_child = all_of(vec![eq(col(PARENT), up(1, ID)), cmp(CmpOp::Le, col(ID), up(2, ID)), cmp(CmpOp::Gt, col(SUBTREE_END), up(2, ID)), eq(col(FIELD), text(f)), first_under(f, 1)]);
+            and(anc(), exists(filter(nodes(), path_child)))
+        }
+    }
 }
 
 /// Lowers a pattern input. `known_field(name)`: whether the grammar has the field (the executor
@@ -482,11 +720,16 @@ pub fn lower_input(input: &InputDef, utils: &BTreeMap<String, Json>, known_field
     }
     let mut front = Front { utils: &all_utils, known_field, stack: Vec::new(), fields: Vec::new() };
     let rule = front.rule(q.get("rule").ok_or("ast.rule missing")?, "rule")?;
-    // Root chain: captures and value tests with their reach.
-    let (mut bound, mut values) = (Vec::new(), Vec::new());
-    root_chain(&rule, &[], &mut bound, &mut values)?;
-    if !values.is_empty() && !front.fields.is_empty() {
-        return Err(format!("`field: {}` of unknown grammar status next to a `value` test", front.fields.join(", ")));
+    // Root chain: captures.
+    let (mut bound, mut caps) = (Vec::new(), Vec::new());
+    root_chain(&rule, &mut bound, &mut caps)?;
+    {
+        // A name bound twice compares instead of binding (`ast.rs` `MetaVar` with a binding).
+        let mut names: Vec<&str> = bound.iter().map(String::as_str).chain(caps.iter().map(|c| c.name.as_str())).collect();
+        names.sort_unstable();
+        if names.windows(2).any(|w| w[0] == w[1]) {
+            return Err("a metavariable bound twice on the root chain".into());
+        }
     }
     let mut decoded: Option<String> = None;
     if let Some(t) = q.get("transform") {
@@ -506,8 +749,8 @@ pub fn lower_input(input: &InputDef, utils: &BTreeMap<String, Json>, known_field
     }
     let kinds = root_kinds(&rule, &mut Vec::new());
     let strings_only = kinds.as_ref().is_some_and(|k| !k.is_empty() && k.iter().all(|k| STRING_KINDS.contains(&k.as_str())));
-    if (!values.is_empty() || decoded.is_some()) && !strings_only {
-        return Err("a `value` test or decoded value on roots that are not only string literals".into());
+    if decoded.is_some() && !strings_only {
+        return Err("a decoded value on roots that are not only string literals".into());
     }
     let syntax = match q.get("syntax").and_then(Json::as_str) {
         Some("valid") => Some(false),
@@ -523,35 +766,65 @@ pub fn lower_input(input: &InputDef, utils: &BTreeMap<String, Json>, known_field
         gate.push(Expr::Exists { rel: Box::new(scan(CoreRel::SyntaxError)), negated: !errors });
     }
     let v = verdict(&rule);
+    // Every `value` test's reach (its refusals), from the candidates' gate.
+    let mut values = Vec::new();
+    value_reach(&rule, all_of(gate.clone()), strings_only, &mut values)?;
+    if !values.is_empty() && !front.fields.is_empty() {
+        return Err(format!("`field: {}` of unknown grammar status next to a `value` test", front.fields.join(", ")));
+    }
     let escape = exists(filter(scan(CoreRel::StringValueUnknown), and(eq(col(0), up(1, ID)), eq(col(1), int(1)))));
     let mut refuse_if = Vec::new();
     if syntax.is_none() {
         refuse_if.push((scan(CoreRel::SyntaxError), NO_SYNTAX.to_owned()));
     }
-    for (reach, _) in &values {
-        let mut c = gate.clone();
-        c.extend(reach.iter().cloned());
-        c.push(eq(col(NAMED), int(1)));
-        c.push(escape.clone());
-        refuse_if.push((filter(nodes(), all_of(c)), NAMED_ESCAPE.to_owned()));
+    for reach in values {
+        refuse_if.push((filter(nodes(), all_of(vec![reach, eq(col(NAMED), int(1)), escape.clone()])), NAMED_ESCAPE.to_owned()));
     }
-    // Projections.
-    let root_text = |n: &str| -> Option<E> { bound.iter().any(|b| b == n).then(node_text) };
+    // Captures by relation searches: `LEFT JOIN node x ON x.id = (first candidate)`, appended
+    // after the candidate row (`nodes()`, 12 columns), 11 columns each.
+    let mut acc = filter(nodes(), {
+        let mut keep = gate.clone();
+        keep.push(v.clone());
+        all_of(keep)
+    });
+    let mut cap_base: Vec<(String, u16)> = Vec::new();
+    let mut width: u16 = 1 + CoreRel::Node.columns().len() as u16;
+    for c in &caps {
+        acc = Rel::Join { kind: JoinKind::Left, left: Box::new(acc), right: Box::new(scan(CoreRel::Node)), on: Some(eq(col(width + N_ID), capture_id(c))) };
+        cap_base.push((c.name.clone(), width));
+        width += CoreRel::Node.columns().len() as u16;
+    }
+    // Where a capture's node columns are: the root's (`nodes()` columns from 1) or a join's.
+    let at = |n: &str| -> Option<u16> {
+        if bound.iter().any(|b| b == n) {
+            Some(1)
+        } else {
+            cap_base.iter().find(|(c, _)| c == n).map(|(_, b)| *b)
+        }
+    };
     let decoded_value = || -> E {
-        let v = Expr::Scalar(Box::new(Rel::Project { input: Box::new(filter(scan(CoreRel::StringValue), eq(col(0), up(1, ID)))), exprs: vec![col(1)], schema: vec![crate::ir::Column::new("value", Aff::None)] }));
+        let v = Expr::Scalar(Box::new(Rel::Project { input: Box::new(filter(scan(CoreRel::StringValue), eq(col(0), up(1, ID)))), exprs: vec![col(1)], schema: vec![Column::new("value", Aff::None)] }));
         Expr::Func(Func::Coalesce, vec![v, text("")])
     };
-    fn proj(p: &Projection, root_text: &dyn Fn(&str) -> Option<E>, decoded: Option<&str>, decoded_value: &dyn Fn() -> E, bound: &[String]) -> Result<E, String> {
-        let root = |n: &str| bound.iter().any(|b| b == n);
+    // A capture's node column `c` (a `node` column index) at base `b`.
+    let nc = |b: u16, c: u16| col(b + c);
+    fn proj(p: &Projection, at: &dyn Fn(&str) -> Option<u16>, nc: &dyn Fn(u16, u16) -> E, decoded: Option<&str>, decoded_value: &dyn Fn() -> E) -> Result<E, String> {
+        let base = |n: &str| at(n).ok_or_else(|| format!("projection of `{n}` (not bound on the root chain)"));
         Ok(match p {
             Projection::Path => col(PATH),
             Projection::Text(n) if decoded == Some(n.as_str()) => decoded_value(),
-            Projection::Capture(n) | Projection::Text(n) => root_text(n).ok_or_else(|| format!("projection of `{n}` (not a root capture)"))?,
-            Projection::Kind(n) if root(n) => col(KIND),
-            Projection::StartByte(n) if root(n) => col(START),
-            Projection::EndByte(n) if root(n) => col(END),
+            Projection::Capture(n) | Projection::Text(n) => {
+                let b = base(n)?;
+                // NULL bounds (an unbound capture) read as NULL.
+                Expr::Func(Func::SourceText, vec![col(PATH), nc(b, N_START), nc(b, N_END)])
+            }
+            Projection::Kind(n) => nc(base(n)?, N_KIND),
+            Projection::StartByte(n) => nc(base(n)?, N_START),
+            Projection::EndByte(n) => nc(base(n)?, N_END),
+            // `node.start_line` is 1-based; the executor projects the 0-based line.
+            Projection::StartLine(n) => Expr::Arith(ArithOp::Sub, Box::new(nc(base(n)?, N_START_LINE)), Box::new(int(1))),
             Projection::Regex { source, regex, group } => {
-                let s = proj(source, root_text, decoded, decoded_value, bound)?;
+                let s = proj(source, at, nc, decoded, decoded_value)?;
                 Expr::Case {
                     operand: None,
                     whens: vec![(Expr::IsNull { e: Box::new(s.clone()), negated: false }, Expr::Lit(Lit::Null), (Aff::None, Aff::None))],
@@ -566,18 +839,32 @@ pub fn lower_input(input: &InputDef, utils: &BTreeMap<String, Json>, known_field
         Anchor::Span => exprs.extend([col(START), col(END)]),
         Anchor::FileStart => exprs.extend([int(0), int(0)]),
         Anchor::Capture(n) if bound.iter().any(|b| b == n) => exprs.extend([col(START), col(END)]),
+        // An unbound capture anchors at the witness.
+        Anchor::Capture(n) if at(n).is_some() => {
+            let b = at(n).unwrap();
+            exprs.extend([Expr::Func(Func::Coalesce, vec![nc(b, N_START), col(START)]), Expr::Func(Func::Coalesce, vec![nc(b, N_END), col(END)])]);
+        }
         a => return Err(format!("anchor {a:?}")),
     }
     for (_, p) in &input.fields {
-        exprs.push(proj(p, &root_text, decoded.as_deref(), &decoded_value, &bound)?);
+        exprs.push(proj(p, &at, &nc, decoded.as_deref(), &decoded_value)?);
     }
-    let mut keep = gate.clone();
-    keep.push(v.clone());
     if decoded.is_some() {
-        let mut c = keep.clone();
+        let mut c = gate.clone();
+        c.push(v.clone());
         c.push(escape);
         refuse_if.push((filter(nodes(), all_of(c)), NAMED_ESCAPE.to_owned()));
     }
-    let rows = Rel::Project { input: Box::new(filter(nodes(), all_of(keep))), exprs, schema: input.schema.clone() };
+    let rows = Rel::Project { input: Box::new(acc), exprs, schema: input.schema.clone() };
     Ok(Lowered { rows, refuse_if })
+}
+
+/// A capture's node id over the candidate row (depth 0): the first candidate on its axis, in
+/// search order, where its inner rule holds; NULL when none.
+fn capture_id(c: &Cap) -> E {
+    let (axis, s) = axis_of(c.has, c.field.as_deref(), &c.stop);
+    let found = filter(filter(nodes(), axis_pred(&axis, s.as_ref())), verdict(&c.inner));
+    // `node` order is preorder; an upward search takes the nearest (largest id) first.
+    let ordered = if axis.upward() { Rel::Sort { input: Box::new(found), keys: vec![(ID, true)], limit: Some(int(1)), offset: None, total: Total::InputOrder } } else { found };
+    Expr::Scalar(Box::new(Rel::Project { input: Box::new(ordered), exprs: vec![col(ID)], schema: vec![Column::new("id", Aff::None)] }))
 }
