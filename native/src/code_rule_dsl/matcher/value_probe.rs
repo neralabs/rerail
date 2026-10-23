@@ -11,11 +11,14 @@ thread_local! { static PROBE: RefCell<Option<Probe>> = const { RefCell::new(None
 pub(super) fn record<D: Doc>(node: &Node<'_, D>) -> bool {
     PROBE.with_borrow_mut(|probe| {
         let Some(probe) = probe else { return false };
+        // Native cleanup can enter leaves after a limit. In reached-only mode these
+        // calls must neither appear in the trace nor overwrite the original failure.
+        if probe.reached_only && super::util_limit_hit() {
+            return false;
+        }
         let text = node.text().into_owned();
         let fail = probe.fault.as_ref() == Some(&text);
-        if !probe.reached_only || !super::util_limit_hit() {
-            probe.calls.push(text);
-        }
+        probe.calls.push(text);
         fail
     })
 }

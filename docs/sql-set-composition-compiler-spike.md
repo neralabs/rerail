@@ -4611,3 +4611,96 @@ Artifacts:
 The next phase applies the same proof to alternatives, with a true outcome as the group's stop condition.
 The frontend still expands utility bodies and retains its 256-operator bound. SQL generation now avoids repeated child programs within the proved group.
 Production integration, native depth limits, deadlines, general recursive outcomes, and the complete-job 100-execution gate remain open.
+
+### 2026-10-23 — Repeat sharing in alternatives
+
+This phase extends the existing repeat-group proof to adjacent identical searches inside `any`.
+The compiler must preserve the first true outcome as the stop condition.
+False and noncapturing unknown outcomes continue, with the original charge for each reached alternative.
+The alternative retains its accumulated unknown flag and can reach a later fallback.
+
+The proposed change reuses the signature proof, first traversal, and guarded cost projection.
+The Boolean operator selects the stop condition during SQL generation.
+There is no new runtime option or separate composition engine.
+Native boundary checks and 18 baseline profiles precede the compiler change.
+The profiles cover 2/8/32 alternatives for true, false, and unknown outcomes, with and without a fallback.
+Results are pending.
+
+Native preflight passes before compiler changes:
+
+- Three true alternatives stop after the first search: two charges and one value read.
+- Three false alternatives consume 12 charges and read each of two candidates once.
+- Three unknown alternatives also consume 12 charges and read each candidate once.
+- Two overlapping roots with true searches consume four charges and one value read.
+- One fewer charge fails in each case. Failure on the second root discards the first provisional match.
+
+The baseline driver now records SQL, EXPLAIN, VM instructions, preparation time, and typed return cells.
+
+The ungrouped 32-alternative baseline exposes duplicated SQL even when native utility answers are cached.
+Across two files, false alternatives use 185,057 SQL bytes, 623 materialization sites, 81,215 VM instructions, and 904 typed return cells.
+True alternatives stop early but still compile the same 623 materialization sites and use 6,699 VM instructions.
+
+The implementation now selects the stop predicate through a compile-time Boolean enum.
+It preserves the existing conjunction SQL verbatim and adds the alternative stop condition to the same replay projection.
+The group profile records `stopTruth` for review.
+The ordinary alternative barrier still owns unknown accumulation, fallback reachability, and capture publication.
+Qualification is pending.
+
+The first semantic run passed six tests and failed the later-fallback fault case.
+At zero allowance, SQL reported Work failure while the native test oracle reported Value failure without a reached value call.
+The reached-call probe suppressed cleanup calls from its trace but still injected faults into those calls.
+A cleanup probe therefore replaced the original Work failure with an injected Value failure.
+Production value decoding preserves an existing failure.
+
+The test probe now suppresses both recording and fault injection after a limit in reached-only mode.
+The full-call probe mode keeps its existing behavior. Production matcher behavior is unchanged.
+The failing fallback case remains in the regression suite.
+The retained first-run log is `/tmp/rerail-repeat-any-first-tests.log`.
+
+The corrected probe and compiler pass all 127 relational tests.
+Seven new comparison tests cover 973 jobs, including 18 profiles. A separate SQL test covers signed-limit arithmetic.
+The suite retains 4,701 publication traces.
+Every new profile has one matching statement and zero legacy frame publications.
+The complete cold-job execution budget remains unproved.
+
+| 32-alternative fixture, across two files | Before VM | After VM | Before return cells | After return cells | SQL bytes after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| True | 6,699 | 2,495 | 148 | 24 | 8,766 |
+| False | 81,215 | 3,629 | 904 | 36 | 8,766 |
+| Unknown | 81,609 | 3,655 | 904 | 36 | 8,754 |
+| True with fallback | 6,804 | 2,600 | 148 | 24 | 9,319 |
+| False with fallback | 81,458 | 3,872 | 904 | 36 | 9,319 |
+| Unknown with fallback | 81,842 | 3,888 | 904 | 36 | 9,307 |
+
+For false alternatives, VM work falls by 22.4× and SQL size falls by 95.3%.
+EXPLAIN materialization sites fall from 623 to 35, or from 625 to 37 with a fallback.
+The preparation sample falls from 142.41 ms to 2.85 ms for the false fixture.
+Concurrent activity affects these instrumented wall-time samples, so they do not establish a production speed ratio.
+The VM counts and SQL text provide the structural comparison.
+All six dimensions retain constant return cells and at most one extra VM instruction across 2/8/32 alternatives.
+
+Final semantic and workload qualification passes 139 unique tests.
+These include 127 relational tests, one workspace test, nine B023 fixtures, one adversarial test, and one corpus test.
+All 141 preceding profiles retain identical SQL, outputs, and VM counts.
+The new 18 profiles also retain the baseline's native traces, charges, and reached value calls.
+Formatting, workspace Clippy, and Clippy with the profiling feature pass. Measured source and SQL artifact hashes match the committed evidence.
+
+The frozen B023 query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+It reports 138 files, two matches, and 2,812,255 generated VM instructions in all three pairs.
+Median generated CPU is 122,091,875 ns versus 66,254,875 ns for the reference: **1.842761×**.
+Both gates pass in this run. Prior timing failures remain recorded, and unchanged SQL and VM counts show no structural B023 improvement.
+The optimized test build uses the recorded jemalloc shim and disables local test-executable LTO.
+
+Artifacts:
+
+- `benchmark/relational-repeat-any.py`: native comparisons, group-shape assertions, EXPLAIN, counters, and pinned source/binary hashes.
+- `benchmark/sql-relational-repeat-any-evidence.json`: 973 traces, 18 before/after profiles, 141 unchanged controls, and frozen gates.
+- `benchmark/sql-relational-repeat-any.sql`: the 32-alternative false group.
+- `benchmark/sql-relational-repeat-any-true.sql`: the true group with early stopping.
+- `benchmark/sql-relational-repeat-any-unknown-fallback.sql`: unknown outcomes followed by a successful fallback.
+- `benchmark/sql-relational-repeat-any-before.sql`: the previous false-group query, with all 32 traversal programs.
+- Raw logs: `/tmp/rerail-repeat-any-20261023-{before,final}` and `/tmp/rerail-repeat-any-b023-20261023-final`.
+
+The next phase lowers each acyclic utility body once and retains its charge at every call site.
+It must expose distinct plan and terminal counts and prove the current expansion-limit failure before changing admission.
+Production integration, native depth limits, deadlines, general recursive outcomes, and the complete-job 100-execution gate remain open.

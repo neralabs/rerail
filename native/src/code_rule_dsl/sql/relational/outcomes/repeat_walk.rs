@@ -5,6 +5,12 @@ use super::{Axis, Demand, Op, Plan, Sql};
 use crate::code_rule_dsl::sql::relational::ir::Set;
 use serde_json::json;
 
+#[derive(Clone, Copy)]
+pub(super) enum Boolean {
+    All,
+    Any,
+}
+
 fn signature(plan: &Plan) -> Option<(Vec<Set>, usize)> {
     if !plan.mentions.is_empty() || !plan.writes.is_empty() {
         return None;
@@ -51,6 +57,7 @@ impl Sql {
         child: &Plan,
         guard: &str,
         calls: usize,
+        boolean: Boolean,
     ) -> Result<String, String> {
         debug_assert!(calls > 1 && self.memo_clause.is_some() && signature(child).is_some());
         let (query, profile) = program(
@@ -62,7 +69,7 @@ impl Sql {
             ("d.file", "d.node", "d.work"),
             self.memo_clause,
         )?;
-        let query = replay(&query, calls - 1);
+        let query = replay(&query, calls - 1, boolean);
         let name = self.relation(
             "correlated repeated traversal",
             format!(
@@ -75,17 +82,22 @@ impl Sql {
         );
         let item = self.profile.last_mut().unwrap();
         item["childPrograms"] = json!({"operand":profile});
-        item["repeatTraversal"] = json!({"calls":calls,"compiledTraversals":1,"typedReturnColumns":2,"proof":"adjacent identical capture-free descendant searches; pure prefix then one value-bearing utility; no stop or intervening effect","cost":"first measured cost replayed for remaining reached calls","overflow":"divide remaining allowance before multiplying cost"});
+        item["repeatTraversal"] = json!({"calls":calls,"compiledTraversals":1,"typedReturnColumns":2,"stopTruth":match boolean {Boolean::All=>0,Boolean::Any=>1},"proof":"adjacent identical capture-free descendant searches; pure prefix then one value-bearing utility; no stop or intervening effect","cost":"first measured cost replayed for remaining reached calls","overflow":"divide remaining allowance before multiplying cost"});
         Ok(name)
     }
 }
 
-fn replay(query: &str, repeats: usize) -> String {
+fn replay(query: &str, repeats: usize, boolean: Boolean) -> String {
     // Division proves the multiplication fits the remaining signed allowance.
-    // A failed/false first search stops All. Unknown repeats remain reached.
+    // Failure always stops. The signature excludes capture effects, so unknown repeats
+    // remain reached in either Boolean operator. Choose the stop rule at compile time.
+    let (continues, stops) = match boolean {
+        Boolean::All => ("f.truth>0", "f.truth<=0"),
+        Boolean::Any => ("f.truth IN (0,2)", "f.truth NOT IN (0,2)"),
+    };
     let exhausted = format!("(d.work-f.work)>f.work/{repeats}");
     format!(
-        "WITH first AS MATERIALIZED ({query}) SELECT CASE WHEN f.truth>0 AND ({exhausted}) THEN -2 ELSE f.truth END AS truth,CASE WHEN f.truth<=0 THEN f.work WHEN {exhausted} THEN 0 ELSE f.work-(d.work-f.work)*{repeats} END AS work FROM first f"
+        "WITH first AS MATERIALIZED ({query}) SELECT CASE WHEN {continues} AND ({exhausted}) THEN -2 ELSE f.truth END AS truth,CASE WHEN {stops} THEN f.work WHEN {exhausted} THEN 0 ELSE f.work-(d.work-f.work)*{repeats} END AS work FROM first f"
     )
 }
 
@@ -95,7 +107,10 @@ fn repeated_cost_arithmetic_stays_integer_at_allowance_limits() {
     crate::code_rule_dsl::sql::relational::row::register(&db).unwrap();
     let query = format!(
         "SELECT r.c0,r.c1 FROM (SELECT ?1 AS work) d {}",
-        bridge(&replay("SELECT ?2 AS truth,?3 AS work", 31), 2)
+        bridge(
+            &replay("SELECT ?2 AS truth,?3 AS work", 31, Boolean::All),
+            2
+        )
     );
     let mut statement = db.prepare(&query).unwrap();
     for (start, truth, left, expected) in [
@@ -108,6 +123,39 @@ fn repeated_cost_arithmetic_stays_integer_at_allowance_limits() {
         (i64::MAX, -4, i64::MAX / 2, (-4, i64::MAX / 2)),
         (i64::MAX, 1, i64::MAX - 1, (1, i64::MAX - 32)),
         (i64::MAX, 1, i64::MAX, (1, i64::MAX)),
+    ] {
+        let result = statement
+            .query_row([start, truth, left], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap();
+        assert_eq!(result, expected);
+    }
+}
+
+#[test]
+fn alternative_repeated_cost_arithmetic_stays_integer() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    crate::code_rule_dsl::sql::relational::row::register(&db).unwrap();
+    let query = format!(
+        "SELECT r.c0,r.c1 FROM (SELECT ?1 AS work) d {}",
+        bridge(
+            &replay("SELECT ?2 AS truth,?3 AS work", 31, Boolean::Any),
+            2
+        )
+    );
+    let mut statement = db.prepare(&query).unwrap();
+    for (start, truth, left, expected) in [
+        (64, 0, 62, (0, 0)),
+        (63, 0, 61, (-2, 0)),
+        (63, 2, 61, (-2, 0)),
+        (63, 1, 61, (1, 61)),
+        (i64::MAX, 0, i64::MAX / 2, (-2, 0)),
+        (i64::MAX, 2, i64::MAX / 2, (-2, 0)),
+        (i64::MAX, 1, i64::MAX / 2, (1, i64::MAX / 2)),
+        (i64::MAX, -4, i64::MAX / 2, (-4, i64::MAX / 2)),
+        (i64::MAX, 0, i64::MAX - 1, (0, i64::MAX - 32)),
+        (i64::MAX, 2, i64::MAX, (2, i64::MAX)),
     ] {
         let result = statement
             .query_row([start, truth, left], |row| {

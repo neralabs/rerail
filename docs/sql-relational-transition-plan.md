@@ -652,26 +652,49 @@ SQL size and return cells stay effectively constant from two through 32 repetiti
 SQLite adds one constant-initialization instruction when the replay multiplier exceeds one.
 The journal records prior controls, full qualification, and frozen workload results.
 
+## Repeat sharing in alternatives: bounded outcome milestone
+
+Adjacent identical descendant searches in `any` now use the same repeat proof and child-program emission as `all`.
+A compile-time Boolean selector changes the replay stop predicate.
+True and failed first outcomes stop. False and noncapturing unknown outcomes replay the measured cost.
+The alternative barrier retains its unknown flag, fallback reachability, and capture publication rules.
+The grouping proof still excludes capture effects, stops, counts, unwrapped value leaves, and nonidentical operands.
+
+Native preflight confirms three-call boundaries of two charges for true and 12 for false or unknown.
+Two overlapping roots with true searches need four charges and one value read per file.
+Seven comparison tests cover 973 jobs, including 18 profiles. A separate SQL test covers signed-limit arithmetic.
+A reached-only test probe now suppresses fault injection during native cleanup after a prior failure.
+The regression case retains the original Work failure and verifies a later fallback's Value failure when that fallback is reached.
+
+Across two files, 32 false alternatives now need 8,766 SQL bytes, 3,629 VM instructions, and 36 typed return cells.
+The previous shape needed 185,057 bytes, 81,215 instructions, and 904 cells.
+EXPLAIN materialization sites fall from 623 to 35.
+True, false, and unknown profiles retain constant return cells across 2/8/32 alternatives, including profiles with a later fallback.
+VM counts differ by at most one constant-initialization instruction.
+The journal records qualification and the frozen workload gates.
+
 ## Next implementation action
 
-Extend the same repeat-group proof to adjacent searches inside `any`.
-Use `v = value(gt: 0)` and an `arguments` root with three identical descendant searches.
-Each body remains `all(kind(number), matches(v))`, without captures or a stop rule.
-First confirm that `f(1,2);` needs two charges: the first true search must stop the group.
-Then use `v = value(eq: 99)`: three false searches should need 12 charges, with two value reads.
-For unknown results, search identifiers in `f(x,y);`. The expected boundary is also 12 charges.
-Append a total true alternative to expose remaining work after false and unknown groups.
-Verify all native boundaries before changing the compiler.
+Lower each acyclic utility body once per clause, and retain a charge operation at each call site.
+The current frontend expands bodies before repeat grouping and can reject a compact physical plan at 256 expanded operators.
+This is the next compiler limit to remove. Increasing the limit alone does not address the expansion.
 
-Generalize the replay projection's stop condition by Boolean operator at compile time.
-A true first outcome stops `any`; false and noncapturing unknown outcomes continue.
-Preserve the alternative's accumulated unknown flag, later fallbacks, reached failures, and clause/file publication.
-Use the same signature proof and child-program emission, with no runtime option or additional compiler path.
-Keep capture-changing, counted, stopped, and nonidentical operands outside the proof.
+First record a failing fixture with 32 repeated searches and one utility containing eight distinct pure predicates plus a value-bearing utility call.
+Use the same fixture in `all` and `any`, with true, false, and unknown results.
+The existing frontend must reject it before the change. Native execution supplies charges and reached-call expectations.
 
-Profile 2/8/32 alternatives for true, false, and unknown outcomes, with and without a later fallback.
-Require bounded SQL size and return cells, then compare VM instructions and preparation against the current engine.
-The frontend still expands utility bodies and retains its 256-operator bound; this remains a later normalization task.
+Intern immutable utility plans by table identity and utility index.
+Keep incoming captures and candidate filters at their existing call sites.
+Retain one charge operation per call, dense utility identities, and the active-set cycle check.
+Cache the effect summaries needed by SQL generation so analysis does not re-expand the shared graph.
+Keep an explicit bound on distinct lowered operators and call sites, plus the existing SQL-size and capture-width bounds.
+Recursive utilities remain rejected until their separate component contract exists.
 
-Repeat the frozen B023 gates and existing work-count controls.
+Add profile counts for call sites, distinct utility bodies, lowered operators, and atomic terminals.
+Measure compiler time separately from SQL preparation and execution.
+Require constant terminal registration for repeated uses of the same utility body.
+The newly admitted repeat fixture must still emit one traversal group and one matching statement.
+Existing capture, failure, charge, and fallback traces must remain exact.
+
+Repeat the frozen B023 gates and existing controls, and explain any SQL or counter changes.
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.
