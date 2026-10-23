@@ -222,6 +222,14 @@ This is general for every statement shape. A FROM subquery is planned with the e
 
 The other batch-5 checks are unchanged: 8 of 10 are exact in replay. `imperative_private_functions` (`calls`) and `internal_dead_code` (`file.module`) are still refused, as in 8.1.
 
+Gate: `just facts-gate` (build plus checks) at `2431fa338` passed 25/25 checks in 1,533 s (run `~/rerail-bench/facts/phase-2/s5-gate/runs/20261023T000948-gate`, load 65 at start, so the timing is not reliable). Results:
+
+- `harness-b5`: 8 of 10 checks exact, 0 FP, 205 FN (207 before), 116 failures, all in the two refused checks.
+- `suite-b5`: 0 FP.
+- Batches 1–4, batch 6 (`a-replay`, `harness-replay`, `a-repo`), A3 and the reference lanes are unchanged and pass.
+
+`public_api_triples` can join `GATED`.
+
 ### 9.5 Reference evaluator
 
 The reference was right and the spike engine was wrong. I ran the same five statements through `rerail_facts::front::sql::lower_query` and `reference::Evaluator` in a throwaway test, not kept:
