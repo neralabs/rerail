@@ -1,1 +1,0 @@
-type barIntersection = (string & number)[];

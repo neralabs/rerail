@@ -1,1 +1,0 @@
-callback(new Error("error"), data)

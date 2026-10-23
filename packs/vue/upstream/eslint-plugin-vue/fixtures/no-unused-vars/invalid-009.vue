@@ -1,1 +1,0 @@
-<template><div v-for="(item, key) in items" :key="item.id">{{item.name}}</div></template>

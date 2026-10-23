@@ -1,1 +1,0 @@
-myFunc(function foo() {}.toString());

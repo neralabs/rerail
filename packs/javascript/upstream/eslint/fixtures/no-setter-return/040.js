@@ -1,1 +1,0 @@
-({ set: set = function set(val) { return 1; } } = {})

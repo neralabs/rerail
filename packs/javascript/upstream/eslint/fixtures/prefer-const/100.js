@@ -1,1 +1,0 @@
-let {a = 0, b} = obj, c = a; b = a;

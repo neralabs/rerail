@@ -1,1 +1,0 @@
-const hasProperty = Object.hasOwn(object, property);

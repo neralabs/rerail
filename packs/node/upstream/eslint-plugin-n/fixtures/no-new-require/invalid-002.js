@@ -1,1 +1,0 @@
-var appHeader = new require('headers').appHeader

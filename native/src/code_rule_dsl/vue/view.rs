@@ -1471,7 +1471,9 @@ mod tests {
         let mut files = Vec::new();
         vue_files(&fixtures.join("vue/language/view/fixtures"), &mut files);
         vue_files(
-            &fixtures.join("../packs/vue/upstream/eslint-plugin-vue/fixtures"),
+            &crate::code_rule_dsl::test_support::pack_test_data(
+                "packs/vue/upstream/eslint-plugin-vue/fixtures",
+            ),
             &mut files,
         );
         files.sort();

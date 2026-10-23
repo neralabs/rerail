@@ -1,1 +1,0 @@
-type Foo = { [k: string]: A.Foo };

@@ -1,1 +1,0 @@
-const fs = require("eslint-plugin-n");

@@ -1,1 +1,0 @@
-<template><div v-for="x in items">{{value | x}}</div></template>

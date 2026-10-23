@@ -1,1 +1,0 @@
-xtest("foo", function () {})

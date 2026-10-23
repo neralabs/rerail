@@ -1,1 +1,0 @@
-global.global['setInterval']('foo')

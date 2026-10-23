@@ -1,1 +1,0 @@
-type invalidVoidUnion = void | Map;

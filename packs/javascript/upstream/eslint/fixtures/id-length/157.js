@@ -1,1 +1,0 @@
-function foo1(...𐌘) { }

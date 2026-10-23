@@ -1,1 +1,0 @@
-SELECT x FROM tbl AS parameter

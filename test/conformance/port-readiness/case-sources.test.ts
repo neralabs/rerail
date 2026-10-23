@@ -1,8 +1,7 @@
 /**
  * The committed case sources are pinned by the recording as upstream's answers are: a case source with other bytes
  * than the ones upstream was recorded on fails `case-sources`, so a pull request cannot trim the construct behind a
- * finding out of a fixture and have the rule agree with upstream's unchanged answer. A recording uploaded by hand
- * before cases carried a sha256 is held to one digest over all its case sources instead (LIFTED_CASE_SOURCES).
+ * finding out of a fixture and have the rule agree with upstream's unchanged answer.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -14,7 +13,6 @@ import { test } from "vitest";
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { staleMessage, toolPackChecks } from "../../../conformance/port-readiness/recorded-adapter.js";
 import { gatesRecordingSchema, RECORDING_FORMAT } from "../../../conformance/port-readiness/recording/schema.js";
-import { assetName, caseSourcesDigest, type RecordingLock } from "../../../conformance/port-readiness/recording/store.js";
 
 const MANIFEST = `adapter: bandit
 rerail:
@@ -70,15 +68,8 @@ function recording(caseDigest: string | undefined) {
   });
 }
 
-/** A lock naming the recording's recording.json by the asset name readRecordingLock requires; only the name is read here. */
-const RECORDING_SHA = "b".repeat(64);
-const LOCK = { tool: "bandit", files: { "recording.json": { sha256: RECORDING_SHA, asset: assetName("demo", "bandit", "recording.json", RECORDING_SHA) } } } as unknown as RecordingLock;
-
-/**
- * The case-sources check on a tool-pack directory whose fixtures/pickle.py holds `committed`, or nothing; with `lifted`,
- * under a lock naming the recording, and LIFTED_CASE_SOURCES replaced by `lifted`.
- */
-function caseSources(committed: string | null, caseDigest: string | undefined, lifted?: ReadonlyMap<string, string>) {
+/** The case-sources check on a tool-pack directory whose fixtures/pickle.py holds `committed`, or nothing. */
+function caseSources(committed: string | null, caseDigest: string | undefined) {
   const root = mkdtempSync(join(tmpdir(), "gates-case-sources-"));
   try {
     mkdirSync(join(root, "packs/demo/upstream/bandit/fixtures"), { recursive: true });
@@ -87,12 +78,12 @@ function caseSources(committed: string | null, caseDigest: string | undefined, l
     const checks = toolPackChecks({
       root,
       manifest: readGatesManifest(root, "demo", "bandit"),
-      lock: lifted === undefined ? null : LOCK,
+      lock: null,
       recording: recording(caseDigest),
       corpus: null,
       tools: [{ name: "bandit", version: "1.9.4" }],
       names: ["B301"],
-    }, lifted);
+    });
     return checks.find((check) => check.id === "case-sources")!;
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -119,28 +110,4 @@ test("an edited, missing or unpinned case source fails case-sources as a stale r
   const unpinned = caseSources(SOURCE, undefined);
   assert.equal(unpinned.ok, false);
   assert.match(unpinned.detail, /fixtures\/pickle\.py has no recorded sha256/u);
-});
-
-test("a hand-uploaded recording without per-case sha256 passes only while its case sources are the ones pinned when it was recorded", () => {
-  const asset = LOCK.files["recording.json"].asset;
-  const pinned = new Map([[asset, caseSourcesDigest([["fixtures/pickle.py", digest(SOURCE)]])]]);
-
-  const unchanged = caseSources(SOURCE, undefined, pinned);
-  assert.equal(unchanged.ok, true, unchanged.detail);
-  assert.match(unchanged.detail, /1 of them pinned together/u);
-
-  // The same trim as above, on a recording that has no per-case digest to catch it: the pinned digest does.
-  const edited = caseSources("import pickle\n", undefined, pinned);
-  assert.equal(edited.ok, false);
-  assert.match(edited.detail, /the 1 case source\(s\) demo-bandit-recording-b{64}\.json\.gz records no sha256 for are [0-9a-f]{12} together, pinned [0-9a-f]{12}/u);
-  assert.ok(edited.detail.endsWith(staleMessage("demo", "bandit")), edited.detail);
-
-  const missing = caseSources(null, undefined, pinned);
-  assert.equal(missing.ok, false);
-  assert.match(missing.detail, /fixtures\/pickle\.py is not committed/u);
-
-  // Only the recording an entry names: another hand-uploaded recording's digest does not excuse this one.
-  const other = caseSources(SOURCE, undefined, new Map([[assetName("demo", "bandit", "recording.json", "c".repeat(64)), pinned.get(asset)!]]));
-  assert.equal(other.ok, false);
-  assert.match(other.detail, /fixtures\/pickle\.py has no recorded sha256/u);
 });

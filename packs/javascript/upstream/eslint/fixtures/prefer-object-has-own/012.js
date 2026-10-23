@@ -1,1 +1,0 @@
-Object.foo.call(obj, prop)

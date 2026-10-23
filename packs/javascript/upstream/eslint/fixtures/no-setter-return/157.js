@@ -1,1 +1,0 @@
-Object['defineProperty'](foo, 'bar', { set: function bar(val) { return 1; } })

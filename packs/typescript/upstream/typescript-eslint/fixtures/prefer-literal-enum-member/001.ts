@@ -1,5 +1,0 @@
-
-enum ValidRegex {
-  A = /test/,
-}
-    

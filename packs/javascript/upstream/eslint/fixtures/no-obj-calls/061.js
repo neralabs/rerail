@@ -1,1 +1,0 @@
-if (foo) { const Temporal = 1; Temporal(); }

@@ -1,1 +1,0 @@
-class A { a() {} get b() {} c() {} set b(foo) {} d() {} }

@@ -1,1 +1,0 @@
-<template><div><slot v-for="x in list" :key="x"><MyComp /></slot></div></template>

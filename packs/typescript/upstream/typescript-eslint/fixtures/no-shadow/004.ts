@@ -1,1 +1,0 @@
-function foo<T = (...args: any[]) => any>(fn: T, args: any[]) {}

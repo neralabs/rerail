@@ -1,7 +1,8 @@
 // Records @vitest/eslint-plugin for the TypeScript pack's vitest ports (packs/typescript/conformance.json), in the
 // format rerail/conformance/languages/pack.ts reads: eslint-plugin-vitest/fixtures.expected.json (the rules' own
 // RuleTester cases). No vitest port ships, so it records no corpus: a corpus recording covers shipped ports only.
-// Run offline by a maintainer, never in CI:
+// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
+// test-data.lock reproduces):
 //   node generate.mjs --tools <dir> --vitest <checkout>
 // <dir> holds node_modules with the runtime nera-rule-validation pins for @vitest/eslint-plugin 1.6.27
 // (validation/upstream/vitest-eslint-plugin-1.6.27): eslint 10.0.0, @vitest/eslint-plugin 1.6.27,

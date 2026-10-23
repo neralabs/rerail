@@ -1,1 +1,0 @@
-foo.location.href = '/path'

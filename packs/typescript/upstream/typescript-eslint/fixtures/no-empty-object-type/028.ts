@@ -1,1 +1,0 @@
-type MyUnion<T> = T | {};

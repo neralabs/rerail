@@ -1,1 +1,0 @@
-({ prop: obj.x.y.something } = {});

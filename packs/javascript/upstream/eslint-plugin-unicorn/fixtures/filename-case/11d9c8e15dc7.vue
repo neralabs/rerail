@@ -1,1 +1,0 @@
-/* Filename: app/javascript/pages/Foo.vue */
