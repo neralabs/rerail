@@ -12,6 +12,17 @@ are free while it is unset), into the tree's own `target/loop`. The gate (T2, `j
                     Moti-Velz/facts-engine), against the T0 checks of its family: the unit-test binary of
                     its crate, `b-generated` over the first T0_EDITS events (mutants 4-6), `b-ties` (9).
                     Budget: 60 s with the incremental build.
+  t1 [--rebase NOTE] [--replay]
+                    sub200-parity: `facts-a repo` over sub200 (the digest memo consulted) against
+                    benchmark/facts/sub200-reference.json, findings and failures per clause (--rebase
+                    rewrites the reference, NOTE kept in its history); ref50-vs-reference: stage-check
+                    over benchmark/facts/ref50.list, stages and their algebraic counts against
+                    rerail_facts::reference; b-exactness/b-generated over T1_EDITS events when a file
+                    under spikes/facts-b changed (--replay: always); bench (below). Budget: 2 min.
+  bench [archetype…] [--compare RUN_DIR] [--serial]
+                    benchmark/facts/archetypes.json: per archetype its counts (algebraic, then
+                    physical; facts-b's dataflow records for the repository one), then wall-clock
+                    (not calibrated). An A/B is two runs, the second with --compare the first's dir.
 
 Output (stdout), facts-gate.py's format, one line per event, every line prefixed `facts-gate: `:
 
