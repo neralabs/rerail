@@ -67,6 +67,9 @@ pub enum Rule {
     /// `host` inside a text grammar's tree rule (ast/parse_ext.rs); binds nothing.
     Host(Box<parse_ext::Host>),
     Parse(Box<ParseTest>),
+    /// `binds` without usage filters or sub-rules (bindings.rs): the node names a binding that
+    /// passes the filters (`py_binding`); binds nothing, reads no values.
+    Binds(Box<crate::bindings::Filter>),
     /// `capture: NAME` inside a parse.
     Capture(Name),
     Never,
@@ -327,7 +330,7 @@ fn obj<'j>(v: &'j Json, at: &str) -> Result<&'j serde_json::Map<String, Json>, S
 const RULE_KEYS: &[&str] = &[
     "pattern", "kind", "regex", "capture", "parse", "nthChild", "filePath", "all", "any", "not",
     "matches", "inside", "has", "precedes", "follows", "count", "compare", "layout", "value",
-    "stopBy", "field", "arguments", "host",
+    "stopBy", "field", "arguments", "host", "binds",
 ];
 
 impl<'a> Compiler<'a> {
@@ -616,6 +619,11 @@ impl<'a> Compiler<'a> {
                 terms.push(self.relation(rel, key, &format!("{at}/{key}"))?);
                 group += 1;
             }
+        }
+        // `binds` after the relations, in the ordered group (native compile/ast_rule.rs:739-754).
+        if let Some(b) = r.get("binds") {
+            terms.push(Rule::Binds(Box::new(crate::bindings::Filter::compile(b, &format!("{at}/binds"))?)));
+            group += 1;
         }
         if group > 1 {
             order_by_captures(&mut terms, from, &self.summary)?;
@@ -1332,6 +1340,23 @@ impl<'a> Eval<'a> {
         }
     }
 
+    /// `binds` (native matcher/binds.rs `Binds::match_node`, Python, declaration-only, no
+    /// sub-rules): some binding named at the node passes the filters. A parsed literal's node
+    /// names none in native's table; `binds` inside `parse` is a compile error there, refused here.
+    fn match_binds(&self, filter: &crate::bindings::Filter, node: Bound) -> bool {
+        let Bound::Node(n) = node else {
+            self.refuse("binds on a parsed literal's node (native: not supported inside parse)".into());
+            return false;
+        };
+        match self.f.bindings() {
+            Ok(all) => crate::bindings::at(all, n).iter().any(|b| filter.passes(b)),
+            Err(why) => {
+                self.refuse(why);
+                false
+            }
+        }
+    }
+
     /// Counts of refusals and of `\N{...}` escapes decoded so far: a verdict whose evaluation
     /// changed either is not memoised, so a query reusing the memo refuses exactly as its own
     /// evaluation would.
@@ -1603,6 +1628,7 @@ impl<'a> Eval<'a> {
             Rule::Arguments(a) => self.match_arguments(a, node, env),
             Rule::Host(h) => self.match_host(h, node, env),
             Rule::Parse(p) => self.parse(node, p, env),
+            Rule::Binds(filter) => self.match_binds(filter, node),
             Rule::Never => false,
         }
     }

@@ -360,6 +360,11 @@ pub enum Func {
     Min,
     Iif,
     Nullif,
+    /// SQLite's `printf` (`sv::printf`: `%d %i %s %f %%`, others refused by name at run time).
+    Printf,
+    /// SQLite's `json_array`: an argument that is itself a JSON function's result (JSON subtype)
+    /// is embedded as JSON, any other as its JSON value (`json_elem`).
+    JsonArray,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -371,6 +376,8 @@ pub enum AggFn {
     GroupConcat,
     Sum,
     Total,
+    /// SQLite's `json_group_array`: every value, NULLs included, in input order; `[]` over none.
+    JsonGroupArray,
 }
 
 /// A planned literal. Plans are shared by every worker (`Send + Sync`), so a text literal is an
@@ -445,6 +452,8 @@ pub(crate) struct AggSpec {
 pub(crate) struct WinSpec {
     pub(crate) partition: Vec<PE>,
     pub(crate) order: Vec<(PE, bool)>,
+    /// `None`: `row_number()`; `Some((max, arg))`: `min`/`max(arg)` over the whole partition.
+    pub(crate) func: Option<(bool, PE)>,
 }
 
 #[derive(Clone, Debug)]
@@ -1094,13 +1103,17 @@ impl<'c> Planner<'c> {
             }
             Expr::Func { name, args, star, distinct, over } => {
                 if let Some(w) = over {
-                    if name != "row_number" || !args.is_empty() {
-                        return Err(format!("window function {name} unsupported"));
-                    }
+                    // `row_number()`; `min`/`max` over a partition without ORDER BY (the frame is
+                    // the whole partition; with ORDER BY it would be a running frame, refused).
+                    let func = match (name.as_str(), args.len(), *star || *distinct, w.order.is_empty()) {
+                        ("row_number", 0, false, _) => None,
+                        ("min" | "max", 1, false, true) => Some((name == "max", self.expr(&args[0])?)),
+                        _ => return Err(format!("window function {name} unsupported")),
+                    };
                     let partition = w.partition.iter().map(|p| self.expr(p)).collect::<Result<Vec<_>, _>>()?;
                     let order = w.order.iter().map(|(o, d)| Ok((self.expr(o)?, *d))).collect::<Result<Vec<_>, String>>()?;
                     let sc = self.scopes.last_mut().unwrap();
-                    sc.wins.push(WinSpec { partition, order });
+                    sc.wins.push(WinSpec { partition, order, func });
                     return Ok(PE::Win((sc.wins.len() - 1) as u16));
                 }
                 let agg = match (name.as_str(), args.len(), *star) {
@@ -1109,6 +1122,7 @@ impl<'c> Planner<'c> {
                     ("min", 1, false) => Some(AggFn::Min),
                     ("max", 1, false) => Some(AggFn::Max),
                     ("group_concat", 1 | 2, false) => Some(AggFn::GroupConcat),
+                    ("json_group_array", 1, false) => Some(AggFn::JsonGroupArray),
                     ("sum", 1, false) => Some(AggFn::Sum),
                     ("total", 1, false) => Some(AggFn::Total),
                     _ => None,
@@ -1124,7 +1138,11 @@ impl<'c> Planner<'c> {
                     let sep = args.get(1).map(|a| self.expr(a)).transpose();
                     self.scopes.last_mut().unwrap().allow_agg = save;
                     let sc = self.scopes.last_mut().unwrap();
-                    sc.aggs.push(AggSpec { f, arg: arg?, sep: sep?, distinct: *distinct });
+                    let (arg, sep) = (arg?, sep?);
+                    if f == AggFn::JsonGroupArray && matches!(arg, Some(PE::Func(Func::JsonExtract, _))) {
+                        return Err("json_group_array over json_extract (JSON subtype by value) unsupported".into());
+                    }
+                    sc.aggs.push(AggSpec { f, arg, sep, distinct: *distinct });
                     return Ok(PE::Agg((sc.aggs.len() - 1) as u16));
                 }
                 if *distinct || *star {
@@ -1155,9 +1173,17 @@ impl<'c> Planner<'c> {
                     "min" => Func::Min,
                     "iif" => Func::Iif,
                     "nullif" => Func::Nullif,
+                    "printf" => Func::Printf,
+                    "json_array" => Func::JsonArray,
                     o => return Err(format!("function {o} unsupported")),
                 };
                 let pargs = args.iter().map(|a| self.expr(a)).collect::<Result<Vec<_>, _>>()?;
+                // SQLite passes a JSON function's result to another with its JSON subtype:
+                // `json_array` embeds it (json_subtype); `json_quote` would return it unquoted and
+                // `json_extract`'s subtype depends on its value — both refused as arguments here.
+                if matches!(f, Func::JsonArray | Func::JsonQuote) && pargs.iter().any(|p| matches!(p, PE::Func(Func::JsonExtract, _)) || (f == Func::JsonQuote && json_subtype(p))) {
+                    return Err(format!("{name} over a JSON function's result (JSON subtype) unsupported"));
+                }
                 PE::Func(f, pargs)
             }
             Expr::Case { operand, whens, else_ } => {
@@ -2301,11 +2327,43 @@ impl<'d, 'a> Exec<'d, 'a> {
                     }
                     a.2.cmp(&b.2)
                 });
+                let same = |a: &Vec<V>, b: &Vec<V>| a.iter().zip(b).all(|(x, y)| sv::cmp(x, y) == Ordering::Equal);
+                if let Some((max, arg)) = &w.func {
+                    // The aggregate over each partition (its rows are consecutive in `keyed`):
+                    // NULLs skipped, NULL when none is left (as the aggregate `min`/`max`).
+                    let mut start = 0;
+                    while start < keyed.len() {
+                        let mut end = start + 1;
+                        while end < keyed.len() && same(&keyed[start].0, &keyed[end].0) {
+                            end += 1;
+                        }
+                        let mut best: Option<V> = None;
+                        for (_, _, bi) in &keyed[start..end] {
+                            let refs = binding(*bi);
+                            let v = self.eval(arg, &EvalCtx { frame: Frame { rows: &refs, parent: outer }, aggs: None, wins: None });
+                            if v.is_null() {
+                                continue;
+                            }
+                            let better = best.as_ref().is_none_or(|b| {
+                                let o = sv::cmp(&v, b);
+                                if *max { o == Ordering::Greater } else { o == Ordering::Less }
+                            });
+                            if better {
+                                best = Some(v);
+                            }
+                        }
+                        let best = best.unwrap_or(V::Null);
+                        for (_, _, bi) in &keyed[start..end] {
+                            wins[*bi][wi] = best.clone();
+                        }
+                        start = end;
+                    }
+                    continue;
+                }
                 let mut n = 0i64;
                 let mut prev: Option<&Vec<V>> = None;
                 for (p, _, bi) in &keyed {
-                    let same = prev.is_some_and(|q| q.iter().zip(p).all(|(x, y)| sv::cmp(x, y) == Ordering::Equal));
-                    n = if same { n + 1 } else { 1 };
+                    n = if prev.is_some_and(|q| same(q, p)) { n + 1 } else { 1 };
                     prev = Some(p);
                     wins[*bi][wi] = V::Int(n);
                 }
@@ -2763,6 +2821,28 @@ impl<'d, 'a> Exec<'d, 'a> {
                 let (x, y) = (a(0), a(1));
                 if sv::compare(&x, &y, (Aff::None, Aff::None)) == Some(Ordering::Equal) { V::Null } else { x }
             }
+            Func::Printf => {
+                let Some(fmt) = (!args.is_empty()).then(|| a(0)).and_then(|f| sv::to_text(&f)) else { return V::Null };
+                let vals: Vec<V> = (1..args.len()).map(|i| a(i)).collect();
+                match sv::printf(&fmt, &vals) {
+                    Ok(s) => V::text(&s),
+                    Err(e) => {
+                        self.fail(e);
+                        V::Null
+                    }
+                }
+            }
+            Func::JsonArray => {
+                let mut s = String::from("[");
+                for (i, x) in args.iter().enumerate() {
+                    if i > 0 {
+                        s.push(',');
+                    }
+                    json_elem(&self.eval(x, ctx), json_subtype(x), &mut s);
+                }
+                s.push(']');
+                V::text(&s)
+            }
         }
     }
 }
@@ -2802,6 +2882,31 @@ struct AggState {
     sum_i: Option<i64>,
     sum_f: Option<f64>,
     seen: Option<rustc_hash::FxHashSet<DKey>>,
+    /// `json_group_array`'s elements so far, rendered.
+    json: Option<String>,
+}
+
+/// Whether a JSON function's argument carries SQLite's JSON subtype: it is the direct result of
+/// a JSON-producing function (`json_array`, `json_quote`). A `json_extract` result's subtype
+/// depends on its value; it is refused at plan time where a JSON function reads it.
+fn json_subtype(e: &PE) -> bool {
+    matches!(e, PE::Func(Func::JsonArray | Func::JsonQuote, _))
+}
+
+/// One JSON array element as SQLite renders it: JSON-subtype text as is, NULL, an integer, a
+/// real as SQLite's text of it, text quoted (`json_quote`).
+fn json_elem(v: &V, subtype: bool, out: &mut String) {
+    match v {
+        V::Text(t) if subtype => out.push_str(t),
+        V::Null => out.push_str("null"),
+        V::Int(i) => out.push_str(&i.to_string()),
+        V::Real(f) => out.push_str(&sv::real_to_text(*f)),
+        V::Text(_) => {
+            if let V::Text(q) = sv::json_quote(v) {
+                out.push_str(&q);
+            }
+        }
+    }
 }
 
 impl AggState {
@@ -2812,6 +2917,18 @@ impl AggState {
             return false;
         }
         let v = v.unwrap_or(V::Null);
+        if spec.f == AggFn::JsonGroupArray {
+            // NULLs are elements too.
+            if spec.distinct && !self.seen.get_or_insert_default().insert(sv::dkey(&v)) {
+                return false;
+            }
+            let s = self.json.get_or_insert_with(String::new);
+            if !s.is_empty() {
+                s.push(',');
+            }
+            json_elem(&v, spec.arg.as_ref().is_some_and(json_subtype), s);
+            return false;
+        }
         if v.is_null() {
             return false;
         }
@@ -2862,7 +2979,7 @@ impl AggState {
                 }
                 _ => {}
             },
-            AggFn::CountStar => {}
+            AggFn::CountStar | AggFn::JsonGroupArray => {}
         }
         false
     }
@@ -2877,6 +2994,7 @@ impl AggState {
                 (None, None) => V::Null,
             },
             AggFn::Total => V::Real(self.sum_f.unwrap_or(self.sum_i.unwrap_or(0) as f64)),
+            AggFn::JsonGroupArray => V::text(&format!("[{}]", self.json.unwrap_or_default())),
         }
     }
 }

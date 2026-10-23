@@ -95,6 +95,8 @@ pub struct Facts {
     pub tape: Option<TapeDoc>,
     /// `string_type_definition` (SCHEMA § 1.3), computed on first use.
     pub typedefs: std::cell::OnceCell<Result<Vec<crate::typedefs::Annotation>, String>>,
+    /// `py_binding` (SCHEMA § 1.4), computed on first use.
+    pub bindings: std::cell::OnceCell<Result<Vec<crate::bindings::Binding>, String>>,
 }
 
 pub enum Built {
@@ -175,6 +177,7 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> F
         syntax_errors: !doc.syntax_error_ranges().is_empty(),
         tape: Some(doc.clone()),
         typedefs: Default::default(),
+        bindings: Default::default(),
     };
     for id in 0..n as u32 {
         let node = doc.node(id);
@@ -261,6 +264,14 @@ impl Facts {
         let r = self.typedefs.get_or_init(|| match &self.tape {
             Some(t) => crate::typedefs::build(t),
             None => Err("string_type_definition needs the parse (facts read from a fact file)".into()),
+        });
+        r.as_deref().map_err(Clone::clone)
+    }
+    /// `py_binding` (SCHEMA § 1.4): computed from the tape on first use, sorted by node.
+    pub fn bindings(&self) -> Result<&[crate::bindings::Binding], String> {
+        let r = self.bindings.get_or_init(|| match &self.tape {
+            Some(t) => crate::bindings::build(t),
+            None => Err("py_binding needs the parse (facts read from a fact file)".into()),
         });
         r.as_deref().map_err(Clone::clone)
     }
