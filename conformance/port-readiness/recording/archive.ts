@@ -13,10 +13,12 @@
  *   answers/<config-id>/<rule>/<task>/<path>@<key>.json   upstream's answer on one golden corpus file (corpus-answers.ts)
  *   verdicts/<parsers-id>/<sha256><type>[.script].json    independent parsers' verdicts on one source (corpus-answers.ts)
  *
- * `<config-id>` is the sha256 of `config/<config-id>.json`: upstream's pins (repository, commit, version, runtime), the
- * recorder's runtime pin digests as recording.lock records them, the gates.yaml sections that say how upstream lints a
- * file, and the digest of the recorder's adapter code for the tool-pack's adapter (ADAPTER_SOURCES), which decides what
- * the recorder asks upstream and how it reads the answer. Moving any of them is a new config id, under which every
+ * `<config-id>` is the sha256 of `config/<config-id>.json` (answerConfig): upstream's pins (repository, commit, version,
+ * runtime), the recorder's runtime pin digests as recording.lock records them, every gates.yaml setting the adapter
+ * reads (the upstream block, the whole ESLint block, rerail.in_scope), the "Not copied" prefixes of the pack's
+ * UPSTREAM.md files, the digest of the recorder's adapter code for the tool-pack's adapter (ADAPTER_SOURCES), which
+ * decides what the recorder asks upstream and how it reads the answer, and the digest of the recorder code that turns
+ * upstream's answers into tree files (RECORDER_SOURCES). Moving any of them is a new config id, under which every
  * answer is asked again; a record keeps one config id's files. An answer exists exactly while its file does, so the
  * recorder asks upstream only about the names a tree lacks, and the gates check by existence.
  *
@@ -34,8 +36,9 @@ import { canonicalText, type RecordedParser } from "./schema.js";
 export { RECORDING_ARCHIVE, RECORDING_ARCHIVE_FORMAT };
 
 /** The config object's own format: a change to what the config id hashes is a new format, and a new id. */
-const CONFIG_FORMAT = 2;
+const CONFIG_FORMAT = 3;
 const TOP_LEVEL = new Set(RECORDING_TREE_ROOTS.map((root) => root.replace(/\/$/u, "")));
+const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** What recording.lock pins the archive by: its tar's sha256, how many files it holds and their total bytes. */
 export interface ArchivePin {
@@ -62,12 +65,14 @@ const sources = (own: readonly string[], ...shared: string[]): readonly string[]
  * The recorder's code an adapter's answers depend on, as `git ls-files` pathspecs: the adapter and the drivers it runs
  * upstream through, the language toolkits it reads parsers' verdicts and literals with, the runtimes it installs
  * upstream with (runtimes.ts), and the span units that turn upstream's positions into spans. The gate code they import
- * besides (process.ts, types.ts, recorded-adapter.ts's licence reading) shapes no answer. Its digest is part of the
- * config id and the parsers id, so a fix to how an answer is asked for or read is asked again rather than mixed with
- * answers the old code gave; recording-store.test.ts checks each adapter's imports and drivers are covered.
+ * besides (process.ts, types.ts, recorded-adapter.ts's licence reading) shapes no answer, but for recorded-adapter.ts's
+ * decodeSource, which Bandit decodes its examples with, as the gates decode their committed copies: it is Bandit's. Its
+ * digest is part of the config id and the parsers id, so a fix to how an answer is asked for or read is asked again
+ * rather than mixed with answers the old code gave; recording-store.test.ts checks each adapter's imports and drivers
+ * are covered.
  */
 export const ADAPTER_SOURCES: Record<GatesManifest["adapter"], readonly string[]> = {
-  bandit: sources(["bandit.ts", "bandit_driver.py"], ...PYTHON, `${SPAN_UNITS}/bandit.ts`),
+  bandit: sources(["bandit.ts", "bandit_driver.py"], ...PYTHON, `${SPAN_UNITS}/bandit.ts`, "conformance/port-readiness/recorded-adapter.ts"),
   ruff: sources(["ruff.ts", "ruff-tests.ts"], ...PYTHON, ...RUST, `${SPAN_UNITS}/ruff.ts`),
   eslint: sources(["eslint"], ...ECMASCRIPT, `${SPAN_UNITS}/eslint.ts`),
   phpcs: sources(["phpcs.ts", "phpcs_driver.php"], ...PHP, `${SPAN_UNITS}/phpcs.ts`),
@@ -81,7 +86,24 @@ export const ADAPTER_SOURCES: Record<GatesManifest["adapter"], readonly string[]
   clippy: sources(["clippy.ts", "ruff.ts", "ruff-tests.ts"], ...PYTHON, ...RUST, `${SPAN_UNITS}/clippy.ts`, `${SPAN_UNITS}/ruff.ts`),
 };
 
+/**
+ * The recorder code, besides an adapter's own, that turns upstream's answers into tree files: record.ts (the case
+ * layouts, the not-copied skip, the rule records and spans, the corpus and verdict asks), tree.ts (case keys and the
+ * files a rule and the tool are written as), schema.ts (spans and the canonical text every file is) and
+ * corpus-answers.ts (the answer and verdict files). A change to any of them could write another file under a name a
+ * locked answer already has, so its digest is part of the config id and the parsers id, and the answers are asked
+ * again. Code that only names a file (engine.ts's fileTypeOf, in a case key and a verdict path) is left out: a change
+ * to a name leaves the old answer unnamed, and the recorder asks for it again.
+ */
+export const RECORDER_SOURCES: readonly string[] = [
+  `${RECORDERS}/record.ts`,
+  "conformance/port-readiness/recording/tree.ts",
+  "conformance/port-readiness/recording/schema.ts",
+  "conformance/port-readiness/recording/corpus-answers.ts",
+];
+
 const sourcesDigests = new Map<GatesManifest["adapter"], string>();
+let recorderDigest: string | undefined;
 
 /** trackedDigest of an adapter's ADAPTER_SOURCES in this package, once per process: the same in the gates and the recorder. */
 export function adapterSourcesDigest(adapter: GatesManifest["adapter"]): string {
@@ -93,26 +115,52 @@ export function adapterSourcesDigest(adapter: GatesManifest["adapter"]): string 
   return digest;
 }
 
+/** trackedDigest of RECORDER_SOURCES in this package, once per process: the same in the gates and the recorder. */
+export function recorderSourcesDigest(): string {
+  recorderDigest ??= trackedDigest(ROOT, RECORDER_SOURCES);
+  return recorderDigest;
+}
+
+/** An UPSTREAM.md line naming an upstream path prefix nothing is copied from (conformance/pack-validation.ts reads it too). */
+const NOT_COPIED = /^- Not copied: `([^`]+)`/gmu;
+
 /**
- * The parts a config id hashes, `config/<id>.json`'s content. The ESLint block contributes what configures the lint of
- * a corpus file (the plugin, the ESLint and plugin release, the shareable environment, the `.vue` parsers); the rest
- * of it says where upstream's tests and implementation are, which the adapter code and the pins already decide.
+ * The upstream path prefixes the pack's `licenses/<project>/UPSTREAM.md` list as "Not copied", sorted: material an
+ * upstream derives from a copyleft project (Ruff's fixtures for its pylint, flake8-builtins, flake8-django,
+ * flake8-executable and refurb ports). No case source under one is committed, and no recording holds such a file's
+ * text; a case under one is recorded as skipped, so the prefixes are part of the config id.
  */
-export function answerConfig(manifest: GatesManifest, runtimes: RuntimeDigests): Record<string, unknown> {
+export function notCopiedPrefixes(root: string, pack: string): string[] {
+  const licenses = join(root, "packs", pack, "licenses");
+  if (!existsSync(licenses)) return [];
+  return readdirSync(licenses, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(licenses, entry.name, "UPSTREAM.md")))
+    .flatMap((entry) => [...readFileSync(join(licenses, entry.name, "UPSTREAM.md"), "utf8").matchAll(NOT_COPIED)].map((match) => match[1]!))
+    .sort(byText);
+}
+
+/**
+ * The parts a config id hashes, `config/<id>.json`'s content: everything that shapes a recorded answer, fact or text
+ * (the module comment lists them). Every gates.yaml setting an adapter reads is here: the upstream block, the whole
+ * ESLint block (which tests are read and how: tests, test_fixtures, case_testers, fixture_parsers, parsers, test_cwd,
+ * esm_tests, implementation, helpers and the rest) and rerail.in_scope (how the ESLint driver handles components);
+ * the other sections (popularity, known_gaps, real_code_gaps) shape no answer. `root` is the checkout whose pack's
+ * UPSTREAM.md files name the not-copied prefixes.
+ */
+export function answerConfig(root: string, manifest: GatesManifest, runtimes: RuntimeDigests): Record<string, unknown> {
   const { upstream, eslint } = manifest;
   return {
     format: CONFIG_FORMAT,
     adapter: manifest.adapter,
     sources: adapterSourcesDigest(manifest.adapter),
+    recorder: recorderSourcesDigest(),
     repository: upstream.repository,
     commit: upstream.commit,
     version: upstream.version,
     runtime: upstream.runtime,
     runtimes,
-    gates: {
-      upstream,
-      eslint: eslint === undefined ? undefined : { plugin: eslint.plugin, eslint_package: eslint.eslint_package, release: eslint.release, environment: eslint.environment, vue: eslint.vue },
-    },
+    gates: { upstream, eslint, inScope: manifest.rerail.in_scope },
+    notCopied: notCopiedPrefixes(root, manifest.rerail.pack),
   };
 }
 
@@ -130,9 +178,9 @@ export function treeConfigs(tree: RecordingTree): string[] {
   return tree.list("config/").map((path) => /^config\/([0-9a-f]{64})\.json$/u.exec(path)?.[1]).filter((id): id is string => id !== undefined);
 }
 
-/** The parsers id: the sha256 of the canonical text of the recorded parser list and the adapter's sources digest. */
+/** The parsers id: the sha256 of the canonical text of the recorded parser list, the adapter's sources digest and the recorder's. */
 export function parsersId(adapter: GatesManifest["adapter"], parsers: readonly RecordedParser[]): string {
-  return sha256(canonicalText({ parsers, sources: adapterSourcesDigest(adapter) }));
+  return sha256(canonicalText({ parsers, sources: adapterSourcesDigest(adapter), recorder: recorderSourcesDigest() }));
 }
 
 /** Read access to a tree, by its paths: an extracted directory, or files in memory. */
@@ -142,8 +190,6 @@ export interface RecordingTree {
   /** Every file path under `prefix` (a directory, with its final `/`), sorted. */
   list(prefix: string): string[];
 }
-
-const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 export function directoryTree(directory: string): RecordingTree {
   return {
@@ -191,7 +237,8 @@ export function treeFiles(directory: string, read = true): Map<string, Buffer> {
 export function checkTreePaths(paths: Iterable<string>): void {
   const folded = new Map<string, string>();
   for (const path of paths) {
-    if (!TOP_LEVEL.has(path.slice(0, path.indexOf("/")))) throw new Error(`a recording archive holds only ${[...TOP_LEVEL].map((root) => `${root}/`).join(", ")}, not ${path}`);
+    const slash = path.indexOf("/");
+    if (slash <= 0 || !TOP_LEVEL.has(path.slice(0, slash))) throw new Error(`a recording archive holds only ${[...TOP_LEVEL].map((root) => `${root}/`).join(", ")}, not ${path}`);
     const key = path.toLowerCase();
     const other = folded.get(key);
     if (other !== undefined) throw new Error(`two recording files differ only by letter case, which a case-insensitive file system cannot hold: ${other} and ${path}`);

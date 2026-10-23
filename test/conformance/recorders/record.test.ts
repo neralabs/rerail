@@ -7,13 +7,14 @@ import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-readiness/manifest.js";
-import { archiveCachePath, cacheArchive, cachedTree, memoryTree, treeDirectory, treeFiles } from "../../../conformance/port-readiness/recording/archive.js";
+import { answerConfig, archiveCachePath, cacheArchive, cachedTree, configId, memoryTree, notCopiedPrefixes, treeDirectory, treeFiles } from "../../../conformance/port-readiness/recording/archive.js";
 import { CONTEXT_FILES } from "../../../conformance/port-readiness/recording/corpus-answers.js";
 import { gatesRecordingSchema, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
 import { recordingLockSchema, recordingLockText } from "../../../conformance/port-readiness/recording/store.js";
 import { loadRecording } from "../../../conformance/port-readiness/recording/tree.js";
+import { createRecordedAdapter, readRecordedInputs } from "../../../conformance/port-readiness/recorded-adapter.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import { CASE_LAYOUTS, checkRecording, committedSources, diffRecording, listedCopies, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources, type RecordOptions } from "../../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, checkRecording, committedSources, diffRecording, listedCopies, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources, type RecordOptions } from "../../../conformance/recorders/port-readiness/record.js";
 import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies, withoutMachinePaths } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
@@ -479,6 +480,135 @@ test("a case from an upstream path the pack's UPSTREAM.md lists as not copied is
     assert.deepEqual(recorded.sources.map((source) => source.fixture), ["examples/assert.py"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** The demo tool-pack's gates.yaml for the ESLint adapter, which reads the whole `eslint` block. */
+const eslintYaml = (tests = "tests/lib/rules/*.js", parser = "javascript") => `${MANIFEST.replace("adapter: bandit", "adapter: eslint")}eslint:
+  plugin: null
+  release:
+    tag: v1.0.0
+    path: lib
+    installed: eslint/lib
+    verbatim: true
+  implementation: lib/rules/{rule}.js
+  tests:
+    - ${tests}
+  helpers: []
+  checkout:
+    - /lib/
+  parsers:
+    espree: ${parser}
+`;
+
+test("a gates.yaml setting the adapter reads or a not-copied prefix moved makes a complete recording incomplete, and the next record asks again", async () => {
+  const root = demoToolPack();
+  const gatesYaml = join(root, "packs/demo/upstream/bandit/gates.yaml");
+  const upstreamMd = join(root, "packs/demo/licenses/bandit/UPSTREAM.md");
+  try {
+    writeFileSync(gatesYaml, eslintYaml());
+    // One case the new not-copied prefix covers and one beside it, which keeps a source for the parsers to read.
+    const live = counted(async (...args) => ({
+      ...(await fakeAdapter(...args)),
+      cases: () => [
+        { fixture: "examples/pickle_deserialize.py", variant: "default", path: "pickle_deserialize.py", source: SOURCE, skipped: null, expected: [span], markup: null },
+        { fixture: "examples/assert.py", variant: "default", path: "assert.py", source: `${SOURCE}# assert\n`, skipped: null, expected: [span], markup: null },
+      ],
+    }));
+    const options = optionsFor(root, live.factory, () => [corpusFile("app.py", "b")], "eslint");
+    const record = async () => {
+      live.made.length = 0;
+      const recorded = await recordToolPack(options);
+      await writeRecording(root, "demo", "bandit", recorded, { cacheRoot: join(root, "cache") });
+      return recorded;
+    };
+    const first = await record();
+    // The gates name the recording by the same config: the recorder's runtimes are the lock's.
+    const gatesConfig = () => configId(answerConfig(root, readGatesManifest(root, "demo", "bandit"), lockOf(root).runtimes));
+    assert.equal(first.configId, gatesConfig());
+    // Complete: nothing is asked.
+    assert.deepEqual((await record()).asked, { rules: [], answers: 0, verdicts: 0 });
+    assert.deepEqual(live.made, []);
+
+    const edits: [string, () => void][] = [
+      ["a parser mapping", () => writeFileSync(gatesYaml, eslintYaml("tests/lib/rules/*.js", "typescript"))],
+      ["the test selection", () => writeFileSync(gatesYaml, eslintYaml("tests/lib/rules/**/*.js", "typescript"))],
+      ["a not-copied prefix", () => writeFileSync(upstreamMd, `${readFileSync(upstreamMd, "utf8")}\n- Not copied: \`examples/pickle\`\n`)],
+    ];
+    let previous = first.configId;
+    for (const [edit, apply] of edits) {
+      apply();
+      const again = await record();
+      assert.notEqual(again.configId, previous, edit);
+      assert.equal(again.configId, gatesConfig(), edit);
+      assert.deepEqual(live.made, [["B301"]], edit);
+      // The rule's cases, its answer on the golden and the verdicts are all asked again under the new config.
+      assert.deepEqual([again.asked.rules, again.asked.answers], [["B301"], 1], edit);
+      assert.ok(again.asked.verdicts > 0, edit);
+      previous = again.configId;
+    }
+    // The case under the new not-copied prefix was asked again, and recorded as skipped.
+    const cases = (await recordToolPack(options)).recording.rules.B301!.cases;
+    assert.deepEqual(cases.map((testCase) => testCase.skipped), ["not-copied", null]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a rule absent upstream that the pack no longer names leaves absent.json with nothing asked", async () => {
+  const root = demoToolPack(["B301", "B999"]);
+  try {
+    const live = counted(fakeAdapter);
+    const options = optionsFor(root, live.factory, () => []);
+    await writeRecording(root, "demo", "bandit", await recordToolPack(options), { cacheRoot: join(root, "cache") });
+    nameRules(root, ["B301"]);
+    live.made.length = 0;
+    const again = await recordToolPack(options);
+    assert.deepEqual(live.made, []);
+    assert.deepEqual(again.recording.absent, []);
+    assert.equal(again.tree.get(`tool/${again.configId}/absent.json`)!.toString("utf8"), "[]\n");
+    // A full record makes the same archive.
+    assert.equal((await recordToolPack({ ...options, mode: { full: true } })).packed.sha256, again.packed.sha256);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a case source with a byte order mark or a Latin-1 coding line keeps its verdict: a complete record asks nothing, and the gates find it", async () => {
+  // The committed copy is upstream's bytes, and the case's text is what the gates decode them to (decodeSource): an
+  // ESLint case's `code` starting with U+FEFF (no-irregular-whitespace's valid[159]), a Ruff fixture file starting with
+  // EF BB BF (flake8_simplify/SIM105_4.py), and a Bandit example a PEP 263 line declares Latin-1
+  // (trojansource_latin1.py), which bandit.ts decodes as the gates do.
+  const bom = `\uFEFF${SOURCE}`;
+  const latin1 = "# -*- coding: latin-1 -*-\nprint('caf\u00e9')\n";
+  const adapters = [
+    { adapter: "eslint", yaml: eslintYaml(), fixture: "tests/lib/rules/no-irregular-whitespace.js#0/valid[159]", path: "bom.js", source: bom, bytes: Buffer.from(bom, "utf8") },
+    { adapter: "ruff", yaml: MANIFEST.replace("adapter: bandit", "adapter: ruff"), fixture: "crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM105_4.py", path: "SIM105_4.py", source: bom, bytes: Buffer.from(bom, "utf8") },
+    { adapter: "bandit", yaml: MANIFEST, fixture: "examples/trojansource_latin1.py", path: "trojansource_latin1.py", source: latin1, bytes: Buffer.from(latin1, "latin1") },
+  ];
+  for (const { adapter, yaml, fixture, path, source, bytes } of adapters) {
+    const root = demoToolPack();
+    try {
+      writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), yaml);
+      const live = counted(async (...args) => ({
+        ...(await fakeAdapter(...args)),
+        cases: () => [{ fixture, variant: "default", path, source, skipped: null, expected: [span], markup: null }],
+      }));
+      const options = { ...optionsFor(root, live.factory, () => [], adapter), upstreamBytes: () => bytes };
+      const first = await recordToolPack(options);
+      await writeRecording(root, "demo", "bandit", first, { cacheRoot: join(root, "cache") });
+      assert.deepEqual(readFileSync(join(root, "packs/demo/upstream/bandit", first.sources[0]!.file)), bytes, adapter);
+      live.made.length = 0;
+      assert.deepEqual((await recordToolPack(options)).asked, { rules: [], answers: 0, verdicts: 0 }, adapter);
+      assert.deepEqual(live.made, [], adapter);
+      // The gates read the committed copy as upstream's text, and find the parsers' verdict on it.
+      const gates = createRecordedAdapter(await readRecordedInputs(root, join(root, "cache"), "demo", "bandit", ["B301"]));
+      const [testCase] = gates.cases("B301");
+      assert.equal(testCase!.source, source, adapter);
+      assert.equal((await gates.parserVerdicts([{ path: testCase!.path, source: testCase!.source, script: false }]))[0]!.length, 1, adapter);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 

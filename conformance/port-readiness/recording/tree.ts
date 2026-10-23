@@ -23,10 +23,10 @@
  * them, which its answers say (`eslintSpanParts`); every other adapter's is a fact of the rule, in rule.json.
  */
 import { createHash } from "node:crypto";
-import { extname } from "node:path";
 
 import { z } from "zod";
 
+import { fileTypeOf } from "../engine.js";
 import type { GatesManifest } from "../manifest.js";
 import { eslintSpanParts } from "../span-units/eslint.js";
 import { configPath, type RecordingTree } from "./archive.js";
@@ -124,13 +124,14 @@ type CaseIdentity = Pick<RecordedCase, "fixture" | "variant" | "path" | "parsedA
  *   Clippy: the UI test's path (its aux crates and a ui-toml directory's clippy.toml). Bladestan: the template's path
  *   (its view name). PHP_CodeSniffer and PHPStan: the path (sniffs read the file name; the data file) and the variant
  *   (the owner test's CLI values; the test method).
- * - tlint and stillat/blade-parser: the template's file type and the variant (the owner test's preset group).
+ * - tlint and stillat/blade-parser: the template's file type (engine.ts's fileTypeOf, so `.blade.php` is a Blade
+ *   template and `.php` is PHP, which tlint does not lint) and the variant (the owner test's preset group).
  * - Bandit: the example's file type.
  *
  * RULE_SET_KEYED adapters add the recorded rules.
  */
 function caseInputs(adapter: GatesManifest["adapter"], testCase: CaseIdentity): Record<string, unknown> {
-  const type = extname(testCase.path);
+  const type = fileTypeOf(testCase.path);
   switch (adapter) {
     case "eslint":
       return { fixture: testCase.fixture, variant: testCase.variant, path: testCase.path, parsedAs: testCase.parsedAs, script: testCase.script };

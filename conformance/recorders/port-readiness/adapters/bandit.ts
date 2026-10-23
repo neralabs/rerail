@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
+import { decodeSource, upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { banditSpan, banditSpanParts, TROJANSOURCE_RELEASE, trojansourcePoint } from "../../../port-readiness/span-units/bandit.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPythonToolkit, pythonRegex } from "../languages/python.js";
@@ -52,6 +52,11 @@ export async function createBanditAdapter(pack: PackManifest, names: string[], c
   const fromCheckout = (file: string) => join(upstream.directory, relative(dirname(installed), file));
   const examples = filesUnder(join(upstream.directory, "examples"), (path) => path.endsWith(".py"));
   const exampleText = new Map(examples.map((path) => [path, readFileSync(path, "utf8")]));
+  // A case's source as Bandit reads the file and as the gates read its committed copy (decodeSource): the Latin-1 a PEP
+  // 263 coding line declares (trojansource_latin1.py), a leading byte order mark kept. The parsers' verdict on it is
+  // keyed by that text, so the recorder and the gates find it. The fixture texts stay UTF-8, as rebuildFixtureTexts
+  // reads upstream's files.
+  const caseText = new Map(examples.map((path) => [path, decodeSource(readFileSync(path))]));
   const examplesRun = await ask<LintResult>({ op: "lint", files: examples });
 
   const idOf = (name: string) => name.toUpperCase();
@@ -168,7 +173,7 @@ export async function createBanditAdapter(pack: PackManifest, names: string[], c
       const id = idOf(name);
       return examples.map((path) => {
         const fixture = relative(upstream.directory, path);
-        const source = exampleText.get(path)!;
+        const source = caseText.get(path)!;
         const skipped = examplesRun.skipped[path];
         return {
           fixture,

@@ -10,14 +10,14 @@ import { packConformance, passesConformanceChecks } from "./checks/passes-confor
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
 import { compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
 import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, outsideInScope, provenGaps, readPath, realCodeGapCheck, recordMissingAnswers, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
-import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedKey, wantedPlaces, type CorpusFile, type CorpusTask } from "./corpus.js";
+import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedKey, wantedPlaces, type CorpusFile, type CorpusTask, type Wanted } from "./corpus.js";
 import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity } from "./engine.js";
 import { byText, readGoldens, SYSTEMATIC_FILES, type Goldens } from "./goldens.js";
-import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
+import { GATES_MANIFEST, toolPackDirectory, type GatesManifest } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { createRecordedAdapter, decodeSource, readRecordedInputs } from "./recorded-adapter.js";
 import { adapterSourcesDigest, parsersId, RECORDING_ARCHIVE } from "./recording/archive.js";
-import { CONTEXT_FILES, verdictPath } from "./recording/corpus-answers.js";
+import { BATCHED_ADAPTERS, CONTEXT_FILES, verdictPath } from "./recording/corpus-answers.js";
 import { ruleTreeDigest } from "./recording/tree.js";
 import { shardOf, type Shard } from "./shard.js";
 import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type RealCodeGap, type UpstreamCase, type UpstreamFile } from "./types.js";
@@ -461,6 +461,19 @@ export function goldenListLines(goldens: Goldens, realCodeGaps: RealCodeGap[], r
 }
 
 /**
+ * What a rule's answers on its goldens read of every other rule's goldens: for an adapter whose answer on a file is
+ * keyed by the batch it is handed (BATCHED_ADAPTERS), the places of every file the run fetches (`wanted`, from all
+ * goldens) in each task the rule's goldens name. With the corpus pins, which fix each place's content, they decide
+ * the batch digest (corpus-answers.ts's batchOf) the rule's answers are read under, so another rule's golden added or
+ * removed in such a task moves the rule's key. Empty for any other adapter, whose answer on a file reads no other.
+ */
+export function goldenBatches(adapter: GatesManifest["adapter"], wanted: Wanted, own: readonly { task: string }[]): string {
+  if (!BATCHED_ADAPTERS[adapter]) return "";
+  const tasks = new Set(own.map((golden) => golden.task));
+  return [...wanted].filter((place) => tasks.has(place.slice(0, place.indexOf("\0")))).sort(byText).join("\n");
+}
+
+/**
  * Run every gate on every document of one gated tool-pack, from its recordings. With the cache, a rule whose inputs are
  * unchanged takes its cached result; when every rule does, nothing is fetched or evaluated.
  */
@@ -538,6 +551,10 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
       return types.map((type) => verdictDigest(verdictPath(verdictsId, { path: `probe${type}`, sha256: sha256(gap.probe), script })));
     }),
   });
+  // Only the files the goldens name are fetched and read, with the files upstream's answer on them depends on
+  // (CONTEXT_FILES), which name the answers: no rule runs over the rest of the corpus.
+  const named = [...goldens.values()].flat();
+  const wanted = wantedPlaces([...named, ...named.flatMap((golden) => CONTEXT_FILES[manifest.adapter](golden.path).map((path) => ({ task: golden.task, path })))]);
   const keyed = rules.map((entry) => {
     const id = entry.rule.id ?? entry.rule.file;
     const recordedCases = inputs.recording.rules[entry.rule.rule]?.cases ?? [];
@@ -560,7 +577,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
       conformanceEntry: JSON.stringify({ entry: entry.entry, on: entry.location === "shipped" ? (on.get(entry.path) ?? true) : null }),
       goldens: JSON.stringify(goldens.get(id) ?? []),
       caseSources,
-      recording: `${ruleTreeDigest(recordedTree, inputs.config, inputs.recording, entry.rule.rule, verdictPaths)}\0${sha256(gapInputs)}`,
+      recording: `${ruleTreeDigest(recordedTree, inputs.config, inputs.recording, entry.rule.rule, verdictPaths)}\0${sha256(gapInputs)}\0${sha256(goldenBatches(manifest.adapter, wanted, goldens.get(id) ?? []))}`,
     });
     return { ...entry, id, key, families, caseSources };
   });
@@ -597,11 +614,8 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   } else {
     // not-overfit reads every upstream test text: fetched at the pinned commit only when a rule is evaluated.
     await adapter.loadFixtureTexts();
-    // Only the files the goldens name are fetched and read, with the files upstream's answer on them depends on
-    // (CONTEXT_FILES), which name the answers: no rule runs over the rest of the corpus.
-    const named = [...goldens.values()].flat();
+    // The goldens' own places, of the fetched ones (`wanted`).
     const goldenPlaces = wantedPlaces(named);
-    const wanted = wantedPlaces([...named, ...named.flatMap((golden) => CONTEXT_FILES[manifest.adapter](golden.path).map((path) => ({ task: golden.task, path })))]);
     const catalog = await buildCorpus(cacheRoot, (path) => adapter.inCorpus(path), options.runner, wanted);
     const rerailCorpus = await buildRerailCorpora(corpora, cacheRoot, (path) => adapter.inCorpus(path), options.runner, wanted);
     const fetched = [...catalog.files, ...rerailCorpus.files];

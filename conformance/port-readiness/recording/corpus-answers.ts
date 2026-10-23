@@ -19,8 +19,9 @@
  *   for Clippy, which builds whole crates, the corpus's commit. Where the answer for one rule depends on the other
  *   rules asked with it (ASKS_EVERY_RULE: stillat/blade-parser and PHPStan), the digest is also of the sorted rules the
  *   tool-pack records, so a rule added or removed asks every answer again. Anything else: none.
- * - `<parsers-id>` is the sha256 of the recorded parser list (the tool's `parsers`, canonical JSON) and of the adapter
- *   code's digest, which runs the parsers. A verdict is named by the source's sha256, its file type (engine.ts's
+ * - `<parsers-id>` is the sha256 of the recorded parser list (the tool's `parsers`, canonical JSON), of the adapter
+ *   code's digest, which runs the parsers, and of the recorder code's (archive.ts's RECORDER_SOURCES), which files
+ *   their verdicts. A verdict is named by the source's sha256, its file type (engine.ts's
  *   fileTypeOf) and whether it is read as an ECMAScript script: the rest of the path never decides a verdict, so a case
  *   source and a corpus file with the same text share one.
  *
@@ -257,6 +258,8 @@ export interface NeededAnswers {
  * records, at this config, and the parsers' verdicts on each file's content.
  */
 export function neededAnswers(options: {
+  /** The checkout whose pack's UPSTREAM.md files the config reads (answerConfig). */
+  root: string;
   manifest: GatesManifest;
   runtimes: RuntimeDigests;
   parsers: readonly RecordedParser[];
@@ -264,7 +267,7 @@ export function neededAnswers(options: {
   files: readonly CorpusPlace[];
   context: KeyContext;
 }): NeededAnswers {
-  const config = answerConfig(options.manifest, options.runtimes);
+  const config = answerConfig(options.root, options.manifest, options.runtimes);
   const id = configId(config);
   const parsers = parsersId(options.manifest.adapter, options.parsers);
   const files = [...new Map(options.files.map((file) => [`${file.task}\0${file.path}\0${file.sha256}`, file])).values()]

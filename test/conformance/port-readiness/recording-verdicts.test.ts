@@ -85,7 +85,7 @@ function adapterOver(files: Parameters<typeof corpus>[0]) {
     manifest,
     lock: null,
     recording: gatesRecordingSchema.parse(recording()),
-    config: configId(answerConfig(manifest, {})),
+    config: configId(answerConfig(root, manifest, {})),
     corpus: corpus(files),
     tools: [{ name: "bandit", version: "1.9.4" }],
     names: [],
@@ -167,7 +167,7 @@ test("a rule whose recorded answer excludes a corpus file hides no other rule's 
     mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
     writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST);
     const manifest = readGatesManifest(root, "demo", "bandit");
-    const config = configId(answerConfig(manifest, {}));
+    const config = configId(answerConfig(root, manifest, {}));
     const file = { task: "demo", repository: "demo/demo", path: "app.py", source: SILENT, sha256: digest(SILENT) };
     const answer = (rule: string, text: string): [string, Buffer] => [answerPath(config, rule, file, file.sha256), Buffer.from(text, "utf8")];
     const adapterWith = (answers: [string, Buffer][]) => createRecordedAdapter({

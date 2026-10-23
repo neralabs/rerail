@@ -455,7 +455,7 @@ export function lockedRecording(text, label) {
   }
   const format = value !== null && typeof value === "object" ? value.format : undefined;
   if (format !== RECORDING_LOCK_FORMAT) {
-    throw new Error(`${label} is format ${JSON.stringify(format)}, not ${RECORDING_LOCK_FORMAT}: record the tool-pack again with \`${recordCommand(label)}\`, which writes it`);
+    throw new Error(`${label} is format ${JSON.stringify(format)}, not ${RECORDING_LOCK_FORMAT}: delete it and record the tool-pack again with \`${recordCommand(label)}\`, which writes a new one`);
   }
   const files = value.files;
   const names = files !== null && typeof files === "object" && !Array.isArray(files) ? Object.keys(files).sort(byBytes) : [];

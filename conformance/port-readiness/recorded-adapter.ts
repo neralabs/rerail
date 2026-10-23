@@ -93,11 +93,14 @@ export function upstreamLicenseText(checkout: string): string {
 
 /**
  * A committed case source as upstream's adapter decoded it: UTF-8, or, for bytes that are not UTF-8, the Latin-1 a PEP 263
- * coding line declares (Bandit's trojansource_latin1.py); recorded parser verdicts are keyed by the decoded text.
+ * coding line declares (Bandit's trojansource_latin1.py); recorded parser verdicts are keyed by the decoded text. A
+ * leading byte order mark is kept: it is part of the text upstream and the parsers were handed (an ESLint case whose
+ * `code` starts with U+FEFF), so the recorder's and the gates' verdict keys are the recorded one, and the engine reads
+ * the text upstream was handed.
  */
 export function decodeSource(bytes: Buffer): string {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     const head = bytes.subarray(0, 400).toString("latin1").split(/\r?\n/u).slice(0, 2).join("\n");
     const coding = /coding[:=][ \t]*([-\w.]+)/u.exec(head)?.[1]?.toLowerCase();
@@ -370,9 +373,10 @@ export function createRecordedAdapter(
   const regex = ({ source: pattern, flags }: { source: string; flags: string }) => new RegExp(pattern, flags);
   const toSpan = SPAN_UNITS[recording.adapter];
   const inCorpus = recordedInCorpus(recording);
-  // The answers this branch reads are those filed under its own config: its pins, runtimes, gates.yaml and adapter code.
+  // The answers this branch reads are those filed under its own config: its pins, runtimes, gates.yaml, not-copied
+  // prefixes and recorder code.
   const runtimes = inputs.lock?.runtimes ?? recording.runtimes;
-  const config = configId(answerConfig(manifest, runtimes));
+  const config = configId(answerConfig(root, manifest, runtimes));
   const verdictsId = parsersId(manifest.adapter, recording.parsers);
   const label = `packs/${pack}/upstream/${recording.tool}/${RECORDING_ARCHIVE}`;
 
@@ -389,7 +393,7 @@ export function createRecordedAdapter(
       // A golden whose fetched file is not its sha256 fails on its own (the goldens gate); its answer cannot be named.
       const fetched = new Map(files.map((file) => [wantedKey(file.task, file.path), file.sha256]));
       const judged = goldens.filter((golden) => fetched.get(wantedKey(golden.task, golden.path)) === golden.sha256);
-      const needed = neededAnswers({ manifest, runtimes, parsers: recording.parsers, rules: Object.keys(recording.rules), files: judged, context: fetchedContext(files, corpus.commitOf, Object.keys(recording.rules)) });
+      const needed = neededAnswers({ root, manifest, runtimes, parsers: recording.parsers, rules: Object.keys(recording.rules), files: judged, context: fetchedContext(files, corpus.commitOf, Object.keys(recording.rules)) });
       const missing = missingAnswers(corpus.tree, needed);
       const goldenFiles = new Set(judged.map((golden) => wantedKey(golden.task, golden.path))).size;
       if (missing.answers.length + missing.verdicts.length === 0) {

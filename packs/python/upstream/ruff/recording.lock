@@ -19,9 +19,9 @@
   },
   "files": {
     "recording.tar.zst": {
-      "sha256": "72695d169db7a128dff908384d4aa0d34e630293001642944785492c7158cdf8",
+      "sha256": "6ce06a90006f295e3536478540a83a65aa766e93f54b8f4ac4103f0f7b131157",
       "files": 112003,
-      "bytes": 3797683,
+      "bytes": 3798103,
       "format": "rerail.port-readiness-recording-archive/v1"
     }
   }

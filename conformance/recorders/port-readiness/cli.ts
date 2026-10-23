@@ -29,6 +29,14 @@ const USAGE = `usage:
 
 const megabytes = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
+/**
+ * The Node major every recording is made on: the one the port readiness workflows set up. What upstream answers can
+ * depend on it (Node 22 and 25 send no `require.resolve` through the ESLint driver's `registerHooks` resolve hook, so
+ * an eslint-plugin-vue test file that resolves its package root does not load), and the config id does not cover the
+ * host's Node, so a record on another major is refused rather than filed under the same config.
+ */
+const RECORDING_NODE_MAJOR = 24;
+
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     options: {
@@ -53,6 +61,11 @@ async function main(): Promise<number> {
   if (values.help === true || positionals.length > 0 || values.pack === undefined || values.tool === undefined || (values.check && (values.corpus || values.prune)) || (checkOnly && !values.check)) {
     process.stderr.write(USAGE);
     return values.help === true ? 0 : 2;
+  }
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  if (nodeMajor !== RECORDING_NODE_MAJOR) {
+    process.stderr.write(`port-readiness:record runs on Node ${RECORDING_NODE_MAJOR}, as CI does, not Node ${process.versions.node}: upstream's answers can differ by Node major. Put Node ${RECORDING_NODE_MAJOR} first on PATH and record again.\n`);
+    return 2;
   }
   const { pack, tool } = values;
   const record = `npm run port-readiness:record -- --pack ${pack} --tool ${tool}`;

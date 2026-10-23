@@ -174,8 +174,10 @@ export interface RuleKeyInputs {
   caseSources: string[];
   /**
    * What the rule's verdict reads of the recording archive (tree.ts's ruleTreeDigest: the config, the whole-tool facts,
-   * the rule's own files and corpus answers, and the verdicts on its sources and goldens) and of every rule's cases a
-   * known gap names, which provenGaps proves the gaps on. Another rule added or re-recorded changes none of it.
+   * the rule's own files and corpus answers, and the verdicts on its sources and goldens), of every rule's cases a
+   * known gap names, which provenGaps proves the gaps on, and, for PHPStan and Psalm, the batch its goldens' answers
+   * are keyed by (run.ts's goldenBatches), which every rule's goldens in those tasks make. Another rule added or
+   * re-recorded changes none of the rest.
    */
   recording: string;
 }

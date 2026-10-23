@@ -112,11 +112,13 @@ verdicts/<parsers-id>/<sha256><type>[.script].json        independent parsers' v
 An answer is named by everything it depends on, so it holds exactly while its name does. What invalidates one:
 
 - **the config id**: upstream's pins (repository, commit, version, runtime), the runtimes' pin digests `recording.lock`
-  records, the parts of `gates.yaml` that say how upstream lints a file (its `upstream` section, and ESLint's
-  plugin, release, environment and `.vue` parsers), and a digest of the recorder's code for the tool-pack's adapter
-  (`ADAPTER_SOURCES` in `archive.ts`: the adapter, its drivers, the language toolkits and span units it reads,
-  and `runtimes.ts`). A bump moves it, and so does a fix to an adapter, and every answer, on the goldens and on
-  upstream's own tests, is asked again;
+  records, every `gates.yaml` setting an adapter reads (its `upstream` section, the whole `eslint` section, and
+  `rerail.in_scope`), the "Not copied" prefixes of the pack's `UPSTREAM.md` files, a digest of the recorder's code
+  for the tool-pack's adapter (`ADAPTER_SOURCES` in `archive.ts`: the adapter, its drivers, the language toolkits and
+  span units it reads, and `runtimes.ts`), and a digest of the recorder code that turns upstream's answers into tree
+  files (`RECORDER_SOURCES`: `record.ts`, `recording/tree.ts`, `recording/schema.ts` and
+  `recording/corpus-answers.ts`). A bump moves it, and so does a fix to an adapter or to how an answer is filed, and
+  every answer, on the goldens and on upstream's own tests, is asked again;
 - **the key**: the file's sha256, so a golden whose file changed needs a new answer; for Ruff also the `__init__.py`
   and `__init__.pyi` files above it the corpus holds; for PHPStan and Psalm, which analyse the files they are handed
   as one project, every golden file of the task, which the recorder hands them at once, for every recorded rule; for

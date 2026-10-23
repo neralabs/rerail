@@ -19,7 +19,7 @@ import { readGoldens, type Golden } from "../../port-readiness/goldens.js";
 import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "../../port-readiness/manifest.js";
 import type { CommandRunner } from "../../port-readiness/process.js";
 import {
-  answerConfig, cacheArchive, cachedTree, configId, configPath, memoryTree, packTree, parsersId, RECORDING_ARCHIVE, treeConfigs, treeFiles, type PackedArchive,
+  answerConfig, cacheArchive, cachedTree, configId, configPath, memoryTree, notCopiedPrefixes, packTree, parsersId, RECORDING_ARCHIVE, treeConfigs, treeFiles, type PackedArchive,
 } from "../../port-readiness/recording/archive.js";
 import {
   answerText, ASKS_EVERY_RULE, BATCHED_ADAPTERS, CONTEXT_FILES, corpusCommits, fetchedContext, missingAnswers, neededAnswers, rulesDigest, verdictPath, verdictText,
@@ -68,23 +68,6 @@ export const LIVE_ADAPTERS: Record<GatesManifest["adapter"], AdapterFactory> = {
 const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const sortedUnique = (values: Iterable<string>): string[] => [...new Set([...values].filter((value) => value !== ""))].sort(byText);
-
-/** An UPSTREAM.md line naming an upstream path prefix nothing is copied from (conformance/pack-validation.ts reads it too). */
-const NOT_COPIED = /^- Not copied: `([^`]+)`/gmu;
-
-/**
- * The upstream path prefixes the pack's `licenses/<project>/UPSTREAM.md` list as "Not copied": material an upstream
- * derives from a copyleft project (Ruff's fixtures for its pylint, flake8-builtins, flake8-django, flake8-executable and
- * refurb ports). No case source under one is committed, and no recording holds such a file's text.
- */
-export function notCopiedPrefixes(root: string, pack: string): string[] {
-  const licenses = join(root, "packs", pack, "licenses");
-  if (!existsSync(licenses)) return [];
-  return readdirSync(licenses, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(join(licenses, entry.name, "UPSTREAM.md")))
-    .flatMap((entry) => [...readFileSync(join(licenses, entry.name, "UPSTREAM.md"), "utf8").matchAll(NOT_COPIED)].map((match) => match[1]!))
-    .sort(byText);
-}
 
 /**
  * The live adapter's fixtureTextSources as the recording archive records them: files sorted by path, inline texts sorted. The
@@ -658,7 +641,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const mode = options.mode ?? {};
   const manifest = readGatesManifest(root, pack, tool);
   const names = await conformanceRuleNames(root, pack, tool);
-  const config = answerConfig(manifest, currentRuntimes(options, manifest));
+  const config = answerConfig(root, manifest, currentRuntimes(options, manifest));
   const id = configId(config);
   const label = `packs/${pack}/upstream/${tool}/${RECORDING_ARCHIVE}`;
   const whole = `record the tool-pack whole (npm run port-readiness:record -- --pack ${pack} --tool ${tool})`;
@@ -666,7 +649,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const previous = mode.full === true ? new Map<string, Buffer>() : lockedTree(root, cacheRoot, pack, tool);
   const before = memoryTree(previous);
   const lockedTool = loadTool(before, id);
-  if (mode.corpus === true && lockedTool === undefined) throw new Error(`${label} holds no recording at this branch's config (its pins, runtime pins, gates.yaml or recorder adapter code moved, or it was never recorded): ${whole}`);
+  if (mode.corpus === true && lockedTool === undefined) throw new Error(`${label} holds no recording at this branch's config (its pins, runtime pins, gates.yaml, not-copied prefixes or recorder code moved, or it was never recorded): ${whole}`);
   const lockedParsers = lockedTool === undefined ? undefined : parsersId(manifest.adapter, lockedTool.parsers);
   const lockedRules = new Set(recordedRuleNames(before, id));
   const lockedAbsent = new Set(lockedTool?.absent ?? []);
@@ -730,8 +713,9 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   if (rewriteTool) {
     recording = gatesRecordingSchema.parse({ ...liveToolFacts(options, manifest, await live(toRecord)), nameSets: fresh.nameSets, rules, absent, parsers });
     for (const [path, bytes] of toolFiles(id, recording)) written.set(path, bytes);
-  } else if (toRecord.length > 0) {
-    written.set(toolPath(id, "absent"), fileText(absent));
+  } else {
+    // A rule absent upstream that the pack no longer names leaves absent.json even when nothing is asked.
+    if (canonicalText(absent) !== canonicalText(lockedTool!.absent)) written.set(toolPath(id, "absent"), fileText(absent));
     for (const [setName, set] of Object.entries(fresh.nameSets)) written.set(nameSetPath(id, setName), fileText(set));
   }
   let deduplicated = 0;
@@ -820,7 +804,7 @@ async function recordCorpus(options: RecordOptions, manifest: GatesManifest, rec
   const byPlace = new Map(fetched.files.map((file) => [wantedKey(file.task, file.path), file]));
   const rules = Object.keys(recording.rules).sort(byText);
   const context = fetchedContext([...byPlace.values()], corpusCommits(corpora, readCorpusTasks()), rules);
-  const needed = neededAnswers({ manifest, runtimes: recording.runtimes, parsers: recording.parsers, rules, files: fetched.goldens, context });
+  const needed = neededAnswers({ root, manifest, runtimes: recording.runtimes, parsers: recording.parsers, rules, files: fetched.goldens, context });
   const missing = missingAnswers(memoryTree(tree), needed);
   const written = new Map<string, Buffer>();
   let askedAnswers = 0;

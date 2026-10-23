@@ -18,15 +18,17 @@ import { extractRecordingTree, RECORDING_TREE_MARKER } from "../../../scripts/s3
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { diffRecordings, renderRecordingChanges, type RecordedPair } from "../../../conformance/port-readiness/recording/diff.js";
 import { buildRecordingLock, readRecordingLock, recordingLockSchema, recordingLockText, RECORDING_LOCK, type RecordingLock } from "../../../conformance/port-readiness/recording/store.js";
-import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-readiness/manifest.js";
+import { readGatesManifest, recordedRuntimes, type GatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { canonicalText, gatesRecordingSchema, type GatesRecording } from "../../../conformance/port-readiness/recording/schema.js";
 import {
-  ADAPTER_SOURCES, adapterSourcesDigest, archiveCachePath, cacheArchive, cachedTree, checkTreePaths, configId, memoryTree, packTree, parsersId, RECORDING_ARCHIVE_FORMAT, treeDirectory, treeFiles,
-  unpackArchive,
+  ADAPTER_SOURCES, adapterSourcesDigest, answerConfig, archiveCachePath, cacheArchive, cachedTree, checkTreePaths, configId, memoryTree, packTree, parsersId, RECORDER_SOURCES,
+  recorderSourcesDigest, RECORDING_ARCHIVE_FORMAT, treeDirectory, treeFiles, unpackArchive,
 } from "../../../conformance/port-readiness/recording/archive.js";
 import { answerKey, answerPath, answerText, fetchedContext, missingAnswers, neededAnswers, parseAnswer, verdictPath, type KeyContext } from "../../../conformance/port-readiness/recording/corpus-answers.js";
 import { caseAnswerPath, caseKey, loadRecording, loadRule, recordingFiles, ruleTreeDigest, textDigest, textPath } from "../../../conformance/port-readiness/recording/tree.js";
 import { parseGatesManifest } from "../../../conformance/port-readiness/manifest.js";
+import { wantedPlaces } from "../../../conformance/port-readiness/corpus.js";
+import { goldenBatches } from "../../../conformance/port-readiness/run.js";
 import type { Span } from "../../../conformance/port-readiness/types.js";
 
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
@@ -227,6 +229,10 @@ test("a case's answer is keyed by its source and the inputs its adapter feeds up
   assert.notEqual(key("blade-parser", {}, "o".repeat(64)), key("blade-parser"));
   assert.notEqual(key("sqlfluff", {}, "o".repeat(64)), key("sqlfluff"));
   assert.equal(key("psalm", {}, "o".repeat(64)), key("psalm"));
+  // tlint and stillat/blade-parser read a template's type as the engine does: a Blade template is not plain PHP.
+  assert.notEqual(key("tlint", { path: "a.blade.php" }), key("tlint", { path: "a.php" }));
+  assert.notEqual(key("blade-parser", { path: "a.blade.php" }), key("blade-parser", { path: "a.php" }));
+  assert.equal(key("tlint", { path: "a.blade.php" }), key("tlint", { path: "b.blade.php" }));
 });
 
 test("two cases of a rule under one key must have the same answer, which is then filed once", () => {
@@ -390,6 +396,40 @@ test("PHPStan's and Psalm's answers are keyed by every fetched file of their tas
   assert.equal(answerKey("phpcs", file, fetchedContext([file, sibling], NO_COMMIT, ["R1"])), "a".repeat(64));
 });
 
+test("a PHPStan or Psalm rule's key reads the batch every rule's goldens make in its tasks, so cached equals uncached", () => {
+  const x = { task: "demo", path: "src/A.php", sha256: "a".repeat(64) };
+  const y = { task: "demo", path: "src/B.php", sha256: "b".repeat(64) };
+  const elsewhere = { task: "other", path: "src/C.php", sha256: "c".repeat(64) };
+  for (const adapter of ["phpstan", "psalm"] as const) {
+    // With another rule's goldens `others`: what X's cached result is keyed by (run.ts builds `wanted` from every
+    // golden, as it fetches them), and the answer an uncached run reads for X on its golden.
+    const state = (others: (typeof x)[]) => {
+      const named = [x, ...others];
+      return {
+        key: goldenBatches(adapter, wantedPlaces(named), [x]),
+        answer: answerPath(CONFIG, "X", x, answerKey(adapter, x, fetchedContext(named, NO_COMMIT, ["X", "Y"]))),
+      };
+    };
+    const alone = state([]);
+    const added = state([y]);
+    const removed = state([]);
+    // Another rule's golden in X's task is another batch: another answer read, another key.
+    assert.notEqual(added.answer, alone.answer, adapter);
+    assert.notEqual(added.key, alone.key, adapter);
+    // Removed again, the answer read and the key are the first ones.
+    assert.deepEqual(removed, alone, adapter);
+    // A golden of another task is no part of the batch, and moves neither.
+    assert.deepEqual(state([elsewhere]), alone, adapter);
+    // An archive recorded at both batches keeps both answers, and X's tree digest (ruleTreeDigest) reads every file
+    // under its answers: the same digest whichever the run reads, so the batch is what tells the two apart.
+    const both = memoryTree(new Map([alone.answer, added.answer].map((path) => [path, Buffer.from("{}\n", "utf8")])));
+    assert.deepEqual(both.list(`answers/${CONFIG}/X/`), [alone.answer, added.answer].sort(), adapter);
+  }
+  // An adapter that reads each file alone: another rule's golden is no part of a rule's key.
+  assert.equal(goldenBatches("bandit", wantedPlaces([x, y]), [x]), "");
+  assert.equal(goldenBatches("phpcs", wantedPlaces([x, y]), [x]), "");
+});
+
 test("stillat/blade-parser's and PHPStan's corpus answers are keyed by the rules recorded, since one rule asked excludes a file for all", () => {
   const file = { task: "demo", path: "views/a.blade.php", sha256: "a".repeat(64) };
   const keyed = (adapter: "blade-parser" | "phpstan" | "psalm" | "tlint", rules: string[]) => answerKey(adapter, file, fetchedContext([file], NO_COMMIT, rules));
@@ -403,18 +443,72 @@ test("stillat/blade-parser's and PHPStan's corpus answers are keyed by the rules
   assert.equal(keyed("psalm", ["P1"]), keyed("psalm", ["P1", "P2"]));
   assert.equal(keyed("tlint", ["T1"]), "a".repeat(64));
   // The gates and the recorder build the context alike: the needed answers' names are those keys.
-  const needed = (rules: string[]) => neededAnswers({ manifest: gatesYaml("blade-parser"), runtimes: RUNTIMES, parsers: PARSERS, rules, files: [file], context: fetchedContext([file], NO_COMMIT, rules) });
+  const needed = (rules: string[]) => neededAnswers({ root: PACKAGE_ROOT, manifest: gatesYaml("blade-parser"), runtimes: RUNTIMES, parsers: PARSERS, rules, files: [file], context: fetchedContext([file], NO_COMMIT, rules) });
   assert.deepEqual(needed(["V1", "V2"]).answers.map((answer) => answer.path.slice(answer.path.lastIndexOf("@"))), [`@${keyed("blade-parser", ["V1", "V2"])}.json`, `@${keyed("blade-parser", ["V1", "V2"])}.json`]);
   assert.equal(needed(["V1"]).answers.some((answer) => needed(["V1", "V2"]).answers.some((other) => other.path === answer.path)), false);
 });
 
-test("the config id and the parsers id name the recorder's adapter code", () => {
-  const needed = neededAnswers({ manifest: gatesYaml("bandit"), runtimes: RUNTIMES, parsers: PARSERS, rules: ["B301"], files: [], context: ALONE });
+test("the config id and the parsers id name the recorder's adapter code and the code that files its answers", () => {
+  const needed = neededAnswers({ root: PACKAGE_ROOT, manifest: gatesYaml("bandit"), runtimes: RUNTIMES, parsers: PARSERS, rules: ["B301"], files: [], context: ALONE });
   assert.equal(needed.config.sources, adapterSourcesDigest("bandit"));
+  assert.equal(needed.config.recorder, recorderSourcesDigest());
   assert.equal(needed.parsersId, parsersId("bandit", PARSERS));
   // The same parsers run by other adapter code are another parsers id.
   assert.notEqual(parsersId("ruff", PARSERS), parsersId("bandit", PARSERS));
   assert.notEqual(adapterSourcesDigest("ruff"), adapterSourcesDigest("bandit"));
+  // The recorder code every adapter files its answers through: the rule records, the keys, spans and canonical text.
+  for (const path of ["conformance/recorders/port-readiness/record.ts", "conformance/port-readiness/recording/tree.ts", "conformance/port-readiness/recording/schema.ts"]) {
+    assert.ok(RECORDER_SOURCES.includes(path), `RECORDER_SOURCES leaves out ${path}`);
+  }
+});
+
+test("the config id covers every gates.yaml setting the adapter reads and the pack's not-copied prefixes", () => {
+  const eslint = (block: string, scope = "") => parseGatesManifest(`adapter: eslint
+rerail:
+  pack: demo
+  project: upstream
+${scope}upstream:
+  name: demo/upstream
+  repository: https://github.com/demo/upstream
+  commit: ${"a".repeat(40)}
+  version: 1.0.0
+  license: MIT
+  recommended_configs:
+    - recommended
+  runtime: upstream-1.0.0
+popularity:
+  observed_on: 2026-10-06
+  evidence:
+    - a fake upstream
+known_gaps: []
+eslint:
+  plugin: null
+  release:
+    tag: v1.0.0
+    path: lib
+    installed: eslint/lib
+    verbatim: true
+  implementation: lib/rules/{rule}.js
+  helpers: []
+  checkout:
+    - /lib/
+${block}`, "gates.yaml");
+  const root = mkdtempSync(join(tmpdir(), "port-readiness-config-"));
+  try {
+    const id = (manifest: GatesManifest) => configId(answerConfig(root, manifest, RUNTIMES));
+    const base = id(eslint("  tests:\n    - tests/lib/rules/*.js\n  parsers:\n    espree: javascript\n"));
+    // Which tests are read, how a parser's tree is read, and which file types the pack covers: each a new config.
+    assert.notEqual(id(eslint("  tests:\n    - tests/lib/rules/a*.js\n  parsers:\n    espree: javascript\n")), base);
+    assert.notEqual(id(eslint("  tests:\n    - tests/lib/rules/*.js\n  parsers:\n    espree: typescript\n")), base);
+    assert.notEqual(id(eslint("  tests:\n    - tests/lib/rules/*.js\n  parsers:\n    espree: javascript\n  fixture_parsers:\n    tests/fixtures/parsers/: .ts\n")), base);
+    assert.notEqual(id(eslint("  tests:\n    - tests/lib/rules/*.js\n  parsers:\n    espree: javascript\n", "  in_scope:\n    - .js\n")), base);
+    // An UPSTREAM.md "Not copied" line skips the cases under it.
+    mkdirSync(join(root, "packs/demo/licenses/upstream"), { recursive: true });
+    writeFileSync(join(root, "packs/demo/licenses/upstream/UPSTREAM.md"), "# Upstream\n\n- Not copied: `tests/lib/rules/gpl/`\n");
+    assert.notEqual(id(eslint("  tests:\n    - tests/lib/rules/*.js\n  parsers:\n    espree: javascript\n")), base);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 /**
@@ -460,7 +554,7 @@ test("ADAPTER_SOURCES covers every recorder file and span unit each adapter reac
 test("the corpus answers needed are every golden file for every recorded rule at this config, and a missing one is found by its absence", () => {
   const manifest = gatesYaml("bandit");
   const files = [{ task: "demo", path: "a.py", sha256: "1".repeat(64) }, { task: "demo", path: "b.py", sha256: "2".repeat(64) }, { task: "demo", path: "a.py", sha256: "1".repeat(64) }];
-  const options = { manifest, runtimes: RUNTIMES, parsers: PARSERS, rules: ["B302", "B301"], files, context: ALONE };
+  const options = { root: PACKAGE_ROOT, manifest, runtimes: RUNTIMES, parsers: PARSERS, rules: ["B302", "B301"], files, context: ALONE };
   const needed = neededAnswers(options);
   // A golden listed under two rule ids is one file to answer.
   assert.equal(needed.answers.length, 4);
@@ -493,6 +587,8 @@ test("the archive is canonical, verified before it is extracted, and refuses pat
 
   assert.throws(() => checkTreePaths(["answers/c/B301/demo/App.py@k.json", "answers/c/B301/demo/app.py@k.json"]), /differ only by letter case/u);
   assert.throws(() => checkTreePaths(["recording.json"]), /holds only answers\/, config\/, rules\/, texts\/, tool\/, verdicts\/, not recording\.json/u);
+  // A bare name is no directory, even one a top-level directory's name starts with.
+  for (const bare of ["tools", "config", "/config/a.json"]) assert.throws(() => checkTreePaths([bare]), /holds only/u);
 
   const cacheRoot = mkdtempSync(join(tmpdir(), "port-readiness-archive-"));
   try {

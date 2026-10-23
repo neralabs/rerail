@@ -823,11 +823,11 @@ describe("recordings", () => {
     ["v2", { format: "rerail.port-readiness-recording-lock/v2", tool: "t", files: { "corpus.json": { sha256: digest, size: 2 }, "recording.json": { sha256: digest, size: 2 } } }],
     ["v3", { format: "rerail.port-readiness-recording-lock/v3", tool: "t", files: { "corpus.tar.zst": { sha256: digest, files: 1, bytes: 2 }, "recording.json": { sha256: digest, size: 2 } } }],
   ];
-  it.each(oldLocks)("refuses a %s recording.lock with the command to record again, fetching nothing", (_, old) => {
+  it.each(oldLocks)("refuses a %s recording.lock, saying to delete it and record again, fetching nothing", (_, old) => {
     const { root, aws, calls, write } = withData();
     write("packs/p/upstream/t/recording.lock", `${JSON.stringify(old)}\n`);
     const message = failure(() => recordings({ root, aws, log: quiet }));
-    for (const text of ["packs/p/upstream/t/recording.lock", `not ${RECORDING_LOCK_V4}`, "npm run port-readiness:record -- --pack p --tool t"]) expect(message).toContain(text);
+    for (const text of ["packs/p/upstream/t/recording.lock", `not ${RECORDING_LOCK_V4}`, "delete it and record the tool-pack again", "npm run port-readiness:record -- --pack p --tool t"]) expect(message).toContain(text);
     expect(failure(() => recordingsPush({ root, pack: "p", aws, log: quiet }))).toContain(`not ${RECORDING_LOCK_V4}`);
     expect(calls).toEqual([]);
   });
