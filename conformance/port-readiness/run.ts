@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { extname, join, relative, resolve } from "node:path";
 
 import { dependencyDigest, ruleKey, readCached, toolPackKey, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
 import { upstreamStatusChecks, defaultOn } from "./checks/upstream-status.js";
@@ -9,15 +9,16 @@ import { loadAsBundled, loadsGate } from "./checks/loads.js";
 import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
 import { compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
-import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, outsideInScope, provenGaps, realCodeGapCheck, recordMissingAnswers, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
+import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, outsideInScope, provenGaps, readPath, realCodeGapCheck, recordMissingAnswers, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
 import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedKey, wantedPlaces, type CorpusFile, type CorpusTask } from "./corpus.js";
 import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity } from "./engine.js";
 import { byText, readGoldens, SYSTEMATIC_FILES, type Goldens } from "./goldens.js";
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
-import { createRecordedAdapter, readRecordedInputs } from "./recorded-adapter.js";
-import { adapterSourcesDigest, CONTEXT_FILES, CORPUS_ARCHIVE } from "./recording/corpus-answers.js";
-import { RECORDING_FILE } from "./recording/schema.js";
+import { createRecordedAdapter, decodeSource, readRecordedInputs } from "./recorded-adapter.js";
+import { adapterSourcesDigest, parsersId, RECORDING_ARCHIVE } from "./recording/archive.js";
+import { CONTEXT_FILES, verdictPath } from "./recording/corpus-answers.js";
+import { ruleTreeDigest } from "./recording/tree.js";
 import { shardOf, type Shard } from "./shard.js";
 import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type RealCodeGap, type UpstreamCase, type UpstreamFile } from "./types.js";
 
@@ -283,7 +284,7 @@ export function gatedToolPacks(root: string): { pack: string; tool: string }[] {
 function method(manifest: PackManifest): GatesReport["method"] {
   return {
     "tool-pack": {
-      pins: "gates.yaml upstream.version, recording.json pins and conformance.json tools[].version agree, and every runtime pin file the recording names (package.json, pyproject.toml, .python-version, composer.json, .php-version, PHP's extensions.txt, rust-toolchain.toml) has the committed file's sha256",
+      pins: "gates.yaml upstream.version, the recording's pins and conformance.json tools[].version agree, and every runtime pin file the recording names (package.json, pyproject.toml, .python-version, composer.json, .php-version, PHP's extensions.txt, rust-toolchain.toml) has the committed file's sha256",
       license: "the licence kept under licenses/<project>/ (every LICENSE or LICENCE file, in name order) has the sha256 of upstream's licence at the pinned commit, as recorded (rerail's pack checks 5 and 6 cover the rest of the licence contract)",
       effect: "a failing tool-pack check fails every shipped rule of the tool-pack: the recording is stale",
     },
@@ -306,7 +307,7 @@ function method(manifest: PackManifest): GatesReport["method"] {
       flag: `more than ${SIZE_FLAG_BYTES} bytes as shipped`,
       rewrite: `a flagged rule goes back when ${(REPEATED_SHARE_LIMIT * 100).toFixed(1)}% or more of its clauses is structure written out over and over, or one node kind definitely occurs ${NESTING_RUN_LIMIT} or more times along a single nesting path`,
     },
-    "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files is read from the tool-pack's recording.json, and on each golden from the corpus answers archive (the answer filed under this branch's upstream configuration, the rule and the fetched file's task, path and sha256), both recorded by the gates recorder at the pinned upstream" },
+    "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files and on each golden is read from the tool-pack's recording archive (each answer filed under this branch's upstream configuration and the rule, a test file's by its case's source and inputs, a golden's by the fetched file's task, path and sha256), recorded by the gates recorder at the pinned upstream" },
     "passes-conformance": {
       check: "the pack contract's own check (test:conformance, conformance/languages/): the pack's fixtures tier over every rule, shipped or candidate, each in its own workspace as the check runs them",
       fails: "an unexplained FP or FN on the fixtures (upstream's cases and Rerail's probes, after the pack's divergences.json), no true positive without pack.json examples, an engine failure, a stale divergence, or a pinned corpus whose recording does not cover the rule: what the check fails a shipped rule on",
@@ -505,22 +506,52 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   const goldens = await readGoldens(directory);
   const realCodeGaps = new Map(manifest.real_code_gaps.map((gap) => [gap.rule, gap]));
   const readOr = (file: string) => (existsSync(join(directory, file)) ? readFileSync(join(directory, file)) : "");
+  const committedBytes = new Map<string, Buffer | undefined>();
+  const committed = (file: string): Buffer | undefined => {
+    if (!committedBytes.has(file)) committedBytes.set(file, existsSync(join(directory, file)) ? readFileSync(join(directory, file)) : undefined);
+    return committedBytes.get(file);
+  };
   const shared: SharedKeyInputs = {
     gateCode: trackedDigest(root, GATE_CODE),
     dependencies: dependencyDigest(root),
     gatesYaml: sha256(readOr(GATES_MANIFEST)),
-    // The recordings are not in the tree: the lock's digests are what they are, and the lock is what the commit pins.
-    recordingJson: inputs.lock?.files[RECORDING_FILE].sha256 ?? "",
-    corpusArchive: inputs.lock?.files[CORPUS_ARCHIVE].sha256 ?? "",
+    // The recording is not in the tree: the lock's digest is what it is, and the lock is what the commit pins.
+    recordingArchive: inputs.lock?.files[RECORDING_ARCHIVE].sha256 ?? "",
     adapterSources: adapterSourcesDigest(manifest.adapter),
     corpusTasks: sha256(corpusTasksText),
     corpora: JSON.stringify(corpora),
   };
+  // What every rule reads of the recording beyond its own: the cases of any rule a known gap names, with their
+  // committed sources, and the parsers' verdicts on each gap's probe, which provenGaps proves the gaps on.
+  const verdictsId = parsersId(manifest.adapter, inputs.recording.parsers);
+  const recordedTree = inputs.corpus!.tree;
+  const verdictDigest = (path: string) => sha256(`${path}\0${recordedTree.text(path) ?? "missing"}`);
+  const gapCases = Object.entries(inputs.recording.rules).flatMap(([name, rule]) => rule.cases
+    .filter((testCase) => manifest.known_gaps.some((gap) => gap.fixtures.includes(testCase.fixture)))
+    .map((testCase) => ({ name, ...testCase, committed: testCase.file === null ? null : sha256(committed(testCase.file) ?? "missing") })));
+  const gapInputs = JSON.stringify({
+    cases: gapCases,
+    probes: manifest.known_gaps.flatMap((gap) => {
+      const named = gapCases.filter((testCase) => gap.fixtures.includes(testCase.fixture));
+      const types = [...new Set(named.map((testCase) => extname(readPath(testCase))))];
+      const script = named.every((testCase) => testCase.script === true);
+      return types.map((type) => verdictDigest(verdictPath(verdictsId, { path: `probe${type}`, sha256: sha256(gap.probe), script })));
+    }),
+  });
   const keyed = rules.map((entry) => {
     const id = entry.rule.id ?? entry.rule.file;
-    const caseFiles = [...new Set((inputs.recording.rules[entry.rule.rule]?.cases ?? []).map((testCase) => testCase.file).filter((file): file is string => file !== null))].sort(byText);
+    const recordedCases = inputs.recording.rules[entry.rule.rule]?.cases ?? [];
+    const caseFiles = [...new Set(recordedCases.map((testCase) => testCase.file).filter((file): file is string => file !== null))].sort(byText);
     const families = policyFamilies(entry.rule.text);
-    const caseSources = caseFiles.map((file) => `${file}\0${existsSync(join(directory, file)) ? sha256(readFileSync(join(directory, file))) : "missing"}`);
+    const caseSources = caseFiles.map((file) => `${file}\0${sha256(committed(file) ?? "missing")}`);
+    // The verdicts the rule's unparsed cases and goldens would be looked up under, read as the recorded adapter reads them.
+    const verdictPaths = [
+      ...recordedCases.flatMap((testCase) => {
+        const bytes = testCase.file === null ? undefined : committed(testCase.file);
+        return bytes === undefined ? [] : [verdictPath(verdictsId, { path: readPath(testCase), sha256: sha256(decodeSource(bytes)), script: testCase.script === true })];
+      }),
+      ...(goldens.get(id) ?? []).map((golden) => verdictPath(verdictsId, { path: golden.path, sha256: golden.sha256, script: false })),
+    ];
     const key = ruleKey(shared, {
       // The shared engine and the families this rule's document names; the whole engine when it names none the
       // language registry knows, so a rule the gates cannot place is judged again on any engine change.
@@ -529,6 +560,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
       conformanceEntry: JSON.stringify({ entry: entry.entry, on: entry.location === "shipped" ? (on.get(entry.path) ?? true) : null }),
       goldens: JSON.stringify(goldens.get(id) ?? []),
       caseSources,
+      recording: `${ruleTreeDigest(recordedTree, inputs.config, inputs.recording, entry.rule.rule, verdictPaths)}\0${sha256(gapInputs)}`,
     });
     return { ...entry, id, key, families, caseSources };
   });

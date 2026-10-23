@@ -9,12 +9,11 @@ import { fileTypeOf } from "./engine.js";
 import type { Golden } from "./goldens.js";
 import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
-import {
-  answerConfig, answerKey, answerPath, cachedCorpusTree, configId, corpusCommits, CORPUS_ARCHIVE, directoryTree, fetchedContext, missingAnswers, neededAnswers, parseAnswer, parsersId, parseVerdicts,
-  verdictPath, type CorpusTree, type KeyContext,
-} from "./recording/corpus-answers.js";
-import { cleanVerdicts, RECORDING_FILE, gatesRecordingSchema, spanOf, type GatesRecording } from "./recording/schema.js";
-import { readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
+import { answerConfig, cachedTree, configId, directoryTree, parsersId, RECORDING_ARCHIVE, treeConfigs, type RecordingTree } from "./recording/archive.js";
+import { answerKey, answerPath, corpusCommits, fetchedContext, missingAnswers, neededAnswers, parseAnswer, parseVerdicts, verdictPath, type KeyContext } from "./recording/corpus-answers.js";
+import { spanOf, type GatesRecording } from "./recording/schema.js";
+import { readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
+import { loadRecording } from "./recording/tree.js";
 import { banditSpan } from "./span-units/bandit.js";
 import { bladeParserSpan } from "./span-units/blade-parser.js";
 import { bladestanSpan } from "./span-units/bladestan.js";
@@ -26,7 +25,7 @@ import { psalmSpan } from "./span-units/psalm.js";
 import { ruffSpan } from "./span-units/ruff.js";
 import { sqlfluffSpan } from "./span-units/sqlfluff.js";
 import { tlintSpan } from "./span-units/tlint.js";
-import type { Check, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamFile } from "./types.js";
+import type { Check, PackAdapter, PackManifest, Span, SpanParts, UpstreamCase, UpstreamFile } from "./types.js";
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
@@ -90,12 +89,6 @@ export function upstreamLicenseText(checkout: string): string {
   const bytes = licenseBytes(checkout);
   if (bytes === null) throw new Error(`upstream's checkout at ${checkout} has no LICENSE or LICENCE file at its root`);
   return bytes.toString("utf8");
-}
-
-function parseText<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } } }, label: string, text: string): T {
-  const parsed = schema.safeParse(JSON.parse(text));
-  if (!parsed.success) throw new Error(`${label}: ${parsed.error.issues.slice(0, 5).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
-  return parsed.data;
 }
 
 /**
@@ -168,9 +161,9 @@ export async function fetchFixtureTexts(cacheRoot: string, pins: { repository: s
   return rebuildFixtureTexts(checkout, recorded);
 }
 
-/** Upstream's answers on the corpus as the gates read them: the extracted archive, and the commits its keys name. */
+/** Upstream's answers on the corpus and the parsers' verdicts as the gates read them: the archive's tree, and the commits its keys name. */
 export interface RecordedCorpus {
-  tree: CorpusTree;
+  tree: RecordingTree;
   commitOf: KeyContext["commitOf"];
 }
 
@@ -181,6 +174,8 @@ export interface RecordedInputs {
   /** The tool-pack's committed manifest, or null for a test that builds the recordings itself. */
   lock: RecordingLock | null;
   recording: GatesRecording;
+  /** The config id the archive holds the recording under: this branch's, or the recording is stale. */
+  config: string;
   corpus: RecordedCorpus | null;
   /** conformance.json `tools[]` of the pack. */
   tools: { name: string; version: string }[];
@@ -188,36 +183,39 @@ export interface RecordedInputs {
   names: string[];
 }
 
-/** What to do when a recording the lock names is not in the cache: fetch it from S3, or record it, which writes the lock it names. */
-function missingMessage(pack: string, tool: string, file: string): string {
-  return `the recording packs/${pack}/upstream/${tool}/${RECORDING_LOCK} names for ${file} is not in the cache:`
+/** What to do when the archive the lock names is not in the cache: fetch it from S3, or record it, which writes the lock it names. */
+function missingMessage(pack: string, tool: string): string {
+  return `the recording packs/${pack}/upstream/${tool}/${RECORDING_LOCK} names (${RECORDING_ARCHIVE}) is not in the cache:`
     + ` fetch it with node scripts/s3/pack-fixtures.mjs recordings --pack ${pack} --tool ${tool}, or record it with npm run port-readiness:record -- --pack ${pack} --tool ${tool}`
     + ` (CI restores it from the Actions cache or S3, or records it)`;
 }
 
 /**
- * Read a gated tool-pack's `gates.yaml` and `recording.lock` from the working tree at `root`, and the recording.json
- * and corpus answers archive the lock names from the cache, the archive extracted to its tree. They are not in the
- * tree: `port-readiness:record` puts them in the cache, and `pack-fixtures.mjs recordings` fetches them there from S3
- * (recording/store.ts). recording.json is checked against the lock's sha256 on every read; the archive is checked
+ * Read a gated tool-pack's `gates.yaml` and `recording.lock` from the working tree at `root`, and the recording archive
+ * the lock names from the cache, extracted to its tree. It is not in the tree: `port-readiness:record` puts it in the
+ * cache, and `pack-fixtures.mjs recordings` fetches it there from S3 (recording/store.ts). The archive is checked
  * against the lock's tar sha256, file count and bytes before it is extracted, and its tree is reused only while the
- * marker the extraction wrote names that archive and the canonical tar of the tree's files is still that archive (corpus-answers.ts
- * cachedCorpusTree), so a rule is never judged against an archive this commit did not name.
+ * marker the extraction wrote names that archive and the canonical tar of the tree's files is still that archive
+ * (archive.ts cachedTree), so a rule is never judged against an archive this commit did not name. The recording is
+ * read at the one config the archive holds; corpus-answers fails every rule when it is not this branch's.
  */
 export async function readRecordedInputs(root: string, cacheRoot: string, pack: string, tool: string, names: string[]): Promise<RecordedInputs> {
   const manifest = readGatesManifest(root, pack, tool);
   const lock = readRecordingLock(root, pack, tool);
-  const text = readCachedRecording(cacheRoot, lock.files[RECORDING_FILE].sha256);
-  if (text === undefined) throw new Error(missingMessage(pack, tool, RECORDING_FILE));
-  const tree = cachedCorpusTree(cacheRoot, lock.files[CORPUS_ARCHIVE], `packs/${pack}/upstream/${tool}/${CORPUS_ARCHIVE}`);
-  if (tree === undefined) throw new Error(missingMessage(pack, tool, CORPUS_ARCHIVE));
+  const label = `packs/${pack}/upstream/${tool}/${RECORDING_ARCHIVE}`;
+  const directory = cachedTree(cacheRoot, lock.files[RECORDING_ARCHIVE], label);
+  if (directory === undefined) throw new Error(missingMessage(pack, tool));
+  const tree = directoryTree(directory);
+  const configs = treeConfigs(tree);
+  if (configs.length !== 1) throw new Error(`${label} holds ${configs.length} configs, not one: record the tool-pack again`);
   const conformance = JSON.parse(readFileSync(join(root, "packs", pack, "conformance.json"), "utf8")) as { tools?: { name: string; version: string }[] };
   return {
     root,
     manifest,
     lock,
-    recording: parseText(gatesRecordingSchema, `packs/${pack}/upstream/${tool}/${RECORDING_FILE}`, text),
-    corpus: { tree: directoryTree(tree), commitOf: corpusCommits(await readRerailCorpora(root, pack), readCorpusTasks()) },
+    recording: loadRecording(tree, configs[0]!, label),
+    config: configs[0]!,
+    corpus: { tree, commitOf: corpusCommits(await readRerailCorpora(root, pack), readCorpusTasks()) },
     tools: conformance.tools ?? [],
     names,
   };
@@ -232,7 +230,7 @@ export function inScopeSamples(samples: readonly string[], inScope: readonly str
 }
 
 /**
- * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, recording.lock, recording.json,
+ * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, recording.lock, the recording archive,
  * conformance.json), the lock pins every runtime gates.yaml installs and no other (recordedRuntimes), the runtimes' pins
  * (package.json, pyproject.toml, .python-version, composer.json, .php-version, PHP's extensions.txt) are the committed ones, the kept licence (licenseBytes of keptLicenseDirectory) is the recorded one, every committed case source has its recorded sha256, and the recording covers every
  * upstream rule the pack names. Any failure means the recording is stale.
@@ -258,13 +256,13 @@ export function toolPackChecks(inputs: RecordedInputs): Check[] {
     ...(manifest.upstream.commit === pins.commit ? [] : [`gates.yaml upstream.commit ${manifest.upstream.commit} but ${RECORDING_LOCK} pins.commit ${pins.commit}`]),
     ...(manifest.upstream.repository === pins.repository ? [] : [`gates.yaml upstream.repository ${manifest.upstream.repository} but ${RECORDING_LOCK} pins.repository ${pins.repository}`]),
     ...(manifest.upstream.runtime === pins.runtime ? [] : [`gates.yaml upstream.runtime ${manifest.upstream.runtime} but ${RECORDING_LOCK} pins.runtime ${pins.runtime}`]),
-    ...(manifest.adapter === recording.adapter ? [] : [`gates.yaml adapter ${manifest.adapter} but recording.json adapter ${recording.adapter}`]),
-    ...(lock === null || lock.tool === tool ? [] : [`${RECORDING_LOCK} tool ${lock.tool} but recording.json tool ${tool}`]),
-    ...(canonical(pins) === canonical(recording.pins) ? [] : [`${RECORDING_LOCK} and recording.json were written by different runs: pins ${canonical(pins)} and ${canonical(recording.pins)}`]),
-    ...(canonical(lock?.runtimes ?? recording.runtimes) === canonical(recording.runtimes) ? [] : [`${RECORDING_LOCK} and recording.json disagree about the recorder's runtimes`]),
+    ...(manifest.adapter === recording.adapter ? [] : [`gates.yaml adapter ${manifest.adapter} but ${RECORDING_ARCHIVE} adapter ${recording.adapter}`]),
+    ...(lock === null || lock.tool === tool ? [] : [`${RECORDING_LOCK} tool ${lock.tool} but ${RECORDING_ARCHIVE} tool ${tool}`]),
+    ...(canonical(pins) === canonical(recording.pins) ? [] : [`${RECORDING_LOCK} and ${RECORDING_ARCHIVE} were written by different runs: pins ${canonical(pins)} and ${canonical(recording.pins)}`]),
+    ...(canonical(lock?.runtimes ?? recording.runtimes) === canonical(recording.runtimes) ? [] : [`${RECORDING_LOCK} and ${RECORDING_ARCHIVE} disagree about the recorder's runtimes`]),
     ...(canonical(pinnedRuntimes) === canonical(wantedRuntimes) ? [] : [`gates.yaml's adapter and environment install the runtimes ${wantedRuntimes.join(", ")} but ${RECORDING_LOCK} pins ${pinnedRuntimes.join(", ") || "none"}`]),
   ];
-  checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${pins.version} at ${pins.commit} in gates.yaml, ${RECORDING_LOCK}, recording.json and conformance.json` : `${pinMismatches.join("; ")}: ${stale}` });
+  checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${pins.version} at ${pins.commit} in gates.yaml, ${RECORDING_LOCK}, ${RECORDING_ARCHIVE} and conformance.json` : `${pinMismatches.join("; ")}: ${stale}` });
 
   const pinFileMismatches: string[] = [];
   for (const [runtime, files] of Object.entries(runtimes).sort(([a], [b]) => (a < b ? -1 : 1))) {
@@ -337,7 +335,7 @@ export function toolPackChecks(inputs: RecordedInputs): Check[] {
  * The recorded adapter's inCorpus: whether a path is of a type upstream lints. A path's type is its longest dialect
  * suffix where that is longer than its extension: `.blade.php` is no `.php`.
  */
-function recordedInCorpus(recording: Pick<GatesRecording, "corpus">): (path: string) => boolean {
+export function recordedInCorpus(recording: Pick<GatesRecording, "corpus">): (path: string) => boolean {
   const { caseSensitive, extensions } = recording.corpus;
   const types = new Set(caseSensitive ? extensions : extensions.map((ext) => ext.toLowerCase()));
   return (path) => types.has(caseSensitive ? fileTypeOf(path) : fileTypeOf(path).toLowerCase());
@@ -347,7 +345,7 @@ function recordedInCorpus(recording: Pick<GatesRecording, "corpus">): (path: str
  * A PackAdapter answering from a tool-pack's recordings and committed case sources; it never runs upstream. Its
  * fixtureTexts are upstream's test files fetched at the pinned commit (`upstream` says where to cache them):
  * `loadFixtureTexts` fetches them, once, and must be awaited before fixtureTexts is read. `corpusAnswers` is the
- * tool-pack check that the corpus answers archive answers every golden.
+ * tool-pack check that the recording archive is filed under this branch's config and answers every golden.
  */
 export function createRecordedAdapter(
   inputs: RecordedInputs,
@@ -372,14 +370,11 @@ export function createRecordedAdapter(
   const regex = ({ source: pattern, flags }: { source: string; flags: string }) => new RegExp(pattern, flags);
   const toSpan = SPAN_UNITS[recording.adapter];
   const inCorpus = recordedInCorpus(recording);
-  // An entry without `verdicts` is every parser silent; an entry that is not there at all is a source nobody recorded.
-  const silent = cleanVerdicts(recording.parsers);
-  const verdictsByKey = new Map<string, ParserVerdict[]>(recording.parserVerdicts.map((entry) => [`${entry.path}\0${entry.script}\0${entry.sha256}`, entry.verdicts ?? silent]));
   // The answers this branch reads are those filed under its own config: its pins, runtimes, gates.yaml and adapter code.
   const runtimes = inputs.lock?.runtimes ?? recording.runtimes;
   const config = configId(answerConfig(manifest, runtimes));
   const verdictsId = parsersId(manifest.adapter, recording.parsers);
-  const label = `packs/${pack}/upstream/${recording.tool}/${CORPUS_ARCHIVE}`;
+  const label = `packs/${pack}/upstream/${recording.tool}/${RECORDING_ARCHIVE}`;
 
   return {
     identity: recording.identity,
@@ -388,7 +383,9 @@ export function createRecordedAdapter(
     licenseText: licenseBytes(join(root, keptLicenseDirectory(manifest)))?.toString("utf8") ?? "",
     corpusAnswers(files, goldens) {
       const command = recordMissingAnswers(pack, recording.tool);
-      if (corpus === null) return { id: "corpus-answers", ok: false, detail: `no corpus answers archive was read: ${command}` };
+      if (corpus === null) return { id: "corpus-answers", ok: false, detail: `no recording archive was read: ${command}` };
+      // The whole recording is filed under the config it was made at: another config's answers say nothing of this branch's upstream.
+      if (inputs.config !== config) return { id: "corpus-answers", ok: false, detail: `${label} holds upstream's answers at config ${inputs.config.slice(0, 12)}, not this branch's config ${config.slice(0, 12)}: ${staleMessage(pack, recording.tool)}` };
       // A golden whose fetched file is not its sha256 fails on its own (the goldens gate); its answer cannot be named.
       const fetched = new Map(files.map((file) => [wantedKey(file.task, file.path), file.sha256]));
       const judged = goldens.filter((golden) => fetched.get(wantedKey(golden.task, golden.path)) === golden.sha256);
@@ -426,7 +423,7 @@ export function createRecordedAdapter(
     fixtureWords: () => new Set(recording.fixtureWords),
     async loadFixtureTexts() {
       if (recording.fixtureTexts === undefined || fetchedTexts !== undefined) return;
-      if (upstream === undefined) throw new Error(`${RECORDING_FILE} records upstream's fixture texts by origin, and this recorded adapter has no cache to fetch them into`);
+      if (upstream === undefined) throw new Error(`${label} records upstream's fixture texts by origin, and this recorded adapter has no cache to fetch them into`);
       fetchedTexts = await fetchFixtureTexts(upstream.cacheRoot, recording.pins, recording.fixtureTexts, upstream.runner);
     },
     fixtureTexts() {
@@ -488,12 +485,9 @@ export function createRecordedAdapter(
       });
     },
     async parserVerdicts(files) {
-      // Independent parsers do not run in PR CI: answer from the recording where it has the file, else no verdict.
+      // Independent parsers do not run in PR CI: answer from the archive where it has the source, else no verdict.
       return files.map((file) => {
-        const digest = sha256(file.source);
-        const recorded = verdictsByKey.get(`${file.path}\0${file.script === true}\0${digest}`);
-        if (recorded !== undefined) return recorded;
-        const path = verdictPath(verdictsId, { path: file.path, sha256: digest, script: file.script === true });
+        const path = verdictPath(verdictsId, { path: file.path, sha256: sha256(file.source), script: file.script === true });
         const text = corpus?.tree.text(path);
         return text === undefined ? [] : parseVerdicts(text, `${label}: ${path}`, recording.parsers);
       });

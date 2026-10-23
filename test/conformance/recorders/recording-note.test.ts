@@ -13,7 +13,7 @@ const ROWS = [
   "| `upstream/ruff/fixtures/b.py` | `crates/b.py` | verbatim |",
 ];
 const TABLE = ["| File | Upstream | Copy |", "| --- | --- | --- |", ...ROWS, "", "Paths are relative to the pack directory.", ""].join("\n");
-const NOTE_START = "> `recording.json` is a port readiness recording";
+const NOTE_START = "> `recording.tar.zst` is a port readiness recording";
 
 test("a recording that holds upstream text is listed once, in a note under UPSTREAM.md's file table and never as a row of it", () => {
   const once = withRecordingNote(TABLE, "`mod.rs`: test strings", ["LICENSE"]);

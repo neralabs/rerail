@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v3",
+  "format": "rerail.port-readiness-recording-lock/v4",
   "tool": "bandit",
   "pins": {
     "repository": "https://github.com/PyCQA/bandit",
@@ -18,16 +18,11 @@
     }
   },
   "files": {
-    "recording.json": {
-      "sha256": "6dffb53a4d903d25ee00064f384238ad80aeac8761d12337483a242faa981613",
-      "size": 2826668,
-      "format": "rerail.port-readiness-recording/v2"
-    },
-    "corpus.tar.zst": {
-      "sha256": "878ff5469c50b7d3377d67e0bf6abdd3313977e2f27d5f84cb1f4db9be2cbbcf",
-      "files": 72733,
-      "bytes": 1557446,
-      "format": "rerail.port-readiness-corpus-answers/v1"
+    "recording.tar.zst": {
+      "sha256": "f853faeb3e7afc1681b6f111799bc5afeb4229854a81d22518260bc80bb17125",
+      "files": 79896,
+      "bytes": 4079568,
+      "format": "rerail.port-readiness-recording-archive/v1"
     }
   }
 }

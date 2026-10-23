@@ -431,7 +431,7 @@ export function installedPackages(directory: string): string[] {
 /**
  * Every Composer runtime this process used and the package set it resolved, by runtime name. Nothing locks the
  * transitive packages, so the recording summary lists them: a drift between two recordings is visible there, and is not
- * in recording.json or the lock, so a transitive release alone never fails a leg.
+ * in the recording archive or the lock, so a transitive release alone never fails a leg.
  */
 export function resolvedComposerRuntimes(): ResolvedRuntime[] {
   return [...RESOLVED_COMPOSER].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([runtime, packages]) => ({ runtime, packages }));

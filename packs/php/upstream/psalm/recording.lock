@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v3",
+  "format": "rerail.port-readiness-recording-lock/v4",
   "tool": "psalm",
   "pins": {
     "repository": "https://github.com/vimeo/psalm",
@@ -19,16 +19,11 @@
     }
   },
   "files": {
-    "recording.json": {
-      "sha256": "688810716643fbe2cd5019cab82c563e5d4638d4a476e738b00ed73fc26aa47e",
-      "size": 3597887,
-      "format": "rerail.port-readiness-recording/v2"
-    },
-    "corpus.tar.zst": {
-      "sha256": "da3e0530ae1eef98b027cbe62e92e74e067da493bd6c20cce05c76084e98f3b4",
-      "files": 1,
-      "bytes": 1123,
-      "format": "rerail.port-readiness-corpus-answers/v1"
+    "recording.tar.zst": {
+      "sha256": "037f2bc16b46d887a027633088e1246286fca7441066250facd2680f3c857ae8",
+      "files": 7369,
+      "bytes": 3757635,
+      "format": "rerail.port-readiness-recording-archive/v1"
     }
   }
 }

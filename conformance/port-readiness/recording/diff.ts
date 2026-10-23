@@ -123,7 +123,7 @@ function answersByRule(answers: ReadonlyMap<string, Buffer> | null): Map<string,
   return byRule;
 }
 
-/** A recording: recording.json, and the files of its corpus answers tree (null when it has none). */
+/** A recording: what the loader rebuilds from its archive's tree, and the archive's corpus answer files (null when it has none). */
 export type RecordedPair = { recording: GatesRecording; corpus: ReadonlyMap<string, Buffer> | null };
 
 /** A recording the committed lock names that could not be read, and why. */

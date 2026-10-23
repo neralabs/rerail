@@ -232,10 +232,10 @@ describe("engine-reads-goldens", () => {
 });
 
 describe("cache keys", () => {
-  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingJson: "j", corpusArchive: "c", adapterSources: "a", corpusTasks: "t", corpora: "[]" };
+  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingArchive: "r", adapterSources: "a", corpusTasks: "t", corpora: "[]" };
   const rules = {
-    a: { engine: "e", document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"] },
-    b: { engine: "e", document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"] },
+    a: { engine: "e", document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"], recording: "ra" },
+    b: { engine: "e", document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"], recording: "rb" },
   };
 
   it("a changed document changes only its own key", () => {
@@ -251,12 +251,19 @@ describe("cache keys", () => {
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
 
-  it("a gate-code, dependency, recording or recorder adapter change changes every key", () => {
-    for (const part of ["gateCode", "dependencies", "recordingJson", "corpusArchive", "adapterSources"] as const) {
+  it("a gate-code, dependency or recorder adapter change changes every key", () => {
+    for (const part of ["gateCode", "dependencies", "adapterSources"] as const) {
       const changed = { ...shared, [part]: "changed" };
       assert.notEqual(ruleKey(changed, rules.a), ruleKey(shared, rules.a));
       assert.notEqual(ruleKey(changed, rules.b), ruleKey(shared, rules.b));
     }
+  });
+
+  // A rule's key takes only what it reads of the recording archive, so another rule recorded again keeps it.
+  it("a re-recorded rule changes only its own key, and a new archive alone changes no rule's key", () => {
+    assert.notEqual(ruleKey(shared, { ...rules.a, recording: "changed" }), ruleKey(shared, rules.a));
+    assert.equal(ruleKey({ ...shared, recordingArchive: "changed" }, rules.a), ruleKey(shared, rules.a));
+    assert.equal(ruleKey({ ...shared, recordingArchive: "changed" }, rules.b), ruleKey(shared, rules.b));
   });
 
   // The engine is each rule's own key input: it is only the part of the engine the rule's language family reads.
@@ -275,7 +282,7 @@ describe("cache keys", () => {
     assert.notEqual(shardOne({ ...pack, caseSources: ["fixtures/a.py\0aa", "fixtures/b.py\0bc"] }), before);
     assert.notEqual(shardOne({ ...pack, names: ["A", "B", "C"] }), before);
     assert.notEqual(shardOne({ ...pack, engine: "changed" }), before);
-    assert.notEqual(toolPackKey({ ...shared, recordingJson: "changed" }, pack, [ruleKey(shared, rules.a)]), before);
+    assert.notEqual(toolPackKey({ ...shared, recordingArchive: "changed" }, pack, [ruleKey(shared, rules.a)]), before);
     // The gap counts come from the shard's own results, so its judged rules are part of the key too.
     assert.notEqual(toolPackKey(shared, pack, [ruleKey(shared, rules.b)]), before);
   });

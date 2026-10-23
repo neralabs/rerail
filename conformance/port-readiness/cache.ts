@@ -150,11 +150,14 @@ export interface SharedKeyInputs {
   gateCode: string;
   dependencies: string;
   gatesYaml: string;
-  recordingJson: string;
-  corpusArchive: string;
   /**
-   * The recorder's adapter code (corpus-answers.ts's adapterSourcesDigest): it is part of the config id the corpus
-   * answers are read under, so moving it can leave a golden unanswered.
+   * The recording archive's sha256, as the lock names it: the tool-pack checks read every rule's recording, so their
+   * key takes it whole. A rule's own key takes only what it reads of the archive (RuleKeyInputs.recording).
+   */
+  recordingArchive: string;
+  /**
+   * The recorder's adapter code (archive.ts's adapterSourcesDigest): it is part of the config id the recording is
+   * read under, so moving it can leave a rule unanswered.
    */
   adapterSources: string;
   corpusTasks: string;
@@ -169,18 +172,24 @@ export interface RuleKeyInputs {
   conformanceEntry: string;
   goldens: string;
   caseSources: string[];
+  /**
+   * What the rule's verdict reads of the recording archive (tree.ts's ruleTreeDigest: the config, the whole-tool facts,
+   * the rule's own files and corpus answers, and the verdicts on its sources and goldens) and of every rule's cases a
+   * known gap names, which provenGaps proves the gaps on. Another rule added or re-recorded changes none of it.
+   */
+  recording: string;
 }
 
 /**
- * A rule's result key: sha256 over the gate code and its dependencies, the tool-pack's manifest and recordings, the
- * recorder's adapter code, the corpus pins, and the rule's own engine key, document, conformance entry, goldens and
- * case sources, each digested in that order. The engine is the rule's own input rather than the tool-pack's because
- * it is only the part of the engine the rule's language family reads.
+ * A rule's result key: sha256 over the gate code and its dependencies, the tool-pack's manifest, the recorder's adapter
+ * code, the corpus pins, and the rule's own engine key, document, conformance entry, goldens, case sources and what it
+ * reads of the recording, each digested in that order. The engine is the rule's own input rather than the tool-pack's
+ * because it is only the part of the engine the rule's language family reads.
  */
 export function ruleKey(shared: SharedKeyInputs, rule: RuleKeyInputs): string {
   const parts = [
-    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingJson, shared.corpusArchive, shared.adapterSources, shared.corpusTasks, shared.corpora,
-    rule.engine, rule.document, rule.conformanceEntry, rule.goldens, ...rule.caseSources,
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.adapterSources, shared.corpusTasks, shared.corpora,
+    rule.engine, rule.document, rule.conformanceEntry, rule.goldens, rule.recording, ...rule.caseSources,
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));
 }
@@ -206,7 +215,7 @@ export interface ToolPackKeyInputs {
 export function toolPackKey(shared: SharedKeyInputs, pack: ToolPackKeyInputs, judgedKeys: readonly string[]): string {
   const sorted = (values: readonly string[]) => [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join("\n");
   const parts = [
-    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingJson, shared.corpusArchive, shared.adapterSources, shared.corpusTasks, shared.corpora,
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingArchive, shared.adapterSources, shared.corpusTasks, shared.corpora,
     pack.engine, sorted(pack.names), sorted(pack.goldens), sorted(pack.caseSources), sorted(judgedKeys),
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));

@@ -1,8 +1,9 @@
 /**
- * The recordings' parser verdicts: recording.json names its independent parsers once and leaves `verdicts` off every
- * entry none of them objected to, and the corpus answers archive writes a golden's as `[]`. What the gates must keep telling apart is an entry that is there without `verdicts`
- * (every parser silent) from an entry that is not there at all (a source nobody recorded, on which the gates draw no
- * conclusion) — the second is what a golden whose text changed looks like.
+ * The recording's parser verdicts: one file per source the recorder asked the independent parsers about, named by the
+ * source's sha256, file type and script (a case source and a golden with the same text share it), `[]` when every parser
+ * was silent. What the gates must keep telling apart is a file that says every parser was silent from no file at all
+ * (a source nobody recorded, on which the gates draw no conclusion) — the second is what a golden whose text changed
+ * looks like.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -13,8 +14,9 @@ import { test } from "vitest";
 
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { createRecordedAdapter } from "../../../conformance/port-readiness/recorded-adapter.js";
-import { answerConfig, answerPath, answerText, configId, memoryTree, parsersId, parseVerdicts, verdictPath, verdictText } from "../../../conformance/port-readiness/recording/corpus-answers.js";
-import { cleanVerdicts, gatesRecordingSchema, isCleanVerdict, recordedParsers, RECORDING_FORMAT } from "../../../conformance/port-readiness/recording/schema.js";
+import { answerConfig, configId, memoryTree, parsersId } from "../../../conformance/port-readiness/recording/archive.js";
+import { answerPath, answerText, parseVerdicts, verdictPath, verdictText } from "../../../conformance/port-readiness/recording/corpus-answers.js";
+import { canonicalText, cleanVerdicts, gatesRecordingSchema, isCleanVerdict, recordedParsers } from "../../../conformance/port-readiness/recording/schema.js";
 
 const MANIFEST = `adapter: bandit
 rerail:
@@ -44,9 +46,8 @@ const digest = (text: string): string => createHash("sha256").update(text).diges
 const PARSERS = [{ parser: "cpython 3.14.8", grammar: true }, { parser: "libcst 1.9.0", grammar: false }];
 const OBJECTING = [{ parser: "cpython 3.14.8", syntax: ["invalid syntax"], grammar: [] }, { parser: "libcst 1.9.0", syntax: ["parse error"], grammar: null }];
 
-function recording(parserVerdicts: unknown[], rules: Record<string, unknown> = {}): unknown {
+function recording(rules: Record<string, unknown> = {}): unknown {
   return {
-    format: RECORDING_FORMAT,
     tool: "bandit",
     adapter: "bandit",
     pins: { repository: "https://github.com/PyCQA/bandit", commit: "a".repeat(40), version: "1.9.4", runtime: "bandit-1.9.4" },
@@ -63,18 +64,17 @@ function recording(parserVerdicts: unknown[], rules: Record<string, unknown> = {
     rules,
     absent: [],
     parsers: PARSERS,
-    parserVerdicts,
   };
 }
 
-/** A corpus answers tree holding the parsers' verdict on each of `files`' content, read at its path as a module. */
-function corpus(files: { path: string; source: string; verdicts: Parameters<typeof verdictText>[0] }[]) {
-  const tree = new Map(files.map((file) => [verdictPath(parsersId("bandit", PARSERS), { path: file.path, sha256: digest(file.source), script: false }), Buffer.from(verdictText(file.verdicts), "utf8")]));
+/** A tree holding the parsers' verdict on each of `files`' content, read at its path. */
+function corpus(files: { path: string; source: string; script?: boolean; verdicts: Parameters<typeof verdictText>[0] }[]) {
+  const tree = new Map(files.map((file) => [verdictPath(parsersId("bandit", PARSERS), { path: file.path, sha256: digest(file.source), script: file.script === true }), Buffer.from(verdictText(file.verdicts), "utf8")]));
   return { tree: memoryTree(tree), commitOf: (task: string): string => { throw new Error(`no commit for ${task}`); } };
 }
 
-/** A recorded adapter over the two recordings, with a tool-pack directory the checks can look at. */
-function adapterOver(parserVerdicts: unknown[], files: Parameters<typeof corpus>[0]) {
+/** A recorded adapter over the recording and the verdict files, with a tool-pack directory the checks can look at. */
+function adapterOver(files: Parameters<typeof corpus>[0]) {
   const root = mkdtempSync(join(tmpdir(), "gates-verdicts-"));
   mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
   writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST);
@@ -84,7 +84,8 @@ function adapterOver(parserVerdicts: unknown[], files: Parameters<typeof corpus>
     root,
     manifest,
     lock: null,
-    recording: gatesRecordingSchema.parse(recording(parserVerdicts)),
+    recording: gatesRecordingSchema.parse(recording()),
+    config: configId(answerConfig(manifest, {})),
     corpus: corpus(files),
     tools: [{ name: "bandit", version: "1.9.4" }],
     names: [],
@@ -103,26 +104,26 @@ test("a verdict is clean when no parser objected, and a parser that makes no gra
   ]);
 });
 
-test("an entry without verdicts reads as every parser silent; no entry at all reads as no verdict", async () => {
-  const { adapter, cleanup } = adapterOver(
-    [
-      { path: "broken.py", script: false, sha256: digest(BROKEN), verdicts: OBJECTING },
-      { path: "silent.py", script: false, sha256: digest(SILENT) },
-    ],
-    [{ path: "app.py", source: SILENT, verdicts: cleanVerdicts(PARSERS) }, { path: "lib/other.py", source: BROKEN, verdicts: OBJECTING }],
-  );
+test("a verdict file written [] reads as every parser silent; no file reads as no verdict", async () => {
+  const { adapter, cleanup } = adapterOver([
+    { path: "broken.py", source: BROKEN, verdicts: OBJECTING },
+    { path: "silent.py", source: SILENT, verdicts: cleanVerdicts(PARSERS) },
+    { path: "probe.js", source: SILENT, script: true, verdicts: OBJECTING },
+  ]);
   try {
     const answers = await adapter.parserVerdicts([
       { path: "silent.py", source: SILENT },
       { path: "broken.py", source: BROKEN },
-      // Recorded at this path, but with other bytes: the entry is not found, as for a golden whose text changed.
+      // The same bytes, never recorded: no verdict, as for a golden whose text changed.
       { path: "silent.py", source: "import sys\n" },
       { path: "never-recorded.py", source: "x = 1\n" },
-      // A golden's verdicts are looked up by its content and file type, wherever it is, and are written `[]` when silent.
-      { path: "app.py", source: SILENT },
+      // A verdict is looked up by content and file type, wherever the source is: a case source and a golden share one.
+      { path: "lib/app.py", source: SILENT },
       { path: "elsewhere/broken.py", source: BROKEN },
-      // Another file type is another parser's read of the same bytes: no verdict.
+      // Another file type, or the same bytes read as a script, is another read: its own verdict, or none.
       { path: "app.pyi", source: SILENT },
+      { path: "probe.js", source: SILENT, script: true },
+      { path: "probe.js", source: SILENT },
     ]);
     assert.deepEqual(answers[0], cleanVerdicts(PARSERS));
     assert.deepEqual(answers[1], OBJECTING);
@@ -131,24 +132,18 @@ test("an entry without verdicts reads as every parser silent; no entry at all re
     assert.deepEqual(answers[4], cleanVerdicts(PARSERS));
     assert.deepEqual(answers[5], OBJECTING);
     assert.deepEqual(answers[6], []);
+    assert.deepEqual(answers[7], OBJECTING);
+    assert.deepEqual(answers[8], []);
   } finally {
     cleanup();
   }
 });
 
-test("a verdict list that is written out must be one a parser objected to, and must name the recording's parsers", () => {
-  const silentWritten = gatesRecordingSchema.safeParse(recording([{ path: "silent.py", script: false, sha256: digest(SILENT), verdicts: cleanVerdicts(PARSERS) }]));
-  assert.equal(silentWritten.success, false);
-  assert.match(silentWritten.error!.issues.map((issue) => issue.message).join("; "), /every parser is silent: leave verdicts off/u);
-
-  const otherParsers = gatesRecordingSchema.safeParse(recording([{ path: "broken.py", script: false, sha256: digest(BROKEN), verdicts: [OBJECTING[1]!, OBJECTING[0]!] }]));
-  assert.equal(otherParsers.success, false);
-  assert.match(otherParsers.error!.issues.map((issue) => issue.message).join("; "), /names other parsers than the recording's parsers, or in another order/u);
-
-  // A golden's verdict file has one form: `[]` for every parser silent, which reads back as the recording's parsers.
+test("a verdict file has one form: [] for every parser silent, and a written list one a parser objected to", () => {
   assert.equal(verdictText(cleanVerdicts(PARSERS)), "[]\n");
   assert.deepEqual(parseVerdicts("[]\n", "app.py", PARSERS), cleanVerdicts(PARSERS));
   assert.throws(() => parseVerdicts(JSON.stringify(cleanVerdicts(PARSERS)), "app.py", PARSERS), /not in canonical form/u);
+  assert.throws(() => parseVerdicts(canonicalText(cleanVerdicts(PARSERS)), "app.py", PARSERS), /every parser is silent, which is written \[\]/u);
 });
 
 test("the recorder's parser list is the one every source was asked about, and a source asked of fewer parsers is an error", () => {
@@ -179,7 +174,8 @@ test("a rule whose recorded answer excludes a corpus file hides no other rule's 
       root,
       manifest,
       lock: null,
-      recording: gatesRecordingSchema.parse(recording([], { B301: recordedRule("B301"), B302: recordedRule("B302"), B303: recordedRule("B303") })),
+      recording: gatesRecordingSchema.parse(recording({ B301: recordedRule("B301"), B302: recordedRule("B302"), B303: recordedRule("B303") })),
+      config,
       corpus: { tree: memoryTree(new Map(answers)), commitOf: () => "0".repeat(40) },
       tools: [{ name: "bandit", version: "1.9.4" }],
       names: [],

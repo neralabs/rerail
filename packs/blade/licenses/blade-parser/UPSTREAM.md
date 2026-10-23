@@ -339,7 +339,7 @@ Paths are relative to the pack directory, `packs/blade/`. Each fixture is writte
 | `upstream/blade-parser/fixtures/RequiredArgumentsTest/125.blade.php` | `tests/Validation/RequiredArgumentsTest.php` | the template test `required arguments validator does not detect issues` passes to `Document::fromText()` (dataset `('choice')`), captured verbatim |
 | `upstream/blade-parser/fixtures/RequiredArgumentsTest/126.blade.php` | `tests/Validation/RequiredArgumentsTest.php` | the template test `required arguments validator does not detect issues` passes to `Document::fromText()` (dataset `('use')`), captured verbatim |
 
-> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
+> `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
 > table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
 > git (docs/port-readiness.md). It carries excerpts of this upstream's tests (upstream's test files), redistributed
 > under the licence above, together with Rerail's Apache-2.0; `license.md` beside this file is this upstream's own, at

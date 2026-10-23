@@ -182,7 +182,7 @@ export async function deriveToolPack(recipe: DeriveRecipe, options: DeriveOption
       if (options.update) {
         if (differing.length > 0) notes.push(`${differing.length} case source(s) differ from the recording recording.lock names (${manifest.upstream.version} at its last record), e.g. ${differing.slice(0, 3).join(", ")}: record the tool-pack again (npm run port-readiness:record) before pushing`);
       } else {
-        for (const file of differing.slice(0, 10)) problems.push(`${label}/${file}: not the case source the recording ${manifest.upstream.version} names (sha256 in recording.lock's recording.json)`);
+        for (const file of differing.slice(0, 10)) problems.push(`${label}/${file}: not the case source the recording ${manifest.upstream.version} names (sha256 in the recording recording.lock names)`);
         if (wrong.size > 10) problems.push(`… and ${wrong.size - 10} more case sources the recording names differently`);
       }
       if (wrong.size === 0) notes.push("every case source is the one recording.lock's recording names");

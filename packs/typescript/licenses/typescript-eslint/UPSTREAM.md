@@ -3928,7 +3928,7 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/typescript-eslint/fixtures/unified-signatures/f8b677b197c6.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/unified-signatures/fa8903378699.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived |
 
-> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
+> `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
 > table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
 > git (docs/port-readiness.md). It carries excerpts of this upstream's tests
 > (`packages/eslint-plugin/tests/rules/**/*.test.ts`: the `code` of each RuleTester case), redistributed under the

@@ -13,9 +13,9 @@ changed, are in [`conformance/port-readiness/README.md`](../conformance/port-rea
 
 **Names.** The system is *port readiness*, its steps are *gates*, and GitHub shows its workflows and checks as "Port
 readiness". It was called the rule gates while this was built. What it keeps outside the tree is named for port
-readiness too: the recordings (`recording.json`, `rerail.port-readiness-recording/v2`, and `corpus.tar.zst`,
-`rerail.port-readiness-corpus-answers/v1`), the lock that names them (`rerail.port-readiness-recording-lock/v3`), their
-Actions cache entries (`port-readiness-recording-<pack>-<tool>-<sha256>-<sha256>`) and the marker on the recording
+readiness too: the recording (`recording.tar.zst`, `rerail.port-readiness-recording-archive/v1`), the lock that names
+it (`rerail.port-readiness-recording-lock/v4`), its Actions cache entries (`port-readiness-recording-<pack>-<tool>-<sha256>`)
+and the marker on the recording
 summaries. The files that configure the gates themselves (`gates.yaml`, `goldens.tsv`) are named for the gates, as they
 should be.
 
@@ -34,9 +34,10 @@ report shows every failure, not only the first.
 | `upstream-status` | The rule exists upstream with an implementation and tests, is not deprecated, and one of upstream's recommended configurations turns it on. It decides only whether a shipped rule starts on; the report flags a pack.json `on` that disagrees. | no |
 
 Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
-and a candidate is not ready to promote. They fail when the recording is stale (the recording checks), when the corpus
-answers archive lacks an answer a golden needs (`corpus-answers`: record just those with
-`npm run port-readiness:record -- --pack <id> --tool <tool> --corpus`),
+and a candidate is not ready to promote. They fail when the recording is stale (the recording checks), when the
+recording archive is filed under another config than this branch's or lacks an answer a golden needs
+(`corpus-answers`: record just those with `npm run port-readiness:record -- --pack <id> --tool <tool> --corpus`, or the
+whole tool-pack when the config moved),
 when a case source in the checkout is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
 corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).
@@ -56,7 +57,7 @@ Gate 6, real code, does not run in rerail's CI; rerail judges the goldens a real
 
 A golden is a real-code file a rule must agree with upstream on. `packs/<id>/upstream/<tool>/goldens.tsv` lists each
 by rule, task or corpus, path and the file's sha256; its expected answer is upstream's findings on that file in the
-tool-pack's corpus answers archive (below). Rerail's CI does not run the rules over the corpus to find goldens, and the gates never write
+tool-pack's recording archive (below). Rerail's CI does not run the rules over the corpus to find goldens, and the gates never write
 `goldens.tsv`. Finding them is V1's Gate 6, and each `goldens.tsv` names the run that found its goldens on its second
 line (`# Source: ...`, which the gates require):
 
@@ -98,8 +99,9 @@ them: Ruff takes a file's package, and so its module name (N999), from the `__in
 (`CONTEXT_FILES` in the recorder), and without them it flags 19 of django's locale packages it does not flag in the
 whole corpus.
 
-**One file per answer.** The answers are a tree, one file per upstream rule and golden file, packed as one canonical
-`corpus.tar.zst` per tool-pack (`conformance/port-readiness/recording/corpus-answers.ts`):
+**One file per answer.** A tool-pack's recording is one tree, one file per answer, packed as one canonical
+`recording.tar.zst` (`conformance/port-readiness/recording/archive.ts`). Upstream's answers on the goldens are a part
+of it (`recording/corpus-answers.ts`):
 
 ```text
 config/<config-id>.json                                   the parts the config id hashes
@@ -112,15 +114,16 @@ An answer is named by everything it depends on, so it holds exactly while its na
 - **the config id**: upstream's pins (repository, commit, version, runtime), the runtimes' pin digests `recording.lock`
   records, the parts of `gates.yaml` that say how upstream lints a file (its `upstream` section, and ESLint's
   plugin, release, environment and `.vue` parsers), and a digest of the recorder's code for the tool-pack's adapter
-  (`ADAPTER_SOURCES` in `corpus-answers.ts`: the adapter, its drivers, the language toolkits and span units it reads,
-  and `runtimes.ts`). A bump moves it, and so does a fix to an adapter, and every answer is asked again;
+  (`ADAPTER_SOURCES` in `archive.ts`: the adapter, its drivers, the language toolkits and span units it reads,
+  and `runtimes.ts`). A bump moves it, and so does a fix to an adapter, and every answer, on the goldens and on
+  upstream's own tests, is asked again;
 - **the key**: the file's sha256, so a golden whose file changed needs a new answer; for Ruff also the `__init__.py`
   and `__init__.pyi` files above it the corpus holds; for PHPStan and Psalm, which analyse the files they are handed
   as one project, every golden file of the task, which the recorder hands them at once, for every recorded rule; for
   Clippy the corpus's commit; and for stillat/blade-parser and PHPStan, which leave a file out for every rule asked
   when one of them cannot read it, the set of rules the tool-pack records, so a rule added or removed asks every
   answer again;
-- **the rule**: a rule recording.json gains has no answers yet.
+- **the rule**: a rule the recording gains has no answers yet.
 
 The corpus pins do not: editing `corpus-tasks.json` or a corpus's paths leaves every answer whose file is unchanged
 valid. An answer exists exactly when its file does, so `corpus-answers` checks that every golden's file has one for
@@ -129,11 +132,38 @@ every rule the tool-pack records, and the parsers' verdict on it. A golden whose
 `npm run port-readiness:record -- --pack <id> --tool <tool> --corpus` asks upstream for the missing answers only, for
 only the files and rules that lack them (for PHPStan and Psalm, every golden of a task that lacks one). An answer no
 golden names any more stays in the archive until `--prune`, and a new config id drops the old ones. `--full` records
-every needed answer from nothing, which an incremental record must equal; `port-readiness:record --check`, which the
-nightly and a pull request's recording leg run, asks them all again and fails when the locked archive lacks one or
-holds another. An incremental record
+everything from nothing, which an incremental record must equal; `port-readiness:record --check`, which the
+nightly and a pull request's recording leg run, asks everything again and fails when the locked archive lacks a file
+it made or holds another. An incremental record
 never asks again about an answer the archive holds, so it cannot fix one upstream now gives otherwise: `--check` then
-says to record with `--corpus --full` (with `--full` when recording.json is stale too).
+says to record with `--full`.
+
+**Upstream's own tests are answered the same way.** The rest of the tree holds what upstream says about its tests and
+itself (`recording/tree.ts`), under the same config id:
+
+```text
+tool/<config-id>/<field>.json                  whole-tool facts: identity, pack checks, licence, the test words and
+                                               texts not-overfit reads, absent rules, parsers, pins and runtimes
+tool/<config-id>/name-sets/<set>.json          names and regexes several rules share
+rules/<config-id>/<rule>/rule.json             a rule's facts, names and case index: each case's identity, committed
+                                               source, upstream's written expectation and the key of its answer
+rules/<config-id>/<rule>/cases/<key>.json      upstream's answer on the case: {"expected": [...], "skipped": null | "<reason>"}
+texts/<sha256>.json                            one inline upstream test text
+```
+
+A case's key is its source's sha256 and a digest of the other inputs its adapter feeds upstream: the path or file type
+it is read at, its variant (options, test method, owner test), and, for PHP_CodeSniffer, tlint, stillat/blade-parser,
+PHPStan and SQLFluff, the rules recorded with it. An ESLint, Psalm or SQLFluff case's answer also depends on the
+configuration it carries in upstream's test file, which nothing recorded holds, so its key takes the case's place in
+the test file too: positions cannot move while the config id pins upstream's commit. ESLint compares a rule on its
+starts alone when one of its own findings has no end; that is read from the rule's answers, not recorded apart.
+A verdict file is shared by a case source and a golden with the same text, file type and script.
+
+So a record asks upstream only about what the tree lacks: nothing at all when it lacks nothing; the whole-tool facts
+when they are missing; for Bandit, Ruff and ESLint, whose cases and answers do not depend on which other rules are
+recorded, only a rule the pack names that has no complete record; for every other adapter, every rule again once the
+rules the pack names change. A rule's cached gate result is keyed by its own part of the tree, so recording another
+rule judges no other rule again.
 
 ## Which packs are gated
 
@@ -290,26 +320,24 @@ untracks them ([CONTRIBUTING.md](../CONTRIBUTING.md#merging-maintainers)). CI pi
 
 ### The recordings are not in the tree
 
-A recording — `recording.json`, upstream's facts and expected findings per rule, and `corpus.tar.zst`, its answers on
-the real-code files the goldens name — is generated and large, and recording.json is rewritten whole every time a
-tool-pack is recorded. The sixteen of
-them were 71 MB, and git keeps every version of each forever, so a pack re-recorded after an upstream bump cost
+A recording — upstream's facts, its expected findings per rule on its own tests, and its answers on the real-code
+files the goldens name — is generated and large. The sixteen of
+them were 71 MB as JSON, and git keeps every version of each forever, so a pack re-recorded after an upstream bump cost
 another few megabytes of history nobody can read. Each tool-pack commits a `recording.lock` of a few hundred bytes
-instead, naming exactly the one its rules are judged against: recording.json's sha256, size and format, the archive's
-tar sha256, file count, bytes and format, and the pins and runtimes they were made with. The bytes live in
-`.rerail/port-readiness/recordings/` (`<sha256>.json`, `<sha256>.tar.zst`, and the archive's tree extracted to
-`corpus/<sha256>/`), where the recorder writes them, and every read checks them against the lock: bytes that are not
-the ones the lock names read as absent.
+instead, naming exactly the archive its rules are judged against: its tar's sha256, file count, bytes and format, and
+the pins and runtimes it was made with. The bytes live in `.rerail/port-readiness/recordings/` (`<sha256>.tar.zst`,
+and its tree extracted to `tree/<sha256>/`), where the recorder writes them, and every read checks them against the
+lock: bytes that are not the ones the lock names read as absent.
 
-Their durable store is S3: each recording is an object of its own at
-`s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json`, named by its own sha256 as the lock's
-`files[name].sha256` names it, and written once, by a conditional write that never overwrites. In CI the Actions cache
-is the fast path: an entry keyed by the tool-pack and the lock's two digests
-(`port-readiness-recording-<pack>-<tool>-<recording sha256>-<corpus sha256>`) holds the two files at
+Their durable store is S3: each archive is an object of its own at
+`s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.tar.zst`, named by its tar's sha256 as the lock's
+`files["recording.tar.zst"].sha256` names it, and written once, by a conditional write that never overwrites. In CI the
+Actions cache is the fast path: an entry keyed by the tool-pack and the lock's digest
+(`port-readiness-recording-<pack>-<tool>-<sha256>`) holds the archive at
 `.rerail/port-readiness/recordings/`. Before any leg starts, the test-data job looks that entry up without restoring
-it; on a miss it downloads the two from S3 under the read role (`node scripts/s3/pack-fixtures.mjs recordings --pack
-<id> --tool <tool>`, which checks each against its sha256) and saves the entry when S3 held both. A leg restores the
-entry, so a commit whose recordings are in the cache or in S3 records nothing, unless its pull request changes the
+it; on a miss it downloads the archive from S3 under the read role (`node scripts/s3/pack-fixtures.mjs recordings --pack
+<id> --tool <tool>`, which verifies it against the lock) and saves the entry when S3 held it. A leg restores the
+entry, so a commit whose recording is in the cache or in S3 records nothing, unless its pull request changes the
 tool-pack's `recording.lock` (below). S3 and the cache, not Git LFS, because every public clone and every fork would
 draw on the repository's LFS bandwidth quota and going over it blocks LFS for the whole repository. A cache entry is a
 copy, never the source: GitHub evicts one unused for a week, and the next run reads S3 again.
@@ -321,25 +349,25 @@ with your AWS credentials, and names, without failing, any S3 does not hold yet,
 **A pull request's leg records what neither the cache nor S3 holds, and every tool-pack whose `recording.lock` the
 pull request changes.** The plan job marks a tool-pack `rerecord` when its `recording.lock` differs from the base's
 (the merge commit's first parent, or the event's base commit when the base has moved); then the test-data job fetches
-the recordings the base's lock names instead of the new lock's, and the legs restore none, so the rules are judged
-against what CI's recorder made from the pinned upstream, never against recordings the pull request, or the bump run
+the archive the base's lock names instead of the new lock's, and the legs restore none, so the rules are judged
+against what CI's recorder made from the pinned upstream, never against a recording the pull request, or the bump run
 that produced it, put in S3. A leg that records installs the pinned runtimes, runs `port-readiness:record` with this
-commit's recorder from the corpus answers archive the base's lock names (which the test-data job fetches from S3 into
-the cache; a base from before the archive gives none, and every answer is asked), and fails unless the recorder wrote
+commit's recorder over the archive the base's lock names (which the test-data job fetches from S3 into
+the cache; a base from before the one archive gives none, and everything is asked), and fails unless the recorder wrote
 exactly the lock and `UPSTREAM.md` the commit has and the case sources the archive its `test-data.lock` names holds. It
 compares every file under the tool-pack and the pack's `licenses/`, tracked or not, since pack test data is git-ignored
 and `git status` would not show a case source the recorder added; such a file is one `npm run fixtures:derive` does not
 make, and the derivation is what needs the fix. The lock names no recorder version, so a release of rerail leaves it
-as it was. Only then does the leg save the two recordings (a `rerecord` leg saves none: no run restores them), and
+as it was. Only then does the leg save the archive (a `rerecord` leg saves none: no run restores it), and
 nothing else: the recorder ran upstream's code and the Composer packages it resolved, so the leg saves neither the
 corpus nor its results. The recorder runs without the
 job's token. A new tool-pack, a new port or a pin bump therefore goes green on its own pull request, with nobody to
 start a recording: the commit's lock is checked against upstream run in CI, and what records the answers (the
 recorder, its adapters and runtimes) is in the pull request's diff, as the gate code that judges them is. A lock
 pointed at a recording of the pull request's own making fails the same way, since CI's recording does not match it.
-Whether it restored them or recorded them, each tool-pack's legs upload the two recordings as the artifact
-`recordings-<pack>--<tool>` (the `<sha256>.json` and `<sha256>.tar.zst` files, kept for 7 days; a sharded tool-pack's first shard uploads
-them), which is how the maintainer who merges the pull request gets them into S3:
+Whether it restored it or recorded it, each tool-pack's legs upload the archive as the artifact
+`recordings-<pack>--<tool>` (the `<sha256>.tar.zst` file, kept for 7 days; a sharded tool-pack's first shard uploads
+it), which is how the maintainer who merges the pull request gets it into S3:
 
 ```sh
 gh run download <run-id> -n recordings-<pack>--<tool> -D .rerail/port-readiness/recordings
@@ -368,16 +396,18 @@ tool-pack's directory, and any case source the recording names that the tool-pac
 `UPSTREAM.md`. The lock and `UPSTREAM.md` are committed; the case sources are derived pack test data, which
 `npm run fixtures:derive` writes from the pins after the generator, as the recorder would, and which go into the
 tool-pack's archive, never into git; the recordings are neither, and reach S3 when a maintainer pushes them or the
-bump's publish workflow uploads them. Record again after adding a port or changing a tool's pins; after importing
-goldens or adding a corpus, `--corpus` records just the answers they need. It needs `uv`, the network, the pinned upstream runtimes
+bump's publish workflow uploads them. Record again after adding a port or changing a tool's pins: a record asks
+upstream only for what the archive lacks, so a new port records that rule alone (Bandit, Ruff, ESLint) and a record
+with nothing missing runs no upstream; after importing goldens or adding a corpus, `--corpus` records just the answers
+they need. It needs `uv`, the network, the pinned upstream runtimes
 (`conformance/recorders/port-readiness/runtimes/`) and the pack test data (`npm run fixtures:pull`, then
 `npm run fixtures:derive` after a pin or generator change):
 
 ```sh
-npm run port-readiness:record -- --pack python --tool ruff            # recording.json, and the corpus answers the archive lacks
+npm run port-readiness:record -- --pack python --tool ruff            # whatever the archive lacks: tool facts, rules, corpus answers
 npm run port-readiness:record -- --pack python --tool ruff --corpus   # only the missing corpus answers
-npm run port-readiness:record -- --pack python --tool ruff --full     # every corpus answer again, from nothing
-npm run port-readiness:record -- --pack python --tool ruff --prune    # and drop the answers no golden names
+npm run port-readiness:record -- --pack python --tool ruff --full     # everything again, from nothing
+npm run port-readiness:record -- --pack python --tool ruff --prune    # and drop what no recorded rule or golden names
 ```
 
 The `php` and `blade` tool-packs also need the pinned PHP first on `PATH`, and Composer. That PHP is built by
@@ -394,9 +424,9 @@ PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run port-readiness:record -- --pack
 "linux")]` item is compiled on Linux alone. Its derived data and recordings are Linux's, made on
 `x86_64-unknown-linux-gnu`; made on macOS, its answers and corpus answers lack the findings in Linux-only code (tokio's
 `examples/prewarm-fd-table.rs`), so derive and record it on Linux (the bump workflow does), or take what CI's leg
-records: a leg whose check fails leaves the lock and the two recordings a record makes in its report artifact
-(`recorded-rust--clippy/`), and once the commit has that lock the leg's `recordings-rust--clippy` artifact holds the
-two for the maintainer to push.
+records: a leg whose check fails leaves the lock and the archive a record makes in its report artifact
+(`recorded-rust--clippy/`), and once the commit has that lock the leg's `recordings-rust--clippy` artifact holds it
+for the maintainer to push.
 
 Locally that is all: the lock names what was just recorded and the gates read it from
 `.rerail/port-readiness/recordings/`, so iterating on a port needs no network. The flow for a pull request that
@@ -408,14 +438,14 @@ changes a tool-pack:
    commit `recording.lock` and `UPSTREAM.md`, with any authored cases (`git add -f`). A case source the recorder wrote
    that the derivation did not is a bug in the derivation: fix it rather than commit the file. Until a maintainer
    pushes newly derived data, CI runs on the archive the old `test-data.lock` names.
-2. CI's test-data job looks the recordings the commit's lock names up in the cache, then in S3, unless the pull
+2. CI's test-data job looks the archive the commit's lock names up in the cache, then in S3, unless the pull
    request changes the lock: then it fetches the base lock's, and every leg of the tool-pack runs
    `port-readiness:record --check --base <the base's lock>` from the pull request's commit. It asks upstream for
-   every answer the goldens need and fails unless the commit's lock is what a record of them makes: an incremental
+   everything again and fails unless the commit's lock is what a record of it makes: an incremental
    record over the base's archive, or a `--full` or `--prune` one, so each mode the maintainer chose holds, and
-   answers no golden names are no failure; recording.json and the case sources must be what it made too. A leg that
-   finds an unchanged lock's recordings in neither also checks, and saves them in the pull request's cache scope.
-   Either way the legs upload the two as the artifact `recordings-<pack>--<tool>`, and the comment carries the
+   answers no golden names are no failure; the case sources must be what it made too. A leg that
+   finds an unchanged lock's archive in neither also checks, and saves it in the pull request's cache scope.
+   Either way the legs upload it as the artifact `recordings-<pack>--<tool>`, and the comment carries the
    per-rule summary of each tool-pack checked.
    **Pack test data is in S3** stays red until S3 holds what the locks name.
 3. Before merging, a maintainer derives any data the pull request changed away from every credential and pushes, from
@@ -462,9 +492,9 @@ resolve when a runtime is installed. When one of them changes what upstream
 answers, the nightly `--check` fails and names the difference: pin that package too (an `overrides` entry in
 `package.json`, a direct `==` dependency in `pyproject.toml`, or a direct requirement in `composer.json`) and record
 again; the pin moves the runtime pin digests, so the config id, and every answer is asked again. Left unpinned, the
-package is caught up with as `--check` says, with `--corpus --full` (or `--full`): an incremental record never asks
+package is caught up with as `--check` says, with `--full`: an incremental record never asks
 again about an answer the archive holds. A recording's per-rule summary (`--changes`, which a gate leg that records uploads in its artifact) lists every package each Composer runtime resolved (`name@version`, from `vendor/composer/installed.json`),
-so a transitive release shows between two recordings; the list is in neither `recording.json` nor the lock, so a
+so a transitive release shows between two recordings; the list is in neither the archive nor the lock, so a
 release that moves no answer fails nothing. Composer audits what it resolved with blocking off (`--no-blocking`): an
 advisory is written to the recorder's log and does not stop the install.
 
@@ -472,8 +502,8 @@ advisory is written to the recorder's log and does not stop the install.
 the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit
 (sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test text that
 is not a file of its own (Ruff's test-module strings, the `code` of each ESLint RuleTester case) is kept verbatim in
-`recording.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material, so it carries
-upstream's licence text (`licenseText`, whose sha256 is `licenseSha256`) wherever the recording is copied. The
+the archive (`texts/`, which the whole-tool `fixtureTexts` names). That makes the recording partly upstream's material,
+so it carries upstream's licence text (`licenseText`, whose sha256 is `licenseSha256`) wherever the recording is copied. The
 licence is every file at upstream's root named `LICENSE` or `LICENCE`, in any letter case and with any extension or
 suffix (`licence.txt`, `license.md`, `LICENSE-MIT`), their bytes one after another in name order; the pack keeps the
 same files under `licenses/<project>/`, and `license-sha256` holds them to the recorded digest. The
@@ -491,11 +521,11 @@ a psql script, so libpg_query reads the SQL psql would send for it: psql's meta-
 and the rows of `COPY ... FROM STDIN` become whitespace, a meta-command that sends the query buffer becomes `;`, and a
 variable psql has defined becomes a stand-in of the same length (`sqlfluff_driver.py`'s `psql_sent_sql`), so the error
 positions are the file's.
-Nine of ten corpus files are source every parser accepts, and writing the same silent verdict list on each of them was
-most of both recordings, so a recording names its parsers once in `parsers` and leaves `verdicts` off an entry no
-parser objected to. The entry itself stays, with its path and its sha256: an entry with no `verdicts` means every
-parser was silent, and no entry at all means the source was never recorded — a golden whose text changed, say — on
-which the gates have no verdict and draw no conclusion.
+Nine of ten corpus files are source every parser accepts, so a verdict file every parser was silent on is `[]`, which
+reads back as each of the recording's parsers (named once, in the whole-tool `parsers`) silent. The file is there
+either way: `[]` means every parser was silent, and no file at all means the source was never recorded — a golden
+whose text changed, say — on which the gates have no verdict and draw no conclusion. A verdict is named by the
+source's sha256, file type and script, so a case source and a golden with the same text share one.
 
 ### Upstream releases
 
@@ -593,8 +623,8 @@ is split over three workflows:
    runtimes installed as the record legs install them, so `rust/clippy`'s answers are Linux's. What it changed in the
    tree (the pins, `recording.lock`, `test-data.lock` and the `UPSTREAM.md` rows of new copies) becomes a patch,
    uploaded as the leg's `bump-<pack>--<tool>` artifact with the new archives (`archives/<pack>/<tool>/<sha256>.tar.zst`),
-   the recordings every changed `recording.lock` names (`recordings/<sha256>.json` and the corpus answers archive
-   `recordings/<sha256>.tar.zst`), the bump's summary and the per-rule summaries. Whatever the upstream code does with the run's cache token lands in the work branch's scope,
+   the archive every changed `recording.lock` names (`recordings/<sha256>.tar.zst`), the bump's summary and the
+   per-rule summaries. Whatever the upstream code does with the run's cache token lands in the work branch's scope,
    which nothing trusted reads.
 3. `port-readiness-bump-publish.yml` runs on main when a bump run ends (`workflow_run`), succeeded or failed: a leg that
    fails leaves the others standing. It runs with main's workflow and main's code, and treats every artifact as data:
@@ -641,11 +671,10 @@ is split over three workflows:
      upload-only role is the one credential that can write to the bucket: conditional writes under `rerail/archives/`
      and `rerail/recordings/` (never an overwrite) and reads. It requires the composed commits to make the tree
      `compose` named, and takes only the `test-data.lock` and `recording.lock` files they change, the archives the
-     former name from the composed legs' artifacts, and the artifacts' `recordings/<sha256>.json` and
-     `recordings/<sha256>.tar.zst` files the latter name, copied into `.rerail/port-readiness/recordings/`
-     (recording.json checked against its sha256 there). `node scripts/s3/pack-fixtures.mjs upload` then puts each
-     changed tool-pack's archive and recordings in S3 (`rerail/recordings/<pack>/<tool>/<sha256>.json` and
-     `…/corpus/<sha256>.tar.zst`, write-once like the archives), verifying each against its lock before the upload and
+     former name from the composed legs' artifacts, and the artifacts' `recordings/<sha256>.tar.zst` files the latter
+     name, copied into `.rerail/port-readiness/recordings/`. `node scripts/s3/pack-fixtures.mjs upload` then puts each
+     changed tool-pack's archive and recording in S3 (`rerail/recordings/<pack>/<tool>/<sha256>.tar.zst`, write-once
+     like the archives), verifying each against its lock before the upload and
      reading it back after. The archives and recordings are still the runs': only their digests
      are checked here, and the pull request's CI checks their content.
    - `pull-request`, after the upload, requires each composed commit to have the tree `compose` named, on main's head
@@ -699,7 +728,7 @@ runs port readiness whatever it touches, so a failing shipped rule, or a change 
 skipped past.
 
 Port readiness runs for pushes and same-repository pull requests only, because its test-data job warms the cache with
-each planned tool-pack's test data archive (`.github/actions/pack-test-data`, `fetch: "true"`) and the two recordings
+each planned tool-pack's test data archive (`.github/actions/pack-test-data`, `fetch: "true"`) and the recording archive
 its `recording.lock` names, from S3 under an OIDC token on a cache miss (`id-token: write`, which `ci.yml` and the
 nightly grant the called workflow), and GitHub gives a fork's or Dependabot's pull request none. The legs, which can
 run upstream's code, hold no OIDC token: any of their steps could mint one and assume the read role, so they only

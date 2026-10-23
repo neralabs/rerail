@@ -78,8 +78,11 @@ Per-rule results are cached under `.rerail/port-readiness/results/<pack>/<tool>/
 `<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).
 The key covers the gate code a cached verdict can read (`GATE_CODE`), the locked closure of the npm packages the gates
 load (`GATE_PACKAGES`) with `package.json`'s `type`, `port-readiness` and `build:native` scripts, the engine (tracked engine
-sources; not the native binary, but a run on one older than them saves nothing), the tool-pack's `gates.yaml` and the recording.json and corpus answers archive digests its `recording.lock` names, the corpus pins, and
-the rule's document, conformance entry, goldens and case sources. When every rule hits, nothing is fetched or
+sources; not the native binary, but a run on one older than them saves nothing), the tool-pack's `gates.yaml`, the corpus pins, and
+the rule's document, conformance entry, goldens and case sources, and what the rule reads of the recording archive
+(recording/tree.ts `ruleTreeDigest`: the config, the whole-tool facts, its own rule directory and corpus answers, the
+verdicts on its sources and goldens, and the cases of any rule a known gap names), so recording another rule judges
+none of the others again. The tool-pack checks' key takes the archive's sha256 whole. When every rule hits, nothing is fetched or
 evaluated. An entry that is not JSON, was written by another cache layout (`CACHE_FORMAT`), lacks the shape of a result,
 or names another document is a miss. In CI every run saves its results, pull requests included; GitHub scopes a pull
 request's cache to that pull request, so main reads only what main's pushes and the nightly saved.
@@ -115,31 +118,40 @@ packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-test
 packs/<pack>/upstream/<tool>/fixtures/          the case sources the recording names: pack test data, from that archive (npm run fixtures:pull)
 
 .rerail/port-readiness/recordings/                       the recordings themselves, recorded or fetched from S3, by digest
-  <sha256>.json                                 recording.json: upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)
-  <sha256>.tar.zst                              corpus.tar.zst: upstream's answers on the goldens' corpus files (recording/corpus-answers.ts,
-                                                rerail.port-readiness-corpus-answers/v1), a canonical tar compressed with zstd
-  corpus/<sha256>/                              that archive extracted, after its sha256, file count and bytes verify:
+  <sha256>.tar.zst                              recording.tar.zst: every answer upstream gave the recorder (recording/archive.ts,
+                                                rerail.port-readiness-recording-archive/v1), a canonical tar compressed with zstd
+  tree/<sha256>/                                that archive extracted, after its sha256, file count and bytes verify:
     config/<config-id>.json                     the parts the config id hashes
+    tool/<config-id>/<field>.json               whole-tool facts: identity, pack checks, licence, the words and texts
+                                                not-overfit reads, absent rules, parsers, pins (recording/tree.ts)
+    tool/<config-id>/name-sets/<set>.json       names and regexes several rules share
+    rules/<config-id>/<rule>/rule.json          a rule's facts, names and case index
+    rules/<config-id>/<rule>/cases/<key>.json   upstream's answer on one of its cases
+    texts/<sha256>.json                         one inline upstream test text
     answers/<config-id>/<rule>/<task>/<path>@<key>.json      one answer per rule and golden corpus file
-    verdicts/<parsers-id>/<sha256><type>[.script].json       independent parsers' verdicts on that content
+    verdicts/<parsers-id>/<sha256><type>[.script].json       independent parsers' verdicts on a case source or golden
 ```
 
-The recordings are not in the tree: the lock names recording.json by sha256 and the archive by its tar's sha256, file
-count and bytes, and each is an object of its own in S3, `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json`
-and `…/<pack>/<tool>/corpus/<sha256>.tar.zst`, written once. `port-readiness:record` writes them into the cache, and
-`node scripts/s3/pack-fixtures.mjs recordings` fetches them there from S3 (`recordings push` puts new ones there); in CI,
-`port-readiness.yml` restores them from the Actions cache, keyed by the lock's digests, which its test-data job fills from
-S3, and a leg that finds them in neither (or whose pull request changes the lock) checks them with `--check --base`,
-over the recordings its base's lock names, which the test-data job fetches too. A cached file whose sha256 is not the
-one the lock names reads as missing (a cached archive that is
-not the locked one is deleted and fetched again), and the gates extract a cached archive themselves when its tree is
-not there; a tree is reused only while the marker its extraction wrote (`.tar-sha256`) names the locked archive and the
-canonical tar of the tree's files is that archive, and is extracted again from the verified archive otherwise.
+The recording is not in the tree: the lock names the archive by its tar's sha256, file count and bytes, and it is an
+object of its own in S3, `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.tar.zst`, written once.
+`port-readiness:record` writes it into the cache, and `node scripts/s3/pack-fixtures.mjs recordings` fetches it there
+from S3 (`recordings push` puts new ones there); in CI, `port-readiness.yml` restores it from the Actions cache, keyed
+by the lock's digest, which its test-data job fills from S3, and a leg that finds it in neither (or whose pull request
+changes the lock) checks it with `--check --base`, over the archive its base's lock names, which the test-data job
+fetches too. A cached archive that is not the locked one is deleted and fetched again, and the gates extract a cached
+archive themselves when its tree is not there; a tree is reused only while the marker its extraction wrote
+(`.tar-sha256`) names the locked archive and the canonical tar of the tree's files is that archive, and is extracted
+again from the verified archive otherwise. The gates read the recording at the one config the archive holds;
+`corpus-answers` fails every rule when it is not this branch's.
 
 Each answer is named by everything it depends on, and only that, so it stays valid while its name does: `<config-id>`
 hashes upstream's pins, the runtimes' pin digests the lock records, the gates.yaml sections that say how upstream
 lints a file (`upstream`, and ESLint's plugin, release, environment and `.vue` parsers) and the recorder's code for the
-adapter (`ADAPTER_SOURCES`); `<rule>` is the rule with `/` written `~`, `<task>` the golden's task or rerail corpus with
+adapter (`ADAPTER_SOURCES`); `<rule>` is the rule with `/` written `~`. A case answer's `<key>` is its source's sha256
+and a digest of the other inputs its adapter feeds upstream (recording/tree.ts `caseKey`: the path or file type, the
+variant, and for ESLint, Psalm and SQLFluff the case's place in upstream's tests, whose own configuration no recorded
+field holds; for PHP_CodeSniffer, tlint, stillat/blade-parser, PHPStan and SQLFluff also the rules recorded with it).
+A corpus answer's `<task>` is the golden's task or rerail corpus with
 `:` written `~`; `<key>` is the file's sha256, plus, for Ruff, a digest of the `__init__.py`/`__init__.pyi` files above
 it that the corpus holds, for PHPStan and Psalm a digest of every golden file of its task, which they analyse as one
 project, and for Clippy the corpus's commit; for stillat/blade-parser and PHPStan, whose answer for one rule depends
@@ -147,25 +159,29 @@ on the other rules asked with it (`ASKS_EVERY_RULE`), the digest is also of the 
 added or removed asks every answer again. An answer file is `{"findings": [...]}` (`[]`: asked, upstream silent) or
 `{"excluded": "<reason>"}`, each rule's on its own. The corpus pins (corpus-tasks.json, a corpus's paths and exclude)
 name none of it: a golden whose file changed has a new key, so importing goldens or moving a corpus asks upstream only
-about the new files.
+about the new files. A verdict is named by the source's sha256, file type and script alone, so a case source and a
+golden with the same text share it.
 
 `npm run port-readiness:record -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/) writes the
-recordings, asking upstream only for the corpus answers the locked archive lacks; `--corpus` records only those, keeping
-recording.json (and refuses when the pins or runtime pins moved since it); `--full` asks every needed answer again (an
-incremental record must equal it); `--prune` drops answers no golden names, which are otherwise kept; `--check` asks
-every needed answer afresh and holds the lock when its archive is what a record of them makes (the fresh tree, as
-`--full` and `--prune` leave it, or, with `--base <lock>`, the fresh answers over that lock's archive, as an
-incremental record on it leaves them) or holds each of them identically, and otherwise says to record with
-`--corpus --full` (`--full` when recording.json differs too), since an incremental record never asks again about an
-answer the archive holds. A
+recording, asking upstream only for what the locked archive lacks at this branch's config, and nothing when it lacks
+nothing: the whole-tool facts when they are missing; the rules the pack names without a complete record (Bandit, Ruff
+and ESLint record a rule alone; any other adapter, whose cases or answers depend on the rules recorded with it, records
+every rule again once they change); and the corpus answers no file holds. `--corpus` records only the corpus answers
+(and refuses when the archive holds nothing at this config); `--full` asks everything again (an incremental record must
+equal it); `--prune` drops what no recorded rule and no golden names, which is otherwise kept; `--check` asks
+everything afresh and holds the lock when its archive is what a record of it makes (the fresh tree, as `--full` and
+`--prune` leave it, or, with `--base <lock>`, the fresh files over that lock's corpus answers, as an incremental record
+on it leaves them) or holds each fresh file identically, and otherwise says to record with `--full`, since an
+incremental record never asks again about an answer the archive holds. A
 tool-pack check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to
 promote. The recording is stale when pins
-disagree between `gates.yaml`, `recording.lock`, `recording.json` and `conformance.json`, a runtime's pins
+disagree between `gates.yaml`, `recording.lock`, the recording archive and `conformance.json`, a runtime's pins
 (`package.json`, `pyproject.toml`, `.python-version`, `composer.json`, `.php-version`, PHP's `extensions.txt`,
 `rust-toolchain.toml`) differ from the ones the lock records, the kept licence (every `LICENSE` or `LICENCE` file under
 `licenses/<project>/`, in any letter case and with any extension, read in name order) is not the recorded one, or a rule
-is not recorded (the recording checks). `corpus-answers` fails when the archive lacks an answer for a golden's file and a
-recorded rule at this branch's config, or the parsers' verdict on it; its detail names how many, the first, and
+is not recorded (the recording checks). `corpus-answers` fails when the archive holds the recording at another config
+than this branch's, or lacks an answer for a golden's file and a recorded rule, or the parsers' verdict on it; its
+detail names how many, the first, and
 `npm run port-readiness:record -- --pack <id> --tool <tool> --corpus`. `corpus-complete` fails when a task or corpus a
 golden names was not fetched (a download or git fetch failed); those results are not cached. `bundled-load` loads every
 document in the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules

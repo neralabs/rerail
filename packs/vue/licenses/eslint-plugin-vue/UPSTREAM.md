@@ -920,7 +920,7 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/f2134f73e29e.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/f583587dc034.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 
-> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
+> `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
 > table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
 > git (docs/port-readiness.md). It carries excerpts of this upstream's tests (`tests/lib/rules/**/*.test.ts`: the `code`
 > of each RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside

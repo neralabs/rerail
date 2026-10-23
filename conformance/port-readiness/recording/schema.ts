@@ -1,15 +1,13 @@
 /**
  * The recording contract between the gates recorder (conformance/recorders/port-readiness/, run on a maintainer machine and
- * nightly) and the gates (conformance/port-readiness/, run in PR CI): what a live adapter answers, written as the two
- * things the tool-pack's `recording.lock` names (store.ts) so the gates can read it back through a recorded adapter
- * without running upstream.
+ * nightly) and the gates (conformance/port-readiness/, run in PR CI): what a live adapter answers, as the gates read it
+ * back through a recorded adapter without running upstream.
  *
- * - `recording.json` (`rerail.port-readiness-recording/v2`, this module) holds every PackAdapter answer the gates read
- *   except upstream's answers on the corpus: identity, tool-pack checks, the license digest, the words and names
- *   `not-overfit` reads, every upstream rule's facts, name sources, span parts and cases, and independent parsers'
- *   verdicts on every case source.
- * - `corpus.tar.zst` (`rerail.port-readiness-corpus-answers/v1`, corpus-answers.ts) holds `lintCorpus`'s answers: one
- *   file per upstream rule and golden corpus file, and independent parsers' verdicts on each golden's content.
+ * The recording is one archive per tool-pack (archive.ts), a tree of one file per answer that tree.ts reads into the
+ * `GatesRecording` this module describes: identity, tool-pack checks, the license digest, the words and names
+ * `not-overfit` reads, and every upstream rule's facts, name sources, span parts and cases. Upstream's answers on the
+ * corpus and the independent parsers' verdicts stay in the tree, where the gates look each one up by name
+ * (corpus-answers.ts).
  *
  * Each PackAdapter member and where its recorded answer is:
  *   identity → `identity`; packChecks → `packChecks`; licenseText → `licenseText` and its digest `licenseSha256` (the kept
@@ -20,16 +18,14 @@
  *   committed source of every case (`cases[].file`); keywords → `keywords`;
  *   commentVocabulary → `commentVocabulary`; inScopeSamples → `inScopeSamples`; cases(name) → `rules[name].cases`,
  *   each source read from its `file` and checked against its `sha256`; toSpan(name) → span-units/<adapter>.ts with `rules[name].spanParts`; inCorpus →
- *   `corpus`; lintCorpus → the archive's `answers/`; parserVerdicts → `parserVerdicts` here, looked up by path, script
- *   and the source's sha256, and the archive's `verdicts/`, by the source's sha256, file type and script.
+ *   `corpus`; lintCorpus → the archive's `answers/`; parserVerdicts → the archive's `verdicts/`, by the source's
+ *   sha256, file type and script.
  *
- * recording.json names its independent parsers once, in `parsers`, and leaves `verdicts` off an entry no parser
- * objected to. An entry still keeps its identity — its path and its sha256 — because an entry that is there without
- * `verdicts` and an entry that is not there at all say different things: the first is every parser silent, the second
- * is a source that was never recorded, for which the gates have no verdict and draw no conclusion.
+ * A verdict file is there for every source the recorder asked the parsers about, `[]` when they were all silent: a
+ * source with no verdict file was never recorded, for which the gates have no verdict and draw no conclusion.
  *
- * Both are deterministic: every list the schema calls sorted is sorted in code-unit order, objects are written with
- * sorted keys (`canonicalText`), and nothing in them names a machine path, a date or a cache directory.
+ * It is deterministic: every list the schema calls sorted is sorted in code-unit order, objects are written with
+ * sorted keys (`canonicalText`), and nothing in it names a machine path, a date or a cache directory.
  */
 import { createHash } from "node:crypto";
 
@@ -37,11 +33,6 @@ import { z } from "zod";
 
 import { ADAPTERS } from "../manifest.js";
 import type { ParserVerdict, Span } from "../types.js";
-
-export const RECORDING_FORMAT = "rerail.port-readiness-recording/v2";
-
-/** recording.json's file name: a key of a lock's `files`, and the stem of its asset name (store.ts). */
-export const RECORDING_FILE = "recording.json";
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -83,7 +74,7 @@ export function compareSpans(a: RecordedSpan, b: RecordedSpan): number {
   return 0;
 }
 
-const checkSchema = z.strictObject({
+export const checkSchema = z.strictObject({
   /** The check's id, e.g. `upstream-commit`, `runtime-version`, `declared-license`. */
   id: nonEmpty,
   /** Whether it held when the recorder ran. */
@@ -108,7 +99,7 @@ const regexSchema = z.strictObject({
 }, "a regex JavaScript compiles");
 
 /** Names and regexes several rules share (one upstream source file, a helper module, a whole crate): stored once. */
-const nameSetSchema = z.strictObject({
+export const nameSetSchema = z.strictObject({
   /** Every name the set's upstream code checks, sorted. */
   names: sortedStrings(nonEmpty),
   /** The regexes the set's upstream code matches names with, in the order the live adapter read them. */
@@ -116,7 +107,7 @@ const nameSetSchema = z.strictObject({
 });
 
 /** One part of upstream's code a rule's names come from: the shared sets it consists of, and what is its own. */
-const nameSourceSchema = z.strictObject({
+export const nameSourceSchema = z.strictObject({
   /** Ids of `nameSets`, in the order the live adapter read their code; each id once. */
   sets: z.array(nonEmpty).refine((ids) => new Set(ids).size === ids.length, "names each set once"),
   /** Names of this part beyond its sets' (Bandit's blacklist qualnames for one test id), sorted. */
@@ -139,7 +130,7 @@ export const parserVerdictSchema = z.strictObject({
  * verdict list in it names these parsers, in this order, so an entry that drops its list still says which parsers
  * were silent on it.
  */
-const parserSchema = z.strictObject({
+export const parserSchema = z.strictObject({
   /** The parser and its version, as a verdict's `parser`; two of a recording's parsers may share it (vitest reads one TypeScript version twice). */
   parser: nonEmpty,
   /** Whether it makes grammar checks: its silent verdict has `grammar: []`, and `null` where it makes none (libcst). */
@@ -184,22 +175,21 @@ export function recordedParsers(lists: readonly (readonly VerdictLike[])[]): Rec
   return first.map((verdict) => ({ parser: verdict.parser, grammar: verdict.grammar !== null }));
 }
 
-/** Independent parsers' verdicts on one source text as the gates would ask for them. */
-const verdictEntrySchema = z.strictObject({
+/** Independent parsers' verdicts on one source text as the gates would ask for them: what the recorder files under verdicts/. */
+export const recordedVerdictSchema = z.strictObject({
   /** The path the source is read as: a case's path with its `parsedAs` file type, or a known gap's `probe<ext>`. */
   path: relativePath,
   /** Whether it is read as an ECMAScript script, as upstream read it (false for every other language). */
   script: z.boolean(),
   /** sha256 of the source text, UTF-8. */
   sha256,
-  /**
-   * Every independent parser's verdict, in `parsers`' order; absent when they were all silent, which is what an absent
-   * list means. The entry itself is kept either way, because no entry at all means the source was never recorded.
-   */
-  verdicts: z.array(parserVerdictSchema).min(1).optional(),
+  /** Every independent parser's verdict, in `parsers`' order. */
+  verdicts: z.array(parserVerdictSchema).min(1),
 });
 
-const caseSchema = z.strictObject({
+export type RecordedVerdict = z.infer<typeof recordedVerdictSchema>;
+
+export const caseSchema = z.strictObject({
   /** UpstreamCase.fixture: the upstream test file, relative to upstream's repository. */
   fixture: nonEmpty,
   /** UpstreamCase.variant: the upstream test configuration (test names for Ruff, `<file>#<run>/<kind>[i]` for ESLint). */
@@ -231,30 +221,34 @@ const caseSchema = z.strictObject({
   sha256: sha256.optional(),
 }).refine((testCase) => testCase.file !== null || testCase.skipped !== null, "only a skipped case has no committed source");
 
+/** rule(name): what upstream says about the rule at the pinned version. */
+export const ruleFactsSchema = z.strictObject({
+  /** UpstreamRule.name: upstream's own name for the rule (`B101`, `@typescript-eslint/no-explicit-any`). */
+  name: nonEmpty,
+  /** UpstreamRule.implementation: the rule's implementation files, relative to upstream's repository. */
+  implementation: z.array(nonEmpty),
+  /** UpstreamRule.tests: the upstream test files that test the rule. */
+  tests: z.array(nonEmpty),
+  /** UpstreamRule.deprecation: upstream's deprecation message, or null. */
+  deprecation: z.string().nullable(),
+  /** UpstreamRule.recommended: the first approved configuration that turns the rule on, with its options; or null. */
+  recommended: z.strictObject({ config: nonEmpty, options: z.array(z.json()) }).nullable(),
+  /** UpstreamRule.notOnRealCode: why upstream cannot lint real code for the rule (type-checked rules), or null. */
+  notOnRealCode: z.string().nullable(),
+});
+
+/** The end parts upstream reports for a rule, which toSpan keeps (types.ts `SpanParts`). */
+export const spanPartsSchema = z.strictObject({ endLine: z.boolean(), endCol: z.boolean() });
+
 const ruleSchema = z.strictObject({
-  /** rule(name): what upstream says about the rule at the pinned version. */
-  facts: z.strictObject({
-    /** UpstreamRule.name: upstream's own name for the rule (`B101`, `@typescript-eslint/no-explicit-any`). */
-    name: nonEmpty,
-    /** UpstreamRule.implementation: the rule's implementation files, relative to upstream's repository. */
-    implementation: z.array(nonEmpty),
-    /** UpstreamRule.tests: the upstream test files that test the rule. */
-    tests: z.array(nonEmpty),
-    /** UpstreamRule.deprecation: upstream's deprecation message, or null. */
-    deprecation: z.string().nullable(),
-    /** UpstreamRule.recommended: the first approved configuration that turns the rule on, with its options; or null. */
-    recommended: z.strictObject({ config: nonEmpty, options: z.array(z.json()) }).nullable(),
-    /** UpstreamRule.notOnRealCode: why upstream cannot lint real code for the rule (type-checked rules), or null. */
-    notOnRealCode: z.string().nullable(),
-  }),
+  facts: ruleFactsSchema,
   /**
    * Where the rule's names come from. implementationNames = `implementation.names` and its sets' names;
    * sharedImplementationNames = the same of `shared`; implementationRegexes = `implementation.regexes`, its sets'
    * regexes, then `shared.regexes` and its sets' regexes.
    */
   names: z.strictObject({ implementation: nameSourceSchema, shared: nameSourceSchema }),
-  /** The end parts upstream reports for the rule, which toSpan keeps (types.ts `SpanParts`). */
-  spanParts: z.strictObject({ endLine: z.boolean(), endCol: z.boolean() }),
+  spanParts: spanPartsSchema,
   /** cases(name): upstream's output on its own test files for the rule, in the live adapter's order. */
   cases: z.array(caseSchema),
 });
@@ -262,28 +256,7 @@ const ruleSchema = z.strictObject({
 export type RecordedRule = z.infer<typeof ruleSchema>;
 export type RecordedCase = z.infer<typeof caseSchema>;
 
-/**
- * Every verdict list a recording writes out is in canonical form: it names the recording's `parsers` in their order,
- * and a list every parser was silent on is not written at all (an absent list means exactly that). Canonical form is
- * what makes `port-readiness:record --check` byte-comparable: there is one way to record a given answer.
- */
-function checkVerdicts(
-  parsers: readonly RecordedParser[],
-  entries: readonly { verdicts?: readonly VerdictLike[] | undefined }[],
-  path: (index: number) => (string | number)[],
-  issue: (path: (string | number)[], message: string) => void,
-): void {
-  const expected = parsers.map(({ parser, grammar }) => `${parser}\0${grammar}`).join("\n");
-  entries.forEach((entry, index) => {
-    if (entry.verdicts === undefined) return;
-    if (entry.verdicts.every(isCleanVerdict)) issue(path(index), "every parser is silent: leave verdicts off, which says the same in fewer bytes");
-    const listed = entry.verdicts.map((verdict) => `${verdict.parser}\0${verdict.grammar !== null}`).join("\n");
-    if (listed !== expected) issue(path(index), "names other parsers than the recording's parsers, or in another order");
-  });
-}
-
 export const gatesRecordingSchema = z.strictObject({
-  format: z.literal(RECORDING_FORMAT),
   /** The tool: `tools[].name` in the pack's conformance.json, and the directory under the pack's upstream/. */
   tool: nonEmpty,
   /** gates.yaml's adapter: whose live adapter recorded this, and whose span units (span-units/<adapter>.ts) toSpan uses. */
@@ -359,25 +332,17 @@ export const gatesRecordingSchema = z.strictObject({
    * `rules` nor `absent` was never recorded: the recording is stale.
    */
   absent: sortedStrings(nonEmpty),
-  /** The independent parsers every verdict list in the file names, in the live adapter's order. */
+  /** The independent parsers every verdict file of the recording names (`[]` stands for all of them silent), in the live adapter's order. */
   parsers: z.array(parserSchema).min(1),
-  /**
-   * Independent parsers' verdicts on every committed case source as its cases read it, and on every known gap's probe,
-   * sorted by path, script and sha256; each combination once. An entry whose parsers were all silent has no `verdicts`.
-   */
-  parserVerdicts: z.array(verdictEntrySchema),
 }).superRefine((recording, context) => {
   const issue = (path: (string | number)[], message: string) => context.addIssue({ code: "custom", path, message });
   if (recording.licenseText !== undefined && createHash("sha256").update(recording.licenseText, "utf8").digest("hex") !== recording.licenseSha256) issue(["licenseText"], "its sha256 is not licenseSha256");
-  checkVerdicts(recording.parsers, recording.parserVerdicts, (index) => ["parserVerdicts", index, "verdicts"], issue);
   for (const [name, rule] of Object.entries(recording.rules)) {
     for (const part of ["implementation", "shared"] as const) {
       for (const id of rule.names[part].sets) if (!(id in recording.nameSets)) issue(["rules", name, "names", part, "sets"], `names the set ${id}, which nameSets lacks`);
     }
     if (recording.absent.includes(name)) issue(["absent"], `${name} is recorded as a rule and as absent`);
   }
-  const keys = recording.parserVerdicts.map((entry) => `${entry.path}\0${entry.script}\0${entry.sha256}`);
-  if (!keys.every((key, index) => index === 0 || byText(keys[index - 1]!, key) < 0)) issue(["parserVerdicts"], "sorted by path, script and sha256, each combination once");
 });
 
 export type GatesRecording = z.infer<typeof gatesRecordingSchema>;

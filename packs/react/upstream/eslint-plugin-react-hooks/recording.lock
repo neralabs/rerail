@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v3",
+  "format": "rerail.port-readiness-recording-lock/v4",
   "tool": "eslint-plugin-react-hooks",
   "pins": {
     "repository": "https://github.com/facebook/react",
@@ -19,16 +19,11 @@
     }
   },
   "files": {
-    "recording.json": {
-      "sha256": "d40e994aa3fd7186a874cc699fb571496749db77bc147d1a47c933bf5105a169",
-      "size": 2087006,
-      "format": "rerail.port-readiness-recording/v2"
-    },
-    "corpus.tar.zst": {
-      "sha256": "d4d37a8924c248c69866c56c0c065d07b5c9b5146e5042ef18bcd71fbab58f3f",
-      "files": 70,
-      "bytes": 6152,
-      "format": "rerail.port-readiness-corpus-answers/v1"
+    "recording.tar.zst": {
+      "sha256": "0c68fecb91a218079a5b76dddc34014e5cdf580ff2b0ab47658ee1130d12bde6",
+      "files": 4431,
+      "bytes": 1460826,
+      "format": "rerail.port-readiness-recording-archive/v1"
     }
   }
 }

@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v3",
+  "format": "rerail.port-readiness-recording-lock/v4",
   "tool": "bladestan",
   "pins": {
     "repository": "https://github.com/TomasVotruba/bladestan",
@@ -23,16 +23,11 @@
     }
   },
   "files": {
-    "recording.json": {
-      "sha256": "73d0d90e53dd5e676818a6654844cd6c37db1d924d203d40120390b3078ff100",
-      "size": 138548,
-      "format": "rerail.port-readiness-recording/v2"
-    },
-    "corpus.tar.zst": {
-      "sha256": "2f455d66fed969164e5aa378ff3000eb9bbe6fb22f990ffb01b56ece735969c9",
-      "files": 1,
-      "bytes": 1376,
-      "format": "rerail.port-readiness-corpus-answers/v1"
+    "recording.tar.zst": {
+      "sha256": "3f8b381f7b533e470a49a7f3dae0219b8b0cfdb27f610e3bb0fe8d673d780107",
+      "files": 258,
+      "bytes": 123393,
+      "format": "rerail.port-readiness-recording-archive/v1"
     }
   }
 }

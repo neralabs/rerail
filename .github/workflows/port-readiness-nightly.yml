@@ -106,9 +106,8 @@ jobs:
           retention-days: 1
 
   # The drift check's test data and recordings: each gated tool-pack's archive (.github/actions/pack-test-data) and the
-  # two recordings its recording.lock names (recording.json and the corpus answers archive), into this run's cache before
-  # record-check starts. This job holds the OIDC token and runs only this commit's scripts/s3/pack-fixtures.mjs (the
-  # pull and the recordings), never upstream's;
+  # recording archive its recording.lock names, into this run's cache before record-check starts. This job holds the
+  # OIDC token and runs only this commit's scripts/s3/pack-fixtures.mjs (the pull and the recordings), never upstream's;
   # id-token: on a cache miss it reads them from S3, and only the steps that download them hold the credentials.
   record-check-test-data:
     name: Test data for the drift check (${{ matrix.pack }} · ${{ matrix.tool }})
@@ -172,9 +171,9 @@ jobs:
           pack: ${{ matrix.pack }}
           tool: ${{ matrix.tool }}
 
-      # As port-readiness.yml's test-data job warms them, under the key record-check restores.
+      # As port-readiness.yml's test-data job warms it, under the key record-check restores.
       - id: recording-lock
-        name: Key the recordings the lock names
+        name: Key the recording the lock names
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
@@ -182,18 +181,14 @@ jobs:
           set -euo pipefail
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           [ -f "$lock" ] || exit 0
-          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
+          archive="$(jq -r '.files["recording.tar.zst"].sha256' "$lock")"
           {
-            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
-            echo "paths<<EOF"
-            echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
-            echo "EOF"
+            echo "key=port-readiness-recording-$PACK-$TOOL-$archive"
+            echo "paths=.rerail/port-readiness/recordings/$archive.tar.zst"
           } >> "$GITHUB_OUTPUT"
 
       - id: recordings
-        name: Look up the recordings the lock names
+        name: Look up the recording the lock names
         if: steps.recording-lock.outputs.key != ''
         uses: actions/cache/restore@v6
         with:
@@ -202,7 +197,7 @@ jobs:
           lookup-only: true
 
       - id: recordings-credentials
-        name: Assume the test data read role for the recordings
+        name: Assume the test data read role for the recording
         if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
@@ -211,7 +206,7 @@ jobs:
           output-credentials: true
           output-env-credentials: false
 
-      - name: Set up Node.js v24 for the recordings
+      - name: Set up Node.js v24 for the recording
         if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
         uses: actions/setup-node@v7
         with:
@@ -219,7 +214,7 @@ jobs:
           package-manager-cache: false
 
       - id: recordings-download
-        name: Download the recordings from S3
+        name: Download the recording from S3
         if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
         env:
           PACK: ${{ matrix.pack }}
@@ -232,12 +227,10 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/s3/pack-fixtures.mjs recordings --pack "$PACK" --tool "$TOOL"
-          while read -r path; do
-            [ -f "$path" ] || exit 0
-          done <<< "$PATHS"
+          [ -f "$PATHS" ] || exit 0
           echo "complete=true" >> "$GITHUB_OUTPUT"
 
-      - name: Save the recordings
+      - name: Save the recording
         if: steps.recordings-download.outputs.complete == 'true'
         uses: actions/cache/save@v6
         with:
@@ -318,28 +311,24 @@ jobs:
           toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
           components: clippy
 
-      # The recordings the lock names, from the cache record-check-test-data and port-readiness.yml's test-data job save
-      # into (the same key): --check compares what it records afresh with them (the recorder extracts the corpus answers
-      # archive itself), and without them says it could not.
+      # The recording archive the lock names, from the cache record-check-test-data and port-readiness.yml's test-data
+      # job save into (the same key): --check compares what it records afresh with it (the recorder extracts its tree
+      # itself), and without it says it could not.
       - id: lock
-        name: Read the recordings the lock names
+        name: Read the recording the lock names
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
         run: |
           set -euo pipefail
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
-          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
+          archive="$(jq -r '.files["recording.tar.zst"].sha256' "$lock")"
           {
-            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
-            echo "paths<<EOF"
-            echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
-            echo "EOF"
+            echo "key=port-readiness-recording-$PACK-$TOOL-$archive"
+            echo "paths=.rerail/port-readiness/recordings/$archive.tar.zst"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Restore the recordings the lock names
+      - name: Restore the recording the lock names
         uses: actions/cache/restore@v6
         with:
           path: ${{ steps.lock.outputs.paths }}

@@ -1,8 +1,9 @@
 /**
- * The recordings outside git: the committed `recording.lock`, the cache they are read from, and what happens when the
- * bytes are not the ones the lock names. That last one is the whole point of the manifest — a pull request that writes
- * its own recording must fail, because the gates take only the bytes the lock names, which CI records from the commit
- * itself on a cache miss, and cannot tell a true recording from a flattering one by anything but its digest.
+ * The recording outside git: the committed `recording.lock`, the archive it names and the cache it is read from, the
+ * tree inside it (one file per answer, named by what the answer depends on), and what happens when the bytes are not
+ * the ones the lock names. That last one is the whole point of the manifest — a pull request that writes its own
+ * recording must fail, because the gates take only the bytes the lock names, which CI records from the commit itself
+ * on a cache miss, and cannot tell a true recording from a flattering one by anything but its digest.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -13,20 +14,18 @@ import { dirname, join, posix } from "node:path";
 import ts from "typescript";
 import { test } from "vitest";
 
-import { CORPUS_TREE_MARKER, extractCorpusTree } from "../../../scripts/s3/pack-fixtures.mjs";
+import { extractRecordingTree, RECORDING_TREE_MARKER } from "../../../scripts/s3/pack-fixtures.mjs";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { diffRecordings, renderRecordingChanges, type RecordedPair } from "../../../conformance/port-readiness/recording/diff.js";
-import {
-  buildRecordingLock, readCachedRecording, readRecordingLock, recordingCachePath, recordingLockSchema, recordingLockText, writeCachedRecording, RECORDING_LOCK,
-  type RecordingLock,
-} from "../../../conformance/port-readiness/recording/store.js";
+import { buildRecordingLock, readRecordingLock, recordingLockSchema, recordingLockText, RECORDING_LOCK, type RecordingLock } from "../../../conformance/port-readiness/recording/store.js";
 import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-readiness/manifest.js";
-import { canonicalText, gatesRecordingSchema, RECORDING_FORMAT } from "../../../conformance/port-readiness/recording/schema.js";
+import { canonicalText, gatesRecordingSchema, type GatesRecording } from "../../../conformance/port-readiness/recording/schema.js";
 import {
-  ADAPTER_SOURCES, adapterSourcesDigest, answerKey, answerPath, answerText, cacheCorpusArchive, cachedCorpusTree, checkTreePaths, configId, corpusArchiveCachePath, corpusTreeDirectory,
-  CORPUS_ANSWERS_FORMAT, fetchedContext, memoryTree, missingAnswers, neededAnswers, nextTree, packCorpusTree, parseAnswer, parsersId, treeFiles, unpackCorpusArchive, verdictPath,
-  type KeyContext,
-} from "../../../conformance/port-readiness/recording/corpus-answers.js";
+  ADAPTER_SOURCES, adapterSourcesDigest, archiveCachePath, cacheArchive, cachedTree, checkTreePaths, configId, memoryTree, packTree, parsersId, RECORDING_ARCHIVE_FORMAT, treeDirectory, treeFiles,
+  unpackArchive,
+} from "../../../conformance/port-readiness/recording/archive.js";
+import { answerKey, answerPath, answerText, fetchedContext, missingAnswers, neededAnswers, parseAnswer, verdictPath, type KeyContext } from "../../../conformance/port-readiness/recording/corpus-answers.js";
+import { caseAnswerPath, caseKey, loadRecording, loadRule, recordingFiles, ruleTreeDigest, textDigest, textPath } from "../../../conformance/port-readiness/recording/tree.js";
 import { parseGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import type { Span } from "../../../conformance/port-readiness/types.js";
 
@@ -35,10 +34,12 @@ const digest = (text: string): string => createHash("sha256").update(text).diges
 const PARSERS = [{ parser: "cpython 3.14.8", grammar: true }];
 const PINS = { repository: "https://github.com/PyCQA/bandit", commit: "a".repeat(40), version: "1.9.4", runtime: "bandit-1.9.4" };
 const RUNTIMES = { "bandit-1.9.4": { "pyproject.toml": "d".repeat(64) } };
+const SOURCE = "5".repeat(64);
+const CONFIG = "c".repeat(64);
+const RULES = "7".repeat(64);
 
-function recordingOf(rules: Record<string, unknown>): ReturnType<typeof gatesRecordingSchema.parse> {
+function recordingOf(rules: Record<string, unknown>, fields: Record<string, unknown> = {}): GatesRecording {
   return gatesRecordingSchema.parse({
-    format: RECORDING_FORMAT,
     tool: "bandit",
     adapter: "bandit",
     pins: PINS,
@@ -55,43 +56,44 @@ function recordingOf(rules: Record<string, unknown>): ReturnType<typeof gatesRec
     rules,
     absent: [],
     parsers: PARSERS,
-    parserVerdicts: [],
+    ...fields,
   });
 }
 
-const rule = (expected: [number, number | null, number | null, number | null][], tests: string[] = ["examples/pickle.py"], recommended: { config: string; options: unknown[] } | null = null) => ({
-  facts: { name: "B301", implementation: ["bandit/blacklists/calls.py"], tests, deprecation: null, recommended, notOnRealCode: null },
+type Tuple = [number, number | null, number | null, number | null];
+const testCase = (expected: Tuple[], fields: Record<string, unknown> = {}) => ({ fixture: "examples/pickle.py", variant: "default", path: "pickle.py", skipped: null, expected, markup: null, file: "fixtures/pickle.py", sha256: SOURCE, ...fields });
+const rule = (expected: Tuple[], tests: string[] = ["examples/pickle.py"], recommended: { config: string; options: unknown[] } | null = null, name = "B301") => ({
+  facts: { name, implementation: ["bandit/blacklists/calls.py"], tests, deprecation: null, recommended, notOnRealCode: null },
   names: { implementation: { sets: [], names: [], regexes: [] }, shared: { sets: [], names: [], regexes: [] } },
   spanParts: { endLine: true, endCol: true },
-  cases: [{ fixture: "examples/pickle.py", variant: "default", path: "pickle.py", skipped: null, expected, markup: null, file: "fixtures/pickle.py" }],
+  cases: [testCase(expected)],
 });
 
-const spanList = (spans: [number, number | null, number | null, number | null][]): Span[] => spans.map(([startLine, startCol, endLine, endCol]) => ({ startLine, startCol, endLine, endCol }));
+const spanList = (spans: Tuple[]): Span[] => spans.map(([startLine, startCol, endLine, endCol]) => ({ startLine, startCol, endLine, endCol }));
 
 /** A corpus answers tree holding each rule's findings on demo/app.py, filed under `config`. */
-function treeOf(findings: Record<string, [number, number | null, number | null, number | null][]>, config = "c".repeat(64), task = "demo"): Map<string, Buffer> {
+function treeOf(findings: Record<string, Tuple[]>, config = CONFIG, task = "demo"): Map<string, Buffer> {
   return new Map(Object.entries(findings).map(([name, spans]) => [answerPath(config, name, { task, path: "app.py" }, "b".repeat(64)), Buffer.from(answerText({ excluded: null, findings: spanList(spans) }), "utf8")]));
 }
 
-/** A tool-pack directory with a committed lock for recording.json and a corpus answers archive, and nothing else. */
-function toolPack(recording: string, corpus: Map<string, Buffer>) {
+/** A tool-pack directory with a committed lock naming the archive of `files`, and nothing else. */
+function toolPack(files: Map<string, Buffer>) {
   const root = mkdtempSync(join(tmpdir(), "port-readiness-store-"));
   mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
-  const packed = packCorpusTree(corpus);
-  const lock = buildRecordingLock("bandit", PINS, RUNTIMES, recording, packed);
+  const packed = packTree(files);
+  const lock = buildRecordingLock("bandit", PINS, RUNTIMES, packed);
   writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(lock));
   return { root, lock, packed, cacheRoot: join(root, "cache"), cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-const RECORDING = canonicalText(recordingOf({ B301: rule([[1, 0, 1, 17]]) }));
-const TREE = treeOf({ B301: [[3, 0, 3, 9]] });
+/** The tree of a recording at CONFIG, with its corpus answers. */
+const filesOf = (recording: GatesRecording, corpus: Map<string, Buffer> = new Map()) => new Map([...recordingFiles({ demo: true }, CONFIG, recording, RULES).files, ...corpus]);
+const TREE = filesOf(recordingOf({ B301: rule([[1, 0, 1, 17]]) }), treeOf({ B301: [[3, 0, 3, 9]] }));
 
-test("a lock names recording.json by its digest and the corpus answers archive by its tar's digest, file count and bytes", () => {
-  const { lock, packed, cleanup } = toolPack(RECORDING, TREE);
+test("a lock names the one archive by its tar's digest, file count and bytes", () => {
+  const { lock, packed, cleanup } = toolPack(TREE);
   try {
-    assert.equal(lock.files["recording.json"].sha256, digest(RECORDING));
-    assert.equal(lock.files["recording.json"].format, RECORDING_FORMAT);
-    assert.deepEqual(lock.files["corpus.tar.zst"], { sha256: packed.sha256, files: 1, bytes: packed.bytes, format: CORPUS_ANSWERS_FORMAT });
+    assert.deepEqual(lock.files["recording.tar.zst"], { sha256: packed.sha256, files: TREE.size, bytes: packed.bytes, format: RECORDING_ARCHIVE_FORMAT });
     // The lock is small enough to review as data, which is the point of taking 71 MB of JSON out of the tree.
     assert.ok(recordingLockText(lock).length < 2000, `${recordingLockText(lock).length} bytes`);
     // It parses back, so what the recorder writes is what the gates read.
@@ -102,36 +104,42 @@ test("a lock names recording.json by its digest and the corpus answers archive b
 });
 
 test("a lock of an older format is refused, saying to record the tool-pack again", () => {
-  const { root, lock, cleanup } = toolPack(RECORDING, TREE);
+  const { root, lock, cleanup } = toolPack(TREE);
   try {
-    const refused = /packs\/demo\/upstream\/bandit\/recording\.lock is format "rerail\.port-readiness-recording-lock\/v[12]", not rerail\.port-readiness-recording-lock\/v3, and is not read: delete it and record the tool-pack again \(npm run port-readiness:record -- --pack demo --tool bandit\)/u;
-    const v1 = { ...lock, format: "rerail.port-readiness-recording-lock/v1", release: "port-readiness-recordings" };
-    writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(v1 as RecordingLock));
-    assert.throws(() => readRecordingLock(root, "demo", "bandit"), refused);
-    const v2 = { ...lock, format: "rerail.port-readiness-recording-lock/v2", files: { "recording.json": lock.files["recording.json"], "corpus.json": { sha256: "e".repeat(64), size: 10, format: "rerail.port-readiness-corpus/v2" } } };
-    writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(v2 as unknown as RecordingLock));
-    assert.throws(() => readRecordingLock(root, "demo", "bandit"), refused);
-    // A v3 lock that does not match its schema is refused by what is wrong with it.
-    writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText({ ...lock, release: "x" } as RecordingLock));
-    assert.throws(() => readRecordingLock(root, "demo", "bandit"), /recording\.lock: \/: Unrecognized key.*release/su);
+    const refused = /packs\/demo\/upstream\/bandit\/recording\.lock is format "rerail\.port-readiness-recording-lock\/v[123]", not rerail\.port-readiness-recording-lock\/v4, and is not read: delete it and record the tool-pack again \(npm run port-readiness:record -- --pack demo --tool bandit\)/u;
+    const entry = { sha256: "e".repeat(64), size: 10 };
+    const older = [
+      { ...lock, format: "rerail.port-readiness-recording-lock/v1", release: "port-readiness-recordings" },
+      { ...lock, format: "rerail.port-readiness-recording-lock/v2", files: { "recording.json": entry, "corpus.json": entry } },
+      { ...lock, format: "rerail.port-readiness-recording-lock/v3", files: { "recording.json": entry, "corpus.tar.zst": { sha256: "e".repeat(64), files: 1, bytes: 1 } } },
+    ];
+    for (const old of older) {
+      writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(old as unknown as RecordingLock));
+      assert.throws(() => readRecordingLock(root, "demo", "bandit"), refused);
+    }
+    // A v4 lock that does not match its schema is refused by what is wrong with it.
+    writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText({ ...lock, files: { ...lock.files, "recording.json": entry } } as unknown as RecordingLock));
+    assert.throws(() => readRecordingLock(root, "demo", "bandit"), /recording\.lock: \/files: Unrecognized key.*recording\.json/su);
   } finally {
     cleanup();
   }
 });
 
-test("a flattering recording cached under the digest the lock names is never read", async () => {
-  const { cacheRoot, lock, cleanup } = toolPack(RECORDING, TREE);
+test("a flattering archive cached under the digest the lock names is never read", () => {
+  const { cacheRoot, lock, packed, cleanup } = toolPack(TREE);
   try {
-    // What a pull request would want for a rule that finds nothing, put where the lock's recording would be: the cache
+    // What a pull request would want for a rule that finds nothing, put where the lock's archive would be: the cache
     // key names the digest, so restoring it is all a poisoned cache entry could do.
-    const flattering = canonicalText(recordingOf({ B301: rule([]) }));
-    const path = recordingCachePath(cacheRoot, lock.files["recording.json"].sha256);
-    mkdirSync(join(cacheRoot, "recordings"), { recursive: true });
-    writeFileSync(path, flattering);
-    assert.equal(readCachedRecording(cacheRoot, lock.files["recording.json"].sha256), undefined);
+    const flattering = packTree(filesOf(recordingOf({ B301: rule([]) })));
+    const pin = lock.files["recording.tar.zst"];
+    mkdirSync(dirname(archiveCachePath(cacheRoot, pin.sha256)), { recursive: true });
+    writeFileSync(archiveCachePath(cacheRoot, pin.sha256), flattering.compressed);
+    assert.equal(cachedTree(cacheRoot, pin, "demo"), undefined);
+    assert.equal(existsSync(archiveCachePath(cacheRoot, pin.sha256)), false);
     // The bytes the lock does name read back.
-    await writeCachedRecording(cacheRoot, RECORDING);
-    assert.equal(readCachedRecording(cacheRoot, lock.files["recording.json"].sha256), RECORDING);
+    cacheArchive(cacheRoot, packed);
+    const tree = memoryTree(treeFiles(cachedTree(cacheRoot, pin, "demo")!));
+    assert.deepEqual(loadRecording(tree, CONFIG, "demo").rules.B301!.cases[0]!.expected, [[1, 0, 1, 17]]);
   } finally {
     cleanup();
   }
@@ -161,17 +169,95 @@ test("every committed lock pins exactly the runtimes its gates.yaml installs", (
   assert.deepEqual(mismatched, []);
 });
 
-test("a recording whose cached bytes were tampered with reads as absent, not as a recording", async () => {
-  const { cacheRoot } = toolPack(RECORDING, TREE);
-  const written = await writeCachedRecording(cacheRoot, RECORDING);
-  assert.equal(readCachedRecording(cacheRoot, written), RECORDING);
-  writeFileSync(join(cacheRoot, "recordings", `${written}.json`), "{}\n");
-  assert.equal(readCachedRecording(cacheRoot, written), undefined);
-  rmSync(cacheRoot, { recursive: true, force: true });
+test("a recording's tree reads back as the recording, with ESLint's span parts said by its answers", () => {
+  const sets = { "regexes:0123456789abcdef": { names: [], regexes: [{ source: "^on[A-Z]", flags: "u" }] } };
+  const named = { ...rule([[1, 0, 1, 17]]), names: { implementation: { sets: ["regexes:0123456789abcdef"], names: ["loads"], regexes: [] }, shared: { sets: [], names: [], regexes: [] } } };
+  // A not-copied case has no source to key an answer by, so its answer is in the index; a lone surrogate survives as a text.
+  const notCopied = testCase([[2, 0, null, null]], { fixture: "examples/gpl.py", file: null, skipped: "not-copied" });
+  delete (notCopied as { sha256?: string }).sha256;
+  const recording = recordingOf({ B301: { ...named, cases: [...named.cases, notCopied] }, "plugin/B302": rule([], undefined, null, "plugin/B302") }, {
+    nameSets: sets,
+    absent: ["B999"],
+    licenseText: "LICENSE\n",
+    licenseSha256: digest("LICENSE\n"),
+    fixtureTexts: { files: [{ path: "examples/pickle.py", sha256: "1".repeat(64) }], inline: [{ text: "a" }, { text: "a" }, { text: "\ud800 lone" }] },
+  });
+  const { files } = recordingFiles({ demo: true }, CONFIG, recording, RULES);
+  assert.equal(canonicalText(loadRecording(memoryTree(files), CONFIG, "demo")), canonicalText(recording));
+  // A rule's directory writes its `/` as `~`; a text is named by its file's digest.
+  assert.ok(files.has(`rules/${CONFIG}/plugin~B302/rule.json`));
+  assert.ok(files.has(textPath(textDigest("\ud800 lone"))));
+
+  // ESLint's spanParts is no file: one finding of the rule without an end compares every finding on its start alone.
+  const eslint = (expected: Tuple[][]) => {
+    const written = recordingFiles({ demo: true }, CONFIG, { ...recordingOf({ R: { ...rule([]), cases: expected.map((spans, index) => testCase(spans, { fixture: `t.js#0/valid[${index}]`, sha256: digest(String(index)) })) } }), adapter: "eslint" }, RULES);
+    assert.equal(JSON.parse(written.files.get(`rules/${CONFIG}/R/rule.json`)!.toString("utf8")).spanParts, undefined);
+    return loadRule(memoryTree(written.files), CONFIG, "eslint", "R")!.spanParts;
+  };
+  assert.deepEqual(eslint([[[0, 1, 0, 4]], []]), { endLine: true, endCol: true });
+  assert.deepEqual(eslint([[[0, 1, 0, 4]], [[1, 2, null, null]]]), { endLine: false, endCol: false });
+  assert.deepEqual(eslint([[]]), { endLine: true, endCol: true });
+});
+
+test("a missing answer is a rule the recorder asks about again, and a tree the gates cannot read", () => {
+  const recording = recordingOf({ B301: rule([[1, 0, 1, 17]]) });
+  const files = filesOf(recording);
+  const answer = caseAnswerPath(CONFIG, "B301", caseKey("bandit", recording.rules.B301!.cases[0]!, SOURCE, RULES));
+  assert.ok(files.delete(answer));
+  assert.equal(loadRule(memoryTree(files), CONFIG, "bandit", "B301"), undefined);
+  assert.throws(() => loadRecording(memoryTree(files), CONFIG, "demo"), /lacks an answer the case index of B301 names/u);
+  // Without the whole-tool facts there is no recording at that config at all.
+  assert.throws(() => loadRecording(memoryTree(new Map()), CONFIG, "demo"), /has no complete tool facts at config cccccccccccc/u);
+});
+
+test("a case's answer is keyed by its source and the inputs its adapter feeds upstream", () => {
+  const base = { fixture: "examples/pickle.py", variant: "default", path: "pickle.py" };
+  const key = (adapter: Parameters<typeof caseKey>[0], fields: Record<string, unknown> = {}, rules = RULES) => caseKey(adapter, { ...base, ...fields }, SOURCE, rules);
+  assert.match(key("bandit"), new RegExp(`^${SOURCE}\\+[0-9a-f]{12}$`, "u"));
+  // Bandit lints each example on its own: the same bytes at another example are the same answer, another file type is not.
+  assert.equal(key("bandit", { fixture: "examples/other.py", path: "other.py" }), key("bandit"));
+  assert.notEqual(key("bandit", { path: "pickle.pyi" }), key("bandit"));
+  assert.notEqual(caseKey("bandit", base, "t".repeat(64), RULES), key("bandit"));
+  // Ruff reads the path (.pyi, and the __init__.py files above it).
+  assert.notEqual(key("ruff", { path: "sub/pickle.py" }), key("ruff"));
+  // ESLint's case configuration is no recorded field, so its key takes the case's place in upstream's tests.
+  assert.notEqual(key("eslint", { fixture: "t.js#0/valid[1]" }), key("eslint", { fixture: "t.js#0/valid[0]" }));
+  assert.notEqual(key("eslint", { script: true }), key("eslint", { script: false }));
+  // The recorded rules key the answers of the adapters that lint them together, and no other.
+  assert.notEqual(key("blade-parser", {}, "o".repeat(64)), key("blade-parser"));
+  assert.notEqual(key("sqlfluff", {}, "o".repeat(64)), key("sqlfluff"));
+  assert.equal(key("psalm", {}, "o".repeat(64)), key("psalm"));
+});
+
+test("two cases of a rule under one key must have the same answer, which is then filed once", () => {
+  const twin = (expected: Tuple[]) => testCase(expected, { fixture: "examples/twin.py", path: "twin.py" });
+  const same = recordingFiles({ demo: true }, CONFIG, recordingOf({ B301: { ...rule([[1, 0, 1, 17]]), cases: [testCase([[1, 0, 1, 17]]), twin([[1, 0, 1, 17]])] } }), RULES);
+  assert.equal(same.deduplicated, 1);
+  assert.throws(
+    () => recordingFiles({ demo: true }, CONFIG, recordingOf({ B301: { ...rule([[1, 0, 1, 17]]), cases: [testCase([[1, 0, 1, 17]]), twin([])] } }), RULES),
+    /B301: two cases are filed under the key [0-9a-f+]+ with different answers \(examples\/twin\.py among them\): the key lacks an input/u,
+  );
+});
+
+test("a rule's digest moves with what it reads of the tree, and not with another rule", () => {
+  const recording = recordingOf({ B301: rule([[1, 0, 1, 17]]), B302: rule([], undefined, null, "B302") });
+  const files = filesOf(recording, treeOf({ B301: [[3, 0, 3, 9]], B302: [] }));
+  const digestOf = (tree: Map<string, Buffer>, name: string, extra: string[] = []) => ruleTreeDigest(memoryTree(tree), CONFIG, recording, name, extra);
+  const before = digestOf(files, "B301");
+  const edited = (path: string) => new Map([...files, [path, Buffer.from("{}\n", "utf8")]]);
+  // Another rule's index or corpus answers: no change.
+  assert.equal(digestOf(edited(`rules/${CONFIG}/B302/rule.json`), "B301"), before);
+  assert.equal(digestOf(edited(answerPath(CONFIG, "B302", { task: "demo", path: "app.py" }, "b".repeat(64))), "B301"), before);
+  // Its own, a whole-tool fact or a verdict it reads: a change.
+  assert.notEqual(digestOf(edited(`rules/${CONFIG}/B301/rule.json`), "B301"), before);
+  assert.notEqual(digestOf(edited(answerPath(CONFIG, "B301", { task: "demo", path: "app.py" }, "b".repeat(64))), "B301"), before);
+  assert.notEqual(digestOf(edited(`tool/${CONFIG}/keywords.json`), "B301"), before);
+  const verdict = verdictPath("p".repeat(64), { path: "pickle.py", sha256: SOURCE, script: false });
+  assert.notEqual(digestOf(edited(verdict), "B301", [verdict]), digestOf(files, "B301", [verdict]));
 });
 
 test("the per-rule summary names what moved, and says so plainly when nothing did", () => {
-  const before: RecordedPair = { recording: recordingOf({ B301: rule([[1, 0, 1, 17]]), B302: rule([[2, 0, 2, 4]]) }), corpus: treeOf({ B301: [[3, 0, 3, 9]] }) };
+  const before: RecordedPair = { recording: recordingOf({ B301: rule([[1, 0, 1, 17]]), B302: rule([[2, 0, 2, 4]], undefined, null, "B302") }), corpus: treeOf({ B301: [[3, 0, 3, 9]] }) };
   const after: RecordedPair = { recording: recordingOf({ B301: rule([[1, 0, 1, 17], [5, 0, 5, 8]], ["examples/pickle.py", "examples/more.py"]) }), corpus: treeOf({ B301: [[4, 0, 4, 9]] }) };
 
   const unchanged = diffRecordings("demo", "bandit", before, before);
@@ -197,27 +283,27 @@ test("the per-rule summary names what moved, and says so plainly when nothing di
   // Answers are compared by rule, place and key, whatever config they are filed under: a bump that answers the same is
   // no change. An answer file one tree has and the other lacks is added or removed.
   assert.deepEqual(diffRecordings("demo", "bandit", before, { ...before, corpus: treeOf({ B301: [[3, 0, 3, 9]] }, "e".repeat(64)) }).rules, []);
-  const wider: RecordedPair = { ...before, corpus: new Map([...treeOf({ B301: [[3, 0, 3, 9]] }), ...treeOf({ B301: [[1, 0, 1, 9]] }, "c".repeat(64), "dropped")]) };
+  const wider: RecordedPair = { ...before, corpus: new Map([...treeOf({ B301: [[3, 0, 3, 9]] }), ...treeOf({ B301: [[1, 0, 1, 9]] }, CONFIG, "dropped")]) };
   assert.deepEqual(diffRecordings("demo", "bandit", wider, before).rules, [
     { rule: "B301", status: "changed", expectedAdded: 0, expectedRemoved: 0, answersAdded: 0, answersRemoved: 1, answersChanged: 0, factsChanged: [] },
   ]);
   // A first recording has nothing to compare with, and says that rather than listing every rule as a change.
   assert.match(renderRecordingChanges([diffRecordings("demo", "bandit", null, after)]), /first recording/u);
   // A lock whose recording could not be read is neither: the summary warns that what moved is unknown.
-  const uncompared = renderRecordingChanges([diffRecordings("demo", "bandit", { unavailable: "demo-bandit-recording.json.gz is not in the cache" }, after)]);
+  const uncompared = renderRecordingChanges([diffRecordings("demo", "bandit", { unavailable: "the locked recording.tar.zst is not in the cache" }, after)]);
   assert.match(uncompared, /^## Port readiness recordings: ⚠️ 1 tool-pack not compared$/mu);
-  assert.match(uncompared, /`demo\/bandit`: ⚠️ not compared\n\n.*\(demo-bandit-recording\.json\.gz is not in the cache\)/u);
+  assert.match(uncompared, /`demo\/bandit`: ⚠️ not compared\n\n.*\(the locked recording\.tar\.zst is not in the cache\)/u);
   assert.doesNotMatch(uncompared, /: first recording|✅/u);
 });
 
 test("the per-rule summary calls a fact changed only when its value changed, whatever order its object keys are in", () => {
   // Bandit's shell_injection options, in the order its gen_config builds them, which is how the recorder holds a fresh
   // recording in memory; the nested object stands for an ESLint rule's options. The recording the lock names is read
-  // back from its key-sorted text, so the same options come back with every key sorted.
+  // back from its key-sorted files, so the same options come back with every key sorted.
   const options = (shell: string[]) => [{ subprocess: ["subprocess.Popen"], shell, no_shell: ["os.execl"] }, { allow: true, ignore: { patterns: ["^_"], names: ["x"] } }];
-  const recorded = (shell: string[]): RecordedPair => ({ recording: recordingOf({ B602: rule([[1, 0, 1, 17]], ["examples/subprocess_shell.py"], { config: "default", options: options(shell) }) }), corpus: null });
+  const recorded = (shell: string[]): RecordedPair => ({ recording: recordingOf({ B602: rule([[1, 0, 1, 17]], ["examples/subprocess_shell.py"], { config: "default", options: options(shell) }, "B602") }), corpus: null });
   const fresh = recorded(["os.system"]);
-  const locked: RecordedPair = { recording: gatesRecordingSchema.parse(JSON.parse(canonicalText(fresh.recording))), corpus: null };
+  const locked: RecordedPair = { recording: loadRecording(memoryTree(filesOf(fresh.recording)), CONFIG, "demo"), corpus: null };
   // The two hold the same options in different key orders, so the comparison below is not vacuous.
   assert.notEqual(JSON.stringify(locked.recording.rules.B602!.facts.recommended), JSON.stringify(fresh.recording.rules.B602!.facts.recommended));
 
@@ -273,7 +359,7 @@ const NO_BATCH: KeyContext["batchOf"] = (task) => {
 const ALONE: KeyContext = { sha256Of: () => undefined, commitOf: NO_COMMIT, batchOf: NO_BATCH, rules: "e".repeat(64) };
 const placesOf = (files: Record<string, string>): KeyContext => ({ ...ALONE, sha256Of: (task, path) => files[`${task}/${path}`] });
 
-test("an answer is keyed by the file's content, plus what else the adapter's answer reads", () => {
+test("a corpus answer is keyed by the file's content, plus what else the adapter's answer reads", () => {
   const file = { task: "rerail:corpus", path: "pkg/sub/mod.py", sha256: "b".repeat(64) };
   // Every adapter that reads a file on its own keys its answer by the content alone.
   assert.equal(answerKey("bandit", file, ALONE), "b".repeat(64));
@@ -286,7 +372,7 @@ test("an answer is keyed by the file's content, plus what else the adapter's ans
   assert.equal(answerKey("ruff", file, placesOf({ "rerail:corpus/pkg/sub/other.py": "1".repeat(64) })), bare);
   // Clippy builds whole crates, so its answer is keyed by the corpus's commit.
   assert.equal(answerKey("clippy", file, { ...ALONE, commitOf: () => "f".repeat(40) }), `${"b".repeat(64)}+${"f".repeat(12)}`);
-  assert.equal(answerPath("c".repeat(64), "@typescript-eslint/no-explicit-any", { task: "rerail:vscode", path: "src/a.ts" }, "k"), `answers/${"c".repeat(64)}/@typescript-eslint~no-explicit-any/rerail~vscode/src/a.ts@k.json`);
+  assert.equal(answerPath(CONFIG, "@typescript-eslint/no-explicit-any", { task: "rerail:vscode", path: "src/a.ts" }, "k"), `answers/${CONFIG}/@typescript-eslint~no-explicit-any/rerail~vscode/src/a.ts@k.json`);
   assert.equal(verdictPath("p", { path: "views/a.blade.php", sha256: "b".repeat(64), script: true }), `verdicts/p/${"b".repeat(64)}.blade.php.script.json`);
 });
 
@@ -304,7 +390,7 @@ test("PHPStan's and Psalm's answers are keyed by every fetched file of their tas
   assert.equal(answerKey("phpcs", file, fetchedContext([file, sibling], NO_COMMIT, ["R1"])), "a".repeat(64));
 });
 
-test("stillat/blade-parser's and PHPStan's answers are keyed by the rules recorded, since one rule asked excludes a file for all", () => {
+test("stillat/blade-parser's and PHPStan's corpus answers are keyed by the rules recorded, since one rule asked excludes a file for all", () => {
   const file = { task: "demo", path: "views/a.blade.php", sha256: "a".repeat(64) };
   const keyed = (adapter: "blade-parser" | "phpstan" | "psalm" | "tlint", rules: string[]) => answerKey(adapter, file, fetchedContext([file], NO_COMMIT, rules));
   assert.match(keyed("blade-parser", ["V1", "V2"]), /^a{64}\+[0-9a-f]{12}$/u);
@@ -371,7 +457,7 @@ test("ADAPTER_SOURCES covers every recorder file and span unit each adapter reac
   }
 });
 
-test("the answers needed are every golden file for every recorded rule at this config, and a missing one is found by its absence", () => {
+test("the corpus answers needed are every golden file for every recorded rule at this config, and a missing one is found by its absence", () => {
   const manifest = gatesYaml("bandit");
   const files = [{ task: "demo", path: "a.py", sha256: "1".repeat(64) }, { task: "demo", path: "b.py", sha256: "2".repeat(64) }, { task: "demo", path: "a.py", sha256: "1".repeat(64) }];
   const options = { manifest, runtimes: RUNTIMES, parsers: PARSERS, rules: ["B302", "B301"], files, context: ALONE };
@@ -396,68 +482,57 @@ test("the answers needed are every golden file for every recorded rule at this c
   assert.equal(missingAnswers(memoryTree(tree), bumped).answers.length, 4);
 });
 
-test("a record keeps the answers of its config, drops other configs', and drops answers no golden needs only when pruned", () => {
-  const needed = neededAnswers({ manifest: gatesYaml("bandit"), runtimes: RUNTIMES, parsers: PARSERS, rules: ["B301"], files: [{ task: "demo", path: "a.py", sha256: "1".repeat(64) }], context: ALONE });
-  const answer = Buffer.from(answerText({ excluded: null, findings: [] }), "utf8");
-  const stale = answerPath(needed.configId, "B301", { task: "demo", path: "gone.py" }, "3".repeat(64));
-  const otherConfig = answerPath("e".repeat(64), "B301", { task: "demo", path: "a.py" }, "1".repeat(64));
-  const previous = new Map([[stale, answer], [otherConfig, answer]]);
-  const written = new Map([[needed.answers[0]!.path, answer]]);
-  const kept = nextTree(previous, needed, written, false);
-  assert.deepEqual([...kept.keys()].sort(), [needed.answers[0]!.path, stale, `config/${needed.configId}.json`].sort());
-  assert.equal(digest(kept.get(`config/${needed.configId}.json`)!.toString("utf8")), needed.configId);
-  assert.deepEqual([...nextTree(previous, needed, written, true).keys()].sort(), [needed.answers[0]!.path, `config/${needed.configId}.json`].sort());
-});
-
-test("the corpus answers archive is canonical, verified before it is extracted, and refuses paths a case-insensitive file system merges", () => {
-  const entries = [...TREE, ["config/x.json", Buffer.from("{}\n", "utf8")] as const];
-  const packed = packCorpusTree(new Map(entries));
+test("the archive is canonical, verified before it is extracted, and refuses paths a case-insensitive file system merges", () => {
+  const entries = [...TREE];
+  const packed = packTree(new Map(entries));
   // The same files make the same archive, whatever order they were added in.
-  assert.equal(packCorpusTree(new Map([...entries].reverse())).sha256, packed.sha256);
-  assert.deepEqual(unpackCorpusArchive(packed.compressed, packed, "demo").map((entry) => entry.path), [...entries.map(([path]) => path)].sort());
-  assert.throws(() => unpackCorpusArchive(packed.compressed, { ...packed, files: packed.files + 1 }, "demo"), /the lock says/u);
-  assert.throws(() => unpackCorpusArchive(packed.compressed, { ...packed, sha256: "0".repeat(64) }, "demo"), /not the locked/u);
+  assert.equal(packTree(new Map([...entries].reverse())).sha256, packed.sha256);
+  assert.deepEqual(unpackArchive(packed.compressed, packed, "demo").map((entry) => entry.path), [...entries.map(([path]) => path)].sort());
+  assert.throws(() => unpackArchive(packed.compressed, { ...packed, files: packed.files + 1 }, "demo"), /the lock says/u);
+  assert.throws(() => unpackArchive(packed.compressed, { ...packed, sha256: "0".repeat(64) }, "demo"), /not the locked/u);
 
   assert.throws(() => checkTreePaths(["answers/c/B301/demo/App.py@k.json", "answers/c/B301/demo/app.py@k.json"]), /differ only by letter case/u);
-  assert.throws(() => checkTreePaths(["corpus.json"]), /holds only config\/, answers\/ and verdicts\//u);
+  assert.throws(() => checkTreePaths(["recording.json"]), /holds only answers\/, config\/, rules\/, texts\/, tool\/, verdicts\/, not recording\.json/u);
 
   const cacheRoot = mkdtempSync(join(tmpdir(), "port-readiness-archive-"));
   try {
-    cacheCorpusArchive(cacheRoot, packed);
-    const archive = corpusArchiveCachePath(cacheRoot, packed.sha256);
-    const tree = corpusTreeDirectory(cacheRoot, packed.sha256);
+    cacheArchive(cacheRoot, packed);
+    const archive = archiveCachePath(cacheRoot, packed.sha256);
+    const tree = treeDirectory(cacheRoot, packed.sha256);
     assert.ok(existsSync(archive));
     // The extraction's marker names the tar, and is no file of the tree.
-    assert.equal(readFileSync(join(tree, CORPUS_TREE_MARKER), "utf8"), `${packed.sha256}\n`);
+    assert.equal(readFileSync(join(tree, RECORDING_TREE_MARKER), "utf8"), `${packed.sha256}\n`);
     assert.deepEqual([...treeFiles(tree).keys()].sort(), [...entries.map(([path]) => path)].sort());
+    const config = `config/${CONFIG}.json`;
     // A tree that lost a file is extracted again from the cached archive.
     rmSync(join(tree, "config"), { recursive: true });
-    assert.ok(existsSync(join(cachedCorpusTree(cacheRoot, packed, "demo")!, "config/x.json")));
+    assert.ok(existsSync(join(cachedTree(cacheRoot, packed, "demo")!, config)));
     // A tree of the right counts whose marker names no archive is not reused: one file's bytes were swapped in place.
-    writeFileSync(join(tree, "config/x.json"), "[]\n");
-    writeFileSync(join(tree, CORPUS_TREE_MARKER), `${"0".repeat(64)}\n`);
-    assert.equal(readFileSync(join(cachedCorpusTree(cacheRoot, packed, "demo")!, "config/x.json"), "utf8"), "{}\n");
+    const original = readFileSync(join(tree, config));
+    writeFileSync(join(tree, config), Buffer.from(original.toString("utf8").replace("true", "nope"), "utf8"));
+    writeFileSync(join(tree, RECORDING_TREE_MARKER), `${"0".repeat(64)}\n`);
+    assert.deepEqual(readFileSync(join(cachedTree(cacheRoot, packed, "demo")!, config)), original);
     // Nor is one whose marker names the archive but whose files were edited, the counts and bytes kept: a finding's
     // coordinate changed, or an answer renamed. Each is extracted again from the verified archive.
     const answer = [...treeFiles(tree).keys()].find((path) => path.startsWith("answers/"))!;
-    const original = readFileSync(join(tree, answer));
-    const moved = Buffer.from(original.toString("utf8").replace("3", "4"), "utf8");
-    assert.equal(moved.length, original.length);
+    const kept = readFileSync(join(tree, answer));
+    const moved = Buffer.from(kept.toString("utf8").replace("3", "4"), "utf8");
+    assert.equal(moved.length, kept.length);
     writeFileSync(join(tree, answer), moved);
-    assert.deepEqual(readFileSync(join(cachedCorpusTree(cacheRoot, packed, "demo")!, answer)), original);
+    assert.deepEqual(readFileSync(join(cachedTree(cacheRoot, packed, "demo")!, answer)), kept);
     renameSync(join(tree, answer), join(tree, `${answer}.renamed`));
-    assert.deepEqual(treeFiles(cachedCorpusTree(cacheRoot, packed, "demo")!).get(answer), original);
+    assert.deepEqual(treeFiles(cachedTree(cacheRoot, packed, "demo")!).get(answer), kept);
     // Another process's tree of the same archive, there first, is accepted as this one.
-    extractCorpusTree(tree, unpackCorpusArchive(packed.compressed, packed, "demo"), packed);
-    assert.equal(cachedCorpusTree(cacheRoot, packed, "demo"), tree);
+    extractRecordingTree(tree, unpackArchive(packed.compressed, packed, "demo"), packed);
+    assert.equal(cachedTree(cacheRoot, packed, "demo"), tree);
     assert.deepEqual(readdirSync(dirname(tree)), [packed.sha256]);
     // A corrupt cached archive is no copy of it: it is deleted, so the caller fetches it again.
     rmSync(tree, { recursive: true });
     writeFileSync(archive, Buffer.from("not zstd"));
-    assert.equal(cachedCorpusTree(cacheRoot, packed, "demo"), undefined);
+    assert.equal(cachedTree(cacheRoot, packed, "demo"), undefined);
     assert.equal(existsSync(archive), false);
     // With neither the tree nor the archive, there is nothing to read.
-    assert.equal(cachedCorpusTree(cacheRoot, { ...packed, sha256: "0".repeat(64) }, "demo"), undefined);
+    assert.equal(cachedTree(cacheRoot, { ...packed, sha256: "0".repeat(64) }, "demo"), undefined);
   } finally {
     rmSync(cacheRoot, { recursive: true, force: true });
   }

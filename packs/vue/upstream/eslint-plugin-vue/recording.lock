@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v3",
+  "format": "rerail.port-readiness-recording-lock/v4",
   "tool": "eslint-plugin-vue",
   "pins": {
     "repository": "https://github.com/vuejs/eslint-plugin-vue",
@@ -19,16 +19,11 @@
     }
   },
   "files": {
-    "recording.json": {
-      "sha256": "6b647d1783acb886ee2e976f7b16f1a0c5bcc301366f719368a2ca3108730b38",
-      "size": 2427092,
-      "format": "rerail.port-readiness-recording/v2"
-    },
-    "corpus.tar.zst": {
-      "sha256": "f76e8874e828e7b439b7cdb16c7ae44ba18fce82c278127c8d6e8f5109894e6a",
-      "files": 4351,
-      "bytes": 102835,
-      "format": "rerail.port-readiness-corpus-answers/v1"
+    "recording.tar.zst": {
+      "sha256": "2c31ebd29ad849fcd5baa0bb6ef6063b40b094d25dc1f0be9a68b1c43eda79d9",
+      "files": 15915,
+      "bytes": 2692576,
+      "format": "rerail.port-readiness-recording-archive/v1"
     }
   }
 }

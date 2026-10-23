@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v3",
+  "format": "rerail.port-readiness-recording-lock/v4",
   "tool": "phpcs",
   "pins": {
     "repository": "https://github.com/PHPCSStandards/PHP_CodeSniffer",
@@ -19,16 +19,11 @@
     }
   },
   "files": {
-    "recording.json": {
-      "sha256": "5ade29e5adc92de29b071db3db400044aaf1a44b194837c6ada36d0fee7a32bf",
-      "size": 276516,
-      "format": "rerail.port-readiness-recording/v2"
-    },
-    "corpus.tar.zst": {
-      "sha256": "e0ed517a1407919456e3b232953aac3d63c77616b322ba3fe88cf682ec1a26c0",
-      "files": 1,
-      "bytes": 1185,
-      "format": "rerail.port-readiness-corpus-answers/v1"
+    "recording.tar.zst": {
+      "sha256": "2cd572b1e41299e91d53a665f18a4c87954ca9a94283ae77339ae0b2546295f8",
+      "files": 108,
+      "bytes": 251632,
+      "format": "rerail.port-readiness-recording-archive/v1"
     }
   }
 }

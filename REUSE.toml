@@ -1108,7 +1108,7 @@ SPDX-License-Identifier = "Apache-2.0"
 # The port readiness gates' recordings hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's tests
 # beside Rerail's recorded answers. They are no longer in this repository — each tool-pack commits a recording.lock
 # naming them by sha256, and the bytes are a cache entry (conformance/port-readiness/recording/store.ts) — so REUSE cannot
-# annotate them, and there is nothing here to annotate. The attribution travels with the recording: each recording.json carries upstream's
+# annotate them, and there is nothing here to annotate. The attribution travels with the recording: each recording archive carries upstream's
 # LICENSE text (licenseText, its copyright and permission notice; recordings made before it was added carry only its
 # digest, licenseSha256, until they are recorded again). In this repository each upstream's
 # packs/<pack>/licenses/<project>/UPSTREAM.md lists the recording as excerpts under upstream's licence and Apache-2.0,

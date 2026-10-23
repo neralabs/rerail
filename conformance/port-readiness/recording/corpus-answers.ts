@@ -1,23 +1,16 @@
 /**
- * Upstream's answers on the golden corpus files: a tree of one file per answer, named by everything the answer
- * depends on, packed as one canonical archive per tool-pack (`corpus.tar.zst`, `rerail.port-readiness-corpus-answers/v1`)
- * that `recording.lock` names by its tar's sha256, file count and byte total (store.ts).
+ * Upstream's answers on the golden corpus files, and independent parsers' verdicts on every source the gates read, in
+ * a tool-pack's recording archive (archive.ts says how the archive is named, packed and cached):
  *
- *   config/<config-id>.json                                   the parts the config id hashes (canonical JSON)
  *   answers/<config-id>/<rule>/<task>/<path>@<key>.json       upstream's answer for one rule on one corpus file
  *   verdicts/<parsers-id>/<sha256><type>[.script].json        independent parsers' verdicts on that content
  *
  * It replaced corpus.json, one file of every answer pinned to the corpus pins (corpus-tasks.json's sha256 and every
  * pinned corpus's paths): any change to them made every answer stale and forced a full re-record, though each answer
- * was already keyed by the file's content. An answer is now valid exactly while its name is, so the recorder asks
- * upstream only about the names a tree lacks (`port-readiness:record -- --corpus`), and the gates check by existence:
+ * was already keyed by the file's content. An answer is valid exactly while its name is, so the recorder asks upstream
+ * only about the names a tree lacks (`port-readiness:record -- --corpus`), and the gates check by existence:
  *
- * - `<config-id>` is the sha256 of `config/<config-id>.json`: upstream's pins (repository, commit, version, runtime),
- *   the recorder's runtime pin digests as recording.lock records them, the gates.yaml sections that say how upstream
- *   lints a file, and the digest of the recorder's adapter code for the tool-pack's adapter (ADAPTER_SOURCES), which
- *   decides what the recorder asks upstream and how it reads the answer. Moving any of them is a new config id, and
- *   every answer is asked again.
- * - `<rule>` is the rule as recording.json names it with `/` written `~`; `<task>` the golden's task or rerail corpus
+ * - `<rule>` is the rule as the recording names it with `/` written `~`; `<task>` the golden's task or rerail corpus
  *   with `:` written `~`; `<path>` the corpus-relative path as it is.
  * - `<key>` is the file's sha256, plus, where upstream's answer depends on other files, `+` and 12 hex digits of what
  *   it depends on: for Ruff the context files (CONTEXT_FILES) the corpus holds, as the sha256 of their sorted
@@ -26,130 +19,30 @@
  *   for Clippy, which builds whole crates, the corpus's commit. Where the answer for one rule depends on the other
  *   rules asked with it (ASKS_EVERY_RULE: stillat/blade-parser and PHPStan), the digest is also of the sorted rules the
  *   tool-pack records, so a rule added or removed asks every answer again. Anything else: none.
- * - `<parsers-id>` is the sha256 of the recorded parser list (recording.json `parsers`, canonical JSON) and of the
- *   adapter code's digest, which runs the parsers. A verdict is read at a corpus path as a module, so its name is the
- *   content's sha256 and file type (engine.ts's fileTypeOf).
+ * - `<parsers-id>` is the sha256 of the recorded parser list (the tool's `parsers`, canonical JSON) and of the adapter
+ *   code's digest, which runs the parsers. A verdict is named by the source's sha256, its file type (engine.ts's
+ *   fileTypeOf) and whether it is read as an ECMAScript script: the rest of the path never decides a verdict, so a case
+ *   source and a corpus file with the same text share one.
  *
  * An answer file is `{"findings": [[startLine, startCol, endLine, endCol], ...]}` (spans sorted; `[]` is upstream
  * asked and silent) or `{"excluded": "<reason>"}` (upstream does not lint it); a verdict file is the verdict list, `[]`
- * when every parser was silent. Every file is canonicalText, so an answer has one form and the archive is a function
- * of the answers alone. The corpus pins name none of it: a golden whose file changed has a new key, and an answer no
- * golden names any more stays until `--prune`.
+ * when every parser was silent. The corpus pins name none of it: a golden whose file changed has a new key, and an
+ * answer no golden names any more stays until `--prune`.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import { z } from "zod";
 
-import { corpusTreeReady, CORPUS_TREE_MARKER, extractCorpusTree, ROOT } from "../../../scripts/s3/pack-fixtures.mjs";
-import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, readArchive, sha256, type ArchiveEntry } from "../../../scripts/s3/test-data-archive.mjs";
-import { trackedDigest } from "../cache.js";
+import { sha256 } from "../../../scripts/s3/test-data-archive.mjs";
 import { rerailCorpusId, type PinnedTask, type RerailCorpus } from "../corpus.js";
 import { fileTypeOf } from "../engine.js";
 import type { GatesManifest } from "../manifest.js";
 import type { ParserVerdict, Span } from "../types.js";
+import { answerConfig, configId, parsersId, type RecordingTree, type RuntimeDigests } from "./archive.js";
 import { canonicalText, cleanVerdicts, compareSpans, isCleanVerdict, parserVerdictSchema, recordedSpanSchema, spanTuple, type RecordedParser } from "./schema.js";
 
-/** The lock's name for the archive: a key of recording.lock `files`. */
-export const CORPUS_ARCHIVE = "corpus.tar.zst";
-export const CORPUS_ANSWERS_FORMAT = "rerail.port-readiness-corpus-answers/v1";
-
-/** The config object's own format: a change to what the config id hashes is a new format, and a new id. */
-const CONFIG_FORMAT = 2;
-const TOP_LEVEL: Record<string, true> = { config: true, answers: true, verdicts: true };
 /** How many hex digits of a context digest or corpus commit a key carries. */
 const CONTEXT_DIGITS = 12;
 
-/** What recording.lock pins the archive by: its tar's sha256, how many files it holds and their total bytes. */
-export interface CorpusArchivePin {
-  sha256: string;
-  files: number;
-  bytes: number;
-}
-
-/** A tool-pack's runtime pin digests, as recording.lock records them. */
-export type RuntimeDigests = Record<string, Record<string, string>>;
-
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
-const RECORDERS = "conformance/recorders/port-readiness";
-const SPAN_UNITS = "conformance/port-readiness/span-units";
-/** The recorder's language toolkits, each with the worker it runs and the toolkits it builds on. */
-const PYTHON = [`${RECORDERS}/languages/python.ts`, `${RECORDERS}/languages/python_toolkit.py`];
-const PHP = [`${RECORDERS}/languages/php.ts`, `${RECORDERS}/languages/php_toolkit.php`];
-const BLADE = [`${RECORDERS}/languages/blade.ts`, `${RECORDERS}/languages/blade_toolkit.php`, ...PHP];
-const ECMASCRIPT = [`${RECORDERS}/languages/ecmascript.ts`, `${RECORDERS}/languages/vue.ts`];
-const RUST = [`${RECORDERS}/languages/rust.ts`];
-/** An adapter's sources: the runtimes every adapter installs upstream with, its own files under adapters/, and `shared`. */
-const sources = (own: readonly string[], ...shared: string[]): readonly string[] => [`${RECORDERS}/runtimes.ts`, ...own.map((file) => `${RECORDERS}/adapters/${file}`), ...shared];
-
-/**
- * The recorder's code an adapter's answers depend on, as `git ls-files` pathspecs: the adapter and the drivers it runs
- * upstream through, the language toolkits it reads parsers' verdicts and literals with, the runtimes it installs
- * upstream with (runtimes.ts), and the span units that turn upstream's positions into spans. The gate code they import
- * besides (process.ts, types.ts, recorded-adapter.ts's licence reading) shapes no answer. Its digest is part of the
- * config id and the parsers id, so a fix to how an answer is asked for or read is asked again rather than mixed with
- * answers the old code gave; recording-store.test.ts checks each adapter's imports and drivers are covered.
- */
-export const ADAPTER_SOURCES: Record<GatesManifest["adapter"], readonly string[]> = {
-  bandit: sources(["bandit.ts", "bandit_driver.py"], ...PYTHON, `${SPAN_UNITS}/bandit.ts`),
-  ruff: sources(["ruff.ts", "ruff-tests.ts"], ...PYTHON, ...RUST, `${SPAN_UNITS}/ruff.ts`),
-  eslint: sources(["eslint"], ...ECMASCRIPT, `${SPAN_UNITS}/eslint.ts`),
-  phpcs: sources(["phpcs.ts", "phpcs_driver.php"], ...PHP, `${SPAN_UNITS}/phpcs.ts`),
-  tlint: sources(["tlint.ts", "tlint_driver.php"], ...BLADE, `${SPAN_UNITS}/tlint.ts`),
-  "blade-parser": sources(["blade-parser.ts", "blade_parser_driver.php", "blade_parser_tests.php", "blade_capture.php"], ...BLADE, `${SPAN_UNITS}/blade-parser.ts`),
-  phpstan: sources(["phpstan.ts", "phpstan_driver.php"], ...PHP, `${SPAN_UNITS}/phpstan.ts`),
-  psalm: sources(["psalm.ts", "psalm_driver.php"], ...PHP, `${SPAN_UNITS}/psalm.ts`, `${SPAN_UNITS}/bandit.ts`),
-  bladestan: sources(["bladestan.ts", "bladestan_driver.php"], ...BLADE, `${SPAN_UNITS}/bladestan.ts`),
-  sqlfluff: sources(["sqlfluff.ts", "sqlfluff_driver.py"], ...PYTHON, `${SPAN_UNITS}/sqlfluff.ts`),
-  // Clippy reads its rustc target from the Ruff adapter.
-  clippy: sources(["clippy.ts", "ruff.ts", "ruff-tests.ts"], ...PYTHON, ...RUST, `${SPAN_UNITS}/clippy.ts`, `${SPAN_UNITS}/ruff.ts`),
-};
-
-const sourcesDigests = new Map<GatesManifest["adapter"], string>();
-
-/** trackedDigest of an adapter's ADAPTER_SOURCES in this package, once per process: the same in the gates and the recorder. */
-export function adapterSourcesDigest(adapter: GatesManifest["adapter"]): string {
-  let digest = sourcesDigests.get(adapter);
-  if (digest === undefined) {
-    digest = trackedDigest(ROOT, ADAPTER_SOURCES[adapter]);
-    sourcesDigests.set(adapter, digest);
-  }
-  return digest;
-}
-
-/**
- * The parts a config id hashes, `config/<id>.json`'s content. The ESLint block contributes what configures the lint of
- * a corpus file (the plugin, the ESLint and plugin release, the shareable environment, the `.vue` parsers); the rest
- * of it says where upstream's tests and implementation are, which no corpus answer reads.
- */
-export function answerConfig(manifest: GatesManifest, runtimes: RuntimeDigests): Record<string, unknown> {
-  const { upstream, eslint } = manifest;
-  return {
-    format: CONFIG_FORMAT,
-    adapter: manifest.adapter,
-    sources: adapterSourcesDigest(manifest.adapter),
-    repository: upstream.repository,
-    commit: upstream.commit,
-    version: upstream.version,
-    runtime: upstream.runtime,
-    runtimes,
-    gates: {
-      upstream,
-      eslint: eslint === undefined ? undefined : { plugin: eslint.plugin, eslint_package: eslint.eslint_package, release: eslint.release, environment: eslint.environment, vue: eslint.vue },
-    },
-  };
-}
-
-/** The config id: the sha256 of the config's canonical text, which is `config/<id>.json`'s bytes. */
-export function configId(config: Record<string, unknown>): string {
-  return sha256(canonicalText(config));
-}
-
-/** The parsers id: the sha256 of the canonical text of the recorded parser list and the adapter's sources digest. */
-export function parsersId(adapter: GatesManifest["adapter"], parsers: readonly RecordedParser[]): string {
-  return sha256(canonicalText({ parsers, sources: adapterSourcesDigest(adapter) }));
-}
 
 /** A path's directories, innermost first: `a/b/c.py` gives `a/b` and `a`. */
 function directoriesOf(path: string): string[] {
@@ -261,7 +154,7 @@ export function fetchedContext(files: readonly CorpusPlace[], commitOf: KeyConte
     sha256Of: (task, path) => byPlace.get(`${task}\0${path}`)?.sha256,
     commitOf,
     batchOf: (task) => batches.get(task) ?? placesDigest([]),
-    rules: sha256([...new Set(rules)].sort(byText).map((rule) => `${rule}\n`).join("")),
+    rules: rulesDigest(rules),
   };
 }
 
@@ -291,8 +184,9 @@ export function answerKey(adapter: GatesManifest["adapter"], file: CorpusPlace, 
   return `${file.sha256}+${placesDigest(present).slice(0, CONTEXT_DIGITS)}`;
 }
 
-export function configPath(id: string): string {
-  return `config/${id}.json`;
+/** The sha256 of the sorted rules, one per line: what an answer asked with every recorded rule is keyed by. */
+export function rulesDigest(rules: readonly string[]): string {
+  return sha256([...new Set(rules)].sort(byText).map((rule) => `${rule}\n`).join(""));
 }
 
 export function answerPath(config: string, rule: string, file: Pick<CorpusPlace, "task" | "path">, key: string): string {
@@ -316,7 +210,8 @@ export function verdictText(verdicts: readonly ParserVerdict[]): string {
   return canonicalText(verdicts.every(isCleanVerdict) ? [] : verdicts);
 }
 
-function parseJson<T>(schema: z.ZodType<T>, text: string, label: string): T {
+/** A tree file's value: valid under `schema`, and written in canonical form (one way to record a given answer). */
+export function parseJson<T>(schema: z.ZodType<T>, text: string, label: string): T {
   const parsed = schema.safeParse(JSON.parse(text));
   if (!parsed.success) throw new Error(`${label}: ${parsed.error.issues.slice(0, 3).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
   if (canonicalText(parsed.data) !== text) throw new Error(`${label} is not in canonical form`);
@@ -334,140 +229,6 @@ export function parseVerdicts(text: string, label: string, parsers: readonly Rec
   const verdicts = parseJson(z.array(parserVerdictSchema), text, label);
   if (verdicts.length > 0 && verdicts.every(isCleanVerdict)) throw new Error(`${label}: every parser is silent, which is written []`);
   return verdicts.length === 0 ? cleanVerdicts(parsers) : verdicts;
-}
-
-/** Read access to a tree, by its paths: an extracted directory, or files in memory. */
-export interface CorpusTree {
-  /** The file's text, or undefined when the tree has no file there. */
-  text(path: string): string | undefined;
-}
-
-export function directoryTree(directory: string): CorpusTree {
-  return {
-    text(path) {
-      const file = join(directory, path);
-      return existsSync(file) ? readFileSync(file, "utf8") : undefined;
-    },
-  };
-}
-
-export function memoryTree(files: ReadonlyMap<string, Buffer>): CorpusTree {
-  return { text: (path) => files.get(path)?.toString("utf8") };
-}
-
-/** Every file of an extracted tree, `/`-separated paths relative to it, unsorted; the extraction's marker is none of them. */
-export function treeFiles(directory: string): Map<string, Buffer> {
-  const files = new Map<string, Buffer>();
-  const walk = (relative: string): void => {
-    for (const entry of readdirSync(join(directory, relative), { withFileTypes: true })) {
-      const path = relative === "" ? entry.name : `${relative}/${entry.name}`;
-      if (path === CORPUS_TREE_MARKER) continue;
-      if (entry.isDirectory()) walk(path);
-      else if (entry.isFile()) files.set(path, readFileSync(join(directory, path)));
-      else throw new Error(`${join(directory, path)} is neither a file nor a directory`);
-    }
-  };
-  if (existsSync(directory)) walk("");
-  return files;
-}
-
-/**
- * Throws unless every path is under config/, answers/ or verdicts/, and no two differ only by letter case: a tree is
- * extracted on macOS's case-insensitive file system too, where such two would be one file.
- */
-export function checkTreePaths(paths: Iterable<string>): void {
-  const folded = new Map<string, string>();
-  for (const path of paths) {
-    if (TOP_LEVEL[path.slice(0, path.indexOf("/"))] !== true) throw new Error(`a corpus answers archive holds only config/, answers/ and verdicts/, not ${path}`);
-    const key = path.toLowerCase();
-    const other = folded.get(key);
-    if (other !== undefined) throw new Error(`two corpus answers differ only by letter case, which a case-insensitive file system cannot hold: ${other} and ${path}`);
-    folded.set(key, path);
-  }
-}
-
-/** A tree packed: the archive's pin, its compressed bytes, and the entries it holds. */
-export interface PackedCorpus extends CorpusArchivePin {
-  compressed: Buffer;
-  entries: ArchiveEntry[];
-}
-
-/** The canonical archive of a tree (test-data-archive.mjs): the same files always make the same tar. */
-export function packCorpusTree(files: ReadonlyMap<string, Buffer>): PackedCorpus {
-  checkTreePaths(files.keys());
-  const entries = [...files].map(([path, bytes]) => ({ path, bytes }));
-  const archive = buildArchive(entries);
-  return { sha256: archive.sha256, files: archive.files, bytes: archive.bytes, compressed: compressArchive(archive.tar), entries };
-}
-
-/**
- * The entries of an archive's tar, once it is the one `pin` names: its sha256, its file count and bytes, the canonical
- * tar of its own entries, holding only a tree's paths. Anything else throws, and nothing is extracted.
- */
-function verifiedTreeEntries(tar: Buffer, pin: CorpusArchivePin, label: string): ArchiveEntry[] {
-  const digest = sha256(tar);
-  if (digest !== pin.sha256) throw new Error(`${label}: the archive's tar has sha256 ${digest}, not the locked ${pin.sha256}`);
-  const entries = readArchive(tar);
-  const bytes = entries.reduce((total, entry) => total + entry.bytes.length, 0);
-  if (entries.length !== pin.files || bytes !== pin.bytes) throw new Error(`${label}: the archive holds ${entries.length} file(s) of ${bytes} byte(s), but the lock says ${pin.files} of ${pin.bytes}`);
-  checkTreePaths(entries.map((entry) => entry.path));
-  if (buildArchive(entries).sha256 !== pin.sha256) throw new Error(`${label}: the archive is not the canonical archive of its own files`);
-  return entries;
-}
-
-/** The entries of a compressed archive, once it is the one `pin` names (verifiedTreeEntries); anything else throws. */
-export function unpackCorpusArchive(compressed: Buffer, pin: CorpusArchivePin, label: string): ArchiveEntry[] {
-  return verifiedTreeEntries(decompressArchive(compressed, archiveSizeBound(pin)), pin, label);
-}
-
-/** Where the cache keeps a tool-pack's compressed archive, by its tar's sha256. */
-export function corpusArchiveCachePath(cacheRoot: string, digest: string): string {
-  return join(cacheRoot, "recordings", `${digest}.tar.zst`);
-}
-
-/** Where the cache keeps the archive's extracted tree. */
-export function corpusTreeDirectory(cacheRoot: string, digest: string): string {
-  return join(cacheRoot, "recordings", "corpus", digest);
-}
-
-/**
- * Put a packed tree in the cache: the compressed archive under its sha256, and its extracted tree beside it, through
- * pack-fixtures.mjs's extractCorpusTree (the marker naming the tar, and another process's tree of it accepted).
- */
-export function cacheCorpusArchive(cacheRoot: string, packed: PackedCorpus): void {
-  const path = corpusArchiveCachePath(cacheRoot, packed.sha256);
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, packed.compressed);
-  renameSync(temporary, path);
-  const directory = corpusTreeDirectory(cacheRoot, packed.sha256);
-  if (!corpusTreeReady(directory, packed)) extractCorpusTree(directory, packed.entries, packed);
-}
-
-/**
- * The extracted tree of the archive `pin` names: the cached tree when its marker names that archive and the canonical
- * tar of its files is that archive's (pack-fixtures.mjs's corpusTreeReady), else the cached archive verified and
- * extracted. Undefined when the cache has neither, or its archive's tar is not the locked one (corrupt, cut short or
- * another archive), which is deleted: fetch it (`pack-fixtures.mjs recordings`). A cached archive whose tar is the
- * locked one but whose files the lock does not describe throws, since fetching the same bytes again changes nothing.
- */
-export function cachedCorpusTree(cacheRoot: string, pin: CorpusArchivePin, label: string): string | undefined {
-  const directory = corpusTreeDirectory(cacheRoot, pin.sha256);
-  if (corpusTreeReady(directory, pin)) return directory;
-  const archive = corpusArchiveCachePath(cacheRoot, pin.sha256);
-  if (!existsSync(archive)) return undefined;
-  let tar: Buffer | undefined;
-  try {
-    tar = decompressArchive(readFileSync(archive), archiveSizeBound(pin));
-  } catch {
-    tar = undefined;
-  }
-  if (tar === undefined || sha256(tar) !== pin.sha256) {
-    rmSync(archive, { force: true });
-    return undefined;
-  }
-  extractCorpusTree(directory, verifiedTreeEntries(tar, pin, label), pin);
-  return directory;
 }
 
 /** An answer or verdict a tool-pack needs, and the tree path it is filed under. */
@@ -518,20 +279,9 @@ export function neededAnswers(options: {
 }
 
 /** The needed files a tree lacks: an answer exists exactly when its file does. */
-export function missingAnswers(tree: CorpusTree, needed: NeededAnswers): { answers: NeededAnswer[]; verdicts: NeededVerdict[] } {
+export function missingAnswers(tree: RecordingTree, needed: NeededAnswers): { answers: NeededAnswer[]; verdicts: NeededVerdict[] } {
   return {
     answers: needed.answers.filter((answer) => tree.text(answer.path) === undefined),
     verdicts: needed.verdicts.filter((verdict) => tree.text(verdict.path) === undefined),
   };
-}
-
-/**
- * The tree a record leaves: the files of `previous` still filed under this config and parsers (a new config id or
- * parser list drops the others'), without those no golden needs when `prune`, then `written`, and the config file.
- */
-export function nextTree(previous: ReadonlyMap<string, Buffer>, needed: NeededAnswers, written: ReadonlyMap<string, Buffer>, prune: boolean): Map<string, Buffer> {
-  const wanted = new Set([...needed.answers, ...needed.verdicts].map((entry) => entry.path));
-  const current = (path: string) => path.startsWith(`answers/${needed.configId}/`) || path.startsWith(`verdicts/${needed.parsersId}/`);
-  const kept = [...previous].filter(([path]) => current(path) && (!prune || wanted.has(path)));
-  return new Map([...kept, ...written, [configPath(needed.configId), Buffer.from(canonicalText(needed.config), "utf8")]]);
 }

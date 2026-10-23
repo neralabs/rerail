@@ -36,7 +36,7 @@ function gapNote(results: CaseResult[]): string {
  * The path whose file type gives the language the engine reads a case in: its own, or, where upstream's parser read
  * another language than the path's (`parsedAs`), the path with that file type. The case is still evaluated at its path.
  */
-export function readPath(testCase: Pick<UpstreamCase, "path" | "parsedAs">): string {
+export function readPath(testCase: { path: string; parsedAs?: string | undefined }): string {
   return testCase.parsedAs === undefined ? testCase.path : testCase.path.replace(/\.[^./]*$/u, testCase.parsedAs);
 }
 

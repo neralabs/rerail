@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v3",
+  "format": "rerail.port-readiness-recording-lock/v4",
   "tool": "ruff",
   "pins": {
     "repository": "https://github.com/astral-sh/ruff",
@@ -18,16 +18,11 @@
     }
   },
   "files": {
-    "recording.json": {
-      "sha256": "d792bbf67fd40a933ce74ff2a894801bd383a0d33ec51d605bee5c58f60fd3e0",
-      "size": 1457552,
-      "format": "rerail.port-readiness-recording/v2"
-    },
-    "corpus.tar.zst": {
-      "sha256": "cfbd52b058d70d2e06b70ddbaa77c776d073ec0134150baf57e13646a9f694f6",
-      "files": 108371,
-      "bytes": 2408718,
-      "format": "rerail.port-readiness-corpus-answers/v1"
+    "recording.tar.zst": {
+      "sha256": "72695d169db7a128dff908384d4aa0d34e630293001642944785492c7158cdf8",
+      "files": 112003,
+      "bytes": 3797683,
+      "format": "rerail.port-readiness-recording-archive/v1"
     }
   }
 }

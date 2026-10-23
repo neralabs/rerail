@@ -12,7 +12,7 @@ import { test } from "vitest";
 
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { RUNTIMES_DIRECTORY, staleMessage, toolPackChecks } from "../../../conformance/port-readiness/recorded-adapter.js";
-import { gatesRecordingSchema, RECORDING_FORMAT } from "../../../conformance/port-readiness/recording/schema.js";
+import { gatesRecordingSchema } from "../../../conformance/port-readiness/recording/schema.js";
 import type { RecordingLock } from "../../../conformance/port-readiness/recording/store.js";
 
 const MANIFEST = `adapter: bandit
@@ -46,7 +46,6 @@ const PYTHON_PIN: Runtimes = { python: { "pyproject.toml": digest(PYTHON) } };
 
 function recording(runtimes: Runtimes) {
   return gatesRecordingSchema.parse({
-    format: RECORDING_FORMAT,
     tool: "bandit",
     adapter: "bandit",
     pins: PINS,
@@ -63,13 +62,12 @@ function recording(runtimes: Runtimes) {
     rules: {},
     absent: [],
     parsers: [{ parser: "cpython 3.14.8", grammar: true }],
-    parserVerdicts: [],
   });
 }
 
 /** A lock naming the recording; the gates read its pins and runtimes. */
 function lockOf(runtimes: Runtimes): RecordingLock {
-  return { tool: "bandit", pins: PINS, runtimes, files: { "recording.json": { sha256: "b".repeat(64) } } } as unknown as RecordingLock;
+  return { tool: "bandit", pins: PINS, runtimes, files: { "recording.tar.zst": { sha256: "b".repeat(64), files: 1, bytes: 1, format: "rerail.port-readiness-recording-archive/v1" } } } as unknown as RecordingLock;
 }
 
 /**
@@ -90,6 +88,7 @@ function runtimeChecks(runtimes: Runtimes, committed: Record<string, string> = {
       manifest: readGatesManifest(root, "demo", "bandit"),
       lock: lockOf(runtimes),
       recording: recording(runtimes),
+      config: "c".repeat(64),
       corpus: null,
       tools: [{ name: "bandit", version: "1.9.4" }],
       names: [],

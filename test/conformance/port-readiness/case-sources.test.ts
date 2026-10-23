@@ -12,7 +12,7 @@ import { test } from "vitest";
 
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { staleMessage, toolPackChecks } from "../../../conformance/port-readiness/recorded-adapter.js";
-import { gatesRecordingSchema, RECORDING_FORMAT } from "../../../conformance/port-readiness/recording/schema.js";
+import { gatesRecordingSchema } from "../../../conformance/port-readiness/recording/schema.js";
 
 const MANIFEST = `adapter: bandit
 rerail:
@@ -40,7 +40,6 @@ const digest = (text: string): string => createHash("sha256").update(text).diges
 function recording(caseDigest: string | undefined) {
   const testCase = { fixture: "examples/pickle.py", variant: "default", path: "pickle.py", skipped: null, expected: [[1, 0, 1, 17]], markup: null, file: "fixtures/pickle.py" };
   return gatesRecordingSchema.parse({
-    format: RECORDING_FORMAT,
     tool: "bandit",
     adapter: "bandit",
     pins: { repository: "https://github.com/PyCQA/bandit", commit: "a".repeat(40), version: "1.9.4", runtime: "bandit-1.9.4" },
@@ -64,7 +63,6 @@ function recording(caseDigest: string | undefined) {
     },
     absent: [],
     parsers: [{ parser: "cpython 3.14.8", grammar: true }],
-    parserVerdicts: [],
   });
 }
 
@@ -80,6 +78,7 @@ function caseSources(committed: string | null, caseDigest: string | undefined) {
       manifest: readGatesManifest(root, "demo", "bandit"),
       lock: null,
       recording: recording(caseDigest),
+      config: "c".repeat(64),
       corpus: null,
       tools: [{ name: "bandit", version: "1.9.4" }],
       names: ["B301"],

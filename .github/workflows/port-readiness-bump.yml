@@ -106,11 +106,11 @@ jobs:
         with:
           fetch: "true"
 
-  # One leg per listed tool-pack: the recordings its current lock names, which its bump leg compares the new recording
-  # with. As port-readiness.yml's test-data job warms them, under the key the bump leg restores; from S3 under the read
-  # role on a miss. A tool-pack without a recording.lock has none. Main's code only.
+  # One leg per listed tool-pack: the recording archive its current lock names, which its bump leg compares the new
+  # recording with. As port-readiness.yml's test-data job warms it, under the key the bump leg restores; from S3 under the
+  # read role on a miss. A tool-pack without a recording.lock has none. Main's code only.
   recordings:
-    name: Pull the recordings (${{ matrix.pack }} · ${{ matrix.tool }})
+    name: Pull the recording (${{ matrix.pack }} · ${{ matrix.tool }})
     needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -129,7 +129,7 @@ jobs:
           persist-credentials: false
 
       - id: recording-lock
-        name: Key the recordings the current lock names
+        name: Key the recording the current lock names
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
@@ -137,18 +137,15 @@ jobs:
           set -euo pipefail
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           [ -f "$lock" ] || exit 0
-          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
+          archive="$(jq -r '.files["recording.tar.zst"].sha256 // empty' "$lock")"
+          [ -n "$archive" ] || exit 0
           {
-            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
-            echo "paths<<EOF"
-            echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
-            echo "EOF"
+            echo "key=port-readiness-recording-$PACK-$TOOL-$archive"
+            echo "paths=.rerail/port-readiness/recordings/$archive.tar.zst"
           } >> "$GITHUB_OUTPUT"
 
       - id: recordings
-        name: Look up the recordings the current lock names
+        name: Look up the recording the current lock names
         if: steps.recording-lock.outputs.key != ''
         uses: actions/cache/restore@v6
         with:
@@ -157,7 +154,7 @@ jobs:
           lookup-only: true
 
       - id: recordings-credentials
-        name: Assume the test data read role for the recordings
+        name: Assume the test data read role for the recording
         if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
@@ -166,7 +163,7 @@ jobs:
           output-credentials: true
           output-env-credentials: false
 
-      - name: Set up Node.js v24 for the recordings
+      - name: Set up Node.js v24 for the recording
         if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
         uses: actions/setup-node@v7
         with:
@@ -174,7 +171,7 @@ jobs:
           package-manager-cache: false
 
       - id: recordings-download
-        name: Download the recordings from S3
+        name: Download the recording from S3
         if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
         env:
           PACK: ${{ matrix.pack }}
@@ -187,12 +184,10 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/s3/pack-fixtures.mjs recordings --pack "$PACK" --tool "$TOOL"
-          while read -r path; do
-            [ -f "$path" ] || exit 0
-          done <<< "$PATHS"
+          [ -f "$PATHS" ] || exit 0
           echo "complete=true" >> "$GITHUB_OUTPUT"
 
-      - name: Save the recordings
+      - name: Save the recording
         if: steps.recordings-download.outputs.complete == 'true'
         uses: actions/cache/save@v6
         with:
@@ -244,13 +239,13 @@ jobs:
         if: matrix.pack == 'php' || matrix.pack == 'blade'
         uses: ./.github/actions/php
 
-      # The recordings the current lock names, from the cache the recordings leg and the gate legs save into
+      # The recording archive the current lock names, from the cache the recordings leg and the gate legs save into
       # (port-readiness.yml, the same key), read before the bump moves the lock: the recorder compares the new recording
-      # with them, so the pull request's per-rule summary says what upstream now answers differently. The record below
-      # is --full, so they are only compared with, never built on: when the cache lacks them (this job holds no S3
-      # credentials), the summary says "not compared".
+      # with it, so the pull request's per-rule summary says what upstream now answers differently. The record below is
+      # --full, so it is only compared with, never built on: when the cache lacks it (this job holds no S3 credentials),
+      # the summary says "not compared".
       - id: base-lock
-        name: Read the recordings the current lock names
+        name: Read the recording the current lock names
         if: hashFiles(format('packs/{0}/upstream/{1}/recording.lock', matrix.pack, matrix.tool)) != ''
         env:
           PACK: ${{ matrix.pack }}
@@ -258,17 +253,14 @@ jobs:
         run: |
           set -euo pipefail
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
-          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-          corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
+          archive="$(jq -r '.files["recording.tar.zst"].sha256 // empty' "$lock")"
+          [ -n "$archive" ] || exit 0
           {
-            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
-            echo "paths<<EOF"
-            echo ".rerail/port-readiness/recordings/$recording.json"
-            echo ".rerail/port-readiness/recordings/$corpus.tar.zst"
-            echo "EOF"
+            echo "key=port-readiness-recording-$PACK-$TOOL-$archive"
+            echo "paths=.rerail/port-readiness/recordings/$archive.tar.zst"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Restore the recordings the current lock names
+      - name: Restore the recording the current lock names
         if: steps.base-lock.outputs.key != ''
         uses: actions/cache/restore@v6
         with:
@@ -308,8 +300,8 @@ jobs:
 
       # Only what git tracks: the pins, and the recording.lock and test-data.lock files. The test data itself is never
       # committed: each changed test-data.lock's archive goes beside the patch, as archives/<pack>/<tool>/<sha256>.tar.zst,
-      # and the two recordings each changed recording.lock names as recordings/<sha256>.json (recording.json) and
-      # recordings/<sha256>.tar.zst (the corpus answers archive, by its tar's sha256), for the publish workflow's upload.
+      # and the recording archive each changed recording.lock names as recordings/<sha256>.tar.zst (by its tar's sha256),
+      # for the publish workflow's upload.
       - name: Keep the bump as a patch, with its archives and recordings
         run: |
           set -euo pipefail
@@ -328,10 +320,8 @@ jobs:
             mkdir -p "$RUNNER_TEMP/bump/recordings"
           fi
           for lock in "${recording_locks[@]}"; do
-            recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-            corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
-            cp ".rerail/port-readiness/recordings/$recording.json" "$RUNNER_TEMP/bump/recordings/$recording.json"
-            cp ".rerail/port-readiness/recordings/$corpus.tar.zst" "$RUNNER_TEMP/bump/recordings/$corpus.tar.zst"
+            archive="$(jq -r '.files["recording.tar.zst"].sha256' "$lock")"
+            cp ".rerail/port-readiness/recordings/$archive.tar.zst" "$RUNNER_TEMP/bump/recordings/$archive.tar.zst"
           done
 
       - name: Upload the bump

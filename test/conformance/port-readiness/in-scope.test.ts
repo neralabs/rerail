@@ -11,7 +11,7 @@ import { test } from "vitest";
 
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { inScopeSamples, toolPackChecks } from "../../../conformance/port-readiness/recorded-adapter.js";
-import { gatesRecordingSchema, RECORDING_FORMAT } from "../../../conformance/port-readiness/recording/schema.js";
+import { gatesRecordingSchema } from "../../../conformance/port-readiness/recording/schema.js";
 
 const SAMPLES = ["src/example.js", "src/example.mjs", "src/example.cjs", "src/example.ts", "src/example.mts", "src/example.cts", "src/example.tsx"];
 
@@ -37,7 +37,6 @@ known_gaps: []
 `;
 
 const recording = gatesRecordingSchema.parse({
-  format: RECORDING_FORMAT,
   tool: "bandit",
   adapter: "bandit",
   pins: { repository: "https://github.com/demo/demo", commit: "a".repeat(40), version: "1.0.0", runtime: "demo-1.0.0" },
@@ -54,7 +53,6 @@ const recording = gatesRecordingSchema.parse({
   rules: {},
   absent: [],
   parsers: [{ parser: "typescript 6.0.3", grammar: true }],
-  parserVerdicts: [],
 });
 
 /** The `in-scope-narrowing` check for a gates.yaml with this `rerail.in_scope`, or undefined when there is none. */
@@ -64,7 +62,7 @@ function narrowing(inScope: string[] | undefined) {
     mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
     writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), manifest(inScope));
     const parsed = readGatesManifest(root, "demo", "bandit");
-    const checks = toolPackChecks({ root, manifest: parsed, lock: null, recording, corpus: null, tools: [{ name: "bandit", version: "1.0.0" }], names: [] });
+    const checks = toolPackChecks({ root, manifest: parsed, lock: null, recording, config: "c".repeat(64), corpus: null, tools: [{ name: "bandit", version: "1.0.0" }], names: [] });
     return { inScope: parsed.rerail.in_scope, check: checks.find((check) => check.id === "in-scope-narrowing") };
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -767,7 +767,7 @@ jobs:
             if [ "${#recording_locks[@]}" -gt 0 ]; then
               {
                 echo
-                echo "Each recording below was recorded by the bump run, then uploaded to S3 and read back, as \`s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json\` (recording.json) or \`.../corpus/<sha256>.tar.zst\` (the corpus answers archive):"
+                echo "Each recording below was recorded by the bump run, then uploaded to S3 and read back, as \`s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.tar.zst\` (the recording archive, by its tar's sha256):"
                 echo
               } >> "$section/test-data.md"
             fi
@@ -924,8 +924,8 @@ jobs:
     outputs:
       # A JSON array of `<lock path> <sha256>`, one per test-data.lock the commits change, each uploaded and read back.
       locks: ${{ steps.uploaded.outputs.locks }}
-      # A JSON array of `<lock path> <sha256>`, one per recording each recording.lock the commits change names, each
-      # uploaded and read back.
+      # A JSON array of `<lock path> <sha256>`, one per recording archive each recording.lock the commits change names,
+      # each uploaded and read back.
       recordings: ${{ steps.uploaded.outputs.recordings }}
     steps:
       # The commit the run job checked, not whatever main is by now.
@@ -950,10 +950,10 @@ jobs:
           path: ${{ runner.temp }}/composed
 
       # The commits the compose job made, which must end in the tree it named; of what they change, only the
-      # test-data.lock and recording.lock files reach the checkout, and of the composed legs' archives and recordings
-      # only those they name, into .rerail/port-readiness/recordings/, where `upload` reads them: recording.json checked
-      # here against its sha256, and the corpus answers archive (named by its tar's sha256, not its compressed bytes') by
-      # `upload`, which verifies every local copy against its lock before it puts anything.
+      # test-data.lock and recording.lock files reach the checkout, and of the composed legs' archives and recording
+      # archives only those they name, into .rerail/port-readiness/recordings/, where `upload` reads them: each recording
+      # archive is named by its tar's sha256, not its compressed bytes', so `upload` verifies it against its lock before
+      # it puts anything.
       - id: locks
         name: Take the locks, their archives and their recordings from the bumps
         env:
@@ -1007,33 +1007,21 @@ jobs:
             echo "$lock $sha" >> "$RUNNER_TEMP/locks.txt"
             echo "$pack $tool" >> "$RUNNER_TEMP/tool-packs.txt"
           done
-          # A recording no leg holds may already be in S3 (`upload` checks); one a leg holds must be what the lock names.
+          # A recording archive no leg holds may already be in S3 (`upload` checks); `upload` verifies one a leg holds.
           mapfile -t recording_locks < <(git diff --name-only --no-renames HEAD "$TREE" | grep -E '^packs/[a-z0-9-]+/upstream/[a-z0-9._-]+/recording\.lock$' || true)
           for lock in "${recording_locks[@]}"; do
             IFS=/ read -r _ pack _ tool _ <<< "$lock"
             git show "$TREE:$lock" > "$lock"
-            recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
-            corpus="$(jq -r '.files["corpus.tar.zst"].sha256' "$lock")"
-            for sha in "$recording" "$corpus"; do
-              if ! [[ "$sha" =~ ^[0-9a-f]{64}$ ]]; then
-                echo "::error::$lock names '$sha', which is not a sha256"
-                exit 1
-              fi
-            done
-            file="$(from_legs "recordings/$recording.json")"
-            if [ -n "$file" ]; then
-              if [ "$(sha256sum < "$file" | cut -d ' ' -f 1)" != "$recording" ]; then
-                echo "::error::a composed leg's recordings/$recording.json is not the recording $lock names"
-                exit 1
-              fi
-              install -D -m 0644 "$file" ".rerail/port-readiness/recordings/$recording.json"
+            sha="$(jq -r '.files["recording.tar.zst"].sha256' "$lock")"
+            if ! [[ "$sha" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::$lock names '$sha', which is not a sha256"
+              exit 1
             fi
-            archive="$(from_legs "recordings/$corpus.tar.zst")"
+            archive="$(from_legs "recordings/$sha.tar.zst")"
             if [ -n "$archive" ]; then
-              install -D -m 0644 "$archive" ".rerail/port-readiness/recordings/$corpus.tar.zst"
+              install -D -m 0644 "$archive" ".rerail/port-readiness/recordings/$sha.tar.zst"
             fi
-            echo "$lock $recording" >> "$RUNNER_TEMP/recordings.txt"
-            echo "$lock $corpus" >> "$RUNNER_TEMP/recordings.txt"
+            echo "$lock $sha" >> "$RUNNER_TEMP/recordings.txt"
             echo "$pack $tool" >> "$RUNNER_TEMP/tool-packs.txt"
           done
           sort -u -o "$RUNNER_TEMP/tool-packs.txt" "$RUNNER_TEMP/tool-packs.txt"
@@ -1046,8 +1034,8 @@ jobs:
           role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-write
           aws-region: us-east-2
 
-      # `upload` puts each changed tool-pack's archive and the recordings its recording.lock names, and reads them back.
-      # The outputs list `<lock path> <sha256>` for every archive and recording uploaded and read back; empty when the
+      # `upload` puts each changed tool-pack's archive and the recording archive its recording.lock names, and reads them
+      # back. The outputs list `<lock path> <sha256>` for every archive uploaded and read back; empty when the
       # bumps changed no lock.
       - id: uploaded
         name: Upload the archives and recordings

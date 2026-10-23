@@ -1,5 +1,5 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v3",
+  "format": "rerail.port-readiness-recording-lock/v4",
   "tool": "tlint",
   "pins": {
     "repository": "https://github.com/tighten/tlint",
@@ -23,16 +23,11 @@
     }
   },
   "files": {
-    "recording.json": {
-      "sha256": "8b8b9b452d9ca7fa4260a09280bd7715d27208c05313c15981fc0edd8e14b132",
-      "size": 141197,
-      "format": "rerail.port-readiness-recording/v2"
-    },
-    "corpus.tar.zst": {
-      "sha256": "1c8e940900f5d5b248a2fc8bff41f9337c6bebd016c76dbde5287ca58e674e88",
-      "files": 1,
-      "bytes": 1348,
-      "format": "rerail.port-readiness-corpus-answers/v1"
+    "recording.tar.zst": {
+      "sha256": "ca4be7f32df146fbc0ea9e1767441914b4c9a85598a4d5bbb4d6483766e81dc2",
+      "files": 161,
+      "bytes": 125404,
+      "format": "rerail.port-readiness-recording-archive/v1"
     }
   }
 }
