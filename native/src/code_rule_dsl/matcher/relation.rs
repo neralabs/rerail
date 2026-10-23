@@ -828,6 +828,19 @@ impl WalkFilter {
     }
 }
 
+/// The relational compiler uses the native analysis, including its conservative text bounds.
+#[cfg(test)]
+pub(crate) fn walk_candidate_filter(rule: &AstMatcher) -> Option<(Vec<u16>, Vec<Vec<String>>)> {
+    WalkFilter::of(rule, &OnceLock::new()).map(|f| {
+        (
+            f.kinds.to_vec(),
+            f.needle
+                .as_ref()
+                .map_or_else(Vec::new, RequiredText::clauses),
+        )
+    })
+}
+
 /// The kinds every node `matcher` can match has, where it says (`None`: any kind). Utilities read
 /// so far are in `utilities` (`None` while one is read: a recursive reference allows any kind).
 fn node_kinds(
@@ -1043,7 +1056,7 @@ pub(crate) fn set_answers_off(off: bool) {
 
 /// Candidates relations tested on this thread (`reset_candidates_tested` restarts the count).
 #[cfg(test)]
-fn candidates_tested() -> usize {
+pub(crate) fn candidates_tested() -> usize {
     CANDIDATES_TESTED.get()
 }
 

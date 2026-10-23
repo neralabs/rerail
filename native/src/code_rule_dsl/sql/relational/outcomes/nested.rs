@@ -167,11 +167,27 @@ pub(super) fn emit(
     };
     let strict = bounds.is_none() && !rule.writes.is_empty();
     let child = matches!(axis, Axis::Child);
+    // Native bounded descendant walks exclude both kinds and required text before
+    // testing a body. The node cursor delivers bounded kind postings in id order.
+    // Seek the next eligible candidate instead of allocating three recursive rows
+    // (and a typed child return) for every irrelevant AST node.
+    let seek = child && end && stop.is_none() && bounds.is_none() && rule.walk_filter.is_some();
+    let seek_after = |file: &str, after: &str, bound: &str| {
+        format!(
+            "(SELECT candidate.id FROM node candidate WHERE candidate.file={file} AND candidate.id>{after} AND candidate.id<={bound} AND ({}) ORDER BY candidate.id LIMIT 1)",
+            super::candidate_filter(rule, "candidate")
+        )
+    };
     let first = match axis {
         Axis::Child => "CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END",
         Axis::Parent => "origin.parent",
         Axis::Previous => "origin.prev",
         Axis::Next => "origin.next",
+    };
+    let first = if seek {
+        seek_after("origin.file", "origin.id", "origin.\"last\"")
+    } else {
+        first.into()
     };
     let next = match (axis, end) {
         (Axis::Child, false) => "n.next".into(),
@@ -187,7 +203,9 @@ pub(super) fn emit(
             }
         ),
     };
-    let next = if child {
+    let next = if seek {
+        seek_after("w.file", "w.node", "w.bound")
+    } else if child {
         format!("CASE WHEN ({next})<=w.bound THEN ({next}) END")
     } else {
         next
@@ -210,15 +228,19 @@ pub(super) fn emit(
     };
     let decisive = format!("w.own<0 OR w.stopped<0 OR ({decisive})");
     let body_phase = usize::from(!child);
+    let candidate_filter = super::candidate_filter(rule, "n");
+    let body_guard = if bounds.is_some() {
+        "w.stopped>=0 AND w.work>0".into()
+    } else if rule.walk_filter.is_some() && !seek {
+        format!("w.stopped>=0 AND ({candidate_filter})")
+    } else {
+        "w.stopped>=0".into()
+    };
     let (body, body_profile) = program(
         rule,
         input,
         false,
-        if bounds.is_some() {
-            "w.stopped>=0 AND w.work>0"
-        } else {
-            "w.stopped>=0"
-        },
+        &body_guard,
         &exports,
         (
             "w.file",
@@ -260,11 +282,34 @@ pub(super) fn emit(
         .iter()
         .map(|slot| format!(",NULL AS v{slot}"))
         .collect::<String>();
+    // The seed both projects and checks its first candidate. A text-filtered seek
+    // can scan many postings: materialize that result once, without caller bindings.
+    let seed = if seek
+        && rule
+            .walk_filter
+            .as_ref()
+            .is_some_and(|f| !f.text.is_empty())
+    {
+        Some(sql.relation(
+            "first text-bounded candidate",
+            format!("SELECT d.k,d.file,{first} AS node,origin.\"last\" AS bound,d.work FROM {} d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node",input.name),
+            true,
+            "k,file,node,bound,work",
+        ))
+    } else {
+        None
+    };
     let walk = format!("outcome{}", sql.definitions.len());
-    let mut arms = vec![format!(
-        "SELECT d.k,d.file,{first} AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open,d.work{seed_values} FROM {} d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE ({first}) IS NOT NULL",
-        input.name
-    )];
+    let mut arms = vec![if let Some(seed) = &seed {
+        format!(
+            "SELECT k,file,node,bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open,work{seed_values} FROM {seed} WHERE node IS NOT NULL"
+        )
+    } else {
+        format!(
+            "SELECT d.k,d.file,{first} AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open,d.work{seed_values} FROM {} d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE ({first}) IS NOT NULL",
+            input.name
+        )
+    }];
     for phase in 0..2 {
         let body_test = phase == body_phase;
         let projected = if body_test {
@@ -322,6 +367,10 @@ pub(super) fn emit(
     profile["childPrograms"] = json!({"body":body_profile,"stop":stop_profile});
     profile["recursiveColumns"] = json!(11 + exports.len());
     profile["typedReturnColumns"] = json!(2 + exports.len());
+    if let Some(filter) = &rule.walk_filter {
+        profile["candidatePruning"] = json!({"kinds":filter.kinds,"requiredTextTerms":filter.text,"shape":if seek {"ordered bounded kind seek"} else {"guard before utility charge"}});
+        profile["candidatePruning"]["materializedFirstCandidate"] = json!(seed.is_some());
+    }
     let terminal=sql.relation("completed nested traversal",format!("SELECT w.k,w.work,CASE WHEN w.own<0 THEN w.own WHEN w.stopped<0 THEN w.stopped ELSE 0 END AS failure,{low} AS low,{uncertain} AS uncertain,{open} AS open{keep_values} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND (({decisive}) OR ({next}) IS NULL)"),true,"k,failure,low,uncertain,open,observable exports");
     let low = "COALESCE(t.low,0)";
     let high = "(COALESCE(t.low,0)+COALESCE(t.uncertain,0))";

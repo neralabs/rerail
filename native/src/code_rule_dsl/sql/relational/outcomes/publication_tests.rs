@@ -63,6 +63,7 @@ pub(super) fn check_work(
                 .collect::<Vec<_>>();
             let mut provisional = vec![];
             let mut work = allowance as usize;
+            let candidates_before = matcher::candidates_tested();
             let (result, calls) = value_probe::run_reached(fault, || {
                 matcher::with_file_memo(&tree, || {
                     matcher::run_clause(
@@ -114,7 +115,7 @@ pub(super) fn check_work(
                 Err(Stopped::Deadline) => panic!("unexpected deadline"),
             }
             native_traces.push(
-                json!({"clause":clause,"file":file,"calls":calls,"provisionalMatches":prior,"remaining":work}),
+                json!({"clause":clause,"file":file,"calls":calls,"provisionalMatches":prior,"remaining":work,"candidateVisits":matcher::candidates_tested()-candidates_before}),
             );
         }
     }
@@ -169,7 +170,7 @@ pub(super) fn check_work(
                         .unwrap();
                     (
                         actual,
-                        json!({"execution":metrics,"framePublications":frames[4],"explain":explain}),
+                        json!({"execution":metrics,"framePublications":frames[4],"nodeAdvances":frames[11],"nodeFilters":frames[13],"explain":explain}),
                     )
                 },
             )

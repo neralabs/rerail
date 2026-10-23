@@ -502,10 +502,9 @@ These tests prove the bounded outcome contract. They do not prove the complete c
 The work-allowance phase ended with a B023 CPU-gate failure at 2.02653× against a 2× limit. SQL and VM counts were unchanged.
 An earlier run passed at 1.68182×. Both runs are retained, and timing qualification remains open.
 
-Two broader cases still fail admission because their native work behavior needs another SQL contract:
-
-- Value-bearing utility reuse across Boolean scopes, traversals, or nested utilities needs a shared demand contract. Local reuse now replays cost correctly.
-- Two-valued charged searches can skip candidates through native walk indexes before invoking a utility. Three-valued searches use different candidate visitation.
+Value-bearing utility reuse across Boolean scopes, traversals, or nested utilities still needs a shared demand contract.
+Local reuse now replays cost correctly.
+Two-valued charged search pruning is now admitted for the supported outcome operators, as described below.
 
 Native stack/depth limits, deadlines, decisions, enumeration, general recursive outcomes, catalog coverage, and production integration remain separate gates.
 The complete cold job must still prove the 100-execution limit.
@@ -540,14 +539,46 @@ The preceding 2.02653× failure remains in the evidence; this pass does not esta
 The journal records final profiles, source hashes, and qualification results.
 The complete cold-job 100-execution gate and production admission remain open.
 
+## Native candidate pruning: bounded outcome milestone
+
+The compiler now admits two-valued charged searches for the supported outcome operators.
+It uses the native kind and required-text analysis through a test-only interface.
+All two-valued searches apply kind bounds before the candidate body and its charges.
+Descendant searches to the end also apply the native required-text bounds.
+Their SQL seeks the next candidate through ordered, bounded kind postings.
+Irrelevant nodes no longer allocate recursive traversal rows or typed child returns.
+
+Text-filtered first candidates have one narrow materialized relation because the seed needs their result twice.
+That relation contains demand ID, file, node, subtree bound, and remaining work.
+Caller captures stay in the existing demand relation.
+Neighbor and stop-bearing searches retain visitation order and guard only the candidate body.
+Stops still run at skipped body candidates.
+Three-valued searches and count visitation retain their prior contracts.
+
+The allowance-one fixture passes; its three-valued counterpart needs two charges.
+Finite-allowance comparisons cover text bounds, kind unions and intersections, captures, nested searches, counts, and stop order.
+Negated searches expose remaining work when the body fails.
+At 256 irrelevant siblings, sparse-kind VM work falls from 286,901 to 1,707 across two files.
+It remains 1,707 at widths four, 32, and 256.
+The sparse-text fixture falls from 288,981 to 4,302 VM instructions after sharing its first-candidate scan.
+All 103 selected tests and both Clippy configurations pass.
+The 66 preceding-phase controls retain identical SQL and VM counts.
+The frozen B023 run passes at 1.83296×, with unchanged query text and VM work.
+The journal records final profiles and both rejected shapes.
+This is matching-query evidence; node-index construction and the complete cold job remain separate measurements.
+
 ## Next implementation action
 
-Preserve native candidate pruning for two-valued charged searches.
-Start with `has(matches(number))` over `f(1,2,3)` at allowance one.
-Native execution skips punctuation and succeeds after one utility charge.
-The corresponding three-valued case must continue to charge the visited punctuation candidate.
-Keep these as semantic planning choices, with no runtime opt-in or fallback.
+Extend utility cost replay across nested Boolean scopes within one root demand.
+Start with `all(matches(v), not(not(matches(v))))`, where `v` reads one numeric value.
+An allowance of three must fail with `Work`; four must succeed with zero remaining and one value-leaf call.
+The current compiler rejects this fixture because its two invocations have different Boolean owners.
 
-Repeat the frozen B023 work and timing gates after compiler changes.
-The existing profiles also show candidate-root enumeration after early failure and materialized traversal states.
-Optimize those costs only with exact reached-call and allowance regression tests.
+Place the typed answer at the smallest shared demand scope that contains both invocations.
+Only the first reached invocation may populate it.
+Nested Boolean programs must use the same utility, file, node, capture-input, answer, and measured-cost contract.
+Prove unknown answers, changed captures, decisive branches, and reached failures before removing that admission boundary.
+Cross-traversal and nested value-utility reuse remain separate gates.
+
+Repeat the frozen B023 gates and existing work-count controls after the compiler changes.
+Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

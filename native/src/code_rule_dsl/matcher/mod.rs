@@ -17,6 +17,8 @@ mod memo;
 mod nth_child;
 mod parse;
 mod relation;
+#[cfg(test)]
+pub(crate) use relation::{candidates_tested, walk_candidate_filter};
 mod resolve;
 mod run;
 mod semantic;

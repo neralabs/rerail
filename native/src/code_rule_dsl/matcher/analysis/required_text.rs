@@ -29,6 +29,14 @@ const MAX_ALTERNATIVES: usize = 16;
 const MAX_CLAUSES: usize = 8;
 
 impl RequiredText {
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl::matcher) fn clauses(&self) -> Vec<Vec<String>> {
+        self.clauses
+            .iter()
+            .map(|c| c.iter().map(ToString::to_string).collect())
+            .collect()
+    }
+
     /// What a file must contain for `matcher` to match in it, or `None` where nothing is required.
     pub(in crate::code_rule_dsl) fn of(matcher: &AstMatcher) -> Option<Self> {
         Self::from_clauses(needs(matcher, &mut Utilities::default(), Reach::File))

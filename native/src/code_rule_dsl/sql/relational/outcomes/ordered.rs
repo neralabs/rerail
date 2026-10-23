@@ -8,6 +8,32 @@ pub(super) mod nested;
 
 type Bounds = (i64, Option<i64>, Option<(usize, i64)>);
 
+pub(super) fn candidate_filter(rule: &Plan, alias: &str) -> String {
+    let Some(filter) = &rule.walk_filter else {
+        return "1".into();
+    };
+    let mut terms = vec![if filter.kinds.is_empty() {
+        "0".into()
+    } else {
+        format!(
+            "{alias}.kind IN ({})",
+            filter
+                .kinds
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }];
+    terms.extend(
+        filter
+            .text
+            .iter()
+            .map(|term| format!("node_regex({term},{alias}.file,{alias}.id)")),
+    );
+    terms.join(" AND ")
+}
+
 pub(super) fn boolean(plan: &Plan, alias: &str) -> Result<Option<String>, String> {
     use super::super::super::ir::Set;
     Ok(Some(match &plan.op {

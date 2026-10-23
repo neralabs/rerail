@@ -6,6 +6,7 @@ mod emit;
 mod lower;
 mod memo_tests;
 mod nested_tests;
+mod pruning_tests;
 mod publication_tests;
 mod reached_tests;
 mod tests;
@@ -51,6 +52,14 @@ struct Plan {
     writes: Slots,
     // Unlike counts, these bindings participate in conjunction withholding.
     node_writes: Slots,
+    // Native two-valued search admission, applied before this candidate's body or charges.
+    walk_filter: Option<WalkFilter>,
+}
+
+struct WalkFilter {
+    kinds: Vec<u16>,
+    // Required-text CNF lowered to one atomic regex per disjunction. Descendant/end only.
+    text: Vec<usize>,
 }
 
 #[derive(Clone)]

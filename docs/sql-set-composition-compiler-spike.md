@@ -4037,3 +4037,136 @@ Cross-Boolean, cross-traversal, and nested value-utility sharing remain explicit
 The next implementation action is native candidate pruning for two-valued charged searches.
 Start with `has(matches(number))` over `f(1,2,3)` at allowance one, as specified in the transition plan.
 Production integration, broader semantic gates, and the complete cold-job 100-execution gate remain open.
+
+### 2026-10-23 — Native candidate pruning for charged searches
+
+This phase starts from `9be0dc0c` and addresses the next transition fixture.
+A two-valued `has(matches(number))` over `f(1,2,3)` must succeed with one utility charge.
+The corresponding three-valued search visits punctuation before the number and needs two charges.
+
+Native search uses two different filters.
+All two-valued searches apply a kind filter before the candidate body.
+Descendant searches to the end also apply required-text clauses through the native posting index.
+Neighbor searches and searches with stop rules do not apply that text filter.
+Stop rules still run at nodes the body skips.
+Counts retain their separate per-candidate charge contract.
+
+The compiler now reads the native filter analysis through a test-only interface.
+Required-text disjunctions lower to atomic literal regex tests; SQL owns the conjunction and traversal.
+The first measurement keeps the existing traversal and guards the body before utility charges.
+The intended physical shape uses indexed, ordered candidate seeks for descendant searches without stop rules.
+This should remove recursive rows for irrelevant nodes while preserving native work and witness order.
+
+The new fixtures compare finite allowances, negated failed searches, captures, nested searches, count bodies, and stop order.
+Profiles separate sparse kinds, sparse text, dense failures, known-first success, and stop-pruned subtrees.
+The replacement remains test-only. Complete-job execution and production admission remain separate gates.
+
+#### Guarded baseline
+
+The guarded baseline passes 90 relational tests and records 325 pruning jobs, including 15 profiles.
+At 256 irrelevant siblings, the sparse-kind fixture uses 286,901 VM instructions and 2,068 typed return cells across two files.
+Its sparse-text counterpart uses 288,981 VM instructions and the same return-cell count.
+Each file has one successful utility invocation.
+The recursion still visits irrelevant AST nodes, despite correct utility charges.
+Known-first success and stop-pruned subtrees already retain constant VM work as their unused tails grow.
+
+The default `has` fixture uses immediate children, not descendant-to-end traversal.
+Native visits its opening punctuation but applies the kind filter before the utility charge.
+Its successful allowance-one visit count is therefore two, while its charge is one.
+The first test expected one visit; that assertion was corrected without changing the compiler.
+Native candidate counters include cleanup visits after a limit and are reported as diagnostic counts.
+They are not asserted equal to SQL visits after a failure.
+
+The candidate-seek implementation uses the node virtual table's existing ordered kind postings.
+Each seek constrains file, lower and upper node IDs, and candidate kinds, then applies required-text clauses.
+`ORDER BY id LIMIT 1` supplies the next eligible descendant.
+Only eligible candidates enter the existing charged traversal.
+The node index still has an input-dependent construction cost; these profiles do not establish constant complete-job cost.
+Stop-bearing and neighbor searches retain the guard shape, so stop evaluations keep their native order.
+
+#### Indexed seeks and the first-candidate boundary
+
+The first seek implementation passes 91 relational tests and 345 pruning jobs.
+The sparse-kind fixture uses 1,707 VM instructions at all three widths: four, 32, and 256 irrelevant siblings.
+At width 256, this is 168× less VM work than the guarded baseline.
+Typed return cells fall from 2,068 to 16 across two files.
+The sparse-text fixture falls from 288,981 to 6,871 VM instructions.
+Dense failures still visit genuine candidates; their width-256 work falls from 326,876 to 176,834 VM instructions.
+Stop-rule profiles remain unchanged.
+
+The first seek shape evaluates the initial text scan twice: once to project its candidate and once to exclude an empty seed.
+Its width-256 sparse-text profile advances 1,036 node rows across two files.
+The final shape materializes that first candidate once when a required-text filter exists.
+The boundary stores only demand ID, file, candidate, subtree bound, and remaining work.
+Caller captures stay in their existing demand relation.
+Kind-only seeks retain the smaller inline seed because they already use direct bounded postings.
+The profiling driver checks constant VM work for irrelevant kind tails and checks the text-scan advance bound.
+
+#### Final evidence and qualification
+
+Validation passed for 103 unique tests.
+These include 91 relational tests, one workspace publication test, nine B023 fixtures, one adversarial test, and one corpus test.
+The six pruning tests cover 355 native-comparison jobs, including 15 profiles.
+The full relational suite records 809 publication traces.
+Formatting and both default and `code-rule-profile` Clippy configurations passed.
+The final boundary tests include empty first roots and nested subtrees with matching nodes outside their upper bounds.
+They preserve captures, outcomes, and remaining native work.
+
+All 15 profiles use one matching SQL execution and zero frame publications.
+At width 256 across two files, the final measurements are:
+
+| Fixture | Guarded VM instructions | Final VM instructions | Guarded return cells | Final return cells |
+| --- | ---: | ---: | ---: | ---: |
+| Sparse kinds | 286,901 | 1,707 | 2,068 | 16 |
+| Sparse text | 288,981 | 4,302 | 2,068 | 16 |
+| Dense false candidates | 326,876 | 176,834 | 3,084 | 2,056 |
+| Known-first success | 2,229 | 1,707 | 20 | 16 |
+| Stop-pruned subtree | 3,570 | 3,570 | 44 | 44 |
+
+The sparse-kind query stays at 1,707 VM instructions as irrelevant siblings grow from four to 256.
+The sparse-text query still examines eligible kind postings for its required text.
+Sharing its first candidate reduces node advances from 1,036 to 524 and VM instructions from 6,871 to 4,302.
+EXPLAIN shows candidate cursors with file, both ID bounds, and kind constraints: `f=i>i{k=`.
+The node cursor supplies ascending candidate IDs for `ORDER BY id LIMIT 1`.
+
+The sparse-kind SQL grows from 5,118 to 5,494 bytes, including the final newline.
+Its individual preparation samples are 0.881 ms guarded and 0.809 ms final.
+Preparation variation does not establish a timing improvement.
+The work-count reduction comes from removing irrelevant traversal states, not from smaller SQL text.
+
+All 66 preceding-phase controls retain identical SQL, output, and VM counts.
+These include 30 traversal controls and 12 profiles each for allowances, publication, and utility memo replay.
+The native outcome and reached-call assertions also pass.
+
+The frozen B023 corpus retains 138 files, two matches, and 2,812,255 generated-query VM instructions in all three pairs.
+Its query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+The final run passes both gates: 117.875 ms generated versus 64.309 ms reference, or 1.83296× against the 2× CPU limit.
+The query and VM counts did not change. This pass does not establish a B023 speedup from candidate pruning.
+
+Committed evidence:
+
+- `benchmark/relational-candidate-pruning.py`: pinned-source profiling driver with constant-tail and text-scan assertions.
+- `benchmark/sql-relational-candidate-pruning-evidence.json`: 355 traces, 15 profiles, both rejected-shape comparisons, 66 controls, and the B023 gates.
+- `benchmark/sql-relational-candidate-pruning.sql`: final sparse-kind query.
+- `benchmark/sql-relational-candidate-pruning-text.sql`: final sparse-text query with its narrow first-candidate materialization.
+- `benchmark/sql-relational-candidate-pruning-guarded.sql`: correct charges with irrelevant recursive states still present.
+- `benchmark/sql-relational-candidate-pruning-repeated-seed.sql`: indexed text seeks with the first scan repeated.
+
+Raw runs are in `/tmp/rerail-candidate-pruning-20261023-{guard,seek,final,accepted}`.
+The `accepted` run includes the final subtree-boundary fixtures; its work counts match the preceding `final` run.
+The frozen B023 run is in `/tmp/rerail-candidate-pruning-b023-20261023-final`.
+The recorded revision is the parent commit; source hashes identify the measured working tree.
+The build retains the diagnostic allocator shim and test-only local-LTO wrapper.
+
+Reproduce the pruning profiles with a new output directory:
+
+```sh
+python3 benchmark/relational-candidate-pruning.py /tmp/new-candidate-pruning-profile --binary target/loop/deps/rerail_engine-11d3550fad116d17
+```
+
+This completes candidate pruning for the admitted two-valued outcome searches.
+Dense failures still pay for three traversal phases and a utility program per genuine candidate.
+Those materializations remain a physical planning cost; the sparse-case gains do not remove it.
+The next semantic transition is utility cost replay across nested Boolean scopes within one root demand.
+The transition plan specifies the rejected fixture and its exact allowance thresholds.
+Production integration, broader semantic gates, and the complete cold-job 100-execution gate remain open.

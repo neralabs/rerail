@@ -154,24 +154,6 @@ fn work_budget_native_memo_replay_requires_the_original_charge() {
     assert_eq!(work, 0);
 }
 #[test]
-fn work_budget_rejects_unproved_two_valued_candidate_pruning() {
-    let rules = [json!({"kind":"arguments","has":{"matches":"n"}})];
-    let p = super::publication_tests::policy_utils(&rules, json!({"n":{"kind":"number"}}));
-    let crate::code_rule_dsl::model::ClauseKind::Forbid(crate::code_rule_dsl::model::Query::Ast {
-        matchers,
-        ..
-    }) = &p.inner.clauses[0].kind
-    else {
-        panic!("AST")
-    };
-    assert!(
-        super::compile_job(&[&matchers[0]], 1)
-            .err()
-            .unwrap()
-            .contains("native candidate pruning")
-    );
-}
-#[test]
 fn work_budget_profile() {
     let mut samples = vec![];
     for dimension in ["roots", "early-limit", "count", "clauses"] {

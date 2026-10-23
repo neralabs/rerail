@@ -145,11 +145,31 @@ impl Lower {
                 let (axis, by, rule) = self.walk(matcher)?;
                 let end = !matches!(by, StopBy::Neighbor);
                 let stop = self.stop(by)?;
-                let child = self.plan(rule)?;
+                let mut child = self.plan(rule)?;
                 if !self.three_valued
-                    && (child.fallible() || stop.as_ref().is_some_and(|p| p.fallible()))
+                    && let Some((kinds, clauses)) =
+                        crate::code_rule_dsl::matcher::walk_candidate_filter(rule)
                 {
-                    return Err("outcome relations: two-valued charged traversal requires native candidate pruning".into());
+                    let mut text = vec![];
+                    if matches!(axis, Axis::Child) && end && stop.is_none() {
+                        for clause in clauses {
+                            let regex = regex::Regex::new(
+                                &clause
+                                    .iter()
+                                    .map(|s| regex::escape(s))
+                                    .collect::<Vec<_>>()
+                                    .join("|"),
+                            )
+                            .map_err(|e| format!("candidate text filter: {e}"))?;
+                            let super::super::ir::Set::Regex(id) =
+                                self.pure.set(&AstMatcher::Regex(regex))?
+                            else {
+                                unreachable!()
+                            };
+                            text.push(id);
+                        }
+                    }
+                    child.walk_filter = Some(super::WalkFilter { kinds, text });
                 }
                 mentions = child.mentions.clone();
                 writes = child.writes.clone();
@@ -215,6 +235,7 @@ impl Lower {
             mentions,
             writes,
             node_writes,
+            walk_filter: None,
         })
     }
 }

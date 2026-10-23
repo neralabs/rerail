@@ -80,7 +80,7 @@ def main():
         'executableSha256': pinned[binary], 'samples': samples, 'traces': traces,
         'allPublicationTraceCount': all_traces,
         'limitations': ['Test-only outcome kernel; production and complete-job 100-execution gate remain pending.',
-                        'Cross-Boolean, cross-traversal, nested value-utility sharing and two-valued charged search pruning remain rejected.',
+                        'Cross-Boolean, cross-traversal and nested value-utility sharing remain rejected.',
                         'Native stack/depth limits, deadlines, decisions, enumeration, and general recursive outcomes remain pending.'],
         'build': 'loop profile, unbounded-work feature; diagnostic jemalloc shim; local LTO disabled for test executable only',
     }
