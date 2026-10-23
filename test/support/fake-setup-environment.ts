@@ -38,9 +38,6 @@ export function fakeSetupEnvironment(options: {
     async connect(agents, repoRoot) {
       connections.push({ agents, repoRoot });
     },
-    async connectedAgents() {
-      return connections.at(-1)?.agents ?? [];
-    },
     sessionsApproved: () => approved,
     async setSessionsApproved(answer) {
       approved = answer;
