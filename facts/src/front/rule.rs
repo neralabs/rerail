@@ -173,7 +173,7 @@ fn file_path_gate(query: &mut Json) {
 
 /// A `when` on a Python ast query (native `compile_python_when`): `option` conditions on the
 /// document's options and `pythonVersion` against Ruff's default 3.10.
-fn when_holds(when: &Json, options: &BTreeMap<String, Json>) -> Result<bool, String> {
+pub fn when_holds(when: &Json, options: &BTreeMap<String, Json>) -> Result<bool, String> {
     let w = obj(when, "when")?;
     check_keys(w, &["option", "pythonVersion"], "when")?;
     let mut holds = true;

@@ -137,7 +137,7 @@ fn evaluate(rules: &[eval::Rule], files: &[(String, Arc<String>)]) -> eval::Outp
             Some(Ok(facts::Built::Unparsed)) | Some(Err(_)) => {
                 out.failures.push(eval::Failure { check: String::new(), clause: String::new(), path: path.clone(), message: "file could not be parsed".into() });
             }
-            None => {}
+            None => eval::eval_text_file(rules, path, source, &mut out),
         }
     }
     eval::finish(rules, |k| repo.0.remove(&k).unwrap_or_default(), budget, &mut out);
