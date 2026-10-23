@@ -11,6 +11,7 @@ mod outcomes;
 mod physical;
 mod recursion;
 mod recursion_tests;
+mod row;
 pub(super) mod tests;
 pub(super) mod witness;
 pub(super) mod witness_tests;

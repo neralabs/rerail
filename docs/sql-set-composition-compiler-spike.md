@@ -3536,3 +3536,129 @@ The next semantic kernel is nested fallible traversal with typed child results a
 The transition plan gives its first two-array fixture and required failure boundaries.
 Full-file publication, native resource budgets, general recursion, enumeration, and complete-job execution accounting remain pending.
 The B023 timing gate also remains open; the unchanged VM count does not waive it.
+
+### Milestone 2: nested reached traversal — started 2026-10-22
+
+The next kernel returns distinct outer and inner capture witnesses from one matching statement.
+The first fixture searches two arrays in an arguments node.
+The first array binds `A`, then its inner number binds `X` and supplies an atomic value test.
+A decisive first match must prevent any value read in the second array.
+
+The physical boundary uses a correlated SQL row-value subquery:
+
+```sql
+CROSS JOIN relation_row r ON (r.c0,r.c1,r.c2) IS (
+  WITH RECURSIVE child_input AS MATERIALIZED (...), ...
+  SELECT truth,cA,cX FROM child_result
+)
+```
+
+`relation_row` supplies one row from its integer or NULL constraints.
+It copies these columns without AST access, rule evaluation, SQL execution, or persistent result storage.
+Its cursor admits only a contiguous constrained prefix and rejects unconstrained scans.
+SQL owns every child rule, stop, Boolean operation, and recursive step.
+The profiler counts supplied rows and cells separately from frame publications.
+
+Each nested walk carries ten control columns plus its observable child exports.
+Incoming captures remain in keyed demand rows and enter a child only when that child is reached.
+A count or stop requests only the child truth column.
+Stop programs use an empty capture environment.
+Separate recursive arms preserve descendant body-before-stop order and ancestor/sibling stop-before-body order.
+The first admission limit permits four traversal levels.
+
+An isolated experiment exposed a materialization hazard before full-engine validation.
+Two consumers of a correlated CTE executed its atomic prefix twice, despite `AS MATERIALIZED`.
+Four expected value calls became eight.
+The rewrite gives the prior state one consumer and passes its computed columns into a separate child scope.
+A permanent row-constructor test requires four calls and exact NULL preservation.
+The same correction also applies to compound Boolean operands in the compact node-local candidate compiler.
+
+### Nested reached traversal — implementation and validation
+
+The implementation is part of the test-only relational compiler.
+It adds no production switch or whole-rule native fallback.
+The native engine remains the independent semantic oracle.
+
+The new cases cover distinct outer and inner witnesses, caller capture equality, Boolean restoration, withheld captures, private stops, and exact count exports.
+They also cover pending unknown stops, skipped failing tails, parent/sibling order, and the four-level admission limit.
+The row constructor tests cover NULL, all 129 columns, rejected unconstrained scans, and one evaluation per input.
+
+The first full run passed 60 tests and failed an obsolete nested-stop refusal assertion.
+Replacing that assertion exposed a legacy compiler failure: `no such table: u` for a synthetic unknown stop.
+The replacement compiler was not the source of that failure.
+A dedicated regression now compares exact true/unknown roots directly with native evaluation for that fixture.
+Other profile cases still compare the native engine, existing SQL compiler, and replacement compiler.
+All 62 relational tests then passed.
+Formatting and both required Clippy configurations also passed.
+
+The normal optimized test build spent over 50 minutes in local ThinLTO code generation before interruption.
+The retained compiler sample identifies that build stage; it does not indicate a query performance problem.
+Validation used a temporary Rust compiler wrapper that adds `-C lto=off` only to the `rerail_engine` test executable.
+The resulting build completed in 59 seconds.
+The evidence stores the wrapper text, binary hash, and source hashes for reproduction.
+The repository's production build configuration is unchanged.
+Absolute CPU comparisons against previous phases' binaries would be invalid.
+The frozen B023 generated/reference comparison uses the same new executable for both shapes.
+
+The first successful profiling run overlapped Clippy and supplies semantic and deterministic work checks only.
+The retained performance run followed completion of Clippy and preceded the B023 run.
+No matching workload or compiler source changed between those two runs.
+
+| Workload | Sizes | VM instructions | Value calls | Typed rows / cells |
+| --- | --- | --- | --- | --- |
+| Known first inner match | 16 / 64 / 256 | 2,363 / 2,363 / 2,363 | 1 / 1 / 1 | 4/10 at every size |
+| Late inner match | 16 / 64 / 256 | 15,983 / 59,567 / 233,903 | 16 / 64 / 256 | 4/10 at every size |
+| Late outer match | 16 / 64 / 256 | 38,423 / 153,815 / 615,383 | 16 / 64 / 256 | 64/160, 256/640, 1,024/2,560 |
+| Independent roots | 16 / 64 / 256 | 35,438 / 141,278 / 564,638 | 16 / 64 / 256 | 64/160, 256/640, 1,024/2,560 |
+
+Every sample has exact native outputs, one traced matching execution, and zero frame publications.
+The evidence includes 30 reached-call traces across the current semantic suite.
+Typed row/cell counts measure actual cursor inputs before any diagnostic queries.
+They are copies and must not be described as zero intermediate work.
+
+Each sample generates the same 8,997-byte query with 23 profiled relations across lexical scopes.
+Nine additional local candidate CTEs implement its compact Boolean program.
+The outer recursive state has 12 columns: ten controls and the two distinct capture witnesses.
+The inner local traversal has ten columns.
+Preparation takes 0.640–0.843 ms; measured cold kernel CPU ranges from 0.953 to 6.105 ms.
+These are diagnostic kernel measurements, not whole-job timing or native resource-limit parity.
+
+EXPLAIN shows a kind-indexed root scan, node point probes, and automatic key indexes at outer demand/result joins.
+Independent roots create 60, 252, and 1,020 automatic-index entries; the other dimensions create none.
+The recursive child remains correlated and creates local single-demand materializations.
+That preserves reached evaluation but still costs about 2,400 VM instructions per array in the late-outer workload.
+Each array adds both an array candidate and an intervening sibling token to that walk.
+The next physical optimization is to collapse proven single-consumer Boolean barriers without repeating atomic work.
+Three traversal states per candidate and repeated node probes are another measured cost to address.
+The current result establishes linear growth and correct early termination, not an optimal constant factor.
+
+Full-file failure publication is the next semantic phase.
+Use two files and two clauses to prove which results survive a reached failure, then encode that publication contract.
+General recursion, enumeration, following values, native budgets, and the complete-job 100-execution gate remain open.
+
+The frozen B023 regression passes on 138 files with two exact matches.
+Generated SQL retains SHA-256 `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1` and 2,812,255 VM instructions in all three pairs.
+Median cold kernel CPU is 118.520 ms generated versus 60.454 ms reference: a 1.96052 ratio, within the 2.0 gate.
+The previous phase's 2.02919 combined ratio remains recorded; this run does not establish a cross-build timing improvement.
+All 12 previous capture scaling profiles retain identical SQL, VM work, value calls, one matching execution, and zero frame publications.
+The full validation selection passes 73 unique tests: 62 relational, nine B023 fixtures, one adversarial case, and one frozen-corpus case.
+
+Artifacts:
+
+- [Reproduction driver](../benchmark/relational-nested-walks.py).
+- [Profile, EXPLAIN, reached traces, source hashes, and regression evidence](../benchmark/sql-relational-nested-walks-evidence.json).
+- [Generated nested query](../benchmark/sql-relational-nested-walks.sql).
+- Raw profiles: `/tmp/rerail-nested-20261022-profile`.
+- Frozen regression: `/tmp/rerail-nested-b023-20261022-final`.
+- Previous capture control: `/tmp/rerail-nested-capture-control-20261022`.
+
+Reproduce with the evidence's test-build command, then pass that executable to these drivers:
+
+```sh
+python3 benchmark/relational-nested-walks.py /tmp/new-nested-profile --binary target/loop/deps/rerail_engine-11d3550fad116d17
+python3 benchmark/relational-complete-spike.py /tmp/rerail-b023-relational-20261022/final/config.json /tmp/new-nested-b023 --binary target/loop/deps/rerail_engine-11d3550fad116d17
+```
+
+The output directories must be new.
+Compiler artifact names can change; use the executable path reported by the build.
+The evidence includes the temporary wrapper contents needed to reproduce this diagnostic build.

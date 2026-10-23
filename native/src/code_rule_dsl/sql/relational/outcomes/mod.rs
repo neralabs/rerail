@@ -4,6 +4,7 @@ mod capture_walk_tests;
 mod emit;
 mod local;
 mod lower;
+mod nested_tests;
 mod reached_tests;
 mod tests;
 

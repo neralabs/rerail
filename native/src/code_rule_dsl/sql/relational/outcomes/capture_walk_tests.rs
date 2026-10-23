@@ -156,26 +156,16 @@ fn ordered_capture_faults_observe_pending_stop_and_withheld_inputs() {
 }
 
 #[test]
-fn ordered_capture_admission_rejects_wide_and_nested_local_programs() {
+fn ordered_capture_admission_rejects_wide_local_programs() {
     let all: Vec<_> = (0..62)
         .map(|i| json!({"pattern":format!("$C{i}")}))
         .collect();
-    for (body, expected) in [
-        (
-            json!({"all":all,"testUnknown":"^never$","stopBy":never()}),
-            "61 local capture slots",
-        ),
-        (
-            json!({"pattern":"$X","has":{"value":{"eq":1}},"stopBy":never()}),
-            "nested traversal",
-        ),
-    ] {
-        let p = policy(json!({"kind":"arguments","has":body}), json!({}));
-        let Err(error) = super::super::compile(&grammar_matchers(&p)[0]) else {
-            panic!("accepted {expected}");
-        };
-        assert!(error.contains(expected), "{error}");
-    }
+    let body = json!({"all":all,"testUnknown":"^never$","stopBy":never()});
+    let p = policy(json!({"kind":"arguments","has":body}), json!({}));
+    let Err(error) = super::super::compile(&grammar_matchers(&p)[0]) else {
+        panic!("accepted 62 local capture slots");
+    };
+    assert!(error.contains("61 local capture slots"), "{error}");
 }
 
 #[test]

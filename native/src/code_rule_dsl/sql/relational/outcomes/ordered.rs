@@ -3,6 +3,8 @@ use super::{Axis, Demand, Op, Output, Plan, Sql};
 
 #[path = "candidate.rs"]
 mod candidate;
+#[path = "nested.rs"]
+mod nested;
 
 type Bounds = (i64, Option<i64>, Option<(usize, i64)>);
 
@@ -94,6 +96,9 @@ impl Sql {
         bounds: Option<Bounds>,
         input: &Demand,
     ) -> Result<Output, String> {
+        if nested::contains_walk(rule) || stop.is_some_and(nested::contains_walk) {
+            return nested::emit(self, axis, end, rule, stop, bounds, input);
+        }
         let strict = bounds.is_none() && !rule.writes.is_empty();
         let captured = if !rule.mentions.is_empty() || !rule.writes.is_empty() {
             Some(candidate::compile(rule, input, false, strict)?)

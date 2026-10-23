@@ -253,11 +253,6 @@ fn outcomes_reached_demands_skip_decided_and_withheld_terms() {
 fn outcomes_reject_unproved_effects_and_recursive_outcomes() {
     for (rule, utils, expected) in [
         (
-            json!({"has":{"testUnknown":"u","stopBy":{"has":{"testUnknown":"s"}}}}),
-            json!({}),
-            "node-local",
-        ),
-        (
             json!({"matches":"r"}),
             json!({"r":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","matches":"r"}}]}}),
             "recursive outcomes",

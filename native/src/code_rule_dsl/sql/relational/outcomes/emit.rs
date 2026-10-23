@@ -14,6 +14,7 @@ pub(super) struct Output {
 pub(super) struct Sql {
     definitions: Vec<String>,
     profile: Vec<Value>,
+    correlated: bool,
 }
 
 fn value(input: &Demand, alias: &str, slot: usize) -> String {
@@ -320,6 +321,19 @@ impl Sql {
                 state.name=self.relation("conjunction scalar barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
                 continue;
             }
+            if self.correlated {
+                let tested = self.correlated_step(&state, child, &filter)?;
+                let columns = fields(&state.slots, |slot| {
+                    if child.writes.contains(&slot) {
+                        format!("CASE WHEN d.tested=1 THEN d.e{slot} ELSE d.c{slot} END")
+                    } else {
+                        format!("d.c{slot}")
+                    }
+                });
+                let withheld:String=plan.node_writes.iter().map(|slot|if child.node_writes.contains(slot){format!(",(d.u{slot} OR COALESCE(d.tested=2,0) OR (d.tested IS NULL AND d.truth<>0)) AS u{slot}")}else{format!(",d.u{slot}")}).collect();
+                state.name=self.relation("correlated conjunction barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
+                continue;
+            }
             let reached = self.input(child, &state, &filter);
             let output = self.emit(child, &reached)?;
             let columns = fields(&state.slots, |slot| {
@@ -382,6 +396,19 @@ impl Sql {
                 });
                 let strict = usize::from(!child.writes.is_empty());
                 state.name=self.relation("alternative scalar barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
+                continue;
+            }
+            if self.correlated {
+                let tested = self.correlated_step(&state, child, "d.truth=0")?;
+                let columns = fields(&state.slots, |slot| {
+                    if child.writes.contains(&slot) {
+                        format!("CASE WHEN d.tested=1 THEN d.e{slot} ELSE d.c{slot} END")
+                    } else {
+                        format!("d.c{slot}")
+                    }
+                });
+                let strict = usize::from(!child.writes.is_empty());
+                state.name=self.relation("correlated alternative barrier",format!("SELECT d.k,d.file,d.node,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
                 continue;
             }
             let reached = self.input(child, &state, "d.truth=0");
@@ -480,6 +507,7 @@ pub(super) fn compile(
     let mut sql = Sql {
         definitions: vec![],
         profile: vec![],
+        correlated: false,
     };
     let roots = Demand {
         name: sql.relation(
@@ -525,7 +553,7 @@ pub(super) fn compile(
             "outcomes":{"false":0,"true":1,"unknown":2},"nativeComposition":false,
             "captures":observed.iter().map(|&id|json!({"name":slots[id].name,"slot":id,"kind":if slots[id].count {"count"} else {"node"}})).collect::<Vec<_>>(),
             "relations":sql.profile,
-            "limitations":["Native work and stack/depth budgets remain unproved.","Following values, nested ordered traversal bodies, recursion, enumeration, and full-file failure publication remain unproved."],
+            "limitations":["Native work and stack/depth budgets remain unproved.","Following values, traversal depth beyond four, recursion, enumeration, and full-file failure publication remain unproved."],
             "flags":["Ordered node-local capture programs admit at most 61 slots and Boolean depth 16; masks keep recursive state at ten columns.","Only total structural search plans may evaluate candidates before ordered reduction.","Total generic counts may evaluate beyond a native early threshold; native resource-limit parity remains pending."]
         }),
     ))

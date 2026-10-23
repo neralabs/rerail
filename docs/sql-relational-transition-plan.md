@@ -266,8 +266,8 @@ The tests compare calls through the first failure and internal failure codes.
 Choices, stop boundaries, and withheld captures suppress unreached failures.
 Native attempts after its first recorded failure appear separately in the trace.
 Native work budgets and full-file failure publication remain separate gates.
-The ordered traversal currently requires capture-free, node-local candidate and stop rules.
-It rejects wider contracts before SQL preparation.
+The first ordered traversal kernel required capture-free, node-local candidate and stop rules.
+The subsequent kernels admit local capture masks and nested typed child results, as described below.
 
 The [reached-kernel evidence](../benchmark/sql-relational-reached-evidence.json) contains 14 failure traces and six scaling profiles.
 The [generated SQL](../benchmark/sql-relational-reached.sql) shows the local traversal phases and guarded scalar operands.
@@ -424,26 +424,47 @@ Cold job time must also improve, without hiding additional native fact construct
 These are proposed engineering targets, not extrapolated B023 results.
 Missed targets require a documented cost attribution and another focused shape experiment before declaring the transition complete.
 
+## Nested reached traversal status
+
+Nested bodies and stops now return typed integer/NULL columns through a correlated SQL row-value subquery.
+SQL completes each reached child before the parent advances.
+The row constructor only copies columns; it cannot evaluate rules, inspect ASTs, or execute SQL.
+The outer recursive relation carries ten control columns plus observable exports.
+The compact node-local kernel retains ten columns and reconstructs its local capture witnesses.
+Admission currently stops at four traversal levels.
+
+Correlated materialization is not a promise of one evaluation across multiple consumers.
+An isolated regression doubled four atomic calls to eight when two consumers referenced the same correlated prefix.
+The corrected shape gives that prefix one consumer and passes its computed state into a child scope.
+Both nested Boolean composition and compact candidate composition use this boundary where required.
+
+Twelve scaling profiles cover early matches, late inner matches, late outer matches, and independent roots.
+Each uses one matching execution and zero frame publications.
+At inner widths 16, 64, and 256, early matches require 2,363 VM instructions and one value call.
+Other dimensions grow linearly; the journal records exact counts and typed return copies.
+These results establish this bounded kernel, not whole-job performance or the 100-execution gate.
+
 ## Next implementation action
 
-The node-local capture kernel is implemented and passes its semantic and scaling tests.
-The latest B023 timing check is unresolved: the combined six-pair median is 2.029 times the reference, above the 2.0 limit.
-Its SQL and VM work remain unchanged; keep this timing gate open while the semantic transition continues.
+Define and test failure publication across files and clauses before broadening production admission.
+Start with two files and two clauses, with a reached value failure after an earlier successful match.
+Place another match after the failure, then repeat with that failing leaf behind a decisive branch.
+Record native results, captures, diagnostic codes, order, and suppression scope.
+Repeat with the file order and clause order reversed.
 
-Admit a nested fallible traversal body with explicit child-result and continuation contracts.
-Start with an arguments node whose descendant array binds `A`, then searches for a number that binds `X` and tests a value.
-Use two arrays: a decisive match in the first must prevent a failing value read in the second.
-Also test an unknown first result, an unknown stop, and an inner capture that differs from the outer candidate.
-Compare exact witnesses, unknown roots, and atomic-call traces with the native engine.
+Specify whether failure suppresses one root, one clause/file pair, or the whole call from those observations.
+Represent that contract explicitly in typed outcomes and final publication SQL.
+Do not let SQLite's immediate statement abort silently select the public failure policy.
+If an atomic leaf must return an error tag, preserve its native error payload and avoid repeating the evaluation.
+Require exact published results and diagnostics, one matching execution for this fixture, and no frame publications.
 
-The completed node-local kernel reconstructs captures from input witnesses and the current candidate.
-An inner traversal can select another node, so that mask representation cannot encode general nested results.
-Carry typed child outputs across this boundary and prove when the parent resumes.
-Do not precompute fallible bodies for candidates that the parent never reaches.
-Measure increasing inner width, outer width, and root count before broadening admission.
-Require one matching execution and no frame publications for this first nested fixture.
+The current reached tests compare atomic calls through the first failure.
+They do not establish full-job diagnostic order or partial-result handling.
+Native work budgets, general recursion, enumeration, catalog coverage, and the complete-job execution gate remain open.
+The latest same-binary B023 check passes at 1.96052 times the reference, with unchanged SQL and VM work.
+The earlier 2.02919 combined ratio remains recorded; repeat the timing gate during subsequent integration.
 
-Then define failure publication across files and clauses.
-The current kernel proves atomic reached failures, not full-job diagnostic ordering or partial-result handling.
-Keep native work-budget parity, general recursion, enumeration, catalog coverage, and the complete-job execution gate explicit.
+Keep the remaining local cost visible while completing these semantics.
+The nested shape still materializes several single-demand Boolean barriers and emits three traversal states per candidate.
+Measure their VM and copy costs before removing barriers; each rewrite must retain exact atomic-call traces.
 The journal records each accepted or rejected rewrite and its measurement artifact.

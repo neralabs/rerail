@@ -112,6 +112,8 @@ pub(in crate::code_rule_dsl::sql) fn measure(
             let started = Started::now();
             let counter_start = profiling::frame_snapshot();
             let value_start = super::leaves::VALUE_REQUESTS.get();
+            let row_start = super::row::ROWS.get();
+            let cell_start = super::row::CELLS.get();
             let equality_start = super::leaves::EQUALITY_REQUESTS.get();
             let mut statement = db.prepare(&compiled.sql).unwrap();
             let prepare = started.elapsed();
@@ -141,6 +143,8 @@ pub(in crate::code_rule_dsl::sql) fn measure(
             let elapsed = started.elapsed();
             let cold = kernel_started.elapsed().plus(generation);
             let value_calls = super::leaves::VALUE_REQUESTS.get() - value_start;
+            let typed_rows = super::row::ROWS.get() - row_start;
+            let typed_cells = super::row::CELLS.get() - cell_start;
             let equality_calls = super::leaves::EQUALITY_REQUESTS.get() - equality_start;
             let pattern_calls = patterns.load(std::sync::atomic::Ordering::Relaxed);
             let counter_end = profiling::frame_snapshot();
@@ -261,6 +265,8 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                 outcomes,
                 equality_calls,
                 value_calls,
+                typed_rows,
+                typed_cells,
             )
         })
     });
@@ -300,6 +306,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
       "coldKernelCpuNs":result.11.cpu,"diagnosticCpuNs":elapsed.cpu,"generationCpuNs":generation.cpu,"prepareCpuNs":result.5.cpu,
       "prepareAndExecuteCpuNs":result.6.cpu,"explain":result.7,
       "diagnosticRelationRows":result.8,
+      "typedReturnRows":result.16,"typedReturnCells":result.17,
       "patternRequests":result.9,"captureEqualityRequests":result.14,"valueRequests":result.15,
       "timingScope":"Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
       "baseline":{"diagnosticKernelCpuNs":baseline_time.cpu,"framePublications":baseline_counters[4],"frameAdvances":baseline_counters[2],"matchingStatements":baseline_session.stats().statements},

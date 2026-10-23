@@ -40,6 +40,7 @@ pub(in crate::code_rule_dsl::sql) fn register(
     db: &Connection,
     batch: &Arc<Batch>,
 ) -> Result<Arc<AtomicUsize>> {
+    super::row::register(db)?;
     let leaves = Leaves(AssertUnwindSafe(Arc::clone(batch)));
     let calls = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&calls);

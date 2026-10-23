@@ -89,12 +89,24 @@ impl Local<'_> {
                     format!("s.bound|{writes}"),
                 )
             } else {
-                let demand = self.relation(format!("SELECT bound FROM {state} s WHERE {reached}"));
-                let result = self.emit(child, &demand)?;
+                // A correlated CTE referenced twice can execute its value leaves twice.
+                // Pass the already computed state into an independent child scope instead.
+                let mut nested = Local {
+                    input: self.input,
+                    fresh: self.fresh,
+                    bits: self.bits.clone(),
+                    definitions: vec![],
+                };
+                let demand = nested.relation(format!("SELECT s.bound AS bound WHERE {reached}"));
+                let result = nested.emit(child, &demand)?;
+                let query = format!(
+                    "WITH {} SELECT truth,bound FROM {result}",
+                    nested.definitions.join(",\n")
+                );
                 (
-                    format!("{state} s LEFT JOIN {result} r ON 1"),
-                    "r.truth".into(),
-                    "r.bound".into(),
+                    format!("{state} s CROSS JOIN relation_row r ON (r.c0,r.c1) IS ({query})"),
+                    "r.c0".into(),
+                    "r.c1".into(),
                 )
             };
             let committed = if writes != 0 {
