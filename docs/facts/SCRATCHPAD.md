@@ -88,6 +88,8 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 
 - **Declared facts (user direction, from Jeremy's proposal): the language declares the computable facts; the engine stops inferring them from rule text.** `DECLARED-FACTS.md` written; I2 amended (inference from rule text is now the compatibility path only). **Correction:** the user asked for a judgement on the claim, not for work. S9 was cancelled before its first commit and its branch deleted; `DECLARED-FACTS.md` stays as a proposal under evaluation, not a scheduled slice.
 
+- **Loop tightened (user: "it's long"):** `LOOP.md` is binding. Tiers T0 (≤ 60 s, before every commit), T1 (≤ 2 min, milestones and every A/B), T2 (the full gate, at merge, integrator only); one build in the `loop` profile with mutant hooks always compiled; the archetype bench on `sub200` reported as deterministic work counts (algebraic and physical) instead of locked wall-clock runs; a digest-keyed memo so parity re-runs only changed plans; a count-regression check in the gate. S10Loop launched to build it; executors no longer run the gate or wait for a quiet machine.
+
 ## Open questions
 
 - Which batch-6 rules depend on facts outside the syntactic schema: answered by the census, 41 of 775 units (decoded strings, f-string and annotation sub-grammars, line splitting); the annotation classifier is the only one that blocks a recorded call.
