@@ -499,31 +499,50 @@ The accepted fixtures contain 217 allowance-boundary jobs and 12 scaling jobs.
 Each job uses one matching SQL execution and zero frame publications.
 EXPLAIN and VM counters are retained in `benchmark/sql-relational-work-budget-evidence.json`.
 These tests prove the bounded outcome contract. They do not prove the complete cold-job execution budget.
-The final B023 CPU gate narrowly failed at 2.02653× against a 2× limit; SQL and VM counts are unchanged.
+The work-allowance phase ended with a B023 CPU-gate failure at 2.02653× against a 2× limit. SQL and VM counts were unchanged.
 An earlier run passed at 1.68182×. Both runs are retained, and timing qualification remains open.
 
-Two cases fail admission because their native work behavior needs another SQL contract:
+Two broader cases still fail admission because their native work behavior needs another SQL contract:
 
-- Value-bearing utility memoization replays the original charge on cache hits. Re-evaluating an inlined body can undercharge after a value-cache hit.
+- Value-bearing utility reuse across Boolean scopes, traversals, or nested utilities needs a shared demand contract. Local reuse now replays cost correctly.
 - Two-valued charged searches can skip candidates through native walk indexes before invoking a utility. Three-valued searches use different candidate visitation.
 
 Native stack/depth limits, deadlines, decisions, enumeration, general recursive outcomes, catalog coverage, and production integration remain separate gates.
 The complete cold job must still prove the 100-execution limit.
 
+## Local utility memo: bounded outcome milestone
+
+The compiler now admits repeated value utilities within one Boolean demand.
+It retains utility identity and stores typed truth, semantic cost, input captures, and output captures.
+File and node identity belong to the enclosing demand.
+The key includes every incoming capture, including captures the utility body does not mention.
+A hit replays the original cost before it returns the answer.
+Failed and unreached invocations do not create reusable answers.
+
+Static capture versions select the SQL shape.
+When versions match, later calls contain only cost and answer replay.
+When a capture may change, SQL compares typed keys and guards the miss body.
+Single-use utilities do not allocate answer storage.
+Answer columns stop propagating after their last use.
+There is one compiler path, with no runtime option or native composition fallback.
+
+The core fixture now matches native execution: allowance three fails with `Work`; four succeeds with zero remaining.
+The value leaf runs once per file.
+False, unknown, count exports, unrelated captures, warm value caches, and reached failures have native comparisons.
+The local storage limit is eight allocated key versions and 512 typed columns.
+These are admission limits for the test-only kernel, not production workload limits.
+
+At 32 identical calls, direct replay reduced VM work from 8,411 to 5,059.
+SQL size fell from 44 KB to 21 KB; typed return cells fell from 136 to 12 across two files.
+The eight memo tests pass 198 native-comparison jobs, including 12 profiles.
+The frozen B023 run passes at 1.94833×, with unchanged query text and VM work.
+The preceding 2.02653× failure remains in the evidence; this pass does not establish a B023 speedup.
+The journal records final profiles, source hashes, and qualification results.
+The complete cold-job 100-execution gate and production admission remain open.
+
 ## Next implementation action
 
-Start with the rejected utility-memo fixture: `all(matches(v), matches(v))`, where `v` reads one numeric value.
-Native execution spends two units on the first invocation and replays two units on the second.
-An allowance of three must fail with `Work`; four must succeed with zero remaining.
-The value leaf must execute once.
-
-Emit a typed shared utility answer and its measured semantic cost for this repeated, identical demand.
-The second invocation must replay that cost in SQL without re-running the body.
-Keep the demand key explicit: utility, file, node, and capture inputs.
-Prove this local reuse before admitting reuse across roots or recursive components.
-Include false and unknown answers, distinct captures, and value-cache reads before the first utility invocation.
-
-Then preserve native candidate pruning for two-valued charged searches.
+Preserve native candidate pruning for two-valued charged searches.
 Start with `has(matches(number))` over `f(1,2,3)` at allowance one.
 Native execution skips punctuation and succeeds after one utility charge.
 The corresponding three-valued case must continue to charge the visited punctuation candidate.

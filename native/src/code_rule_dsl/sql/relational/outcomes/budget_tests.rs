@@ -114,7 +114,7 @@ fn work_budget_keeps_inlined_utility_entry_charges() {
     }
 }
 #[test]
-fn work_budget_rejects_value_bearing_utility_memo_replay() {
+fn work_budget_native_memo_replay_requires_the_original_charge() {
     let rules = [json!({"kind":"number","all":[{"matches":"v"},{"matches":"v"}]})];
     let p = super::publication_tests::policy_utils(&rules, json!({"v":{"value":{"gt":0}}}));
     let crate::code_rule_dsl::model::ClauseKind::Forbid(crate::code_rule_dsl::model::Query::Ast {
@@ -124,12 +124,7 @@ fn work_budget_rejects_value_bearing_utility_memo_replay() {
     else {
         panic!("AST")
     };
-    assert!(
-        super::compile_job(&[&matchers[0]], 3)
-            .err()
-            .unwrap()
-            .contains("memo charge replay")
-    );
+    assert!(super::compile_job(&[&matchers[0]], 3).is_ok());
     // Native's second utility invocation replays two steps, even though the value is cached.
     let doc = crate::code_rule_dsl::sql::tests::differential::tape(matchers[0].language, "1;");
     let tree = ast_grep_core::AstGrep::doc(doc.clone());

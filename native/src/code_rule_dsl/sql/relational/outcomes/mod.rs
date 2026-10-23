@@ -4,6 +4,7 @@ mod budget_tests;
 mod capture_walk_tests;
 mod emit;
 mod lower;
+mod memo_tests;
 mod nested_tests;
 mod publication_tests;
 mod reached_tests;
@@ -27,7 +28,7 @@ enum Op {
     Predicate(Set),
     Unknown(usize),
     Value(usize),
-    Charge(Box<Plan>),
+    Charge(usize, Box<Plan>),
     Bind(usize),
     All(Vec<Plan>),
     Any(Vec<Plan>),
@@ -64,6 +65,7 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     }
     let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
     let plan = lower.plan(&grammar.matcher)?;
+    emit::memo::admit(&plan)?;
     if plan.fallible() {
         return compile_job(&[grammar], i64::MAX);
     }
@@ -76,10 +78,23 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
 }
 
 impl Plan {
+    fn uses_memo(&self) -> bool {
+        match &self.op {
+            Op::Charge(_, child) => child.reads_value(),
+            Op::All(items) | Op::Any(items) => items.iter().any(Self::uses_memo),
+            Op::Not(child) => child.uses_memo(),
+            Op::Search(_, _, child, stop)
+            | Op::Count {
+                rule: child, stop, ..
+            } => child.uses_memo() || stop.as_ref().is_some_and(|s| s.uses_memo()),
+            _ => false,
+        }
+    }
+
     fn reads_value(&self) -> bool {
         match &self.op {
             Op::Value(_) => true,
-            Op::Not(child) | Op::Charge(child) => child.reads_value(),
+            Op::Not(child) | Op::Charge(_, child) => child.reads_value(),
             Op::All(items) | Op::Any(items) => items.iter().any(Self::reads_value),
             Op::Search(_, _, child, stop)
             | Op::Count {
@@ -91,7 +106,7 @@ impl Plan {
 
     fn fallible(&self) -> bool {
         match &self.op {
-            Op::Value(_) | Op::Charge(_) | Op::Count { .. } => true,
+            Op::Value(_) | Op::Charge(..) | Op::Count { .. } => true,
             Op::All(items) | Op::Any(items) => items.iter().any(Self::fallible),
             Op::Not(child) => child.fallible(),
             Op::Search(_, _, child, stop) => {
@@ -114,6 +129,7 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
         lower.pure.program.terminals = terminals;
         let plan = lower.plan(&grammar.matcher)?;
+        emit::memo::admit(&plan)?;
         terminals = lower.pure.program.terminals;
         let roots = grammar.anchors.root_kinds().map_or("1".into(), |kinds| {
             format!(

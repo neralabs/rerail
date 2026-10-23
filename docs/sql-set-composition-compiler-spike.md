@@ -3936,3 +3936,104 @@ The committed evidence supplements the driver's output with these work-count com
 
 The next transition action is the local utility memo-cost fixture documented in the transition plan.
 The broader work-budget contract remains open until memo replay and two-valued candidate pruning are admitted.
+
+### 2026-10-23 — Local utility memo costs in typed SQL (in progress)
+
+This phase starts from `2612d778` and addresses the next transition fixture.
+A repeated value utility must replay its original work cost, even after the value decoder caches its answer.
+At allowance three, two calls to a one-value utility must fail with `Work`.
+At allowance four, they must succeed with zero work left and one value-leaf call.
+
+The first implementation preserves utility identity during lowering.
+It stores typed truth, measured cost, input captures, and output captures inside one Boolean demand.
+File and node identity belong to that demand.
+A reached hit replays cost before it returns the stored answer.
+Failures and unreached invocations do not create reusable answers.
+The native key includes all incoming captures for value utilities, including unrelated captures.
+The compiler therefore preserves those inputs through the demand boundary.
+
+The initial native comparisons pass for true, false, unknown, count exports, changed captures, and previously cached values.
+Cross-traversal, nested-utility, and cross-Boolean reuse remain explicit admission failures.
+This phase does not establish global utility sharing or change production admission.
+
+The initial SQL retains a guarded miss body for each repeated invocation.
+The next measurement compares that shape with direct replay when static capture versions prove an identical key.
+Profiles will include preparation, VM instructions, typed return cells, EXPLAIN, and reached value calls.
+
+#### Measured shape change
+
+The baseline passed 84 relational tests and retained 434 publication traces.
+Its 32-call true fixture generated 44,263 SQL bytes, used 8,411 VM instructions, and copied 136 typed return cells across two files.
+Only two value leaves ran. The remaining return copies came from guarded miss subqueries at later call sites.
+
+The compiler now tracks static capture versions within a Boolean demand.
+An identical version proves that a reached call can replay an existing answer directly.
+Conjunction withholding only grows, and a decisive alternative stops later alternatives.
+Therefore, an identical later call cannot become reached after its earlier call was skipped.
+A possible capture write invalidates this proof and retains a typed key comparison with a guarded miss body.
+This is a SQL generation decision, not a runtime option.
+
+Before final column retirement, the direct-replay fixture used 20,557 SQL bytes, 5,063 VM instructions, and 12 typed return cells.
+The 12-cell count stayed constant at two, eight, and 32 repetitions.
+False and unknown fixtures retained exact native charges and calls, with similar VM reductions.
+Preparation timings varied; individual timing samples do not establish a general speedup.
+
+The compiler also skips memo allocation for single-use utilities and drops answer columns after their last use.
+A regression fixture rejects more than eight allocated key versions before SQL execution.
+The storage bound is deliberately conservative and counts allocated versions, including versions whose columns have retired.
+
+#### Final evidence and qualification
+
+Validation passed for 98 unique tests: 86 relational tests, one workspace publication test, nine B023 fixtures, one adversarial test, and one corpus test.
+The eight memo tests include 198 native-comparison jobs, including 12 profiles.
+The full relational suite produced 454 publication traces.
+Formatting and both default and `code-rule-profile` Clippy configurations passed.
+
+All 12 memo profiles use one matching SQL execution and zero frame publications.
+The 32-call true fixture now uses 5,059 VM instructions and 20,539 SQL-file bytes, including the final newline.
+The rejected shape used 8,411 VM instructions and 44,264 SQL-file bytes.
+This is a 39.9% VM reduction and a 53.6% SQL-size reduction for this fixture.
+Typed return cells fall from 136 to 12 and remain constant as repetitions grow.
+EXPLAIN materialization sites fall from 111 to 80.
+Preparation falls from 9.305 ms to 4.031 ms in these individual instrumented samples.
+These timings are observations, not a general performance guarantee.
+
+At 32 roots per file, the memo fixture uses 38,195 VM instructions versus 41,779 in the rejected shape.
+Distinct roots still require distinct utility answers.
+The fixture retains two files, exact native work, and one leaf invocation per root.
+The compiler does not claim sharing across different root demands.
+
+The 54 preceding-phase control samples have identical SQL, output, and VM counts.
+These include 30 traversal controls, 12 finite-allowance profiles, and 12 publication profiles.
+Their reached calls and outcome comparisons also pass.
+The memo change adds no SQL work to those existing shapes.
+
+The frozen B023 corpus still has 138 files, two matches, and 2,812,255 generated-query VM instructions in every pair.
+The query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+The final run passes both gates: 124.478 ms generated versus 63.890 ms reference, or 1.94833× against the 2× CPU limit.
+The preceding phase's 2.02653× failure remains in its evidence.
+The query and VM counts did not change. This pass does not establish a B023 speedup from memo compilation.
+
+Committed evidence:
+
+- `benchmark/relational-utility-memo.py`: pinned-source profiling driver with native parity and constant-return-width assertions.
+- `benchmark/sql-relational-utility-memo-evidence.json`: 198 memo traces, 12 profiles, rejected-shape comparisons, 54 unchanged controls, and the B023 gates.
+- `benchmark/sql-relational-utility-memo.sql`: final 32-call query.
+- `benchmark/sql-relational-utility-memo-rejected.sql`: the same fixture with a guarded miss body at every call.
+
+Raw memo runs are in `/tmp/rerail-utility-memo-20261023-{baseline,replay,final}`.
+The final B023 run is in `/tmp/rerail-utility-memo-b023-20261023-final`.
+Source hashes identify the measured tree; the recorded revision is the parent commit.
+The build retains the diagnostic allocator shim and test-only local-LTO wrapper from the preceding phase.
+
+Reproduce the memo profiles with a new output directory:
+
+```sh
+python3 benchmark/relational-utility-memo.py /tmp/new-utility-memo-profile --binary target/loop/deps/rerail_engine-11d3550fad116d17
+```
+
+This completes local utility cost replay within the bounded outcome kernel.
+Cross-Boolean, cross-traversal, and nested value-utility sharing remain explicit admission failures.
+The next implementation action is native candidate pruning for two-valued charged searches.
+Start with `has(matches(number))` over `f(1,2,3)` at allowance one, as specified in the transition plan.
+Production integration, broader semantic gates, and the complete cold-job 100-execution gate remain open.

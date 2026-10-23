@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 pub(super) fn contains_walk(plan: &Plan) -> bool {
     match &plan.op {
         Op::Search(..) | Op::Count { .. } => true,
-        Op::Not(child) | Op::Charge(child) => contains_walk(child),
+        Op::Not(child) | Op::Charge(_, child) => contains_walk(child),
         Op::All(items) | Op::Any(items) => items.iter().any(contains_walk),
         _ => false,
     }
@@ -27,7 +27,7 @@ fn check_depth(plan: &Plan, walks: usize) -> Result<(), String> {
                 check_depth(stop, walks + 1)?;
             }
         }
-        Op::Not(child) | Op::Charge(child) => check_depth(child, walks)?,
+        Op::Not(child) | Op::Charge(_, child) => check_depth(child, walks)?,
         Op::All(items) | Op::Any(items) => {
             for child in items {
                 check_depth(child, walks)?;
@@ -107,6 +107,8 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     };
     let slots = if fresh {
         Slots::new()
+    } else if plan.uses_memo() {
+        input.slots.clone()
     } else {
         needed(plan).intersection(&input.slots).copied().collect()
     };

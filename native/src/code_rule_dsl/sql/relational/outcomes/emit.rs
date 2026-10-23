@@ -1,4 +1,6 @@
 use super::super::ir::Set;
+#[path = "memo.rs"]
+pub(super) mod memo;
 #[path = "ordered.rs"]
 mod ordered;
 #[path = "publication.rs"]
@@ -104,7 +106,7 @@ impl Sql {
                 ),
                 true,
             ),
-            Op::Value(_) | Op::Charge(_) => return Ok(None),
+            Op::Value(_) | Op::Charge(..) => return Ok(None),
             Op::Unknown(term) => (
                 format!("CASE WHEN node_regex({term},d.file,d.node) THEN 2 ELSE 1 END"),
                 false,
@@ -164,7 +166,10 @@ impl Sql {
     }
 
     fn input(&mut self, plan: &Plan, source: &Demand, filter: &str) -> Demand {
-        let slots = needed(plan);
+        let mut slots = needed(plan);
+        if plan.uses_memo() {
+            slots.extend(&source.slots);
+        }
         let columns = fields(&slots, |slot| value(source, "d", slot));
         Demand {
             name: self.relation(
@@ -218,7 +223,7 @@ impl Sql {
                     output.name
                 )
             }
-            Op::Charge(child) => {
+            Op::Charge(_, child) => {
                 let (query, profile) = ordered::nested::program(
                     child,
                     input,
@@ -268,7 +273,10 @@ impl Sql {
     }
 
     fn all(&mut self, plan: &Plan, items: &[Plan], input: &Demand) -> Result<Output, String> {
-        let slots = needed(plan);
+        let mut slots = needed(plan);
+        if plan.uses_memo() {
+            slots.extend(&input.slots);
+        }
         let columns = fields(&slots, |slot| value(input, "d", slot));
         let withheld: String = plan
             .node_writes
@@ -287,7 +295,12 @@ impl Sql {
             ),
             slots,
         };
-        for child in items {
+        let mut memo = memo::Local::new(&state.slots, items);
+        for (index, child) in items.iter().enumerate() {
+            if index > 0 {
+                memo.wrote(&items[index - 1]);
+            }
+            let carried = memo.carry("d");
             let blocked = child
                 .mentions
                 .intersection(&plan.node_writes)
@@ -312,11 +325,16 @@ impl Sql {
                 let withheld: String = plan.node_writes.iter().map(|slot| if child.node_writes.contains(slot) {
                     format!(",(d.u{slot} OR COALESCE(d.tested=2,0) OR (d.tested IS NULL AND d.truth<>0)) AS u{slot}")
                 } else {format!(",d.u{slot}")}).collect();
-                state.name=self.relation("conjunction scalar barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
+                state.name=self.relation("conjunction scalar barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld}{carried} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
                 continue;
             }
             if self.correlated {
-                let tested = self.correlated_step(&state, child, &filter)?;
+                let tested = if let Some(tested) = memo.step(self, &state, child, &filter)? {
+                    tested
+                } else {
+                    self.correlated_step(&state, child, &filter)?
+                };
+                let carried = memo.carry("d");
                 let columns = fields(&state.slots, |slot| {
                     if child.writes.contains(&slot) {
                         format!("CASE WHEN d.tested=1 THEN d.e{slot} ELSE d.c{slot} END")
@@ -325,7 +343,7 @@ impl Sql {
                     }
                 });
                 let withheld:String=plan.node_writes.iter().map(|slot|if child.node_writes.contains(slot){format!(",(d.u{slot} OR COALESCE(d.tested=2,0) OR (d.tested IS NULL AND d.truth<>0)) AS u{slot}")}else{format!(",d.u{slot}")}).collect();
-                state.name=self.relation("correlated conjunction barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
+                state.name=self.relation("correlated conjunction barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld}{carried} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
                 continue;
             }
             let reached = self.input(child, &state, &filter);
@@ -365,7 +383,10 @@ impl Sql {
     }
 
     fn any(&mut self, plan: &Plan, items: &[Plan], input: &Demand) -> Result<Output, String> {
-        let slots = needed(plan);
+        let mut slots = needed(plan);
+        if plan.uses_memo() {
+            slots.extend(&input.slots);
+        }
         let columns = fields(&slots, |slot| value(input, "d", slot));
         let mut state = Demand {
             name: self.relation(
@@ -379,7 +400,12 @@ impl Sql {
             ),
             slots,
         };
-        for child in items {
+        let mut memo = memo::Local::new(&state.slots, items);
+        for (index, child) in items.iter().enumerate() {
+            if index > 0 {
+                memo.wrote(&items[index - 1]);
+            }
+            let carried = memo.carry("d");
             if let Some(tested) = self.scalar_step(&state, child, "d.truth=0")? {
                 let columns = fields(&state.slots, |slot| {
                     if child.writes.contains(&slot) {
@@ -389,11 +415,16 @@ impl Sql {
                     }
                 });
                 let strict = usize::from(!child.writes.is_empty());
-                state.name=self.relation("alternative scalar barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
+                state.name=self.relation("alternative scalar barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns}{carried} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
                 continue;
             }
             if self.correlated {
-                let tested = self.correlated_step(&state, child, "d.truth=0")?;
+                let tested = if let Some(tested) = memo.step(self, &state, child, "d.truth=0")? {
+                    tested
+                } else {
+                    self.correlated_step(&state, child, "d.truth=0")?
+                };
+                let carried = memo.carry("d");
                 let columns = fields(&state.slots, |slot| {
                     if child.writes.contains(&slot) {
                         format!("CASE WHEN d.tested=1 THEN d.e{slot} ELSE d.c{slot} END")
@@ -402,7 +433,7 @@ impl Sql {
                     }
                 });
                 let strict = usize::from(!child.writes.is_empty());
-                state.name=self.relation("correlated alternative barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
+                state.name=self.relation("correlated alternative barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns}{carried} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
                 continue;
             }
             let reached = self.input(child, &state, "d.truth=0");
@@ -423,7 +454,10 @@ impl Sql {
     }
 
     fn candidates(&mut self, axis: Axis, end: bool, plan: &Plan, input: &Demand) -> Demand {
-        let slots = needed(plan);
+        let mut slots = needed(plan);
+        if plan.uses_memo() {
+            slots.extend(&input.slots);
+        }
         let columns = fields(&slots, |slot| value(input, "d", slot));
         let guard = kind_filter(plan, "n");
         let (source, rank) = if end && !matches!(axis, Axis::Child) {

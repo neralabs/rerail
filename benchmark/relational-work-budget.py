@@ -70,7 +70,7 @@ def main():
         'sourceHashes': {str(p.relative_to(root)): pinned[p] for p in sources},
         'executableSha256': pinned[binary], 'samples': samples, 'traces': traces,
         'limitations': ['Test-only outcome kernel; production and complete-job 100-execution gate remain pending.',
-                        'Value-bearing utility memo charge replay and two-valued charged search pruning are rejected.',
+                        'Cross-Boolean, cross-traversal, nested value-utility sharing and two-valued charged search pruning remain rejected.',
                         'Native stack/depth limits, deadlines, decisions, enumeration, and general recursive outcomes remain pending.'],
         'build': 'loop profile, unbounded-work feature; diagnostic jemalloc shim; local LTO disabled for test executable only',
     }

@@ -4,12 +4,13 @@ use crate::code_rule_dsl::{
     matcher::{AstMatcher, Semantic, StopBy},
 };
 use ast_grep_core::{matcher::PatternNode, meta_var::MetaVariable};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub(super) struct Lower {
     pub pure: super::super::lower::Lowerer,
     pub slots: Vec<Slot>,
     active: HashSet<(usize, usize)>,
+    utilities: HashMap<(usize, usize), usize>,
     operators: usize,
     three_valued: bool,
 }
@@ -20,6 +21,7 @@ impl Lower {
             pure: super::super::lower::Lowerer::new(dialect),
             slots: vec![],
             active: HashSet::new(),
+            utilities: HashMap::new(),
             operators: 0,
             three_valued,
         }
@@ -196,13 +198,12 @@ impl Lower {
                     .ok_or("outcome relations: missing utility")?;
                 self.active.remove(&key);
                 let child = result?;
-                if child.reads_value() {
-                    return Err("outcome relations: value-bearing utility memo charge replay needs a keyed cost relation".into());
-                }
                 mentions = child.mentions.clone();
                 writes = child.writes.clone();
                 node_writes = child.node_writes.clone();
-                Op::Charge(Box::new(child))
+                let next = self.utilities.len();
+                let id = *self.utilities.entry(key).or_insert(next);
+                Op::Charge(id, Box::new(child))
             }
             _ => return Err(
                 "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
