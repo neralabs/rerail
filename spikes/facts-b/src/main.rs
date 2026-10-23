@@ -84,6 +84,9 @@ fn main() {
             assert_eq!(d, e, "round trip");
             println!("{e:#?}\nencoded bytes: {}", enc.len());
         }
+        // `gnorm --real SPEC [--dump STAGE]`: compile and normalise the spec's repository plans
+        // only (no exports read): the refusals, and the IR of the named stages.
+        "gnorm" => gen::real::check(&PathBuf::from(arg(&args, "--real").expect("--real")), arg(&args, "--dump").as_deref()),
         _ => {
             eprintln!("usage: facts-b extract --run-dir DIR [--corpus DIR] [--threads N] | dump FILE");
             std::process::exit(2);

@@ -330,6 +330,18 @@ impl Agg {
     }
 }
 
+/// One aggregate folded over its input rows in the order given, `(argument, separator)` per row,
+/// with this evaluator's state: S3's generator folds its ordered aggregates
+/// (`group_concat`/`json_group_array`) through it, so both share one definition.
+pub fn fold_aggregate<S>(call: &AggCall<S>, items: impl IntoIterator<Item = (Option<V>, Option<V>)>) -> Result<V, Error> {
+    let mut a = Agg::default();
+    let subtype = json_subtype(call.arg.as_ref());
+    for (v, sep) in items {
+        a.add(call.f, call.distinct, v, sep, subtype)?;
+    }
+    Ok(a.finish(call.f))
+}
+
 impl<'a, S> Evaluator<'a, S> {
     pub fn new(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>) -> Self {
         Self { source, shared: None, locals: RefCell::new(Vec::new()), content: None }

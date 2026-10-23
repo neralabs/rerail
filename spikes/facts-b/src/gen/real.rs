@@ -115,6 +115,35 @@ pub fn load(spec: &Path) -> Real {
     out
 }
 
+/// `facts-b gnorm`: compile and normalise the spec's repository plans without reading their
+/// exports; print every refusal and the node count of each plan that normalises; with `--dump X`,
+/// the program's EXPLAIN text (`X` = `all`) or its lines from the first containing `X` on.
+pub fn check(spec: &Path, dump: Option<&str>) {
+    let items: Vec<Json> = serde_json::from_str(&std::fs::read_to_string(spec).unwrap()).unwrap();
+    // Constants are evaluated while normalising; their text values need a string table.
+    val::install(Rc::new(RefCell::new(crate::derive::World::new(crate::store::Store::default()))));
+    for it in &items {
+        let doc: Json = serde_json::from_str(&std::fs::read_to_string(it["rule"].as_str().unwrap()).unwrap()).unwrap();
+        let config: Map<String, Json> = it.get("config").and_then(Json::as_object).cloned().unwrap_or_default();
+        let clauses: Vec<String> = it["clauses"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().to_owned()).collect();
+        let c = rerail_facts::compile::compile_report(&doc, &config, &mut Accept).unwrap();
+        for r in c.refusals.iter().filter(|r| clauses.contains(&r.clause)) {
+            println!("refused (compiler) {} {}: {}", r.clause, r.at, r.construct);
+        }
+        if let Some(d) = dump {
+            let text = rerail_facts::explain::explain(&c.program);
+            let from = if d == "all" { 0 } else { text.find(d).map(|i| text[..i].rfind('\n').map_or(0, |j| j + 1)).unwrap_or(text.len()) };
+            println!("{}", &text[from..]);
+        }
+        for p in c.program.repository.iter().filter(|p| clauses.contains(&p.clause)) {
+            match norm::plan(p, &c.program.exported) {
+                Ok(g) => println!("ok {}: {} nodes", p.clause, g.nodes.len()),
+                Err(rs) => rs.iter().for_each(|r| println!("refused (generator) {} {}: {}", p.clause, r.at, r.construct)),
+            }
+        }
+    }
+}
+
 impl Real {
     /// Rows of global export `e` for (path, content hash): read from its producer's output.
     /// A content the producer failed on is an error (its clause fails; never an empty guess).
