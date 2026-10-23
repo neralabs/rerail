@@ -207,15 +207,10 @@ pub fn statement(st: &Statement) -> Node {
 /// The physical plans of a relational clause: per stage `(name, plan)`, then the final query.
 pub fn clause(plan: &RelPlan) -> Vec<(String, Node)> {
     let mut out = Vec::new();
-    for (si, st) in plan.stages.iter().enumerate() {
-        let kernel = plan.kernels.get(si).and_then(Option::as_ref);
+    for st in &plan.stages {
         match st {
             StagePlan::Query { name, stmt, deferred, .. } => {
                 let mut n = statement(stmt);
-                if let Some(k) = kernel {
-                    // Spike A3's shape-recognised substitution (deleted with `subst.rs`).
-                    n = node(Op::Project { exprs: vec![format!("a3-kernel {}", kernel_name(k))] }, vec![n]);
-                }
                 for (pos, _, d) in deferred {
                     n = node(Op::Project { exprs: vec![format!("deferred #{pos}")] }, vec![n, statement(d)]);
                 }
@@ -235,16 +230,6 @@ pub fn clause(plan: &RelPlan) -> Vec<(String, Node)> {
     }
     out.push(("query".into(), statement(&plan.fin)));
     out
-}
-
-fn kernel_name(k: &crate::subst::Kernel) -> &'static str {
-    match k {
-        crate::subst::Kernel::Absorbed => "absorbed",
-        crate::subst::Kernel::Nodes { .. } => "nodes",
-        crate::subst::Kernel::Edges => "edges",
-        crate::subst::Kernel::Ownership => "ownership",
-        crate::subst::Kernel::Descendants { .. } => "descendants",
-    }
 }
 
 /// The EXPLAIN text of one rule's relational clauses that apply to `path`.

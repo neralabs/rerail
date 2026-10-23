@@ -55,7 +55,7 @@ Each gets an R-number, side conditions from I2's fact metadata, a test and a mut
 | selection pushdown | `Filter(p)` over `Join`/`Union`/`Project` → into the input that binds `p`'s columns | `p` deterministic; not across a `LEFT JOIN`'s null-extended side |
 | CSE by expression digest across the pack | equal `Rel` digests (Merkle over stage and input digests; `census` computes them) → one shared relation | equal digests and equal inputs |
 
-## Which rewrites retire `subst.rs` (S2's physical side)
+## What replaced `subst.rs` (S2's physical side; `subst.rs` and `FACTS_A3_*` deleted in S7b)
 
 | A3 kernel / substitution | generic replacement |
 |---|---|
