@@ -69,6 +69,8 @@ struct Facts {
     /// Exported row count per (path, content), for the membership model's weights.
     counts: FxHashMap<(Sym, Cid), u64>,
     exports: Vec<u32>,
+    /// Keep computed rows until eviction (`FACTS_ROW_CACHE=0`: recompute on every record).
+    cache: bool,
 }
 
 impl Facts {
@@ -93,7 +95,9 @@ impl Facts {
             return r.clone();
         }
         let r: Rc<[Row]> = self.compute(e, p, c).into();
-        self.rows.insert((e, p, c), r.clone());
+        if self.cache {
+            self.rows.insert((e, p, c), r.clone());
+        }
         r
     }
     /// Make a (path, content)'s rows resident before its records enter (not timed).
@@ -206,7 +210,8 @@ pub fn run(run_dir: &Path, opts: Opts) {
             s.into_iter().collect()
         };
         let rss_store = rss();
-        let facts = Rc::new(RefCell::new(Facts { world: world.clone(), real: real.clone(), rows: FxHashMap::default(), counts: FxHashMap::default(), exports }));
+        let cache = std::env::var("FACTS_ROW_CACHE").map_or(true, |v| v != "0");
+        let facts = Rc::new(RefCell::new(Facts { world: world.clone(), real: real.clone(), rows: FxHashMap::default(), counts: FxHashMap::default(), exports, cache }));
         let fs = facts.clone();
         let src: Source = Rc::new(move |e, p, c| fs.borrow_mut().get(e, p, c));
 
@@ -235,6 +240,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
         eprintln!("model: {} clusters, cost {} (flat {}), {:.2}s", model.clusters.len(), model.cost, model.flat_cost, model_s);
 
         let probe = timely::dataflow::operators::probe::Handle::new();
+        let sizes = crate::flow::register_logging(worker);
         let mut built = lower::build(worker, graphs.clone(), src, &probe, opts.track);
         let mut resident = Resident::default();
         let mut epoch: T = 0;
@@ -473,7 +479,23 @@ pub fn run(run_dir: &Path, opts: Opts) {
         } else {
             json!(null)
         };
+        // Arrangement records from differential's logging, per operator name (`n<node>:<role>`).
+        let arrangements = {
+            let sz = sizes.borrow();
+            let mut by_name: BTreeMap<String, (isize, isize)> = BTreeMap::new();
+            for (op, n) in &sz.records {
+                by_name.entry(sz.names.get(op).cloned().unwrap_or_else(|| format!("op{op}"))).or_default().0 += n;
+            }
+            for (op, b) in &sz.batcher_bytes {
+                by_name.entry(sz.names.get(op).cloned().unwrap_or_else(|| format!("op{op}"))).or_default().1 += b;
+            }
+            let total: isize = by_name.values().map(|v| v.0).sum();
+            let mut arr: Vec<(String, (isize, isize))> = by_name.into_iter().filter(|(_, v)| v.0 != 0 || v.1 != 0).collect();
+            arr.sort_by_key(|x| -x.1 .0);
+            json!({"total_records": total, "by_operator": arr.iter().map(|(n, (r, b))| json!([n, r, b])).collect::<Vec<_>>()})
+        };
         let out = json!({
+            "arrangements": arrangements,
             "plans": graphs.iter().map(|(n, g)| json!({"plan": n, "nodes": g.nodes.len()})).collect::<Vec<_>>(),
             "refused_static": refusals_static,
             "runtime_refusals": runtime_refusals,
