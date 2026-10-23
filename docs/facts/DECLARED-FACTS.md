@@ -1,6 +1,6 @@
 # Declared facts: the shared fact layer as a language construct
 
-Status: design, 2026-10-23. Origin: the measured residue of Phase 2 (34.9 s of byte-identical stage text recomputing the same relations per clause over clause-specific subsets; selection sharing admissible only under a subtree-closure side condition) and Jeremy's proposal that the language declare the facts it computes rather than the engine infer them. This document amends `INVARIANTS.md` I2 and is read under it.
+Status: **proposal under evaluation, not scheduled.** Written 2026-10-23 as the decider's reading of Jeremy's suggestion; no implementation decision has been taken. Origin: the measured residue of Phase 2 (34.9 s of byte-identical stage text recomputing the same relations per clause over clause-specific subsets; selection sharing admissible only under a subtree-closure side condition) and Jeremy's proposal that the language declare the facts it computes rather than the engine infer them. This document amends `INVARIANTS.md` I2 and is read under it.
 
 ## The idea
 
@@ -73,7 +73,7 @@ The clause's own selection stays the clause's business; the shared relation is c
 5. Budgets: a declared fact has no per-rule budget; what happens when one content's fact exceeds a work limit (named refusal of that content's fact for all readers is the current rule).
 6. His compiler as `define.match`'s front end: it lowers a complete matcher with recursion and ordered capture; ours lowers a subset. Retargeting his lowering at the IR makes every `define.match` fact exact and complete.
 
-## Plan
+## If adopted
 
-- **S9 (Phase 2, wave 6):** `facts` block in the compiler (`rerail-facts`): parse, type, digest, memo keys, reader binding in stages and inputs, census and `EXPLAIN` rows; migrate batch 6's shared stage texts into a pack-level `facts` block (definitions equal to the stage texts over the full node set, checked by S4's corpus differential); measure G2.3 and parity with the migrated pack; the original pack keeps working through inference.
+- **A compiler slice would:** `facts` block in the compiler (`rerail-facts`): parse, type, digest, memo keys, reader binding in stages and inputs, census and `EXPLAIN` rows; migrate batch 6's shared stage texts into a pack-level `facts` block (definitions equal to the stage texts over the full node set, checked by S4's corpus differential); measure G2.3 and parity with the migrated pack; the original pack keeps working through inference.
 - **With Jeremy:** the open questions above, then the `py.*` library pack and the migration of the 60 rules.

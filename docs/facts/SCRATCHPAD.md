@@ -86,12 +86,16 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 - **G2.3 restated at the measured floor.** After S7/S7b/S8/S8b the generic path measures 89.0–90.7 s CPU on the batch-6 corpus (decider's runs at load ≤ 3.4; S8b's quiet pair 89.0 / 89.6 s with the flat-id fix), parity 173/173, with every remaining cost scattered (index builds 13%, `descendants` seeds select, `reach`'s distinct, `ownership`'s per-row probes; R19 gave no gain). That is 23% of native and 10.0 ms per file mean for the 10 heaviest rules, which is the per-file figure the gate was defined to express. G2.3 is recorded as **met at 90 s** once S8c's gated runs confirm it; the stretch (≤ 40 s) stays a Phase 3 item for the cold corpus only, since per-edit cost is the product target.
 - **Reference-ahead discipline:** the reference evaluator is truth (I1); when a ruling lands in the reference first, the engine must catch up before merge, and `a-vs-reference` is the check. S8b's branch is in that state (reference has (a)–(d), engine (a),(b)); S8cEngine finishes (c),(d) before the gate.
 
+- **Declared facts (user direction, from Jeremy's proposal): the language declares the computable facts; the engine stops inferring them from rule text.** `DECLARED-FACTS.md` written; I2 amended (inference from rule text is now the compatibility path only). **Correction:** the user asked for a judgement on the claim, not for work. S9 was cancelled before its first commit and its branch deleted; `DECLARED-FACTS.md` stays as a proposal under evaluation, not a scheduled slice.
+
 ## Open questions
 
 - Which batch-6 rules depend on facts outside the syntactic schema: answered by the census, 41 of 775 units (decoded strings, f-string and annotation sub-grammars, line splitting); the annotation classifier is the only one that blocks a recorded call.
 - Divergence of the 47 worktrees from a common base (B reports it; it sets per-worktree state).
 
 ## Log
+
+- Wave 5 merged and gated by decider (`0271ed8f0`, 28/28, 40/40, pushed as `326710287` after a numbering tidy). Jeremy's branches reviewed (`reports/jb-progress-2026-10-23.md`): direct relational compiler at milestone 1 (B023 within 2× of hand-written SQL, no catalogue run, SQLite in the hot path, nothing on cross-file); conclusion: his path reaches native parity per file at best and has no answer for cross-file or fleet memory; his compiler would be a better pattern front end for our IR. User: keep working; shared fact layer as a declared language construct. S9 launched.
 
 - S3CrossFile-5 done (2 h 27 min): all six decorrelation rewrites plus three more generic ones; 5 of 8 clauses run, 4 exact; dead code wrong by a per-file export defect in `xexport`; memory 8.6 GB for 40 worktrees with 5 plans. S3-6 launched. S8c still running.
 
