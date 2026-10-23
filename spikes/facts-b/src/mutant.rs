@@ -6,6 +6,8 @@
 //! - 4: join drops the (w, w) pair (the ΔR⋈ΔS term of the bilinear expansion).
 //! - 5: presence / count reduce ignores negative deltas (retractions not counted).
 //! - 6: recursion stops after one step: records a fixpoint step derives at round ≥ 2 are dropped.
+//! - 9: runtime tie detection off.
+//! - 24: R15 filter pushdown moves a right-only WHERE conjunct below a LEFT join.
 
 #[cfg(feature = "mutants")]
 pub fn on(n: u32) -> bool {

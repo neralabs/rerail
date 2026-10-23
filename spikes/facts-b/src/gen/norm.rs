@@ -117,42 +117,54 @@ pub fn col(c: usize) -> X {
 
 /// Does `e` read a row `k` or more subquery levels out (relative to the expression's operator)?
 fn expr_free(e: &X, k: u16) -> bool {
-    match e {
-        Expr::Lit(_) => false,
-        Expr::Col { depth, .. } => *depth >= k,
-        Expr::Not(x) | Expr::Neg(x) | Expr::Plus(x) | Expr::Cast(x, _) => expr_free(x, k),
-        Expr::IsNull { e, .. } => expr_free(e, k),
-        Expr::Arith(_, a, b) | Expr::Concat(a, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Cmp(_, a, b, _) => expr_free(a, k) || expr_free(b, k),
-        Expr::Is { left, right, .. } => expr_free(left, k) || expr_free(right, k),
-        Expr::Like { text, pattern, .. } => expr_free(text, k) || expr_free(pattern, k),
-        Expr::Func(_, a) => a.iter().any(|x| expr_free(x, k)),
-        Expr::Case { operand, whens, else_ } => operand.as_ref().is_some_and(|o| expr_free(o, k)) || whens.iter().any(|(w, t, _)| expr_free(w, k) || expr_free(t, k)) || else_.as_ref().is_some_and(|x| expr_free(x, k)),
-        Expr::InList { e, list, .. } => expr_free(e, k) || list.iter().any(|(x, _)| expr_free(x, k)),
-        Expr::InRel { e, rel, .. } => expr_free(e, k) || rel_free(rel, k + 1),
-        Expr::Exists { rel, .. } => rel_free(rel, k + 1),
-        Expr::Scalar(rel) => rel_free(rel, k + 1),
-    }
+    expr_any(e, k, &|_, _| true)
 }
 
 /// Does a relation's expressions read a row `k` or more levels out (k = 1: the row enclosing the
 /// subquery the relation is)?
 fn rel_free(r: &Rel<RepoSource>, k: u16) -> bool {
+    rel_any(r, k, &|_, _| true)
+}
+
+/// Does `e` read a column `col` of a row `k + up` levels out with `p(up, col)`?
+fn expr_any(e: &X, k: u16, p: &dyn Fn(u16, u16) -> bool) -> bool {
+    let f = |x: &X| expr_any(x, k, p);
+    match e {
+        Expr::Lit(_) => false,
+        Expr::Col { depth, col } => *depth >= k && p(*depth - k, *col),
+        Expr::Not(x) | Expr::Neg(x) | Expr::Plus(x) | Expr::Cast(x, _) => f(x),
+        Expr::IsNull { e, .. } => f(e),
+        Expr::Arith(_, a, b) | Expr::Concat(a, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Cmp(_, a, b, _) => f(a) || f(b),
+        Expr::Is { left, right, .. } => f(left) || f(right),
+        Expr::Like { text, pattern, .. } => f(text) || f(pattern),
+        Expr::Func(_, a) => a.iter().any(f),
+        Expr::Case { operand, whens, else_ } => operand.as_ref().is_some_and(|o| f(o)) || whens.iter().any(|(w, t, _)| f(w) || f(t)) || else_.as_ref().is_some_and(|x| f(x)),
+        Expr::InList { e, list, .. } => f(e) || list.iter().any(|(x, _)| f(x)),
+        Expr::InRel { e, rel, .. } => f(e) || rel_any(rel, k + 1, p),
+        Expr::Exists { rel, .. } => rel_any(rel, k + 1, p),
+        Expr::Scalar(rel) => rel_any(rel, k + 1, p),
+    }
+}
+
+fn rel_any(r: &Rel<RepoSource>, k: u16, p: &dyn Fn(u16, u16) -> bool) -> bool {
+    let e = |x: &X| expr_any(x, k, p);
+    let r_ = |x: &Rel<RepoSource>| rel_any(x, k, p);
     match r {
         Rel::Scan { .. } | Rel::Local { .. } | Rel::Unit => false,
-        Rel::JsonEach { input, arg, on, .. } => rel_free(input, k) || expr_free(arg, k) || on.as_ref().is_some_and(|o| expr_free(o, k)),
-        Rel::Join { left, right, on, .. } => rel_free(left, k) || rel_free(right, k) || on.as_ref().is_some_and(|o| expr_free(o, k)),
-        Rel::Filter { input, pred } => rel_free(input, k) || expr_free(pred, k),
-        Rel::Project { input, exprs, .. } => rel_free(input, k) || exprs.iter().any(|e| expr_free(e, k)),
-        Rel::Aggregate { input, keys, aggs } => rel_free(input, k) || keys.iter().any(|e| expr_free(e, k)) || aggs.iter().any(|a| a.arg.as_ref().is_some_and(|e| expr_free(e, k)) || a.sep.as_ref().is_some_and(|e| expr_free(e, k))),
-        Rel::Window { input, funcs } => rel_free(input, k) || funcs.iter().any(|f| f.partition.iter().any(|e| expr_free(e, k)) || f.order.iter().any(|(e, _)| expr_free(e, k)) || matches!(&f.kind, WindowKind::Min(e) | WindowKind::Max(e) if expr_free(e, k))),
-        Rel::Distinct { input, .. } => rel_free(input, k),
-        Rel::Union { left, right, .. } => rel_free(left, k) || rel_free(right, k),
-        Rel::Sort { input, limit, offset, .. } => rel_free(input, k) || limit.as_ref().is_some_and(|e| expr_free(e, k)) || offset.as_ref().is_some_and(|e| expr_free(e, k)),
+        Rel::JsonEach { input, arg, on, .. } => r_(input) || e(arg) || on.as_ref().is_some_and(e),
+        Rel::Join { left, right, on, .. } => r_(left) || r_(right) || on.as_ref().is_some_and(e),
+        Rel::Filter { input, pred } => r_(input) || e(pred),
+        Rel::Project { input, exprs, .. } => r_(input) || exprs.iter().any(e),
+        Rel::Aggregate { input, keys, aggs } => r_(input) || keys.iter().any(e) || aggs.iter().any(|a| a.arg.as_ref().is_some_and(e) || a.sep.as_ref().is_some_and(e)),
+        Rel::Window { input, funcs } => r_(input) || funcs.iter().any(|f| f.partition.iter().any(e) || f.order.iter().any(|(x, _)| e(x)) || matches!(&f.kind, WindowKind::Min(x) | WindowKind::Max(x) if e(x))),
+        Rel::Distinct { input, .. } => r_(input),
+        Rel::Union { left, right, .. } => r_(left) || r_(right),
+        Rel::Sort { input, limit, offset, .. } => r_(input) || limit.as_ref().is_some_and(e) || offset.as_ref().is_some_and(e),
         Rel::With { bindings, body } => {
-            rel_free(body, k)
+            r_(body)
                 || bindings.iter().any(|(_, b)| match b {
-                    Binding::Plain(r) => rel_free(r, k),
-                    Binding::Fix { init, step, .. } => init.iter().chain(step).any(|r| rel_free(r, k)),
+                    Binding::Plain(x) => r_(x),
+                    Binding::Fix { init, step, .. } => init.iter().chain(step).any(r_),
                 })
         }
     }
@@ -272,6 +284,75 @@ fn shift(e: &X, by: isize) -> X {
     map_cols(e, &|d, c| (d == 0).then(|| Expr::Col { depth: 0, col: (c as isize + by) as u16 }))
 }
 
+/// Does `e` call `rerail_refuse` (a refusal raised by evaluation: never moved)?
+fn raises(e: &X) -> bool {
+    let mut found = false;
+    rerail_facts::front::sql::visit_expr(e, &mut |x| found |= matches!(x, Expr::Func(ir::Func::Refuse, _)));
+    found
+}
+
+/// R15 (REWRITES.md): a conjunct reading one side of a join only is evaluated on that side.
+/// - `WHERE` over a join: a left-only conjunct filters the left input (inner or LEFT join); a
+///   right-only one the right input (inner joins only: under a LEFT join it would keep the NULL-
+///   extended rows its WHERE drops).
+/// - `ON`: a left- or right-only conjunct filters that input (inner joins); under a LEFT join only
+///   a right-only one (it restricts the matches; a left-only one decides NULL-extension instead).
+///
+/// Side conditions: the conjunct is subquery-free, reads no outer row (a correlation stays where
+/// decorrelation looks for it) and raises no named refusal. Returns `None` when nothing moves.
+/// Exact: a conjunction over a join's rows is the same filter before or after the join for the
+/// conjuncts determined by one side's columns; inner joins commute with filters on either input,
+/// a LEFT join with filters on its preserved side and with `ON` restrictions of its right side.
+pub fn push_filters(r: &Rel<RepoSource>) -> Option<Rel<RepoSource>> {
+    let (join, pred) = match r {
+        Rel::Filter { input, pred } if matches!(**input, Rel::Join { .. }) => (&**input, Some(pred)),
+        Rel::Join { .. } => (r, None),
+        _ => return None,
+    };
+    let Rel::Join { kind, left, right, on } = join else { unreachable!() };
+    let inner = *kind == ir::JoinKind::Inner;
+    let (wl, wr) = (left.schema().len(), right.schema().len());
+    let movable = |c: &X| !has_subquery(c) && !raises(c);
+    let (mut to_l, mut to_r) = (Vec::new(), Vec::new());
+    let split = |cs: Vec<X>, to_l: &mut Vec<X>, to_r: &mut Vec<X>, left_ok: bool, right_ok: bool| -> Vec<X> {
+        let mut keep = Vec::new();
+        for c in cs {
+            if movable(&c) && left_ok && only_cols_below(&c, 0, wl) {
+                to_l.push(c);
+            } else if movable(&c) && right_ok && only_cols_below(&c, wl, wl + wr) {
+                to_r.push(shift(&c, -(wl as isize)));
+            } else {
+                keep.push(c);
+            }
+        }
+        keep
+    };
+    let mut on_cs = Vec::new();
+    if let Some(o) = on {
+        conjuncts(o, &mut on_cs);
+    }
+    let on_keep = split(on_cs, &mut to_l, &mut to_r, inner, true);
+    let mut where_keep = Vec::new();
+    if let Some(p) = pred {
+        let mut cs = Vec::new();
+        conjuncts(p, &mut cs);
+        // Mutant 24: a right-only WHERE conjunct moves below a LEFT join too.
+        where_keep = split(cs, &mut to_l, &mut to_r, true, inner || crate::mutant::on(24));
+    }
+    if to_l.is_empty() && to_r.is_empty() {
+        return None;
+    }
+    let wrap = |rel: &Rel<RepoSource>, cs: Vec<X>| match and_all(cs) {
+        None => rel.clone(),
+        Some(pred) => Rel::Filter { input: Box::new(rel.clone()), pred },
+    };
+    let j = Rel::Join { kind: *kind, left: Box::new(wrap(left, to_l)), right: Box::new(wrap(right, to_r)), on: and_all(on_keep) };
+    Some(match and_all(where_keep) {
+        None => j,
+        Some(pred) => Rel::Filter { input: Box::new(j), pred },
+    })
+}
+
 // --------------------------------------------------------------------------------------------
 // The constant evaluator: a subtree that reads no scan and no binding.
 
@@ -361,6 +442,9 @@ impl<'a> Ctx<'a> {
             Rel::Unit => unreachable!("constant"),
             Rel::JsonEach { .. } => refuse(&self.at, "json_each over a non-constant relation"),
             Rel::Filter { input, pred } => {
+                if let Some(p) = push_filters(r) {
+                    return self.rel(&p);
+                }
                 let n = self.rel(input)?;
                 self.filter(n, pred)
             }
@@ -373,6 +457,9 @@ impl<'a> Ctx<'a> {
                 Ok(self.add(Op::Map { input: n, exprs }, schema.len(), Vec::new()))
             }
             Rel::Join { kind, left, right, on } => {
+                if let Some(p) = push_filters(r) {
+                    return self.rel(&p);
+                }
                 let l = self.rel(left)?;
                 let r = self.rel(right)?;
                 self.join(l, r, on.as_ref(), *kind == ir::JoinKind::Left)
@@ -996,4 +1083,105 @@ pub fn plan(p: &ir::Plan<RepoSource>, exported: &[ir::ExportedRelation]) -> Resu
         Sink::Witnesses { .. } | Sink::Export(_) => refused.push(Refused { at: ctx.at.clone(), construct: "per-file sink in a repository plan".into() }),
     }
     if refused.is_empty() { Ok(ctx.g) } else { Err(refused) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rerail_facts::ir::{Column, Plan, Violation};
+    use rerail_facts::reference::{evaluate_repository, multiset};
+
+    fn c(col: u16) -> X {
+        Expr::Col { depth: 0, col }
+    }
+    fn lit(i: i64) -> X {
+        Expr::Lit(ir::Lit::Int(i))
+    }
+    fn cmp(op: CmpOp, a: X, b: X) -> X {
+        Expr::Cmp(op, Box::new(a), Box::new(b), (Aff::None, Aff::None))
+    }
+    fn and(a: X, b: X) -> X {
+        Expr::And(Box::new(a), Box::new(b))
+    }
+    fn is_null(e: X) -> X {
+        Expr::IsNull { e: Box::new(e), negated: false }
+    }
+    fn scan(id: u32, names: &[&str]) -> Rel<RepoSource> {
+        Rel::Scan { src: RepoSource::Exported(id), schema: names.iter().map(|n| Column::new(n, Aff::None)).collect() }
+    }
+    fn plan(rel: Rel<RepoSource>) -> Plan<RepoSource> {
+        Plan { clause: "t".into(), syntax: None, stages: Vec::new(), sink: Sink::Findings { rel, key: Vec::new(), code: None, locations: Vec::new(), violation: Violation { code: "t".into(), anchor: ir::Anchor::Span, each: None } } }
+    }
+    /// R15 applied until nothing moves, at the top and inside the join's inputs.
+    fn pushed(r: &Rel<RepoSource>) -> Rel<RepoSource> {
+        let mut cur = r.clone();
+        while let Some(p) = push_filters(&cur) {
+            cur = p;
+        }
+        cur
+    }
+
+    /// R15's differential test: for random tables (NULLs included) and filters over inner and
+    /// LEFT joins mixing left-only, right-only and two-sided conjuncts in WHERE and ON, the
+    /// reference evaluator gives the same multiset before and after the rewrite.
+    #[test]
+    fn rewrite_filter_pushdown_equals_unpushed() {
+        let mut seed: u64 = 0x5eed_f15;
+        let mut next = move |m: u64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) % m
+        };
+        let a = scan(0, &["x", "y"]);
+        let b = scan(1, &["x", "z"]);
+        let on_eq = cmp(CmpOp::Eq, c(0), c(2));
+        let preds = [
+            cmp(CmpOp::Gt, c(1), lit(1)),
+            is_null(c(3)),
+            cmp(CmpOp::Gt, c(3), lit(0)),
+            and(cmp(CmpOp::Lt, c(1), lit(3)), is_null(c(3))),
+            and(cmp(CmpOp::Eq, c(1), c(3)), cmp(CmpOp::Ne, c(2), lit(1))),
+        ];
+        let mut fired = 0;
+        for round in 0..200 {
+            let mut table = |n: u64| -> Vec<Vec<V>> {
+                (0..next(n))
+                    .map(|_| (0..2).map(|_| if next(5) == 0 { V::Null } else { V::Int(next(4) as i64) }).collect())
+                    .collect()
+            };
+            let (ta, tb) = (table(7), table(7));
+            let exported = |id: ir::ExportId| -> Result<Vec<Vec<V>>, rerail_facts::reference::Error> { Ok(if id == 0 { ta.clone() } else { tb.clone() }) };
+            let kind = if round % 2 == 0 { ir::JoinKind::Inner } else { ir::JoinKind::Left };
+            for p in &preds {
+                for on in [on_eq.clone(), and(on_eq.clone(), cmp(CmpOp::Gt, c(3), lit(1))), and(on_eq.clone(), cmp(CmpOp::Lt, c(1), lit(2)))] {
+                    let j = Rel::Join { kind, left: Box::new(a.clone()), right: Box::new(b.clone()), on: Some(on) };
+                    let orig = Rel::Filter { input: Box::new(j), pred: p.clone() };
+                    let new = pushed(&orig);
+                    if format!("{new:?}") != format!("{orig:?}") {
+                        fired += 1;
+                    }
+                    let want = multiset(&evaluate_repository(&plan(orig.clone()), &exported).unwrap());
+                    let got = multiset(&evaluate_repository(&plan(new.clone()), &exported).unwrap());
+                    assert_eq!(want, got, "round {round}: {orig:?}\n→ {new:?}\nA {ta:?}\nB {tb:?}");
+                }
+            }
+        }
+        assert!(fired > 1000, "the rewrite fired {fired} times");
+    }
+
+    /// Where R15 must not move a conjunct: right-only WHERE and left-only ON under a LEFT join,
+    /// a correlated conjunct, a subquery.
+    #[test]
+    fn rewrite_filter_pushdown_side_conditions() {
+        let a = scan(0, &["x", "y"]);
+        let b = scan(1, &["x", "z"]);
+        let lj = |on: X| Rel::Join { kind: ir::JoinKind::Left, left: Box::new(a.clone()), right: Box::new(b.clone()), on: Some(on) };
+        let on_eq = cmp(CmpOp::Eq, c(0), c(2));
+        assert!(push_filters(&Rel::Filter { input: Box::new(lj(on_eq.clone())), pred: is_null(c(3)) }).is_none());
+        assert!(push_filters(&lj(and(on_eq.clone(), cmp(CmpOp::Gt, c(1), lit(0))))).is_none());
+        let corr = cmp(CmpOp::Eq, c(1), Expr::Col { depth: 1, col: 0 });
+        let ij = Rel::Join { kind: ir::JoinKind::Inner, left: Box::new(a.clone()), right: Box::new(b.clone()), on: Some(on_eq) };
+        assert!(push_filters(&Rel::Filter { input: Box::new(ij.clone()), pred: corr }).is_none());
+        let sub = Expr::Exists { rel: Box::new(scan(2, &["w"])), negated: false };
+        assert!(push_filters(&Rel::Filter { input: Box::new(ij), pred: sub }).is_none());
+    }
 }

@@ -31,6 +31,7 @@ Checks (clean build, `FACTS_MUTANT` unset), in nine concurrent lanes:
      classifier-leak  cargo test -p rerail-facts leak: a per-file plan reading cross-file state is refused.
      planner-audit    cargo test -p rerail-facts phys::tests::audit: an inner scan is refused.
      facts-a-unit     cargo test -p facts-a --bin facts-a: the leaf executor's and spike SQL engine's unit tests.
+     facts-b-unit     cargo test -p facts-b --bin facts-b norm::tests: the delta generator's rewrite tests (R15).
      explain-stable   facts-a explain over the pack: byte-identical across two runs and per-rule processes.
      harness-replay   Jeremy's replay.ts --engine facts: same acceptance as a-replay.
   v  views-derived    S4's facts-a derived-check --shard 0/8 (VIEWS_SHARD): schema views equal the policies'
@@ -161,7 +162,7 @@ REWRITES = ROOT / "docs/facts/REWRITES.md"
 # corpus differential (default vs FACTS_REWRITES=0). a-pattern runs clean only: under mutants 1, 3 and 23
 # it survives on the subset (run 20261023T034203-gate) and 2 dies by the unit test and a-unrewritten
 # too, while its ~100 s per mutant put the gate over 10 minutes.
-REWRITE_FAMILIES = {"rerail-facts": ["rerail-facts-lib", "a-unrewritten"], "facts-a": ["facts-a-unit", "a-unrewritten"]}
+REWRITE_FAMILIES = {"rerail-facts": ["rerail-facts-lib", "a-unrewritten"], "facts-a": ["facts-a-unit", "a-unrewritten"], "facts-b": ["facts-b-unit", "b-generated"]}
 
 
 def rewrite_mutants() -> tuple[list[tuple], list[str]]:
@@ -190,7 +191,7 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
     for table in tables:
         cols = [c.lower() for c in table[0]]
         mcol = next(c for c in cols if c.startswith("mutant"))
-        crate = "facts-a" if "facts-a" in mcol else "rerail-facts"
+        crate = next((k for k in ("facts-a", "facts-b") if k in mcol), "rerail-facts")
         ri, mi = cols.index("rewrite"), cols.index(mcol)
         ii = cols.index("id") if "id" in cols else ri
         for r in table[2:]:
@@ -207,7 +208,7 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
 
 BATCH_CHECKS = [f"harness-b{n}" for n in BATCH_RECORDINGS] + [f"suite-b{n}" for n in BATCH_RECORDINGS]
 LANES = {"a": ["a-replay", "a-repo", "a-subset", "a-unrewritten"], "p": ["a-pattern"], "r": ["a-vs-reference"], "b": ["b-exactness"], "g": ["b-generated"],
-         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "facts-a-unit", "explain-stable", "harness-replay"],
+         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "facts-a-unit", "facts-b-unit", "explain-stable", "harness-replay"],
          "v": ["views-derived"], "h": [*BATCH_CHECKS, "explain-physical"], "t": ["b-ties"]}
 # The edit replays' prefix (b-exactness, b-generated and their mutants): events 0-299 hold every
 # single-file edit kind, one new worktree (event 100) and one 200-file bulk replace (event 161), but none
@@ -303,6 +304,9 @@ def build(rd: Path) -> tuple[bool, dict]:
     if status == 0 and "facts-a" in present:
         f = ["--features", "facts-a/mutants"] if "facts-a" in mutants else []
         status, _ = run(["cargo", "test", "--release", "-p", "facts-a", *f, "--bin", "facts-a", "--no-run"], rd / "build-tests-facts-a", env)
+    if status == 0 and "facts-b" in present:
+        f = ["--features", "facts-b/mutants"] if "facts-b" in mutants else []
+        status, _ = run(["cargo", "test", "--release", "-p", "facts-b", *f, "--bin", "facts-b", "--no-run"], rd / "build-tests-facts-b", env)
     info = {"seconds": round(time.monotonic() - t0, 1), "packages": present, "mutants_feature": mutants,
             "target": str(target), "ok": status == 0}
     say(f"build {'ok' if status == 0 else 'FAIL'} {info['seconds']:.0f}s "
@@ -563,6 +567,7 @@ CARGO_CHECKS = {
     "classifier-leak": ("rerail-facts", ["leak"], "leak tests"),
     "planner-audit": ("rerail-facts", ["phys::tests::audit"], "plan audit tests"),
     "facts-a-unit": ("facts-a", ["--bin", "facts-a"], "facts-a unit tests (leaf executor, spike SQL engine)"),
+    "facts-b-unit": ("facts-b", ["--bin", "facts-b", "norm::tests"], "facts-b generator rewrite tests"),
 }
 
 
