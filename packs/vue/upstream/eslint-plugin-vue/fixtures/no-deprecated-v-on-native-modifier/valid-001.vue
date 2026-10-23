@@ -1,1 +1,0 @@
-<template><input @keyup.enter='fire'></template>

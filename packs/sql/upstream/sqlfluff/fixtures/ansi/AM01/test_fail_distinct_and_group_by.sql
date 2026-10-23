@@ -1,1 +1,0 @@
-select distinct a from b group by a

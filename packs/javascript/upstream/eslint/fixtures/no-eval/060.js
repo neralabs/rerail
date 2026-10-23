@@ -1,1 +1,0 @@
-function foo(eval) { eval('foo') }

@@ -1,4 +1,0 @@
-
-new A();
-class A {}
-      

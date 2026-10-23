@@ -10,7 +10,7 @@ import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-r
 import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
 import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, listedCopies, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources } from "../../../conformance/recorders/port-readiness/record.js";
 import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies, withoutMachinePaths } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
@@ -89,8 +89,7 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     // The lock names the recording; the recording itself is not in the tree but in the cache, by its own digest.
     const lock = recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
     assert.deepEqual(lock.pins, recorded.recording.pins);
-    assert.match(lock.files["recording.json"].asset, /^demo-bandit-recording-[0-9a-f]{64}\.json\.gz$/u);
-    assert.deepEqual(written.assets.map((asset) => asset.name).sort(), [lock.files["corpus.json"].asset, lock.files["recording.json"].asset].sort());
+    assert.deepEqual(written.lock, lock);
     assert.equal(existsSync(join(root, "packs/demo/upstream/bandit/recording.json")), false);
     const recording = gatesRecordingSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["recording.json"].sha256)!));
     assert.deepEqual(Object.keys(recording.rules), ["B301"]);
@@ -128,7 +127,7 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     // that this is a first recording.
     const uncompared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
     assert.equal(uncompared.changes.first, false);
-    assert.equal(uncompared.changes.unavailable, `${lock.files["recording.json"].asset} is not in the cache`);
+    assert.equal(uncompared.changes.unavailable, `the locked recording.json (sha256 eeeeeeeeeeee) is not in the cache`);
     const compared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
     assert.equal(compared.changes.unavailable, null);
     assert.deepEqual(compared.changes.rules, []);
@@ -237,11 +236,36 @@ test("an ESLint case reuses a committed source with its bytes, its own directory
   }
 });
 
+test("a case reuses a source its licence table lists under its bytes' name, on disk or not, as a derivation finds it", () => {
+  const root = mkdtempSync(join(tmpdir(), "gates-layout-"));
+  try {
+    const code = "let a = 1;";
+    const named = `${createHash("sha256").update(code).digest("hex").slice(0, 12)}.ts`;
+    const table = ["| File | Upstream path | Copy |", "|---|---|---|",
+      `| \`upstream/typescript-eslint/fixtures/no-redeclare/${named}\` | \`packages/eslint-plugin/tests/rules/no-redeclare.test.ts\` | derived |`,
+      "| `upstream/other/fixtures/x/aaaaaaaaaaaa.ts` | `x` | derived |", ""].join("\n");
+    const listed = listedCopies(table, "typescript-eslint");
+    assert.deepEqual(listed, [`fixtures/no-redeclare/${named}`]);
+    const place = (committed: CommittedSources) =>
+      CASE_LAYOUTS.eslint.file({ fixture: "packages/eslint-plugin/tests/rules/no-shadow/no-shadow.test.ts#0/valid[1]", path: "file.ts", bytes: Buffer.from(code) }, committed);
+    assert.equal(place(committedSources(root, listed)), `fixtures/no-redeclare/${named}`);
+    assert.equal(place(committedSources(root)), `fixtures/no-shadow/${named}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The versions come from the manifests, so a bump of the pins (conformance/port-readiness/upstream/bump.ts) keeps this
+// test meaning what it says: a runtime directory is named for the release it installs.
 test("a lock pins every runtime the adapter installs, the environment the pack is linted in among them", () => {
-  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "next", "eslint-plugin-next")), ["eslint-config-next-16.3.8", "eslint-plugin-next-16.3.8", "parsers"]);
-  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "python", "ruff")), ["python", "ruff-0.16.9"]);
-  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "php", "phpcs")), ["php", "phpcs-4.0.4"]);
-  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "blade", "tlint")), ["blade", "php", "tlint-9.7.0"]);
+  const next = readGatesManifest(PACKAGE_ROOT, "next", "eslint-plugin-next");
+  assert.deepEqual(recordedRuntimes(next), [`eslint-config-next-${next.eslint!.environment!.version}`, `eslint-plugin-next-${next.upstream.version}`, "parsers"]);
+  const ruff = readGatesManifest(PACKAGE_ROOT, "python", "ruff");
+  assert.deepEqual(recordedRuntimes(ruff), ["python", `ruff-${ruff.upstream.version}`]);
+  const phpcs = readGatesManifest(PACKAGE_ROOT, "php", "phpcs");
+  assert.deepEqual(recordedRuntimes(phpcs), ["php", `phpcs-${phpcs.upstream.version}`]);
+  const tlint = readGatesManifest(PACKAGE_ROOT, "blade", "tlint");
+  assert.deepEqual(recordedRuntimes(tlint), ["blade", "php", `tlint-${tlint.upstream.version}`]);
 });
 
 test("a runtime's manifest pins every direct dependency at an exact version", () => {

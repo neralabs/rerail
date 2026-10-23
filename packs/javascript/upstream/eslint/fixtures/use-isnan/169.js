@@ -1,1 +1,0 @@
-switch(foo) { case bar: case NaN: default: break; }

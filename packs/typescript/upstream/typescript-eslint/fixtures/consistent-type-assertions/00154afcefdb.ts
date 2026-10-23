@@ -1,1 +1,0 @@
-const x = new (<Foo>Generic<string>)('string');

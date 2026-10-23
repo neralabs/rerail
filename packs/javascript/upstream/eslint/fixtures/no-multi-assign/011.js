@@ -1,1 +1,0 @@
-const x = {};const y = {};x.one = y.one = 1;

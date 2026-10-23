@@ -1,1 +1,0 @@
-new (obj?.foo?.() || obj?.bar)()

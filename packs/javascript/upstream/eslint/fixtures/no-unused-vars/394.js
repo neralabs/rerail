@@ -1,1 +1,0 @@
-import foo, { a } from 'module'; alert(a);

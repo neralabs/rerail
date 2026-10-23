@@ -17,7 +17,7 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack java
 | `upstream/eslint/` | ESLint's copied test cases (`fixtures/`) and its recording (`fixtures.expected.json`) |
 | `upstream/generate.mjs` | ESLint's recorder |
 | `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases, its recording and its recorder (`generate.mjs`) |
-| `upstream/<tool>/gates.yaml`, `recording.lock`, `goldens.tsv` | The port readiness gates' manifest for the tool, the lock naming its recordings (`recording.json`, `corpus.json`, held in a GitHub release) and its goldens ([docs/port-readiness.md](../../docs/port-readiness.md)) |
+| `upstream/<tool>/gates.yaml`, `recording.lock`, `goldens.tsv` | The port readiness gates' manifest for the tool, the lock naming its recordings (`recording.json`, `corpus.json`, kept out of git, by sha256) and its goldens ([docs/port-readiness.md](../../docs/port-readiness.md)) |
 | `candidates/rules/` | Ports of ESLint and eslint-plugin-unicorn rules still being evaluated: listed in `conformance.json`, scored and reported, never gated, never shipped |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
@@ -32,11 +32,15 @@ TypeScript they report overloads, declaration merges and type names, and with bo
 port would report the same violation again. `no-loss-of-precision` and `prefer-spread`, which typescript-eslint leaves
 to the core rule on TypeScript, run on every ECMA file.
 
-Re-recording runs offline against the pinned tool versions (the recorder's header lists them):
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/javascript.ts`) runs each tool's recorder against the pinned tool versions and upstream
+commit (the recorder's header lists them):
 
 ```sh
-node upstream/generate.mjs --tools <dir> --eslint <ESLint checkout at v10.11.0>
-node upstream/eslint-plugin-unicorn/generate.mjs --tools <dir> --unicorn <eslint-plugin-unicorn checkout at v76.0.0>
+npm run fixtures:derive -- --pack javascript                                 # every tool
+npm run fixtures:derive -- --pack javascript --tool eslint-plugin-unicorn    # one
+npm run fixtures:push -- --pack javascript --tool eslint-plugin-unicorn      # on your own branch: archive it and rewrite its test-data.lock
 ```
 
 Scoring one rule with every false positive and false negative printed:

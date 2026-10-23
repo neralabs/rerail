@@ -1,1 +1,0 @@
-var foo = 0; var bar = 0; export {foo as foo, bar as baz};

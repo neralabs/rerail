@@ -1,1 +1,0 @@
-class C { #x; foo() { x = this.a.#x; } }

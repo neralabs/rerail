@@ -1,6 +1,0 @@
-
-                function foo() {
-                    return
-                    Array();
-                }
-                

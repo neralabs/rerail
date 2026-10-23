@@ -1,1 +1,0 @@
-foo as any ? false : true

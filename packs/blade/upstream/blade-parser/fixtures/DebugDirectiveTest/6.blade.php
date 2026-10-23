@@ -1,1 +1,0 @@
-Lead @can($arg) Trail

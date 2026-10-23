@@ -1,1 +1,0 @@
-if (foo) {} else var x, y;

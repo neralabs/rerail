@@ -1,6 +1,0 @@
-
-try {
-} catch (ignoreErr) {}
-try {
-} catch (err) {}
-      

@@ -1,1 +1,0 @@
-let Number; if (x === Number?.NaN) {}

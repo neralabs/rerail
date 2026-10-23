@@ -39,7 +39,7 @@ const UPSTREAM_STOP_BY_CASES = upstreamCases("stop-by");
 const UPSTREAM_UTILS_CASES = upstreamCases("utils");
 
 // The pinned devDependency is the oracle; ast-grep-core in native/Cargo.toml is pinned to the same version.
-const UPSTREAM_VERSION = "0.45.3";
+const UPSTREAM_VERSION = "0.51.0";
 const cli = join(dirname(createRequire(import.meta.url).resolve("@ast-grep/cli/package.json")), "ast-grep");
 const binding = loadNativeBinding();
 const scratch = mkdtempSync(join(tmpdir(), "rerail-upstream-"));

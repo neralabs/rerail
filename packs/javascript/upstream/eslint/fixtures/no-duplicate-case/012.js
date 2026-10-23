@@ -1,1 +1,0 @@
-switch(a) { case toString: break; }

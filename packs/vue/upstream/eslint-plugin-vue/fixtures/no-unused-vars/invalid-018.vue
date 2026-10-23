@@ -1,1 +1,0 @@
-<template><my-component v-for="i in foo" v-slot="a" >{{i}}</my-component></template>

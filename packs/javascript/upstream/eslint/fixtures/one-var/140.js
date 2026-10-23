@@ -1,1 +1,0 @@
-function foo() { var bar = true; var baz = false; var a; var b;}

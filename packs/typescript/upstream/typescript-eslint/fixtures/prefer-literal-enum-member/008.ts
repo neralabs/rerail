@@ -1,5 +1,0 @@
-
-enum ValidPlain {
-  A,
-}
-    

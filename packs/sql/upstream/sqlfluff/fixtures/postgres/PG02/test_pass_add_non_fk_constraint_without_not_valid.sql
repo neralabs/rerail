@@ -1,1 +1,0 @@
-ALTER TABLE foo ADD CONSTRAINT uq_bar UNIQUE (bar_id);

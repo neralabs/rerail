@@ -84,21 +84,46 @@ evaluated. An entry that is not JSON, was written by another cache layout (`CACH
 or names another document is a miss. In CI every run saves its results, pull requests included; GitHub scopes a pull
 request's cache to that pull request, so main reads only what main's pushes and the nightly saved.
 
+## Upstream releases
+
+```sh
+npm run port-readiness:upstream-releases   # every pin against its upstream's latest stable release
+npm run port-readiness:bump -- --pack <pack> --tool <tool> [--version <release>] [--dry-run]   # move a tool-pack's pins
+```
+
+`upstream/releases.ts` reads each gated tool-pack's pin of its upstream twice, `upstream.version` in `gates.yaml` and the
+package its runtime installs (`runtimes/<upstream.runtime>/`: `package.json`, `pyproject.toml` or `composer.json`), and
+the Rust pack's Clippy pin (`TOOLCHAIN` in `packs/rust/upstream/common.py`, with `conformance.json`'s Clippy version). It
+asks npm, PyPI, Packagist and Rust's stable channel manifest for each package's latest stable release, prints a table
+with each pin's gap (patch, minor, major, or a minor of a `0.x` pin; Rust on major.minor only), and exits 1 only on a
+breaking gap (a major release, or a minor one of a `0.x` pin), pins that disagree, or a registry it cannot read; a
+minor or patch gap is reported without failing. `--behind <file>` writes every tool-pack behind, breaking or not, as
+JSON. `upstream/bump.ts` moves one tool-pack's pins (gates.yaml, the runtime and its directory name, conformance.json,
+the generators' constants; Clippy's toolchain) to a release, resolving its tag's commit on GitHub, and lists the prose
+still naming the old one. `port-readiness-nightly.yml` runs the check on main and starts `port-readiness-bump.yml` once
+on a work branch, with a leg per tool-pack behind, each running the bump; `port-readiness-bump-publish.yml` then
+composes the verified legs into one pull request with a commit per tool-pack (docs/port-readiness.md, "Upstream
+releases").
+
 ## Data
 
 ```
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
 packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording/store.ts)
+packs/<pack>/upstream/<tool>/test-data.lock     which archive of pack test data this commit holds (scripts/s3/pack-fixtures.mjs)
 packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id, and the real-code run that found them
+packs/<pack>/upstream/<tool>/fixtures/          the case sources the recording names: pack test data, from that archive (npm run fixtures:pull)
 
-.rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
+.rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, recorded or fetched from S3, by digest
   recording.json                                upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)
   corpus.json                                   upstream's findings on the corpus (rerail.port-readiness-corpus/v2)
 ```
 
-The recordings are not in the tree: the lock names them and a GitHub release holds them, so `npm run port-readiness -- fetch
---pack <id> --tool <tool>` must have run (or `port-readiness:record`, which writes them straight into the cache). A download
-whose sha256 is not the one the lock names fails the run.
+The recordings are not in the tree: the lock names them by sha256, and each is an object of its own in S3,
+`s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json`, written once. `port-readiness:record` writes them
+into the cache, and `node scripts/s3/pack-fixtures.mjs recordings` fetches them there from S3; in CI, `port-readiness.yml`
+restores them from the Actions cache, keyed by the lock's digests, which its test-data job fills from S3, and a leg that
+finds them in neither records them. A cached file whose sha256 is not the one the lock names reads as missing.
 
 `npm run port-readiness:record -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/) writes the recordings. A tool-pack
 check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
@@ -109,7 +134,7 @@ recorded sha256 (a download or git fetch failed); those results are not cached. 
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
 duplicate id) fails it.
 
-Offline, `not-overfit` runs regexes over the committed case sources only, not every upstream test file; test words stay
+Offline, `not-overfit` runs regexes over the checkout's case sources only, not every upstream test file; test words stay
 complete. The report's method text says so.
 
 ## Packs that are not gated

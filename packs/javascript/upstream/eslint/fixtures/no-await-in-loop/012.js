@@ -1,1 +1,0 @@
-async function foo() { while (true) { class Foo { async foo() { await bar; } } } }

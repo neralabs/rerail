@@ -185,13 +185,6 @@ export function diffRecordings(
   return { pack, tool, pinsChanged, first: false, unavailable: null, rules, totals, resolved };
 }
 
-/**
- * Starts each per-rule summary comment, so port-readiness-record.yml finds a tool-pack's earlier ones to collapse when
- * it posts a new one, as port-readiness.yml does with its own comment. Summaries posted while the recordings were named
- * for the gates start with `<!-- rerail-gate-recording -->`, which the workflow collapses too.
- */
-export const RECORDING_COMMENT_MARKER = "<!-- rerail-port-readiness-recording -->";
-
 /** At most this many rule rows; the rest are counted. A tool-pack has up to a few hundred rules. */
 const ROW_LIMIT = 60;
 
@@ -207,7 +200,6 @@ export function renderRecordingChanges(changes: RecordingChanges[]): string {
   const packs = (count: number) => `${count} tool-pack${count === 1 ? "" : "s"}`;
   const headline = [...(uncompared.length > 0 ? [`⚠️ ${packs(uncompared.length)} not compared`] : []), ...(moved.length > 0 ? [`${packs(moved.length)} moved`] : [])];
   const lines = [
-    RECORDING_COMMENT_MARKER,
     `## Port readiness recordings: ${headline.length === 0 ? "✅ re-recorded, and upstream answers the same" : headline.join(", ")}`,
     "",
     "Upstream's recorded answers are not in the diff (`recording.lock` names them; docs/port-readiness.md). This is what changed in them.",

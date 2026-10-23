@@ -1,1 +1,0 @@
-const x = bar<string>`${'baz'}` as Foo;

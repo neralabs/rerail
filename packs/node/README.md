@@ -33,12 +33,15 @@ no-mixed-requires, prefer-node-protocol) report in both. The recorder lints each
 so a case it runs as a module that reads one of those names and has no module syntax is written as CommonJS (`.js`
 under the fixtures' `"type": "commonjs"` package.json), where Node defines them.
 
-Re-recording and regenerating run offline against the pinned tools under `.rerail/tools/node` (eslint 10.11.0,
-eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0) and the corpus
-checkouts under `.rerail/corpora/node`:
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/node.ts`) runs `upstream/eslint-plugin-n/generate.mjs` against the pinned tools (eslint
+10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0) and corpora.
+Regenerating the rule documents runs offline, against the same tools installed under `.rerail/tools/node`:
 
 ```sh
-node packs/node/upstream/eslint-plugin-n/generate.mjs [--fixtures-only]
+npm run fixtures:derive -- --pack node
+npm run fixtures:push -- --pack node     # on your own branch: archive it and rewrite its test-data.lock
 python3 scripts/generate/packs/node_policies.py
 ```
 

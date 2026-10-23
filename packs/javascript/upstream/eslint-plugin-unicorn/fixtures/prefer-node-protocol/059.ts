@@ -1,1 +1,0 @@
-type fs = typeof import("node:fs");

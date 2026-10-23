@@ -1,3 +1,0 @@
-@once
-	{{ $foo }}
-@endonce

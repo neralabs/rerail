@@ -1,1 +1,0 @@
-<template><input :keydown.native='fire'></template>

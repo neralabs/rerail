@@ -1,1 +1,0 @@
-Object/* comment */.prototype.hasOwnProperty.call(a, b);

@@ -1,1 +1,0 @@
-if (ZERO <= index && index < 100) {}

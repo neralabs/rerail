@@ -1,9 +1,0 @@
-SELECT
-    1 AS RegionCode
-FROM BA
-LEFT OUTER JOIN I
-  LEFT OUTER JOIN P
-    ON I.Pcd = P.Iid
-  LEFT OUTER JOIN C
-    ON I.Pcd = C.Iid
-  ON BA.Iid = I.Bcd
