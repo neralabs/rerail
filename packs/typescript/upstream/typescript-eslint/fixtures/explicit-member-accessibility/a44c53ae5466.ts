@@ -1,5 +1,0 @@
-
-class EnsureWhiteSPaceSpan {
-  public /* */ constructor() {}
-}
-      

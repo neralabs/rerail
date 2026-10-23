@@ -1,1 +1,0 @@
-const { props, state } = this;

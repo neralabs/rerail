@@ -14,7 +14,7 @@ Each copied file is the `code` of one of the rule's own `valid` or `invalid` Rul
 left out, and identical code in the same language is written once. The port readiness gates' recorder (`npm run port-readiness:record`)
 reuses those files and writes every other case the gates read, the same verbatim `code`, as
 `upstream/eslint/fixtures/<rule>/<sha256 prefix>.<ext>`. Its recording (`recording.json`, which
-`upstream/eslint/recording.lock` names and a GitHub release holds) also holds the `code` of every RuleTester case of
+`upstream/eslint/recording.lock` names by its sha256; it is cached, not committed) also holds the `code` of every RuleTester case of
 ESLint's rule tests, verbatim, as the words `not-overfit` reads.
 
 Paths are relative to the pack directory, `packs/javascript/`.
@@ -10381,8 +10381,8 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/yoda/146.js` | `tests/lib/rules/yoda.js` | derived |
 
 > `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
-> It carries excerpts of this upstream's tests (`tests/lib/rules/*.js`: the `code` of each RuleTester case),
-> redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file is this
-> upstream's own, at the pinned commit.
+> table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
+> git (docs/port-readiness.md). It carries excerpts of this upstream's tests (`tests/lib/rules/*.js`: the `code` of each
+> RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file
+> is this upstream's own, at the pinned commit.
 

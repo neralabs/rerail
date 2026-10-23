@@ -1,1 +1,0 @@
-let a: Array<{ foo: Bar[] }> = [];

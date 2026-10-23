@@ -1,6 +1,0 @@
-
-const x = 1;
-let y;
-[y = x] = [];
-foo(y);
-      

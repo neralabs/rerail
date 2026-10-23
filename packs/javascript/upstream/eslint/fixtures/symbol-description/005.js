@@ -1,1 +1,0 @@
-function bar() { var Symbol = function () {}; Symbol(); }

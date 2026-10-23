@@ -1,1 +1,0 @@
-type BannedVoid = Ex.Mx.Tx<void>;

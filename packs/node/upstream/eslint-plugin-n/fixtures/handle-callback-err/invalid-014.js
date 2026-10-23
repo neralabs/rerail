@@ -1,1 +1,0 @@
-function userHandler(err) {logThisAction(function(err) {if (err) { console.log(err); } })}

@@ -1,1 +1,0 @@
-self[`SetTimeOut`]('foo', 100);

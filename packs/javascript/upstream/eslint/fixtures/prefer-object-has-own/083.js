@@ -1,1 +1,0 @@
-async function foo(){return await/*comment*/{}.hasOwnProperty.call(object, property)}

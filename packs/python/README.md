@@ -19,14 +19,17 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 | `candidates/rules/` | Ports still being evaluated (98 Ruff and Bandit ports): never shipped or listed in `pack.json`. 96 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) are not recorded |
 
-Re-recording runs offline against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own
-install, on CPython 3.13):
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/python.ts`) runs each tool's `generate.py`, in `fixtures` mode and then `corpus` mode over
+django, against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own install, on CPython
+3.13). The cases Rerail wrote (`fixtures/rerail/`) are authored: a change to them goes in your pull request with
+`git add -f`.
 
 ```sh
-python3.14 upstream/ruff/generate.py fixtures <ruff checkout at 0.16.9> <ruff 0.16.9 executable>
-python3.14 upstream/ruff/generate.py corpus <ruff 0.16.9 executable> django=<django checkout>
-python3.14 upstream/bandit/generate.py fixtures <bandit checkout at 1.9.4> <bandit 1.9.4 executable>
-python3.14 upstream/bandit/generate.py corpus <bandit 1.9.4 executable> django=<django checkout>
+npm run fixtures:derive -- --pack python                # every tool
+npm run fixtures:derive -- --pack python --tool ruff    # one
+npm run fixtures:push -- --pack python --tool ruff      # on your own branch: archive it and rewrite its test-data.lock
 ```
 
 Scoring one rule with every false positive and false negative printed:

@@ -1,1 +1,0 @@
-switch (a) { default: function f() {} break; }

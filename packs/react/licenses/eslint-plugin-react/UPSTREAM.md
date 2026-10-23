@@ -2534,8 +2534,8 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react/fixtures/void-dom-elements-no-children/f87a7db315a4.tsx` | `tests/lib/rules/void-dom-elements-no-children.js` | derived |
 
 > `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
-> It carries excerpts of this upstream's tests (`tests/lib/rules/*.js`: the `code` of each RuleTester case),
-> redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file is this
-> upstream's own, at the pinned commit.
+> table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
+> git (docs/port-readiness.md). It carries excerpts of this upstream's tests (`tests/lib/rules/*.js`: the `code` of each
+> RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file
+> is this upstream's own, at the pinned commit.
 

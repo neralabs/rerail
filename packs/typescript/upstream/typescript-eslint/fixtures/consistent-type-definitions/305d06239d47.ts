@@ -1,1 +1,0 @@
-type V = { x: number } | { y: string };

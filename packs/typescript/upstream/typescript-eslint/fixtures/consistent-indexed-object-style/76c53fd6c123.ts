@@ -1,1 +1,0 @@
-type Foo = Record<Exclude<'a' | 'b' | 'c', 'a'>, any>;

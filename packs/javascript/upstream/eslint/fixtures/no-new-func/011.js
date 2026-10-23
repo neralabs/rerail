@@ -1,1 +1,0 @@
-foo(Function.bind)

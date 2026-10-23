@@ -1,1 +1,0 @@
-DROP INDEX CONCURRENTLY idx_foo;

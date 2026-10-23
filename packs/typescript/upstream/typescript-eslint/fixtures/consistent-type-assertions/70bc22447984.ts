@@ -1,1 +1,0 @@
-function b(x = <Foo.Bar>[5]) {}

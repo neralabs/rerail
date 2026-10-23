@@ -1,1 +1,0 @@
-Atomics.load(foo, 0)

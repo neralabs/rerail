@@ -1,26 +1,25 @@
 /**
- * Where a recording's bytes live now that they are not in the tree: a GitHub release holds them, and each tool-pack
- * commits a `recording.lock` naming exactly the one its rules are judged against.
+ * Where a recording's bytes live now that they are not in the tree: each tool-pack commits a `recording.lock` naming,
+ * by the sha256 of its text, exactly the one its rules are judged against, and the bytes are an object in S3.
  *
  * The recordings were 96% of the branch that added the gates — 71 MB over 16 files, every one of them generated — and
  * git keeps every version of each of them forever, so re-recording a pack after an upstream bump cost another few
  * megabytes of history that nobody can ever read. The lock is a few hundred bytes and reviews as data; the bytes it
- * names are fetched and checked against its sha256, so a commit still pins exactly one recording.
+ * names are checked against its sha256 on every read, so a commit still pins exactly one recording.
  *
- * Release assets, not Git LFS: every public clone and every fork would draw on the repository's LFS bandwidth quota,
- * and going over it blocks LFS for the whole repository, including the native engine's fixtures. Not Actions
- * artifacts either: those expire after 90 days, and a commit must stay judgeable. Release downloads have no stated
- * bandwidth limit, need no account once the repository is public, and a fork pull request's token is read-only, so a
- * fork cannot upload one (port-readiness-record.yml records instead).
- *
- * An asset is named for the sha256 of what it decompresses to, so it is write-once: the same recording is the same
- * asset, a changed recording is a new one, and nothing a commit already names is ever replaced.
+ * Locally the recorder writes them into `.rerail/port-readiness/recordings/<sha256>.json`, where the gates read them.
+ * Their durable store is S3, written once at s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json by
+ * the maintainer's `fixtures:push` or the bump's publish workflow; `node scripts/s3/pack-fixtures.mjs recordings`
+ * fetches the ones a checkout's locks name into that directory. In CI the directory is restored from the GitHub
+ * Actions cache, keyed by the tool-pack and the lock's two digests (port-readiness.yml), which the test-data job fills
+ * from S3; a gate leg that finds them in neither records the tool-pack from its own commit's recorder, which must write
+ * the lock the commit has, then saves the two recordings. Whatever the source, a recording is bytes with the digest
+ * the lock names, or it is absent.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { gunzipSync, gzipSync } from "node:zlib";
 
 import { z } from "zod";
 
@@ -32,49 +31,34 @@ const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(b
 /** The committed manifest's file name in a tool-pack's directory. */
 export const RECORDING_LOCK = "recording.lock";
 
-export const RECORDING_LOCK_FORMAT = "rerail.port-readiness-recording-lock/v1";
-
-/**
- * The prerelease a lock names when `port-readiness:record` is given no `--release`. It is a prerelease so it never shows as the
- * repository's current release. GitHub caps a release at 1,000 assets, so port-readiness-record.yml, the only job that
- * uploads, passes `--release` itself: the newest of `port-readiness-recordings`, `port-readiness-recordings-2`, `-3`
- * and so on, or the next once the newest holds 900, and it refuses an upload that would pass the cap. A lock names the
- * release that holds its assets, so an older commit keeps fetching from the older one.
- */
-export const DEFAULT_RELEASE = "port-readiness-recordings";
+export const RECORDING_LOCK_FORMAT = "rerail.port-readiness-recording-lock/v2";
 
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/u, "a sha256 in lowercase hex");
 const nonEmpty = z.string().min(1);
 
-/** One recording in the release: what it is, how big, and under what name the release holds it. */
+/** One recording: what it is and how big. */
 const lockedFileSchema = z.strictObject({
-  /** sha256 of the recording's text, UTF-8: what the fetched asset must decompress to. */
+  /** sha256 of the recording's text, UTF-8: the name it is cached under, and what every read checks. */
   sha256: digestSchema,
-  /** The text's length in bytes, so a fetch can report what it is about to read before it reads it. */
+  /** The text's length in bytes. */
   size: z.number().int().positive(),
-  /** The recording's own `format`, checked after the download so a v2 reader never parses a v3 recording. */
+  /** The recording's own `format`, so a v2 reader never parses a v3 recording. */
   format: z.enum([RECORDING_FORMAT, CORPUS_FORMAT]),
-  /**
-   * The asset's name in the release: `<pack>-<tool>-<stem>-<sha256>.json.gz`. readRecordingLock refuses any other,
-   * so a lock cannot name another tool-pack's recording, or an asset under a name of its own choosing.
-   */
-  asset: nonEmpty,
 });
 
 export type LockedFile = z.infer<typeof lockedFileSchema>;
 
 export const recordingLockSchema = z.strictObject({
   format: z.literal(RECORDING_LOCK_FORMAT),
-  /** The tool, as in recording.json: the directory under the pack's upstream/. */
+  /**
+   * The tool, as in recording.json: the directory under the pack's upstream/. The lock names no recorder version: a
+   * re-record of the same upstream writes the same lock whatever version of rerail runs it, which is what
+   * port-readiness.yml's recording leg holds a commit to.
+   */
   tool: nonEmpty,
   /**
-   * The release tag holding both assets. The lock names no recorder version: a re-record of the same upstream writes the
-   * same lock whatever version of rerail runs it, which is what port-readiness.yml's recording leg holds a commit to.
-   */
-  release: nonEmpty,
-  /**
    * The upstream pins the recording was made at, copied from recording.json. The stale-recording checks read them here,
-   * from the committed manifest, so a pull request whose pins moved fails before anything is downloaded.
+   * from the committed manifest, so a pull request whose pins moved fails before any recording is read.
    */
   pins: z.strictObject({ repository: nonEmpty, commit: z.string().regex(/^[0-9a-f]{40}$/u), version: nonEmpty, runtime: nonEmpty }),
   /** The runtimes' committed pin digests, as recording.json records them, for the same reason. */
@@ -84,54 +68,6 @@ export const recordingLockSchema = z.strictObject({
 });
 
 export type RecordingLock = z.infer<typeof recordingLockSchema>;
-
-/**
- * The assets recorded on a maintainer's machine and uploaded by hand before port-readiness-record.yml could run from
- * main, the only ref whose recordings it attests: the only ones fetch.ts takes without its attestation. Each is the
- * recording a reviewed commit's lock names. The list only shrinks: an entry goes once its tool-pack's lock names an
- * attested recording, nothing joins it once the record workflow runs from main, and a test fails while an entry is
- * named by no committed lock.
- */
-// Empty: run 39319650531 recorded every tool-pack from main, so every committed lock names attested recordings.
-export const LIFTED_ASSETS: ReadonlySet<string> = new Set();
-
-/**
- * The case sources of each hand-uploaded `recording.json` (LIFTED_ASSETS) made before a case carried the sha256 of its
- * committed source (`cases[].sha256`), pinned together: the gates' `case-sources` check has nothing per case to check
- * them against, and passing them unchecked would let an edited fixture be judged against upstream's unchanged answers.
- * Each value is caseSourcesDigest over every file the recording's cases name, taken from the tree the recording was
- * made from. Keyed by asset name, which readRecordingLock ties to the recording's sha256 and tool-pack, so an entry
- * covers that one recording and no other. A recording whose cases carry their own sha256 needs no entry. The list only
- * shrinks: an entry goes with the asset's entry in LIFTED_ASSETS, when the tool-pack gets an attested recording.
- */
-// Empty: every hand-uploaded recording carried a sha256 per case, and since run 39319650531 no lock names one.
-export const LIFTED_CASE_SOURCES: ReadonlyMap<string, string> = new Map();
-
-/**
- * The runtimes each hand-uploaded `recording.json` (LIFTED_ASSETS) was made with but its lock doesn't pin, with the
- * digests of their pins (runtimePinDigests) in the tree the recording was made from. The recorder pinned only upstream's
- * runtime and the adapter's until 8c7e29a8, so next/eslint-plugin-next, react/eslint-plugin-react and
- * react/eslint-plugin-react-hooks were recorded in eslint-config-next's environment without the lock naming it. The
- * gates read an entry as part of its lock: pins-agree counts its runtimes, and runtime-pins checks their committed pins.
- * Keyed by asset name, like LIFTED_CASE_SOURCES, so an entry covers that one recording and no other. The list only
- * shrinks: an entry goes with the asset's entry in LIFTED_ASSETS, when the tool-pack gets an attested recording.
- */
-// Empty: since run 39319650531 the next, react and react-hooks locks pin eslint-config-next-16.3.8 themselves.
-export const LIFTED_RUNTIMES: ReadonlyMap<string, RecordingLock["runtimes"]> = new Map();
-
-/**
- * One digest over a set of case sources: sha256 of `<sha256 of the file's bytes>  <file>\n` per file (sha256sum's
- * lines), the files in code-unit order. Any file added, dropped, renamed or edited changes it.
- */
-export function caseSourcesDigest(files: Iterable<readonly [file: string, digest: string]>): string {
-  const lines = [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([file, digest]) => `${digest}  ${file}\n`);
-  return sha256(lines.join(""));
-}
-
-/** A recording's asset name: content-addressed, so the same bytes are always the same asset. */
-export function assetName(pack: string, tool: string, file: string, digest: string): string {
-  return `${pack}-${tool}-${file.replace(/\.json$/u, "")}-${digest}.json.gz`;
-}
 
 export function recordingLockPath(root: string, pack: string, tool: string): string {
   return join(toolPackDirectory(root, pack, tool), RECORDING_LOCK);
@@ -146,10 +82,6 @@ export function readRecordingLock(root: string, pack: string, tool: string): Rec
   if (!existsSync(path)) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK} is missing: run npm run port-readiness:record -- --pack ${pack} --tool ${tool}`);
   const parsed = recordingLockSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
   if (!parsed.success) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK}: ${parsed.error.issues.slice(0, 5).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
-  for (const [file, locked] of Object.entries(parsed.data.files)) {
-    const expected = assetName(pack, tool, file, locked.sha256);
-    if (locked.asset !== expected) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK}: /files/${file}/asset is ${locked.asset}, and this tool-pack's recording of sha256 ${locked.sha256.slice(0, 12)} is ${expected}`);
-  }
   return parsed.data;
 }
 
@@ -158,15 +90,15 @@ export function recordingLockText(lock: RecordingLock): string {
   return `${JSON.stringify(lock, null, 2)}\n`;
 }
 
-/** Where a fetched recording is kept: by its own digest, so two commits naming the same recording share one copy. */
+/** Where a recording is cached: by its own digest, so two commits naming the same recording share one copy. */
 export function recordingCachePath(cacheRoot: string, digest: string): string {
   return join(cacheRoot, "recordings", `${digest}.json`);
 }
 
 /**
  * A cached recording's text, or undefined when it is not cached. Bytes whose digest is not the one asked for are
- * treated as absent and not read: a truncated download or a half-written file must not become a recording, and the
- * caller fetches again.
+ * treated as absent and not read: a truncated cache entry or a half-written file must not become a recording, and the
+ * gates report it missing.
  */
 export function readCachedRecording(cacheRoot: string, digest: string): string | undefined {
   const path = recordingCachePath(cacheRoot, digest);
@@ -186,47 +118,25 @@ export async function writeCachedRecording(cacheRoot: string, text: string): Pro
   return digest;
 }
 
-/** What a recording weighs in the release: gzip at the default level, which is what the recorder uploads. */
-export function gzipRecording(text: string): Buffer {
-  return gzipSync(Buffer.from(text, "utf8"));
-}
-
-/**
- * The text an asset holds, checked against the digest its name and its lock entry carry. A digest that does not match
- * fails here and nowhere else: the alternative is judging rules against bytes no commit pinned, which is exactly the
- * hole a fork pull request would reach for.
- */
-export function recordingFromAsset(bytes: Buffer, locked: LockedFile, label: string): string {
-  const text = gunzipSync(bytes).toString("utf8");
-  const digest = sha256(Buffer.from(text, "utf8"));
-  if (digest !== locked.sha256) throw new Error(`${label}: the release's ${locked.asset} has sha256 ${digest.slice(0, 12)}, and ${RECORDING_LOCK} names ${locked.sha256.slice(0, 12)}`);
-  const format: unknown = (JSON.parse(text) as { format?: unknown }).format;
-  if (format !== locked.format) throw new Error(`${label}: the release's ${locked.asset} is ${String(format)}, and ${RECORDING_LOCK} names ${locked.format}`);
-  return text;
-}
-
 /** The lock for a tool-pack whose two recordings have just been written. */
 export function buildRecordingLock(
-  pack: string,
   tool: string,
-  release: string,
   pins: RecordingLock["pins"],
   runtimes: RecordingLock["runtimes"],
   texts: { [RECORDING_FILE]: string; [CORPUS_FILE]: string },
 ): RecordingLock {
-  const locked = (file: string, text: string, format: LockedFile["format"]): LockedFile => {
+  const locked = (text: string, format: LockedFile["format"]): LockedFile => {
     const digest = sha256(Buffer.from(text, "utf8"));
-    return { sha256: digest, size: Buffer.byteLength(text), format, asset: assetName(pack, tool, file, digest) };
+    return { sha256: digest, size: Buffer.byteLength(text), format };
   };
   return recordingLockSchema.parse({
     format: RECORDING_LOCK_FORMAT,
     tool,
-    release,
     pins,
     runtimes,
     files: {
-      [RECORDING_FILE]: locked(RECORDING_FILE, texts[RECORDING_FILE], RECORDING_FORMAT),
-      [CORPUS_FILE]: locked(CORPUS_FILE, texts[CORPUS_FILE], CORPUS_FORMAT),
+      [RECORDING_FILE]: locked(texts[RECORDING_FILE], RECORDING_FORMAT),
+      [CORPUS_FILE]: locked(texts[CORPUS_FILE], CORPUS_FORMAT),
     },
   });
 }

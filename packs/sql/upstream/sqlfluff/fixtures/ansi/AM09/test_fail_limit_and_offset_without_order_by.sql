@@ -1,4 +1,0 @@
-SELECT *
-FROM foo
-LIMIT 10
-OFFSET 5;

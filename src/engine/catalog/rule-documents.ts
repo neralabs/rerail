@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseJsonWithoutDuplicateKeys } from "../json-duplicate-keys.js";
 import { codeRuleSchema, CODE_RULE_FORMAT } from "../code-rule/code-rule-schema.js";
-import { conversationRuleSchema } from "./rule-schema.js";
+import { conversationRuleSchema, reportedIssue } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 
 /** A code rule (`format` is the code rule format) or a conversation rule; `label` names the source in errors. */
@@ -16,7 +16,8 @@ export function parseRuleDocument(value: unknown, label: string): RuleDocument {
   if (isCodeRule) return { kind: "code", rule: codeRuleSchema.parse(value) };
   const conversationRule = conversationRuleSchema.safeParse(value);
   if (conversationRule.success) return { kind: "conversation", rule: conversationRule.data };
-  throw new Error(`${label} is neither a ${CODE_RULE_FORMAT} document nor a conversation rule: ${conversationRule.error.issues[0]?.message ?? "invalid"}`);
+  const issue = conversationRule.error.issues[0];
+  throw new Error(`${label} is neither a ${CODE_RULE_FORMAT} document nor a conversation rule: ${issue === undefined ? "invalid" : reportedIssue(issue).message}`);
 }
 
 /** The JSON at `path`, without duplicate keys. */

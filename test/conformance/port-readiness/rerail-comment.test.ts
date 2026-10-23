@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "vitest";
 
 import { COMMENT_LIMIT, COMMENT_MARKER, renderComment } from "../../../conformance/port-readiness/comment.js";
-import type { Summary } from "../../../conformance/port-readiness/summary.js";
+import { readRecordingSummaries, type Summary } from "../../../conformance/port-readiness/summary.js";
 
 function summary(candidates: number, blocking: number): Summary {
   const gates = ["Compiles and loads on this engine", "Not overfit to upstream's tests", "Matches upstream on its own tests"];
@@ -69,4 +72,47 @@ test("candidates with no conformance entry are listed as not judged, apart from 
   const section = text.slice(text.indexOf("### Candidates"));
   assert.match(section, /<summary>1 candidate is not judged: no conformance\.json entry maps it to an upstream rule, so no gate ran<\/summary>/u);
   assert.match(section, /^- python: `packs\/python\/candidates\/rules\/ruff-a005-stdlib-module-shadowing\.json`$/mu);
+});
+
+test("the recording summaries a run's legs wrote are read beside the reports, sorted by tool-pack", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-comment-"));
+  try {
+    writeFileSync(join(directory, "recording-sql--sqlfluff.md"), "## Port readiness recordings: ✅ re-recorded, and upstream answers the same\n");
+    writeFileSync(join(directory, "recording-python--ruff.md"), "## Port readiness recordings: 1 tool-pack moved\n");
+    writeFileSync(join(directory, "python--ruff.json"), "{}\n");
+    writeFileSync(join(directory, "recording-notes.md"), "not a leg's summary\n");
+    assert.deepEqual(readRecordingSummaries(directory).map((entry) => entry.toolPack), ["python/ruff", "sql/sqlfluff"]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a tool-pack this run recorded gets its per-rule summary in the comment, collapsed under what it moved", () => {
+  const markdown = [
+    "## Port readiness recordings: 1 tool-pack moved",
+    "",
+    "Upstream's recorded answers are not in the diff.",
+    "",
+    "### `python/ruff`",
+    "",
+    "| Upstream rule | | Expected findings | Corpus files | Facts |",
+    "| --- | --- | --- | --- | --- |",
+    "| `E501` | changed | +2 / −0 | — | — |",
+    "",
+  ].join("\n");
+  const text = renderComment(summary(10, 0), { recordings: [{ toolPack: "python/ruff", markdown }] });
+  const section = text.slice(text.indexOf("### Recorded by this run"), text.indexOf("### Ready to promote"));
+  assert.match(section, /<summary>python\/ruff: 1 tool-pack moved<\/summary>/u);
+  assert.match(section, /^\| `E501` \| changed \| \+2 \/ −0 \| — \| — \|$/mu);
+  assert.doesNotMatch(section, /^## Port readiness recordings/mu);
+  assert.doesNotMatch(renderComment(summary(10, 0)), /Recorded by this run/u);
+});
+
+test("recording summaries are cut to fit, and the tool-packs past the budget are named", () => {
+  const long = `## Port readiness recordings: 1 tool-pack moved\n\n${"| `X` | changed | +1 / −0 | — | — |\n".repeat(1000)}`;
+  const recordings = ["a/one", "b/two", "c/three", "d/four"].map((toolPack) => ({ toolPack, markdown: long }));
+  const text = renderComment(summary(10, 0), { recordings });
+  assert.ok(text.length <= COMMENT_LIMIT, `${text.length} characters`);
+  assert.match(text, /Cut short: the leg's job summary has all of it\./u);
+  assert.match(text, /^Also recorded, too long to show here \(see each leg's job summary\): c\/three, d\/four\.$/mu);
 });

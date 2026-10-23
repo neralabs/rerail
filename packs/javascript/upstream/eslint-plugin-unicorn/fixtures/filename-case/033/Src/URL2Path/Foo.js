@@ -1,1 +1,0 @@
-/* Filename: Src/URL2Path/Foo.js */

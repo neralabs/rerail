@@ -1,1 +1,0 @@
-foo.call(Object.prototype.hasOwnProperty, Object.prototype.hasOwnProperty.call)

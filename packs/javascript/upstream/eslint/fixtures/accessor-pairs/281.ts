@@ -1,1 +1,0 @@
-interface I { set prop(value: any): any, get other(): any }

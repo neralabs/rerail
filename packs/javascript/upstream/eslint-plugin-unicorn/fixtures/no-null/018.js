@@ -1,1 +1,0 @@
-drawingManager.setMap(null)

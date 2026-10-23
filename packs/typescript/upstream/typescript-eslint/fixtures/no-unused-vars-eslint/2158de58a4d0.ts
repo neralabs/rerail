@@ -1,7 +1,0 @@
-
-class Foo {
-  static {
-    var bar;
-  }
-}
-      

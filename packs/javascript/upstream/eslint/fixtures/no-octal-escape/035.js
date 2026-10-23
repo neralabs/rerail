@@ -1,1 +1,0 @@
-var foo = "foo \01 bar";

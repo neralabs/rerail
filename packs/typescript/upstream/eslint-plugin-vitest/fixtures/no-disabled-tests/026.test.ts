@@ -1,1 +1,0 @@
-test("foo", { skip: true }, function () {})

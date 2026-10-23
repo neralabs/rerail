@@ -1,1 +1,0 @@
-React.createElement("button", {type: condition ? "button" : "submit"})

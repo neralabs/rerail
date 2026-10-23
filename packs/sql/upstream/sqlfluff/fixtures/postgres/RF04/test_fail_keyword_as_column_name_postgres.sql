@@ -1,1 +1,0 @@
-CREATE TABLE test_table (type varchar(30) NOT NULL)

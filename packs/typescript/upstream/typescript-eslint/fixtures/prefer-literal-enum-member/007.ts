@@ -1,5 +1,0 @@
-
-enum ValidNull {
-  A = null,
-}
-    

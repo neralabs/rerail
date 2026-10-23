@@ -1,1 +1,0 @@
-/*globals a */ /*globals a */ var a = 0

@@ -3,22 +3,41 @@ name: Port readiness
 # The port readiness gates (docs/port-readiness.md): every rule a pack ships must pass them; candidates run through them and are
 # only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine) when a pull request
 # or a push to main touches a gate input, and by port-readiness-nightly.yml, which judges every rule again and refreshes
-# the result cache. The gates read each tool-pack's recordings (recording.json and corpus.json, which
-# packs/<id>/upstream/<tool>/recording.lock names): the fetch step downloads them from the release, and a tool-pack whose
-# recording the release does not hold is recorded in its own leg from this commit's recorder, which must write the lock
-# the commit has. No rule runs over the real-code corpus (that is NRV's real-code gate): only the pinned corpus files
-# the goldens name and upstream's pinned test files are fetched, and they are cached by their pins.
+# the result cache. Both callers run it only for pushes and same-repository pull requests, and grant `id-token: write`,
+# which only the test-data job holds: it pulls each planned tool-pack's test data (upstream's copied tests, the case
+# sources, the recorded answers) with .github/actions/pack-test-data, the archive its test-data.lock names, into the
+# Actions cache, from S3 on a miss under an OIDC token GitHub gives no fork's or Dependabot's pull request, and does the
+# same for the tool-pack's recordings (recording.json and corpus.json, which packs/<id>/upstream/<tool>/recording.lock
+# names by sha256; s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json); it runs nothing else. A
+# gate leg can run upstream's code (the recorder, below), and any of its steps could mint a token and assume the read
+# role, so the legs hold none: they restore the archives (`fetch: "false"`) and recordings the test-data job saved.
 #
-# The plan job builds the legs (conformance/port-readiness/plan.mjs, which also holds the shard counts). A pull request
-# (`select`) judges only the tool-packs of the packs it touches, and every one when it touches the engine, the gate
-# code, the package files or the workflows; a tool-pack it leaves out keeps main's verdict. Pushes to main and the
-# nightly judge every tool-pack.
+# Only a pull request's leg records its tool-pack. It records when neither the cache nor S3 holds the recordings the
+# lock names, and always when the pull request changes the tool-pack's recording.lock against its base: then the
+# test-data job does not fetch the recordings the new lock names and the leg does not restore them, so the rules are
+# judged against what this commit's recorder made from the pinned upstream, never against bytes the pull request (or the
+# bump run that produced it) put in S3. The recorder must write the lock the commit has. Its per-rule summary of what
+# upstream answers differently from the base's recording (recording-<pack>--<tool>.md, against the recordings the
+# test-data job fetched for the base's lock) goes into the pull request comment. The tool-pack's legs upload the two
+# recordings as the artifact recordings-<pack>--<tool>, which a maintainer pushes to S3 before the pull request merges:
+# ci.yml's "Pack test data is in S3" check fails until they are there. A push to main or a nightly never records: its leg
+# fails when neither the cache nor S3 holds the recordings. No rule runs over the real-code corpus (that is NRV's
+# real-code gate): only the pinned corpus files the goldens name and upstream's pinned test files are fetched, and they
+# are cached by their pins.
+#
+# The plan job builds the legs (conformance/port-readiness/plan.mjs, which also holds the shard counts), lists their
+# tool-packs once each for the test-data job, and marks the tool-packs whose recording.lock a pull request changes
+# (`rerecord`). A pull request (`select`) judges only the tool-packs of the packs it touches, and every one when it
+# touches the engine, the gate code, the package files or the workflows; a tool-pack it leaves out keeps main's
+# verdict. Pushes to main and the nightly judge every tool-pack.
 #
 # Every run saves its results, pull requests included, except a leg that recorded its tool-pack itself: the recorder
-# ran upstream's code and unlocked Composer packages, so that leg saves no cache. GitHub scopes a pull request's cache
-# to that pull request, so main never reads one: a push to main reads only what main's own pushes and the nightly
-# saved, and the nightly judges every rule uncached. A pull request can therefore hand itself verdicts its own code
-# computed, but it can edit the gate code that decides them just as easily, so this opens no route it did not already have.
+# ran upstream's code and unlocked Composer packages, so that leg saves only the two recordings (none when it recorded
+# because the pull request changed the lock: no run restores those), which every read checks against the sha256 its key
+# names. GitHub scopes a pull request's cache to that pull request, so main never reads one: a push to main reads only
+# what main's own pushes and the nightly saved, and the nightly judges every rule uncached. A pull request can therefore
+# hand itself verdicts its own code computed, but it can edit the gate code that decides them just as easily, so this
+# opens no route it did not already have.
 
 on:
   workflow_call:
@@ -40,8 +59,11 @@ permissions:
   contents: read
 
 jobs:
-  # The gates' legs, as JSON for their matrix. A pull request's checkout is its merge commit, whose first parent is the
-  # base tip, so depth 2 holds both sides of the diff; anything else plans every leg.
+  # The gates' legs, as JSON for their matrix, and the tool-packs they judge, once each, for the test-data job's. A pull
+  # request's checkout is its merge commit, whose first parent is the base tip, so depth 2 holds both sides of the diff;
+  # anything else plans every leg. Each leg and tool-pack carries `rerecord`: true when the pull request changes its
+  # recording.lock against the merge commit's first parent or the event's base commit (the same commit unless the base
+  # moved), false on every other event.
   plan:
     name: Plan the port readiness legs
     runs-on: ubuntu-24.04
@@ -49,8 +71,12 @@ jobs:
     permissions:
       contents: read
     outputs:
-      legs: ${{ steps.plan.outputs.legs }}
+      legs: ${{ steps.recordings.outputs.legs }}
       tool-packs: ${{ steps.plan.outputs.tool-packs }}
+      # `{pack, tool, rerecord}` of each planned tool-pack once, however many shards its legs split it into.
+      test-data: ${{ steps.recordings.outputs.test-data }}
+      # The commit a pull request's recording is compared with (its merge commit's first parent); empty otherwise.
+      base: ${{ steps.recordings.outputs.base }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -75,18 +101,190 @@ jobs:
             node conformance/port-readiness/plan.mjs
           fi
 
-  gates:
-    name: Port readiness (${{ matrix.pack }} · ${{ matrix.tool }}${{ matrix.shards && format(' · {0}/{1}', matrix.shard, matrix.shards) || '' }})
+      # The checkout keeps no credentials, so the event's base commit is fetched with the token, as the report job
+      # fetches. A pull request without either commit to compare with fails here rather than reading the recordings it
+      # names.
+      - id: recordings
+        name: Mark the tool-packs whose recording.lock the pull request changes
+        env:
+          EVENT: ${{ github.event_name }}
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          LEGS: ${{ steps.plan.outputs.legs }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base=""
+          refs=()
+          if [ "$EVENT" = "pull_request" ]; then
+            base="$(git rev-parse -q --verify 'HEAD^1' || true)"
+            if [ -n "$base" ]; then refs+=("$base"); fi
+            if [ -n "$EVENT_BASE" ] && [ "$EVENT_BASE" != "$base" ]; then
+              auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+              if git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$EVENT_BASE"; then
+                refs+=("$EVENT_BASE")
+              else
+                echo "::warning::could not fetch the pull request's base $EVENT_BASE: comparing the locks with ${base:-nothing} only"
+              fi
+            fi
+            if [ "${#refs[@]}" -eq 0 ]; then
+              echo "::error::the pull request has no base commit to compare its recording.lock files with"
+              exit 1
+            fi
+          fi
+          changed='[]'
+          for ref in "${refs[@]}"; do
+            changed="$(git diff --name-only --no-renames "$ref" HEAD -- 'packs/*/upstream/*/recording.lock' |
+              jq -R -s -c --argjson changed "$changed" '$changed + (split("\n") | map(select(test("^packs/[^/]+/upstream/[^/]+/recording\\.lock$")) | split("/") | "\(.[1])/\(.[3])")) | unique')"
+          done
+          legs="$(jq -c --argjson changed "$changed" 'map(. + { rerecord: ("\(.pack)/\(.tool)" as $id | $changed | any(.[]; . == $id)) })' <<< "$LEGS")"
+          {
+            echo "base=$base"
+            echo "legs=$legs"
+            echo "test-data=$(jq -c 'map({ pack, tool, rerecord }) | unique' <<< "$legs")"
+          } >> "$GITHUB_OUTPUT"
+          echo "recording.lock changed against the base: $(jq -r 'if length == 0 then "none" else join(", ") end' <<< "$changed")"
+
+  # Each planned tool-pack's archive and recordings, into this run's cache before any leg starts. This job holds the
+  # OIDC token and runs only this commit's scripts/s3/pack-fixtures.mjs (the pull and the recordings), never upstream's.
+  # For a tool-pack whose recording.lock the pull request changes (`rerecord`), the recordings are the ones the base's
+  # lock names, which its legs compare their own recording with; the ones the new lock names are never fetched.
+  test-data:
+    name: Pack test data (${{ matrix.pack }} · ${{ matrix.tool }})
     needs: plan
     if: needs.plan.outputs.legs != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # id-token: the archive and the recordings from S3 on a cache miss, with credentials only the steps that download
+    # them hold.
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.test-data) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: ${{ matrix.pack }}
+          tool: ${{ matrix.tool }}
+
+      # The recordings the gate legs restore, under the key they restore (below), from S3 when the cache lacks them, so
+      # a leg records only what neither holds. A tool-pack without a recording.lock is left to its legs, which fail on it.
+      # A `rerecord` tool-pack's legs restore none of the new lock's: this job keys the base's lock instead, written over
+      # this commit's so the recordings command below reads it (nothing else in this job reads the lock), and a base
+      # without a lock, or one that cannot be fetched, leaves nothing to warm.
+      - id: recording-lock
+        name: Key the recordings the legs read
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          RERECORD: ${{ matrix.rerecord }}
+          BASE: ${{ needs.plan.outputs.base }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          if [ "$RERECORD" = "true" ]; then
+            rm -f "$lock"
+            [ -n "$BASE" ] || exit 0
+            auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+            if ! git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$BASE"; then
+              echo "::warning::could not fetch $BASE: the legs' recording summary is not compared with its recording"
+              exit 0
+            fi
+            if ! git show "$BASE:$lock" > "$lock" 2> /dev/null; then
+              rm -f "$lock"
+              echo "$BASE has no $lock: the legs record $PACK/$TOOL for the first time"
+              exit 0
+            fi
+          fi
+          [ -f "$lock" ] || exit 0
+          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          {
+            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
+            echo "paths<<EOF"
+            echo ".rerail/port-readiness/recordings/$recording.json"
+            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: recordings
+        name: Look up the recordings the legs read
+        if: steps.recording-lock.outputs.key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.recording-lock.outputs.paths }}
+          key: ${{ steps.recording-lock.outputs.key }}
+          lookup-only: true
+
+      # As in .github/actions/pack-test-data: the role reads the bucket, and the credentials are this step's outputs, not
+      # exported, so only the download step below holds them.
+      - id: recordings-credentials
+        name: Assume the test data read role for the recordings
+        if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
+          aws-region: us-east-2
+          output-credentials: true
+          output-env-credentials: false
+
+      - name: Set up Node.js v24 for the recordings
+        if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      # Each recording the lock names, from s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.json,
+      # verified against its sha256. S3 lacks a recording only before a maintainer pushed it; the script says so, and a
+      # pull request's legs record it while a push's or a nightly's fail. Saved only when both are here.
+      - id: recordings-download
+        name: Download the recordings from S3
+        if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          PATHS: ${{ steps.recording-lock.outputs.paths }}
+          AWS_ACCESS_KEY_ID: ${{ steps.recordings-credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.recordings-credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.recordings-credentials.outputs.aws-session-token }}
+          AWS_REGION: us-east-2
+        run: |
+          set -euo pipefail
+          node scripts/s3/pack-fixtures.mjs recordings --pack "$PACK" --tool "$TOOL"
+          while read -r path; do
+            [ -f "$path" ] || exit 0
+          done <<< "$PATHS"
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+
+      - name: Save the recordings
+        if: steps.recordings-download.outputs.complete == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.recording-lock.outputs.paths }}
+          key: ${{ steps.recording-lock.outputs.key }}
+
+  gates:
+    name: Port readiness (${{ matrix.pack }} · ${{ matrix.tool }}${{ matrix.shards && format(' · {0}/{1}', matrix.shard, matrix.shards) || '' }})
+    # A leg whose tool-pack's test data job failed fails at its restore; the others still run.
+    needs: [plan, test-data]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.legs != '[]' }}
     runs-on: ubuntu-24.04
     # An uncached leg judges every rule again: javascript/eslint (121 rules, 11,368 upstream cases) takes 35 min on a
     # laptop, as nera-rule-validation does, and Ruff took 4.5 times longer on a cold CI runner than on a laptop.
     timeout-minutes: 180
-    # Reading the recordings' attestations, which the fetch below checks (recording/fetch.ts). The callers grant the same.
+    # No id-token: the recorder below runs upstream's code, so the test data comes from the test-data job's cache entry.
     permissions:
       contents: read
-      attestations: read
     strategy:
       fail-fast: false
       # One leg per gated tool-pack the plan selects, or one per shard of a tool-pack in plan.mjs's SHARDS: `shard`
@@ -105,143 +303,137 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      # Before anything reads a case source or fixtures.expected.json, and before the recorder below compares what it
+      # writes with what the tool-pack has. Only from the cache: the test-data job put it there.
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: ${{ matrix.pack }}
+          tool: ${{ matrix.tool }}
+          fetch: "false"
+
       - uses: ./.github/actions/node-deps
         with:
           built: "true"
 
-      # Each recording is cached by its own sha256, which is what its tool-pack's recording.lock names, so a commit
-      # that did not re-record hits the cache and downloads nothing. The fetch takes a cached recording without checking
-      # its attestation again, so only what it fetched and verified is saved, by the step after it: a recording this leg
-      # makes itself (below) is never saved, or a later push with the same lock would judge against it unattested.
-      - id: recordings
-        name: Restore the recordings this commit names
-        uses: actions/cache/restore@v6
-        with:
-          path: .rerail/port-readiness/recordings
-          key: port-readiness-fetched-recordings-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles(format('packs/{0}/upstream/{1}/recording.lock', matrix.pack, matrix.tool)) }}
-
-      # The recordings are not in the tree (docs/port-readiness.md): this downloads the two a shard's own tool-pack needs
-      # from the release, and nothing else, and fails when the sha256 is not the one the lock names, or when
-      # port-readiness-record.yml, run from main, did not attest it. A lock naming a recording the release does not hold
-      # exits 3, and the leg records the tool-pack itself, below; any other failure fails the leg.
-      - id: fetch
-        name: Fetch this tool-pack's recording
+      # The recordings are not in the tree (docs/port-readiness.md): the lock names each by the sha256 of its text, and
+      # the cache holds them at .rerail/port-readiness/recordings/<sha256>.json under a key naming both digests, saved by
+      # the test-data job from S3 or by an earlier leg of the same pull request that recorded them.
+      - id: lock
+        name: Read the recordings this commit's lock names
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          set +e
-          npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL"
-          status=$?
-          if [ "$status" = 3 ]; then
-            echo "missing=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          exit "$status"
+          set -euo pipefail
+          lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          [ -f "$lock" ] || { echo "::error::$lock is missing: run npm run port-readiness:record -- --pack $PACK --tool $TOOL and commit it"; exit 1; }
+          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          {
+            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
+            echo "paths<<EOF"
+            echo ".rerail/port-readiness/recordings/$recording.json"
+            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-      # Only after a fetch that found both recordings: each is then in the cache because the release held it and
-      # port-readiness-record.yml's attestation verified, or because an earlier save put it there the same way.
-      - name: Save the fetched recordings
-        if: steps.fetch.outputs.missing != 'true' && steps.recordings.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+      # A hit is the two recordings the test-data job downloaded from S3 or an earlier run recorded, each checked against
+      # this lock. Every read checks a cached recording's sha256 again (recording/store.ts), so bytes that are not the
+      # ones the lock names are never judged against. A `rerecord` leg (the pull request changes this lock) restores
+      # nothing: it records below, so the recordings the new lock names are what this commit's recorder makes.
+      - id: recordings
+        name: Restore the recordings this commit names
+        if: ${{ !matrix.rerecord }}
+        uses: actions/cache/restore@v6
         with:
-          path: .rerail/port-readiness/recordings
-          key: ${{ steps.recordings.outputs.cache-primary-key }}
+          path: ${{ steps.lock.outputs.paths }}
+          key: ${{ steps.lock.outputs.key }}
 
-      # What a recording made here is compared with: a pull request's base (its merge commit's first parent), or a push's
-      # previous head; a nightly, and a push that created the branch, have none. The checkout keeps no credentials, so it
-      # is fetched with the token, as the report job fetches. A fork's pull request needs it, below; anyone else's
-      # recording summary goes without the comparison when it cannot be fetched.
-      - id: base
-        name: Fetch the commit to record against
-        if: steps.fetch.outputs.missing == 'true'
+      # A push to main or a nightly never records: the recordings a lock on main names must be in S3 (a pull request's
+      # check "Pack test data is in S3" holds it until they are), and recording there would run upstream's code in main's
+      # cache scope. A pull request records on a miss, and always for a `rerecord` leg.
+      - id: source
+        name: Decide whether this leg records its tool-pack
+        if: steps.recordings.outputs.cache-hit != 'true'
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ inputs.base }}
-          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          RERECORD: ${{ matrix.rerecord }}
+        run: |
+          set -euo pipefail
+          lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "::error::neither the Actions cache nor S3 holds the recordings $lock names, and a $EVENT run never records them. They must be pushed to S3 before the pull request that changed the lock merges: download them with gh run download <the pull request's run> -n recordings-$PACK--$TOOL -D .rerail/port-readiness/recordings, then push them (CONTRIBUTING.md, \"Pack test data\")"
+            exit 1
+          fi
+          if [ "$RERECORD" = "true" ]; then
+            echo "::notice::this pull request changes $lock: recording $PACK/$TOOL from this commit instead of reading the recordings the lock names"
+          else
+            echo "::notice::neither the cache nor S3 holds the recordings $lock names: recording them from this commit"
+          fi
+          echo "record=true" >> "$GITHUB_OUTPUT"
+
+      # What a recording made here is compared with: the pull request's base (its merge commit's first parent, from the
+      # plan). The checkout keeps no credentials, so it is fetched with the token, as the report job fetches; the
+      # recording summary goes without the comparison when it cannot be fetched. The base lock's recordings are restored
+      # from the cache, where the test-data job put them from S3 for a `rerecord` leg.
+      - id: base
+        name: Fetch the commit to record against
+        if: steps.source.outputs.record == 'true'
+        env:
+          BASE: ${{ needs.plan.outputs.base }}
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
           TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = "pull_request" ]; then
-            base="$(git cat-file -p HEAD | awk '$1 == "parent" { print $2; exit }')"
-          else
-            base="$BASE"
-          fi
-          if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ]; then
+          base="$BASE"
+          if [ -n "$base" ]; then
             auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
             if ! git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$base"; then
-              if [ "$FORK" = "true" ]; then
-                echo "::error::could not fetch $base, the base this fork's pull request is recorded against"
-                exit 1
-              fi
               echo "::warning::could not fetch $base: the recording summary is not compared with its recording"
               base=""
             fi
-          else
-            base=""
           fi
           echo "sha=$base" >> "$GITHUB_OUTPUT"
-
-      # A fork records against the upstream its base's gates.yaml pins, as port-readiness-record.yml does. Its
-      # repository, commit, runtime and test paths decide which code the recorder runs and whose tests it records, so a
-      # fork that changed them would have this leg record answers of the fork's choosing and match the lock it
-      # committed. Only `popularity`, `known_gaps`, `real_code_gaps` and comments may differ. The code the recorder runs
-      # decides the answers just as much, so a fork may not change that either: the recorder, the gate code and the
-      # engine modules it imports (src/engine, for PACKAGE_ROOT; cache.test.ts holds the list to the recorder's import
-      # graph), package.json, whose script starts it and whose dependencies it imports, package-lock.json, which locks
-      # them, and the PHP action. A maintainer records such a pull request with port-readiness-record.yml, which runs the
-      # base branch's recorder. A fork that touches only packs/ still records itself. This guard is no defence against a
-      # pull request that edits this workflow: a pull_request run takes the workflow from the pull request, fork or not,
-      # so the change to .github/ is what review has to catch.
-      - name: Refuse a fork's change to the upstream or the recorder it is recorded with
-        if: >-
-          steps.fetch.outputs.missing == 'true' && github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name != github.repository
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-          BASE_SHA: ${{ steps.base.outputs.sha }}
-        run: |
-          set -euo pipefail
-          [ -n "$BASE_SHA" ] || { echo "::error::this fork's pull request has no base commit to record against"; exit 1; }
-          manifest="packs/$PACK/upstream/$TOOL/gates.yaml"
-          git show "$BASE_SHA:$manifest" > "$RUNNER_TEMP/base-gates.yaml" 2> /dev/null || : > "$RUNNER_TEMP/base-gates.yaml"
-          if ! node -e '
-            const { parse } = require("yaml");
-            const { readFileSync } = require("node:fs");
-            const pinned = (file) => {
-              const { popularity, known_gaps, real_code_gaps, ...rest } = parse(readFileSync(file, "utf8")) ?? {};
-              return JSON.stringify(rest);
-            };
-            process.exit(pinned(process.argv[1]) === pinned(process.argv[2]) ? 0 : 1);
-          ' "$RUNNER_TEMP/base-gates.yaml" "$manifest"; then
-            echo "::error::this pull request comes from a fork and changes $manifest beyond popularity, known_gaps and real_code_gaps, and the release holds no recording for it: land that change on the base branch first, then record"
-            exit 1
-          fi
-          recorder=(conformance/recorders/port-readiness conformance/port-readiness src/engine package.json package-lock.json .github/actions/php)
-          if ! git diff --quiet "$BASE_SHA" HEAD -- "${recorder[@]}"; then
-            echo "::error::this pull request comes from a fork, changes the recorder (${recorder[*]}), and the release holds no recording for $PACK/$TOOL: a maintainer must record it with port-readiness-record.yml"
-            exit 1
+          lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          if [ -n "$base" ] && git show "$base:$lock" > "$RUNNER_TEMP/base-recording.lock" 2> /dev/null; then
+            recording="$(jq -r '.files["recording.json"].sha256' "$RUNNER_TEMP/base-recording.lock")"
+            corpus="$(jq -r '.files["corpus.json"].sha256' "$RUNNER_TEMP/base-recording.lock")"
+            {
+              echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
+              echo "paths<<EOF"
+              echo ".rerail/port-readiness/recordings/$recording.json"
+              echo ".rerail/port-readiness/recordings/$corpus.json"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
           fi
 
-      # Without an attested recording the leg runs the pinned upstream itself, with the recorder and runtimes of this
+      - name: Restore the recordings the base's lock names
+        if: steps.source.outputs.record == 'true' && steps.base.outputs.key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.base.outputs.paths }}
+          key: ${{ steps.base.outputs.key }}
+
+      # Without a cached recording the leg runs the pinned upstream itself, with the recorder and runtimes of this
       # commit, so what records a pull request's rules is in its diff like the gate code that judges them. uv installs the
       # Python runtimes, the php action the PHP and Composer the php and blade runtimes need, and rustup the toolchain
       # Clippy's runtime pins. The runtimes are installed afresh, not restored from a cache: a Bladestan runtime restored
       # from the previous run's cache recorded other answers than the same runtime installed fresh, which is what the lock
       # was recorded with.
       - name: Set up uv to record this tool-pack
-        if: steps.fetch.outputs.missing == 'true'
+        if: steps.source.outputs.record == 'true'
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
 
       - name: Set up the pinned PHP and Composer to record this tool-pack
-        if: steps.fetch.outputs.missing == 'true' && (matrix.pack == 'php' || matrix.pack == 'blade')
+        if: steps.source.outputs.record == 'true' && (matrix.pack == 'php' || matrix.pack == 'blade')
         uses: ./.github/actions/php
 
       - id: clippy-toolchain
         name: Read the Rust toolchain Clippy's runtime pins
-        if: steps.fetch.outputs.missing == 'true' && matrix.tool == 'clippy'
+        if: steps.source.outputs.record == 'true' && matrix.tool == 'clippy'
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
@@ -255,7 +447,7 @@ jobs:
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
 
       - name: Install the pinned Rust toolchain with clippy to record this tool-pack
-        if: steps.fetch.outputs.missing == 'true' && matrix.tool == 'clippy'
+        if: steps.source.outputs.record == 'true' && matrix.tool == 'clippy'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
@@ -263,52 +455,73 @@ jobs:
 
       # The recorder writes both recordings into the cache the gates read, and the lock and case sources into the tree:
       # those must be what the commit already has, or the commit's lock names a recording its own recorder does not make.
-      # It records into the release the committed lock names, so the lock it writes is the committed one when upstream
-      # answers the same. No maintainer's recording run posts a per-rule summary for this commit, so the leg writes one
-      # into its job summary and its report artifact: against the recording the base's lock names, put in the commit's
-      # lock's place while the recorder runs, or as a first recording when the base has no lock. The recorder runs
-      # upstream's code and the Composer packages it resolves, so it gets no token: only the base lock's fetch is given
-      # one, and the script keeps it in an unexported variable.
-      - name: Record this tool-pack
-        if: steps.fetch.outputs.missing == 'true'
+      # The comparison is over every file under the tool-pack and the pack's licences, tracked or not: the packs' test
+      # data is gitignored (extracted from the tool-pack's archive), so `git status` would not show a case source the
+      # recorder added. No maintainer's recording run posts a per-rule summary for this commit, so the leg writes one into
+      # its job summary and its report artifact, from which the report job puts it in the pull request comment: against
+      # the recording the base's lock names, put in the commit's lock's place while the recorder runs, or as a first
+      # recording when the base has no lock. The recorder runs upstream's code and the Composer packages it resolves, so
+      # the step gets no token.
+      - id: record
+        name: Record this tool-pack
+        if: steps.source.outputs.record == 'true'
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
           BASE_SHA: ${{ steps.base.outputs.sha }}
-          TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          token="$TOKEN"
-          unset TOKEN
-          echo "::notice::the release holds no recording for $PACK/$TOOL's recording.lock: recording it from this commit"
+          written=("packs/$PACK/upstream/$TOOL" "packs/$PACK/licenses")
+          snapshot() { find "${written[@]}" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; }
+          snapshot > "$RUNNER_TEMP/before.sha256"
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
-          release="$(jq -r .release "$lock")"
           if [ -n "$BASE_SHA" ]; then
-            if ! git show "$BASE_SHA:$lock" > "$RUNNER_TEMP/base-recording.lock" 2> /dev/null; then
-              rm "$lock"
-            elif ! cmp -s "$RUNNER_TEMP/base-recording.lock" "$lock"; then
+            if [ -s "$RUNNER_TEMP/base-recording.lock" ]; then
               cp "$RUNNER_TEMP/base-recording.lock" "$lock"
-              GITHUB_TOKEN="$token" npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL" ||
-                echo "::warning::could not fetch the recording $BASE_SHA's lock names: the summary does not compare with it"
+            else
+              rm "$lock"
             fi
           fi
-          unset token
           changes="$RUNNER_TEMP/gates/recording-$PACK--$TOOL.md"
-          npm run port-readiness:record -- --pack "$PACK" --tool "$TOOL" --release "$release" --changes "$changes"
+          npm run port-readiness:record -- --pack "$PACK" --tool "$TOOL" --changes "$changes"
           cat "$changes" >> "$GITHUB_STEP_SUMMARY"
-          written=("packs/$PACK/upstream/$TOOL" "packs/$PACK/licenses")
-          changed="$(git status --porcelain --untracked-files=all -- "${written[@]}")"
-          if [ -n "$changed" ]; then
+          snapshot > "$RUNNER_TEMP/after.sha256"
+          if ! diff -u "$RUNNER_TEMP/before.sha256" "$RUNNER_TEMP/after.sha256" > "$RUNNER_TEMP/written.diff"; then
             git --no-pager diff -- "${written[@]}" | sed -n '1,200p'
             # What the recorder made, beside the report, so the difference from the committed lock can be read.
             mkdir -p "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL"
-            jq -r '.files[].asset' "$lock" | while read -r asset; do
-              cp ".rerail/port-readiness/recordings/upload/$asset" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
+            cp "$lock" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
+            jq -r '.files[].sha256' "$lock" | while read -r digest; do
+              cp ".rerail/port-readiness/recordings/$digest.json" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
             done
-            echo "::error::the recorder wrote files this commit does not have; record $PACK/$TOOL again and commit them (the report artifact holds what it recorded):"
-            echo "$changed"
+            echo "::error::the recorder wrote files this commit does not have; record $PACK/$TOOL again and commit them (the report artifact holds what it recorded). A case source it wrote comes from the tool-pack's test data archive (test-data.lock): a maintainer derives it again and pushes it with npm run fixtures:push -- --from <ref> (CONTRIBUTING.md, \"Pack test data\"), and the pull request commits the lock:"
+            sed -n '1,200p' "$RUNNER_TEMP/written.diff"
             exit 1
           fi
+
+      # Only the two recordings, and only once the recorder made exactly the lock this commit has: what upstream's code
+      # left anywhere else under .rerail/ is not saved (the corpus and results saves below skip this leg too). A
+      # `rerecord` leg saves nothing: no run restores the recordings of a lock its pull request changes.
+      - name: Save the recordings
+        if: steps.source.outputs.record == 'true' && !matrix.rerecord
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.lock.outputs.paths }}
+          key: ${{ steps.lock.outputs.key }}
+
+      # The two recordings the lock names, restored or recorded here, for the maintainer who pushes a pull request's
+      # recording.lock to S3 (gh run download <run-id> -n recordings-<pack>--<tool> -D .rerail/port-readiness/recordings;
+      # CONTRIBUTING.md, "Pack test data"). The first shard of a sharded tool-pack uploads them, since every shard has the
+      # same two. A leg whose recorder failed has none.
+      - name: Upload the recordings
+        if: ${{ always() && (!matrix.shards || matrix.shard == 1) && (steps.recordings.outputs.cache-hit == 'true' || steps.record.outcome == 'success') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: recordings-${{ matrix.pack }}--${{ matrix.tool }}
+          path: ${{ steps.lock.outputs.paths }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
       # The corpus files the goldens name and upstream's pinned test files are keyed by their pins; a partial
       # match is reused, since every checkout in them is keyed by commit.
@@ -342,7 +555,7 @@ jobs:
           REFRESH: ${{ inputs.no-cache && '--refresh-cache' || '' }}
         run: |
           set +e
-          npm run port-readiness -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" $REFRESH
+          npm run port-readiness -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" ${REFRESH:+"$REFRESH"}
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
       # Pull requests restore main's corpus (by exact key, or by prefix when the pull request changes a pin) and never
@@ -351,7 +564,7 @@ jobs:
       # whatever the event: the recorder ran upstream's code and the Composer packages it resolved, unlocked, which could
       # have rewritten anything under .rerail/, and on main the save would land where every pull request restores from.
       - name: Save the corpus and upstream's test files
-        if: ${{ always() && github.event_name != 'pull_request' && steps.fetch.outputs.missing != 'true' }}
+        if: ${{ always() && github.event_name != 'pull_request' && steps.recordings.outputs.cache-hit == 'true' }}
         uses: actions/cache/save@v6
         with:
           path: |
@@ -364,7 +577,7 @@ jobs:
       # every other branch cannot read, so a second push reuses only the rules this pull request has not touched. Not
       # after the leg recorded its tool-pack, as above.
       - name: Save the rule results
-        if: ${{ always() && steps.fetch.outputs.missing != 'true' }}
+        if: ${{ always() && steps.recordings.outputs.cache-hit == 'true' }}
         uses: actions/cache/save@v6
         with:
           path: .rerail/port-readiness/results
@@ -472,6 +685,7 @@ jobs:
           marker='<!-- rerail-port-readiness -->'
           # Comments posted while this was called the rule gates carry the old marker; collapse those too.
           legacy='<!-- rerail-rule-gates -->'
+          # shellcheck disable=SC2016 # the GraphQL query's $id is GraphQL's variable, not the shell's.
           gh api --paginate "repos/$REPO/issues/$PR/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\") | select((.body | startswith(\"$marker\")) or (.body | startswith(\"$legacy\"))) | .node_id" |
             while read -r id; do

@@ -1,1 +1,0 @@
-function foo(): Record<string, any> {}

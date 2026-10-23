@@ -1,1 +1,0 @@
-if (foo) { var bar = true, baz = false; }

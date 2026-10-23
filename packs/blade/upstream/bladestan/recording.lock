@@ -1,7 +1,6 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v1",
+  "format": "rerail.port-readiness-recording-lock/v2",
   "tool": "bladestan",
-  "release": "port-readiness-recordings",
   "pins": {
     "repository": "https://github.com/TomasVotruba/bladestan",
     "commit": "ceb0823cd4b4f400b64a008cace0d91e786a2859",
@@ -27,14 +26,12 @@
     "recording.json": {
       "sha256": "73d0d90e53dd5e676818a6654844cd6c37db1d924d203d40120390b3078ff100",
       "size": 138548,
-      "format": "rerail.port-readiness-recording/v2",
-      "asset": "blade-bladestan-recording-73d0d90e53dd5e676818a6654844cd6c37db1d924d203d40120390b3078ff100.json.gz"
+      "format": "rerail.port-readiness-recording/v2"
     },
     "corpus.json": {
       "sha256": "a657b7f1f69d48ee8d2398a351a527a8f0cbf747e24ddef0722d022fd6ae40b0",
       "size": 1401,
-      "format": "rerail.port-readiness-corpus/v2",
-      "asset": "blade-bladestan-corpus-a657b7f1f69d48ee8d2398a351a527a8f0cbf747e24ddef0722d022fd6ae40b0.json.gz"
+      "format": "rerail.port-readiness-corpus/v2"
     }
   }
 }

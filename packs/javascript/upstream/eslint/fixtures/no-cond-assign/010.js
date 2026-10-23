@@ -1,1 +1,0 @@
-while (someNode || (someNode = parentNode)) { }

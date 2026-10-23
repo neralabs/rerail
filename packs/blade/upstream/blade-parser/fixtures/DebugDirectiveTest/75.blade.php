@@ -1,1 +1,0 @@
-Lead @extends($arg) Trail
