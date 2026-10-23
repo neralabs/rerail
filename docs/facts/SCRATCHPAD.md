@@ -80,6 +80,8 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 
 - **Ruling on the two SQLite differences S8 found (I1):** both are engine bugs to fix even though the corpus never exercises them: (1) a column with no declared type has SQLite's no-affinity (BLOB) semantics, so a comparison with a TEXT column follows SQLite's affinity rules exactly; (2) `UNION`/`DISTINCT` over equal values of different storage classes keeps the representative SQLite keeps (first in SQLite's evaluation order under the plan the engine uses; document the rule). Both go into `key_cells_match_sqlite`-style random differentials against SQLite, in the engine and in the reference evaluator (S5 owns the reference).
 
+- **I1 pinned to SQLite 3.53.2** (what native bundles). Rulings on S8b's probes: no-affinity (BLOB) columns compare without conversion against TEXT; `UNION`'s representative follows 3.53.2 (first row of the class in the right-most arm holding it); bare `GROUP BY` columns are exact only when FD-determined by the key or taken from the lone min()/max() row, otherwise `Total::Checked` (runtime refusal on distinct values within a group), never "first row" emulation; compound FROM-subquery/CTE columns take 3.53.2's affinity rule. Reference evaluator and IR typing must agree with the engine (S8b owns `reference.rs` and `front/sql.rs` for this; S3-5 informed because the generator compiles from the typing).
+
 ## Open questions
 
 - Which batch-6 rules depend on facts outside the syntactic schema: answered by the census, 41 of 775 units (decoded strings, f-string and annotation sub-grammars, line splitting); the annotation classifier is the only one that blocks a recorded call.
