@@ -104,3 +104,7 @@ The gate's `count-regression` check (`scripts/check/facts-gate.py`) compares eve
 
 | clause | count | change | why |
 |---|---|---|---|
+| execution_authority_bypass/authority-sites | rows_joined, rows_out | +5.7% | P3b: K1 per-content key checks on stored stage tables (`rel::run`), and `bounds_unproven` metering at stage boundaries; observation and verification work, no plan change (merge `eee7d6ac3`) |
+| legacy_execution_surfaces/legacy-execution-graphs | probes, rows_scanned | +8.8% | same |
+| serverplan_quality/quality-conditional-1 | probes | +17% | same; its classes rest on the most assumed keys, so it is checked most |
+| (15 further clauses on the same merge) | probes, rows_scanned, rows_joined | 5–17% | same cause; the gate run `s5-gate/runs/*-gate` at `eee7d6ac3` lists them. Whether the checks' physical cost is acceptable is a P3b-3 question (check once per content, not per stage read) |
