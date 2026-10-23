@@ -22,6 +22,7 @@ Checks (clean build, `FACTS_MUTANT` unset), in seven concurrent lanes:
                       reference evaluator).
      classifier-leak  cargo test -p rerail-facts leak: a per-file plan reading cross-file state is refused.
      planner-audit    cargo test -p rerail-facts phys::tests::audit: an inner scan is refused.
+     facts-a-unit     cargo test -p facts-a --bin facts-a: the leaf executor's and spike SQL engine's unit tests.
      explain-stable   facts-a explain over the pack: byte-identical across two runs and per-rule processes.
      harness-replay   Jeremy's replay.ts --engine facts: same acceptance as a-replay.
   v  views-derived    S4's facts-a derived-check --shard 0/8 (VIEWS_SHARD): schema views equal the policies'
@@ -40,10 +41,12 @@ holding an oracle finding (1,150 files of 9,010). It is hard-linked under SUBSET
 
 Mutants (`--mutants`): MUTANTS (1-3 S2's interim A3 views, 4-6 S3's delta generator, 7 the classifier,
 8 the plan audit, 9 S3's runtime tie check, 10 the order-totality proof) plus one per rewrite registered
-in docs/facts/REWRITES.md; each runs the checks of its family with `FACTS_MUTANT=<n>` and is killed when
-one of them detects it (a3-check: the FACTS_A3_CHECK panic; a-reference: findings differ from the clean
+in docs/facts/REWRITES.md (family: rerail-facts-lib and the corpus differential a-reference); each runs
+the checks of its family with `FACTS_MUTANT=<n>`, every check in its own lane, and is killed when one of
+them detects it (a3-check: the FACTS_A3_CHECK panic; a-reference: findings differ from the clean
 reference; b-*: an exactness difference or a missed expected refusal; cargo checks: a failing test,
-named in failed-tests.txt). A registered rewrite without a mutant fails the gate.
+named in failed-tests.txt; harness-b*/suite-b*: a GATED check no longer exact). A registered rewrite
+without a mutant fails the gate.
 
 Output (stdout), one line per event, every line prefixed `facts-gate: `:
 
@@ -174,13 +177,16 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
         if len(words) < 2 or not words[0].isdigit():
             problems.append(f"rewrite {name}: mutant cell {cell!r} is not `<n> <kind>`")
             continue
-        out.append((int(words[0]), f"rewrite-{r[ii].lower()}", "rerail-facts", f"rewrite {name}", words[1], ["rerail-facts-lib"]))
+        # The rewrite's unit differential (lib tests) and the corpus differential: facts-a's rewritten
+        # per-file plans on the subset against the unrewritten reference (facts-a's `mutants` feature
+        # turns rerail-facts' on, so the mutant reaches the corpus run).
+        out.append((int(words[0]), f"rewrite-{r[ii].lower()}", "rerail-facts", f"rewrite {name}", words[1], ["rerail-facts-lib", "a-reference"]))
     return out, problems
 
 
 BATCH_CHECKS = [f"harness-b{n}" for n in BATCH_RECORDINGS] + [f"suite-b{n}" for n in BATCH_RECORDINGS]
 LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"], "g": ["b-generated"],
-         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay"],
+         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "facts-a-unit", "explain-stable", "harness-replay"],
          "v": ["views-derived"], "h": [*BATCH_CHECKS, "explain-physical"], "t": ["b-ties"]}
 # The edit replays' prefix (b-exactness, b-generated and their mutants): events 0-299 hold every
 # single-file edit kind, one new worktree (event 100) and one 200-file bulk replace (event 161), but none
@@ -261,6 +267,9 @@ def build(rd: Path) -> tuple[bool, dict]:
     if status == 0 and "rerail-facts" in present:
         f = ["--features", "rerail-facts/mutants"] if "rerail-facts" in mutants else []
         status, _ = run(["cargo", "test", "--release", "-p", "rerail-facts", *f, "--no-run"], rd / "build-tests", env)
+    if status == 0 and "facts-a" in present:
+        f = ["--features", "facts-a/mutants"] if "facts-a" in mutants else []
+        status, _ = run(["cargo", "test", "--release", "-p", "facts-a", *f, "--bin", "facts-a", "--no-run"], rd / "build-tests-facts-a", env)
     info = {"seconds": round(time.monotonic() - t0, 1), "packages": present, "mutants_feature": mutants,
             "target": str(target), "ok": status == 0}
     say(f"build {'ok' if status == 0 else 'FAIL'} {info['seconds']:.0f}s "
@@ -459,12 +468,12 @@ def check_ties(d: Path, env: dict) -> tuple[bool, str, dict]:
     return ok, summary, det
 
 
-def cargo_test(d: Path, env: dict, *names: str) -> tuple[int, int, list[str]]:
-    """`cargo test --release -p rerail-facts [--features mutants] <names>`: (exit status, tests run,
+def cargo_test(d: Path, env: dict, *names: str, package: str = "rerail-facts") -> tuple[int, int, list[str]]:
+    """`cargo test --release -p <package> [--features mutants] <names>`: (exit status, tests run,
     failed tests)."""
     pkgs = workspace_packages()
-    f = ["--features", "rerail-facts/mutants"] if "mutants" in pkgs["rerail-facts"].get("features", {}) else []
-    status, _ = run(["cargo", "test", "--release", "-p", "rerail-facts", *f, *names], d,
+    f = ["--features", f"{package}/mutants"] if "mutants" in pkgs[package].get("features", {}) else []
+    status, _ = run(["cargo", "test", "--release", "-p", package, *f, *names], d,
                     {**env, "CARGO_TARGET_DIR": os.environ["FACTS_GATE_TARGET"]})
     out = (d / "stdout.txt").read_text(errors="replace")
     ran = sum(int(l.split()[1]) for l in out.splitlines() if l.startswith("running ") and l.split()[1].isdigit())
@@ -472,12 +481,21 @@ def cargo_test(d: Path, env: dict, *names: str) -> tuple[int, int, list[str]]:
     return status, ran, failed
 
 
-def check_cargo(d: Path, env: dict, what: str, *names: str) -> tuple[bool, str, dict]:
-    if "rerail-facts" not in workspace_packages():
-        return False, "package rerail-facts is not in the workspace", {"detected": False}
-    status, ran, failed = cargo_test(d, env, *names)
+def check_cargo(d: Path, env: dict, what: str, *names: str, package: str = "rerail-facts") -> tuple[bool, str, dict]:
+    if package not in workspace_packages():
+        return False, f"package {package} is not in the workspace", {"detected": False}
+    status, ran, failed = cargo_test(d, env, *names, package=package)
     return (status == 0 and ran > 0, f"{ran} {what}, exit {status}" + (f", failed: {', '.join(failed[:6])}" if failed else ""),
             {"tests": ran, "failed": failed, "detected": status != 0 and ran > 0})
+
+
+# The cargo checks: (package, test-name arguments, what they hold).
+CARGO_CHECKS = {
+    "rerail-facts-lib": ("rerail-facts", ["--lib"], "lib tests (rewrite differentials, classifier, audit, reference)"),
+    "classifier-leak": ("rerail-facts", ["leak"], "leak tests"),
+    "planner-audit": ("rerail-facts", ["phys::tests::audit"], "plan audit tests"),
+    "facts-a-unit": ("facts-a", ["--bin", "facts-a"], "facts-a unit tests (leaf executor, spike SQL engine)"),
+}
 
 
 def check_explain(d: Path, env: dict) -> tuple[bool, str, dict]:
@@ -709,12 +727,9 @@ def run_check(cid: str, gate_dir: Path, env: dict, edits: int | None) -> tuple[b
         return check_b(d, env, "greplay", limit=edits)
     if cid == "b-ties":
         return check_ties(d, env)
-    if cid == "rerail-facts-lib":
-        return check_cargo(d, env, "lib tests (rewrite differentials, classifier, audit, reference)", "--lib")
-    if cid == "classifier-leak":
-        return check_cargo(d, env, "leak tests", "leak")
-    if cid == "planner-audit":
-        return check_cargo(d, env, "plan audit tests", "phys::tests::audit")
+    if cid in CARGO_CHECKS:
+        package, names, what = CARGO_CHECKS[cid]
+        return check_cargo(d, env, what, *names, package=package)
     if cid == "explain-stable":
         return check_explain(d, env)
     if cid == "explain-physical":
@@ -750,10 +765,15 @@ def run_mutant_check(n: int, cid: str, gate_dir: Path, edits: int | None) -> str
         ok, _, det = check_b(d, env, "replay" if cid == "b-exactness" else "greplay", fail_fast=True, limit=edits)
     elif cid == "b-ties":
         ok, _, det = check_ties(d, env)
-    elif cid in ("rerail-facts-lib", "classifier-leak", "planner-audit"):
-        names = {"rerail-facts-lib": ["--lib"], "classifier-leak": ["leak"], "planner-audit": ["phys::tests::audit"]}[cid]
-        ok, _, det = check_cargo(d, env, "tests", *names)
+    elif cid in CARGO_CHECKS:
+        package, names, _ = CARGO_CHECKS[cid]
+        ok, _, det = check_cargo(d, env, "tests", *names, package=package)
         (d / "failed-tests.txt").write_text("\n".join(det.get("failed", [])) + "\n")
+    elif cid.startswith(("harness-b", "suite-b")):
+        # Killed when a GATED check of the batch stops being exact under the mutant.
+        n_batch = int(cid.removeprefix("harness-b").removeprefix("suite-b"))
+        ok, _, det = (check_harness_batch if cid.startswith("harness-b") else check_suite_batch)(d, env, n_batch)
+        det = {**det, "detected": bool(det.get("gated_failing"))}
     else:
         raise ValueError(cid)
     return "survived" if ok else ("killed" if det.get("detected") else "error")
@@ -810,35 +830,46 @@ def main() -> int:
             report["checks"][cid] = {"ok": ok, "seconds": round(secs, 1), "summary": summary, "details": details,
                                      "dir": str(gate_dir / cid)}
             say(f"check {cid} {'pass' if ok else 'FAIL'} {secs:.0f}s {summary}")
+        # Each lane runs the mutant's checks that belong to it; the verdict is taken over every lane's
+        # cells once all lanes are done.
         for (n, name, crate, site, what, tests) in mutants:
             t0 = time.monotonic()
-            cells = {}
             for cid in tests:
                 try:
-                    cells[cid] = run_mutant_check(n, cid, gate_dir, edits)
+                    cell = run_mutant_check(n, cid, gate_dir, edits)
                 except Exception as e:
-                    cells[cid] = "error"
+                    cell = "error"
                     (gate_dir / "mutants").mkdir(exist_ok=True)
                     (gate_dir / "mutants" / f"{n}-{cid}.error").write_text(repr(e))
-            killed = any(v == "killed" for v in cells.values())
-            secs = time.monotonic() - t0
-            report["mutants"].append({"n": n, "name": name, "crate": crate, "site": site, "breaks": what,
-                                      "killed": killed, "seconds": round(secs, 1), "cells": cells})
-            say(f"mutant {n} {name} {'killed' if killed else 'SURVIVED'} {secs:.0f}s "
-                + " ".join(f"{c}={v}" for c, v in cells.items()))
+                with print_lock:
+                    mutant_cells.setdefault(n, {})[cid] = cell
+            with print_lock:
+                mutant_secs[n] = mutant_secs.get(n, 0.0) + time.monotonic() - t0
 
     # A mutant runs the selected checks of its family; with none selected, it does not run.
     rewrites, registry_problems = rewrite_mutants()
     report["registry_problems"] = registry_problems if args.mutants else []
     for p in report["registry_problems"]:
         say(f"registry FAIL {p}")
-    family = {k: [(n, name, crate, site, what, [t for t in tests if t in only]) for (n, name, crate, site, what, tests) in rewrites + MUTANTS
-                  if any(t in LANES[k] for t in tests) and any(t in only for t in tests)] for k in LANES}
-    threads = [threading.Thread(target=lane, args=(LANES[k], family[k] if args.mutants else [])) for k in LANES]
+    every = rewrites + MUTANTS if args.mutants else []
+    family = {k: [(n, name, crate, site, what, [t for t in tests if t in only and t in LANES[k]]) for (n, name, crate, site, what, tests) in every
+                  if any(t in LANES[k] and t in only for t in tests)] for k in LANES}
+    mutant_cells: dict[int, dict[str, str]] = {}
+    mutant_secs: dict[int, float] = {}
+    threads = [threading.Thread(target=lane, args=(LANES[k], family[k])) for k in LANES]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
+    for (n, name, crate, site, what, tests) in sorted(every):
+        if n not in mutant_cells:
+            continue
+        cells = {c: mutant_cells[n][c] for c in tests if c in mutant_cells[n]}
+        killed = any(v == "killed" for v in cells.values())
+        report["mutants"].append({"n": n, "name": name, "crate": crate, "site": site, "breaks": what,
+                                  "killed": killed, "seconds": round(mutant_secs[n], 1), "cells": cells})
+        say(f"mutant {n} {name} {'killed' if killed else 'SURVIVED'} {mutant_secs[n]:.0f}s "
+            + " ".join(f"{c}={v}" for c, v in cells.items()))
     secs = time.monotonic() - started
     checks_ok = [c for c, v in report["checks"].items() if v["ok"]]
     failing = ([c for c, v in report["checks"].items() if not v["ok"]] + [f"mutant {m['n']}" for m in report["mutants"] if not m["killed"]]
