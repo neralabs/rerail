@@ -203,3 +203,57 @@ Status: **partial** (run budget reached). The linker and `file.module` compile t
   3. Run the 6 narrowed/compiled clauses on greplay (oracle + replay specs, exports in `exports/w3/`); `unreachable-internal-symbols` exports need the merged binary; `quality-conditional-1` needs a faster per-file executor than the reference evaluator.
   4. Closure-cost export + aggregate (§ 9.3).
   5. G2.4 rows 3× locked; message S5Gate-3 the command and `results.json` fields.
+
+## 11. Wave 4 (S3CrossFile-4)
+
+Status: **partial**. The linker now runs on the generator in usable time and exactly: base load 50.1 s, 145,431 = native. Main's I6 fix is committed and gated. 6 of the 8 clauses are still blocked on generator decorrelation gaps (§ 11.3). The G2.4 protocol rows were not run.
+
+### 11.1 Results
+
+| Gate / item | Target | Measured | Result | Run directory |
+|---|---|---|---|---|
+| Cause of the 3 h "load" | with numbers | Not a load at all. It was **dataflow construction**: `sample` of the stuck process showed 100 % of the time in `lower::reads_var`, an unmemoised recursive walk of the hash-consed plan DAG. The walk is called from `boundary`, `boundary_arrs` and `ViewLower::is_view` for every fixpoint. Calls, as a lower bound per fixpoint (931 plan nodes): `link_result` **1.06e17**, `plain_prefix` 1.7e14, `fq_class` 6.3e12, `class_of_walk` 3.1e12, `order_dist` 1.2e12, `link_reach` 6.0e10. The 9,010-file run never reached `loaded`, and a 514-file subset ran the same way for 7 min | cause found | `runs/20261023-034130-linker-sub500-base` (killed), `…-034723-linker-sub500-prof` (killed), notes in `…-042347-linker-full-memo-prof/profile.json` |
+| Generic fix | linear | `var_readers`: one pass in node-id order, because ids are topological (asserted). `boundary` visits each node once. Dataflow construction now takes **0.01–0.02 s** | pass | same |
+| Base load = plain semi-naive | no delta expansion without deltas | The fixpoint is now **delta-mode** (`IterLower`): differential `iterate` over tagged records, with the same bilinear and presence expansions as outside, and each round's distinct a count-based presence. With base records only, every product is base and presence is a threshold. The per-touched-view materialisation (touched set, chain seeds, `result-by-view` R_v − R_pv) is deleted, so per-worktree fixpoint state is proportional to divergence, not to view size. b-generated (r3 recursion) 0 differences; mutants 4/5/6 killed | pass | gate `s5-gate/runs/20261023T043646-gate` |
+| Linker base load, full worktree (9,010 files, 3,110 in scope) | ≤ 10 min | **69.0 s** locked (load 5.1) after the memo fix and delta fixpoint; **50.1 s** locked (load 2.9) with R15. RSS 9.66 → **7.43 GB**. With profiling: 143 s | **pass** | `runs/20261023-045237-linker-full-7fa1`, `runs/20261023-045802-linker-full-r15` |
+| Linker exactness on the generator | 145,431 = native | **145,431 = 145,431, 0 missing, 0 extra**, 0 runtime refusals (`scripts/edges_parity.py`), in all three runs above | pass | `edges-parity.json` in each run dir |
+| Where the load goes (profile, `FACTS_PROFILE=1`, before R15) | per stage | busy 112 s: `link_reach` 68.1 s (420 iterations; 2.66M rows; 3.45M derivations; the bulk in iterations 1–20, then a tail of ~100 rows per iteration), `name_sub` 15.2 s (3 iterations, 1.27M rows), all others ≤ 3.2 s. The top operators are key-extraction `FlatMap`s of `link_reach`'s join arms (19.1, 11.2, 10.6 s): regex keys evaluated on every recursive row because the arms' single-side `WHERE` conjuncts ran after the join. Arranged records after R15: 58.8M (presence in+out of `link_reach` 5.3M, `iter-join-l` arms 2.3M/2.0M/1.1M/1.1M); 4.26M interned strings (721 MB) | measured | `runs/20261023-042347-linker-full-memo-prof/profile.json`, `…-045802-linker-full-r15/results.json` → `arrangements` |
+| R15 filter pushdown (generic; REWRITES.md, mutant 24) | registered | `norm::push_filters`: a single-side `WHERE`/`ON` conjunct filters that join input. Restrictions: right side only under inner joins for `WHERE`; right side only under LEFT joins for `ON`. Never applied to subqueries, correlations or `rerail_refuse`. Differential test `norm::tests::rewrite_filter_pushdown_equals_unpushed` (reference evaluator before vs after, 200 random table pairs, ≥ 1,000 firings) and `…_side_conditions`. `FACTS_MUTANT=24` fails both. Gate: new check `facts-b-unit`, family `facts-b` in `facts-gate.py` | pass (gate run in § 11.2) | — |
+| I6 (Main's priority) | leak tests green, mutant 7 live | `AnySource::Members(CoreRel)` / `AnySource::Summaries{rel,links}` replace `Core`/`Summary`, which only the views produced. `classify::file_source` refuses both in a per-file plan, naming `file.module` / `reference_edges`. `export_to_file` maps them to the per-content leaf on the file side of a repository clause. Mutant 7 also fires on them. A refused repository clause no longer yields a plan (its `Rel::Unit` stand-ins could reach an executor through `compile_report`). New test `repository_clause_over_reference_edges_exports_its_membership_leaves`. Gate **27/27, 23/23 mutants** | pass | commit `7fa1067ec`; gate `20261023T043646-gate` |
+| Clauses on the engine, oracle parity | see target | `required-contracts` 0 = 0 and `quality-project-taxonomy` 0 = 0 (exports regenerated with the merged binary; reference check 0 differences). `unreachable-internal-symbols`, `exported-families` and `state-flow-project-1` are refused by the generator (§ 11.3). `quality-conditional-1`: per-file export through the reference evaluator still running at hand-off. `state-flow-1`, `state-projection-recovery-2`: no oracle (native exceeds its budget, wave 2) | 2 of 8 | `runs/20261023-050620-parity-light-w4`, `…-050657-parity-dead-code-w4` |
+| G2.4 protocol rows (3× locked) | rows | not run | open | — |
+| Closure-cost aggregate (`captured-return`), `calls` atom | implemented | not started | open | — |
+
+### 11.2 Commits and gate
+
+- `7fa1067ec` (s3): I6 typed membership leaves, no plan for refused clauses, linear `var_readers`, delta-mode fixpoint, `FACTS_PROFILE` profiler (`gen/prof.rs`), `scripts/edges_parity.py`. Gate 27/27, 23/23.
+- R15, the gate registration (`facts-b-unit`, family `facts-b`, mutant 24) and this report: gate **28/28 checks, 24/24 mutants** (mutant 24 killed by `facts-b-unit`; `b-generated` does not reach it), `s5-gate/runs/20261023T045924-gate`. The release binary in that run was built before the `expr_any`/`rel_any` refactor of `expr_free`/`rel_free`, which is semantics-preserving; the facts-b test binary includes it.
+
+### 11.3 Generator refusals left (generic decorrelation gaps; exports ready in `exports/w4/`)
+
+| Clause / stage | Construct | Generic rewrite needed |
+|---|---|---|
+| unreachable-internal-symbols, exported-families `base_edges` | scalar subqueries (`coalesce` of three) in an inner JOIN's `ON`, correlated with the left side only | compute them as columns of a `Project` over the left input (their depth-1 refs are left columns, the same indices), then key the join on the new column; check with `expr_any` (added) that no subquery reads a right column |
+| unreachable-internal-symbols `high_confidence` | correlation `m.name = d.name` inside an inner join's `ON` within an EXISTS body | lift correlated conjuncts out of inner-join `ON`s and inner-join inputs to the body's top `WHERE` before `decorrelate` (exact for inner joins) |
+| exported-families `traits`, state-flow-project-1 `direct_events` | disjunctive correlation `(a1 ∧ b1) ∨ (a2 ∧ b2)` in EXISTS | EXISTS(σ_{(d1∨d2)∧r}) = EXISTS(σ_{d1∧r}) ∨ EXISTS(σ_{d2∧r}) |
+| exported-families `family_groups` | correlated filter under a derived table inside an aggregate (`json_group_array` over an ordered subquery) | pull the correlated filter through Project/Sort to the aggregate input |
+| state-flow-project-1 `taints` | uncorrelated EXISTS under OR in a JOIN `ON` | constant subquery → cross join with its count |
+| state-flow-project-1 `direct_sinks` | correlated count in a window `ORDER BY` | hoist the scalar into the window input |
+
+### 11.4 Interface changes
+
+- `ir::AnySource::{Members, Summaries}` (replacing `Core`, `Summary`). `classify::{export_to_file, member_leaf}`; `stage_to_file` takes the mapping.
+- `norm::Graph.labels` (stage per node). `norm::push_filters` (R15). `expr_any`/`rel_any` generalise `expr_free`/`rel_free`.
+- `lower`: `IterLower` replaces `ViewLower`; `var_readers`, `op_inputs`.
+- `greplay`: `results.json` → `load.dataflow_build_seconds`; `FACTS_PROFILE=1` writes `profile.json` (per stage/node: busy seconds, records sent, arranged records; per fixpoint arm: records per iteration; notes).
+- `facts-gate.py`: check `facts-b-unit`; rewrite family `facts-b` (`mutant (facts-b)` column); build step for the facts-b test binary.
+
+## 12. Resume notes (wave 4)
+
+- Exports regenerated with the merged binary, all with 0 failures: `exports/w4/{oracle,replay}-{dead-code,exported-families,state-flow-project-1,required-contracts,quality-project-taxonomy}.jsonl`. Specs: `w4/spec-{oracle,replay}-{light,dead-code}.json`. 514-file subset: `w4/sub500-jobs.tsv`.
+- Linker check: `greplay --plans none --real exports/w3/spec-oracle-linker.json --parity exports/oracle-b6-jobs.tsv --no-oracle`, then `scripts/edges_parity.py RUN_DIR`. The reference-evaluator check of the linker is infeasible: more than 50 min on 514 files (`runs/…-043012-linker-sub500-memo-prof`, killed at 3,000 s). Incremental ≡ from-scratch for linker clauses therefore needs an engine from-scratch side: a second dataflow per checked worktree, dropped after the check (`Worker::drop_dataflow`). Not written yet.
+- Next, in order:
+  1. The four decorrelation rewrites of § 11.3, each registered in REWRITES.md with a test and a mutant (facts-b family); then dead-code parity (4,931 expected) and the light clauses.
+  2. Engine from-scratch checks in greplay, then the 1,000-edit replay for every clause that runs.
+  3. Memory: the linker base is 7.4 GB (58.8M arranged records, about 110 B each). G2.4's 250 MB for 40 worktrees cannot hold with the linker as is. Levers: presence keeps both input and output arrangements; packed rows; fewer intermediate interned strings.
+  4. G2.4 rows, 3× locked; closure-cost aggregate; `calls` atom.
