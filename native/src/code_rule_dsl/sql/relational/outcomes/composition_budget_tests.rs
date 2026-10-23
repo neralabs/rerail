@@ -92,7 +92,7 @@ fn composition_budget_native_and_admission_boundaries() {
             assert_eq!(compiled.terminals.len(), 9);
             assert_eq!(
                 compiled.relations["lowering"][0]["compositionOperators"],
-                16
+                17
             );
             assert_eq!(compiled.relations["lowering"][0]["utilityBodyLowerings"], 2);
             let (rule, utils, _) = fixture(boolean, verdict, 32);

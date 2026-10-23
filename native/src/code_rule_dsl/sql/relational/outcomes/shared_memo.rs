@@ -114,6 +114,40 @@ struct Shared<'a> {
 }
 
 impl Shared<'_> {
+    fn state_width(&self, carried: &str) -> Result<usize, String> {
+        let width = 4 + self.demand.slots.len() + self.live.len() + carried.matches(',').count();
+        if width > 512 {
+            return Err("utility memo: shared sequencing state exceeds 512 typed columns".into());
+        }
+        Ok(width)
+    }
+
+    // Total predicates neither consume work nor change bindings. An ordered CASE
+    // retains their short circuit while one materialized result serves the barrier.
+    fn predicates(&mut self, items: &[Plan], all: bool, guard: &str) -> Result<String, String> {
+        // Count the Boolean expression and its leaves like an existing scalar tree.
+        self.sql.generation.operator()?;
+        let decisive = usize::from(!all);
+        let mut arms = String::new();
+        for child in items {
+            self.sql.generation.tree(child)?;
+            let (test, _) = Sql::scalar(child, &self.demand)?.expect("total predicate");
+            arms.push_str(&format!(" WHEN ({test})={decisive} THEN {decisive}"));
+        }
+        let truth = self.name("truth");
+        self.live.insert(truth.clone());
+        let width = self.state_width(&self.memo.carry("d"))?;
+        self.demand.name = self.sql.relation(
+            "guarded total predicate run",
+            format!("SELECT d.*,CASE WHEN {guard} THEN CASE{arms} ELSE {} END END AS {truth} FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node", usize::from(all), self.demand.name),
+            true,
+            "input state,one total Boolean result (NULL means unreached)",
+        );
+        self.sql.profile.last_mut().unwrap()["predicateRun"] = json!({"predicates":items.len(),"boolean":if all {"all"} else {"any"},"proof":"adjacent total predicates; no charges, unknowns, bindings, or walks","orderedCase":true});
+        self.sql.profile.last_mut().unwrap()["typedStateColumns"] = json!(width);
+        Ok(truth)
+    }
+
     fn name(&mut self, prefix: &str) -> String {
         self.serial += 1;
         format!("{prefix}{}", self.serial)
@@ -148,10 +182,7 @@ impl Shared<'_> {
             .map(|s| format!(",{} AS {s}", expression(s)))
             .collect::<String>();
         let carried = self.memo.carry("d");
-        let width = 4 + self.demand.slots.len() + self.live.len() + carried.matches(',').count();
-        if width > 512 {
-            return Err("utility memo: shared sequencing state exceeds 512 typed columns".into());
-        }
+        let width = self.state_width(&carried)?;
         self.demand.name = self.sql.relation(
             operator,
             format!(
@@ -344,7 +375,19 @@ impl Shared<'_> {
                 format!("COALESCE(d.{truth}=0,0)")
             };
             let available = self.memo.proven.clone();
-            let (tested, proven) = self.emit(child, &guard)?;
+            let predicates = items[index..]
+                .iter()
+                .take_while(|p| matches!(p.op, Op::Predicate(_)))
+                .count();
+            let (tested, proven) = if predicates > 1 {
+                skip_until = index + predicates;
+                (
+                    self.predicates(&items[index..skip_until], all, &guard)?,
+                    None,
+                )
+            } else {
+                self.emit(child, &guard)?
+            };
             // A following sibling can be reached only after this child was reached.
             // Export only its unconditional first call, not calls from optional arms.
             self.memo.proven = available;
@@ -527,4 +570,52 @@ fn memo_metadata_bounds_shared_graph_analysis() {
     }
     let error = call_counts(&body, &mut BTreeMap::new()).unwrap_err();
     assert!(error.contains("logical call count overflow"));
+}
+
+#[test]
+fn predicate_run_retains_shared_column_and_generation_limits() {
+    use crate::code_rule_dsl::sql::relational::{ir::Set, outcomes::effects::Effects};
+    let items = (0..2)
+        .map(|_| Plan {
+            op: Op::Predicate(Set::AllNodes),
+            effects: Effects::default(),
+            mentions: Slots::new(),
+            writes: Slots::new(),
+            node_writes: Slots::new(),
+            walk_filter: None,
+        })
+        .collect::<Vec<_>>();
+    for (columns, operators, success) in [(511, 253, true), (512, 0, false), (4, 254, false)] {
+        let mut sql = Sql {
+            definitions: vec![],
+            profile: vec![],
+            correlated: false,
+            generation: super::super::Generation::default(),
+        };
+        sql.generation.operators.set(operators);
+        let mut shared = Shared {
+            sql: &mut sql,
+            demand: Demand {
+                name: "input".into(),
+                slots: Slots::new(),
+            },
+            memo: Local::new(&Slots::new(), &[]),
+            live: (0..columns - 4).map(|n| format!("saved{n}")).collect(),
+            serial: 0,
+        };
+        let result = shared.predicates(&items, true, "1");
+        if success {
+            result.unwrap();
+            assert_eq!(shared.sql.profile[0]["typedStateColumns"], 512);
+            assert_eq!(shared.sql.generation.operators.get(), 256);
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.contains(if columns == 512 {
+                "512 typed columns"
+            } else {
+                "emitted composition operator count"
+            }));
+            assert!(shared.sql.definitions.is_empty());
+        }
+    }
 }

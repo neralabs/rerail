@@ -9,6 +9,7 @@ mod lower;
 mod memo_tests;
 mod nested_memo_tests;
 mod nested_tests;
+mod predicate_run_tests;
 mod pruning_tests;
 mod publication_tests;
 mod reached_tests;

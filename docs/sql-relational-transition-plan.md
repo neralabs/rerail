@@ -726,25 +726,41 @@ Materialization sites fall from 103 to 42, and VM work falls from 7,773 to 3,219
 Simple value utilities use 19 materialization sites and 1,375 instructions for the same true fixture.
 The journal records comparisons, semantic qualification, and frozen workload results.
 
+## Consecutive total predicates: bounded outcome milestone
+
+The shared Boolean emitter combines consecutive `Op::Predicate` operands into one guarded, ordered `CASE` expression.
+Each run uses one materialized result and one sequencing barrier.
+Existing scalar lowering supplies the predicate expressions. Each predicate appears once, in source order.
+The guard preserves SQL NULL for unreached runs. The Boolean barrier retains unknown, failure, and capture publication rules.
+
+Values, utility charges, unknown tests, captures, negation, and traversals end a run.
+Generation counts the predicate leaves plus one Boolean operator. All existing limits remain in force.
+For the preceding eight-predicate, 32-call true fixture, SQL falls from 14,555 to 8,366 bytes.
+VM work falls from 3,219 to 2,237 instructions, and materialization sites fall from 42 to 28.
+All 162 unique tests pass. The 231 preceding profiles contain 18 improvements and 213 unchanged SQL/VM results.
+The final frozen B023 CPU gate fails at 2.021×, with unchanged SQL and VM counts.
+The journal retains that failure and the initial 1.976× pass. CPU qualification remains open.
+
 ## Next implementation action
 
-Fuse adjacent total predicates inside shared Boolean composition.
-The wide fixture still evaluates its eight pure regex predicates through eight scalar stages and eight sequencing barriers.
-Each predicate has no capture effect, semantic charge, or unknown result. These boundaries add unnecessary intermediate rows.
+Remove constant-row subqueries from atomic predicate expressions.
+The current scalar lowering sends each atomic set through the general existence-query emitter.
+A regex becomes `CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE node_regex(...))) THEN 1 ELSE 0 END`.
+The ordered predicate run preserves that unnecessary wrapper around every regex.
 
-Start with contiguous `Op::Predicate` operands under shared `all` and `any`.
-Generate one guarded SQL Boolean expression and one barrier for each run.
-Reuse the existing scalar and total-predicate lowering. Keep the generation budget consistent with existing fused scalar trees.
-Do not extend this proof across utility charges, value leaves, unknown tests, capture reads or writes, or traversal operations.
+Start with total atomic kinds, regexes, empty sets, and all-node sets in the outcome scalar path.
+Use direct SQL predicates for these atoms. Retain the existing relational emitter for sets that require joins or traversal.
+Share the atomic expression lowering with ordered Boolean tests. Preserve outer guards, terminal registration, and one evaluation per reached atom.
+Do not change utility work accounting, capture behavior, value tests, or recursive scheduling in this step.
 
-Use the current eight-regex nested utility as the baseline: 14,555 bytes, 42 materialization sites, and 3,219 VM instructions.
-The eight predicates must emit one scalar stage and one barrier, removing 14 materialization sites from this shape.
-Measure predicate counts 2/8/32, separately from utility repetition counts 2/8/32.
-Require one reached value-read site, unchanged terminal registration, unchanged native charges, and unchanged typed return cells.
+The new true-conjunction profiles use 28 materializations at predicate widths 2, 8, and 32.
+Their VM counts are 2,063, 2,237, and 2,933 for 32 utility repetitions across two files.
+EXPLAIN reports 7, 13, and 37 correlated scalar subqueries, respectively.
+The next target is zero constant-row existence subqueries for atomic tests, with unchanged materializations and typed return cells.
+VM work must decrease for the eight- and 32-predicate fixtures. SQL must retain one value-read site.
 
-Check conjunction and alternative results, early false and true predicates, unknown surrounding operands, and unreached value failures.
-Include nested utilities, later memo reuse, capture boundaries, and independent clauses and files.
-Compare SQL, full EXPLAIN, generation time, VM work, and native publication traces.
-Repeat the 231 prior profiles and the frozen B023 gates, retaining any failures.
+Use the same 54-profile width/repetition matrix and the preceding 231 controls.
+Check true, false, and unknown surrounding results, early decisive atoms, failures, capture boundaries, and independent clauses and files.
+Retain full SQL, EXPLAIN, generation and preparation time, native traces, and the frozen B023 gates.
 
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

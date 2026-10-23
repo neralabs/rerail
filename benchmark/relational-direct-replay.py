@@ -63,8 +63,9 @@ def main():
         assert lower['distinctUtilityBodies'] == lower['utilityBodyLowerings'] == (2 if wide else 1)
         assert lower['utilityCallSites'] == sample['size'] + int(wide)
         assert lower['atomicTerminals'] == (9 if wide else 1)
-        assert lower['compositionOperators'] == (16 if wide else 6)
         relations = list(objects(sample['relations']))
+        predicate_runs = [o['predicateRun'] for o in relations if 'predicateRun' in o]
+        assert lower['compositionOperators'] == (16 if wide else 6) + len(predicate_runs)
         misses = sum(o.get('operator') == 'nested utility entry or replay charge' for o in relations)
         replays = sum(o.get('operator') == 'utility memo statically identical replay' for o in relations)
         groups = [o['repeatUtility'] for o in relations if 'repeatUtility' in o]
@@ -75,7 +76,7 @@ def main():
         sample['summary'] = {
             'sqlBytes': query.stat().st_size, 'lowering': lower,
             'generationWallNs': sample['generationWallNs'],
-            'emittedOuterMissBodies': misses, 'staticReplays': replays, 'repeatGroups': groups,
+            'emittedOuterMissBodies': misses, 'staticReplays': replays, 'repeatGroups': groups, 'predicateRuns': predicate_runs,
             'materializationSitesInExplain': sum(line.startswith('MATERIALIZE ') for line in sample['metrics']['explain']),
             'flags': [('One body and one guarded replay group.' if groups else 'One body plus one replay/barrier per remaining source call; SQL size still grows with call sites.'),
                       'Counters include instrumentation; one matching statement does not prove the complete cold-job budget.'],

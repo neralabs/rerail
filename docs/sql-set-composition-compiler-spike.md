@@ -4934,3 +4934,80 @@ Artifacts:
 - `benchmark/relational-composition-budget.py` accepts either individual proved replays or the new group when checking its earlier 18-profile matrix.
 
 The bounded outcome kernel remains test-only. Production integration, general recursive outcomes, native depth limits, deadlines, and the whole cold-job 100-execution gate remain open.
+
+### 2026-10-23 — Consecutive total predicates: implementation and qualification
+
+The preceding wide fixture uses 42 materialization sites and 3,219 VM instructions for 32 true utility calls.
+Its eight pure regex predicates each create a scalar stage and a sequencing barrier.
+The target is one scalar stage and one barrier for that run: 28 materialization sites in this fixture.
+
+The shared Boolean emitter now groups consecutive `Op::Predicate` operands.
+An ordered `CASE` stops at the first decisive predicate. The outer guard preserves unreached results as SQL NULL.
+The existing scalar lowering supplies each predicate expression. Bindings and remaining semantic work pass through unchanged.
+Values, charges, unknown tests, captures, negation, and traversals end a run.
+The generation budget counts every predicate plus the combined Boolean expression, consistent with scalar trees.
+
+Four new tests pass 642 native-comparison jobs, including 54 profiles.
+Predicate width and utility repetitions vary independently across 2, 8, and 32 for both conjunction and alternative utility bodies.
+Comparisons cover early decisive predicates, unknowns, reached failures, capture rollback, nested reuse, and independent clauses and files.
+The first profiling script passed the Rust tests and shape checks, then failed while parsing the test-result line.
+The corrected script produced the pinned evidence. This correction required no engine change or frozen gate rerun.
+
+**Exact preceding workload.** These measurements retain the eight-regex conjunction utility under both conjunction and alternative callers.
+All samples use 32 utility repetitions across two files.
+
+| Case | SQL bytes, before → after | VM instructions, before → after | Materializations, before → after |
+| --- | ---: | ---: | ---: |
+| True conjunction | 14,555 → 8,366 | 3,219 → 2,237 | 42 → 28 |
+| False conjunction | 14,555 → 8,366 | 3,077 → 2,095 | 42 → 28 |
+| Unknown conjunction | 14,551 → 8,362 | 3,121 → 2,139 | 42 → 28 |
+| True alternative | 15,229 → 8,695 | 3,263 → 2,253 | 42 → 28 |
+| False alternative | 15,229 → 8,695 | 3,165 → 2,155 | 42 → 28 |
+| Unknown alternative | 15,225 → 8,691 | 3,185 → 2,175 | 42 → 28 |
+
+The 54 new profiles retain 28 materialization sites and 12 typed return cells at every predicate width and repetition count.
+Each emits one value-read site, reached once per file. Atomic terminal registration remains unchanged.
+Across utility repetitions, VM work differs by at most one constant-register instruction.
+Across predicate widths, VM work grows with reached predicates, while materializations stay constant.
+
+**Prior controls.** All 150 final relational tests pass. All 231 preceding profiles retain native results, charges, reached calls, and typed returns.
+The 18 composition profiles improve. The other 213 profiles retain identical SQL and VM counts.
+The controls verify unchanged atomic terminal counts. No VM regression occurs.
+
+**Remaining shape.** The true-conjunction profiles use 2,063, 2,237, and 2,933 VM instructions at widths 2, 8, and 32.
+Their EXPLAIN reports contain 7, 13, and 37 correlated scalar subqueries.
+The general condition emitter still wraps each atomic regex in a constant-row existence query.
+The transition plan targets direct atomic expressions next, retaining relational emission for actual set joins and traversal.
+
+**Qualification review.** The initial frozen run passed both gates at 1.976× reference CPU time.
+Generated and reference median CPU times were 124,780,417 ns and 63,152,500 ns.
+Query text and 2,812,255 VM instructions remained unchanged.
+Review then found that the fused result bypassed the preceding projection's 512-column check.
+The fused path now uses the same width check and reports its typed width.
+A boundary test admits 512 columns and 256 generated operators, and rejects either limit plus one.
+The final profile run passes all five new tests. All 54 SQL hashes, VM counts, and 642 native traces match the initial implementation.
+The final relational suite passes all 150 tests. The initial passing frozen run remains in the evidence.
+The lint command uses the existing diagnostic jemalloc shim, as does the optimized test build.
+An initial lint attempt omitted that override and stopped in the dependency configure script before engine lint checks.
+This change remains in the test-only outcome compiler. Production integration and the complete cold-job execution gate remain open.
+
+
+**Final frozen workload.** The 138-file corpus retains two matches and exact parity.
+Generated median CPU time is 130,234,292 ns. Reference median CPU time is 64,427,209 ns.
+The ratio is 2.021×, which fails the 2× CPU gate. The VM gate passes at 2,812,255 instructions in all three samples.
+The query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+The initial source passed at 1.976×. Both runs remain recorded, and no repeat attempts replace the final failure.
+B023 has no eligible shared predicate run. Neither run establishes a structural B023 speedup or stable CPU qualification.
+
+**Final checks.** All 162 unique tests pass: 150 relational tests, nine B023 fixtures, adversarial and corpus tests, and workspace publication.
+Formatting and both Clippy configurations pass. Five new tests cover 642 native-comparison jobs and the compiler limits.
+The complete relational run records 7,315 publication traces.
+Source hashes pin the final executable and measured source files. The initial source, query hash, and timing gates remain in the evidence.
+
+Artifacts for this phase:
+
+- `benchmark/relational-predicate-run.py` reproduces the 54-profile matrix and enforces the materialization, width, and repetition checks.
+- `benchmark/sql-relational-predicate-run-evidence.json` records the failed baseline target, comparisons, native traces, EXPLAIN, source hashes, and frozen gates.
+- `benchmark/sql-relational-predicate-run.sql` records the preceding 32-call true conjunction after fusion.
+- `benchmark/sql-relational-predicate-run-unknown.sql` records the preceding 32-call unknown alternative after fusion.
+- `benchmark/relational-direct-replay.py` now accounts for the combined predicate expression when checking the generation budget.
