@@ -22,7 +22,6 @@ mod spill;
 mod stagecheck;
 mod sql;
 mod trits;
-mod subst;
 mod xexport;
 mod typedefs;
 mod views;

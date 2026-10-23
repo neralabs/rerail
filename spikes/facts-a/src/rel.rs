@@ -256,10 +256,6 @@ pub struct RelPlan {
     pub code: Option<String>,
     pub per_file: bool,
     pub locations: BTreeSet<String>,
-    /// Spike A3: per stage, its fixed substitution (`subst::plan_clause`), if its shape has one.
-    pub kernels: Vec<Option<crate::subst::Kernel>>,
-    /// Spike A3: the node-dumping inputs produced in one pass over the facts.
-    pub dump: Option<crate::subst::DumpGroup>,
     /// Per stage, the stored tables (lowercase) whose last reader it is: dropped, with their
     /// clause-level indexes, once it has run (`schedule_releases`).
     pub release: Vec<Vec<String>>,
@@ -338,10 +334,10 @@ impl RelPlan {
         let key = o.get("key").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
         let code = o.get("code").and_then(Json::as_str).map(str::to_owned);
         let locations = o.get("locations").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, kernels: Vec::new(), dump: None, release: Vec::new() })
+        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, release: Vec::new() })
     }
 
-    /// Computes `release` from every statement's reads (stages, deferred columns, kernels); the
+    /// Computes `release` from every statement's reads (stages and deferred columns); the
     /// final query's tables are dropped with the clause. A table no stage reads goes at the
     /// stage that produces it (inputs: the first stage).
     pub fn schedule_releases(&mut self) {
@@ -356,13 +352,10 @@ impl RelPlan {
             }
         }
         for (i, st) in self.stages.iter().enumerate() {
-            let mut reads: Vec<String> = match st {
+            let reads: Vec<String> = match st {
                 StagePlan::Query { stmt, deferred, .. } => stmt.reads.iter().chain(deferred.iter().flat_map(|(_, _, s)| s.reads.iter())).cloned().collect(),
                 StagePlan::Reach { roots, edges, .. } => roots.reads.iter().chain(edges.iter().flat_map(|e| e.reads.iter())).cloned().collect(),
             };
-            if let Some(k) = self.kernels.get(i).and_then(Option::as_ref) {
-                reads.extend(crate::subst::kernel_reads(k));
-            }
             for r in reads {
                 last.insert(r.to_ascii_lowercase(), i);
             }
@@ -439,9 +432,9 @@ fn memtrace(name: &str, t: &Table, db: &Db<'_>) {
 }
 
 /// One `run`'s tables for `facts-a stage-check` (the gate's `a-vs-reference`): every input and
-/// syntax table the clause read, then every stage it stored, by lower-case name, in order; `None`
-/// for a stage a kernel absorbed (never stored). A failing stage and everything after it are absent.
-pub type Traced = Vec<(String, Option<Rc<Table>>)>;
+/// syntax table the clause read, then every stage it stored, by lower-case name, in order. A
+/// failing stage and everything after it are absent.
+pub type Traced = Vec<(String, Rc<Table>)>;
 
 type TraceHook = Box<dyn FnMut(&RelPlan, &str, &Traced)>;
 
@@ -470,9 +463,9 @@ impl Drop for TraceGuard<'_> {
 }
 
 impl TraceGuard<'_> {
-    fn push(&mut self, name: &str, t: Option<&Rc<Table>>) {
+    fn push(&mut self, name: &str, t: &Rc<Table>) {
         if let Some(v) = self.tables.as_mut() {
-            v.push((name.to_ascii_lowercase(), t.cloned()));
+            v.push((name.to_ascii_lowercase(), t.clone()));
         }
     }
 }
@@ -483,7 +476,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
     let mut trace = TraceGuard { plan, path: part.path.to_owned(), tables: tracing.then(Vec::new) };
     let mut db = Db::new(part.source, part.path);
     for ((name, _), t) in plan.inputs.iter().zip(part.inputs) {
-        trace.push(name, Some(&t));
+        trace.push(name, &t);
         db.tables.insert(name.to_ascii_lowercase(), t);
     }
     let mut syntax_tables_present = false;
@@ -498,7 +491,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                 }
                 for (n, t) in spec.tables(f, path) {
                     let t = Rc::new(t);
-                    trace.push(&n, Some(&t));
+                    trace.push(&n, &t);
                     db.tables.insert(n.to_ascii_lowercase(), t);
                 }
                 syntax_tables_present = true;
@@ -506,51 +499,16 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
             _ => {
                 for (n, s) in spec.schemas() {
                     let t = Rc::new(Table::empty(s));
-                    trace.push(&n, Some(&t));
+                    trace.push(&n, &t);
                     db.tables.insert(n.to_ascii_lowercase(), t);
                 }
             }
         }
     }
-    let check = crate::subst::check_mode();
     for (si, st) in plan.stages.iter().enumerate() {
         let t0 = std::time::Instant::now();
-        let kernel = plan.kernels.get(si).and_then(Option::as_ref);
-        match (st, kernel) {
-            (StagePlan::Query { name, .. }, Some(crate::subst::Kernel::Absorbed)) if !check => {
-                // Read only by a later kernel, which reads its sources directly.
-                trace.push(name, None);
-            }
-            (StagePlan::Query { name, stmt, schema, .. }, Some(k)) if !matches!(k, crate::subst::Kernel::Absorbed) => {
-                let t = match crate::subst::run(k, &db, schema) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        out.failure = Some(format!("relational stage {name}: {e}"));
-                        return out;
-                    }
-                };
-                let ns = t0.elapsed().as_nanos() as u64;
-                if check {
-                    let sql = engine::execute(&db, stmt).map(|s| store(s, stmt.schema()));
-                    match sql {
-                        Ok(s) => {
-                            if let Err(e) = crate::subst::same_rows(&t, &s) {
-                                panic!("FACTS_A3_CHECK: stage {name} at {}: {e}", part.path);
-                            }
-                            if s.schema.cols != t.schema.cols || s.schema.affs != t.schema.affs {
-                                panic!("FACTS_A3_CHECK: stage {name}: schema differs");
-                            }
-                        }
-                        Err(e) => panic!("FACTS_A3_CHECK: stage {name}: SQL failed ({e}), kernel succeeded"),
-                    }
-                }
-                memtrace(name, &t, &db);
-                let t = Rc::new(t);
-                trace.push(name, Some(&t));
-                db.tables.insert(name.to_ascii_lowercase(), t);
-                out.stage_ns.push((format!("view:{name}"), ns));
-            }
-            (StagePlan::Query { name, stmt, deferred, schema }, _) => {
+        match st {
+            StagePlan::Query { name, stmt, deferred, schema } => {
                 let t = match engine::execute(&db, stmt) {
                     Ok(t) => t,
                     Err(e) => {
@@ -587,11 +545,11 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                 }
                 memtrace(&name, &t, &db);
                 let t = Rc::new(t);
-                trace.push(name, Some(&t));
+                trace.push(name, &t);
                 db.tables.insert(name.to_ascii_lowercase(), t);
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
             }
-            (StagePlan::Reach { name, roots, edges, forest, syntax }, _) => {
+            StagePlan::Reach { name, roots, edges, forest, syntax } => {
                 let r = match reach(&db, roots, edges.as_ref(), *forest, if *syntax { part.facts.filter(|_| syntax_tables_present) } else { None }, plan.syntax.as_ref(), *syntax) {
                     Ok(t) => t,
                     Err(e) => {
@@ -600,7 +558,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     }
                 };
                 let r = Rc::new(r);
-                trace.push(name, Some(&r));
+                trace.push(name, &r);
                 db.tables.insert(name.to_ascii_lowercase(), r);
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
             }

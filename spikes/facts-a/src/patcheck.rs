@@ -12,7 +12,7 @@
 //! Rows (values and order), anchors, witnesses and run-time refusals must be identical.
 //!
 //! `facts-a pattern-check --root DIR --out-dir DIR [--rules DIR] [--input NAME] [--threads N]
-//! [--limit N] [--max-nodes N] [--config JSON]`
+//! [--limit N] [--shard K/N] [--max-nodes N] [--config JSON]`
 use crate::ast::{Compiler, FileMemo, Names};
 use crate::eval::{Anchor as EAnchor, FileCtx, Input, Proj, Rows};
 use crate::facts::{self, Facts};
@@ -140,6 +140,12 @@ pub fn run(args: &[String]) {
     let mut paths = crate::repo::walk(root);
     if let Some(l) = limit {
         paths.truncate(l);
+    }
+    // `--shard k/n`: every n-th file from the k-th (runs stay under the 15-minute limit).
+    let shard = arg(args, "--shard");
+    if let Some(s) = &shard {
+        let (k, n) = s.split_once('/').map(|(k, n)| (k.parse::<usize>().unwrap(), n.parse::<usize>().unwrap())).expect("--shard k/n");
+        paths = paths.into_iter().enumerate().filter(|(i, _)| i % n == k).map(|(_, p)| p).collect();
     }
     let (all, refused) = cases(&rules, &config);
     let names: Vec<String> = all.iter().map(|c| format!("{}/{}", c.rule, c.def.name)).collect();
@@ -296,6 +302,7 @@ pub fn run(args: &[String]) {
         "checked_inputs": keep.len(),
         "planned_inputs": planned,
         "files": paths.len(),
+        "shard": shard,
         "reference_skipped_over_max_nodes": skipped.load(Ordering::Relaxed),
         "rows": rows,
         "phys_mismatches": phys_mismatches,

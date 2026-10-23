@@ -18,6 +18,10 @@ pub enum Item {
     IndexNestedLoop { rel: String, key_cols: Vec<u16>, key_affs: Vec<String>, residual: Vec<String> },
     /// Union of one index probe per OR branch, in table order, the OR re-checked.
     OrIndexProbe { rel: String, branches: Vec<Vec<u16>>, residual: Vec<String> },
+    /// R14: rows of `rel` whose `range_col` value (under `range_aff`) lies within `bounds` (`lo`,
+    /// `hi` or `lo,hi`), by binary search in a sorted index within the `key_cols` hash group (none:
+    /// the whole table), in table order; the comparisons are re-checked in `residual`.
+    RangeProbe { rel: String, key_cols: Vec<u16>, range_col: u16, range_aff: String, bounds: String, residual: Vec<String> },
     /// `json_each(arg)` over the binding.
     LateralJsonEach { arg: String },
     /// A relation known to hold at most a constant number of rows (literals, `Unit`).
@@ -78,6 +82,11 @@ fn item_text(i: &PipelineItem) -> String {
         Item::OrIndexProbe { rel, branches, residual } => format!(
             "{l}or-probe {rel} branches ({}){}",
             branches.iter().map(|b| b.iter().map(|c| format!("#{c}")).collect::<Vec<_>>().join("+")).collect::<Vec<_>>().join(" | "),
+            if residual.is_empty() { String::new() } else { format!(" where {}", list(residual)) }
+        ),
+        Item::RangeProbe { rel, key_cols, range_col, range_aff, bounds, residual } => format!(
+            "{l}range {rel} on ({}) #{range_col} aff {range_aff} bounds {bounds}{}",
+            key_cols.iter().map(|c| format!("#{c}")).collect::<Vec<_>>().join(", "),
             if residual.is_empty() { String::new() } else { format!(" where {}", list(residual)) }
         ),
         Item::LateralJsonEach { arg } => format!("{l}json_each({arg})"),

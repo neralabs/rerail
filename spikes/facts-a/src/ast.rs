@@ -1904,16 +1904,7 @@ impl<'a> Eval<'a> {
             _ => {
                 if let (Stop::End, Bound::Node(n)) = (stop, node) {
                     if let Some(key) = self.memo_slot(rule) {
-                        let before = self.unknown.get();
-                        let found = self.memo_finish(self.inside_end_memo(key, rule, n));
-                        if crate::subst::check_mode() {
-                            let after = self.unknown.replace(before);
-                            let anc = self.ancestors(node);
-                            let mut e = env.clone();
-                            let want = self.find(stop, None, &anc, rule, &mut e);
-                            assert!(want == found && self.unknown.get() == after, "FACTS_A3_CHECK: inside memo at node {n} in {}", self.path);
-                        }
-                        return found;
+                        return self.memo_finish(self.inside_end_memo(key, rule, n));
                     }
                 }
                 let anc = self.ancestors(node);
@@ -2005,7 +1996,7 @@ impl<'a> Eval<'a> {
         }
         let end = self.f.subtree_end[n as usize];
         let t0 = self.taint();
-        let mut i = n + 1 + crate::mutant::on(3) as u32;
+        let mut i = n + 1;
         let mut unknown = false;
         let mut res = F;
         while i < end {
@@ -2049,15 +2040,7 @@ impl<'a> Eval<'a> {
     fn has(&self, node: Bound, rule: &Rule, stop: &Stop, env: &mut Env) -> bool {
         if let (Stop::End, Bound::Node(n)) = (stop, node) {
             if let Some(key) = self.memo_slot(rule) {
-                let before = self.unknown.get();
-                let found = self.memo_finish(self.has_end_memo(key, rule, n));
-                if crate::subst::check_mode() {
-                    let after = self.unknown.replace(before);
-                    let mut e = env.clone();
-                    let want = self.has_unmemoised(node, rule, stop, &mut e);
-                    assert!(want == found && self.unknown.get() == after, "FACTS_A3_CHECK: has memo at node {n} in {}", self.path);
-                }
-                return found;
+                return self.memo_finish(self.has_end_memo(key, rule, n));
             }
         }
         self.has_unmemoised(node, rule, stop, env)
@@ -2132,15 +2115,7 @@ impl<'a> Eval<'a> {
     fn field_inside(&self, node: Bound, field: u16, rule: &Rule, stop: &Stop, env: &mut Env) -> bool {
         if let (Stop::End, Bound::Node(n)) = (stop, node) {
             if let Some(key) = self.memo_slot(rule) {
-                let before = self.unknown.get();
-                let found = self.memo_finish(self.field_inside_end_memo(key, rule, field, n));
-                if crate::subst::check_mode() {
-                    let after = self.unknown.replace(before);
-                    let mut e = env.clone();
-                    let want = self.field_inside_unmemoised(node, field, rule, stop, &mut e);
-                    assert!(want == found && self.unknown.get() == after, "FACTS_A3_CHECK: field inside memo at node {n} in {}", self.path);
-                }
-                return found;
+                return self.memo_finish(self.field_inside_end_memo(key, rule, field, n));
             }
         }
         self.field_inside_unmemoised(node, field, rule, stop, env)

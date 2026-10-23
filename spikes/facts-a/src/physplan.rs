@@ -162,6 +162,16 @@ impl Ctx<'_> {
             let item = match (src, s.probes.get(k).and_then(Option::as_ref), s.or_probes.get(k).and_then(Option::as_ref)) {
                 (Src::JsonEach(arg), _, _) if *lateral || k > 0 => Item::LateralJsonEach { arg: self.pe(arg) },
                 (Src::JsonEach(arg), _, _) => Item::Constant { rel: format!("json_each({})", self.pe(arg)) },
+                // R14: a range probe, within the equality probe's group if there is one.
+                (_, p, _) if s.ranges.get(k).and_then(Option::as_ref).is_some() => {
+                    let r = s.ranges[k].as_ref().unwrap();
+                    let bounds = match (&r.lo, &r.hi) {
+                        (Some(_), Some(_)) => "lo,hi",
+                        (Some(_), None) => "lo",
+                        _ => "hi",
+                    };
+                    Item::RangeProbe { rel, key_cols: p.map(|p| p.cols.clone()).unwrap_or_default(), range_col: r.col, range_aff: format!("{:?}", r.col_aff), bounds: bounds.into(), residual: preds }
+                }
                 // A probe at item 0: a correlated subquery's lookup on its correlation.
                 (_, Some(p), _) => Item::IndexNestedLoop { rel, key_cols: p.cols.clone(), key_affs: p.col_affs.iter().map(|a| format!("{a:?}")).collect(), residual: preds },
                 (_, _, Some(ps)) => Item::OrIndexProbe { rel, branches: ps.iter().map(|p| p.cols.clone()).collect(), residual: preds },
@@ -207,15 +217,10 @@ pub fn statement(st: &Statement) -> Node {
 /// The physical plans of a relational clause: per stage `(name, plan)`, then the final query.
 pub fn clause(plan: &RelPlan) -> Vec<(String, Node)> {
     let mut out = Vec::new();
-    for (si, st) in plan.stages.iter().enumerate() {
-        let kernel = plan.kernels.get(si).and_then(Option::as_ref);
+    for st in &plan.stages {
         match st {
             StagePlan::Query { name, stmt, deferred, .. } => {
                 let mut n = statement(stmt);
-                if let Some(k) = kernel {
-                    // Spike A3's shape-recognised substitution (deleted with `subst.rs`).
-                    n = node(Op::Project { exprs: vec![format!("a3-kernel {}", kernel_name(k))] }, vec![n]);
-                }
                 for (pos, _, d) in deferred {
                     n = node(Op::Project { exprs: vec![format!("deferred #{pos}")] }, vec![n, statement(d)]);
                 }
@@ -235,16 +240,6 @@ pub fn clause(plan: &RelPlan) -> Vec<(String, Node)> {
     }
     out.push(("query".into(), statement(&plan.fin)));
     out
-}
-
-fn kernel_name(k: &crate::subst::Kernel) -> &'static str {
-    match k {
-        crate::subst::Kernel::Absorbed => "absorbed",
-        crate::subst::Kernel::Nodes { .. } => "nodes",
-        crate::subst::Kernel::Edges => "edges",
-        crate::subst::Kernel::Ownership => "ownership",
-        crate::subst::Kernel::Descendants { .. } => "descendants",
-    }
 }
 
 /// The EXPLAIN text of one rule's relational clauses that apply to `path`.

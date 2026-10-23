@@ -16,8 +16,8 @@
 //!   are applied on both sides as CTAS stores them);
 //! - order, when the stage's query is an `ORDER BY` whose keys reach the output unchanged: the
 //!   sequences of sort-key values are equal (ties may be in any order, as SQLite leaves them);
-//! - not compared, counted by reason: a stage the engine did not store (a kernel absorbed it, or
-//!   the engine failed: its failure is reported by `repo`), a stage the reference refuses (by
+//! - not compared, counted by reason: a stage the engine did not store (the engine failed: its
+//!   failure is reported by `repo`), a stage the reference refuses (by
 //!   name), and per-file runs over files with more than `--max-nodes` nodes, or repository runs
 //!   whose input tables hold more than `--max-input-rows` rows in total (the reference's joins are
 //!   nested loops).
@@ -133,8 +133,8 @@ fn compare(ir: &ClauseIr, label: &str, path: &str, traced: &rel::Traced, st: &mu
         };
         let name = name.ok_or_else(|| format!("{s:?} has no table name"))?;
         match table(&name) {
-            Some(Some(t)) => Ok(rows_of(&t)),
-            _ => Err(format!("table {name} not read by the engine")),
+            Some(t) => Ok(rows_of(&t)),
+            None => Err(format!("table {name} not read by the engine")),
         }
     };
     let t0 = Instant::now();
@@ -148,17 +148,11 @@ fn compare(ir: &ClauseIr, label: &str, path: &str, traced: &rel::Traced, st: &mu
         st.skip(format!("reference refused ({label} stage {at}): {}", r.chars().take(120).collect::<String>()));
     }
     for (stage, want) in ir.stages.iter().zip(&done) {
-        let got = match table(&stage.name.to_ascii_lowercase()) {
-            Some(Some(t)) => rows_of(&t),
-            Some(None) => {
-                st.skip("stage absorbed by a kernel (not stored)");
-                continue;
-            }
-            None => {
-                st.skip("engine stopped before the stage (its failure is reported by repo)");
-                continue;
-            }
+        let Some(t) = table(&stage.name.to_ascii_lowercase()) else {
+            st.skip("engine stopped before the stage (its failure is reported by repo)");
+            continue;
         };
+        let got = rows_of(&t);
         st.stages_compared += 1;
         st.rows_compared += want.len() as u64;
         let (bg, bw) = (bag(&got), bag(want));
@@ -238,7 +232,7 @@ fn install(reg: Registry, nodes: Rc<Cell<usize>>, max_nodes: usize, max_rows: us
                 st.skip("per-file run over --max-nodes");
                 return;
             }
-            let input_rows: usize = traced.iter().filter_map(|(_, t)| t.as_ref()).take(plan.inputs.len()).map(|t| t.len()).sum();
+            let input_rows: usize = traced.iter().take(plan.inputs.len()).map(|(_, t)| t.len()).sum();
             if !*per_file && input_rows > max_rows {
                 st.skip(format!("repository run over --max-input-rows ({label}: {input_rows} input rows)"));
                 return;
@@ -363,7 +357,8 @@ pub fn run(args: &[String]) {
     std::fs::create_dir_all(&out_dir).unwrap();
     let t_all = Instant::now();
     let recs = crate::args_all(args, "--recording");
-    let (rec_stats, calls) = recordings(&recs, &policies, max_nodes, max_rows);
+    // The caps bound the corpus runs only: recorded calls are small and every one is compared.
+    let (rec_stats, calls) = recordings(&recs, &policies, usize::MAX, usize::MAX);
     let rec_s = t_all.elapsed().as_secs_f64();
     let t_corpus = Instant::now();
     let (corpus_stats, files, rules) = match arg(args, "--root") {
