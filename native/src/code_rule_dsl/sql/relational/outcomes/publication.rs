@@ -1,12 +1,16 @@
 //! File-local failure publication. Only fallible clauses sequence roots.
 //! Each SQL child completes before the next root in its clause/file pair is reached.
 use super::ordered::nested::{bridge, program};
-use super::{Demand, Plan, Slot, Slots, Sql, fields, kind_filter};
+use super::{Demand, Plan, Slot, Slots, Sql, fields};
 use serde_json::{Value, json};
 
 pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
-    plans: &[(&Plan, &[Slot], bool)],
+    plans: &[(&Plan, &[Slot], bool, &str)],
+    work: i64,
 ) -> Result<(String, Value), String> {
+    if work < 0 {
+        return Err("publication: negative work allowance".into());
+    }
     if plans.is_empty() || plans.len() > 32 {
         return Err("publication: expected 1..32 clauses in this bounded kernel".into());
     }
@@ -17,32 +21,38 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
     };
     let width = plans
         .iter()
-        .map(|(plan, _, _)| plan.writes.len())
+        .map(|(plan, _, _, _)| plan.writes.len())
         .max()
         .unwrap_or(0);
     let mut raw_arms = vec![];
     let mut payload_cases = vec![];
     let mut clauses = vec![];
-    for (clause, &(plan, slots, applies)) in plans.iter().enumerate() {
+    for (clause, &(plan, slots, applies, root_filter)) in plans.iter().enumerate() {
         let roots = Demand {
-            name: sql.relation("publication root demand",format!("SELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node,ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS ordinal FROM node n WHERE {} AND {}",usize::from(applies),kind_filter(plan,"n")),true,"k,file,node,ordinal"),
+            name: sql.relation("publication root demand",format!("SELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node,{work} AS work,ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS ordinal FROM node n WHERE {} AND {}",usize::from(applies),root_filter),true,"k,file,node,ordinal"),
             slots: Slots::new(),
         };
         let output = if plan.fallible() {
-            let (query, profile) =
-                program(plan, &roots, true, "1", &plan.writes, "d.file", "d.node")?;
+            let (query, profile) = program(
+                plan,
+                &roots,
+                true,
+                "1",
+                &plan.writes,
+                ("d.file", "d.node", "w.work"),
+            )?;
             let walk = format!("outcome{}", sql.definitions.len());
             let empty = fields(&plan.writes, |_| "NULL".into());
             let values = plan
                 .writes
                 .iter()
                 .enumerate()
-                .map(|(i, _)| format!(",r.c{}", i + 1))
+                .map(|(i, _)| format!(",r.c{}", i + 2))
                 .collect::<String>();
-            sql.relation("reached roots per clause/file",format!("SELECT NULL AS k,file,NULL AS node,0 AS ordinal,0 AS truth{empty} FROM {} GROUP BY file\nUNION ALL\nSELECT d.k,d.file,d.node,d.ordinal,r.c0{values} FROM {walk} w CROSS JOIN {} d ON d.file=w.file AND d.ordinal=w.ordinal+1 {} WHERE w.truth>=0",roots.name,roots.name,bridge(&query,1+plan.writes.len())),false,"k,file,node,ordinal,truth,observable captures");
+            sql.relation("reached roots per clause/file",format!("SELECT NULL AS k,file,NULL AS node,0 AS ordinal,0 AS truth,{work} AS work{empty} FROM {} GROUP BY file\nUNION ALL\nSELECT d.k,d.file,d.node,d.ordinal,r.c0,r.c1{values} FROM {walk} w CROSS JOIN {} d ON d.file=w.file AND d.ordinal=w.ordinal+1 {} WHERE w.truth>=0",roots.name,roots.name,bridge(&query,2+plan.writes.len())),false,"k,file,node,ordinal,truth,work,observable captures");
             let item = sql.profile.last_mut().unwrap();
             item["childPrograms"] = json!({"root":profile});
-            item["recursiveColumns"] = json!(5 + plan.writes.len());
+            item["recursiveColumns"] = json!(6 + plan.writes.len());
             walk
         } else {
             sql.emit(plan, &roots)?.name
@@ -76,7 +86,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
             format!("{} d JOIN {output} o ON o.k=d.k", roots.name)
         };
         let owner = if plan.fallible() { "o" } else { "d" };
-        raw_arms.push(format!("SELECT {clause} AS clause,{owner}.file,{owner}.node,o.truth{columns} FROM {source} WHERE o.truth=1 OR o.truth<0"));
+        raw_arms.push(format!("SELECT {clause} AS clause,{owner}.file,{owner}.node,o.truth,o.work{columns} FROM {source} WHERE o.truth=1 OR o.truth<0"));
         let published = observed
             .iter()
             .enumerate()
@@ -96,23 +106,23 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
         "typed provisional publication",
         raw_arms.join("\nUNION ALL\n"),
         true,
-        "clause,file,node,truth,typed observed captures",
+        "clause,file,node,truth,work,typed observed captures",
     );
     let failures = sql.relation(
         "failed clause/file pairs",
-        format!("SELECT clause,file,node,truth FROM {raw} WHERE truth<0"),
+        format!("SELECT clause,file,node,truth,work FROM {raw} WHERE truth<0"),
         true,
-        "clause,file,node,failure",
+        "clause,file,node,failure,work",
     );
     let query = format!(
-        "WITH RECURSIVE\n{}\n-- final matches\nSELECT m.clause,m.file,m.node,CASE m.clause {} END AS payload,0 AS failure FROM {raw} m WHERE m.truth=1 AND NOT EXISTS (SELECT 1 FROM {failures} f WHERE f.clause=m.clause AND f.file=m.file)\nUNION ALL\nSELECT clause,file,node,'[]',truth FROM {failures}\nORDER BY 1,2,3",
+        "WITH RECURSIVE\n{}\n-- final matches\nSELECT m.clause,m.file,m.node,CASE m.clause {} END AS payload,0 AS failure,m.work FROM {raw} m WHERE m.truth=1 AND NOT EXISTS (SELECT 1 FROM {failures} f WHERE f.clause=m.clause AND f.file=m.file)\nUNION ALL\nSELECT clause,file,node,'[]',truth,work FROM {failures}\nORDER BY 1,2,3",
         sql.definitions.join(",\n"),
         payload_cases.join(" ")
     );
     if query.len() > 256_000 {
         return Err("publication: SQL text exceeds 256000 bytes".into());
     }
-    let mut profile = json!({"scope":"Workspace clause/file failure publication kernel","clauses":clauses,"relations":sql.profile,"outcomes":{"false":0,"true":1,"unknown":2,"depth":-1,"work":-2,"scope":-3,"value":-4},"failureColumn":4,"publicationWidth":4+width,"nativeComposition":false,"flags":["Fallible clauses sequence roots within each file; total clauses retain set composition.","Provisional matches are withheld until the clause/file outcome is complete."],"limitations":["Native work/depth/stack budgets, decision and enumeration remain unproved.","This publication contract is for workspace local clauses. Stateless query aggregation has a different failure scope."]});
+    let mut profile = json!({"scope":"Workspace clause/file failure publication kernel","clauses":clauses,"relations":sql.profile,"outcomes":{"false":0,"true":1,"unknown":2,"depth":-1,"work":-2,"scope":-3,"value":-4},"failureColumn":4,"remainingWorkColumn":5,"initialWork":work,"publicationWidth":5+width,"nativeComposition":false,"flags":["Fallible clauses sequence roots within each file; total clauses retain set composition.","Provisional matches are withheld until the clause/file outcome is complete."],"limitations":["Work accounting covers the admitted outcome operators. Value-bearing utility memo replay and two-valued charged search pruning remain unproved.","Native depth/stack budgets, decisions and enumeration remain unproved.","This publication contract is for workspace local clauses. Stateless query aggregation has a different failure scope."]});
     if clauses.len() == 1 {
         for key in [
             "outcomeDemand",

@@ -85,6 +85,15 @@ pub(in crate::code_rule_dsl::sql) trait Verdicts:
         false
     }
 
+    #[cfg(test)]
+    fn budget_verdict(
+        &self,
+        _node: Node<'_, TapeDoc>,
+        _work: usize,
+    ) -> (std::result::Result<Option<bool>, String>, usize) {
+        (Err("budget verdict requires an atomic leaf".into()), 0)
+    }
+
     fn rows<'t>(
         &self,
         node: Node<'t, TapeDoc>,
@@ -123,6 +132,20 @@ impl Verdicts for Leaf {
     #[cfg(test)]
     fn spike_eager_safe(&self) -> bool {
         matches!(self.0, AstMatcher::TestUnknown(_))
+    }
+    #[cfg(test)]
+    fn budget_verdict(
+        &self,
+        node: Node<'_, TapeDoc>,
+        work: usize,
+    ) -> (std::result::Result<Option<bool>, String>, usize) {
+        let (verdict, left) = crate::code_rule_dsl::matcher::leaf_verdict_budget(
+            &self.0,
+            node,
+            &MetaVarEnv::new(),
+            work,
+        );
+        (verdict.map_err(|limit| format!("{limit:?}")), left)
     }
     fn rows<'t>(
         &self,

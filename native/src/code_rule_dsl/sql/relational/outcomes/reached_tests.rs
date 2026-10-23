@@ -1,7 +1,7 @@
 use super::super::tests::measure;
 use super::tests::policy;
 use crate::code_rule_dsl::{
-    matcher::{node_at, value_probe},
+    matcher::{self, Stopped, value_probe},
     sql::{exec, tests::differential::tape},
     test_support::grammar_matchers,
 };
@@ -28,10 +28,20 @@ pub(super) fn reached(
     let (native, native_calls) = value_probe::run(fault, || {
         let mut work = usize::MAX;
         crate::code_rule_dsl::matcher::with_file_memo(&tree, || {
-            for id in 0..doc.transducer_len() as u32 {
-                grammar.match_root(node_at(&tree, id), &mut work)?;
+            match matcher::run_clause(
+                &tree,
+                grammar,
+                None,
+                doc.transducer_len(),
+                &mut work,
+                |_, _, _| Ok::<_, ()>(true),
+            )
+            .unwrap()
+            {
+                Ok(()) => Ok(()),
+                Err(Stopped::Limit(limit)) => Err(limit),
+                Err(Stopped::Deadline) => panic!("deadline"),
             }
-            Ok::<_, crate::code_rule_dsl::matcher::UtilLimit>(())
         })
     });
     assert_eq!(native.is_err(), fails, "native calls: {native_calls:?}");
@@ -112,13 +122,13 @@ fn reached_values_preserve_native_truth_and_ordered_boolean_guards() {
         &[],
         false,
     );
-    // A later false kind cannot erase a reached failure through root-demand pruning.
+    // Production root selection applies native anchor kinds before matching any root.
     reached(
         json!({"all":[{"value":{"eq":1}},{"kind":"identifier"}]}),
         "1;",
         Some("1"),
-        &["1;", "1;", "1"],
-        true,
+        &[],
+        false,
     );
     reached(
         json!({"kind":"number","value":{"eq":1}}),

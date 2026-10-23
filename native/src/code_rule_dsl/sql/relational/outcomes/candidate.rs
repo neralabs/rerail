@@ -50,7 +50,7 @@ impl Local<'_> {
                 format!("CASE ({test}) WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE 2 END")
             }
             Op::All(_) | Op::Any(_) => return Ok(None),
-            _ => super::truth(plan, 0)?,
+            _ => super::truth(plan, 0, "n")?,
         }))
     }
     fn emit(&mut self, plan: &Plan, input: &str) -> Result<String, String> {

@@ -2,6 +2,7 @@
 //! No frame IR, SQL reparsing, rule-ID recognizers, or native composition callbacks.
 mod analysis;
 mod answers;
+mod budget_leaf;
 mod demand;
 mod emit;
 mod failure;

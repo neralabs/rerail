@@ -13,8 +13,8 @@ use std::{
     marker::PhantomData,
 };
 
-// Truth plus the existing maximum of 128 typed capture slots.
-const WIDTH: usize = 129;
+// Truth, remaining work, plus the existing maximum of 128 typed capture slots.
+const WIDTH: usize = 130;
 thread_local! {
     pub(super) static ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static CELLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -168,12 +168,12 @@ mod tests {
             .join(",");
         let last: i64 = db
             .query_row(
-                &format!("SELECT c128 FROM relation_row WHERE ({columns}) IS (SELECT {values})"),
+                &format!("SELECT c129 FROM relation_row WHERE ({columns}) IS (SELECT {values})"),
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(last, 128);
+        assert_eq!(last, 129);
         assert!(
             db.query_row::<i64, _, _>("SELECT c1 FROM relation_row WHERE c0 IS 1", [], |r| r
                 .get(0))

@@ -1,8 +1,8 @@
 //! Explicit outcomes with sequencing barriers for reached atomic value leaves.
 //! SQL owns composition. Bindings are typed columns; unknown is never SQL NULL.
+mod budget_tests;
 mod capture_walk_tests;
 mod emit;
-mod local;
 mod lower;
 mod nested_tests;
 mod publication_tests;
@@ -27,6 +27,7 @@ enum Op {
     Predicate(Set),
     Unknown(usize),
     Value(usize),
+    Charge(Box<Plan>),
     Bind(usize),
     All(Vec<Plan>),
     Any(Vec<Plan>),
@@ -61,8 +62,11 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     if grammar.transform.is_some() {
         return Err("outcome relations: transformed captures need a typed output contract".into());
     }
-    let mut lower = lower::Lower::new(grammar.language);
+    let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
     let plan = lower.plan(&grammar.matcher)?;
+    if plan.fallible() {
+        return compile_job(&[grammar], i64::MAX);
+    }
     let (sql, relations) = emit::compile(&plan, &lower.slots, grammar.applies)?;
     Ok(Compiled {
         sql,
@@ -72,39 +76,64 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
 }
 
 impl Plan {
-    fn fallible(&self) -> bool {
+    fn reads_value(&self) -> bool {
         match &self.op {
             Op::Value(_) => true,
-            Op::All(items) | Op::Any(items) => items.iter().any(Self::fallible),
-            Op::Not(child) => child.fallible(),
+            Op::Not(child) | Op::Charge(child) => child.reads_value(),
+            Op::All(items) | Op::Any(items) => items.iter().any(Self::reads_value),
             Op::Search(_, _, child, stop)
             | Op::Count {
                 rule: child, stop, ..
-            } => child.fallible() || stop.as_ref().is_some_and(|s| s.fallible()),
+            } => child.reads_value() || stop.as_ref().is_some_and(|p| p.reads_value()),
+            _ => false,
+        }
+    }
+
+    fn fallible(&self) -> bool {
+        match &self.op {
+            Op::Value(_) | Op::Charge(_) | Op::Count { .. } => true,
+            Op::All(items) | Op::Any(items) => items.iter().any(Self::fallible),
+            Op::Not(child) => child.fallible(),
+            Op::Search(_, _, child, stop) => {
+                child.fallible() || stop.as_ref().is_some_and(|s| s.fallible())
+            }
             _ => false,
         }
     }
 }
 
 /// Bounded workspace publication kernel. Terminal IDs share one batch namespace.
-pub(super) fn compile_job(grammars: &[&GrammarMatcher]) -> Result<Compiled, String> {
+pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Compiled, String> {
     let mut terminals = vec![];
     let mut plans = vec![];
-    for grammar in grammars {
+    let mut terminal_owners = vec![];
+    for (clause, grammar) in grammars.iter().enumerate() {
         if grammar.transform.is_some() {
             return Err("publication: transforms need their publication contract".into());
         }
-        let mut lower = lower::Lower::new(grammar.language);
+        let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
         lower.pure.program.terminals = terminals;
         let plan = lower.plan(&grammar.matcher)?;
         terminals = lower.pure.program.terminals;
-        plans.push((plan, lower.slots, grammar.applies));
+        let roots = grammar.anchors.root_kinds().map_or("1".into(), |kinds| {
+            format!(
+                "n.kind IN ({})",
+                kinds
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        });
+        terminal_owners.resize(terminals.len(), clause);
+        plans.push((plan, lower.slots, grammar.applies, roots));
     }
     let borrowed: Vec<_> = plans
         .iter()
-        .map(|(plan, slots, applies)| (plan, slots.as_slice(), *applies))
+        .map(|(plan, slots, applies, roots)| (plan, slots.as_slice(), *applies, roots.as_str()))
         .collect();
-    let (sql, relations) = emit::compile_jobs(&borrowed)?;
+    let (sql, mut relations) = emit::compile_jobs(&borrowed, work)?;
+    relations["terminalOwners"] = serde_json::json!(terminal_owners);
     Ok(Compiled {
         sql,
         relations,

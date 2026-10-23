@@ -8,14 +8,27 @@ use crate::code_rule_dsl::{
 use ast_grep_core::AstGrep;
 use serde_json::{Value, json};
 
-fn policy(rules: &[Value]) -> CompiledCodeRuleDsl {
-    let clauses: Vec<_> = rules.iter().enumerate().map(|(i,rule)|json!({"id":format!("c{i}"),"forbid":{"ast":{"language":"typescript","rule":rule}},"violation":{"code":format!("C{i}"),"message":"match","anchor":"witness.span"}})).collect();
+pub(super) fn policy(rules: &[Value]) -> CompiledCodeRuleDsl {
+    policy_utils(rules, json!({}))
+}
+
+pub(super) fn policy_utils(rules: &[Value], utils: Value) -> CompiledCodeRuleDsl {
+    let clauses: Vec<_> = rules.iter().enumerate().map(|(i,rule)|json!({"id":format!("c{i}"),"forbid":{"ast":{"language":"typescript","rule":rule,"utils":utils}},"violation":{"code":format!("C{i}"),"message":"match","anchor":"witness.span"}})).collect();
     CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"publication","revision":1,"mode":"steer","clauses":clauses}).to_string(),"json".into(),CAPABILITIES.into()).unwrap()
 }
 
 #[inline(never)]
 fn check(rules: &[Value], sources: &[&str], fault: Option<&str>) -> Value {
-    let p = policy(rules);
+    check_work(&policy(rules), rules, sources, fault, i64::MAX)
+}
+
+pub(super) fn check_work(
+    p: &CompiledCodeRuleDsl,
+    rules: &[Value],
+    sources: &[&str],
+    fault: Option<&str>,
+    allowance: i64,
+) -> Value {
     let grammars: Vec<_> = p
         .inner
         .clauses
@@ -36,26 +49,29 @@ fn check(rules: &[Value], sources: &[&str], fault: Option<&str>) -> Value {
         .map(|s| tape(grammars[0].language, s))
         .collect();
     let mut expected = vec![];
+    let mut diagnostics = vec![];
     let mut native_traces = vec![];
-    for (clause, grammar) in grammars.iter().enumerate() {
-        let names = matcher::CaptureAnalysis::default()
-            .binds(&grammar.matcher)
-            .union(&matcher::CaptureAnalysis::default().counts(&grammar.matcher))
-            .cloned()
-            .collect::<Vec<_>>();
-        for (file, doc) in docs.iter().enumerate() {
-            let tree = AstGrep::doc(doc.clone());
+    for (file, doc) in docs.iter().enumerate() {
+        let tree = AstGrep::doc(doc.clone());
+        let _scopes =
+            matcher::FileScopeSlot::install(Default::default(), Default::default(), false);
+        for (clause, grammar) in grammars.iter().enumerate() {
+            let names = matcher::CaptureAnalysis::default()
+                .binds(&grammar.matcher)
+                .union(&matcher::CaptureAnalysis::default().counts(&grammar.matcher))
+                .cloned()
+                .collect::<Vec<_>>();
             let mut provisional = vec![];
-            let (result, calls) = value_probe::run(fault, || {
+            let mut work = allowance as usize;
+            let (result, calls) = value_probe::run_reached(fault, || {
                 matcher::with_file_memo(&tree, || {
-                    let mut work = usize::MAX;
                     matcher::run_clause(
                         &tree,
                         grammar,
                         None,
                         doc.transducer_len(),
                         &mut work,
-                        |root, env, _| {
+                        |root, env, left| {
                             let captures: Vec<_> = names
                                 .iter()
                                 .map(|name| {
@@ -69,7 +85,7 @@ fn check(rules: &[Value], sources: &[&str], fault: Option<&str>) -> Value {
                                         .unwrap_or(Value::Null)
                                 })
                                 .collect();
-                            provisional.push(json!([clause, file, root, captures, 0]));
+                            provisional.push(json!([clause, file, root, captures, 0, *left]));
                             Ok::<_, ()>(true)
                         },
                     )
@@ -79,78 +95,123 @@ fn check(rules: &[Value], sources: &[&str], fault: Option<&str>) -> Value {
             let prior = provisional.len();
             match result {
                 Ok(()) => expected.extend(provisional),
-                Err(Stopped::Limit(limit)) => expected.push(json!([
-                    clause,
-                    file,
-                    null,
-                    [],
-                    failure::encode(&format!("{limit:?}")).unwrap()
-                ])),
+                Err(Stopped::Limit(limit)) => {
+                    diagnostics.push(crate::code_rule_dsl::eval::failure(
+                        &format!("c{clause}"),
+                        "budget-exceeded",
+                        limit.message(),
+                        Some(&format!("{file}.ts")),
+                    ));
+                    expected.push(json!([
+                        clause,
+                        file,
+                        null,
+                        [],
+                        failure::encode(&format!("{limit:?}")).unwrap(),
+                        work
+                    ]));
+                }
                 Err(Stopped::Deadline) => panic!("unexpected deadline"),
             }
             native_traces.push(
-                json!({"clause":clause,"file":file,"calls":calls,"provisionalMatches":prior}),
+                json!({"clause":clause,"file":file,"calls":calls,"provisionalMatches":prior,"remaining":work}),
             );
         }
     }
-    let compiled = super::compile_job(&grammars).unwrap();
-    let ((actual, metrics), calls) = value_probe::run(fault, || {
-        exec::with_terminals(
-            docs.into_iter().map(|d| (d, Default::default())).collect(),
-            compiled.terminals,
-            |db, batch, _| {
-                super::super::leaves::register(db, batch).unwrap();
-                let ((actual, metrics), frames) = profiling::frame_counts(|| {
-                    let row_start = super::super::row::ROWS.get();
-                    let cell_start = super::super::row::CELLS.get();
-                    let start = std::time::Instant::now();
-                    let mut stmt = db.prepare(&compiled.sql).unwrap();
-                    let prepare = start.elapsed().as_nanos();
-                    let trace = ExecutionTrace::start(db);
-                    let actual: Vec<Value> = stmt
-                        .query_map([], |r| {
-                            let tag = r.get::<_, i64>(4)?;
-                            Ok(json!([
-                                r.get::<_, u32>(0)?,
-                                r.get::<_, u32>(1)?,
-                                if tag < 0 {
-                                    None
-                                } else {
-                                    Some(r.get::<_, u32>(2)?)
-                                },
-                                serde_json::from_str::<Value>(&r.get::<_, String>(3)?).unwrap(),
-                                tag
-                            ]))
-                        })
+    expected.sort_by_key(|row| (row[0].as_u64(), row[1].as_u64(), row[2].as_u64()));
+    let compiled = super::compile_job(&grammars, allowance).unwrap();
+    let (((actual, metrics), calls), budget_calls) = super::super::budget_leaf::trace(|| {
+        value_probe::run_reached(fault, || {
+            exec::with_terminals(
+                docs.into_iter().map(|d| (d, Default::default())).collect(),
+                compiled.terminals,
+                |db, batch, _| {
+                    super::super::leaves::register(db, batch).unwrap();
+                    let ((actual, metrics), frames) = profiling::frame_counts(|| {
+                        let row_start = super::super::row::ROWS.get();
+                        let cell_start = super::super::row::CELLS.get();
+                        let start = std::time::Instant::now();
+                        let mut stmt = db.prepare(&compiled.sql).unwrap();
+                        let prepare = start.elapsed().as_nanos();
+                        let trace = ExecutionTrace::start(db);
+                        let actual: Vec<Value> = stmt
+                            .query_map([], |r| {
+                                let tag = r.get::<_, i64>(4)?;
+                                Ok(json!([
+                                    r.get::<_, u32>(0)?,
+                                    r.get::<_, u32>(1)?,
+                                    if tag < 0 {
+                                        None
+                                    } else {
+                                        Some(r.get::<_, u32>(2)?)
+                                    },
+                                    serde_json::from_str::<Value>(&r.get::<_, String>(3)?).unwrap(),
+                                    tag,
+                                    r.get::<_, i64>(5)?
+                                ]))
+                            })
+                            .unwrap()
+                            .collect::<rusqlite::Result<_>>()
+                            .unwrap();
+                        let executions = trace.count();
+                        drop(trace);
+                        let metrics = json!({"typedReturnRows":super::super::row::ROWS.get()-row_start,"typedReturnCells":super::super::row::CELLS.get()-cell_start,"matchingStatements":executions,"prepareWallNs":prepare,"prepareExecuteWallNs":start.elapsed().as_nanos(),"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep)});
+                        (actual, metrics)
+                    });
+                    assert_eq!(frames[4], 0);
+                    assert_eq!(metrics["matchingStatements"], 1);
+                    let explain: Vec<_> = db
+                        .prepare(&format!("EXPLAIN QUERY PLAN {}", compiled.sql))
+                        .unwrap()
+                        .query_map([], |r| r.get::<_, String>(3))
                         .unwrap()
                         .collect::<rusqlite::Result<_>>()
                         .unwrap();
-                    let executions = trace.count();
-                    drop(trace);
-                    let metrics = json!({"typedReturnRows":super::super::row::ROWS.get()-row_start,"typedReturnCells":super::super::row::CELLS.get()-cell_start,"matchingStatements":executions,"prepareWallNs":prepare,"prepareExecuteWallNs":start.elapsed().as_nanos(),"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep)});
-                    (actual, metrics)
-                });
-                assert_eq!(frames[4], 0);
-                assert_eq!(metrics["matchingStatements"], 1);
-                let explain: Vec<_> = db
-                    .prepare(&format!("EXPLAIN QUERY PLAN {}", compiled.sql))
-                    .unwrap()
-                    .query_map([], |r| r.get::<_, String>(3))
-                    .unwrap()
-                    .collect::<rusqlite::Result<_>>()
-                    .unwrap();
-                (
-                    actual,
-                    json!({"execution":metrics,"framePublications":frames[4],"explain":explain}),
-                )
-            },
-        )
+                    (
+                        actual,
+                        json!({"execution":metrics,"framePublications":frames[4],"explain":explain}),
+                    )
+                },
+            )
+        })
     });
+    for trace in &native_traces {
+        let reached: Vec<_> = budget_calls
+            .iter()
+            .filter(|call| {
+                call["file"] == trace["file"]
+                    && compiled.relations["terminalOwners"]
+                        [call["terminal"].as_u64().unwrap() as usize]
+                        == trace["clause"]
+            })
+            .map(|call| call["text"].clone())
+            .collect();
+        assert_eq!(
+            json!(reached),
+            trace["calls"],
+            "reached calls for clause/file {trace}, allowance={allowance}, rules={rules:?}"
+        );
+    }
     assert_eq!(
         actual, expected,
         "rules={rules:?}, sources={sources:?}, calls={calls:?}"
     );
-    let result = json!({"parity":true,"output":actual,"nativeTraces":native_traces,"sqlCalls":calls,"metrics":metrics,"sql":compiled.sql,"relations":compiled.relations});
+    let mut actual_diagnostics: Vec<_> = actual
+        .iter()
+        .filter(|row| row[4].as_i64().unwrap() < 0)
+        .map(|row| {
+            failure::diagnostic(
+                row[4].as_i64().unwrap(),
+                &format!("c{}", row[0]),
+                &format!("{}.ts", row[1]),
+            )
+            .unwrap()
+        })
+        .collect();
+    diagnostics.sort_by_key(Value::to_string);
+    actual_diagnostics.sort_by_key(Value::to_string);
+    assert_eq!(actual_diagnostics, diagnostics);
+    let result = json!({"parity":true,"allowance":allowance,"budgetCalls":budget_calls,"output":actual,"nativeTraces":native_traces,"sqlCalls":calls,"metrics":metrics,"sql":compiled.sql,"relations":compiled.relations});
     println!(
         "PUBLICATION_TRACE {}",
         json!({"output":result["output"],"nativeTraces":result["nativeTraces"],"sqlCalls":result["sqlCalls"]})
@@ -322,7 +383,7 @@ fn publication_multiple_failures_are_isolated_and_empty_files_are_empty() {
         })
         .collect();
     assert!(
-        super::compile_job(&grammars)
+        super::compile_job(&grammars, i64::MAX)
             .err()
             .unwrap()
             .contains("1..32")

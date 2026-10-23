@@ -11,15 +11,17 @@ pub(super) struct Lower {
     pub slots: Vec<Slot>,
     active: HashSet<(usize, usize)>,
     operators: usize,
+    three_valued: bool,
 }
 
 impl Lower {
-    pub fn new(dialect: GrammarDialect) -> Self {
+    pub fn new(dialect: GrammarDialect, three_valued: bool) -> Self {
         Self {
             pure: super::super::lower::Lowerer::new(dialect),
             slots: vec![],
             active: HashSet::new(),
             operators: 0,
+            three_valued,
         }
     }
 
@@ -142,6 +144,11 @@ impl Lower {
                 let end = !matches!(by, StopBy::Neighbor);
                 let stop = self.stop(by)?;
                 let child = self.plan(rule)?;
+                if !self.three_valued
+                    && (child.fallible() || stop.as_ref().is_some_and(|p| p.fallible()))
+                {
+                    return Err("outcome relations: two-valued charged traversal requires native candidate pruning".into());
+                }
                 mentions = child.mentions.clone();
                 writes = child.writes.clone();
                 node_writes = child.node_writes.clone();
@@ -188,7 +195,14 @@ impl Lower {
                     .with_target(|rule| self.plan(rule))
                     .ok_or("outcome relations: missing utility")?;
                 self.active.remove(&key);
-                return result;
+                let child = result?;
+                if child.reads_value() {
+                    return Err("outcome relations: value-bearing utility memo charge replay needs a keyed cost relation".into());
+                }
+                mentions = child.mentions.clone();
+                writes = child.writes.clone();
+                node_writes = child.node_writes.clone();
+                Op::Charge(Box::new(child))
             }
             _ => return Err(
                 "outcome relations: leaf or operator lacks a total, effect-free outcome contract"

@@ -8,20 +8,20 @@ pub(super) mod nested;
 
 type Bounds = (i64, Option<i64>, Option<(usize, i64)>);
 
-fn boolean(plan: &Plan) -> Result<Option<String>, String> {
+pub(super) fn boolean(plan: &Plan, alias: &str) -> Result<Option<String>, String> {
     use super::super::super::ir::Set;
     Ok(Some(match &plan.op {
         Op::Predicate(Set::Kinds(kinds)) => format!(
-            "n.kind IN ({})",
+            "{alias}.kind IN ({})",
             kinds
                 .iter()
                 .map(u16::to_string)
                 .collect::<Vec<_>>()
                 .join(",")
         ),
-        Op::Predicate(set) => super::super::super::emit::condition(set, "n")?,
+        Op::Predicate(set) => super::super::super::emit::condition(set, alias)?,
         Op::Not(child) => {
-            let Some(test) = boolean(child)? else {
+            let Some(test) = boolean(child, alias)? else {
                 return Ok(None);
             };
             format!("NOT ({test})")
@@ -29,7 +29,7 @@ fn boolean(plan: &Plan) -> Result<Option<String>, String> {
         Op::All(items) | Op::Any(items) => {
             let mut terms = vec![];
             for child in items {
-                let Some(test) = boolean(child)? else {
+                let Some(test) = boolean(child, alias)? else {
                     return Ok(None);
                 };
                 terms.push(format!("({test})"));
@@ -45,25 +45,26 @@ fn boolean(plan: &Plan) -> Result<Option<String>, String> {
     }))
 }
 
-fn truth(plan: &Plan, depth: usize) -> Result<String, String> {
+pub(super) fn truth(plan: &Plan, depth: usize, alias: &str) -> Result<String, String> {
     if depth > 16 || !plan.mentions.is_empty() || !plan.writes.is_empty() {
         return Err(
             "ordered outcomes: node-local capture-free tests of depth at most 16 required".into(),
         );
     }
-    if let Some(test) = boolean(plan)? {
+    if let Some(test) = boolean(plan, alias)? {
         return Ok(format!("CASE WHEN {test} THEN 1 ELSE 0 END"));
     }
     Ok(match &plan.op {
         Op::Predicate(set) => format!(
             "CASE WHEN {} THEN 1 ELSE 0 END",
-            super::super::super::emit::condition(set, "n")?
+            super::super::super::emit::condition(set, alias)?
         ),
-        Op::Unknown(term) => format!("CASE WHEN node_regex({term},n.file,n.id) THEN 2 ELSE 1 END"),
-        Op::Value(term) => format!("relation_value({term},n.file,n.id)"),
+        Op::Unknown(term) => {
+            format!("CASE WHEN node_regex({term},{alias}.file,{alias}.id) THEN 2 ELSE 1 END")
+        }
         Op::Not(child) => format!(
             "(WITH neg AS MATERIALIZED (SELECT {} AS t) SELECT CASE t WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE t END FROM neg)",
-            truth(child, depth + 1)?
+            truth(child, depth + 1, alias)?
         ),
         Op::All(items) | Op::Any(items) => {
             let all = matches!(plan.op, Op::All(_));
@@ -71,7 +72,7 @@ fn truth(plan: &Plan, depth: usize) -> Result<String, String> {
             let mut expression = if all { "1" } else { "0" }.to_string();
             for (index, child) in items.iter().enumerate() {
                 // Each operand has one physical evaluation, and CASE prevents unreached calls.
-                let next = truth(child, depth + 1)?;
+                let next = truth(child, depth + 1, alias)?;
                 if index == 0 {
                     expression = next;
                     continue;
@@ -96,7 +97,12 @@ impl Sql {
         bounds: Option<Bounds>,
         input: &Demand,
     ) -> Result<Output, String> {
-        if nested::contains_walk(rule) || stop.is_some_and(nested::contains_walk) {
+        if rule.fallible()
+            || stop.is_some_and(Plan::fallible)
+            || bounds.is_some()
+            || nested::contains_walk(rule)
+            || stop.is_some_and(nested::contains_walk)
+        {
             return nested::emit(self, axis, end, rule, stop, bounds, input);
         }
         let strict = bounds.is_none() && !rule.writes.is_empty();
@@ -108,11 +114,11 @@ impl Sql {
         let body = captured
             .as_ref()
             .map(|c| Ok(c.expression.clone()))
-            .unwrap_or_else(|| truth(rule, 0))?;
+            .unwrap_or_else(|| truth(rule, 0, "n"))?;
         let stop_test = stop
             .map(|s| {
                 if s.mentions.is_empty() && s.writes.is_empty() {
-                    truth(s, 0)
+                    truth(s, 0, "n")
                 } else {
                     candidate::compile(s, input, true, false).map(|c| c.expression)
                 }
@@ -222,6 +228,6 @@ impl Sql {
                 captured.as_ref().map_or(String::new(),|candidate| candidate.bits.iter().filter(|(slot,_)|rule.writes.contains(slot)).map(|(slot,bit)|format!(",CASE WHEN (t.captured&{})<>0 THEN t.witness ELSE {} END AS c{slot}",bit<<2,super::value(input,"d",*slot))).collect()),
             )
         };
-        Ok(Output{name:self.relation("ordered traversal outcome",format!("SELECT d.k,CASE WHEN t.failure<0 THEN t.failure ELSE {verdict} END AS truth{columns} FROM {} d LEFT JOIN {terminal} t ON t.k=d.k",input.name),true,"k,truth,observable capture or count exports")})
+        Ok(Output{name:self.relation("ordered traversal outcome",format!("SELECT d.k,d.work,CASE WHEN t.failure<0 THEN t.failure ELSE {verdict} END AS truth{columns} FROM {} d LEFT JOIN {terminal} t ON t.k=d.k",input.name),true,"k,truth,observable capture or count exports")})
     }
 }

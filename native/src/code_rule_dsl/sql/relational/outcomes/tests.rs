@@ -322,7 +322,7 @@ fn outcomes_scaling() {
         assert_eq!(result["matches"], 0);
         assert_eq!(result["outcomes"].as_array().unwrap().len(), 1);
         assert_eq!(result["outcomes"][0][2], 2);
-        assert_eq!(result["regexRequests"], size + 1);
+        assert_eq!(result["regexRequests"], size);
         result["dimension"] = json!("uncertain-count-width");
         result["size"] = json!(size);
         samples.push(result);

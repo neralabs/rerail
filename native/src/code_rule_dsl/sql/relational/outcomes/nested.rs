@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 pub(super) fn contains_walk(plan: &Plan) -> bool {
     match &plan.op {
         Op::Search(..) | Op::Count { .. } => true,
-        Op::Not(child) => contains_walk(child),
+        Op::Not(child) | Op::Charge(child) => contains_walk(child),
         Op::All(items) | Op::Any(items) => items.iter().any(contains_walk),
         _ => false,
     }
@@ -27,7 +27,7 @@ fn check_depth(plan: &Plan, walks: usize) -> Result<(), String> {
                 check_depth(stop, walks + 1)?;
             }
         }
-        Op::Not(child) => check_depth(child, walks)?,
+        Op::Not(child) | Op::Charge(child) => check_depth(child, walks)?,
         Op::All(items) | Op::Any(items) => {
             for child in items {
                 check_depth(child, walks)?;
@@ -45,9 +45,61 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     fresh: bool,
     guard: &str,
     exports: &Slots,
-    file: &str,
-    node: &str,
+    location: (&str, &str, &str),
 ) -> Result<(String, Value), String> {
+    let (file, node, work) = location;
+    // A node-local child need not allocate a demand/result CTE pair.
+    // Unknown or binding prefixes keep the general typed composition contract.
+    if plan.mentions.is_empty() && plan.writes.is_empty() && exports.is_empty() {
+        let local_value = match &plan.op {
+            Op::Value(term) => Some((*term, "1".to_string())),
+            Op::All(items) => {
+                if let Some((last, prefix)) = items.split_last()
+                    && let Op::Value(term) = last.op
+                {
+                    let predicates = prefix
+                        .iter()
+                        .map(|p| super::boolean(p, "probe"))
+                        .collect::<Result<Option<Vec<_>>, _>>()?;
+                    predicates.map(|terms| {
+                        (
+                            term,
+                            if terms.is_empty() {
+                                "1".into()
+                            } else {
+                                terms
+                                    .into_iter()
+                                    .map(|t| format!("({t})"))
+                                    .collect::<Vec<_>>()
+                                    .join(" AND ")
+                            },
+                        )
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some((term, prefix)) = local_value {
+            return Ok((
+                format!(
+                    "SELECT COALESCE(v.truth,0),COALESCE(v.work,{work}) FROM node probe LEFT JOIN relation_value_budget({term},{file},{node},CASE WHEN ({guard}) AND ({prefix}) THEN {work} END) v ON 1 WHERE probe.file={file} AND probe.id={node} AND ({guard})"
+                ),
+                json!({"operator":"guarded node-local value return","singleReachedDemand":true,"exports":exports,"typedReturnColumns":2}),
+            ));
+        }
+        if !plan.fallible()
+            && let Ok(test) = super::truth(plan, 0, "probe")
+        {
+            return Ok((
+                format!(
+                    "SELECT {test},{work} FROM node probe WHERE probe.file={file} AND probe.id={node} AND ({guard})"
+                ),
+                json!({"operator":"node-local total return","singleReachedDemand":true,"exports":exports,"typedReturnColumns":2}),
+            ));
+        }
+    }
     let mut sql = Sql {
         definitions: vec![],
         profile: vec![],
@@ -62,7 +114,9 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     let demand = Demand {
         name: sql.relation(
             "correlated child demand",
-            format!("SELECT 1 AS k,{file} AS file,{node} AS node{columns} WHERE {guard}"),
+            format!(
+                "SELECT 1 AS k,{file} AS file,{node} AS node,{work} AS work{columns} WHERE {guard}"
+            ),
             true,
             "k,file,node,live input captures",
         ),
@@ -71,7 +125,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     let output = sql.emit(plan, &demand)?;
     let payload = fields(exports, |slot| format!("o.c{slot}"));
     let query = format!(
-        "WITH RECURSIVE {} SELECT o.truth{payload} FROM {} o",
+        "WITH RECURSIVE {} SELECT o.truth,o.work{payload} FROM {} o",
         sql.definitions.join(",\n"),
         output.name
     );
@@ -142,7 +196,7 @@ pub(super) fn emit(
     let decisive = if let Some((min, max, binding)) = bounds {
         max.map(|m| format!("{low}>{m}")).unwrap_or_else(|| {
             if binding.is_none() {
-                format!("{low}>={min}")
+                format!("w.own=1 AND {low}>={min}")
             } else {
                 "0".into()
             }
@@ -158,10 +212,21 @@ pub(super) fn emit(
         rule,
         input,
         false,
-        "w.stopped>=0",
+        if bounds.is_some() {
+            "w.stopped>=0 AND w.work>0"
+        } else {
+            "w.stopped>=0"
+        },
         &exports,
-        "w.file",
-        "n.id",
+        (
+            "w.file",
+            "n.id",
+            if bounds.is_some() {
+                "w.work-1"
+            } else {
+                "w.work"
+            },
+        ),
     )?;
     let (stop_sql, stop_profile) = if let Some(stop) = stop {
         program(
@@ -174,8 +239,7 @@ pub(super) fn emit(
                 "1".into()
             },
             &Slots::new(),
-            "w.file",
-            "n.id",
+            ("w.file", "n.id", "w.work"),
         )?
     } else {
         ("SELECT 0".into(), Value::Null)
@@ -183,7 +247,7 @@ pub(super) fn emit(
     let write_values = exports
         .iter()
         .enumerate()
-        .map(|(index, _)| format!(",r.c{}", index + 1))
+        .map(|(index, _)| format!(",r.c{}", index + 2))
         .collect::<String>();
     let keep_values = exports
         .iter()
@@ -196,7 +260,7 @@ pub(super) fn emit(
         .collect::<String>();
     let walk = format!("outcome{}", sql.definitions.len());
     let mut arms = vec![format!(
-        "SELECT d.k,d.file,{first} AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open{seed_values} FROM {} d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE ({first}) IS NOT NULL",
+        "SELECT d.k,d.file,{first} AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open,d.work{seed_values} FROM {} d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE ({first}) IS NOT NULL",
         input.name
     )];
     for phase in 0..2 {
@@ -210,14 +274,16 @@ pub(super) fn emit(
             format!(
                 "CROSS JOIN {} d ON d.k=w.k {}",
                 input.name,
-                bridge(&body, 1 + exports.len())
+                bridge(&body, 2 + exports.len())
             )
         } else if stop.is_some() {
-            bridge(&stop_sql, 1)
+            bridge(&stop_sql, 2)
         } else {
             String::new()
         };
-        let own = if body_test {
+        let own = if body_test && bounds.is_some() {
+            "CASE WHEN w.stopped<0 THEN 0 WHEN w.work=0 THEN -2 ELSE COALESCE(r.c0,0) END"
+        } else if body_test {
             "COALESCE(r.c0,0)"
         } else {
             "w.own"
@@ -229,11 +295,16 @@ pub(super) fn emit(
         } else {
             "0"
         };
-        arms.push(format!("SELECT w.k,w.file,w.node,w.bound,{}, {own},{stopped},w.low,w.uncertain,w.open{projected} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node {join} WHERE w.phase={phase}",phase+1));
+        let work = if body_test || stop.is_some() {
+            "COALESCE(r.c1,w.work)"
+        } else {
+            "w.work"
+        };
+        arms.push(format!("SELECT w.k,w.file,w.node,w.bound,{}, {own},{stopped},w.low,w.uncertain,w.open,{work}{projected} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node {join} WHERE w.phase={phase}",phase+1));
     }
-    arms.push(format!("SELECT w.k,w.file,{next},w.bound,0,0,0,{low},{uncertain},{open}{null_values} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND NOT ({decisive}) AND ({next}) IS NOT NULL"));
+    arms.push(format!("SELECT w.k,w.file,{next},w.bound,0,0,0,{low},{uncertain},{open},w.work{null_values} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND NOT ({decisive}) AND ({next}) IS NOT NULL"));
     let schema = format!(
-        "k,file,node,bound,phase,own,stopped,low,uncertain,open{}",
+        "k,file,node,bound,phase,own,stopped,low,uncertain,open,work{}",
         exports
             .iter()
             .map(|slot| format!(",v{slot}"))
@@ -247,9 +318,9 @@ pub(super) fn emit(
     );
     let profile = sql.profile.last_mut().unwrap();
     profile["childPrograms"] = json!({"body":body_profile,"stop":stop_profile});
-    profile["recursiveColumns"] = json!(10 + exports.len());
-    profile["typedReturnColumns"] = json!(1 + exports.len());
-    let terminal=sql.relation("completed nested traversal",format!("SELECT w.k,CASE WHEN w.own<0 THEN w.own WHEN w.stopped<0 THEN w.stopped ELSE 0 END AS failure,{low} AS low,{uncertain} AS uncertain,{open} AS open{keep_values} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND (({decisive}) OR ({next}) IS NULL)"),true,"k,failure,low,uncertain,open,observable exports");
+    profile["recursiveColumns"] = json!(11 + exports.len());
+    profile["typedReturnColumns"] = json!(2 + exports.len());
+    let terminal=sql.relation("completed nested traversal",format!("SELECT w.k,w.work,CASE WHEN w.own<0 THEN w.own WHEN w.stopped<0 THEN w.stopped ELSE 0 END AS failure,{low} AS low,{uncertain} AS uncertain,{open} AS open{keep_values} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND (({decisive}) OR ({next}) IS NULL)"),true,"k,failure,low,uncertain,open,observable exports");
     let low = "COALESCE(t.low,0)";
     let high = "(COALESCE(t.low,0)+COALESCE(t.uncertain,0))";
     let closed = "NOT COALESCE(t.open,0)";
@@ -277,7 +348,7 @@ pub(super) fn emit(
             fields(&exports, |slot| format!("t.v{slot}")),
         )
     };
-    Ok(Output{name:sql.relation("nested traversal outcome",format!("SELECT d.k,CASE WHEN t.failure<0 THEN t.failure ELSE {verdict} END AS truth{columns} FROM {} d LEFT JOIN {terminal} t ON t.k=d.k",input.name),true,"k,truth,observable capture or count exports")})
+    Ok(Output{name:sql.relation("nested traversal outcome",format!("SELECT d.k,COALESCE(t.work,d.work) AS work,CASE WHEN t.failure<0 THEN t.failure ELSE {verdict} END AS truth{columns} FROM {} d LEFT JOIN {terminal} t ON t.k=d.k",input.name),true,"k,truth,observable capture or count exports")})
 }
 
 impl Sql {
@@ -293,21 +364,20 @@ impl Sql {
             false,
             guard,
             &child.writes,
-            "d.file",
-            "d.node",
+            ("d.file", "d.node", "d.work"),
         )?;
         let columns = child
             .writes
             .iter()
             .enumerate()
-            .map(|(index, slot)| format!(",r.c{} AS e{slot}", index + 1))
+            .map(|(index, slot)| format!(",r.c{} AS e{slot}", index + 2))
             .collect::<String>();
         let name = self.relation(
             "correlated operand",
             format!(
-                "SELECT d.*,r.c0 AS tested{columns} FROM {} d {}",
+                "SELECT d.*,r.c0 AS tested,r.c1 AS remaining{columns} FROM {} d {}",
                 state.name,
-                bridge(&query, child.writes.len() + 1)
+                bridge(&query, child.writes.len() + 2)
             ),
             true,
             "input state,tested outcome,child exports",

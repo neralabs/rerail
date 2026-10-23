@@ -43,7 +43,7 @@ The [outcome evidence](../benchmark/sql-relational-outcomes-evidence.json) recor
 Non-following value leaves and node-local rule-based stops now have an ordered SQL kernel.
 It preserves reached atomic failures through sequencing barriers and early traversal termination.
 Capture-bearing ordered walks, nested fallible traversal bodies, full-file failure publication, enumeration, and general recursive components remain pending.
-Native work and stack/depth budgets also remain unresolved.
+Native work accounting now has a bounded outcome proof. Memo charge replay and stack/depth budgets remain unresolved.
 The compiler remains test-only until the semantic coverage and production cutover gates pass.
 The complete-job 100-execution gate remains a separate requirement.
 
@@ -475,25 +475,60 @@ The fixtures use TypeScript and admit every supplied file to each clause.
 Mixed-dialect batches and per-clause file selection remain integration work.
 The replacement remains test-only until the remaining transition gates pass.
 
+## Native work allowance: bounded outcome milestone
+
+The outcome compiler now carries remaining work through roots, Boolean operands, and nested traversals.
+The atomic value cursor accepts an allowance and returns truth plus remaining work.
+SQL owns the allowance for each clause/file pair.
+There is no host budget accumulator and no unlimited value-leaf execution path in this compiler.
+The test harness supplies either a finite allowance or `i64::MAX` to the same generated shape.
+
+Counts charge each visited candidate before testing its body.
+This includes punctuation and candidates that fail a kind test.
+Their prior uncharged existence-probe reduction has been removed.
+Utility entry charges survive inlining.
+Pure structural operators retain set-based evaluation and return their unchanged allowance.
+
+The publication kernel now uses native anchor kinds for its initial root selection.
+The native oracle uses `run_clause`, file value caches, and utility memoization.
+It compares reached value calls separately for each clause/file pair.
+It also compares captures, provisional-match suppression, remaining allowance on published rows, and public diagnostics.
+
+Nine new tests cover zero allowance, successful thresholds, decisive alternatives, unknowns, counts, nested walks, and utility entry.
+The accepted fixtures contain 217 allowance-boundary jobs and 12 scaling jobs.
+Each job uses one matching SQL execution and zero frame publications.
+EXPLAIN and VM counters are retained in `benchmark/sql-relational-work-budget-evidence.json`.
+These tests prove the bounded outcome contract. They do not prove the complete cold-job execution budget.
+The final B023 CPU gate narrowly failed at 2.02653× against a 2× limit; SQL and VM counts are unchanged.
+An earlier run passed at 1.68182×. Both runs are retained, and timing qualification remains open.
+
+Two cases fail admission because their native work behavior needs another SQL contract:
+
+- Value-bearing utility memoization replays the original charge on cache hits. Re-evaluating an inlined body can undercharge after a value-cache hit.
+- Two-valued charged searches can skip candidates through native walk indexes before invoking a utility. Three-valued searches use different candidate visitation.
+
+Native stack/depth limits, deadlines, decisions, enumeration, general recursive outcomes, catalog coverage, and production integration remain separate gates.
+The complete cold job must still prove the 100-execution limit.
+
 ## Next implementation action
 
-Prove native work-budget accounting through the typed child boundary.
-Start with two clauses over two files containing three value-bearing roots.
-Measure native charges with allowances just below, at, and above the successful threshold.
-Repeat with a decisive alternative, an unknown operand, a count, and a nested traversal.
-Compare reached calls, the first failure, exact captures, published matches, and public diagnostics.
+Start with the rejected utility-memo fixture: `all(matches(v), matches(v))`, where `v` reads one numeric value.
+Native execution spends two units on the first invocation and replays two units on the second.
+An allowance of three must fail with `Work`; four must succeed with zero remaining.
+The value leaf must execute once.
 
-Return the remaining work allowance with each reached atomic result and carry it through SQL composition.
-Each clause/file pair owns its allowance; sibling pairs cannot consume it.
-Utility-entry and count charges must remain explicit during lowering, even when SQL removes their control structure.
-Do not use VM instructions or visited SQL rows as a substitute for native semantic charges.
-Require one matching execution and no frame publications for these fixtures.
+Emit a typed shared utility answer and its measured semantic cost for this repeated, identical demand.
+The second invocation must replay that cost in SQL without re-running the body.
+Keep the demand key explicit: utility, file, node, and capture inputs.
+Prove this local reuse before admitting reuse across roots or recursive components.
+Include false and unknown answers, distinct captures, and value-cache reads before the first utility invocation.
 
-Native stack/depth rules, deadlines, decisions, enumeration, general recursion, catalog coverage, and production integration remain separate gates.
-The complete cold job must still prove the 100-execution limit.
-Repeat the frozen B023 work and timing gates after each compiler change.
+Then preserve native candidate pruning for two-valued charged searches.
+Start with `has(matches(number))` over `f(1,2,3)` at allowance one.
+Native execution skips punctuation and succeeds after one utility charge.
+The corresponding three-valued case must continue to charge the visited punctuation candidate.
+Keep these as semantic planning choices, with no runtime opt-in or fallback.
 
-The remaining physical costs are visible in the profiles.
-Early failures still enumerate candidate keys, although later value calls are suppressed.
-Nested execution still creates single-demand Boolean materializations and three traversal states per candidate.
-Remove these costs only with measured SQL rewrites and exact reached-call regression tests.
+Repeat the frozen B023 work and timing gates after compiler changes.
+The existing profiles also show candidate-root enumeration after early failure and materialized traversal states.
+Optimize those costs only with exact reached-call and allowance regression tests.

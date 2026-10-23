@@ -3790,3 +3790,149 @@ Reproduce with a fresh output directory and the executable path reported by that
 ```sh
 python3 benchmark/relational-publication.py /tmp/new-publication-profile --binary target/loop/deps/rerail_engine-11d3550fad116d17
 ```
+
+### 2026-10-23 — Native work allowance through typed outcomes (in progress)
+
+The next transition phase carries native work allowance through SQL composition.
+The previous kernel lifted the allowance at every value leaf.
+It also erased utility entry charges and reduced total counts without charging candidate visits.
+
+The implementation adds a two-column atomic value cursor: truth and remaining allowance.
+SQL passes the allowance to each reached leaf and carries the returned allowance through child programs.
+The host has no shared budget accumulator.
+Each clause/file root sequence owns its allowance.
+Counts charge a step before each tested candidate, including punctuation and failed kind tests.
+Utility entry remains explicit after lowering.
+
+The first regression run found a test-oracle mismatch in root selection.
+An older reached-call test invoked `match_root` on every node; production uses `run_clause` and native anchor kinds.
+The bounded publication compiler now uses those native root kinds.
+The reached-call oracle now also uses `run_clause`.
+This changes the test with a value leaf followed by an incompatible kind: production never reaches that leaf.
+
+Validation is in progress. Work-limit parity, profiling results, and admission limits are not yet claimed.
+
+#### Work-budget milestone: implementation and admission
+
+The bounded outcome compiler now has one work-accounting path.
+`relation_value_budget(term, file, node, allowance)` returns two typed columns: truth and remaining work.
+A NULL allowance denotes an unreached operand and performs no native leaf call.
+Negative allowances are rejected.
+The previous unlimited `relation_value` function has been removed from this compiler.
+
+A root state carries `(key, file, node, ordinal, truth, work, captures)`.
+A nested child returns `(truth, work, captures)` through the existing row-value bridge.
+The bridge now admits 130 columns: truth, work, and 128 captures.
+It still only copies SQL values; it cannot compose rules or execute SQL.
+
+Each count candidate consumes one work unit before its body runs.
+A zero allowance produces `Work` before any value leaf runs.
+An exhausted value decoder produces `Value`.
+Both failures suppress the entire clause/file pair, including earlier provisional matches.
+Unrelated pairs retain their own allowance.
+The final output carries remaining work as column six for the test-only contract.
+
+The native reference now installs file value caches and runs actual clauses.
+The comparison checks reached value-call order separately for each clause/file pair.
+It excludes native probes attempted after a limit is already recorded.
+It also checks exact captures, remaining work on published rows, failures, and public diagnostics.
+Nine new tests cover 217 allowance-boundary jobs and 12 scaling jobs.
+
+Two admission checks prevent incorrect resource claims:
+
+- Value-bearing utility bodies require memo charge replay. Native charges a remembered utility's original cost even when its value is cached.
+- Two-valued charged searches require native candidate pruning. Native can skip punctuation before invoking a utility; three-valued searches visit it.
+
+The first rejection has a concrete regression fixture.
+Two identical utility invocations over one number cost four units natively.
+With three units, the second invocation fails with `Work`.
+Simply inlining it would spend three units and incorrectly succeed after a value-cache hit.
+The compiler refuses this case pending a keyed utility cost relation.
+Pure utility entry charges are retained and tested, including repeated calls, searches, and counts.
+
+The second rejection came from a differential failure.
+`has(matches(number))` over `f(1,2,3)` succeeds natively with allowance one in a two-valued clause.
+The unfiltered SQL walk instead spent its first unit on punctuation and then failed.
+The three-valued version correctly charges that visit.
+The compiler now rejects the unproved two-valued charged search instead of silently changing its budget behavior.
+
+#### Physical shape: reject unnecessary child materialization
+
+The first correct budget implementation moved every fallible local walk into the general typed child kernel.
+This preserved results but increased a capture-free, 256-candidate control from 154,657 to 336,563 VM instructions.
+That was a 2.18-fold regression against the preceding compiler, which lacked work accounting.
+
+The accepted planner recognizes a node-local value leaf preceded by total, capture-free predicates.
+It emits one guarded atomic cursor rather than a demand CTE plus a materialized result CTE.
+Total node-local child tests also return their result directly.
+Unknown or capture-bearing prefixes retain the general composition contract.
+Aliases are compiler inputs; the rewrite does not edit or reparse generated SQL.
+There is no runtime switch between shapes.
+
+The same 256-candidate control now uses 172,664 VM instructions.
+This removes 48.7% of the rejected implementation's work.
+It remains 11.6% above the preceding compiler because allowance propagation has a cost.
+Reached calls remain exactly 256 in all three cases.
+The known-first control remains constant as its unused tail grows.
+
+The finite-budget count profile also improves from 144,632 to 112,008 VM instructions at width 64.
+Both versions execute exactly 128 value leaves across two files.
+These are physical improvements to the new accounting contract, not evidence of complete-job performance parity.
+
+#### Final evidence and qualification
+
+Validation passed for 90 unique tests: 78 relational tests, one workspace publication test, nine B023 fixtures, one adversarial test, and one corpus test.
+Formatting and both default and `code-rule-profile` Clippy configurations passed.
+The 217 allowance-boundary jobs and 12 scaling jobs compare native results and reached calls.
+The evidence contains those 229 traces plus 27 publication traces from the preceding phase's fixtures.
+
+All 12 finite-budget profiles use one matching execution and zero frame publications.
+At zero allowance, value calls remain two as roots per file grow from four to 64.
+Candidate enumeration still grows; a sibling total clause also processes every root in that fixture.
+The statement count does not include cold database setup and does not establish the complete-job 100-execution gate.
+
+Thirty preceding-phase controls retain exact outputs, outcomes, and value-call counts.
+Their additional VM work is 5.3–7.0% for nested traversal, 1.7–13.9% for capture walks, and 8.5–11.6% for capture-free reached walks.
+The evidence retains the larger regression from the rejected child-materialization shape.
+Allowance correctness has a measured cost; this phase does not claim a global performance improvement.
+
+The frozen B023 query remains byte-for-byte unchanged:
+`84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+Both runs report 138 files, two matches, and 2,812,255 generated-query VM instructions in all three pairs.
+Both pass the VM gate.
+
+The earlier run passed the CPU gate at 102.208 ms generated versus 60.772 ms reference: 1.68182×.
+The final-source run failed narrowly at 126.279 ms versus 62.313 ms: 2.02653×, against the 2× limit.
+Other workloads were active on the host. That observation does not establish the cause of the variation.
+Both results are retained. The final timing gate remains unresolved; the earlier pass does not replace it.
+Production admission and the complete-job budget remain pending.
+
+Committed evidence:
+
+- `benchmark/sql-relational-work-budget-evidence.json`: source hashes, 12 profiles, 256 traces, 30 work-count controls, publication controls, and both B023 timing gates.
+- `benchmark/sql-relational-work-budget.sql`: finite-budget count and publication query.
+- `benchmark/sql-relational-work-value-walk.sql`: accepted capture-free walk query.
+- `benchmark/sql-relational-work-value-walk-rejected.sql`: rejected materialized child query.
+
+Raw final profiles are in `/tmp/rerail-work-budget-20261023-accepted`.
+The earlier correct but slower shape is in `/tmp/rerail-work-budget-20261023-final`.
+Final B023 evidence is in `/tmp/rerail-work-budget-b023-20261023-accepted`; its driver exits with the retained CPU-gate failure.
+The preceding run is in `/tmp/rerail-work-budget-b023-20261023-final`.
+The evidence's revision names the parent commit; source hashes identify the measured working tree.
+
+The build uses the same diagnostic allocator shim and test-only local-LTO wrapper as the previous phase.
+Production build settings remain unchanged.
+Reproduce the finite-budget profiles with a new output directory:
+
+```sh
+python3 benchmark/relational-work-budget.py /tmp/new-work-budget-profile --binary target/loop/deps/rerail_engine-11d3550fad116d17
+```
+
+To collect the 30 control samples, run the outcome tests with these output variables:
+`RERAIL_RELATIONAL_NESTED_EVIDENCE`, `RERAIL_RELATIONAL_CAPTURE_WALK_EVIDENCE`, and `RERAIL_RELATIONAL_REACHED_EVIDENCE`.
+`RERAIL_RELATIONAL_PUBLICATION_EVIDENCE` collects the preceding publication fixtures.
+Each variable names a JSON output file.
+The committed evidence supplements the driver's output with these work-count comparisons and both frozen B023 gate reports.
+
+The next transition action is the local utility memo-cost fixture documented in the transition plan.
+The broader work-budget contract remains open until memo replay and two-valued candidate pruning are admitted.

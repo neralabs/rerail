@@ -456,6 +456,45 @@ pub(super) fn leaf_verdict<'tree, D: Doc>(
     limit.map_or(Ok(verdict), Err)
 }
 
+/// Atomic SQL leaf with a caller-owned allowance. Restore all ambient matcher state on unwind.
+#[cfg(test)]
+pub(super) fn leaf_verdict_budget<'tree, D: Doc>(
+    leaf: &AstMatcher,
+    node: Node<'tree, D>,
+    env: &MetaVarEnv<'tree, D>,
+    work: usize,
+) -> (std::result::Result<Option<bool>, UtilLimit>, usize) {
+    struct Reset(bool, bool, usize, Option<UtilLimit>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            THREE_VALUED.set(self.0);
+            UNKNOWN.set(self.1);
+            UTIL_STEPS_LEFT.set(self.2);
+            UTIL_EXCEEDED.set(self.3);
+        }
+    }
+    let _reset = Reset(
+        THREE_VALUED.replace(true),
+        UNKNOWN.replace(false),
+        UTIL_STEPS_LEFT.replace(work),
+        UTIL_EXCEEDED.replace(None),
+    );
+    let matched = leaf
+        .match_node_with_env(node, &mut Cow::Borrowed(env))
+        .is_some();
+    let verdict = if matched {
+        Some(true)
+    } else if UNKNOWN.get() {
+        None
+    } else {
+        Some(false)
+    };
+    (
+        UTIL_EXCEEDED.get().map_or(Ok(verdict), Err),
+        UTIL_STEPS_LEFT.get(),
+    )
+}
+
 /// `leaf_verdict`, with the environment a true verdict leaves: the leaf's bindings (a binding
 /// leaf's, `arguments` or `capture`, unified with `env`'s) and its exports (`calls`' chain).
 #[allow(clippy::type_complexity)]
