@@ -7,6 +7,8 @@ pub(super) mod memo;
 mod ordered;
 #[path = "publication.rs"]
 mod publication;
+#[path = "repeat_cost.rs"]
+mod repeat_cost;
 #[path = "repeat_walk.rs"]
 mod repeat_walk;
 use super::{Axis, Op, Plan, Slot, Slots};
@@ -401,7 +403,12 @@ impl Sql {
                     skip_until = index + repeats;
                     self.repeat_step(&state, child, &filter, repeats, repeat_walk::Boolean::All)?
                 } else if let Some(tested) = memo.step(self, &state, child, &filter)? {
-                    tested
+                    if let Some(group) = memo.group(&items[index..]) {
+                        skip_until = index + group.calls;
+                        memo.replay_group(self, &tested, &group, repeat_cost::Boolean::All)?
+                    } else {
+                        tested
+                    }
                 } else {
                     self.correlated_step(&state, child, &filter)?
                 };
@@ -509,7 +516,12 @@ impl Sql {
                         repeat_walk::Boolean::Any,
                     )?
                 } else if let Some(tested) = memo.step(self, &state, child, "d.truth=0")? {
-                    tested
+                    if let Some(group) = memo.group(&items[index..]) {
+                        skip_until = index + group.calls;
+                        memo.replay_group(self, &tested, &group, repeat_cost::Boolean::Any)?
+                    } else {
+                        tested
+                    }
                 } else {
                     self.correlated_step(&state, child, "d.truth=0")?
                 };

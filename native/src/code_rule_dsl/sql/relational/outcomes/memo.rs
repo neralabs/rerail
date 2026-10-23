@@ -23,6 +23,16 @@ pub(super) struct Local {
     remaining: BTreeMap<usize, usize>,
     entries: Vec<Entry>,
 }
+pub(super) struct Group {
+    utility: usize,
+    entry: usize,
+    pub(super) calls: usize,
+}
+impl Group {
+    fn profile(&self, boolean: super::repeat_cost::Boolean) -> serde_json::Value {
+        json!({"calls":self.calls,"utility":self.utility,"entry":self.entry,"compiledFirstCalls":1,"stopTruth":match boolean {super::repeat_cost::Boolean::All=>0,super::repeat_cost::Boolean::Any=>1},"proof":"adjacent identical node-local utility calls; existing memo replay proof; no input bindings or capture effects","cost":"completed first answer plus integer replay of remaining reached calls"})
+    }
+}
 impl Local {
     pub(super) fn new(keys: &Slots, items: &[Plan]) -> Self {
         let mut remaining = BTreeMap::new();
@@ -76,6 +86,71 @@ impl Local {
         Ok(id)
     }
 
+    fn identical(&self, utility: usize) -> Option<usize> {
+        let version = self.versions.values().copied().collect::<Vec<_>>();
+        if self.direct {
+            self.entries
+                .iter()
+                .position(|e| e.utility == utility && e.version == version)
+        } else {
+            self.proven.get(&utility).copied()
+        }
+    }
+
+    // Called only after the first sibling has established the existing memo proof.
+    pub(super) fn group(&self, items: &[Plan]) -> Option<Group> {
+        let Op::Charge(utility, body) = &items.first()?.op else {
+            return None;
+        };
+        if !self.keys.is_empty()
+            || !body.reads_value()
+            || body.effects.walk_depth != 0
+            || !body.mentions.is_empty()
+            || !body.writes.is_empty()
+        {
+            return None;
+        }
+        let entry = self.identical(*utility)?;
+        let calls = items
+            .iter()
+            .take_while(|p| matches!(&p.op, Op::Charge(id, _) if id == utility))
+            .count();
+        (calls > 1).then_some(Group {
+            utility: *utility,
+            entry,
+            calls,
+        })
+    }
+
+    pub(super) fn replay_group(
+        &mut self,
+        sql: &mut Sql,
+        input: &str,
+        group: &Group,
+        boolean: super::repeat_cost::Boolean,
+    ) -> Result<String, String> {
+        sql.generation.operator()?;
+        *self
+            .remaining
+            .get_mut(&group.utility)
+            .expect("grouped utility") -= group.calls - 1;
+        let (truth, remaining) = boolean.replay(
+            "d.tested",
+            "d.remaining",
+            &format!("d.m{}cost", group.entry),
+            group.calls - 1,
+        );
+        let open = if matches!(boolean, super::repeat_cost::Boolean::Any) {
+            ",d.open"
+        } else {
+            ""
+        };
+        let carried = self.carry("d");
+        let name = sql.relation("direct utility replay group", format!("SELECT d.k,d.file,d.node,d.work,d.truth{open}{carried},{truth} AS tested,CASE WHEN d.tested IS NULL THEN d.remaining ELSE {remaining} END AS remaining FROM {input} d"), true, "Boolean state,grouped outcome,remaining work,live answers");
+        sql.profile.last_mut().unwrap()["repeatUtility"] = group.profile(boolean);
+        Ok(name)
+    }
+
     pub(super) fn step(
         &mut self,
         sql: &mut Sql,
@@ -99,14 +174,7 @@ impl Local {
             return Ok(None);
         }
         sql.generation.operator()?;
-        let version = self.versions.values().copied().collect::<Vec<_>>();
-        let existing = if self.direct {
-            self.entries
-                .iter()
-                .position(|e| e.utility == *utility && e.version == version)
-        } else {
-            self.proven.get(utility).copied()
-        };
+        let existing = self.identical(*utility);
         if let Some(id) = existing {
             // A later direct operand cannot become reached after the same utility was
             // skipped: All withholding only grows, and Any stops permanently. Equal

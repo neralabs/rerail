@@ -711,30 +711,40 @@ The 18 profiles retain one outer miss body and one value-read site, with 12 type
 Native boundaries, unknown behavior, capture keys, failure publication, and nested sharing have comparison coverage.
 The journal records qualification and retained failures.
 
+## Adjacent direct utility groups: bounded outcome milestone
+
+Adjacent identical node-local utility calls now share one first-call result and one guarded cost calculation.
+The existing local key-version or shared dominance proof admits each group.
+The proof requires no input bindings or capture effects. Optional branches and different utility IDs retain their existing emission.
+Traversal and direct groups share the same overflow-safe arithmetic.
+Grouped calls consume their logical remaining uses, including nested utility calls, while the generation budget counts one replay group.
+
+All 36 simple and nested utility profiles retain constant materialization counts and typed return cells across 2/8/32 calls.
+SQL text grows by three bytes. VM work differs by at most one constant-register instruction.
+At 32 true conjunction calls, SQL falls from 38,320 to 14,555 bytes.
+Materialization sites fall from 103 to 42, and VM work falls from 7,773 to 3,219 instructions.
+Simple value utilities use 19 materialization sites and 1,375 instructions for the same true fixture.
+The journal records comparisons, semantic qualification, and frozen workload results.
+
 ## Next implementation action
 
-Combine adjacent proved direct utility replays into one guarded cost calculation.
-Use the new direct-call profiles as the baseline. Admission is fixed, but SQL still grows with repeated replay barriers.
-At 32 true `all` calls, the current shape uses 38,320 bytes, 103 EXPLAIN materialization sites, and 7,773 VM instructions.
-At two calls, it uses 14,970 bytes, 43 materialization sites, and 3,303 instructions.
-False `all` still grows from 3,161 to 7,031 instructions despite stopping after its first call.
+Fuse adjacent total predicates inside shared Boolean composition.
+The wide fixture still evaluates its eight pure regex predicates through eight scalar stages and eight sequencing barriers.
+Each predicate has no capture effect, semantic charge, or unknown result. These boundaries add unnecessary intermediate rows.
 
-Start with adjacent identical, binding-free, node-local utility calls under `all` and `any`.
-Use the existing memo planner's replay proof. Utility identity alone is insufficient.
-Compile the first call once, retain its answer and measured cost, and replay the remaining reached calls with one calculation.
-Reuse the overflow-safe arithmetic from traversal repeat groups rather than introducing a second replay algorithm.
+Start with contiguous `Op::Predicate` operands under shared `all` and `any`.
+Generate one guarded SQL Boolean expression and one barrier for each run.
+Reuse the existing scalar and total-predicate lowering. Keep the generation budget consistent with existing fused scalar trees.
+Do not extend this proof across utility charges, value leaves, unknown tests, capture reads or writes, or traversal operations.
 
-For `all`, false and failed answers stop; true and noncapturing unknown answers continue.
-For `any`, true and failed answers stop; false and noncapturing unknown answers continue.
-Exhaustion must produce Work with zero remaining allowance, preserving the existing partial-publication contract.
-Update remaining-use accounting for both the grouped utility and its nested bodies. Retire typed answers at their last use.
-The generation budget must count the emitted group, while semantic work still counts every reached call.
+Use the current eight-regex nested utility as the baseline: 14,555 bytes, 42 materialization sites, and 3,219 VM instructions.
+The eight predicates must emit one scalar stage and one barrier, removing 14 materialization sites from this shape.
+Measure predicate counts 2/8/32, separately from utility repetition counts 2/8/32.
+Require one reached value-read site, unchanged terminal registration, unchanged native charges, and unchanged typed return cells.
 
-Repeat all 18 2/8/32 profiles and both sides of the native charge boundaries.
-Require one miss body, constant terminal count, constant typed returns, and effectively constant SQL and materialization counts across group sizes.
-Check signed-limit arithmetic, reached value faults, unknown fallbacks, multiple clauses, and multiple files.
-Retain existing emission for changed capture keys, distinct utility IDs, intervening effects, and calls across optional branches.
-Those cases must not acquire the adjacent replay proof.
-Repeat the 213 prior profiles and the frozen B023 gates, preserving any failures.
+Check conjunction and alternative results, early false and true predicates, unknown surrounding operands, and unreached value failures.
+Include nested utilities, later memo reuse, capture boundaries, and independent clauses and files.
+Compare SQL, full EXPLAIN, generation time, VM work, and native publication traces.
+Repeat the 231 prior profiles and the frozen B023 gates, retaining any failures.
 
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

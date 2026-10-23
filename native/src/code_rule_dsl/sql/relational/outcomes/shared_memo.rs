@@ -320,7 +320,11 @@ impl Shared<'_> {
         }
         seed.extend(withheld.values().map(|n| (n.clone(), "0".into())));
         self.project("shared Boolean entry", seed, &[], true)?;
+        let mut skip_until = 0;
         for (index, child) in items.iter().enumerate() {
+            if index < skip_until {
+                continue;
+            }
             let guard = if all {
                 let blocked = child
                     .mentions
@@ -349,6 +353,45 @@ impl Shared<'_> {
             }
             if index == 0 {
                 guaranteed = proven;
+            }
+            if let Some(group) = self.memo.group(&items[index..]) {
+                self.sql.generation.operator()?;
+                let boolean = if all {
+                    super::super::repeat_cost::Boolean::All
+                } else {
+                    super::super::repeat_cost::Boolean::Any
+                };
+                let repeats = group.calls - 1;
+                let mut skipped = BTreeMap::new();
+                calls(child, &mut skipped)?;
+                for (id, count) in skipped {
+                    *self
+                        .memo
+                        .remaining
+                        .get_mut(&id)
+                        .expect("grouped logical calls") -= count * repeats;
+                }
+                let result = format!("d.{tested}");
+                let (answer, left) = boolean.replay(
+                    &result,
+                    "d.work",
+                    &format!("d.m{}cost", group.entry),
+                    repeats,
+                );
+                self.project(
+                    "shared utility replay group",
+                    BTreeMap::from([
+                        (tested.clone(), answer),
+                        (
+                            "work".into(),
+                            format!("CASE WHEN {result} IS NULL THEN d.work ELSE {left} END"),
+                        ),
+                    ]),
+                    &[],
+                    true,
+                )?;
+                self.sql.profile.last_mut().unwrap()["repeatUtility"] = group.profile(boolean);
+                skip_until = index + group.calls;
             }
             let mut updates = BTreeMap::new();
             let result = if all {

@@ -4863,3 +4863,74 @@ Artifacts:
 - `benchmark/sql-relational-composition-budget-unknown.sql` records 32 unknown alternatives.
 
 The bounded outcome kernel remains test-only. Production integration, general recursive outcomes, native depth limits, deadlines, and the whole cold-job 100-execution gate remain open.
+
+### 2026-10-23 — Adjacent direct utility replay groups
+
+This phase targets the repeated barriers exposed by composition admission.
+The preceding 32-call conjunction needs 38,320 SQL bytes, 103 EXPLAIN materialization sites, and 7,773 VM instructions.
+Its two-call counterpart needs 14,970 bytes, 43 materialization sites, and 3,303 instructions.
+These recorded profiles fail the next phase's constant-shape gate.
+
+The compiler now asks the existing memo planner for a replay proof after the first call.
+It combines adjacent identical calls only when the body is node-local and the demand has no input bindings or capture effects.
+The local memo planner supplies its existing key-version proof. Shared Boolean composition supplies its existing dominance proof.
+The first call retains its normal miss or replay emission. One additional projection applies the remaining semantic costs.
+One Boolean barrier commits the group result.
+
+Traversal groups and direct groups use the same integer replay expressions.
+Division checks the remaining allowance before multiplication. False or failed conjunction answers stop the group.
+True or failed alternative answers stop the group. Noncapturing unknown answers continue for either operator.
+An unreached first call retains SQL NULL as its tested result and leaves the work allowance unchanged.
+
+Grouped calls consume their logical remaining uses, including uses inside nested utility bodies.
+Typed answers retire at their last use. Later calls and optional branches retain their existing answer lifetime and reachability rules.
+The generation budget counts one replay group. Native semantic work still counts every reached call.
+There is no new runtime option, native fallback, or second memo planner.
+
+**Measured shape.** All 36 profiles pass the constant-shape gate for 2/8/32 calls.
+SQL text grows by three bytes. Materialization sites and typed return cells stay constant.
+VM work differs by at most one instruction for a new integer constant.
+Each profile retains one value-read site and one replay group. The wide profiles retain one outer miss body and nine terminals.
+Generation uses 16 operators for the wide fixture and six for the simple value fixture, independent of group size.
+
+| 32-call fixture | SQL bytes before → after | Materialization sites before → after | VM instructions before → after |
+| --- | ---: | ---: | ---: |
+| True `all`, eight regex predicates and inner utility | 38,320 → 14,555 | 103 → 42 | 7,773 → 3,219 |
+| Unknown `any`, same nested body | 39,818 → 15,225 | 103 → 42 | 7,729 → 3,185 |
+
+The preceding simple memo repetition profile falls from 20,538 to 4,213 SQL bytes and from 5,059 to 1,375 VM instructions.
+Across 213 preceding profiles, 42 use fewer VM instructions and 171 retain identical SQL and VM counts.
+None increase VM work. All retain native outputs, semantic charges, reached calls, and typed return counts.
+The changed profiles belong to the direct-call, simple memo, and nested memo families.
+Traversal repeat SQL remains identical after the arithmetic extraction.
+
+**Semantic qualification.** Six new tests cover 684 comparison jobs and direct replay arithmetic at signed limits.
+Coverage includes failed first calls, unreached groups, unknown fallbacks, prefix rejection without value reads, nested answer reuse, and independent clauses and files.
+Negative cases retain existing emission for captures, changed keys, distinct utilities, optional branch boundaries, and traversing utility bodies.
+The complete relational suite passes 145 tests and records 6,673 publication traces.
+
+**Next concrete target.** The wide fixture still has eight scalar stages and eight sequencing barriers for its pure regex prefix.
+The transition plan now specifies one guarded Boolean expression and one barrier for that run.
+The acceptance target is 28 materialization sites for the current 42-site shape, with unchanged value boundaries and charges.
+Unknown tests, capture effects, utility charges, and traversal boundaries remain outside that proof.
+
+**Frozen B023.** Both gates pass across 138 files and two matches.
+Generated median cold-kernel CPU time is 121,614,833 ns. Reference median is 65,453,792 ns, a ratio of 1.858025780996768.
+All three generated samples retain 2,812,255 VM instructions.
+The query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+This query has no eligible direct utility group. The change provides no structural B023 speedup.
+Earlier failed CPU gates remain recorded. This passing run does not establish stable CPU qualification.
+
+**Final qualification.** Workspace publication, nine B023 fixtures, the adversarial test, and the frozen corpus bring qualification to 157 unique tests.
+Formatting and both Clippy configurations pass: workspace all targets and `code-rule-profile` all targets.
+The evidence pins one optimized executable and the measured source files for both profile and frozen-workload runs.
+
+Artifacts:
+
+- `benchmark/relational-direct-replay.py` reproduces all 36 profiles and enforces the constant-shape checks.
+- `benchmark/sql-relational-direct-replay-evidence.json` retains the baseline failures, comparisons, native traces, full EXPLAIN, source hashes, and frozen gates.
+- `benchmark/sql-relational-direct-replay.sql` records the 32-call true conjunction.
+- `benchmark/sql-relational-direct-replay-unknown.sql` records the 32-call unknown alternative.
+- `benchmark/relational-composition-budget.py` accepts either individual proved replays or the new group when checking its earlier 18-profile matrix.
+
+The bounded outcome kernel remains test-only. Production integration, general recursive outcomes, native depth limits, deadlines, and the whole cold-job 100-execution gate remain open.

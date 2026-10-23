@@ -5,11 +5,7 @@ use super::{Axis, Demand, Op, Plan, Sql};
 use crate::code_rule_dsl::sql::relational::ir::Set;
 use serde_json::json;
 
-#[derive(Clone, Copy)]
-pub(super) enum Boolean {
-    All,
-    Any,
-}
+pub(super) use super::repeat_cost::Boolean;
 
 fn signature(plan: &Plan) -> Option<(Vec<Set>, usize)> {
     if !plan.mentions.is_empty() || !plan.writes.is_empty() {
@@ -90,16 +86,9 @@ impl Sql {
 }
 
 fn replay(query: &str, repeats: usize, boolean: Boolean) -> String {
-    // Division proves the multiplication fits the remaining signed allowance.
-    // Failure always stops. The signature excludes capture effects, so unknown repeats
-    // remain reached in either Boolean operator. Choose the stop rule at compile time.
-    let (continues, stops) = match boolean {
-        Boolean::All => ("f.truth>0", "f.truth<=0"),
-        Boolean::Any => ("f.truth IN (0,2)", "f.truth NOT IN (0,2)"),
-    };
-    let exhausted = format!("(d.work-f.work)>f.work/{repeats}");
+    let (truth, work) = boolean.replay("f.truth", "f.work", "(d.work-f.work)", repeats);
     format!(
-        "WITH first AS MATERIALIZED ({query}) SELECT CASE WHEN {continues} AND ({exhausted}) THEN -2 ELSE f.truth END AS truth,CASE WHEN {stops} THEN f.work WHEN {exhausted} THEN 0 ELSE f.work-(d.work-f.work)*{repeats} END AS work FROM first f"
+        "WITH first AS MATERIALIZED ({query}) SELECT {truth} AS truth,{work} AS work FROM first f"
     )
 }
 

@@ -64,14 +64,16 @@ def main():
         relations = list(objects(sample['relations']))
         misses = sum(o.get('operator') == 'nested utility entry or replay charge' for o in relations)
         replays = sum(o.get('operator') == 'utility memo statically identical replay' for o in relations)
-        assert misses == 1 and replays == sample['size'] - 1
+        groups = [o['repeatUtility'] for o in relations if 'repeatUtility' in o]
+        assert misses == 1
+        assert (len(groups) == 1 and groups[0]['calls'] == sample['size'] and replays == 0) or (not groups and replays == sample['size'] - 1)
         assert query.read_text().count('relation_value_budget(') == 1
         sample['summary'] = {
             'sqlBytes': query.stat().st_size, 'lowering': lower,
             'generationWallNs': sample['generationWallNs'],
-            'emittedOuterMissBodies': misses, 'staticReplays': replays,
+            'emittedOuterMissBodies': misses, 'staticReplays': replays, 'repeatGroups': groups,
             'materializationSitesInExplain': sum(line.startswith('MATERIALIZE ') for line in sample['metrics']['explain']),
-            'flags': ['One body plus one replay/barrier per remaining source call; SQL size still grows with call sites.',
+            'flags': [('One body and one guarded replay group.' if groups else 'One body plus one replay/barrier per remaining source call; SQL size still grows with call sites.'),
                       'Counters include instrumentation; one matching statement does not prove the complete cold-job budget.'],
         }
     for path, sha in pinned.items():
