@@ -27,32 +27,28 @@ const POINTS: Readonly<Record<string, FailurePoint>> = {
   // Conformance: compact.
   "no-combinatorial-expansion": { what: "Lists cases one by one instead of expressing the logic", fix: "rewrite the repeated clauses as one general clause" },
   "no-written-out-repetition": { what: "Nests the same pattern three or more levels deep", fix: "express the nesting as a rule, not one level at a time" },
-  // Conformance: the pack's conformance check on its test fixtures.
+  // Conformance: passes its fixtures. A rule with none fails has-fixtures; then the pack's fixtures, by line.
+  "has-fixtures": { what: "Has no test fixtures", fix: "add fixtures with expected findings; for a port, its `conformance.json` entry and recording" },
   "no-unexplained-false-positives": { what: "Flags code its test fixtures say is fine", fix: "fix the rule, or declare the difference in the pack's `divergences.json`" },
   "no-unexplained-misses": { what: "Misses problems its test fixtures expect it to flag", fix: "fix the rule, or declare the difference in the pack's `divergences.json`" },
-  "catches-something": { what: "Flags nothing in its test fixtures", fix: "add a fixture it should flag, or `examples` in `pack.json`" },
+  "catches-something": { what: "Flags nothing in its test fixtures", fix: "add a fixture it should flag" },
   "fixtures-row": { what: "Has no test fixtures to be scored on", fix: "add its `conformance.json` entry and record its fixtures" },
   scored: { what: "The pack's conformance check can't score it", fix: "fix what the detail names" },
   "engine-reads-fixtures": { what: "The engine fails on some of its test fixtures", fix: "fix the engine failure the detail names" },
   "divergences-current": { what: "Declares a difference from upstream that no longer happens", fix: "remove the stale entry from `divergences.json`" },
   "corpus-recorded": { what: "The pack's real-code recordings don't cover it", fix: "record the pack's corpora for its upstream rule" },
   "conformance-job": { what: "The conformance job didn't report it", fix: "re-run CI; if it persists, the conformance job is missing the rule" },
+  // Conformance: passes its fixtures, the sets whose answers upstream recorded (start and end; only proven parser gaps excuse).
+  "identical-results": { what: "Differs from the recorded answers on upstream's test files", fix: "fix the rule where the first difference shows" },
+  "identical-on-goldens": { what: "Differs from the recorded answers on real-code goldens", fix: "fix the rule where the first difference shows" },
+  "engine-reads-goldens": { what: "The engine can't fully read some real-code goldens it is checked on", fix: "the fix is the engine's; the rule may be right" },
+  "no-real-code-gap": { what: "Listed in `gates.yaml` as differing from upstream on real code", fix: "fix the rule, then remove its `real_code_gaps` entry" },
   // Conformance: where it comes from (conformance/origins.ts).
   origin: {
     what: "Not declared: neither `conformance.json` nor `origins.json` says where it comes from",
     fix: "add its `conformance.json` entry if it is a port the recordings cover; otherwise declare it in `origins.json`, as an original or as a port with why it is not recorded",
   },
-  // Port readiness: what it needs before any port readiness gate can run.
-  "conformance-entry": {
-    what: "Declared, not recorded: `origins.json` names its upstream rule, but no `conformance.json` entry maps it yet",
-    fix: "record its upstream rule, then replace its `origins.json` entry with a `conformance.json` entry",
-  },
-  "gates-yaml": { what: "Its upstream linter isn't set up for port readiness yet", fix: "add the linter's `gates.yaml`, or keep the rule a candidate" },
-  // Port readiness: the upstream licence.
-  "license-sha256": { what: "The kept copy of upstream's licence isn't upstream's", fix: "re-record the linter, or restore `licenses/<project>/`" },
-  "declared-license": { what: "Upstream's package declares another licence than `gates.yaml` records", fix: "correct `upstream.license` in `gates.yaml`" },
-  "license-allowed": { what: "Upstream's licence isn't on Rerail's licence allowlist", fix: "don't port from it, or have the licence approved" },
-  // Port readiness: the linter's other checks.
+  // Conformance: its fixtures' recorded answers are current (the linter's checks; a failing one fails every port of it).
   "corpus-pins": RECORDING_STALE,
   "recording-covers-rules": RECORDING_STALE,
   "corpus-covers-rules": RECORDING_STALE,
@@ -62,16 +58,19 @@ const POINTS: Readonly<Record<string, FailurePoint>> = {
   "corpus-complete": { what: "A real-code file it is checked on couldn't be downloaded", fix: "re-run CI" },
   "conformance-runs": { what: "The pack's conformance check didn't run", fix: "fix the error the detail names" },
   "in-scope-narrowing": { what: "`gates.yaml` limits it to a file type upstream doesn't check", fix: "correct `rerail.in_scope` in `gates.yaml`" },
+  // Port readiness: what it needs before any port readiness check can run.
+  "gates-yaml": { what: "Its upstream linter isn't set up for port readiness yet", fix: "add the linter's `gates.yaml`, or keep the rule a candidate" },
+  // Port readiness: the upstream licence.
+  "license-sha256": { what: "The kept copy of upstream's licence isn't upstream's", fix: "re-record the linter, or restore `licenses/<project>/`" },
+  "declared-license": { what: "Upstream's package declares another licence than `gates.yaml` records", fix: "correct `upstream.license` in `gates.yaml`" },
+  "license-allowed": { what: "Upstream's licence isn't on Rerail's licence allowlist", fix: "don't port from it, or have the licence approved" },
   // Port readiness: the port against upstream.
   "in-scope": { what: "Doesn't check every file type upstream checks", fix: "widen its scope, or narrow `rerail.in_scope` in `gates.yaml`" },
   "no-fixture-only-names": { what: "Hardcodes names that only appear in upstream's tests", fix: "match the logic, not the test cases' names" },
   "regexes-judged": { what: "Has regexes the overfit check can't run", fix: "rewrite them in syntax the check runs" },
-  "identical-results": { what: "Reports different findings than upstream on upstream's own tests", fix: "fix the rule where the first difference shows" },
-  fires: { what: "Never reproduces one of upstream's findings", fix: "fix the rule so it flags what upstream flags" },
-  "stays-silent": { what: "Never stays silent where upstream does", fix: "fix the rule so it passes what upstream passes" },
-  "identical-on-goldens": { what: "Disagrees with upstream on real-code files", fix: "fix the rule where the first difference shows" },
-  "engine-reads-goldens": { what: "The engine can't fully read some real-code files it is checked on", fix: "the fix is the engine's; the rule may be right" },
-  "no-real-code-gap": { what: "Listed in `gates.yaml` as differing from upstream on real code", fix: "fix the rule, then remove its `real_code_gaps` entry" },
+  // Port readiness: has evidence from upstream.
+  fires: { what: "Never reproduces one of upstream's findings", fix: "add an upstream test case or golden where upstream reports it, or fix the rule so it flags what upstream flags" },
+  "stays-silent": { what: "Never stays silent where upstream does", fix: "add an upstream test case or golden where upstream reports nothing, or fix the rule so it passes what upstream passes" },
 };
 
 /** What the check `check` failing at `step` means, and its fix. */

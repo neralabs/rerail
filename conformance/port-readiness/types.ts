@@ -4,9 +4,11 @@ import type { GatesManifest } from "./manifest.js";
 export type { EslintUpstream, KnownGap, RealCodeGap } from "./manifest.js";
 
 /**
- * The gates in the order a rule meets them: the `conformance` gates first, which hold for every rule document of every
- * pack (conformance-gates.ts judges the rules no gated tool-pack does), then the `port` gates, which judge a port
- * against the upstream linter it ports, so only a gated tool-pack's rules meet them. `loads` to
+ * The gates and where they run: the `conformance` gates hold for every rule document of every pack (conformance-gates.ts
+ * judges the rules no gated tool-pack does), and the `port` gates run only in a gated tool-pack's runs, since they read
+ * its upstream recordings. The summary's STEPS (summary.ts) give the verdict's order and stages, which split
+ * `matches-upstream-tests`: its comparisons are conformance's "Passes its fixtures", and `fires` and `stays-silent` port
+ * readiness's "Has evidence from upstream". `loads` to
  * `matches-upstream-tests` decide whether a rule ships (`blocking`); `upstream-status` only decides whether it ships on
  * or off. `passes-conformance` is the pack contract's own check (`test:conformance`), so the gates are a superset of
  * it. V1's gates ran compile, generality, size, upstream tests; here size (`compact`) and the pack's check come before

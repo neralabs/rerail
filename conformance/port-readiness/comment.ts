@@ -144,11 +144,21 @@ function failuresOf(rules: RuleVerdict[]): string[] {
 }
 
 /**
- * The steps that mean no port readiness gate could judge a port: no conformance.json entry maps the port origins.json
- * declares (its reason is that entry's), or its linter is not set up. A document that declares no origin fails
- * conformance instead, and is counted with the other failures.
+ * The step that means no port readiness check could judge a port: its linter is not set up. A port no conformance.json
+ * entry maps has no fixtures, and a document that declares no origin none either: both fail conformance instead, and
+ * are counted with the other failures.
  */
-const UNJUDGED: readonly StepId[] = ["mapping", "set-up"];
+const UNJUDGED: readonly StepId[] = ["set-up"];
+
+/**
+ * The line under a pack's shipped table on its ports with no real-code goldens: their fixtures are upstream's test files
+ * alone, so nothing has compared them with upstream on real code. It fails nothing. Empty when every port has goldens.
+ */
+function realCodeLine(rules: RuleVerdict[]): string[] {
+  const ports = rules.filter((rule) => rule.realCodeGoldens !== undefined);
+  const without = ports.filter((rule) => rule.realCodeGoldens === 0).length;
+  return without === 0 ? [] : ["", `No real-code evidence: ${without} of ${plural(ports.length, "port")} ${without === 1 ? "is" : "are"} checked on upstream's tests only.`];
+}
 
 interface Limits {
   failing: number | null;
@@ -182,23 +192,24 @@ function shippedSection(summary: Summary, { limits, why }: Render): string[] {
         ]),
     ...byPack(shipped).flatMap(({ pack, rules, origins }) => details(
       `${pack}: ${rules.length}`,
-      table(["Origin", "✅ Pass", "❌ Fail", "Total"], originRows(origins, rules, (members) => [members.length - failingIn(members), failingIn(members), members.length])),
+      [
+        ...table(["Origin", "✅ Pass", "❌ Fail", "Total"], originRows(origins, rules, (members) => [members.length - failingIn(members), failingIn(members), members.length])),
+        ...realCodeLine(rules),
+      ],
       failingIn(rules) > 0,
     )),
   ];
 }
 
-/** The candidates no port readiness gate could judge, and why: each one nothing maps, and each linter not set up. */
+/** The candidates no port readiness check could judge, and why: each linter not set up. */
 function unjudgedLines(failing: RuleVerdict[], why: (text: string) => string): string[] {
-  const unmapped = failing.filter((rule) => rule.stoppedAt === "mapping");
   const byTool = new Map<string, RuleVerdict[]>();
   for (const rule of failing.filter((entry) => entry.stoppedAt === "set-up")) byTool.set(rule.upstream!.tool, [...(byTool.get(rule.upstream!.tool) ?? []), rule]);
-  if (unmapped.length + byTool.size === 0) return [];
+  if (byTool.size === 0) return [];
   return [
     "",
     "Not judged against upstream:",
     "",
-    ...unmapped.map((rule) => `- \`${rule.id}\`: ${why(rule.why)}`),
     ...[...byTool].map(([tool, rules]) => `- ${plural(rules.length, `${tool} candidate`)}: ${why(rules[0]!.why)}`),
   ];
 }

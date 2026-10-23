@@ -21,10 +21,27 @@ should be.
 
 ## The gates
 
-The gates come in two stages. **Conformance** (`loads`, `compact`, `passes-conformance`) checks every rule document of
-every pack. **Port readiness** checks ports, once they pass conformance. Port readiness (`not-overfit`,
-`matches-upstream-tests`, and `upstream-status`, which decides only `on`) makes sure a port is true to the upstream
-rule it comes from.
+The gates come in two stages. **Conformance** checks every rule document of every pack: it declares its origin, loads,
+is compact, and passes its fixtures. **Port readiness** checks ports, once they pass conformance, and makes sure a port
+is true to the upstream rule it comes from: its linter is set up, upstream's licence is kept and allowed, it covers the
+files upstream lints, it is not overfit to upstream's tests, and it has evidence from upstream (`upstream-status`
+decides only `on`).
+
+**Every rule needs fixtures**: input files with the findings the rule must report on them. Passing its fixtures means
+passing every set of fixtures the rule has, each compared its own way:
+
+- **The pack's fixtures** (`passes-conformance`, the pack's conformance check): upstream's cases and Rerail's probes as
+  the pack records them, compared by line, or line and column, after the pack's `divergences.json`.
+- **Upstream's test files** and **the real-code goldens**, a gated linter's port's (`matches-upstream-tests`'
+  `identical-results`, `identical-on-goldens`, `engine-reads-goldens` and `no-real-code-gap`): their answers are what the
+  pinned upstream reported, compared on start and end, and only a proven known parser gap excuses a difference. A
+  divergence in `divergences.json` never does. These are what make a passing port true to upstream.
+
+A set the rule does not have is not checked. An original has no set upstream answered, so nothing in conformance
+compares it with an upstream. A rule with no fixtures at all fails (`has-fixtures`): today that is complexity's three
+originals, whose fixtures (lizard's scored corpus) are not in the gates yet, and every port no `conformance.json` entry
+maps. `pack.json`'s `examples` are tested documentation (the pack checks run them); they are not fixtures, and
+`catches-something` does not accept them in place of a finding on the fixtures.
 
 Every rule document declares its origin, one of two
 ([pack format](pack-format.md#conformancejson-divergencesjson-originsjson-upstream)):
@@ -33,7 +50,8 @@ Every rule document declares its origin, one of two
   entry declares it, naming that rule. A port the conformance runner cannot score yet, since no recording covers its
   upstream rule, is declared in the pack's `origins.json` instead, with its upstream rule and why no entry maps it.
 - **An original** is Rerail's own rule (complexity's three, modelled on lizard): `origins.json` declares it, saying
-  what it is. It is done after conformance, and a candidate that passes it is ready to promote.
+  what it is. It is done after conformance, and a candidate that passes it is ready to promote. It needs fixtures like
+  any rule, with hand-written expected findings, or scores from a tool it is modelled on, as complexity's come from lizard.
 
 The declaration is per document, not per pack: an original can sit in a pack of ports. A document that declares
 neither fails conformance, at its first step, and the pack checks (check 1) fail it too.
@@ -47,36 +65,46 @@ started by hand runs the check itself. A rule's verdict is the first
 step it fails, conformance first, so a port that fails conformance stops there, whatever port readiness would say.
 Every gate still runs on every rule it applies to, so the report shows every failure, not only the first. The summary
 holds one verdict per rule document (`STEPS` in `conformance/port-readiness/summary.ts`), so each rule is counted once.
-Besides the gates, conformance starts with **Declares its origin: a port or an original**, and port readiness has these
-steps, in this order:
+The steps, in order:
 
-1. **Mapped to an upstream rule:** the port is declared in `origins.json`, and no `conformance.json` entry maps it yet,
-   so no port readiness gate can run on it. The verdict gives the `unmapped` reason.
-2. **Set up for its upstream linter:** its upstream tool has no `gates.yaml` yet (node's `eslint-plugin-n`), so no port
-   readiness gate can run on it. A shipped one fails: keep it in `candidates/` until the tool has a `gates.yaml`.
-3. **Upstream licence kept and allowed:** a port may only come from an upstream whose licence Rerail keeps and allows.
-   The licence kept under `licenses/<project>/` is upstream's at the pinned commit (`license-sha256`); the installed
-   package declares the licence `gates.yaml` records, where the adapter reads one (`declared-license`); and every
-   licence `gates.yaml` records is on `scripts/check/licence-allowlist.json` (`license-allowed`). It fails every port of
-   that linter. The pack contract (`conformance/pack-validation.ts`, check 6) still checks the pack's packaging: each
-   `UPSTREAM.md`'s licence line and text, `package.json`'s licence, and that every copied file is listed.
-4. **Upstream linter checks:** the other tool-pack checks below.
-5. **Applies to the files upstream lints:** `loads`'s `in-scope` check, which judges the port, not the document.
+1. **Conformance: Declares its origin: a port or an original.**
+2. **Conformance: `loads`, then `compact`.**
+3. **Conformance: Its fixtures' recorded answers are current:** for a gated linter's port, the tool-pack checks below
+   that vouch for the answers its upstream-answered fixtures are judged against (a current recording, the case sources,
+   a complete corpus, the shipped rules loading together). A failing one fails every port of that linter.
+4. **Conformance: Passes its fixtures:** `has-fixtures`, then each set the rule has, as above.
+5. **Port readiness: Set up for its upstream linter:** its upstream tool has no `gates.yaml` yet (node's
+   `eslint-plugin-n`), so no port readiness check can run on it. A shipped one fails: keep it in `candidates/` until the
+   tool has a `gates.yaml`.
+6. **Port readiness: Upstream licence kept and allowed:** a port may only come from an upstream whose licence Rerail
+   keeps and allows. The licence kept under `licenses/<project>/` is upstream's at the pinned commit (`license-sha256`);
+   the installed package declares the licence `gates.yaml` records, where the adapter reads one (`declared-license`);
+   and every licence `gates.yaml` records is on `scripts/check/licence-allowlist.json` (`license-allowed`). It fails
+   every port of that linter. The pack contract (`conformance/pack-validation.ts`, check 6) still checks the pack's
+   packaging: each `UPSTREAM.md`'s licence line and text, `package.json`'s licence, and that every copied file is listed.
+7. **Port readiness: Applies to the files upstream lints:** `loads`'s `in-scope` check, which judges the port, not the
+   document.
+8. **Port readiness: `not-overfit`.**
+9. **Port readiness: Has evidence from upstream:** `matches-upstream-tests`' `fires` (it reproduces at least one of
+   upstream's findings) and `stays-silent` (it agrees on at least one case upstream leaves clean), so its fixtures hold
+   it to upstream at all.
 
-Then `not-overfit` and `matches-upstream-tests`.
+A port with no real-code goldens is checked on upstream's test files alone; the comment says so under each pack's
+shipped table ("No real-code evidence: N of M ports are checked on upstream's tests only"). It fails nothing.
 
 | Gate | Section | What it checks | Blocks |
 | --- | --- | --- | --- |
 | `loads` | conformance | The document is written for the current rule contract (`rerail.policy/v1`, one `mode`, no severity), passes the duplicate-key check, the policy schema and the engine compile (as written and as stable JSON), loads through the bundled-rule loader, has no `llm` clause, and, for a ported rule, its scope covers every file type upstream lints (`in-scope`, which judges the port, so the summary and the comment count it as a port step; a rule no gated tool-pack judges has no upstream to say which, so the check is not made), or the ones the tool-pack's `gates.yaml` narrows it to (`rerail.in_scope`: typescript-eslint's ports cover TypeScript files only, since JavaScript files are the javascript pack's, and eslint-plugin-vue's cover `.vue` files only). The narrowing holds for the other gates too: `matches-upstream-tests` does not score an upstream test case of a type `in_scope` leaves out (eslint-plugin-vue's `.js` cases), reports it as not scored, "outside the tool-pack's rerail.in_scope (.js)", counts it in the identical-results detail and lists it under the rule's `outOfScope`, and `fires` and `stays-silent` must be met by in-scope cases alone. | yes |
 | `compact` | conformance | A document over 15 KiB is inspected: it fails when a third or more of its clauses is the same structure written out over and over, or one node kind nests three or more times along one path. Catches rules that list cases instead of expressing the logic. | yes |
-| `passes-conformance` | conformance | The pack's own conformance check (`test:conformance`), which already blocks every shipped rule: on the pack's fixtures (upstream's cases and Rerail's probes, after `divergences.json`) the rule has no unexplained false positive or miss, catches something (or `pack.json` gives it examples), runs without engine failures and has no stale divergence; when the pack pins corpora, their recordings cover it. Candidates are held to the same bar, so the gates are a superset of the check and "ready to promote" means CI accepts the rule once it ships. It runs with the other conformance gates, before the port gates, so a rule that fails a conformance gate stops there whatever the port gates say. It does not apply to a rule no `conformance.json` entry maps, since the check has nothing to score it against: complexity has no `conformance.json` at all. | yes |
+| `passes-conformance` | conformance | The pack's own conformance check (`test:conformance`), which already blocks every shipped rule: on the pack's fixtures (upstream's cases and Rerail's probes, after `divergences.json`) the rule has no unexplained false positive or miss, catches something on the fixtures (`pack.json` examples do not count here, though the check itself accepts them), runs without engine failures and has no stale divergence; when the pack pins corpora, their recordings cover it. Candidates are held to the same bar, so the gates are a superset of the check and "ready to promote" means CI accepts the rule once it ships. It is the pack's fixtures part of "Passes its fixtures". A rule no `conformance.json` entry maps has no fixtures and fails it (`has-fixtures`): complexity has no `conformance.json` at all. | yes |
 | `not-overfit` | port | No word the rule hardcodes (patterns, fixes, regexes, names, static values) appears in upstream's tests unless upstream's own code explains it (the rule's implementation, its imports and helpers, the names upstream's regexes match) or it is a language keyword. Catches ports that pass upstream's tests by naming their fixtures. The regexes are not run over stress tests of upstream's own engine (a test text over 20,000 characters with fewer than one identifier per 1,000, such as ESLint's 1,000,000-backslash strings), which Rerail does not run. | yes |
-| `matches-upstream-tests` | port | Upstream, configured as upstream recommends, is the expected answer on its own tests for the rule. The rule must report the same findings at the same start and end positions, in both directions (`identical-results`), leaving out only an end part upstream does not report on every finding of the rule (when any finding of an ESLint rule on its own tests has no end, the rule is compared on starts alone; the report lists every rule compared without an end); reproduce at least one upstream finding (`fires`); agree on at least one case where upstream reports nothing, in its tests or its goldens (`stays-silent`); agree with upstream on every golden (`identical-on-goldens`, `engine-reads-goldens`); and not be listed as a real-code gap (`no-real-code-gap`). See "Goldens" below. | yes |
+| `matches-upstream-tests` | both | Runs in a gated linter's legs. Its comparisons (`identical-results`, `identical-on-goldens`, `engine-reads-goldens`, `no-real-code-gap`) are the upstream-answered part of conformance's "Passes its fixtures"; `fires` and `stays-silent` are port readiness's "Has evidence from upstream". Upstream, configured as upstream recommends, is the expected answer on its own tests for the rule. The rule must report the same findings at the same start and end positions, in both directions (`identical-results`), leaving out only an end part upstream does not report on every finding of the rule (when any finding of an ESLint rule on its own tests has no end, the rule is compared on starts alone; the report lists every rule compared without an end); reproduce at least one upstream finding (`fires`); agree on at least one case where upstream reports nothing, in its tests or its goldens (`stays-silent`); agree with upstream on every golden (`identical-on-goldens`, `engine-reads-goldens`); and not be listed as a real-code gap (`no-real-code-gap`). See "Goldens" below. | yes |
 | `upstream-status` | port | The rule exists upstream with an implementation and tests, is not deprecated, and one of upstream's recommended configurations turns it on. It decides only whether a shipped rule starts on; the report flags a pack.json `on` that disagrees. | no |
 
 Tool-pack checks judge the tool-pack, not a rule. When one fails, every rule of the tool-pack fails with it: a shipped
-rule blocks and a candidate is not ready to promote. In a verdict they come after conformance and before the other
-port readiness gates, the licence checks (above) first. The others fail when the recording is stale (`corpus-pins` and the recording checks),
+rule blocks and a candidate is not ready to promote. In a verdict the licence checks (above) are port readiness's; the
+others are conformance's "Its fixtures' recorded answers are current", just before "Passes its fixtures", since they
+vouch for the answers those fixtures are judged against. They fail when the recording is stale (`corpus-pins` and the recording checks),
 when a case source in the checkout is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
 corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).

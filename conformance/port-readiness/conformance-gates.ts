@@ -7,8 +7,9 @@
  *
  * `passes-conformance` is the pack's conformance check, which scores every rule of the pack at once, so it runs here,
  * once per pack with a conformance.json, for every rule that file maps: the tool-pack runs in CI leave it to this job
- * (`--conformance-in-own-job`), and the summary takes each of their rules' results from `passesConformance`. It does
- * not apply to a rule conformance.json does not map (complexity has no conformance.json at all).
+ * (`--conformance-in-own-job`), and the summary takes each of their rules' results from `passesConformance`. Every rule
+ * needs fixtures, so a rule conformance.json does not map has none to be scored on and fails it (`has-fixtures`):
+ * complexity's originals until their fixtures come in, and a port origins.json declares no entry maps yet.
  *
  * Before the gates, a rule must declare its origin (conformance/origins.ts): a port, by its conformance.json entry or in
  * origins.json, or an original, in origins.json. One declared nowhere stops at `origin`; a gated tool-pack's rules are
@@ -17,7 +18,7 @@
  * Nothing here reads a recording or upstream's code. `loads` has no upstream to name the files a rule must apply to, so
  * its `in-scope` check is not made. Nothing is cached: the pack checks take about a minute together.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { packOrigins, type Origin } from "../origins.js";
@@ -29,24 +30,19 @@ import { loadEngine, type Engine, type EngineIdentity } from "./engine.js";
 import { conformanceEntries, gatedToolPacks, packDocuments, readRule, type GateReport, type Location } from "./run.js";
 import { CONFORMANCE_GATES, type Check, type ConformanceGateId } from "./types.js";
 
-export const CONFORMANCE_REPORT_FORMAT = "rerail.conformance-gates/v2" as const;
+export const CONFORMANCE_REPORT_FORMAT = "rerail.conformance-gates/v3" as const;
 /** The report's file name beside the tool-pack reports; readReports never takes it for one (`<pack>--<tool>.json`). */
 export const CONFORMANCE_REPORT_FILE = "conformance-gates.json";
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Every pack under `root` (a directory with a pack.json), sorted, with the upstream tools its conformance.json names. */
-function packsOf(root: string): { pack: string; tools: string[] }[] {
+/** Every pack under `root` (a directory with a pack.json), sorted. */
+function packsOf(root: string): string[] {
   const packs = join(root, "packs");
   return readdirSync(packs, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(packs, entry.name, "pack.json")))
     .map((entry) => entry.name)
-    .sort(byText)
-    .map((pack) => {
-      const manifest = join(packs, pack, "conformance.json");
-      const tools = existsSync(manifest) ? ((JSON.parse(readFileSync(manifest, "utf8")) as { tools?: { name: string }[] }).tools ?? []).map((tool) => tool.name) : [];
-      return { pack, tools };
-    });
+    .sort(byText);
 }
 
 export interface ConformanceRuleReport {
@@ -64,8 +60,8 @@ export interface ConformanceRuleReport {
   gates: {
     loads: GateReport;
     compact: GateReport & { metrics: SizeMetrics | null };
-    /** `applies` is false when conformance.json does not map the rule: the check has nothing to score it against. */
-    "passes-conformance": GateReport & { applies: boolean };
+    /** Fails `has-fixtures` when conformance.json does not map the rule: it has no fixtures to be scored on. */
+    "passes-conformance": GateReport;
   };
 }
 
@@ -86,13 +82,24 @@ export interface ConformanceReport {
 
 const gate = (checks: Check[]): GateReport => ({ pass: checks.every((check) => check.ok), checks });
 const notRun = (reason: string): GateReport => ({ pass: false, checks: [{ id: "not-run", ok: false, detail: reason }] });
-const notApplicable = (reason: string): GateReport & { applies: false } => ({ pass: true, applies: false, checks: [{ id: "not-applicable", ok: true, detail: reason }] });
+/** The check a rule with no fixtures fails: nothing gives it input files with expected findings to be scored on. */
+export const HAS_FIXTURES = "has-fixtures";
+
+/** `passes-conformance` of a rule no conformance.json entry maps: it has no fixtures, so it fails. */
+function noFixtures(origin: Origin | null): GateReport {
+  const detail = origin?.kind === "port" && origin.unmapped !== undefined
+    ? `no conformance.json entry maps it (${origin.unmapped})`
+    : origin?.kind === "original"
+      ? "nothing gives this original input files with expected findings to be scored on"
+      : "no conformance.json entry maps it";
+  return { pass: false, checks: [{ id: HAS_FIXTURES, ok: false, detail }] };
+}
 
 /**
  * One rule on the conformance gates. `mapped` is the upstream rule a conformance.json entry maps it to: only then does
- * the pack's conformance check score it.
+ * the rule have fixtures, which the pack's conformance check scores.
  */
-function judgeRule(root: string, engine: Engine, scratch: string, pack: string, path: string, location: Location, origin: Origin | null, mapped: { tool: string; rule: string } | null, conformance: PackConformance | undefined, hasManifest: boolean): ConformanceRuleReport {
+function judgeRule(root: string, engine: Engine, scratch: string, pack: string, path: string, location: Location, origin: Origin | null, mapped: { tool: string; rule: string } | null, conformance: PackConformance | undefined): ConformanceRuleReport {
   const rule = readRule(root, path, mapped?.rule ?? "");
   const id = rule.id ?? rule.file;
   const compiled = loadsGate(engine, rule, pack, scratch, null);
@@ -101,12 +108,78 @@ function judgeRule(root: string, engine: Engine, scratch: string, pack: string, 
     const result = compactGate(rule.bytes, document);
     return { ...gate(result.checks), metrics: result.metrics };
   })();
-  const passesConformance = conformance !== undefined && mapped !== null
-    ? { ...gate(passesConformanceChecks(conformance, id)), applies: true }
-    : notApplicable(hasManifest ? "no conformance.json entry maps it to an upstream rule, so the pack's conformance check has nothing to score it against" : `packs/${pack} has no conformance.json, so the pack's conformance check does not run on it`);
+  const passesConformance = mapped === null
+    ? noFixtures(origin)
+    : conformance === undefined
+      ? notRun("the pack's conformance check did not run (see the pack's checks)")
+      : gate(passesConformanceChecks(conformance, id));
   const gates = { loads: gate(compiled.checks), compact, "passes-conformance": passesConformance };
   const stoppedAt = origin === null ? "origin" : (CONFORMANCE_GATES.find((entry) => !gates[entry.id].pass)?.id ?? null);
   return { id, file: path, pack, location, origin, pass: stoppedAt === null, stoppedAt, gates };
+}
+
+const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** `bundled-load`: every shipped document of the pack loads together through rerail's bundled-rule loader. */
+function bundledLoadCheck(engine: Engine, scratch: string, pack: string, shipped: ReturnType<typeof readRule>[]): Check {
+  try {
+    const loaded = loadAsBundled(engine, scratch, pack, shipped);
+    const ok = loaded.ids.length === shipped.length;
+    return { id: "bundled-load", ok, detail: ok ? `rerail's bundled-rule loader loads all ${shipped.length} shipped document(s) of the pack together` : `the loader returned ${loaded.ids.length} rule(s) for ${shipped.length} shipped document(s)` };
+  } catch (error) {
+    return { id: "bundled-load", ok: false, detail: `the pack's shipped rules do not load together through rerail's bundled-rule loader: ${message(error)}` };
+  }
+}
+
+/** The pack's conformance check, and `conformance-runs`: whether it ran without errors. */
+async function runPackCheck(conformanceOf: typeof packConformance, root: string, pack: string): Promise<{ conformance?: PackConformance; check: Check }> {
+  try {
+    const conformance = await conformanceOf(root, pack);
+    const ok = conformance.errors.length === 0;
+    return { conformance, check: { id: "conformance-runs", ok, detail: ok ? "the pack's conformance check runs without errors" : conformance.errors.slice(0, 3).join("; ") } };
+  } catch (error) {
+    return { check: { id: "conformance-runs", ok: false, detail: `the pack's conformance check failed to run: ${message(error)}` } };
+  }
+}
+
+interface RunContext {
+  root: string;
+  engine: Engine;
+  scratch: string;
+  gated: ReadonlySet<string>;
+  conformanceOf: typeof packConformance;
+}
+
+/** One pack: its checks, the conformance gates on its documents no gated tool-pack judges, and the rest's pack check. */
+async function judgePack({ root, engine, scratch, gated, conformanceOf }: RunContext, pack: string): Promise<{ entry: ConformanceReport["packs"][number]; rules: ConformanceRuleReport[]; passesConformance: ConformanceReport["passesConformance"] }> {
+  const entries = new Map(conformanceEntries(root, pack).map((entry) => [entry.path, entry]));
+  const documents = packDocuments(root, pack);
+  const judgedHere = (path: string): boolean => {
+    const entry = entries.get(path);
+    return entry === undefined || !gated.has(`${pack}/${entry.upstream.tool}`);
+  };
+  const prefix = `packs/${pack}/`;
+  const origins = packOrigins(join(root, "packs", pack), documents.map((document) => document.path.slice(prefix.length)));
+  const shipped = documents.filter((document) => document.location === "shipped").map((document) => readRule(root, document.path, ""));
+  const checks: Check[] = [
+    bundledLoadCheck(engine, scratch, pack, shipped),
+    { id: "origins", ok: origins.failures.length === 0, detail: origins.failures.length === 0 ? "origins.json declares only the pack's rule documents, each once" : origins.failures.join("; ") },
+  ];
+  // The pack's conformance check scores every rule conformance.json maps, this job's and the tool-pack runs' alike.
+  const ran = documents.some((document) => entries.has(document.path)) ? await runPackCheck(conformanceOf, root, pack) : undefined;
+  if (ran !== undefined) checks.push(ran.check);
+  const conformance = ran?.conformance;
+  const passesConformance = documents.filter((document) => !judgedHere(document.path)).map((document) => ({
+    file: document.path,
+    location: document.location,
+    gate: conformance === undefined ? notRun("the pack's conformance check did not run (see the pack's checks)") : gate(passesConformanceChecks(conformance, entries.get(document.path)!.id)),
+  }));
+  const rules = documents.filter((document) => judgedHere(document.path)).map((document) => {
+    const entry = entries.get(document.path);
+    const origin = origins.origins.get(document.path.slice(prefix.length)) ?? null;
+    return judgeRule(root, engine, scratch, pack, document.path, document.location, origin, entry === undefined ? null : { tool: entry.upstream.tool, rule: entry.upstream.rule }, conformance);
+  });
+  return { entry: { pack, checks: gate(checks), judgedByToolPacks: passesConformance.length }, rules, passesConformance };
 }
 
 /**
@@ -119,56 +192,20 @@ export async function runConformanceGates(root: string, options: { cacheRoot?: s
   const gated = new Set(gatedToolPacks(root).map(({ pack, tool }) => `${pack}/${tool}`));
   mkdirSync(join(cacheRoot, "tmp"), { recursive: true });
   const scratch = mkdtempSync(join(cacheRoot, "tmp", "conformance-"));
-  const packs: ConformanceReport["packs"] = [];
-  const rules: ConformanceRuleReport[] = [];
-  const passesConformance: ConformanceReport["passesConformance"] = [];
-  const conformanceOf = options.packConformance ?? packConformance;
+  const context: RunContext = { root, engine, scratch, gated, conformanceOf: options.packConformance ?? packConformance };
+  const judged = [];
   try {
-    for (const { pack, tools } of packsOf(root)) {
-      const entries = new Map(conformanceEntries(root, pack).map((entry) => [entry.path, entry]));
-      const documents = packDocuments(root, pack);
-      const mine = documents.filter((document) => {
-        const entry = entries.get(document.path);
-        return entry === undefined || !gated.has(`${pack}/${entry.upstream.tool}`);
-      });
-      const prefix = `packs/${pack}/`;
-      const origins = packOrigins(join(root, "packs", pack), documents.map((document) => document.path.slice(prefix.length)));
-      const checks: Check[] = [];
-      const shipped = documents.filter((document) => document.location === "shipped").map((document) => readRule(root, document.path, ""));
-      try {
-        const loaded = loadAsBundled(engine, scratch, pack, shipped);
-        const ok = loaded.ids.length === shipped.length;
-        checks.push({ id: "bundled-load", ok, detail: ok ? `rerail's bundled-rule loader loads all ${shipped.length} shipped document(s) of the pack together` : `the loader returned ${loaded.ids.length} rule(s) for ${shipped.length} shipped document(s)` });
-      } catch (error) {
-        checks.push({ id: "bundled-load", ok: false, detail: `the pack's shipped rules do not load together through rerail's bundled-rule loader: ${error instanceof Error ? error.message : String(error)}` });
-      }
-      checks.push({ id: "origins", ok: origins.failures.length === 0, detail: origins.failures.length === 0 ? "origins.json declares only the pack's rule documents, each once" : origins.failures.join("; ") });
-      // The pack's conformance check scores every rule conformance.json maps, this job's and the tool-pack runs' alike.
-      const hasManifest = tools.length > 0 || entries.size > 0;
-      let conformance: PackConformance | undefined;
-      if (documents.some((document) => entries.has(document.path))) {
-        try {
-          conformance = await conformanceOf(root, pack);
-          checks.push({ id: "conformance-runs", ok: conformance.errors.length === 0, detail: conformance.errors.length === 0 ? "the pack's conformance check runs without errors" : conformance.errors.slice(0, 3).join("; ") });
-        } catch (error) {
-          checks.push({ id: "conformance-runs", ok: false, detail: `the pack's conformance check failed to run: ${error instanceof Error ? error.message : String(error)}` });
-        }
-      }
-      for (const document of documents.filter((entry) => !mine.includes(entry))) {
-        const entry = entries.get(document.path)!;
-        passesConformance.push({ file: document.path, location: document.location, gate: conformance === undefined ? notRun("the pack's conformance check did not run (see the pack's checks)") : gate(passesConformanceChecks(conformance, entry.id)) });
-      }
-      packs.push({ pack, checks: gate(checks), judgedByToolPacks: documents.length - mine.length });
-      for (const document of mine) {
-        const entry = entries.get(document.path);
-        const origin = origins.origins.get(document.path.slice(prefix.length)) ?? null;
-        rules.push(judgeRule(root, engine, scratch, pack, document.path, document.location, origin, entry === undefined ? null : { tool: entry.upstream.tool, rule: entry.upstream.rule }, conformance, hasManifest));
-      }
-    }
+    for (const pack of packsOf(root)) judged.push(await judgePack(context, pack));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-  return { format: CONFORMANCE_REPORT_FORMAT, engine: { sha256: engine.identity.sha256 }, packs, rules: rules.sort((a, b) => byText(a.file, b.file)), passesConformance: passesConformance.sort((a, b) => byText(a.file, b.file)) };
+  return {
+    format: CONFORMANCE_REPORT_FORMAT,
+    engine: { sha256: engine.identity.sha256 },
+    packs: judged.map((entry) => entry.entry),
+    rules: judged.flatMap((entry) => entry.rules).sort((a, b) => byText(a.file, b.file)),
+    passesConformance: judged.flatMap((entry) => entry.passesConformance).sort((a, b) => byText(a.file, b.file)),
+  };
 }
 
 /** Whether the report fails CI: a shipped rule declares no origin or fails a conformance gate, or a pack check fails. */

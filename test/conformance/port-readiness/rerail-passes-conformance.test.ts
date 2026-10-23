@@ -21,7 +21,12 @@ const failing = (checks: { id: string; ok: boolean }[]) => checks.filter((check)
 
 test("a rule passes when the pack's check would pass it as shipped", () => {
   assert.deepEqual(failing(passesConformanceChecks(conformance([row("a")]), "a")), []);
-  assert.deepEqual(failing(passesConformanceChecks(conformance([row("a", { tp: 0, examples: true })]), "a")), []);
+});
+
+test("pack.json examples are documentation, not fixtures: a rule that catches nothing on its fixtures fails, examples or not", () => {
+  const checks = passesConformanceChecks(conformance([row("a", { tp: 0, examples: true })]), "a");
+  assert.deepEqual(failing(checks), ["catches-something"]);
+  assert.equal(checks.find((check) => check.id === "catches-something")!.detail, "0 true positives on the fixtures: nothing shows it catches anything");
 });
 
 test("an unexplained finding on the pack's fixtures or probes fails it, naming the first, as the check fails a shipped rule", () => {

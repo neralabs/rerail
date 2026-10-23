@@ -24,24 +24,26 @@ document, so a pack of ports can hold an original. The gates run in `GATES` orde
 | 1 | `upstream-status` (decides on or off) | port | no |
 | 2 | `loads` | conformance | yes |
 | 4 | `compact` | conformance | yes |
-| — | `passes-conformance` (the pack's `test:conformance` verdict on the rule; never cached; in CI run once per pack, in the conformance job; not applicable to a rule conformance.json does not map) | conformance | yes |
+| — | `passes-conformance` (the pack's `test:conformance` verdict on the rule; never cached; in CI run once per pack, in the conformance job; a rule conformance.json does not map has no fixtures and fails it, `has-fixtures`) | conformance | yes |
 | 3 | `not-overfit` | port | yes |
-| 5 | `matches-upstream-tests` | port | yes |
+| 5 | `matches-upstream-tests` (runs in a gated tool-pack's legs: its comparisons are conformance's, `fires` and `stays-silent` port readiness's) | port | yes |
 | 6 | none: real code runs in NRV only; `matches-upstream-tests` judges the goldens imported from it | — | — |
 
 A rule's verdict is the first blocking gate it fails. The summary (summary.ts) holds one verdict per rule document, the
 first step of `STEPS` the rule fails, and every count it and the pull request comment (comment.ts) show comes from
-those verdicts, so each rule is counted once. The steps are `origin` (the document declares its origin; one declared
-nowhere stops there, fail-closed, and a pack's origins.json that is wrong fails the conformance report's `origins` pack
-check), the conformance gates, then, for a port: `mapping` (a conformance.json entry maps it; a port origins.json
-declares stops here, with its `unmapped` reason), `set-up` (its tool has a gates.yaml; a shipped port of a tool without
-one fails), `licence` (the tool-pack checks about upstream's licence, recorded-adapter.ts `LICENSE_CHECKS`: the kept
-licence is upstream's, the package declares it, and it is on the repository's allowlist), the other tool-pack checks,
-`loads`'s `in-scope` check (it compares a rule with the files upstream lints, so it judges the port),
-`not-overfit` and `matches-upstream-tests`. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
-that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
-fix belongs in the engine. It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
-`real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens or, where NRV pins no tool, found by
+those verdicts, so each rule is counted once. The steps are, for conformance, `origin` (the document declares its
+origin; one declared nowhere stops there, fail-closed, and a pack's origins.json that is wrong fails the conformance
+report's `origins` pack check), `loads`, `compact`, `fixture-data` (a gated port's tool-pack checks that vouch for its
+recorded answers, every one but the licence checks) and `fixtures` (passes its fixtures: `has-fixtures`, the pack's
+fixtures as `passes-conformance` scores them, then, for a gated port, `matches-upstream-tests`' comparisons on
+upstream's test files and the goldens, start and end, where only a proven parser gap excuses a difference); then, for a
+port, `set-up` (its tool has a gates.yaml; a shipped port of a tool without one fails), `licence` (the tool-pack checks
+about upstream's licence, recorded-adapter.ts `LICENSE_CHECKS`: the kept licence is upstream's, the package declares
+it, and it is on the repository's allowlist), `loads`'s `in-scope` check (it compares a rule with the files upstream
+lints, so it judges the port), `not-overfit` and `upstream-evidence` (`fires` and `stays-silent`). The comparisons
+include `engine-reads-goldens`: a golden that differs where the engine reported `source-partial`, `source-incomplete` or
+`budget-exceeded` fails the rule; the fix belongs in the engine. They also include `no-real-code-gap`: a rule
+`gates.yaml` lists under `real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens or, where NRV pins no tool, found by
 rerail's own real-code run (each goldens.tsv's source line says which), and never written by the gates (docs/port-readiness.md, "Goldens").
 
 ## Where the code comes from
@@ -164,5 +166,6 @@ complete. The report's method text says so.
 A port of a tool with no gates.yaml (node's eslint-plugin-n) meets conformance only and stops at `set-up`: a candidate
 is reported, and a shipped one fails ("keep it in candidates/ until the tool has a gates.yaml"). A port origins.json
 declares, which no conformance.json entry maps because no recording covers its upstream rule (Ruff's A005 and INP001,
-typescript-eslint's prefer-optional-chain and no-explicit-any, unicorn's no-array-for-each), stops at `mapping`. There
+typescript-eslint's prefer-optional-chain and no-explicit-any, unicorn's no-array-for-each), has no fixtures and fails
+conformance at `has-fixtures`. There
 is no list of exempt rules: a rule ships when it passes every gate it must.

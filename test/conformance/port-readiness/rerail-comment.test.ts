@@ -8,16 +8,20 @@ import { COMMENT_LIMIT, COMMENT_MARKER, renderComment, renderJobSummary } from "
 import { failureLabel, failurePoint } from "../../../conformance/port-readiness/failure-points.js";
 import { readRecordingSummaries, SUMMARY_FORMAT, type OtherFailure, type RuleVerdict, type StepId, type Summary } from "../../../conformance/port-readiness/summary.js";
 
-/** The check a rule stopping at each step fails in these tests. */
-const CHECKS: Partial<Record<StepId, string>> = { origin: "origin", compact: "no-combinatorial-expansion", "passes-conformance": "catches-something", mapping: "conformance-entry", "not-overfit": "no-fixture-only-names", "matches-upstream-tests": "identical-results" };
+/** The check a rule stopping at each step fails in these tests, unless it names its own. */
+const CHECKS: Partial<Record<StepId, string>> = { origin: "origin", compact: "no-combinatorial-expansion", fixtures: "catches-something", "not-overfit": "no-fixture-only-names", "upstream-evidence": "fires" };
 
-/** A port of `tool`, unless `tool` is null: then an original (a complexity rule), or with `undeclared` a document that declares no origin. */
-function verdict(id: string, location: RuleVerdict["location"], stoppedAt: StepId | null, tool: string | null = "ruff", pack = tool === null ? "complexity" : "python", undeclared = false): RuleVerdict {
+/**
+ * A port of `tool`, unless `tool` is null: then an original (a complexity rule), or with `undeclared` a document that
+ * declares no origin. A port holds 2 real-code goldens, a bandit port none.
+ */
+function verdict(id: string, location: RuleVerdict["location"], stoppedAt: StepId | null, tool: string | null = "ruff", pack = tool === null ? "complexity" : "python", undeclared = false, check?: string): RuleVerdict {
+  const failed = check ?? (stoppedAt === null ? "" : CHECKS[stoppedAt]!);
   return {
     id, file: `packs/${pack}/${location === "shipped" ? "rules" : "candidates/rules"}/${id}.json`, pack, location, origin: tool !== null ? "port" : undeclared ? null : "original",
     upstream: tool === null ? null : { tool, rule: id.toUpperCase() }, stoppedAt,
-    check: stoppedAt === null ? "" : CHECKS[stoppedAt]!, why: stoppedAt === null ? "" : stoppedAt === "mapping" ? "the fixtures are GPL-derived" : `1 upstream test file differs ${"x".repeat(400)}`,
-    ...(tool === null ? {} : { onByDefault: true }),
+    check: failed, why: stoppedAt === null ? "" : failed === "has-fixtures" ? "no conformance.json entry maps it (the fixtures are GPL-derived)" : `1 upstream test file differs ${"x".repeat(400)}`,
+    ...(tool === null ? {} : { onByDefault: true, realCodeGoldens: tool === "bandit" ? 0 : 2 }),
   };
 }
 
@@ -36,8 +40,9 @@ function summary(rules: RuleVerdict[], otherFailures: OtherFailure[] = []): Summ
 }
 
 /**
- * python: 3 shipped ruff rules (one failing) and 2 bandit; candidates across the gates, among them a port no
- * conformance.json entry maps (ruff-g) and a document that declares no origin (python-h); complexity: originals.
+ * python: 3 shipped ruff rules (one failing) and 2 bandit; candidates across the steps, among them a port no
+ * conformance.json entry maps (ruff-g, so it has no fixtures) and a document that declares no origin (python-h);
+ * complexity: originals.
  */
 const sample = (): RuleVerdict[] => [
   verdict("ruff-a", "shipped", null),
@@ -48,11 +53,12 @@ const sample = (): RuleVerdict[] => [
   verdict("complexity-a", "shipped", null, null),
   verdict("complexity-b", "shipped", null, null),
   verdict("ruff-d", "candidate", null),
-  verdict("ruff-e", "candidate", "passes-conformance"),
-  verdict("ruff-f", "candidate", "matches-upstream-tests"),
+  verdict("ruff-e", "candidate", "fixtures"),
+  verdict("ruff-f", "candidate", "fixtures", "ruff", "python", false, "identical-results"),
   verdict("bandit-c", "candidate", "not-overfit", "bandit"),
-  verdict("ruff-g", "candidate", "mapping"),
+  verdict("ruff-g", "candidate", "fixtures", "ruff", "python", false, "has-fixtures"),
   verdict("python-h", "candidate", "origin", null, "python", true),
+  verdict("ruff-i", "candidate", "upstream-evidence"),
   verdict("complexity-c", "candidate", null, null),
 ];
 
@@ -83,6 +89,9 @@ test("the shipped rule summary lists each blocker, then each pack's shipped rule
   // One origin needs no total row.
   assert.doesNotMatch(block(section, "complexity: 2"), /Total\*\*/u);
   assert.match(block(section, "complexity: 2"), /^\| original \| 2 \| 0 \| 2 \|$/mu);
+  // The ports with no real-code goldens are counted under their pack's table; an original is no port.
+  assert.match(block(section, "python: 5"), /\n\nNo real-code evidence: 2 of 5 ports are checked on upstream's tests only\.\n/u);
+  assert.doesNotMatch(block(section, "complexity: 2"), /No real-code evidence/u);
 });
 
 test("a blocking failure no rule owns is listed with the blockers, and counted in the heading", () => {
@@ -94,16 +103,24 @@ test("a blocking failure no rule owns is listed with the blockers, and counted i
 
 test("the candidate rule summary lists the candidates ready to promote, then each pack's candidates by origin and gate", () => {
   const text = renderComment(summary(sample()));
-  const section = text.slice(text.indexOf("### Candidate Rule Summary: 7 candidates, 🟢 2 ready to promote"));
+  const section = text.slice(text.indexOf("### Candidate Rule Summary: 8 candidates, 🟢 2 ready to promote"));
   assert.match(section, /^- 🟢 `ruff-d` \(python, from ruff RUFF-D\): on by default$/mu);
   assert.match(section, /^- 🟢 `complexity-c` \(complexity, original\)$/mu);
-  const python = block(section, "python: 6");
+  const python = block(section, "python: 7");
   assert.match(python, /^\| Origin \| 🟢 Ready \| ❌ Conformance \| ❌ Port readiness \| Total \|$/mu);
-  assert.match(python, /^\| bandit \| 0 \| 0 \| 1 \| 1 \|\n\| ruff \| 1 \| 1 \| 2 \| 4 \|\n\| not declared \| 0 \| 1 \| 0 \| 1 \|\n\| \*\*Total\*\* \| \*\*1\*\* \| \*\*2\*\* \| \*\*3\*\* \| \*\*6\*\* \|$/mu);
+  assert.match(python, /^\| bandit \| 0 \| 0 \| 1 \| 1 \|\n\| ruff \| 1 \| 3 \| 1 \| 5 \|\n\| not declared \| 0 \| 1 \| 0 \| 1 \|\n\| \*\*Total\*\* \| \*\*1\*\* \| \*\*4\*\* \| \*\*2\*\* \| \*\*7\*\* \|$/mu);
   assert.match(python, /^\| Fails because \| bandit \| ruff \| not declared \|$/mu);
-  assert.match(python, /^\| Conformance: Not declared: neither `conformance\.json` nor `origins\.json` says where it comes from \|  \|  \| 1 \|\n\| Conformance: Flags nothing in its test fixtures \|  \| 1 \|  \|\n\| Port readiness: Declared, not recorded: `origins\.json` names its upstream rule, but no `conformance\.json` entry maps it yet \|  \| 1 \|  \|\n\| Port readiness: Hardcodes names that only appear in upstream's tests \| 1 \|  \|  \|\n\| Port readiness: Reports different findings than upstream on upstream's own tests \|  \| 1 \|  \|$/mu);
-  // The candidates no port readiness gate could judge are named, with the reason their origins.json entry gives.
-  assert.match(python, /^Not judged against upstream:\n\n- `ruff-g`: the fixtures are GPL-derived$/mu);
+  // Every failure is named by its check: a fixture comparison is conformance's, evidence from upstream port readiness's.
+  assert.match(python, new RegExp([
+    "^\\| Conformance: Not declared: neither `conformance\\.json` nor `origins\\.json` says where it comes from \\|  \\|  \\| 1 \\|",
+    "\\| Conformance: Flags nothing in its test fixtures \\|  \\| 1 \\|  \\|",
+    "\\| Conformance: Differs from the recorded answers on upstream's test files \\|  \\| 1 \\|  \\|",
+    "\\| Conformance: Has no test fixtures \\|  \\| 1 \\|  \\|",
+    "\\| Port readiness: Hardcodes names that only appear in upstream's tests \\| 1 \\|  \\|  \\|",
+    "\\| Port readiness: Never reproduces one of upstream's findings \\|  \\| 1 \\|  \\|$",
+  ].join("\\n"), "mu"));
+  // A port no entry maps fails conformance for having no fixtures, so no port readiness step names it.
+  assert.doesNotMatch(python, /Not judged against upstream/u);
   // Every candidate of complexity is ready: no failure table.
   assert.doesNotMatch(block(section, "complexity: 1"), /Fails because/u);
   assert.doesNotMatch(text, /How to fix/u);
@@ -114,7 +131,7 @@ test("the candidate rule summary lists the candidates ready to promote, then eac
 test("the job summary is the comment's page in full, with each failing candidate's gate and why", () => {
   const text = renderJobSummary(summary(sample()));
   assert.ok(!text.startsWith(COMMENT_MARKER));
-  const python = block(text, "Each failing python candidate (5)");
+  const python = block(text, "Each failing python candidate (6)");
   assert.match(python, /^\*\*Port readiness: Hardcodes names that only appear in upstream's tests\*\*\n\n- `bandit-c` \(python, from bandit BANDIT-C\): 1 upstream test file differs x{400}$/mu);
   assert.match(python, /^- `ruff-g` \(python, from ruff RUFF-G\): /mu);
   assert.match(python, /^- `python-h` \(python, not declared\): /mu);
@@ -139,7 +156,10 @@ test("a pull request that re-ran only some upstream linters says which it left o
 
 test("a failure is named by the check that failed, in plain words with its fix; an unnamed check falls back to its step", () => {
   assert.deepEqual(failurePoint("in-scope", "in-scope"), { what: "Doesn't check every file type upstream checks", fix: "widen its scope, or narrow `rerail.in_scope` in `gates.yaml`" });
-  assert.equal(failureLabel("passes-conformance", "no-unexplained-false-positives"), "Conformance: Flags code its test fixtures say is fine");
+  assert.equal(failureLabel("fixtures", "no-unexplained-false-positives"), "Conformance: Flags code its test fixtures say is fine");
+  assert.equal(failureLabel("fixtures", "has-fixtures"), "Conformance: Has no test fixtures");
+  assert.equal(failureLabel("fixtures", "identical-on-goldens"), "Conformance: Differs from the recorded answers on real-code goldens");
+  assert.equal(failureLabel("upstream-evidence", "stays-silent"), "Port readiness: Never stays silent where upstream does");
   assert.equal(failureLabel("licence", "license-allowed"), "Port readiness: Upstream's licence isn't on Rerail's licence allowlist");
   assert.deepEqual(failurePoint("not-overfit", "a-new-check"), { what: "Not overfit to upstream's tests (a-new-check)", fix: "see the detail" });
 });

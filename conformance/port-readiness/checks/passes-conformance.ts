@@ -5,8 +5,9 @@
  * runs them): upstream's fixtures and Rerail's probes, after the pack's declared divergences. In CI it runs once per
  * pack, in the conformance job (conformance-gates.ts), and the tool-pack runs leave it to that job; run alone, a
  * tool-pack run runs it itself.
- * Every rule is held to what the check fails a shipped rule on (`reportFailures`). When the pack pins corpora, the
- * tool's corpus recordings must also cover the rule, as the check requires of every shipped rule.
+ * Every rule is held to what the check fails a shipped rule on (`reportFailures`), and to one thing more: it must catch
+ * something on its fixtures, where the check also accepts pack.json examples. When the pack pins corpora, the tool's
+ * corpus recordings must also cover the rule, as the check requires of every shipped rule.
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -81,7 +82,8 @@ export function passesConformanceChecks(conformance: PackConformance, id: string
   checks.push(
     { id: "no-unexplained-false-positives", ok: row.fp === 0, detail: row.fp === 0 ? `no unexplained finding on the pack's fixtures (upstream's cases and Rerail's probes), with ${row.tp} true positive(s)` : `${row.fp} unexplained FP on the pack's fixtures${point(row.falsePositives[0])}: ${fix}` },
     { id: "no-unexplained-misses", ok: row.fn === 0, detail: row.fn === 0 ? "misses no finding upstream reports on the pack's fixtures" : `${row.fn} unexplained FN on the pack's fixtures${point(row.falseNegatives[0])}: ${fix}` },
-    { id: "catches-something", ok: row.tp > 0 || row.examples, detail: row.tp > 0 ? `${row.tp} finding(s) agree with upstream on the fixtures` : row.examples ? "pack.json gives it examples" : "0 true positives on the fixtures and no examples in pack.json: nothing shows it catches anything" },
+    // pack.json's examples are documentation, tested by the pack checks; they are not fixtures, so they prove nothing here.
+    { id: "catches-something", ok: row.tp > 0, detail: row.tp > 0 ? `${row.tp} finding(s) agree with upstream on the fixtures` : "0 true positives on the fixtures: nothing shows it catches anything" },
     { id: "engine-reads-fixtures", ok: row.engineFailures === 0, detail: row.engineFailures === 0 ? "the engine evaluates it on every fixture" : `${row.engineFailures} engine failure(s) on the fixtures` },
   );
   const stale = conformance.stale.get(id) ?? [];
