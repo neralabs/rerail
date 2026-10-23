@@ -176,7 +176,7 @@ fn rel_any(r: &Rel<RepoSource>, k: u16, p: &dyn Fn(u16, u16) -> bool) -> bool {
     }
 }
 
-fn has_subquery(e: &X) -> bool {
+pub(super) fn has_subquery(e: &X) -> bool {
     match e {
         Expr::InRel { .. } | Expr::Exists { .. } | Expr::Scalar(_) => true,
         Expr::Lit(_) | Expr::Col { .. } => false,
@@ -192,7 +192,7 @@ fn has_subquery(e: &X) -> bool {
 }
 
 /// Columns of the depth-0 row an expression reads.
-fn cols_read(e: &X, out: &mut Vec<usize>) {
+pub(super) fn cols_read(e: &X, out: &mut Vec<usize>) {
     fn go(e: &X, d: u16, out: &mut Vec<usize>) {
         match e {
             Expr::Lit(_) => {}

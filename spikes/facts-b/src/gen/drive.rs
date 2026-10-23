@@ -506,7 +506,21 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut lat: BTreeMap<String, Vec<f64>> = BTreeMap::new();
         let mut per_event = Vec::new();
         let mut edits_done = 0usize;
-        let mut rss_samples = vec![json!({"at": "loaded", "rss_mb": mb(rss_loaded.0), "footprint_mb": mb(rss_loaded.1)})];
+        let arrangements_json = |sz: &crate::flow::Sizes| {
+            let mut by_name: BTreeMap<String, (isize, isize)> = BTreeMap::new();
+            for (op, n) in &sz.records {
+                by_name.entry(sz.names.get(op).cloned().unwrap_or_else(|| format!("op{op}"))).or_default().0 += n;
+            }
+            for (op, b) in &sz.batcher_bytes {
+                by_name.entry(sz.names.get(op).cloned().unwrap_or_else(|| format!("op{op}"))).or_default().1 += b;
+            }
+            let total: isize = by_name.values().map(|v| v.0).sum();
+            let mut arr: Vec<(String, (isize, isize))> = by_name.into_iter().filter(|(_, v)| v.0 != 0 || v.1 != 0).collect();
+            arr.sort_by_key(|x| -x.1 .0);
+            json!({"total_records": total, "by_operator": arr.iter().map(|(n, (r, b))| json!([n, r, b])).collect::<Vec<_>>()})
+        };
+        let arrangements_loaded = arrangements_json(&sizes.borrow());
+        let mut rss_samples = vec![json!({"at": "loaded", "rss_mb": mb(rss_loaded.0), "footprint_mb": mb(rss_loaded.1), "arranged": arrangements_loaded["total_records"]})];
         let mut fact_load_s = 0.0;
         let mut stopped = false;
         let mut events_done = 0usize;
@@ -590,7 +604,8 @@ pub fn run(run_dir: &Path, opts: Opts) {
             }
         }
         let rss_end = rss();
-        rss_samples.push(json!({"at": "end", "rss_mb": mb(rss_end.0), "footprint_mb": mb(rss_end.1)}));
+        let arrangements = arrangements_json(&sizes.borrow());
+        rss_samples.push(json!({"at": "end", "rss_mb": mb(rss_end.0), "footprint_mb": mb(rss_end.1), "arranged": arrangements["total_records"]}));
         let mut lat_summary = serde_json::Map::new();
         for (k, v) in &lat {
             lat_summary.insert(k.clone(), summary(v));
@@ -627,23 +642,9 @@ pub fn run(run_dir: &Path, opts: Opts) {
         } else {
             json!(null)
         };
-        // Arrangement records from differential's logging, per operator name (`n<node>:<role>`).
-        let arrangements = {
-            let sz = sizes.borrow();
-            let mut by_name: BTreeMap<String, (isize, isize)> = BTreeMap::new();
-            for (op, n) in &sz.records {
-                by_name.entry(sz.names.get(op).cloned().unwrap_or_else(|| format!("op{op}"))).or_default().0 += n;
-            }
-            for (op, b) in &sz.batcher_bytes {
-                by_name.entry(sz.names.get(op).cloned().unwrap_or_else(|| format!("op{op}"))).or_default().1 += b;
-            }
-            let total: isize = by_name.values().map(|v| v.0).sum();
-            let mut arr: Vec<(String, (isize, isize))> = by_name.into_iter().filter(|(_, v)| v.0 != 0 || v.1 != 0).collect();
-            arr.sort_by_key(|x| -x.1 .0);
-            json!({"total_records": total, "by_operator": arr.iter().map(|(n, (r, b))| json!([n, r, b])).collect::<Vec<_>>()})
-        };
         let out = json!({
             "arrangements": arrangements,
+            "arrangements_loaded": arrangements_loaded,
             "construction": lower::construction(),
             "plans": graphs.iter().map(|(n, g)| json!({"plan": n, "nodes": g.nodes.len()})).collect::<Vec<_>>(),
             "refused_static": refusals_static,

@@ -214,10 +214,129 @@ fn key_of(row: &[Val], key: &Key, vrow: &mut Option<Vec<V>>) -> Option<Row> {
         .collect()
 }
 
-fn keyed<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(c: C<'s, Tm>, key: Key, name: &str) -> Arr<'s, Tm, Row> {
+/// Columns of a node's output its arrangements keep (`None`: all of them). The others are read
+/// by no consumer (`demand`); they come back as NULL when an arranged row is widened.
+type Cols = Option<Rc<[usize]>>;
+
+fn narrow(row: &Row, cols: &Cols) -> Row {
+    match cols {
+        None => row.clone(),
+        Some(c) => c.iter().map(|i| row[*i]).collect(),
+    }
+}
+
+/// Appends an arranged row widened back to its node's `width` (unkept columns NULL).
+fn widen_into(out: &mut Vec<Val>, row: &[Val], cols: &Cols, width: usize) {
+    match cols {
+        None => out.extend_from_slice(row),
+        Some(c) => {
+            let s = out.len();
+            out.resize(s + width, Val::NULL);
+            for (j, i) in c.iter().enumerate() {
+                out[s + i] = row[j];
+            }
+        }
+    }
+}
+
+fn widen(row: &Row, cols: &Cols, width: usize) -> Row {
+    match cols {
+        None => row.clone(),
+        Some(_) => {
+            let mut v = Vec::with_capacity(width);
+            widen_into(&mut v, row, cols, width);
+            Row::new(&v)
+        }
+    }
+}
+
+/// A join's output row from two arranged (possibly narrowed) rows.
+fn joined(a: &Row, ca: &Cols, wa: usize, b: &Row, cb: &Cols, wb: usize) -> Row {
+    if ca.is_none() && cb.is_none() {
+        return Row::concat(a, b);
+    }
+    let mut v = Vec::with_capacity(wa + wb);
+    widen_into(&mut v, a, ca, wa);
+    widen_into(&mut v, b, cb, wb);
+    Row::new(&v)
+}
+
+/// Column demand: per node, the output columns some consumer reads (backwards over the
+/// topological node order). Consumers with whole-row semantics (outputs, DISTINCT, fixpoints,
+/// aggregates, windows, DISTINCT prefixes) read every column; a map reads what any of its
+/// expressions reads (an unread expression may still refuse at run time); a join passes its
+/// output demand to its sides plus its keys; a semijoin's right side is read at its keys only.
+fn demand(g: &Graph) -> Vec<Cols> {
+    let n = g.nodes.len();
+    let mut need: Vec<Vec<bool>> = g.widths.iter().map(|w| vec![false; *w]).collect();
+    let all = |need: &mut Vec<Vec<bool>>, i: NodeId| need[i].iter_mut().for_each(|x| *x = true);
+    let reads = |need: &mut Vec<Vec<bool>>, i: NodeId, e: &X| {
+        if super::norm::has_subquery(e) {
+            need[i].iter_mut().for_each(|x| *x = true);
+            return;
+        }
+        let mut c = Vec::new();
+        super::norm::cols_read(e, &mut c);
+        for c in c {
+            need[i][c] = true;
+        }
+    };
+    for (_, o, _) in &g.outputs {
+        all(&mut need, *o);
+    }
+    for i in (0..n).rev() {
+        let mine = need[i].clone();
+        match &g.nodes[i] {
+            Op::Exported(_) | Op::Const(_) | Op::Var(_) => {}
+            Op::Map { input, exprs } => exprs.iter().for_each(|e| reads(&mut need, *input, e)),
+            Op::Filter { input, pred } => {
+                mine.iter().enumerate().filter(|(_, x)| **x).for_each(|(c, _)| need[*input][c] = true);
+                reads(&mut need, *input, pred);
+            }
+            Op::Affinity { input, .. } => mine.iter().enumerate().filter(|(_, x)| **x).for_each(|(c, _)| need[*input][c] = true),
+            Op::Join { l, r, lk, rk } => {
+                let wl = g.widths[*l];
+                for (c, x) in mine.iter().enumerate() {
+                    if *x {
+                        if c < wl {
+                            need[*l][c] = true
+                        } else {
+                            need[*r][c - wl] = true
+                        }
+                    }
+                }
+                lk.iter().for_each(|(e, _)| reads(&mut need, *l, e));
+                rk.iter().for_each(|(e, _)| reads(&mut need, *r, e));
+            }
+            Op::Semi { l, r, lk, rk, .. } => {
+                mine.iter().enumerate().filter(|(_, x)| **x).for_each(|(c, _)| need[*l][c] = true);
+                lk.iter().for_each(|(e, _)| reads(&mut need, *l, e));
+                rk.iter().for_each(|(e, _)| reads(&mut need, *r, e));
+            }
+            Op::Concat { inputs } => {
+                for j in inputs {
+                    mine.iter().enumerate().filter(|(_, x)| **x).for_each(|(c, _)| need[*j][c] = true);
+                }
+            }
+            Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } => all(&mut need, *input),
+            Op::Fix { init, step, .. } => init.iter().chain(step).for_each(|j| all(&mut need, *j)),
+        }
+    }
+    need.into_iter()
+        .map(|v| {
+            if !cut("cols") || v.iter().all(|x| *x) {
+                None
+            } else {
+                Some(v.iter().enumerate().filter(|(_, x)| **x).map(|(c, _)| c).collect::<Vec<_>>().into())
+            }
+        })
+        .collect()
+}
+
+fn keyed<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(c: C<'s, Tm>, key: Key, cols: Cols, name: &str) -> Arr<'s, Tm, Row> {
     c.flat_map(move |(w, row)| {
         let mut vr = None;
-        key_of(&row, &key, &mut vr).map(|k| (k, (w, row)))
+        key_of(&row, &key, &mut vr).map(|k| (k, (w, narrow(&row, &cols))))
     })
     .arrange_by_key_named(name)
 }
@@ -240,28 +359,32 @@ fn per_tag<V2>(vals: &[(&(W, V2), R)]) -> Vec<(W, R)> {
     per
 }
 
+/// Presence per key from its per-tag counts: the base emits [c_0 > 0]; tag t emits
+/// [below + d_t > 0] − [below > 0].
+fn presence_logic(_k: &Row, vals: &[(&(W, ()), R)], out: &mut Vec<((W, ()), R)>) {
+    let per = per_tag(vals);
+    let at = |t: W| per.iter().find(|(w, _)| *w == t).map(|(_, c)| *c).unwrap_or(0);
+    if at(BASE) > 0 {
+        out.push(((BASE, ()), 1));
+    }
+    for &(t, d) in &per {
+        if t == BASE {
+            continue;
+        }
+        let ch = tags::chain(t);
+        let below: R = ch[..ch.len() - 1].iter().map(|x| at(*x)).sum();
+        let f = flip(below, below + d);
+        if f != 0 {
+            out.push(((t, ()), f));
+        }
+    }
+}
+
 /// Presence of keys (count-based): `key -> (tag, ())` with ±1 deltas.
 fn presence<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(keys: VecCollection<'s, Tm, (Row, (W, ())), R>, name: &str) -> Arr<'s, Tm, ()> {
     keys.arrange_by_key_named(&format!("{name}:presence-in")).reduce_abelian::<_, ValBuilder<Row, (W, ()), Tm, R>, ValSpine<Row, (W, ()), Tm, R>, _, _>(
         &format!("{name}:presence-out"),
-        |_k, vals: &[(&(W, ()), R)], out: &mut Vec<((W, ()), R)>| {
-            let per = per_tag(vals);
-            let at = |t: W| per.iter().find(|(w, _)| *w == t).map(|(_, c)| *c).unwrap_or(0);
-            if at(BASE) > 0 {
-                out.push(((BASE, ()), 1));
-            }
-            for &(t, d) in &per {
-                if t == BASE {
-                    continue;
-                }
-                let ch = tags::chain(t);
-                let below: R = ch[..ch.len() - 1].iter().map(|x| at(*x)).sum();
-                let f = flip(below, below + d);
-                if f != 0 {
-                    out.push(((t, ()), f));
-                }
-            }
-        },
+        presence_logic,
         |vec, key, upds| {
             vec.clear();
             vec.extend(upds.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
@@ -269,15 +392,126 @@ fn presence<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice
     )
 }
 
+/// The same presence outside fixpoints, as a stream: one arrangement (its input counts).
+fn presence_stream<'s>(keys: VecCollection<'s, T, (Row, (W, ())), R>, name: &str) -> VecCollection<'s, T, (Row, (W, ())), R> {
+    if !cut("total") {
+        return presence(keys, name).as_collection(|k, v| (k.clone(), *v));
+    }
+    reduce_total(keys.arrange_by_key_named(&format!("{name}:presence-in")), name, presence_logic)
+}
+
+/// Explore slice X1: the cuts switched on (`FACTS_X1_CUTS`, comma-separated; default all).
+fn cut(name: &str) -> bool {
+    thread_local! {
+        static CUTS: Vec<String> = std::env::var("FACTS_X1_CUTS").map(|s| s.split(',').map(|x| x.trim().to_owned()).collect()).unwrap_or_else(|_| vec!["all".into()]);
+    }
+    CUTS.with(|c| c.iter().any(|x| x == name || x == "all"))
+}
+
+/// Reduce over a totally ordered time (outside fixpoints) without an output arrangement: per key
+/// changed at time t, the output is `logic(input through t) − logic(input before t)`, both read
+/// from the input arrangement alone (DD's `threshold_total`, generalised to values). The output
+/// is a stream; a consumer that needs it arranged arranges it.
+fn reduce_total<'s, V2, O>(input: Arr<'s, T, V2>, name: &str, logic: impl Fn(&Row, &[(&(W, V2), R)], &mut Vec<((W, O), R)>) + 'static) -> VecCollection<'s, T, (Row, (W, O)), R>
+where
+    V2: differential_dataflow::ExchangeData + Ord + Clone,
+    O: differential_dataflow::ExchangeData + Ord + Clone,
+{
+    use differential_dataflow::trace::{BatchReader, Cursor, TraceReader};
+    use timely::dataflow::channels::pact::Pipeline;
+    use timely::dataflow::operators::Operator;
+    use timely::progress::Antichain;
+    let mut trace = input.trace.clone();
+    input
+        .stream
+        .unary_frontier(Pipeline, &format!("{name}:reduce-total"), move |_, _| {
+            let mut lower = Antichain::from_elem(0 as T);
+            let mut upper = Antichain::from_elem(0 as T);
+            let mut state: BTreeMap<(W, V2), R> = BTreeMap::new();
+            let mut ups: Vec<(T, (W, V2), R)> = Vec::new();
+            let (mut before, mut after): (Vec<((W, O), R)>, Vec<((W, O), R)>) = (Vec::new(), Vec::new());
+            move |(inp, _frontier), output| {
+                lower.clone_from(&upper);
+                let mut batches = Vec::new();
+                let mut cap = None;
+                inp.for_each(|c, bs| {
+                    if cap.is_none() {
+                        cap = Some(c.retain(0));
+                    }
+                    for b in bs.drain(..) {
+                        upper.clone_from(b.upper());
+                        batches.push(b);
+                    }
+                });
+                if let Some(cap) = cap {
+                    let mut session = output.session(&cap);
+                    let (mut bc, bs) = differential_dataflow::trace::cursor::cursor_list(batches);
+                    let (mut tc, ts) = trace.cursor_through(lower.borrow()).expect("reduce_total: trace compacted past its lower");
+                    while let Some(key) = bc.get_key(&bs) {
+                        state.clear();
+                        tc.seek_key(&ts, key);
+                        if tc.get_key(&ts) == Some(key) {
+                            while let Some(v) = tc.get_val(&ts) {
+                                let mut c: R = 0;
+                                tc.map_times(&ts, |_, d| c += *d);
+                                if c != 0 {
+                                    state.insert(v.clone(), c);
+                                }
+                                tc.step_val(&ts);
+                            }
+                        }
+                        ups.clear();
+                        while let Some(v) = bc.get_val(&bs) {
+                            bc.map_times(&bs, |t, d| ups.push((*t, v.clone(), *d)));
+                            bc.step_val(&bs);
+                        }
+                        ups.sort_by_key(|u| u.0);
+                        let k: &Row = key;
+                        before.clear();
+                        // As `reduce`: a key without input has no output (its logic is not run).
+                        if !state.is_empty() {
+                            logic(k, &state.iter().map(|(v, c)| (v, *c)).collect::<Vec<_>>(), &mut before);
+                        }
+                        let mut i = 0;
+                        while i < ups.len() {
+                            let t = ups[i].0;
+                            while i < ups.len() && ups[i].0 == t {
+                                let (_, v, d) = &ups[i];
+                                let e = state.entry(v.clone()).or_default();
+                                *e += *d;
+                                if *e == 0 {
+                                    state.remove(v);
+                                }
+                                i += 1;
+                            }
+                            after.clear();
+                            if !state.is_empty() {
+                                logic(k, &state.iter().map(|(v, c)| (v, *c)).collect::<Vec<_>>(), &mut after);
+                            }
+                            let mut diff: Vec<((W, O), R)> = after.iter().cloned().chain(before.iter().map(|(x, r)| (x.clone(), -r))).collect();
+                            differential_dataflow::consolidation::consolidate(&mut diff);
+                            for (x, r) in diff {
+                                session.give(((k.clone(), x), t, r));
+                            }
+                            std::mem::swap(&mut before, &mut after);
+                        }
+                        bc.step_key(&bs);
+                    }
+                }
+                trace.advance_upper(&mut upper);
+                trace.set_logical_compaction(upper.borrow());
+                trace.set_physical_compaction(upper.borrow());
+            }
+        })
+        .as_collection()
+}
+
 /// Group recompute: per key, logic over each tag's view, emitted as differences. Returns the
 /// output and the refusal records (`(t, [construct])`, differences like the output's): a group
 /// whose logic refuses in view t yields no rows there and one live refusal.
 fn group<'s>(input: Arr<'s, T, Row>, logic: Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>>, sentinel: bool, name: &str) -> (C<'s, T>, C<'s, T>) {
     let at = name.to_owned();
-    let all = input
-        .reduce_abelian::<_, ValBuilder<Row, (W, Row), T, R>, ValSpine<Row, (W, Row), T, R>, _, _>(
-            &format!("{name}:group-out"),
-            move |k, vals: &[(&(W, Row), R)], out: &mut Vec<((W, Row), R)>| {
+    let f = move |k: &Row, vals: &[(&(W, Row), R)], out: &mut Vec<((W, Row), R)>| {
                 let mut tags_at: Vec<W> = Vec::new();
                 for ((w, _), _) in vals {
                     if tags_at.last() != Some(w) {
@@ -331,13 +565,17 @@ fn group<'s>(input: Arr<'s, T, Row>, logic: Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec
                     }
                 }
                 differential_dataflow::consolidation::consolidate(out);
-            },
-            |vec, key, upds| {
+    };
+    let all: C<'s, T> = if cut("total") {
+        reduce_total(input, name, f).map(|(_k, (w, r))| (w, r))
+    } else {
+        input
+            .reduce_abelian::<_, ValBuilder<Row, (W, Row), T, R>, ValSpine<Row, (W, Row), T, R>, _, _>(&format!("{name}:group-out"), f, |vec, key, upds| {
                 vec.clear();
                 vec.extend(upds.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
-            },
-        )
-        .as_collection(|_k, (w, r)| (*w, r.clone()));
+            })
+            .as_collection(|_k, (w, r)| (*w, r.clone()))
+    };
     split_refusals(all)
 }
 
@@ -630,6 +868,8 @@ struct Lower<'s> {
     press: FxHashMap<(NodeId, String), Arr<'s, T, ()>>,
     /// Refusal records raised by the plan's operators (tag, [construct]).
     refused: Vec<C<'s, T>>,
+    /// Per node, the columns its arrangements keep (`demand`).
+    cols: Rc<Vec<Cols>>,
 }
 
 /// The nodes of `g` that read the fixpoint variable `var`, directly or below: one pass over the
@@ -818,20 +1058,25 @@ impl<'s> Lower<'s> {
             Op::Join { l, r, lk, rk } => {
                 let la = self.arr(*l, lk);
                 let ra = self.arr(*r, rk);
-                la.join_core(ra, |_k, (w1, a), (w2, b)| {
-                    tags::product(*w1, *w2).map(|w| (w, Row::concat(a, b)))
+                let (cl, cr, wl, wr) = (self.cols[*l].clone(), self.cols[*r].clone(), g.widths[*l], g.widths[*r]);
+                la.join_core(ra, move |_k, (w1, a), (w2, b)| {
+                    tags::product(*w1, *w2).map(|w| (w, joined(a, &cl, wl, b, &cr, wr)))
                 })
             }
             Op::Semi { l, r, lk, rk, anti } => {
+                let (cl, wl) = (self.cols[*l].clone(), g.widths[*l]);
                 let left = self.node(*l);
                 let la = self.arr(*l, lk);
                 let pres = self.pres(*r, rk);
-                let hit = la.join_core(pres, |_k, (w1, a), (w2, ())| tags::product(*w1, *w2).map(|w| (w, a.clone())));
+                let c2 = cl.clone();
+                let hit = la.join_core(pres, move |_k, (w1, a), (w2, ())| tags::product(*w1, *w2).map(|w| (w, widen(a, &c2, wl))));
+                // The antijoin's left rows masked like the arranged ones, so that hits cancel.
+                let left = if cl.is_some() { left.map(move |(w, row)| (w, widen(&narrow(&row, &cl), &cl, wl))) } else { left };
                 if *anti { left.concat(hit.negate()) } else { hit }
             }
             Op::Distinct { input } => {
                 let keys = self.node(*input).map(|(w, row)| (row, (w, ())));
-                presence(keys, &format!("n{n}:distinct")).as_collection(|k, (w, ())| (*w, k.clone()))
+                presence_stream(keys, &format!("n{n}:distinct")).map(|(k, (w, ()))| (w, k))
             }
             Op::Concat { inputs } => {
                 let mut it = inputs.clone().into_iter();
@@ -890,7 +1135,7 @@ impl<'s> Lower<'s> {
         if let Some(a) = self.arrs.get(&k) {
             return a.clone();
         }
-        let a = keyed(self.node(n), key.clone(), &format!("n{n}:by{}", self.arrs.len()));
+        let a = keyed(self.node(n), key.clone(), self.cols[n].clone(), &format!("n{n}:by{}", self.arrs.len()));
         self.arrs.insert(k, a.clone());
         a
     }
@@ -988,6 +1233,7 @@ impl<'s> Lower<'s> {
         // The boundary relations' arrangements are the delta-mode ones built above, entered.
         let g2 = g.clone();
         let gname = self.name.clone();
+        let cols = self.cols.clone();
         let result = seeds.clone().iterate(|inner, rec| {
             let mut env: FxHashMap<NodeId, C<'_, IT>> = FxHashMap::default();
             for (b, c) in &bnd_cols {
@@ -995,7 +1241,7 @@ impl<'s> Lower<'s> {
             }
             let earrs = outer_arrs.iter().map(|(k, a)| (k.clone(), a.clone().enter(inner))).collect();
             let epress = outer_press.iter().map(|(k, a)| (k.clone(), a.clone().enter(inner))).collect();
-            let mut vl = IterLower { g: g2.clone(), gname: gname.clone(), rd: rd.clone(), rec: rec.clone(), env, earrs, epress, done: FxHashMap::default() };
+            let mut vl = IterLower { g: g2.clone(), gname: gname.clone(), rd: rd.clone(), rec: rec.clone(), env, earrs, epress, done: FxHashMap::default(), cols: cols.clone() };
             let mut out = seeds.clone().enter(inner);
             let fix_label = format!("{gname}:{}#fix{var}", g2.labels[step[0]]);
             for (ai, &s) in step.iter().enumerate() {
@@ -1036,6 +1282,7 @@ struct IterLower<'i> {
     earrs: FxHashMap<(NodeId, String), EArr<'i, Row>>,
     epress: FxHashMap<(NodeId, String), EArr<'i, ()>>,
     done: FxHashMap<NodeId, C<'i, IT>>,
+    cols: Rc<Vec<Cols>>,
 }
 
 impl<'i> IterLower<'i> {
@@ -1093,22 +1340,24 @@ impl<'i> IterLower<'i> {
             }
             Op::Join { l, r, lk, rk } => {
                 let (lv, rv) = (self.is_view(*l), self.is_view(*r));
+                let (cl, cr, wl, wr) = (self.cols[*l].clone(), self.cols[*r].clone(), g.widths[*l], g.widths[*r]);
                 // The bilinear expansion, as outside: a pair (t1, t2) yields product(t1, t2).
-                let pair = |_k: &Row, (w1, a): &(W, Row), (w2, b): &(W, Row)| tags::product(*w1, *w2).map(|w| (w, Row::concat(a, b)));
+                let (c1, c2) = (cl.clone(), cr.clone());
+                let pair = move |_k: &Row, (w1, a): &(W, Row), (w2, b): &(W, Row)| tags::product(*w1, *w2).map(|w| (w, joined(a, &c1, wl, b, &c2, wr)));
                 match (lv, rv) {
                     (true, true) => {
-                        let la = keyed(self.node(*l), lk.clone(), &format!("n{n}:iter-join-l"));
-                        let ra = keyed(self.node(*r), rk.clone(), &format!("n{n}:iter-join-r"));
+                        let la = keyed(self.node(*l), lk.clone(), cl, &format!("n{n}:iter-join-l"));
+                        let ra = keyed(self.node(*r), rk.clone(), cr, &format!("n{n}:iter-join-r"));
                         la.join_core(ra, pair)
                     }
                     (true, false) => {
-                        let la = keyed(self.node(*l), lk.clone(), &format!("n{n}:iter-join-l"));
+                        let la = keyed(self.node(*l), lk.clone(), cl, &format!("n{n}:iter-join-l"));
                         let ra = self.earrs[&(*r, format!("{rk:?}"))].clone();
                         la.join_core(ra, pair)
                     }
                     (false, true) => {
                         let la = self.earrs[&(*l, format!("{lk:?}"))].clone();
-                        let ra = keyed(self.node(*r), rk.clone(), &format!("n{n}:iter-join-r"));
+                        let ra = keyed(self.node(*r), rk.clone(), cr, &format!("n{n}:iter-join-r"));
                         la.join_core(ra, pair)
                     }
                     (false, false) => unreachable!("join of two non-recursive relations inside the recursion"),
@@ -1121,8 +1370,10 @@ impl<'i> IterLower<'i> {
                     refuse(&format!("{}: antijoin by a recursive relation inside the recursion (not stratified)", g.labels[n]));
                     return self.rec.clone().filter(|_| false);
                 }
+                let (cl, wl) = (self.cols[*l].clone(), g.widths[*l]);
                 let left = self.node(*l);
-                let hit_of = |_k: &Row, (w1, a): &(W, Row), (w2, ()): &(W, ())| tags::product(*w1, *w2).map(|w| (w, a.clone()));
+                let c2 = cl.clone();
+                let hit_of = move |_k: &Row, (w1, a): &(W, Row), (w2, ()): &(W, ())| tags::product(*w1, *w2).map(|w| (w, widen(a, &c2, wl)));
                 // The right side's count-based presence: built here over the recursive relation,
                 // or the delta-mode one shared with the operators outside, entered.
                 let hit = match (lv, rv) {
@@ -1133,11 +1384,11 @@ impl<'i> IterLower<'i> {
                             key_of(&row, &rk, &mut vr).map(|k| (k, (w, ())))
                         });
                         let pres = presence(keys, &format!("n{n}:iter-semi-r"));
-                        keyed(left.clone(), lk.clone(), &format!("n{n}:iter-semi-l")).join_core(pres, hit_of)
+                        keyed(left.clone(), lk.clone(), cl.clone(), &format!("n{n}:iter-semi-l")).join_core(pres, hit_of)
                     }
                     (true, false) => {
                         let pres = self.epress[&(*r, format!("{rk:?}"))].clone();
-                        keyed(left.clone(), lk.clone(), &format!("n{n}:iter-semi-l")).join_core(pres, hit_of)
+                        keyed(left.clone(), lk.clone(), cl.clone(), &format!("n{n}:iter-semi-l")).join_core(pres, hit_of)
                     }
                     (false, true) => {
                         let rk = rk.clone();
@@ -1150,6 +1401,7 @@ impl<'i> IterLower<'i> {
                     }
                     (false, false) => unreachable!("semijoin of two non-recursive relations inside the recursion"),
                 };
+                let left = if cl.is_some() { left.map(move |(w, row)| (w, widen(&narrow(&row, &cl), &cl, wl))) } else { left };
                 if *anti { left.concat(hit.negate()) } else { hit }
             }
             Op::Group { .. } | Op::Window { .. } | Op::DistinctPrefix { .. } => {
@@ -1193,7 +1445,10 @@ pub fn build(worker: &mut timely::worker::Worker, graphs: Vec<(String, Rc<Graph>
         for (name, g) in graphs {
             let n = g.nodes.len();
             let gi = outputs.len();
-            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), name: name.clone(), done: vec![None; n], track: track_on.then_some(gi * 100_000), arrs: FxHashMap::default(), press: FxHashMap::default(), refused: Vec::new() };
+            let cols = demand(&g);
+            let (narrowed, kept, width): (usize, usize, usize) = cols.iter().enumerate().filter_map(|(i, c)| c.as_ref().map(|c| (1, c.len(), g.widths[i]))).fold((0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2));
+            eprintln!("demand {name}: {narrowed} of {n} nodes narrowed, {kept} of {width} columns kept");
+            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), name: name.clone(), done: vec![None; n], track: track_on.then_some(gi * 100_000), arrs: FxHashMap::default(), press: FxHashMap::default(), refused: Vec::new(), cols: Rc::new(cols) };
             // A construct refused while lowering (inside a recursion: a non-stratified antijoin,
             // an aggregate over the recursive relation) leaves part of the plan empty: the plan's
             // findings are withheld everywhere by a base refusal record, never reported partial.
