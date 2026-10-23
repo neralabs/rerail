@@ -3937,7 +3937,7 @@ The committed evidence supplements the driver's output with these work-count com
 The next transition action is the local utility memo-cost fixture documented in the transition plan.
 The broader work-budget contract remains open until memo replay and two-valued candidate pruning are admitted.
 
-### 2026-10-23 — Local utility memo costs in typed SQL (in progress)
+### 2026-10-23 — Local utility memo costs in typed SQL
 
 This phase starts from `2612d778` and addresses the next transition fixture.
 A repeated value utility must replay its original work cost, even after the value decoder caches its answer.
