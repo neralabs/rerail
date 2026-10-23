@@ -8,6 +8,13 @@
 //! 2. lost union arm: `subst.rs::nodes` drops the last arm of its source union.
 //! 3. wrong interval bound: `ast.rs::has_end_memo` starts the descendant range at `id + 2`
 //!    (the first descendant is skipped).
+//!
+//! Outside the rewrite kinds:
+//!
+//! 22. SQL derived-table scope: `sql/engine.rs::Planner::source_schema` plans a FROM subquery with
+//!     the enclosing select's partial scope visible, so its outer references are one level too
+//!     deep (read NULL) and FROM siblings resolve. Killed by
+//!     `sql::engine::tests::derived_table_correlation_follows_sqlite_scoping`.
 
 #[cfg(feature = "mutants")]
 pub fn on(n: u8) -> bool {
