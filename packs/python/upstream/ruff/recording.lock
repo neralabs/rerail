@@ -20,10 +20,10 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "54c3afce9ed5d8d530790d80d274785c947ef232854807d526a3c4b724a520ad",
-      "size": 3598170,
+      "sha256": "05b6f6952efb6c32312790f5adede4dbfaf9cdb6f6d190cdb35d2b0d86367b0a",
+      "size": 3598133,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "python-ruff-recording-54c3afce9ed5d8d530790d80d274785c947ef232854807d526a3c4b724a520ad.json.gz"
+      "asset": "python-ruff-recording-05b6f6952efb6c32312790f5adede4dbfaf9cdb6f6d190cdb35d2b0d86367b0a.json.gz"
     },
     "corpus.json": {
       "sha256": "ecfbc1a264ce82a1b530b8841d876f4bde9a67a455b9b2ecf678f67aaf6e6650",
