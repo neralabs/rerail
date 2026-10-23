@@ -58,16 +58,17 @@ pub enum RegexSource {
 pub struct RegexClause {
     pub source: RegexSource,
     pub rx: Regex,
-    pub include: Vec<Regex>,
-    pub exclude: Vec<Regex>,
-    pub lines: Option<bool>,
+    /// Match-text filters, the content gate and `lines` (`ast/lines.rs`).
+    pub options: ast::lines::Options,
     pub paths: Option<Scope>,
 }
 
 pub enum Kind {
     ForbidAst { input: usize },
     ForbidRegex(RegexClause),
-    Budget { input: usize, lte: u64 },
+    /// `budget` (native query/crossfile.rs:436-509): rows grouped by the `group` columns of the
+    /// input's table (none: one group), a group of more than `lte` rows reported at its first row.
+    Budget { input: usize, lte: u64, group: Vec<usize> },
     Relational(Box<RelPlan>),
 }
 
@@ -145,6 +146,7 @@ fn node_regexes(rule: &ast::Rule, utils: &[ast::Rule], out: &mut Vec<Regex>, see
 impl Rule {
     pub fn compile(document: &Json, config: &Map<String, Json>, scope_override: Option<&Json>, grammar: &rerail_engine::code_rule_dsl::tape::Grammar) -> Result<Rule, String> {
         let doc = policy::resolve(document, config)?;
+        let options = policy::option_values(document, config)?;
         let id = doc["id"].as_str().unwrap_or("").to_owned();
         let check = id.trim_start_matches("data-layer-").replace('-', "_");
         let scope = Scope::new(scope_override.or(doc.get("scope")))?;
@@ -161,7 +163,7 @@ impl Rule {
         let mut keys: BTreeMap<String, usize> = BTreeMap::new();
         let mut clauses = Vec::new();
         // One compiled utility table for every input query without local utilities.
-        let mut util_table: Option<(Rc<[ast::Rule]>, Rc<[bool]>)> = None;
+        let mut util_table: Option<ast::UtilTable> = None;
         let mut add_input = |ev: &Json, names: &mut Names, inputs: &mut Vec<Input>| -> Result<(usize, Vec<String>), String> {
             let key = serde_json::to_string(ev).unwrap();
             let project = ev.get("project").and_then(Json::as_object).cloned().unwrap_or_default();
@@ -174,6 +176,7 @@ impl Rule {
             let ast_json = ev.get("query").and_then(|q| q.get("ast")).ok_or("evidence query must be ast")?;
             let mut comp = Compiler::new(names, grammar, &utils);
             comp.shared = util_table.clone();
+            comp.options = Some(options.clone());
             let query = comp.query(ast_json)?;
             if util_table.is_none() {
                 util_table = comp.shared.take();
@@ -219,21 +222,7 @@ impl Rule {
                     let (i, _) = add_input(&ev, &mut names, &mut inputs).map_err(|e| format!("{cid}: {e}"))?;
                     Kind::ForbidAst { input: i }
                 } else if let Some(r) = f.get("regex") {
-                    let rx_list = |k: &str| -> Result<Vec<Regex>, String> {
-                        r.get(k).and_then(Json::as_array).into_iter().flatten().map(|x| crate::rx::get(x.as_str().unwrap_or("")).map_err(|e| e.to_string())).collect()
-                    };
-                    if r.get("content").is_some() {
-                        return Err(format!("{cid}: regex content gate unsupported"));
-                    }
-                    let lines = match r.get("lines") {
-                        None => None,
-                        Some(l) => {
-                            if l.get("terminators").and_then(Json::as_str).unwrap_or("python") != "python" {
-                                return Err(format!("{cid}: terminators"));
-                            }
-                            Some(l.get("first").and_then(Json::as_bool).unwrap_or(false))
-                        }
-                    };
+                    let options = ast::lines::options(r).map_err(|e| format!("{cid}: {e}"))?;
                     Kind::ForbidRegex(RegexClause {
                         source: match r["source"].as_str() {
                             Some("file.content") => RegexSource::Content,
@@ -241,9 +230,7 @@ impl Rule {
                             s => return Err(format!("{cid}: regex source {s:?}")),
                         },
                         rx: crate::rx::get(r["pattern"].as_str().ok_or("pattern")?).map_err(|e| e.to_string())?,
-                        include: rx_list("include")?,
-                        exclude: rx_list("exclude")?,
-                        lines,
+                        options,
                         paths: r.get("paths").map(|p| Scope::new(Some(p))).transpose()?,
                     })
                 } else {
@@ -251,16 +238,24 @@ impl Rule {
                 }
             } else if let Some(b) = c.get("budget") {
                 let ev = b["query"]["evidence"].clone();
-                let gb: Vec<&str> = b.get("group_by").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
-                if gb != ["row.path", "row.line"] || b["count"].get("distinct").is_some() {
-                    return Err(format!("{cid}: budget shape unsupported"));
+                if b["count"].get("distinct").is_some() {
+                    return Err(format!("{cid}: budget count.distinct unsupported"));
                 }
-                let proj = ev.get("project").cloned().unwrap_or_default();
-                if proj.get("path").and_then(Json::as_str) != Some("file.path") || !proj.get("line").and_then(Json::as_str).is_some_and(|l| l.ends_with(".startLine")) {
-                    return Err(format!("{cid}: budget projection unsupported"));
+                if ev.get("where").is_some() || ev.get("closure").is_some() {
+                    return Err(format!("{cid}: budget evidence where/closure unsupported"));
                 }
-                let (i, _) = add_input(&ev, &mut names, &mut inputs).map_err(|e| format!("{cid}: {e}"))?;
-                Kind::Budget { input: i, lte: b["count"]["lte"].as_u64().ok_or("lte")? }
+                let alias = ev.get("as").and_then(Json::as_str).unwrap_or("row").to_owned();
+                let gb: Vec<String> = b.get("group_by").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_str).map(str::to_owned).collect()).unwrap_or_default();
+                let (i, fields) = add_input(&ev, &mut names, &mut inputs).map_err(|e| format!("{cid}: {e}"))?;
+                // Table columns: __path, __start, __end, then the projected fields in name order.
+                let group = gb
+                    .iter()
+                    .map(|g| {
+                        let field = g.strip_prefix(alias.as_str()).and_then(|r| r.strip_prefix('.')).ok_or_else(|| format!("{cid}: group_by {g} is not a field of {alias}"))?;
+                        fields.iter().position(|f| f == field).map(|p| p + 3).ok_or_else(|| format!("{cid}: group_by {g} is not projected"))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Kind::Budget { input: i, lte: b["count"]["lte"].as_u64().ok_or("lte")?, group }
             } else if let Some(r) = c.get("relational") {
                 let mut ins = Vec::new();
                 let mut named: Vec<(&String, &Json)> = r["inputs"].as_object().ok_or("inputs")?.iter().collect();
@@ -452,19 +447,7 @@ impl Input {
 
     fn query_binds(&self, name: Name) -> bool {
         // A metavariable `each` (the rule binds it) vs a regex group `each`.
-        fn walk(r: &ast::Rule, utils: &[ast::Rule], name: Name, seen: &mut std::collections::BTreeSet<usize>) -> bool {
-            match r {
-                ast::Rule::MetaVar { name: Some(n), .. } | ast::Rule::Capture(n) => *n == name,
-                ast::Rule::All(v) | ast::Rule::Any(v) => v.iter().any(|x| walk(x, utils, name, seen)),
-                ast::Rule::Not(x) => walk(x, utils, name, seen),
-                ast::Rule::Has { rule, .. } | ast::Rule::Inside { rule, .. } | ast::Rule::Field { rule, .. } => walk(rule, utils, name, seen),
-                ast::Rule::NthChild { of_rule: Some(x), .. } => walk(x, utils, name, seen),
-                ast::Rule::Parse(p) => walk(&p.rule, utils, name, seen),
-                ast::Rule::Util(i) => seen.insert(*i) && walk(&utils[*i], utils, name, seen),
-                _ => false,
-            }
-        }
-        walk(&self.query.rule, &self.query.utils, name, &mut Default::default())
+        ast::binds_name(&self.query, name)
     }
 
     fn query_name(&self, n: &str) -> Name {
@@ -792,7 +775,10 @@ impl Output {
     }
 }
 
-pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut dyn crate::spill::RepoSink, budget: &mut BTreeMap<(usize, usize), Vec<(String, u32)>>) {
+/// Budget rows per (rule, clause): (path, group key, the row's witness line), in file order.
+pub type BudgetRows = BTreeMap<(usize, usize), Vec<(String, String, u32)>>;
+
+pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut dyn crate::spill::RepoSink, budget: &mut BudgetRows) {
     // The file's text, shared by every input column that reads node text.
     let source: Rc<str> = Rc::from(ctx.source);
     for (ri, rule) in rules.iter().enumerate() {
@@ -873,16 +859,25 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         }, &clause.viol.anchor, &rule.names);
                     }
                 }
-                Kind::Budget { input, .. } => {
+                Kind::Budget { input, group, .. } => {
                     if let Some(rows) = get(*input, out) {
                         if let Some(u) = &rows.unsupported {
                             fail(out, format!("unsupported: {u}"));
                         }
                         let acc = budget.entry((ri, ci)).or_default();
-                        // Groups by (path, start line of the root); the first row's witness reports.
+                        // The group key: the `group_by` values, each typed (as native's JSON text
+                        // of each value tells types apart).
                         for k in 0..rows.table.len() {
-                            let wline = line_of(ctx.f, rows.witnesses[k].0);
-                            acc.push((ctx.path.to_owned(), wline));
+                            let mut key = String::new();
+                            for &c in group {
+                                match rows.table.value(k, c) {
+                                    V::Null => key.push_str("n\u{1f}"),
+                                    V::Int(i) => key.push_str(&format!("i{i}\u{1f}")),
+                                    V::Real(r) => key.push_str(&format!("r{r:?}\u{1f}")),
+                                    V::Text(t) => key.push_str(&format!("t{}:{t}\u{1f}", t.len())),
+                                }
+                            }
+                            acc.push((ctx.path.to_owned(), key, line_of(ctx.f, rows.witnesses[k].0)));
                         }
                     }
                 }
@@ -972,26 +967,29 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
 
 /// Repository partitions and budgets, after every file. `load` returns one repository clause's
 /// per-file rows (from the spill files or memory); clauses are loaded and run one at a time.
-pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate::spill::FileRows>, budget: BTreeMap<(usize, usize), Vec<(String, u32)>>, out: &mut Output) {
+pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate::spill::FileRows>, budget: BudgetRows, out: &mut Output) {
     for ((ri, ci), mut rows) in budget {
         let rule = &rules[ri];
         let clause = &rule.clauses[ci];
         let Kind::Budget { lte, .. } = &clause.kind else { continue };
+        // Files in path order, each file's rows in preorder (a stable sort); groups in first-row
+        // order, each reported at its first row.
         rows.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut counts: Vec<((String, u32), u64)> = Vec::new();
-        let mut index: std::collections::HashMap<(String, u32), usize> = Default::default();
-        for r in rows {
-            match index.get(&r) {
-                Some(&i) => counts[i].1 += 1,
+        let mut groups: Vec<(usize, u64)> = Vec::new();
+        let mut index: std::collections::HashMap<&str, usize> = Default::default();
+        for (j, r) in rows.iter().enumerate() {
+            match index.get(r.1.as_str()) {
+                Some(&g) => groups[g].1 += 1,
                 None => {
-                    index.insert(r.clone(), counts.len());
-                    counts.push((r, 1));
+                    index.insert(&r.1, groups.len());
+                    groups.push((j, 1));
                 }
             }
         }
-        for ((p, line), n) in counts {
+        for (first, n) in groups {
             if n > *lte {
-                out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p, line: line + 1, code: clause.viol.code.clone() });
+                let (p, _, line) = &rows[first];
+                out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p.clone(), line: line + 1, code: clause.viol.code.clone() });
             }
         }
     }
@@ -1034,72 +1032,29 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
     }
 }
 
+/// A regex clause's findings in one file (native `eval/query.rs:721-802`): the matches of
+/// `ast/lines.rs::matches`; under `lines` each reports the scan's own line, else the line of its
+/// start (or of the anchoring capture's start) in the file's line table; `file.path` matches
+/// report line 0.
 fn regex_findings(rc: &RegexClause, ctx: &FileCtx<'_>, emit: &mut dyn FnMut(u32), anchor: &Anchor, names: &Names) {
-    let keep = |t: &str| rc.include.iter().all(|r| r.is_match(t)) && !rc.exclude.iter().any(|r| r.is_match(t));
-    match rc.source {
-        RegexSource::Path => {
-            for m in rc.rx.find_iter(ctx.path) {
-                if keep(m.as_str()) {
-                    emit(0);
-                }
-            }
-        }
-        RegexSource::Content => {
-            let text = ctx.source;
-            match rc.lines {
-                None => {
-                    for caps in rc.rx.captures_iter(text) {
-                        let m = caps.get(0).unwrap();
-                        if !keep(m.as_str()) {
-                            continue;
-                        }
-                        let start = match anchor {
-                            Anchor::Capture(n) => {
-                                let name = &names.names[*n as usize];
-                                caps.name(name).map_or(m.start(), |g| g.start())
-                            }
-                            _ => m.start(),
-                        };
-                        emit(line_of(ctx.f, start as u32));
+    let haystack = match rc.source {
+        RegexSource::Path => ctx.path,
+        RegexSource::Content => ctx.source,
+    };
+    ast::lines::matches(&rc.rx, haystack, &rc.options, &mut |m| {
+        emit(match (m.line, &rc.source) {
+            (Some(line), _) => line as u32,
+            (None, RegexSource::Path) => 0,
+            (None, RegexSource::Content) => {
+                let start = match anchor {
+                    Anchor::Capture(n) => {
+                        let name = &names.names[*n as usize];
+                        rc.rx.captures_at(haystack, m.range.start).and_then(|caps| caps.name(name).map(|g| g.start())).unwrap_or(m.range.start)
                     }
-                }
-                Some(first) => {
-                    for (li, line) in python_splitlines(text).into_iter().enumerate() {
-                        for m in rc.rx.find_iter(line) {
-                            if keep(m.as_str()) {
-                                emit(li as u32);
-                                if first {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
+                    _ => m.range.start,
+                };
+                line_of(ctx.f, start as u32)
             }
-        }
-    }
-}
-
-/// Python `str.splitlines()` boundaries: lines without their terminators; a final empty line
-/// after the last terminator is not a line.
-fn python_splitlines(text: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut chars = text.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        let term = matches!(c, '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}');
-        if term {
-            out.push(&text[start..i]);
-            let mut end = i + c.len_utf8();
-            if c == '\r' && chars.peek().is_some_and(|(_, n)| *n == '\n') {
-                chars.next();
-                end += 1;
-            }
-            start = end;
-        }
-    }
-    if start < text.len() {
-        out.push(&text[start..]);
-    }
-    out
+        })
+    });
 }

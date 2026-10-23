@@ -27,7 +27,7 @@ struct FileStat {
 
 struct Worker {
     out: eval::Output,
-    budget: BTreeMap<(usize, usize), Vec<(String, u32)>>,
+    budget: eval::BudgetRows,
     spill_bytes: u64,
     files: Vec<FileStat>,
     compile_ns: u64,
@@ -179,7 +179,7 @@ pub fn repo(args: &[String]) {
     let t_merge = Instant::now();
     let rules = compile_batch6(&policies);
     let mut out = eval::Output::default();
-    let mut budget: BTreeMap<(usize, usize), Vec<(String, u32)>> = BTreeMap::new();
+    let mut budget: eval::BudgetRows = BTreeMap::new();
     let mut files = Vec::new();
     let mut compile_ns = Vec::new();
     let mut spill_bytes = 0u64;

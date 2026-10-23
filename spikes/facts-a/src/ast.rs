@@ -1,14 +1,21 @@
-//! The AST query language of rerail's DSL (the subset the batch-6 policies use), evaluated over
+//! The AST query language of rerail's DSL (the subset the data-layer policies use), evaluated over
 //! per-file facts. Semantics mirror the native matcher (ast-grep-config 0.45.3 plus rerail's
 //! extensions): every node is a candidate root in preorder; a root yields at most one match, the
 //! first-success binding with no backtracking; relations bind from the first related node that
 //! matches; verdicts are three-valued in a clause that reads values.
+mod arguments;
+mod layout;
+mod parse_ext;
+mod pattern;
+pub mod lines;
+
 use crate::facts::{self, Facts, NONE};
 use crate::pyvalue::{self, PyValue};
 use regex::Regex;
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub type Name = u16;
 
@@ -33,13 +40,32 @@ pub enum Rule {
     Literal { kind: u32, text: String },
     Has { rule: Box<Rule>, stop: Stop },
     Inside { rule: Box<Rule>, stop: Stop },
+    /// `precedes`: a later sibling (native `StopBy::find_sibling`, forward).
+    Precedes { rule: Box<Rule>, stop: Stop },
+    /// `follows`: an earlier sibling (native `StopBy::find_sibling`, backward).
+    Follows { rule: Box<Rule>, stop: Stop },
     Field { inside: bool, field: u16, rule: Box<Rule>, stop: Stop },
     Util(usize),
+    /// `matches` with parameters (native `UtilCall`): the utility runs in a frame of its own;
+    /// `args` are (parameter, caller's capture) in the utility's parameter order.
+    Call { util: usize, args: Vec<(Name, Name)> },
     FilePath { regex: Option<Regex>, not_regex: Option<Regex> },
     NthChild { step: i32, offset: i32, of_rule: Option<Box<Rule>>, reverse: bool },
     Value(ValueTest),
-    Compare { left: Name, right: Name, op: CompareOp, text: CompareText },
-    Count { relation: Box<Rule>, min: usize, max: Option<usize> },
+    /// `transform`: a side names a variable of the query's `transform` (native
+    /// `Comparison::transform`).
+    Compare { left: Name, right: Name, op: CompareOp, text: CompareText, transform: bool },
+    /// `relation` is `Has`, `Inside`, `Precedes` or `Follows`; `binding` is `as` with `offset`.
+    Count { relation: Box<Rule>, min: usize, max: Option<usize>, binding: Option<(Name, i64)> },
+    /// `layout` (ast/layout.rs).
+    Layout(Box<layout::Layout>),
+    /// A structural pattern (ast/pattern.rs); metavariables and single names compile to
+    /// `MetaVar`/`Literal` above.
+    Pattern(Box<pattern::Pattern>),
+    /// `arguments` (ast/arguments.rs): binds call arguments to signature slots.
+    Arguments(Box<arguments::Arguments>),
+    /// `host` inside a text grammar's tree rule (ast/parse_ext.rs); binds nothing.
+    Host(Box<parse_ext::Host>),
     Parse(Box<ParseTest>),
     /// `capture: NAME` inside a parse.
     Capture(Name),
@@ -55,10 +81,15 @@ pub enum CompareOp {
 pub enum CompareText {
     Source,
     Node,
+    /// Each capture's index among the elements of the list holding it (native
+    /// `CompareText::Index`, compare.rs:287-337).
+    Index,
 }
 
 #[derive(Clone)]
 pub struct ValueTest {
+    /// `type`: Python type names; only `str` and `bytes` (the value decoder tells only those).
+    pub types: Vec<String>,
     pub eq: Option<String>,
     pub regex: Option<Regex>,
 }
@@ -67,10 +98,15 @@ pub struct ValueTest {
 pub struct ParseTest {
     pub grammar: ParseGrammar,
     pub rule: Rule,
+    /// pythonFString's `interpolation` marker (default `{}`).
+    pub marker: String,
+    /// The tree rule holds a `host` (parse_ext.rs `compile_tree_rule`).
+    pub hosted: bool,
 }
 #[derive(Clone, Copy, PartialEq)]
 pub enum ParseGrammar {
     PythonFString,
+    IdentifierWords,
     Annotation,
 }
 
@@ -82,9 +118,13 @@ pub enum Bound {
     Parsed(u32),
 }
 
+/// Bindings: captures, `$$$` lists, and text variables (ast-grep's transformed variables: a
+/// count's `as`).
 #[derive(Clone, Default, Debug)]
 pub struct Env {
     pub vars: Vec<(Name, Bound)>,
+    pub multi: Vec<(Name, Vec<Bound>)>,
+    pub texts: Vec<(Name, String)>,
 }
 impl Env {
     pub fn get(&self, name: Name) -> Option<Bound> {
@@ -97,15 +137,134 @@ impl Env {
             self.vars.push((name, b));
         }
     }
+    pub fn text(&self, name: Name) -> Option<&str> {
+        self.texts.iter().find(|(n, _)| *n == name).map(|(_, t)| t.as_str())
+    }
+    fn set_text(&mut self, name: Name, text: String) {
+        if let Some(slot) = self.texts.iter_mut().find(|(n, _)| *n == name) {
+            slot.1 = text;
+        } else {
+            self.texts.push((name, text));
+        }
+    }
+}
+
+/// One `transform` variable: `replace` over its source's text (native `Trans::Replace`), or the
+/// source's decoded value (`value: true`, only in the `DECODED` shape `decoded` lists).
+pub struct TransformStep {
+    pub name: Name,
+    pub source: Name,
+    pub default: Option<String>,
+    pub value: bool,
+    pub regex: Regex,
+    pub by: String,
+}
+
+/// The query's transforms, ordered so each source is computed before it is read.
+#[derive(Default)]
+pub struct Transform {
+    pub steps: Vec<TransformStep>,
+}
+
+impl Transform {
+    fn contains(&self, name: Name) -> bool {
+        self.steps.iter().any(|s| s.name == name)
+    }
+    /// Indices of the steps `name` is computed from, itself included (native `Transform::chain`).
+    fn chain(&self, name: Name) -> BTreeSet<usize> {
+        let mut chain = BTreeSet::new();
+        let mut next = Some(name);
+        while let Some(key) = next.take() {
+            let Some(i) = self.steps.iter().position(|s| s.name == key) else { break };
+            if chain.insert(i) {
+                next = Some(self.steps[i].source);
+            }
+        }
+        chain
+    }
+    /// The captures `name` is computed from (native `Transform::roots`).
+    fn roots(&self, name: Name) -> BTreeSet<Name> {
+        self.chain(name)
+            .into_iter()
+            .map(|i| self.steps[i].source)
+            .filter(|s| !self.contains(*s))
+            .collect()
+    }
+}
+
+/// `regex.replace_all(text, by)` with `$1`/`${name}`/`$$` expansion, as native `replace_bounded`.
+fn replace_all(text: &str, regex: &Regex, by: &str) -> String {
+    let mut output = String::new();
+    let mut end = 0;
+    for captures in regex.captures_iter(text) {
+        let matched = captures.get(0).expect("whole match");
+        output.push_str(&text[end..matched.start()]);
+        let mut cursor = 0;
+        while let Some(dollar) = by[cursor..].find('$') {
+            let dollar = cursor + dollar;
+            output.push_str(&by[cursor..dollar]);
+            let reference = dollar + 1;
+            let Some(first) = by[reference..].chars().next() else {
+                output.push('$');
+                cursor = reference;
+                break;
+            };
+            if first == '$' {
+                output.push('$');
+                cursor = reference + 1;
+                continue;
+            }
+            let (name, next) = if first == '{' {
+                let body = reference + 1;
+                let Some(close) = by[body..].find('}') else {
+                    output.push('$');
+                    cursor = reference;
+                    continue;
+                };
+                (&by[body..body + close], body + close + 1)
+            } else if first.is_ascii_alphanumeric() || first == '_' {
+                let next = by[reference..]
+                    .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                    .map_or(by.len(), |o| reference + o);
+                (&by[reference..next], next)
+            } else {
+                output.push('$');
+                cursor = reference;
+                continue;
+            };
+            let capture = name.parse::<usize>().ok().and_then(|i| captures.get(i)).or_else(|| captures.name(name));
+            if let Some(c) = capture {
+                output.push_str(c.as_str());
+            }
+            cursor = next;
+        }
+        if cursor < by.len() {
+            output.push_str(&by[cursor..]);
+        }
+        end = matched.end();
+    }
+    output.push_str(&text[end..]);
+    output
+}
+
+/// A policy set's compiled utility table: rules, per utility whether it mentions no capture
+/// (its verdict is a function of the node), and the capture summaries.
+#[derive(Clone)]
+pub struct UtilTable {
+    pub utils: Arc<[Rule]>,
+    pub capture_free: Arc<[bool]>,
+    pub summary: Arc<Summary>,
 }
 
 /// A compiled `ast` query.
 pub struct Query {
     pub rule: Rule,
     /// The utility table, shared by the policy set's queries without local utilities.
-    pub utils: Rc<[Rule]>,
+    pub utils: Arc<[Rule]>,
     /// Per utility: it mentions no capture (its verdict is a function of the node).
-    pub util_capture_free: Rc<[bool]>,
+    pub util_capture_free: Arc<[bool]>,
+    pub summary: Arc<Summary>,
+    pub transform: Arc<Transform>,
     pub syntax: SyntaxMode,
     pub three_valued: bool,
     /// `transform: { NAME: { replace: { source: $STRING, value: true, replace: "\b\B", by: "" } } }`
@@ -147,10 +306,18 @@ pub struct Compiler<'a> {
     pub grammar: &'a rerail_engine::code_rule_dsl::tape::Grammar,
     util_ids: Vec<String>,
     util_json: Vec<Json>,
-    /// The policy set's compiled utility table and capture-freedom, shared by every query
-    /// without local utilities (set by the first such query; callers carry it across
-    /// compilers of one policy set).
-    pub shared: Option<(Rc<[Rule]>, Rc<[bool]>)>,
+    /// Per utility: its parameters (`{ params, rule }`), empty for a plain utility.
+    util_params: Vec<Vec<String>>,
+    /// The policy set's compiled utility table, shared by every query without local utilities
+    /// or transforms (set by the first such query; callers carry it across compilers of one
+    /// policy set).
+    pub shared: Option<UtilTable>,
+    /// What capture ordering reads of the utilities while compiling: none yet (native's unfilled
+    /// table), a draft, or the final table.
+    summary: Arc<Summary>,
+    transform: Arc<Transform>,
+    /// The call's option values (`policy::option_values`), for `ast.when`.
+    pub options: Option<BTreeMap<String, Json>>,
 }
 
 fn obj<'j>(v: &'j Json, at: &str) -> Result<&'j serde_json::Map<String, Json>, String> {
@@ -159,7 +326,8 @@ fn obj<'j>(v: &'j Json, at: &str) -> Result<&'j serde_json::Map<String, Json>, S
 
 const RULE_KEYS: &[&str] = &[
     "pattern", "kind", "regex", "capture", "parse", "nthChild", "filePath", "all", "any", "not",
-    "matches", "inside", "has", "count", "compare", "value", "stopBy", "field",
+    "matches", "inside", "has", "precedes", "follows", "count", "compare", "layout", "value",
+    "stopBy", "field", "arguments", "host",
 ];
 
 impl<'a> Compiler<'a> {
@@ -173,14 +341,18 @@ impl<'a> Compiler<'a> {
             grammar,
             util_ids: utils.keys().cloned().collect(),
             util_json: utils.values().cloned().collect(),
+            util_params: Vec::new(),
             shared: None,
+            summary: Arc::default(),
+            transform: Arc::default(),
+            options: None,
         }
     }
 
     pub fn query(&mut self, ast: &Json) -> Result<Query, String> {
         let ast = obj(ast, "ast")?;
         for k in ast.keys() {
-            if !["language", "syntax", "rule", "utils", "transform"].contains(&k.as_str()) {
+            if !["language", "syntax", "rule", "utils", "transform", "file", "when"].contains(&k.as_str()) {
                 return Err(format!("unsupported ast key {k}"));
             }
         }
@@ -196,62 +368,162 @@ impl<'a> Compiler<'a> {
                 self.util_json.push(v.clone());
             }
         }
+        // A utility is a rule, or `{ params, rule }` (native compile/utils.rs:54-110).
+        self.util_params = Vec::with_capacity(self.util_json.len());
+        for (i, j) in self.util_json.iter().enumerate() {
+            let params = match j.as_object() {
+                Some(o) if o.contains_key("params") => {
+                    let at = format!("utils/{}", self.util_ids[i]);
+                    if o.keys().any(|k| k != "params" && k != "rule") {
+                        return Err(format!("{at}: a parameterised utility holds params and rule only"));
+                    }
+                    let names = o["params"].as_array().filter(|a| !a.is_empty()).ok_or_else(|| format!("{at}/params must be a non-empty array"))?;
+                    let mut params: Vec<String> = Vec::new();
+                    for p in names {
+                        let p = p.as_str().filter(|p| valid_meta(p)).ok_or_else(|| format!("{at}/params: capture names"))?;
+                        if params.iter().any(|q| q == p) {
+                            return Err(format!("{at}/params: `{p}` listed twice"));
+                        }
+                        params.push(p.to_owned());
+                    }
+                    params
+                }
+                _ => Vec::new(),
+            };
+            self.util_params.push(params);
+        }
         let syntax = match ast.get("syntax").and_then(Json::as_str) {
             Some("valid") => SyntaxMode::Valid,
             Some("invalid") => SyntaxMode::Invalid,
             None => SyntaxMode::Unspecified,
             Some(o) => return Err(format!("syntax {o}")),
         };
-        let rule = self.rule(ast.get("rule").ok_or("ast.rule missing")?, "rule")?;
+        let (transform, decoded) = self.transform(ast.get("transform"))?;
+        let transform = Arc::new(transform);
+        self.transform = transform.clone();
         // Utilities, compiled in id order (indices are stable). Without query-local utilities
-        // every query of a policy set has the same table, compiled once and shared (`shared`).
-        let local = ast.get("utils").and_then(Json::as_object).is_some_and(|o| !o.is_empty());
-        let (utils, util_capture_free) = match (&self.shared, local) {
+        // or transforms every query of a policy set has the same table, compiled once and
+        // shared (`shared`). As native (compile/mod.rs:1107-1126), utilities compile twice: first
+        // with no utility readable by the capture ordering, then against that draft. (Native
+        // recompiles only when the first pass read an unfilled utility; a pass that read none
+        // orders alike against any table, so always recompiling is the same.)
+        let local = ast.get("utils").and_then(Json::as_object).is_some_and(|o| !o.is_empty()) || !transform.steps.is_empty();
+        let table = match (&self.shared, local) {
             (Some(s), false) => s.clone(),
             _ => {
-                let mut utils = Vec::new();
-                for i in 0..self.util_ids.len() {
-                    let j = self.util_json[i].clone();
-                    utils.push(self.rule(&j, &format!("utils/{}", self.util_ids[i]))?);
-                }
+                self.summary = Arc::new(Summary::of(&[], transform.clone()));
+                let draft = self.compile_utils()?;
+                self.summary = Arc::new(Summary::of(&draft, transform.clone()));
+                let utils = self.compile_utils()?;
+                let summary = Arc::new(Summary::of(&utils, transform.clone()));
                 // Verdicts of capture-free utilities are memoised per node (`Eval::util`).
-                let free: Vec<bool> = (0..utils.len())
-                    .map(|i| {
-                        let mut out = BTreeSet::new();
-                        mentions(&utils[i], &utils, &mut BTreeSet::new(), &mut out);
-                        out.is_empty()
-                    })
-                    .collect();
-                let s: (Rc<[Rule]>, Rc<[bool]>) = (utils.into(), free.into());
+                let free: Vec<bool> = utils.iter().map(|u| summary.mentions(u).is_empty()).collect();
+                let t = UtilTable { utils: utils.into(), capture_free: free.into(), summary };
                 if !local {
-                    self.shared = Some(s.clone());
+                    self.shared = Some(t.clone());
                 }
-                s
+                t
             }
         };
-        let mut decoded = Vec::new();
-        if let Some(t) = ast.get("transform") {
-            for (var, spec) in obj(t, "transform")? {
-                let rep = spec
-                    .get("replace")
-                    .ok_or_else(|| format!("transform {var}: only replace"))?;
-                let src = rep.get("source").and_then(Json::as_str).unwrap_or("");
-                if rep.get("value") != Some(&Json::Bool(true))
-                    || rep.get("replace").and_then(Json::as_str) != Some("\\b\\B")
-                    || rep.get("by").and_then(Json::as_str) != Some("")
-                    || !src.starts_with('$')
-                    || spec.as_object().map(|o| o.len()) != Some(1)
-                {
-                    return Err(format!("transform {var}: unsupported shape"));
-                }
-                let target = self.names.id(var);
-                let source = self.names.id(&src[1..]);
-                decoded.push((target, source));
+        self.summary = table.summary.clone();
+        // `file: { path }` with `syntax` set: the rule `all: [{ filePath }, rule]` (the
+        // file-path-gate rewrite, docs/facts/REWRITES.md; rerail_facts `file_path_gate`).
+        let mut rule_json = ast.get("rule").ok_or("ast.rule missing")?.clone();
+        if let Some(file) = ast.get("file") {
+            let fo = obj(file, "ast.file")?;
+            if fo.len() != 1 || !fo.contains_key("path") {
+                return Err("ast.file: only `path` (module and package conditions read other files' facts)".into());
             }
+            if !ast.contains_key("syntax") {
+                return Err("ast.file without `syntax` (natively a gated-out file reports no partial-source failure)".into());
+            }
+            rule_json = serde_json::json!({ "all": [{ "filePath": fo["path"] }, rule_json] });
         }
-        let three_valued = reads_values(&rule, &utils, &mut BTreeSet::new());
-        let root_kinds = root_kinds(&rule, &utils, &mut BTreeSet::new());
-        Ok(Query { rule, utils, util_capture_free, syntax, three_valued, decoded, root_kinds })
+        // `when` (native `compile_python_when`): a query whose condition is false reads no file.
+        let applies = match ast.get("when") {
+            None => true,
+            Some(w) => {
+                let options = self.options.as_ref().ok_or("ast.when: the call's options are not known here")?;
+                rerail_facts::front::rule::when_holds(w, options)?
+            }
+        };
+        let rule = self.rule(&rule_json, "rule")?;
+        let rule = if applies { rule } else { Rule::Never };
+        let three_valued = reads_values(&rule, &table.utils, &mut BTreeSet::new());
+        let root_kinds = if applies { root_kinds(&rule, &table.utils, &mut BTreeSet::new()) } else { Some(Vec::new()) };
+        Ok(Query {
+            rule,
+            utils: table.utils,
+            util_capture_free: table.capture_free,
+            summary: table.summary,
+            transform,
+            syntax,
+            three_valued,
+            decoded,
+            root_kinds,
+        })
+    }
+
+    fn compile_utils(&mut self) -> Result<Vec<Rule>, String> {
+        let mut utils = Vec::with_capacity(self.util_json.len());
+        for i in 0..self.util_json.len() {
+            let j = self.util_json[i].clone();
+            let at = format!("utils/{}", self.util_ids[i]);
+            let body = if self.util_params[i].is_empty() { &j } else { j.get("rule").ok_or_else(|| format!("{at}/rule missing"))? };
+            utils.push(self.rule(body, &at)?);
+        }
+        Ok(utils)
+    }
+
+    /// `transform` (native compile/transform.rs): `replace` steps only. Returns the steps in an
+    /// order where each source is computed before it is read, and the `DECODED` shapes.
+    fn transform(&mut self, t: Option<&Json>) -> Result<(Transform, Vec<(Name, Name)>), String> {
+        let mut steps = Vec::new();
+        let mut decoded = Vec::new();
+        let Some(t) = t else { return Ok((Transform::default(), decoded)) };
+        for (var, spec) in obj(t, "transform")? {
+            let at = format!("transform/{var}");
+            let so = obj(spec, &at)?;
+            let rep = match (so.len(), so.get("replace")) {
+                (1, Some(r)) => obj(r, &at)?,
+                _ => return Err(format!("{at}: only replace")),
+            };
+            if rep.keys().any(|k| !["source", "replace", "by", "value", "default"].contains(&k.as_str())) {
+                return Err(format!("{at}: replace keys"));
+            }
+            let src = rep.get("source").and_then(Json::as_str).unwrap_or("");
+            let source = match src.strip_prefix('$') {
+                Some(n) if !n.starts_with('$') && valid_meta(n) => self.names.id(n),
+                _ => return Err(format!("{at}: source {src} (only `$NAME`)")),
+            };
+            let value = match rep.get("value") {
+                None | Some(Json::Bool(false)) => false,
+                Some(Json::Bool(true)) => true,
+                _ => return Err(format!("{at}/value")),
+            };
+            let pattern = rep.get("replace").and_then(Json::as_str).ok_or_else(|| format!("{at}/replace"))?;
+            let by = rep.get("by").and_then(Json::as_str).ok_or_else(|| format!("{at}/by"))?.to_owned();
+            let default = rep.get("default").map(|d| d.as_str().map(str::to_owned).ok_or_else(|| format!("{at}/default"))).transpose()?;
+            let name = self.names.id(var);
+            if value {
+                if pattern != "\\b\\B" || !by.is_empty() || default.is_some() {
+                    return Err(format!("{at}: transform value with a replacement unsupported"));
+                }
+                decoded.push((name, source));
+            }
+            let regex = crate::rx::get(pattern).map_err(|e| format!("{at}/replace: {e}"))?;
+            steps.push(TransformStep { name, source, default, value, regex, by });
+        }
+        // Each step after the step computing its source (a stable topological order).
+        let mut ordered: Vec<TransformStep> = Vec::with_capacity(steps.len());
+        while !steps.is_empty() {
+            let ready = steps
+                .iter()
+                .position(|s| !steps.iter().any(|o| o.name == s.source))
+                .ok_or("transform: cyclic sources")?;
+            ordered.push(steps.remove(ready));
+        }
+        Ok((Transform { steps: ordered }, decoded))
     }
 
     fn kind(&self, kind: &str) -> Result<Rule, String> {
@@ -269,6 +541,8 @@ impl<'a> Compiler<'a> {
         if r.contains_key("stopBy") || r.contains_key("field") {
             return Err(format!("{at}: stopBy/field outside a relation"));
         }
+        // Terms in native's order (compile/ast_rule.rs:397-923): atomic, the ordered group, then
+        // count, compare, layout, value.
         let mut terms = Vec::new();
         if let Some(p) = r.get("pattern") {
             let p = p.as_str().ok_or_else(|| format!("{at}/pattern: contextual patterns unsupported"))?;
@@ -292,6 +566,9 @@ impl<'a> Compiler<'a> {
         if let Some(n) = nth.filter(|_| !of_rule) {
             terms.push(self.nth_child(n, at)?);
         }
+        if let Some(a) = r.get("arguments") {
+            terms.push(self.compile_arguments(a, &format!("{at}/arguments"))?);
+        }
         if let Some(fp) = r.get("filePath") {
             let o = obj(fp, "filePath")?;
             let get = |k: &str| -> Result<Option<Regex>, String> {
@@ -307,7 +584,6 @@ impl<'a> Compiler<'a> {
             terms.push(self.nth_child(n, at)?);
             group += 1;
         }
-        let mut has_all = false;
         for key in ["all", "any"] {
             let Some(items) = r.get(key).and_then(Json::as_array) else { continue };
             group += 1;
@@ -317,7 +593,6 @@ impl<'a> Compiler<'a> {
                 .map(|(i, it)| self.rule(it, &format!("{at}/{key}/{i}")))
                 .collect::<Result<Vec<_>, _>>()?;
             if key == "all" {
-                has_all = true;
                 terms.push(if compiled.iter().any(|c| matches!(c, Rule::Never)) {
                     Rule::Never
                 } else {
@@ -328,29 +603,22 @@ impl<'a> Compiler<'a> {
                 terms.push(if kept.is_empty() { Rule::Never } else { Rule::Any(kept) });
             }
         }
-        let _ = has_all;
         if let Some(n) = r.get("not") {
             terms.push(Rule::Not(Box::new(self.rule(n, &format!("{at}/not"))?)));
             group += 1;
         }
         if let Some(m) = r.get("matches") {
-            let id = m.as_str().ok_or("parameterised matches unsupported")?;
-            let idx = self
-                .util_ids
-                .iter()
-                .position(|u| u == id)
-                .ok_or_else(|| format!("{at}/matches: unknown utility {id}"))?;
-            terms.push(Rule::Util(idx));
+            terms.push(self.matches(m, &format!("{at}/matches"))?);
             group += 1;
         }
-        for key in ["inside", "has"] {
+        for key in ["inside", "has", "precedes", "follows"] {
             if let Some(rel) = r.get(key) {
-                terms.push(self.relation(rel, key == "inside", &format!("{at}/{key}"))?);
+                terms.push(self.relation(rel, key, &format!("{at}/{key}"))?);
                 group += 1;
             }
         }
         if group > 1 {
-            order_by_captures(&mut terms, from, &self.util_rules_for_analysis()?)?;
+            order_by_captures(&mut terms, from, &self.summary)?;
         }
         if let Some(c) = r.get("count") {
             terms.push(self.count(c, &format!("{at}/count"))?);
@@ -358,8 +626,19 @@ impl<'a> Compiler<'a> {
         if let Some(c) = r.get("compare") {
             terms.push(self.compare(c, &format!("{at}/compare"))?);
         }
+        if let Some(l) = r.get("layout") {
+            terms.push(self.compile_layout(l, &format!("{at}/layout"))?);
+        }
         if let Some(v) = r.get("value") {
             terms.push(self.value(v, &format!("{at}/value"))?);
+        }
+        // `host` (a text grammar's tree rule only) is the last term, as native's
+        // `compile_sub_rule` pushes it.
+        if let Some(h) = r.get("host") {
+            terms.push(self.compile_host(h, at)?);
+        }
+        if terms.iter().any(|t| matches!(t, Rule::Never)) {
+            return Ok(Rule::Never);
         }
         if terms.is_empty() {
             return Err(format!("{at}: empty rule"));
@@ -367,27 +646,51 @@ impl<'a> Compiler<'a> {
         Ok(if terms.len() == 1 { terms.pop().unwrap() } else { Rule::All(terms) })
     }
 
-    /// Utilities compiled shallowly for capture analysis during ordering. Recursion through
-    /// utilities is handled by name: analysis reads `self.util_json` lazily.
-    fn util_rules_for_analysis(&mut self) -> Result<UtilJson, String> {
-        Ok(UtilJson { ids: self.util_ids.clone(), json: self.util_json.clone() })
+    /// `matches`: a utility's id, or a parameterised call `{ id: { PARAM: "$CAPTURE" } }`
+    /// (native compile/ast_rule.rs:215-285).
+    fn matches(&mut self, m: &Json, at: &str) -> Result<Rule, String> {
+        let index = |c: &Self, id: &str| c.util_ids.iter().position(|u| u == id).ok_or_else(|| format!("{at}: unknown utility {id}"));
+        match m {
+            Json::String(id) => {
+                let i = index(self, id)?;
+                if !self.util_params[i].is_empty() {
+                    return Err(format!("{at}: utility {id} takes parameters"));
+                }
+                Ok(Rule::Util(i))
+            }
+            Json::Object(call) if call.len() == 1 => {
+                let (id, arguments) = call.iter().next().unwrap();
+                let i = index(self, id)?;
+                let params = self.util_params[i].clone();
+                if params.is_empty() {
+                    return Err(format!("{at}: utility {id} takes no parameters"));
+                }
+                let arguments = obj(arguments, at)?;
+                if let Some(k) = arguments.keys().find(|k| !params.contains(k)) {
+                    return Err(format!("{at}/{id}/{k}: not a parameter"));
+                }
+                let mut args = Vec::with_capacity(params.len());
+                for p in &params {
+                    let caller = arguments
+                        .get(p)
+                        .and_then(Json::as_str)
+                        .and_then(|t| t.strip_prefix('$'))
+                        .filter(|n| valid_meta(n))
+                        .ok_or_else(|| format!("{at}/{id}/{p} must name a capture"))?;
+                    args.push((self.names.id(p), self.names.id(caller)));
+                }
+                Ok(Rule::Call { util: i, args })
+            }
+            _ => Err(format!("{at}: must call one utility")),
+        }
     }
 
-    fn pattern(&mut self, p: &str, at: &str) -> Result<Rule, String> {
-        let p = p.trim();
-        if let Some(rest) = p.strip_prefix("$$") {
-            if rest.starts_with('$') {
-                return Err(format!("{at}: `$$$` at the root is invalid"));
-            }
-            if !valid_meta(rest) {
-                return Err(format!("{at}: pattern {p}"));
-            }
+    fn pattern(&mut self, written: &str, at: &str) -> Result<Rule, String> {
+        let p = written.trim();
+        if let Some(rest) = p.strip_prefix("$$").filter(|r| !r.starts_with('$') && valid_meta(r)) {
             return Ok(Rule::MetaVar { name: (rest != "_").then(|| self.names.id(rest)), named: false });
         }
-        if let Some(rest) = p.strip_prefix('$') {
-            if !valid_meta(rest) {
-                return Err(format!("{at}: pattern {p}"));
-            }
+        if let Some(rest) = p.strip_prefix('$').filter(|r| valid_meta(r)) {
             return Ok(Rule::MetaVar { name: (rest != "_").then(|| self.names.id(rest)), named: true });
         }
         // Literal patterns: a single token the Python grammar reads as one named leaf.
@@ -401,20 +704,28 @@ impl<'a> Compiler<'a> {
             {
                 Ok(Rule::Literal { kind: facts::intern("identifier"), text: p.into() })
             }
-            _ => Err(format!("{at}: pattern `{p}` unsupported (only metavariables and single names)")),
+            // Anything else: ast-grep's structural pattern (ast/pattern.rs).
+            _ => self.compile_pattern_text(written, at),
         }
     }
 
-    fn relation(&mut self, rel: &Json, inside: bool, at: &str) -> Result<Rule, String> {
-        let o = obj(rel, at)?;
-        let stop = match o.get("stopBy") {
+    fn stop(&mut self, o: &serde_json::Map<String, Json>, at: &str) -> Result<Stop, String> {
+        Ok(match o.get("stopBy") {
             None => Stop::Neighbor,
             Some(Json::String(s)) if s == "neighbor" => Stop::Neighbor,
             Some(Json::String(s)) if s == "end" => Stop::End,
             Some(v @ Json::Object(_)) => Stop::Rule(Box::new(self.rule(v, &format!("{at}/stopBy"))?)),
             Some(_) => return Err(format!("{at}/stopBy")),
-        };
+        })
+    }
+
+    fn relation(&mut self, rel: &Json, key: &str, at: &str) -> Result<Rule, String> {
+        let o = obj(rel, at)?;
+        let stop = self.stop(o, at)?;
         let field = o.get("field").and_then(Json::as_str);
+        if field.is_some() && !matches!(key, "inside" | "has") {
+            return Err(format!("{at}/field: only inside and has take a field"));
+        }
         let mut nested = o.clone();
         nested.remove("stopBy");
         nested.remove("field");
@@ -422,18 +733,17 @@ impl<'a> Compiler<'a> {
         if matches!(inner, Rule::Never) {
             return Ok(Rule::Never);
         }
-        Ok(match field {
-            None => {
-                if inside {
-                    Rule::Inside { rule: Box::new(inner), stop }
-                } else {
-                    Rule::Has { rule: Box::new(inner), stop }
-                }
-            }
-            Some(name) => match self.grammar.field_code(name) {
-                Some(code) => Rule::Field { inside, field: code, rule: Box::new(inner), stop },
+        let rule = Box::new(inner);
+        Ok(match (key, field) {
+            ("inside", None) => Rule::Inside { rule, stop },
+            ("has", None) => Rule::Has { rule, stop },
+            ("precedes", None) => Rule::Precedes { rule, stop },
+            ("follows", None) => Rule::Follows { rule, stop },
+            (_, Some(name)) => match self.grammar.field_code(name) {
+                Some(code) => Rule::Field { inside: key == "inside", field: code, rule, stop },
                 None => Rule::Never,
             },
+            _ => unreachable!("relation keys"),
         })
     }
 
@@ -451,31 +761,41 @@ impl<'a> Compiler<'a> {
         Ok(Rule::NthChild { step: 0, offset: pos, of_rule: of_rule.map(Box::new), reverse })
     }
 
+    /// `count` (native matcher/count.rs, compile/ast_rule.rs:805-821): the relation's `field`
+    /// is not read, as native drops `compile_relation(..).2` there.
     fn count(&mut self, c: &Json, at: &str) -> Result<Rule, String> {
         let o = obj(c, at)?;
+        let keys = ["has", "inside", "precedes", "follows"];
+        if let Some(k) = o.keys().find(|k| !keys.contains(&k.as_str()) && !["min", "max", "as", "offset"].contains(&k.as_str())) {
+            return Err(format!("{at}: count key {k}"));
+        }
         let min = o.get("min").and_then(Json::as_u64).unwrap_or(0) as usize;
         let max = o.get("max").and_then(Json::as_u64).map(|m| m as usize);
-        if o.contains_key("as") {
-            return Err(format!("{at}: count binding unsupported"));
-        }
-        let (key, rel) = ["has", "inside"]
+        let binding = match o.get("as") {
+            None => None,
+            Some(n) => {
+                let n = n.as_str().filter(|n| valid_meta(n)).ok_or_else(|| format!("{at}/as must be a capture name"))?;
+                let offset = o.get("offset").map(|x| x.as_i64().ok_or_else(|| format!("{at}/offset"))).transpose()?.unwrap_or(0);
+                Some((self.names.id(n), offset))
+            }
+        };
+        let (key, rel) = keys
             .iter()
             .find_map(|k| o.get(*k).map(|v| (*k, v)))
-            .ok_or_else(|| format!("{at}: count needs has/inside"))?;
+            .ok_or_else(|| format!("{at}: count needs a relation"))?;
         let ro = obj(rel, at)?;
-        let stop = match ro.get("stopBy") {
-            None => Stop::Neighbor,
-            Some(Json::String(s)) if s == "neighbor" => Stop::Neighbor,
-            Some(Json::String(s)) if s == "end" => Stop::End,
-            Some(v @ Json::Object(_)) => Stop::Rule(Box::new(self.rule(v, at)?)),
-            _ => return Err(format!("{at}/stopBy")),
-        };
+        let stop = self.stop(ro, at)?;
         let mut nested = ro.clone();
         nested.remove("stopBy");
         nested.remove("field");
         let inner = Box::new(self.rule(&Json::Object(nested), at)?);
-        let relation = if key == "has" { Rule::Has { rule: inner, stop } } else { Rule::Inside { rule: inner, stop } };
-        Ok(Rule::Count { relation: Box::new(relation), min, max })
+        let relation = match key {
+            "has" => Rule::Has { rule: inner, stop },
+            "inside" => Rule::Inside { rule: inner, stop },
+            "precedes" => Rule::Precedes { rule: inner, stop },
+            _ => Rule::Follows { rule: inner, stop },
+        };
+        Ok(Rule::Count { relation: Box::new(relation), min, max, binding })
     }
 
     fn compare(&mut self, c: &Json, at: &str) -> Result<Rule, String> {
@@ -490,6 +810,7 @@ impl<'a> Compiler<'a> {
         let text = match o.get("text").and_then(Json::as_str) {
             Some("source") | None => CompareText::Source,
             Some("node") => CompareText::Node,
+            Some("index") => CompareText::Index,
             Some(t) => return Err(format!("{at}: text {t}")),
         };
         for k in o.keys() {
@@ -497,15 +818,35 @@ impl<'a> Compiler<'a> {
                 return Err(format!("{at}: compare key {k}"));
             }
         }
-        Ok(Rule::Compare { left: self.names.id(left.trim_start_matches('$')), right: self.names.id(right.trim_start_matches('$')), op, text })
+        let (left, right) = (self.names.id(left.trim_start_matches('$')), self.names.id(right.trim_start_matches('$')));
+        let t = &self.transform;
+        let transform = t.contains(left) || t.contains(right);
+        if transform {
+            if text != CompareText::Source {
+                return Err(format!("{at}/text: a transform variable compares as source"));
+            }
+            if [left, right].iter().any(|n| t.chain(*n).iter().any(|&i| t.steps[i].value)) {
+                return Err(format!("{at}: a transform reading a value is compared (value text unsupported)"));
+            }
+        }
+        Ok(Rule::Compare { left, right, op, text, transform })
     }
 
     fn value(&mut self, v: &Json, at: &str) -> Result<Rule, String> {
         let o = obj(v, at)?;
         for k in o.keys() {
-            if !["eq", "regex"].contains(&k.as_str()) {
+            if !["eq", "regex", "type"].contains(&k.as_str()) {
                 return Err(format!("{at}: value key {k} unsupported"));
             }
+        }
+        let types: Vec<String> = match o.get("type") {
+            None => Vec::new(),
+            Some(Json::String(s)) => vec![s.clone()],
+            Some(Json::Array(a)) if !a.is_empty() => a.iter().map(|x| x.as_str().map(str::to_owned).ok_or_else(|| format!("{at}/type must hold strings"))).collect::<Result<_, _>>()?,
+            Some(_) => return Err(format!("{at}/type must be a string or an array of strings")),
+        };
+        if let Some(t) = types.iter().find(|t| *t != "str" && *t != "bytes") {
+            return Err(format!("{at}: value type {t} unsupported (the decoder tells str and bytes only)"));
         }
         let eq = match o.get("eq") {
             None => None,
@@ -516,20 +857,34 @@ impl<'a> Compiler<'a> {
             .get("regex")
             .map(|r| crate::rx::get(r.as_str().unwrap_or("")).map_err(|e| format!("{at}: {e}")))
             .transpose()?;
-        Ok(Rule::Value(ValueTest { eq, regex }))
+        Ok(Rule::Value(ValueTest { types, eq, regex }))
     }
 
     fn parse(&mut self, p: &Json, at: &str) -> Result<Rule, String> {
         let o = obj(p, at)?;
         let grammar = match o.get("grammar").and_then(Json::as_str) {
             Some("pythonFString") => ParseGrammar::PythonFString,
+            Some("identifierWords") => ParseGrammar::IdentifierWords,
             Some("annotation") => ParseGrammar::Annotation,
             g => return Err(format!("{at}: grammar {g:?}")),
         };
+        if o.contains_key("flags") {
+            return Err(format!("{at}/flags: unsupported"));
+        }
+        let marker = match o.get("interpolation") {
+            None => "{}".to_owned(),
+            Some(Json::String(m)) if grammar == ParseGrammar::PythonFString && m.len() <= 1024 => m.clone(),
+            Some(_) => return Err(format!("{at}/interpolation: a string of at most 1024 bytes, pythonFString only")),
+        };
         let mut nested = o.clone();
         nested.remove("grammar");
-        let rule = self.rule(&Json::Object(nested), at)?;
-        Ok(Rule::Parse(Box::new(ParseTest { grammar, rule })))
+        nested.remove("interpolation");
+        let nested = Json::Object(nested);
+        let (rule, hosted) = match grammar {
+            ParseGrammar::Annotation => (self.rule(&nested, at)?, false),
+            _ => self.compile_tree_rule(&nested, at, grammar)?,
+        };
+        Ok(Rule::Parse(Box::new(ParseTest { grammar, rule, marker, hosted })))
     }
 }
 
@@ -544,98 +899,202 @@ fn valid_meta(s: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Capture analysis (captures.rs): binds / reads / mentions.
+// Capture analysis (native matcher/captures.rs, captures/semantic.rs): what a rule binds, reads
+// and mentions, with utilities summarised as least fixpoints (native `UtilitySummary`).
 
-pub struct UtilJson {
-    ids: Vec<String>,
-    json: Vec<Json>,
+type NameSet = BTreeSet<Name>;
+static EMPTY: NameSet = BTreeSet::new();
+
+/// Per-utility summaries over one utility table. An empty table is native's unfilled one: every
+/// utility reads as binding, reading and mentioning nothing.
+#[derive(Default)]
+pub struct Summary {
+    binds: Vec<NameSet>,
+    reads: Vec<NameSet>,
+    mentions: Vec<NameSet>,
+    exported: Vec<NameSet>,
+    transform: Arc<Transform>,
 }
 
-fn binds(rule: &Rule, out: &mut BTreeSet<Name>, utils: &dyn Fn(usize) -> Option<BTreeSet<Name>>) {
-    match rule {
-        Rule::MetaVar { name: Some(n), .. } => {
-            out.insert(*n);
-        }
-        Rule::Capture(n) => {
-            out.insert(*n);
-        }
-        Rule::All(v) | Rule::Any(v) => v.iter().for_each(|r| binds(r, out, utils)),
-        Rule::Has { rule, .. } | Rule::Inside { rule, .. } | Rule::Field { rule, .. } => binds(rule, out, utils),
-        Rule::NthChild { of_rule: Some(r), .. } => binds(r, out, utils),
-        Rule::Util(i) => out.extend(utils(*i).unwrap_or_default()),
-        Rule::Parse(p) => binds(&p.rule, out, utils),
-        _ => {}
-    }
+fn outward(names: &NameSet, args: &[(Name, Name)]) -> NameSet {
+    args.iter().filter(|(p, _)| names.contains(p)).map(|(_, c)| *c).collect()
 }
 
-/// binds/reads on compiled rules; utilities are summarised by recompiling-free json walks: the
-/// policies' utilities bind only through patterns, so their summary is computed on demand from
-/// the already compiled utility rules once the query is compiled. During ordering (before the
-/// utilities are compiled) a utility is summarised from its JSON.
-fn json_binds(v: &Json, uj: &UtilJson, seen: &mut BTreeSet<usize>, names: &Names) -> BTreeSet<Name> {
-    let mut out = BTreeSet::new();
-    fn walk(v: &Json, uj: &UtilJson, seen: &mut BTreeSet<usize>, names: &Names, out: &mut BTreeSet<Name>) {
-        let Some(o) = v.as_object() else { return };
-        for (k, x) in o {
-            match k.as_str() {
-                "pattern" => {
-                    if let Some(p) = x.as_str() {
-                        let p = p.trim().trim_start_matches('$');
-                        if p != "_" {
-                            if let Some(n) = names.get(p) {
-                                out.insert(n);
-                            }
-                        }
-                    }
-                }
-                "capture" => {
-                    if let Some(n) = x.as_str().and_then(|c| names.get(c.trim_start_matches('$'))) {
-                        out.insert(n);
-                    }
-                }
-                "all" | "any" => {
-                    for it in x.as_array().into_iter().flatten() {
-                        walk(it, uj, seen, names, out);
-                    }
-                }
-                "has" | "inside" | "parse" => walk(x, uj, seen, names, out),
-                "nthChild" => {
-                    if let Some(r) = x.get("ofRule") {
-                        walk(r, uj, seen, names, out);
-                    }
-                }
-                "matches" => {
-                    if let Some(i) = x.as_str().and_then(|id| uj.ids.iter().position(|u| u == id)) {
-                        if seen.insert(i) {
-                            walk(&uj.json[i], uj, seen, names, out);
-                        }
-                    }
-                }
-                _ => {}
+impl Summary {
+    pub fn of(utils: &[Rule], transform: Arc<Transform>) -> Summary {
+        let n = utils.len();
+        let mut s = Summary { binds: vec![NameSet::new(); n], reads: vec![NameSet::new(); n], mentions: vec![NameSet::new(); n], exported: vec![NameSet::new(); n], transform };
+        // Each summary is monotone in the summaries it reads: iterate from empty to the least
+        // fixpoint (what native's per-component walks reach).
+        loop {
+            let next: Vec<NameSet> = utils.iter().map(|u| s.binds(u)).collect();
+            if next == s.binds {
+                break;
             }
+            s.binds = next;
+        }
+        loop {
+            let next: Vec<NameSet> = utils.iter().map(|u| s.exported(u)).collect();
+            if next == s.exported {
+                break;
+            }
+            s.exported = next;
+        }
+        loop {
+            let next: Vec<NameSet> = utils.iter().map(|u| s.binds_reads(u).1).collect();
+            if next == s.reads {
+                break;
+            }
+            s.reads = next;
+        }
+        loop {
+            let next: Vec<NameSet> = utils.iter().map(|u| s.mentions(u)).collect();
+            if next == s.mentions {
+                break;
+            }
+            s.mentions = next;
+        }
+        s
+    }
+
+    fn of_util(v: &[NameSet], i: usize) -> &NameSet {
+        v.get(i).unwrap_or(&EMPTY)
+    }
+
+    /// Native `collect_binds`.
+    pub fn binds(&self, rule: &Rule) -> NameSet {
+        let mut out = NameSet::new();
+        self.binds_into(rule, &mut out);
+        out
+    }
+    fn binds_into(&self, rule: &Rule, out: &mut NameSet) {
+        match rule {
+            Rule::MetaVar { name: Some(n), .. } | Rule::Capture(n) => {
+                out.insert(*n);
+            }
+            Rule::Pattern(p) => out.extend(p.binds()),
+            Rule::Arguments(a) => out.extend(a.binds()),
+            Rule::All(v) | Rule::Any(v) => v.iter().for_each(|r| self.binds_into(r, out)),
+            Rule::Has { rule, .. } | Rule::Inside { rule, .. } | Rule::Precedes { rule, .. } | Rule::Follows { rule, .. } | Rule::Field { rule, .. } => self.binds_into(rule, out),
+            Rule::NthChild { of_rule: Some(r), .. } => self.binds_into(r, out),
+            Rule::Util(i) => out.extend(Self::of_util(&self.binds, *i)),
+            Rule::Call { util, args } => out.extend(outward(Self::of_util(&self.binds, *util), args)),
+            Rule::Count { binding: Some((n, _)), .. } => {
+                out.insert(*n);
+            }
+            Rule::Parse(p) => out.extend(self.exported(&p.rule)),
+            _ => {}
         }
     }
-    walk(v, uj, seen, names, &mut out);
-    out
+
+    /// Native `parse_exported`: what a parsed tree's rule exports.
+    fn exported(&self, rule: &Rule) -> NameSet {
+        let mut out = NameSet::new();
+        self.exported_into(rule, &mut out);
+        out
+    }
+    fn exported_into(&self, rule: &Rule, out: &mut NameSet) {
+        match rule {
+            Rule::MetaVar { name: Some(n), .. } | Rule::Capture(n) => {
+                out.insert(*n);
+            }
+            Rule::Pattern(p) => out.extend(p.binds()),
+            Rule::Parse(p) => self.exported_into(&p.rule, out),
+            Rule::Util(i) => out.extend(Self::of_util(&self.exported, *i)),
+            Rule::Call { util, args } => out.extend(outward(Self::of_util(&self.exported, *util), args)),
+            Rule::All(v) | Rule::Any(v) => v.iter().for_each(|r| self.exported_into(r, out)),
+            Rule::Has { rule, .. } | Rule::Inside { rule, .. } | Rule::Precedes { rule, .. } | Rule::Follows { rule, .. } => self.exported_into(rule, out),
+            _ => {}
+        }
+    }
+
+    /// The captures a comparison reads: each side, or the captures a transform variable on that
+    /// side is computed from (native `comparison_reads`).
+    fn comparison_reads(&self, left: Name, right: Name, transform: bool) -> NameSet {
+        [left, right]
+            .into_iter()
+            .flat_map(|n| if transform && self.transform.contains(n) { self.transform.roots(n) } else { [n].into_iter().collect() })
+            .collect()
+    }
+
+    /// Native `binds_and_reads`.
+    pub fn binds_reads(&self, rule: &Rule) -> (NameSet, NameSet) {
+        match rule {
+            Rule::MetaVar { .. } | Rule::Capture(_) | Rule::Pattern(_) | Rule::Arguments(_) => (self.binds(rule), NameSet::new()),
+            Rule::Compare { left, right, transform, .. } => (NameSet::new(), self.comparison_reads(*left, *right, *transform)),
+            Rule::Layout(l) => (NameSet::new(), l.reads().into_iter().collect()),
+            Rule::Any(items) => {
+                let (mut b, mut r) = (NameSet::new(), NameSet::new());
+                for it in items {
+                    let (ib, ir) = self.binds_reads(it);
+                    b.extend(ib);
+                    r.extend(ir);
+                }
+                (b, r)
+            }
+            Rule::All(items) => {
+                let (mut b, mut r) = (NameSet::new(), NameSet::new());
+                for it in items {
+                    let (ib, ir) = self.binds_reads(it);
+                    r.extend(ir.into_iter().filter(|n| !b.contains(n)));
+                    b.extend(ib);
+                }
+                (b, r)
+            }
+            Rule::Not(it) => {
+                let (mut r, ir) = self.binds_reads(it);
+                r.extend(ir);
+                (NameSet::new(), r)
+            }
+            Rule::Has { rule, .. } | Rule::Inside { rule, .. } | Rule::Precedes { rule, .. } | Rule::Follows { rule, .. } | Rule::Field { rule, .. } => self.binds_reads(rule),
+            Rule::NthChild { of_rule: Some(r), .. } => self.binds_reads(r),
+            Rule::Count { relation, binding, .. } => (binding.iter().map(|(n, _)| *n).collect(), self.binds_reads(relation).1),
+            Rule::Util(i) => (Self::of_util(&self.binds, *i).clone(), Self::of_util(&self.reads, *i).clone()),
+            Rule::Call { util, args } => (outward(Self::of_util(&self.binds, *util), args), outward(Self::of_util(&self.reads, *util), args)),
+            // A parse binds its exports and reads nothing of the caller.
+            Rule::Parse(_) => (self.binds(rule), NameSet::new()),
+            _ => (NameSet::new(), NameSet::new()),
+        }
+    }
+
+    /// Native `collect_mentions`.
+    pub fn mentions(&self, rule: &Rule) -> NameSet {
+        let mut out = NameSet::new();
+        self.mentions_into(rule, &mut out);
+        out
+    }
+    fn mentions_into(&self, rule: &Rule, out: &mut NameSet) {
+        match rule {
+            Rule::MetaVar { name: Some(n), .. } | Rule::Capture(n) => {
+                out.insert(*n);
+            }
+            Rule::Pattern(p) => out.extend(p.binds()),
+            Rule::Arguments(a) => out.extend(a.binds()),
+            Rule::Compare { left, right, transform, .. } => out.extend(self.comparison_reads(*left, *right, *transform)),
+            Rule::Layout(l) => out.extend(l.reads()),
+            Rule::All(v) | Rule::Any(v) => v.iter().for_each(|r| self.mentions_into(r, out)),
+            Rule::Not(r) => self.mentions_into(r, out),
+            Rule::Has { rule, .. } | Rule::Inside { rule, .. } | Rule::Precedes { rule, .. } | Rule::Follows { rule, .. } | Rule::Field { rule, .. } => self.mentions_into(rule, out),
+            Rule::NthChild { of_rule: Some(r), .. } => self.mentions_into(r, out),
+            Rule::Count { relation, binding, .. } => {
+                out.extend(binding.iter().map(|(n, _)| *n));
+                self.mentions_into(relation, out);
+            }
+            Rule::Util(i) => out.extend(Self::of_util(&self.mentions, *i)),
+            Rule::Call { args, .. } => out.extend(args.iter().map(|(_, c)| *c)),
+            Rule::Parse(p) => out.extend(self.exported(&p.rule)),
+            _ => {}
+        }
+    }
 }
 
-fn order_by_captures(terms: &mut Vec<Rule>, from: usize, _uj: &UtilJson) -> Result<(), String> {
-    // The native orders group terms so that a term reading a capture runs after the sibling that
-    // binds it. Reads arise only from `not` (what its rule would bind) and `compare`; the policies'
-    // `compare` terms come after the group anyway. A `not` among the group reading a sibling's
-    // capture is the case to order.
-    let util_binds = |_i: usize| -> Option<BTreeSet<Name>> { None };
-    let early: BTreeSet<Name> = terms[..from].iter().flat_map(|t| {
-        let mut s = BTreeSet::new();
-        binds(t, &mut s, &util_binds);
-        s
-    }).collect();
+fn order_by_captures(terms: &mut Vec<Rule>, from: usize, s: &Summary) -> Result<(), String> {
+    // Native compile/order.rs `order_by_captures`: a group term reading what a sibling binds
+    // runs after it; otherwise the written order stays.
+    let early: NameSet = terms[..from].iter().flat_map(|t| s.binds(t)).collect();
     let group = &terms[from..];
-    let bound: Vec<BTreeSet<Name>> = group.iter().map(|t| { let mut s = BTreeSet::new(); binds(t, &mut s, &util_binds); s }).collect();
-    let needs: Vec<BTreeSet<Name>> = group
-        .iter()
-        .map(|t| reads(t).into_iter().filter(|n| !early.contains(n)).collect())
-        .collect();
+    let bound: Vec<NameSet> = group.iter().map(|t| s.binds(t)).collect();
+    let needs: Vec<NameSet> = group.iter().map(|t| s.binds_reads(t).1.into_iter().filter(|n| !early.contains(n)).collect()).collect();
     let after: Vec<Vec<usize>> = needs
         .iter()
         .enumerate()
@@ -650,9 +1109,6 @@ fn order_by_captures(terms: &mut Vec<Rule>, from: usize, _uj: &UtilJson) -> Resu
         .collect();
     if after.iter().all(Vec::is_empty) {
         return Ok(());
-    }
-    if group.iter().any(|t| matches!(t, Rule::Util(_))) {
-        return Err("capture ordering through utilities unsupported".into());
     }
     let mut placed = vec![false; group.len()];
     let mut order = Vec::new();
@@ -670,111 +1126,30 @@ fn order_by_captures(terms: &mut Vec<Rule>, from: usize, _uj: &UtilJson) -> Resu
     Ok(())
 }
 
-/// What a rule reads and does not bind itself (captures.rs `binds_and_reads().1`), without
-/// utilities (refused above when they matter).
-fn reads(rule: &Rule) -> BTreeSet<Name> {
-    fn br(rule: &Rule) -> (BTreeSet<Name>, BTreeSet<Name>) {
-        let none = |_i: usize| -> Option<BTreeSet<Name>> { None };
-        match rule {
-            Rule::MetaVar { .. } | Rule::Capture(_) => {
-                let mut b = BTreeSet::new();
-                binds(rule, &mut b, &none);
-                (b, BTreeSet::new())
-            }
-            Rule::Compare { left, right, .. } => (BTreeSet::new(), [*left, *right].into_iter().collect()),
-            Rule::Any(items) => {
-                let (mut b, mut r) = (BTreeSet::new(), BTreeSet::new());
-                for it in items {
-                    let (ib, ir) = br(it);
-                    b.extend(ib);
-                    r.extend(ir);
-                }
-                (b, r)
-            }
-            Rule::All(items) => {
-                let (mut b, mut r) = (BTreeSet::new(), BTreeSet::new());
-                for it in items {
-                    let (ib, ir) = br(it);
-                    r.extend(ir.into_iter().filter(|n| !b.contains(n)));
-                    b.extend(ib);
-                }
-                (b, r)
-            }
-            Rule::Not(it) => {
-                let (mut r, ir) = br(it);
-                r.extend(ir);
-                (BTreeSet::new(), r)
-            }
-            Rule::Has { rule, .. } | Rule::Inside { rule, .. } | Rule::Field { rule, .. } => br(rule),
-            Rule::NthChild { of_rule: Some(r), .. } => br(r),
-            Rule::Count { relation, .. } => (BTreeSet::new(), br(relation).1),
-            Rule::Parse(p) => br(&p.rule),
-            _ => (BTreeSet::new(), BTreeSet::new()),
-        }
-    }
-    br(rule).1
-}
-
-fn mentions(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>, out: &mut BTreeSet<Name>) {
-    match rule {
-        Rule::MetaVar { name: Some(n), .. } | Rule::Capture(n) => {
-            out.insert(*n);
-        }
-        Rule::Compare { left, right, .. } => {
-            out.insert(*left);
-            out.insert(*right);
-        }
-        Rule::All(v) | Rule::Any(v) => v.iter().for_each(|r| mentions(r, utils, seen, out)),
-        Rule::Not(r) => mentions(r, utils, seen, out),
-        Rule::Has { rule, .. } | Rule::Inside { rule, .. } | Rule::Field { rule, .. } => mentions(rule, utils, seen, out),
-        Rule::NthChild { of_rule: Some(r), .. } => mentions(r, utils, seen, out),
-        Rule::Count { relation, .. } => mentions(relation, utils, seen, out),
-        Rule::Util(i) => {
-            if seen.insert(*i) {
-                mentions(&utils[*i], utils, seen, out);
-            }
-        }
-        Rule::Parse(p) => mentions(&p.rule, utils, seen, out),
-        _ => {}
-    }
-}
-
-fn binds_full(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>, out: &mut BTreeSet<Name>) {
-    match rule {
-        Rule::MetaVar { name: Some(n), .. } | Rule::Capture(n) => {
-            out.insert(*n);
-        }
-        Rule::All(v) | Rule::Any(v) => v.iter().for_each(|r| binds_full(r, utils, seen, out)),
-        Rule::Has { rule, .. } | Rule::Inside { rule, .. } | Rule::Field { rule, .. } => binds_full(rule, utils, seen, out),
-        Rule::NthChild { of_rule: Some(r), .. } => binds_full(r, utils, seen, out),
-        Rule::Util(i) => {
-            if seen.insert(*i) {
-                binds_full(&utils[*i], utils, seen, out);
-            }
-        }
-        Rule::Parse(p) => binds_full(&p.rule, utils, seen, out),
-        _ => {}
-    }
-}
-
 /// Whether a query's rule (through its utilities) can bind any capture.
 pub fn binds_any(q: &Query) -> bool {
-    let mut out = BTreeSet::new();
-    binds_full(&q.rule, &q.utils, &mut BTreeSet::new(), &mut out);
-    !out.is_empty()
+    !q.summary.binds(&q.rule).is_empty()
+}
+
+/// Whether a query's rule binds or mentions the capture `name` (a metavariable `each` rather
+/// than a regex group's).
+pub fn binds_name(q: &Query, name: Name) -> bool {
+    q.summary.binds(&q.rule).contains(&name) || q.summary.mentions(&q.rule).contains(&name)
 }
 
 fn reads_values(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>) -> bool {
     match rule {
         Rule::Value(_) | Rule::Parse(_) => true,
+        Rule::Arguments(a) => a.reads_values(),
+        Rule::Host(h) => h.sub_rules().into_iter().any(|r| reads_values(r, utils, seen)),
         Rule::All(v) | Rule::Any(v) => v.iter().any(|r| reads_values(r, utils, seen)),
         Rule::Not(r) => reads_values(r, utils, seen),
-        Rule::Has { rule, stop } | Rule::Inside { rule, stop } | Rule::Field { rule, stop, .. } => {
+        Rule::Has { rule, stop } | Rule::Inside { rule, stop } | Rule::Precedes { rule, stop } | Rule::Follows { rule, stop } | Rule::Field { rule, stop, .. } => {
             reads_values(rule, utils, seen) || matches!(stop, Stop::Rule(s) if reads_values(s, utils, seen))
         }
         Rule::NthChild { of_rule: Some(r), .. } => reads_values(r, utils, seen),
         Rule::Count { relation, .. } => reads_values(relation, utils, seen),
-        Rule::Util(i) => seen.insert(*i) && reads_values(&utils[*i], utils, seen),
+        Rule::Util(i) | Rule::Call { util: i, .. } => seen.insert(*i) && reads_values(&utils[*i], utils, seen),
         _ => false,
     }
 }
@@ -784,6 +1159,7 @@ fn root_kinds(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>) -> Option
     match rule {
         Rule::Kind(k) => Some(vec![*k]),
         Rule::Literal { kind, .. } => Some(vec![*kind]),
+        Rule::Pattern(p) => p.root_kind().map(|k| vec![k]),
         Rule::All(items) => items.iter().find_map(|r| root_kinds(r, utils, seen)),
         Rule::Any(items) => {
             let mut all = Vec::new();
@@ -854,7 +1230,7 @@ pub struct Eval<'a> {
     /// `violation.each`: the capture enumerated and the ranges reported so far.
     each: std::cell::RefCell<Option<(Name, Vec<(u32, u32)>, bool)>>,
     pub parsed: std::cell::RefCell<Vec<ParsedNode>>,
-    parsed_hosts: std::cell::RefCell<rustc_hash::FxHashMap<u32, Option<(u32, u32)>>>,
+    parsed_hosts: std::cell::RefCell<rustc_hash::FxHashMap<(u32, u8, String), Option<(u32, u32)>>>,
     pub unsupported: std::cell::RefCell<Option<String>>,
     /// Utility verdicts and relation memos; shared by the queries of one policy set over one
     /// file that have the same utility table and valuedness (`FileMemo`).
@@ -862,6 +1238,8 @@ pub struct Eval<'a> {
     pub steps: std::cell::Cell<u64>,
     /// Refusals so far (`taint`).
     refusals: std::cell::Cell<u64>,
+    /// Utility levels entered (`matches`, parameterised calls).
+    depth: std::cell::Cell<u32>,
 }
 
 /// Memoised verdicts over one file's nodes. Capture-free utility verdicts by (utility, node);
@@ -900,13 +1278,13 @@ const U: u8 = 3;
 
 fn parses(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>) -> bool {
     match rule {
-        Rule::Parse(_) => true,
+        Rule::Parse(_) | Rule::Host(_) => true,
         Rule::All(v) | Rule::Any(v) => v.iter().any(|r| parses(r, utils, seen)),
         Rule::Not(r) => parses(r, utils, seen),
-        Rule::Has { rule, stop } | Rule::Inside { rule, stop } | Rule::Field { rule, stop, .. } => parses(rule, utils, seen) || matches!(stop, Stop::Rule(s) if parses(s, utils, seen)),
+        Rule::Has { rule, stop } | Rule::Inside { rule, stop } | Rule::Precedes { rule, stop } | Rule::Follows { rule, stop } | Rule::Field { rule, stop, .. } => parses(rule, utils, seen) || matches!(stop, Stop::Rule(s) if parses(s, utils, seen)),
         Rule::NthChild { of_rule: Some(r), .. } => parses(r, utils, seen),
         Rule::Count { relation, .. } => parses(relation, utils, seen),
-        Rule::Util(i) => seen.insert(*i) && parses(&utils[*i], utils, seen),
+        Rule::Util(i) | Rule::Call { util: i, .. } => seen.insert(*i) && parses(&utils[*i], utils, seen),
         _ => false,
     }
 }
@@ -920,7 +1298,7 @@ impl<'a> Eval<'a> {
     /// file. A query with a `transform` reads decoded values its own way: it memoises alone.
     pub fn shared(f: &'a Facts, path: &'a str, q: &'a Query, memo: &FileMemo) -> Self {
         let set = if q.decoded.is_empty() {
-            memo.sets.borrow_mut().entry((Rc::as_ptr(&q.utils) as *const Rule as usize, q.three_valued)).or_default().clone()
+            memo.sets.borrow_mut().entry((Arc::as_ptr(&q.utils) as *const Rule as usize, q.three_valued)).or_default().clone()
         } else {
             Rc::default()
         };
@@ -941,6 +1319,7 @@ impl<'a> Eval<'a> {
             memo,
             steps: Default::default(),
             refusals: Default::default(),
+            depth: Default::default(),
         }
     }
 
@@ -1171,13 +1550,29 @@ impl<'a> Eval<'a> {
             Rule::All(items) => self.match_all(items, node, env),
             Rule::Any(items) => self.match_any(items, node, env),
             Rule::Not(inner) => self.match_not(inner, node, env),
-            Rule::Util(i) => self.util(*i, node, env),
+            Rule::Util(i) => {
+                if !self.enter_level() {
+                    return false;
+                }
+                let r = self.util(*i, node, env);
+                self.depth.set(self.depth.get() - 1);
+                r
+            }
+            Rule::Call { util, args } => self.call(*util, args, node, env),
             Rule::FilePath { regex, not_regex } => {
                 regex.as_ref().is_none_or(|r| r.is_match(self.path))
                     && not_regex.as_ref().is_none_or(|r| !r.is_match(self.path))
             }
             Rule::Has { rule, stop } => self.has(node, rule, stop, env),
             Rule::Inside { rule, stop } => self.inside(node, rule, stop, env),
+            Rule::Precedes { rule, stop } => {
+                let (once, all) = self.sibling_walk(node, true);
+                self.find(stop, once, &all, rule, env)
+            }
+            Rule::Follows { rule, stop } => {
+                let (once, all) = self.sibling_walk(node, false);
+                self.find(stop, once, &all, rule, env)
+            }
             Rule::Field { inside, field, rule, stop } => {
                 if *inside {
                     self.field_inside(node, *field, rule, stop, env)
@@ -1193,18 +1588,19 @@ impl<'a> Eval<'a> {
                     false
                 }
             },
-            Rule::Compare { left, right, op, text } => {
-                let (Some(l), Some(r)) = (env.get(*left), env.get(*right)) else { return false };
-                let eq = match text {
-                    CompareText::Source => self.text_of(l) == self.text_of(r),
-                    CompareText::Node => self.range_of(l) == self.range_of(r) && self.kind_of(l) == self.kind_of(r),
-                };
-                match op {
-                    CompareOp::Eq => eq,
-                    CompareOp::Ne => !eq,
+            Rule::Compare { left, right, op, text, transform } => match self.compare(*left, *right, *op, *text, *transform, env) {
+                Some(v) => v,
+                None => {
+                    self.unknown.set(true);
+                    false
                 }
-            }
-            Rule::Count { relation, min, max } => self.count(node, relation, *min, *max, env),
+            },
+            // A count runs with `violation.each` suspended (native matcher/mod.rs:562).
+            Rule::Count { relation, min, max, binding } => self.suspended(|| self.count(node, relation, *min, *max, *binding, env)),
+            Rule::Layout(l) => self.match_layout(l, node, env),
+            Rule::Pattern(p) => self.match_pattern(p, node, env),
+            Rule::Arguments(a) => self.match_arguments(a, node, env),
+            Rule::Host(h) => self.match_host(h, node, env),
             Rule::Parse(p) => self.parse(node, p, env),
             Rule::Never => false,
         }
@@ -1236,12 +1632,9 @@ impl<'a> Eval<'a> {
         let mut withheld: Option<BTreeSet<Name>> = None;
         for item in items {
             if let Some(names) = withheld.as_mut() {
-                let mut m = BTreeSet::new();
-                mentions(item, &self.q.utils, &mut BTreeSet::new(), &mut m);
+                let m = self.q.summary.mentions(item);
                 if !m.is_disjoint(names) {
-                    let mut b = BTreeSet::new();
-                    binds_full(item, &self.q.utils, &mut BTreeSet::new(), &mut b);
-                    names.extend(b);
+                    names.extend(self.q.summary.binds(item));
                     continue;
                 }
             }
@@ -1249,8 +1642,7 @@ impl<'a> Eval<'a> {
                 if self.three && self.unknown.get() {
                     self.unknown.set(false);
                     unknown = true;
-                    let mut b = BTreeSet::new();
-                    binds_full(item, &self.q.utils, &mut BTreeSet::new(), &mut b);
+                    let b = self.q.summary.binds(item);
                     if !b.is_empty() {
                         withheld.get_or_insert_default().extend(b);
                     }
@@ -1294,9 +1686,7 @@ impl<'a> Eval<'a> {
     }
 
     fn may_bind(&self, rule: &Rule) -> bool {
-        let mut b = BTreeSet::new();
-        binds_full(rule, &self.q.utils, &mut BTreeSet::new(), &mut b);
-        !b.is_empty()
+        !self.q.summary.binds(rule).is_empty()
     }
 
     fn match_not(&self, inner: &Rule, node: Bound, env: &mut Env) -> bool {
@@ -1509,8 +1899,7 @@ impl<'a> Eval<'a> {
         let key = rule as *const Rule as usize;
         let mut memo = self.memo.rel.borrow_mut();
         let e = memo.entry(key).or_insert_with(|| {
-            let mut m = BTreeSet::new();
-            mentions(rule, &self.q.utils, &mut BTreeSet::new(), &mut m);
+            let m = self.q.summary.mentions(rule);
             RelMemo { ok: m.is_empty() && !parses(rule, &self.q.utils, &mut BTreeSet::new()), ..Default::default() }
         });
         e.ok.then_some(key)
@@ -1914,17 +2303,21 @@ impl<'a> Eval<'a> {
         }
     }
 
-    fn count(&self, node: Bound, relation: &Rule, min: usize, max: Option<usize>, env: &mut Env) -> bool {
+    /// `count` (native matcher/count.rs `Count::holds`).
+    fn count(&self, node: Bound, relation: &Rule, min: usize, max: Option<usize>, binding: Option<(Name, i64)>, env: &mut Env) -> bool {
         let three = self.three;
         let saved = three && self.unknown.replace(false);
         let mut found = 0usize;
         let mut unknown = 0usize;
         let mut open = false;
+        let bound = binding.is_some();
         let mut test = |this: &Self, rule: &Rule, c: Bound| -> bool {
             let mut probe = env.clone();
             if this.m(rule, c, &mut probe) {
                 found += 1;
-                if max.is_some_and(|m| found > m) || (max.is_none() && found >= min) {
+                // Past `max` the answer is no; at `min` with no `max` it is yes, unless the
+                // count is bound, which needs every node counted.
+                if max.is_some_and(|m| found > m) || (max.is_none() && !bound && found >= min) {
                     return false;
                 }
             } else if three && this.unknown.replace(false) {
@@ -1968,10 +2361,19 @@ impl<'a> Eval<'a> {
                     }
                 }
             },
-            Rule::Inside { rule, stop } => {
-                let walk: Vec<Bound> = match stop {
-                    Stop::Neighbor => self.parent(node).into_iter().collect(),
-                    _ => self.ancestors(node),
+            Rule::Inside { rule, stop } | Rule::Precedes { rule, stop } | Rule::Follows { rule, stop } => {
+                let walk: Vec<Bound> = match relation {
+                    Rule::Inside { .. } => match stop {
+                        Stop::Neighbor => self.parent(node).into_iter().collect(),
+                        _ => self.ancestors(node),
+                    },
+                    _ => {
+                        let (once, all) = self.sibling_walk(node, matches!(relation, Rule::Precedes { .. }));
+                        match stop {
+                            Stop::Neighbor => once.into_iter().collect(),
+                            _ => all,
+                        }
+                    }
                 };
                 for c in walk {
                     let stopped = match stop {
@@ -2002,8 +2404,13 @@ impl<'a> Eval<'a> {
             self.unknown.set(saved);
         }
         let high = (!open).then_some(found + unknown);
-        let holds = found >= min && max.is_none_or(|m| high.is_some_and(|h| h <= m));
+        let exact = !bound || high == Some(found);
+        let holds = exact && found >= min && max.is_none_or(|m| high.is_some_and(|h| h <= m));
         if holds {
+            if let Some((name, offset)) = binding {
+                let value = i128::try_from(found).unwrap_or(i128::MAX) + i128::from(offset);
+                env.set_text(name, value.to_string());
+            }
             return true;
         }
         let fails = high.is_some_and(|h| h < min) || max.is_some_and(|m| found > m);
@@ -2032,15 +2439,26 @@ impl<'a> Eval<'a> {
             Bound::Parsed(p) => {
                 // A parsed literal's `literal` node has its decoded text as a str value.
                 let pn = self.parsed.borrow()[p as usize].clone();
-                if &*facts::name(pn.kind) == "literal" {
-                    PyValue::Str(pn.text)
-                } else {
-                    return Some(false);
+                match parse_ext::text_node_value(pn.kind, &pn.text) {
+                    Some(v) => v,
+                    None => return Some(false),
                 }
             }
         };
         if matches!(value, PyValue::Unknown) {
             return None;
+        }
+        // `type` (native matcher/value.rs:269-275, value/mod.rs `is_type`): the value's Python
+        // type name is one of the listed ones; compile admits only `str` and `bytes`.
+        if !test.types.is_empty() {
+            let own = match &value {
+                PyValue::Str(_) => "str",
+                PyValue::Bytes(_) => "bytes",
+                _ => "",
+            };
+            if !test.types.iter().any(|t| t == own) {
+                return Some(false);
+            }
         }
         if let Some(eq) = &test.eq {
             if !matches!(&value, PyValue::Str(s) if s == eq) {
@@ -2059,24 +2477,325 @@ impl<'a> Eval<'a> {
         Some(true)
     }
 
-    // --- parse (matcher/parse.rs): pythonFString, and annotation over `string_type_definition` ---
-    fn parse(&self, node: Bound, p: &ParseTest, env: &mut Env) -> bool {
-        let Bound::Node(n) = node else { return false };
-        match p.grammar {
-            ParseGrammar::Annotation => {
-                // Native `ParseTest::tree_at`: a host of kind string/concatenated_string holds a
-                // tree iff it is a string type definition of the file's scope table (S4,
-                // SCHEMA § 1.3); the tree's rule runs on its root and exports its captures.
-                let kind = facts::name(self.f.kind[n as usize]);
-                if &*kind != "string" && &*kind != "concatenated_string" {
+    // --- utility levels, parameterised calls (native matcher/call.rs, mod.rs:556-591) ---
+
+    /// Enters one utility level; at native's depth limit (`MAX_UTIL_DEPTH`) the evaluation
+    /// refuses (native fails the clause for the file).
+    fn enter_level(&self) -> bool {
+        if self.depth.get() >= 256 {
+            self.refuse("utility recursion deeper than 256 levels (native UtilLimit)".into());
+            return false;
+        }
+        self.depth.set(self.depth.get() + 1);
+        true
+    }
+
+    /// Native `unify_capture`: binds `to` in `target` to what the `from` captures hold in
+    /// `source`, unifying them by text with each other and with an existing binding; of equal
+    /// nodes the first in the source is bound. Parsed-literal bindings stand for native's
+    /// exported texts, which agree only with an equal text at an equal range. `None` where they
+    /// differ.
+    fn unify(&self, source: &Env, from: &[Name], target: &mut Env, to: Name) -> Option<()> {
+        let held = target.get(to).filter(|b| matches!(b, Bound::Node(_)));
+        let mut chosen: Option<Bound> = None;
+        for b in from.iter().filter_map(|f| source.get(*f)).filter(|b| matches!(b, Bound::Node(_))) {
+            if let Some(agreed) = held.or(chosen) {
+                (self.text_of(agreed) == self.text_of(b)).then_some(())?;
+            }
+            if held.is_none() && chosen.is_none_or(|k| self.range_of(b) < self.range_of(k)) {
+                chosen = Some(b);
+            }
+        }
+        if let Some(b) = chosen {
+            if matches!(target.get(to), Some(Bound::Parsed(_))) {
+                self.refuse("parameterised call: a node and an exported text under one name".into());
+                return None;
+            }
+            target.set(to, b);
+        }
+        // `$$$` lists.
+        let held = target.multi.iter().find(|(n, _)| *n == to).map(|(_, v)| v.clone()).unwrap_or_default();
+        let agree = |l: &[Bound], r: &[Bound]| l.len() == r.len() && l.iter().zip(r).all(|(a, b)| self.text_of(*a) == self.text_of(*b));
+        let mut chosen: Option<Vec<Bound>> = None;
+        for f in from {
+            let Some((_, nodes)) = source.multi.iter().find(|(n, _)| n == f) else { continue };
+            if nodes.is_empty() {
+                continue;
+            }
+            let agreed = if held.is_empty() { chosen.as_deref() } else { Some(held.as_slice()) };
+            if let Some(agreed) = agreed {
+                agree(agreed, nodes).then_some(())?;
+            }
+            if held.is_empty() && chosen.as_ref().is_none_or(|kept| nodes.iter().map(|b| self.range_of(*b)).lt(kept.iter().map(|b| self.range_of(*b)))) {
+                chosen = Some(nodes.clone());
+            }
+        }
+        if let Some(nodes) = chosen {
+            target.multi.retain(|(n, _)| *n != to);
+            target.multi.push((to, nodes));
+        }
+        // Exported texts (parsed-literal bindings) and text variables.
+        for f in from {
+            if let Some(Bound::Parsed(p)) = source.get(*f) {
+                match target.get(to) {
+                    Some(Bound::Parsed(q)) => {
+                        let (a, b) = (self.range_of(Bound::Parsed(p)), self.range_of(Bound::Parsed(q)));
+                        (a == b && self.text_of(Bound::Parsed(p)) == self.text_of(Bound::Parsed(q))).then_some(())?;
+                    }
+                    None => target.set(to, Bound::Parsed(p)),
+                    Some(Bound::Node(_)) => {
+                        self.refuse("parameterised call: a node and an exported text under one name".into());
+                        return None;
+                    }
+                }
+            }
+            if let Some(text) = source.text(*f) {
+                match target.text(to) {
+                    Some(existing) => (existing == text).then_some(())?,
+                    None => target.set_text(to, text.to_owned()),
+                }
+            }
+        }
+        Some(())
+    }
+
+    /// A parameterised utility call at `node` (native `call::call` and `match_extension`).
+    fn call(&self, util: usize, args: &[(Name, Name)], node: Bound, env: &mut Env) -> bool {
+        if !self.enter_level() {
+            return false;
+        }
+        let matched = (|| {
+            let mut frame = Env::default();
+            for (param, caller) in args {
+                self.unify(env, &[*caller], &mut frame, *param)?;
+            }
+            // `violation.each` in the frame: the enumerated capture is excluded under the
+            // parameter it is passed as, nothing where it is not passed (native `each::framed`).
+            let active = self.each_active();
+            let renamed = if active {
+                let name = self.each.borrow().as_ref().map(|e| e.0).unwrap();
+                args.iter().find(|(_, c)| *c == name).map(|(p, _)| (name, *p))
+            } else {
+                None
+            };
+            let body = |frame: &mut Env| self.m(&self.q.utils[util], node, frame);
+            let ok = match (active, renamed) {
+                (false, _) => body(&mut frame),
+                (true, None) => self.suspended(|| body(&mut frame)),
+                (true, Some((caller, param))) => {
+                    self.each.borrow_mut().as_mut().unwrap().0 = param;
+                    let ok = body(&mut frame);
+                    self.each.borrow_mut().as_mut().unwrap().0 = caller;
+                    ok
+                }
+            };
+            ok.then_some(frame)
+        })();
+        self.depth.set(self.depth.get() - 1);
+        // A failed body leaves the unknown flag as it set it (native: `Err(())` sets UNKNOWN).
+        let Some(frame) = matched else { return false };
+        let mut out = env.clone();
+        let returned = args.iter().any(|(p, c)| {
+            (frame.get(*p).is_some() && out.get(*c).is_none())
+                || (frame.multi.iter().any(|(n, v)| n == p && !v.is_empty()) && !out.multi.iter().any(|(n, v)| n == c && !v.is_empty()))
+                || (frame.text(*p).is_some() && out.text(*c).is_none())
+        });
+        if returned {
+            let mut unified: Vec<Name> = Vec::new();
+            for (_, caller) in args {
+                if unified.contains(caller) {
+                    continue;
+                }
+                unified.push(*caller);
+                let params: Vec<Name> = args.iter().filter(|(_, c)| c == caller).map(|(p, _)| *p).collect();
+                if self.unify(&frame, &params, &mut out, *caller).is_none() {
                     return false;
                 }
-                let root = {
-                    let cached = self.parsed_hosts.borrow().get(&n).copied();
-                    match cached {
-                        Some(r) => r,
-                        None => {
-                            let r = match self.f.typedefs() {
+            }
+        }
+        *env = out;
+        true
+    }
+
+    // --- siblings (native tape.rs:2197-2228, relation.rs `find_sibling`) ---
+
+    /// `precedes`/`follows` from `node`: the neighbour (`next`: the first later sibling ending
+    /// after this node's end; `prev`: the previous sibling) and the walk (`next_all`/`prev_all`
+    /// from the walk anchor: the first sibling, from this node, ending after its start; for the
+    /// root, from its first child).
+    fn sibling_walk(&self, node: Bound, forward: bool) -> (Option<Bound>, Vec<Bound>) {
+        let (start, end) = self.range_of(node);
+        let parent = self.parent(node);
+        let (sibs, at): (Vec<Bound>, Option<usize>) = match parent {
+            Some(p) => {
+                let s: Vec<Bound> = self.children(p).collect();
+                let i = s.iter().position(|c| *c == node);
+                (s, i)
+            }
+            None => {
+                let s: Vec<Bound> = self.children(node).collect();
+                let i = (!s.is_empty()).then_some(0);
+                (s, i)
+            }
+        };
+        let once = match (parent, at) {
+            (Some(_), Some(i)) => {
+                if forward {
+                    sibs[i + 1..].iter().copied().find(|c| self.range_of(*c).1 > end)
+                } else {
+                    i.checked_sub(1).map(|j| sibs[j])
+                }
+            }
+            _ => None,
+        };
+        let all = match at {
+            None => Vec::new(),
+            Some(mut a) => {
+                let ends_after = |b: Bound| self.range_of(b).1 > start;
+                let found = if ends_after(sibs[a]) {
+                    while a > 0 && ends_after(sibs[a - 1]) {
+                        a -= 1;
+                    }
+                    true
+                } else {
+                    loop {
+                        a += 1;
+                        if a >= sibs.len() {
+                            break false;
+                        }
+                        if ends_after(sibs[a]) {
+                            break true;
+                        }
+                    }
+                };
+                match (found, forward) {
+                    (false, _) => Vec::new(),
+                    (true, true) => sibs[a + 1..].to_vec(),
+                    (true, false) => sibs[..a].iter().rev().copied().collect(),
+                }
+            }
+        };
+        (once, all)
+    }
+
+    // --- comparisons (native matcher/compare.rs `Comparison::holds`) ---
+
+    /// `Some(verdict)`, or `None` where a transform's value is not known.
+    fn compare(&self, left: Name, right: Name, op: CompareOp, text: CompareText, transform: bool, env: &Env) -> Option<bool> {
+        if let (Some(l), Some(r)) = (env.get(left), env.get(right)) {
+            let eq = match text {
+                CompareText::Source => self.text_of(l) == self.text_of(r),
+                CompareText::Node => self.range_of(l) == self.range_of(r) && self.kind_of(l) == self.kind_of(r),
+                CompareText::Index => match (self.element_index(l), self.element_index(r)) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => return Some(false),
+                },
+            };
+            return Some(eq != (op == CompareOp::Ne));
+        }
+        // A text variable or a transform variable is text: compared as source text only.
+        let side = |name: Name| -> Option<Option<String>> {
+            if let Some(b) = env.get(name) {
+                return Some(Some(self.text_of(b)));
+            }
+            if let Some(t) = env.text(name) {
+                return Some(Some(t.to_owned()));
+            }
+            if transform { Some(self.transform_text(name, env)) } else { Some(None) }
+        };
+        let (l, r) = (side(left)?, side(right)?);
+        Some(match (text, l, r) {
+            (CompareText::Source, Some(l), Some(r)) => (l == r) != (op == CompareOp::Ne),
+            _ => false,
+        })
+    }
+
+    /// A list element's 0-based index: the `,` tokens before it among its parent's children,
+    /// parentheses transparent (native compare.rs `element_index`).
+    fn element_index(&self, b: Bound) -> Option<usize> {
+        const LISTS: &[&str] = &[
+            "array", "array_pattern", "arguments", "formal_parameters", "object", "object_pattern",
+            "type_arguments", "type_parameters", "tuple_type", "named_imports", "export_clause", "list",
+            "tuple", "set", "dictionary", "argument_list", "parameters", "lambda_parameters",
+            "list_pattern", "tuple_pattern", "pattern_list", "expression_list",
+        ];
+        let Bound::Node(mut node) = b else { return None };
+        let kind = |n: u32| facts::name(self.f.kind[n as usize]);
+        if !self.f.named(node) || matches!(&*kind(node), "comment" | "html_comment" | "line_comment" | "block_comment") {
+            return None;
+        }
+        let mut parent = self.f.parent(node)?;
+        while &*kind(parent) == "parenthesized_expression" {
+            node = parent;
+            parent = self.f.parent(node)?;
+        }
+        if !LISTS.contains(&&*kind(parent)) {
+            return None;
+        }
+        let mut commas = 0;
+        for &c in self.f.children(parent) {
+            if c == node {
+                return Some(commas);
+            }
+            if !self.f.named(c) && self.f.text(c) == "," {
+                commas += 1;
+            }
+        }
+        None
+    }
+
+    /// A transform variable's text over the bindings so far (native `Transform::text`); `None`
+    /// where a capture it derives from is unbound.
+    fn transform_text(&self, name: Name, env: &Env) -> Option<String> {
+        let t = &self.q.transform;
+        let chain = t.chain(name);
+        if chain.is_empty() {
+            return None;
+        }
+        let mut scratch: Vec<(Name, String)> = env.texts.clone();
+        for i in chain {
+            let step = &t.steps[i];
+            // The source's text: a capture's (a node, or an exported text), else a variable.
+            let bound = env.get(step.source);
+            let text = match bound {
+                Some(b) => Some(self.text_of(b)),
+                None => scratch.iter().find(|(n, _)| *n == step.source).map(|(_, s)| s.clone()),
+            }
+            .or_else(|| step.default.clone());
+            let text = text?;
+            let out = replace_all(&text, &step.regex, &step.by);
+            // ast-grep de-indents a multi-line result relative to its source node.
+            if out.contains('\n') && matches!(bound, Some(Bound::Node(_))) {
+                self.refuse("transform: a multi-line result is de-indented (unsupported)".into());
+                return None;
+            }
+            scratch.retain(|(n, _)| *n != step.name);
+            scratch.push((step.name, out));
+        }
+        scratch.into_iter().find(|(n, _)| *n == name).map(|(_, s)| s)
+    }
+
+    // --- parse (matcher/parse.rs): text grammars (ast/parse_ext.rs), and annotation over
+    // `string_type_definition` ---
+    fn parse(&self, node: Bound, p: &ParseTest, env: &mut Env) -> bool {
+        let Bound::Node(n) = node else { return false };
+        // Trees cached per (host node, grammar, interpolation marker): `Some(range)` a tree,
+        // `(NONE, NONE)` an unknown value, `None` no tree.
+        let key = (n, p.grammar as u8, p.marker.clone());
+        let cached = self.parsed_hosts.borrow().get(&key).copied();
+        let tree = match cached {
+            Some(t) => t,
+            None => {
+                let t = match p.grammar {
+                    ParseGrammar::Annotation => {
+                        // Native `ParseTest::tree_at`: a host of kind string/concatenated_string
+                        // holds a tree iff it is a string type definition of the file's scope
+                        // table (S4, SCHEMA § 1.3).
+                        let kind = facts::name(self.f.kind[n as usize]);
+                        if &*kind != "string" && &*kind != "concatenated_string" {
+                            None
+                        } else {
+                            match self.f.typedefs() {
                                 Err(why) => {
                                     self.refuse(why);
                                     None
@@ -2090,77 +2809,30 @@ impl<'a> Eval<'a> {
                                     }
                                     (base, parsed.len() as u32)
                                 }),
-                            };
-                            self.parsed_hosts.borrow_mut().insert(n, r);
-                            r
+                            }
                         }
                     }
+                    _ => self.text_tree(n, p.grammar, &p.marker),
                 };
-                let Some((root, _)) = root else { return false };
+                self.parsed_hosts.borrow_mut().insert(key, t);
+                t
+            }
+        };
+        let Some(tree) = tree else { return false };
+        match p.grammar {
+            ParseGrammar::Annotation => {
+                // The tree's rule runs on its root in an environment of its own; its captures are
+                // exported to the host.
                 let mut inner = Env::default();
-                if !self.m(&p.rule, Bound::Parsed(root), &mut inner) {
+                if !self.m(&p.rule, Bound::Parsed(tree.0), &mut inner) {
                     return false;
                 }
                 for (name, b) in inner.vars {
-                    env.set(name, b);
+                    parse_ext::export(env, name, b);
                 }
                 true
             }
-            ParseGrammar::PythonFString => {
-                let kind = facts::name(self.f.kind[n as usize]);
-                if &*kind != "string" && &*kind != "concatenated_string" {
-                    return false;
-                }
-                // Cached per host node: Some(root) for a tree, None for NotString, root NONE for
-                // an unknown value.
-                let root = {
-                    let cached = self.parsed_hosts.borrow().get(&n).copied();
-                    match cached {
-                        Some(r) => r,
-                        None => {
-                            let r = match crate::fstring::parse(self.f, n) {
-                                Ok(crate::fstring::FParse::Tree(pieces)) => {
-                                    let mut parsed = self.parsed.borrow_mut();
-                                    let root = parsed.len() as u32;
-                                    let text: String = pieces.iter().map(|p| p.text.as_str()).collect();
-                                    let (s, e) = match (pieces.first(), pieces.last()) {
-                                        (Some(a), Some(b)) => (a.start, b.end),
-                                        _ => (self.f.start[n as usize], self.f.start[n as usize]),
-                                    };
-                                    parsed.push(ParsedNode { kind: facts::intern("template"), start: s, end: e, text, parent: NONE, named: true });
-                                    for piece in pieces {
-                                        parsed.push(ParsedNode { kind: facts::intern(piece.kind), start: piece.start, end: piece.end, text: piece.text, parent: root, named: true });
-                                    }
-                                    Some((root, parsed.len() as u32))
-                                }
-                                Ok(crate::fstring::FParse::NotString) => None,
-                                Ok(crate::fstring::FParse::Unknown) => Some((NONE, NONE)),
-                                Err(why) => {
-                                    self.refuse(why);
-                                    None
-                                }
-                            };
-                            self.parsed_hosts.borrow_mut().insert(n, r);
-                            r
-                        }
-                    }
-                };
-                let Some((root, _)) = root else { return false };
-                if root == NONE {
-                    self.unknown.set(true);
-                    return false;
-                }
-                // The tree's rule runs in an environment of its own; what it binds is exported to
-                // the host as span captures.
-                let mut inner = Env::default();
-                if !self.m(&p.rule, Bound::Parsed(root), &mut inner) {
-                    return false;
-                }
-                for (name, b) in inner.vars {
-                    env.set(name, b);
-                }
-                true
-            }
+            _ => self.match_text_tree(n, tree, &p.rule, p.hosted, env),
         }
     }
 }
