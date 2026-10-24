@@ -35,3 +35,20 @@ it.skipIf(!required)("reuses empty relational backing across clauses without ind
   expect([indexes,statistics],'empty relations need no physical indexes or statistics').toEqual([0,0]);
  }finally{rmSync(directory,{recursive:true,force:true});}
 },35_000);
+
+it.skipIf(!required)("preserves deferred CAST affinity through a later stored stage",()=>{
+ const program=`
+  import {readFileSync} from 'node:fs';import {loadNativeBinding} from ${JSON.stringify(engine)};
+  const n=loadNativeBinding();const policy={format:'rerail.policy/v1',id:'affinity',revision:1,mode:'log',clauses:[{id:'typed',relational:{inputs:{events:{evidence:{as:'e',query:{ast:{language:'python',rule:{kind:'identifier'}}},project:{path:'file.path'}}}},stages:[{name:'a',query:"SELECT __path,__start,__end,'01' AS value FROM events",deferred:{value:"CAST('01' AS INTEGER)"}},{name:'b',query:'SELECT * FROM a'}],query:"SELECT __path path,__start start_byte,__end end_byte FROM b WHERE value='01'"},violation:{code:'MATCH',message:'Match',anchor:'witness.span'}}]};
+  const results=[];
+  for(let i=0;i<3;i++){
+   const r=n.CodeRuleDslRuntime.compile(JSON.stringify(policy),'json',readFileSync(new URL(${JSON.stringify(caps)}),'utf8'));
+   results.push(JSON.parse(r.evaluate(JSON.stringify({format:'rerail.repository-snapshot/v1',revision:1,files:[{path:'a.py',language:'python',source:'target()'}]}),'report')));
+  }
+  console.log(JSON.stringify(results));
+ `;
+ const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30_000});
+ expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
+ const results=JSON.parse(child.stdout);expect(results).toHaveLength(3);
+ for(const result of results){expect(result.failures).toEqual([]);expect(result.violations).toHaveLength(1);}
+});
