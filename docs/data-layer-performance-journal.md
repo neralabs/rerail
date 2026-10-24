@@ -43,6 +43,12 @@ New captures set explicit compiler, publication, structural-preparation, and can
 Compilation still validates through SQLite. This step changes observation, not the rule execution algorithm.
 The next runtime step removes eager preparation for excluded local rule/file pairs.
 
+The R2 red tests exercise the real public workspace API with the previous profiling addon.
+Adding a path-excluded rule increases the prepared template from one plan to two, although findings remain unchanged.
+Twenty files still share one batch, but both eligible and excluded plans enter that batch.
+`.rerail/profiles/sql-recovery-tdd-20261023/admission-red` records both behavioral failures (6.146 seconds).
+The mandatory producer-shape command now includes these preparation-admission checks.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.

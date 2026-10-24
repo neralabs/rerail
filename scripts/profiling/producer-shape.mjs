@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 const result = spawnSync(process.execPath, [
   fileURLToPath(new URL("../../node_modules/vitest/vitest.mjs", import.meta.url)),
-  "run", "test/engine/native/relational-batch.test.ts", "test/engine/native/relational-completed.test.ts",
+  "run", "test/engine/native/candidate-admission.test.ts", "test/engine/native/relational-batch.test.ts", "test/engine/native/relational-completed.test.ts",
 ], {
   cwd: fileURLToPath(new URL("../../", import.meta.url)),
   env: { ...process.env, RERAIL_REQUIRE_PRODUCER_SHAPE: "1" },
