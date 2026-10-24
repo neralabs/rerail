@@ -16,6 +16,7 @@ fn signature(plan: &Plan) -> Option<(Vec<Set>, usize)> {
     };
     fn prefix(plan: &Plan, predicates: &mut Vec<Set>, utility: &mut Option<usize>) -> bool {
         match &plan.op {
+            Op::Shared(body) => prefix(body, predicates, utility),
             Op::Predicate(set) if utility.is_none() => {
                 predicates.push(set.clone());
                 true

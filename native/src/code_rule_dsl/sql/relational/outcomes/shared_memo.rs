@@ -39,6 +39,7 @@ fn call_counts(plan: &Plan, cache: &mut BTreeMap<usize, CallCounts>) -> Result<C
             }
         }
         Op::Not(child) => counts = call_counts(child, cache)?,
+        Op::Shared(child) => counts = call_counts(child, cache)?,
         _ => {}
     }
     cache.insert(key, counts.clone());
@@ -53,6 +54,9 @@ fn calls(plan: &Plan, counts: &mut CallCounts) -> Result<(), String> {
 /// necessary only when a utility occurs in different child subtrees, at least
 /// one of which is nested. Deeper sharing stays inside its own child program.
 pub(in super::super) fn region(plan: &Plan) -> Result<bool, String> {
+    if let Op::Shared(body) = &plan.op {
+        return region(body);
+    }
     if let Op::Charge(_, body) = &plan.op {
         return Ok(body.uses_memo());
     }
@@ -98,6 +102,7 @@ fn keys(plan: &Plan, slots: &mut Slots, seen: &mut BTreeSet<usize>) {
         }
         Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => keys(child, slots, seen),
         Op::Not(child) => keys(child, slots, seen),
+        Op::Shared(child) => keys(child, slots, seen),
         Op::Charge(_, child) => keys(child, slots, seen),
         Op::Search(_, _, child, stop)
         | Op::Count {
@@ -226,6 +231,7 @@ impl Shared<'_> {
         guard: &str,
     ) -> Result<(String, Option<(usize, usize)>), String> {
         match &plan.op {
+            Op::Shared(body) => self.emit(body, guard),
             Op::Charge(id, body) if body.uses_memo() && !self.memo.proven.contains_key(id) => {
                 self.sql.generation.operator()?;
                 self.utility(*id, body, guard)

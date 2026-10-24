@@ -83,7 +83,7 @@ fn catalog(execute: bool) -> Value {
                                 )
                                 .unwrap();
                             }
-                            let mut result = json!({"admitted":true,"sqlBytes":compiled.sql.len(),"sqlSha256":digest(compiled.sql.as_bytes()),"compilerLimitations":compiled.relations["limitations"]});
+                            let mut result = json!({"admitted":true,"sqlBytes":compiled.sql.len(),"sqlSha256":digest(compiled.sql.as_bytes()),"compilerScope":compiled.relations["scope"],"compilerLimitations":compiled.relations["limitations"],"lowering":compiled.relations["lowering"],"compositionOperators":compiled.relations["compositionOperators"],"nestedReturnCells":compiled.relations["nestedReturnCells"]});
                             if let Some(fixtures) = &fixtures {
                                 let checked =
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -105,8 +105,13 @@ fn catalog(execute: bool) -> Value {
                                     no_positive_witness += 1;
                                 }
                                 eprintln!(
-                                    "catalog {relative}/{} grammar {index}: parity={}",
-                                    clause.id, checked["passed"]
+                                    "catalog {relative}/{} grammar {index}: parity={} vm={} nodeAdvances={} executionCpuNs={} prepareCpuNs={}",
+                                    clause.id,
+                                    checked["passed"],
+                                    checked["vm"],
+                                    checked["nodeAdvances"],
+                                    checked["executionCpuNs"],
+                                    checked["prepareCpuNs"]
                                 );
                                 result["execution"] = checked;
                             }

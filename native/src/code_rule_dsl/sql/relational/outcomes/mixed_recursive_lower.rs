@@ -31,12 +31,15 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) enum Instruction {
 pub(in crate::code_rule_dsl::sql::relational::outcomes) struct Function {
     pub entry: usize,
     pub memo: usize,
+    pub writes: Slots,
 }
 pub(in crate::code_rule_dsl::sql::relational::outcomes) struct Program {
     pub code: Vec<Instruction>,
     pub functions: Vec<Function>,
     pub regions: Vec<Plan>,
     pub mentions: Slots,
+    pub writes: Slots,
+    pub captures: bool,
     pub bypass: bool,
     pub three: bool,
 }
@@ -264,6 +267,52 @@ impl Source {
     }
 }
 
+fn structurally_total(m: &AstMatcher) -> bool {
+    match m {
+        AstMatcher::Kind(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Never
+        | AstMatcher::Pattern(_)
+        | AstMatcher::Util(_)
+        | AstMatcher::Semantic(Semantic::Capture(_)) => true,
+        AstMatcher::All(items) | AstMatcher::Any(items) => items.iter().all(structurally_total),
+        AstMatcher::Not(child) => structurally_total(child),
+        AstMatcher::Has(child, stop)
+        | AstMatcher::Inside(child, stop)
+        | AstMatcher::Follows(child, stop)
+        | AstMatcher::Precedes(child, stop) => {
+            structurally_total(child.rule())
+                && match stop {
+                    StopBy::Rule(rule) => pure(rule).is_ok(),
+                    _ => true,
+                }
+        }
+        AstMatcher::Field(field) => {
+            structurally_total(&field.rule) && matches!(field.stop, StopBy::Neighbor)
+        }
+        _ => false,
+    }
+}
+fn needs_state(m: &AstMatcher, source: &Source, members: &BTreeSet<usize>) -> bool {
+    // A finite region already owns any captures private to its Not/count/stop
+    // probes. Only bindings crossing recursive control need a snapshot lane.
+    if !source.recursive(m, members) {
+        return !matcher::CaptureAnalysis::default().binds(m).is_empty();
+    }
+    match m {
+        AstMatcher::All(items) | AstMatcher::Any(items) => {
+            items.iter().any(|m| needs_state(m, source, members))
+        }
+        AstMatcher::Not(child) => needs_state(child, source, members),
+        AstMatcher::Has(child, _)
+        | AstMatcher::Inside(child, _)
+        | AstMatcher::Follows(child, _)
+        | AstMatcher::Precedes(child, _) => needs_state(child.rule(), source, members),
+        AstMatcher::Field(field) => needs_state(&field.rule, source, members),
+        _ => false,
+    }
+}
+
 struct Builder<'a> {
     source: &'a Source,
     members: &'a BTreeSet<usize>,
@@ -277,12 +326,13 @@ impl Builder<'_> {
                 Instruction::Test(lower.pure.set(m)?)
             } else {
                 let p = lower.plan(m)?;
-                if !p.writes.is_empty() {
+                if !p.writes.is_empty() && !self.program.captures {
                     return Err(
                         "mixed recursion: finite regions must not write captures or counts".into(),
                     );
                 }
                 self.program.mentions.extend(&p.mentions);
+                self.program.writes.extend(&p.writes);
                 let id = self.program.regions.len();
                 self.program.regions.push(p);
                 Instruction::Eval(id)
@@ -392,9 +442,6 @@ impl Lower {
         &mut self,
         u: &UtilRef,
     ) -> Result<Option<Op>, String> {
-        if !self.three_valued {
-            return Ok(None);
-        }
         let key = (u.table.as_ptr() as usize, u.index);
         let context = (
             key.0,
@@ -422,9 +469,16 @@ impl Lower {
         let Some(members) = source.component() else {
             return Ok(None);
         };
+        let total = source.bodies.iter().all(structurally_total);
+        let captures = members
+            .iter()
+            .any(|id| needs_state(&source.bodies[*id], &source, &members));
+        if (!self.three_valued || captures) && !total {
+            return Ok(None);
+        }
         for &id in &members {
             let mut a = matcher::CaptureAnalysis::default();
-            if !a.binds(&source.bodies[id]).is_empty() || !a.counts(&source.bodies[id]).is_empty() {
+            if !a.counts(&source.bodies[id]).is_empty() {
                 return Ok(None);
             }
         }
@@ -461,7 +515,11 @@ impl Lower {
             .map(|_| {
                 let memo = 4_000_000 + self.mixed_functions;
                 self.mixed_functions += 1;
-                Function { entry: 0, memo }
+                Function {
+                    entry: 0,
+                    memo,
+                    writes: Slots::new(),
+                }
             })
             .collect();
         let mut builder = Builder {
@@ -473,6 +531,8 @@ impl Lower {
                 functions,
                 regions: vec![],
                 mentions: Slots::new(),
+                writes: Slots::new(),
+                captures,
                 bypass: self.parsed_depth > 0 || self.hosted_depth > 0,
                 three: self.three_valued,
             },
@@ -494,6 +554,23 @@ impl Lower {
             self.active.remove(key);
         }
         built?;
+        // Only bindings that leave the invoked function are caller exports;
+        // temporary bindings under Not still require the mutable-state machine.
+        builder.program.writes.clear();
+        for &id in &members {
+            let names = matcher::CaptureAnalysis::default().binds(&source.bodies[id]);
+            for name in names {
+                let qualified = format!("{}{}", self.namespace, name);
+                let slot = self
+                    .slots
+                    .iter()
+                    .position(|slot| slot.name == qualified)
+                    .ok_or("mixed recursion: missing typed output slot")?;
+                builder.program.writes.insert(slot);
+                let dense = builder.dense[&id];
+                builder.program.functions[dense].writes.insert(slot);
+            }
+        }
         let program = Rc::new(builder.program);
         for &id in &members {
             let dense = members

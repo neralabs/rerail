@@ -36,6 +36,7 @@ pub(super) fn candidate_filter(rule: &Plan, alias: &str) -> String {
 
 pub(super) fn boolean(plan: &Plan, alias: &str) -> Result<Option<String>, String> {
     Ok(Some(match &plan.op {
+        Op::Shared(body) => return boolean(body, alias),
         Op::Predicate(set) => super::predicate::condition(set, alias)?,
         Op::NthChild {
             step,
@@ -70,6 +71,9 @@ pub(super) fn boolean(plan: &Plan, alias: &str) -> Result<Option<String>, String
 }
 
 pub(super) fn truth(plan: &Plan, depth: usize, alias: &str) -> Result<String, String> {
+    if let Op::Shared(body) = &plan.op {
+        return truth(body, depth, alias);
+    }
     if depth > 16 || !plan.mentions.is_empty() || !plan.writes.is_empty() {
         return Err(
             "ordered outcomes: node-local capture-free tests of depth at most 16 required".into(),

@@ -52,6 +52,7 @@ pub(in crate::code_rule_dsl::sql) fn register(
     super::file_guard::register(db, batch)?;
     super::sibling_state::register(db)?;
     super::capture_cell::register(db)?;
+    super::capture_state::register(db)?;
     super::bound_leaf::register(db, batch)?;
     super::memo_store::register(db)?;
     super::budget_leaf::register(db, batch)?;

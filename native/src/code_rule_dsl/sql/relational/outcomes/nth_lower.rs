@@ -44,6 +44,7 @@ fn metadata(plan: &Plan) -> bool {
         Op::Predicate(_) => true,
         Op::NthChild { of_rule: None, .. } => true,
         Op::Not(child) => metadata(child),
+        Op::Shared(child) => metadata(child),
         Op::All(items) | Op::Any(items) => items.iter().all(metadata),
         _ => false,
     }

@@ -11,6 +11,8 @@ pub(super) struct Components {
     definitions: BTreeMap<usize, String>,
     pub(super) semantic: BTreeMap<usize, String>,
     pub(super) downward: BTreeMap<usize, (String, BTreeMap<u32, String>)>,
+    /// Immutable compiler tables, materialized once for all reached roots.
+    constants: Vec<String>,
 }
 
 impl Components {
@@ -20,9 +22,26 @@ impl Components {
 }
 
 impl Sql {
+    pub(super) fn constant_relation(&mut self, operator: &str, body: String) -> String {
+        let mut components = self.generation.components.borrow_mut();
+        let name = format!(
+            "constant{}_{}",
+            components.clause,
+            components.constants.len()
+        );
+        components
+            .constants
+            .push(format!("{name} AS MATERIALIZED ({body})"));
+        self.profile
+            .push(json!({"operator":operator,"relation":name,"scope":"statement","constant":true}));
+        name
+    }
+
     /// This is called once at the statement boundary, never in a correlated child.
     pub(super) fn publish_components(&mut self) {
         let components = self.generation.components.borrow();
+        self.definitions
+            .extend(components.constants.iter().cloned());
         for (id, definitions) in &components.semantic {
             self.definitions.push(definitions.clone());
             self.profile.push(json!({"operator":"shared semantic recursion forest","component":id,"scope":"statement","nativeComposition":false,"materializedCaptures":false}));

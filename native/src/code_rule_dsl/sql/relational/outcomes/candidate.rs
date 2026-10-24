@@ -29,6 +29,7 @@ impl Local<'_> {
     }
     fn scalar(&self, plan: &Plan, bound: &str) -> Result<Option<String>, String> {
         Ok(Some(match &plan.op {
+            Op::Shared(body) => return self.scalar(body, bound),
             Op::Bind(slot) => {
                 let bit = self.mask(&std::iter::once(*slot).collect());
                 let input = if self.fresh {
@@ -54,6 +55,9 @@ impl Local<'_> {
         }))
     }
     fn emit(&mut self, plan: &Plan, input: &str) -> Result<String, String> {
+        if let Op::Shared(body) = &plan.op {
+            return self.emit(body, input);
+        }
         if let Some(test) = self.scalar(plan, "i.bound")? {
             let tested = self.relation(format!("SELECT i.bound,{test} AS truth FROM {input} i"));
             let writes = self.mask(&plan.writes);

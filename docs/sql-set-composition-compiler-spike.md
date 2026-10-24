@@ -5907,3 +5907,109 @@ These regressions stay visible in the evidence. Exact peak tracking and native m
 The remaining refusals are six recursive-context contracts and five resource limits. Shared finite functions need lazy typed calls with distinct native memo identities. Recursive parameter frames and cross-document capture returns need explicit contracts. The compiler's source and emitted operator limits remain 256; active typed returns remain limited to 128 cells.
 
 `benchmark/sql-relational-recursive-catalog-integration.json` records new grammar SQL, controlled profiles, unchanged cases, and cost regressions. The coverage and qualification records pin the source, executable, fixture inventory, and failed checkpoints. The transition plan describes the next two implementation tracks. Production replacement, native stack-byte equivalence, aggregate storage-byte bounds, deadlines, and the complete-job 100-execution gate remain unqualified.
+
+### Complete coverage and regression rejection, 2026-10-24
+
+The user rejected acceptance of the catalog regressions. The previous evidence exposed them, but acceptance did not enforce their budgets. A new catalog performance gate now pins all 135 existing grammars and the 596-file inventory. The previous 101 retain their pre-regression VM ceilings. Running the gate on the published batch fails for B110, B112, B507, and ASYNC221. Coverage gains cannot compensate for these failures.
+
+The remaining implementation separates three contracts: captured structural recursion, recursion across parsed documents, and shared finite utility bodies. All use SQL for child composition. A shared atomic capture store provides immutable snapshots through a persistent seven-level trie. Continuations carry snapshot handles; unchanged capture vectors are not copied at every step.
+
+The finite compiler retains a 256-operator limit. It fuses proven total source regions and emits shared utility bodies once, with separate native memo identities at calls. The parsed component requires each recursive cycle to cross a Parse boundary. Ordinary captured recursion initially requires structurally total atoms. These are compiler proofs, not policy-name recognizers or user-selectable modes.
+
+The second executable checkpoint admits 144 of 146 grammars. All 144 pass catalog native parity. One admitted semantic-annotation clause still lacks a positive fixture witness, so complete coverage is not qualified. B020 passes capture mutation, alias, shadowing, rollback, and finite-work tests. The shared finite compiler passes its initial Boolean, search, stop, count, work, and unknown tests.
+
+B615 still fails at 257 source operators. The current source profile has six completed utility bodies and twelve utility references. A bounded source-attribution diagnostic will identify repeated lowering before choosing the next sharing change. The second remaining refusal is rule-stopped field traversal exposed by the await-annotation rule. Its native traversal order needs an explicit SQL contract.
+
+The catalog performance gate still rejects exactly the four existing regressions. New admission also exposes substantial costs: F632 uses 247,155,957 VM instructions and SIM905 uses 501,837,825. These measurements are diagnostic results, not accepted performance. The new qualification driver requires complete coverage, positive witnesses, unchanged pinned inputs, native parity, and all existing VM ceilings in one failing gate.
+
+The third checkpoint admits 145 grammars. All145 pass native parity and have positive witnesses on597 fixtures. Both frozen baseline executables were rerun on this exact inventory. Performance ceilings retain the lower baseline cost for each existing grammar.
+
+The focused field-traversal tests reject a duplicate reached value probe. A side-effecting correlated CTE was consumed through two paths. The repair must use one evaluation chain, with the next traversal seeded from the completed row. Invalid frontend fixtures are also being corrected; they are not evidence of successful contracts. The deep captured-recursion test reports the same limit tag but different remaining work. It remains a failing gate pending diagnosis.
+
+SQL inspection identifies two distinct wastes. Pure recursion lowering absorbs nonrecursive wrappers and replaces specialized descendant plans with a general scheduler. The finite compiler also materializes immutable instruction, edge, and function tables inside each root query. The next checkpoint restricts scheduler selection to recursive entries and publishes those constant tables at statement scope. Catalog execution now records prepare and execution time separately, EXPLAIN QUERY PLAN, VM, scans, automatic-index rows, typed returns, and node-cursor counters.
+
+The fourth executable checkpoint passes all145 admitted catalog grammars, all13 parsed-recursion tests, all6 stopped-field tests, the capture tests, and the shared finite helper tests. The separate captured-depth oracle checks logical depth256, cache-fit peaks, failure cost, and cleanup. A diagnostic retains the native physical-stack discrepancy and explicitly marks that contract unqualified.
+
+The performance gate rejects the fourth checkpoint. B110/B112 return to their prior counts. ASYNC221 falls from50,076,368 to41,779,500 VM instructions on597 files. B507 still exceeds its ceiling. Restricting all pure schedulers to cyclic root utilities also regresses F601 and restores RET501's older, slower plan. The planner must distinguish cheap specialized wrappers from wrappers that benefit from fused control. These regressions cannot be accepted as a cost of broader coverage.
+
+F632 falls from247,346,274 to216,183,413 VM instructions, but grows from62,867 to107,139 SQL bytes. It still creates1,699,974 typed return rows. SIM905 falls from501,889,344 to460,230,641 VM instructions and creates1,619,198 typed return rows. These results expose control-transition overhead; neither is a satisfactory final query shape. B615 now stops earlier at a classifier proof hidden by the new shared-definition wrapper. Its transparent classifier visitor is being repaired without changing sibling-cache identity.
+
+
+The fifth checkpoint retains 145 admissions and native parity on all 597 files. Four of the six cases that regressed during this batch now pass their ceilings. B507 still uses 23,723,808 VM instructions against its 22,062,247 ceiling. RET501 uses 18,137,388 against 11,334,102. The checkpoint is rejected. Restoring rich wrapper fusion fixes F601 without restoring the overly broad scheduler selection.
+
+The sixth checkpoint confirms shared finite utility call instructions and all focused contracts except B615 admission. B615 still exceeds 256 source operators. Diagnostics attribute the remaining count to distinct lowered controls, including repeated conjunction boundaries. The next normalization must remove actual controls under a proof; changing accounting alone would not qualify it.
+
+A prefix-filter experiment cannot provide the expected SIM905 benefit. Native evaluation checks arguments before the attribute-call shape. Moving the attribute check earlier would skip utility work. The safe derived filter only requires an argument list, which almost every call already has. This experiment remains test-only and is not incorporated into query generation.
+
+The next performance checkpoint tests two planner repairs. Simple guarded self-tail recursion uses its specialized tree-walk plan. An expensive predicate helper can use a local memo transaction when ancestor traversal produces repeated demand for the same node. Its proof excludes utility calls, capture access, and typed callbacks. Separate tests check entry cost, cache replay, depth, and repeated ancestors.
+
+Recursive parsing receives a separate reached-child gate after the authoritative atomic parse. A failed or unknown parse must not initialize the recursive child SQL. Cheap parsed children keep their existing query shape. This is still an experiment until native contracts and full catalog measurements pass.
+
+
+The seventh checkpoint proves the source normalization: B615 lowers to253 operators, with13 conjunction boundaries removed. Its finite representation has62 instructions,10 functions, and14 SQL regions. It now fails the emitted-operator limit instead. Both conjunction contract tests pass, including propagation through a skipped sibling. A test-only unrestricted inventory is diagnostic and never supplies a compiled query.
+
+The same checkpoint fixes B507 at22,062,247 VM instructions and RET501 at11,013,724. The existing-budget gate now rejects B033 at13,806,755 against13,615,296. A broader scheduler preference also makes SIM905 exceed the emitted-operator limit. The checkpoint has144 admissions, all with native parity and positive witnesses. It is rejected; the limits and ceilings stay unchanged.
+
+The deferred parse experiment is mixed. F722's three clauses each save roughly299,000 VM instructions. F632 grows from240,957,037 to246,569,664, while typed returns only fall from1,440,173 to1,433,096. The compiler must not accept a universal dispatch layer on this evidence. Further profiling will separate dispatch overhead from other planner changes.
+
+Fourteen parsed-recursion contracts pass. The remaining new test has an invalid precondition: native root inference visits no nonliteral candidates, so its derived boundary allowance becomes negative. The corrected fixture forces the intended root stream and asserts positive native work before testing the boundary. It retains the same parity oracle.
+
+
+The eighth executable checkpoint passes native parity for145 grammars and every original135 VM ceiling. The parsed family restores F632 and F405's fifth-checkpoint SQL hashes and VM counts exactly. All three F722 clauses retain the cheaper reached-child setup. All15 parsed-recursion tests pass. The three new finite-recursion tests pass, including an independent static/dynamic depth, memo, capture, and cleanup oracle.
+
+This checkpoint still refuses B615. Exposing every function-bearing recursive component produces249 control instructions and46 SQL regions. Emission reaches256 operators before finishing those regions. The source bound remains satisfied at253. The next change must reduce real instructions or regions; changing the counter would not qualify the plan.
+
+The broader comparison also rejects indiscriminate recursive expansion. B020 grows from134,929,696 to164,738,193 VM instructions. PIE810 grows from7,353,390 to13,722,907. SIM101 also regresses. Their shorter SQL does not justify this additional execution work. Automatic physical selection will preserve existing recursive kernels when they fit, and expose their functions only after a resource refusal. There is one selected SQL statement and no user-selectable execution mode.
+
+The performance gate now also pins the ten new admissions to their first native-correct diagnostic measurements on the same597 files. All135 published ceilings remain unchanged. This stronger gate rejects B020, PIE810, SIM101, and SIM113 at checkpoint8. SIM113's5.6% increase predates recursive extraction and requires separate SQL attribution.
+
+The first eighth-checkpoint build found a stale argument name after the parsed setup refactor. It was corrected before building the frozen executable. Native lint then identified17 mechanical issues. Those are being corrected before final source qualification.
+
+
+The ninth checkpoint passes all145 native catalog comparisons and all145 pinned VM ceilings. B020 returns to134,123,888 VM instructions. PIE810 returns to7,132,058 and SIM101 to21,442,365. Keeping small capture operations inside their original regions reduces SIM113 to27,915,627, below its28,444,836 diagnostic ceiling. Both native lint configurations pass.
+
+Complete compile-only attribution now identifies B615's remaining problem. Keeping recursive bodies opaque emits444 operators and453,095 SQL bytes. Exposing their functions reduces this to289 operators and384,587 bytes. Neither representation qualifies. The latter has66 Search instructions, each with a separate SQL enter/return template. Exact instruction interning only saves two control nodes; it cannot remove these template copies.
+
+The next physical change replaces those66 template pairs with one pair plus immutable instruction metadata. All66 instructions remain subject to the256-node control-graph limit. Emission counts one shared Search template only after the copies are removed. The normal specialized renderer remains the automatic choice for already-fitting plans, whose lower VM costs are now pinned. The large-plan candidate gets the shared template without adding a user option or executing alternate queries.
+
+The catalog ledger will record source operators, finite control nodes, emitted operators, active typed returns, and the selected physical shape. Final qualification requires those counts to satisfy the existing limits, as well as native parity, positive witnesses, one matching statement, zero frame publications, and every VM ceiling.
+
+The tenth checkpoint admits all 146 grammars. Each passes native parity and has a positive witness on the same 597 files. B615 now uses 253 source operators, 249 finite control instructions, 225 emitted operators, and 24 active typed return cells. Its published SQL occupies 163,748 bytes. None of the resource limits changed.
+
+The shared Search renderer removes actual SQL copies. In the same compile-only diagnostic, B615 falls from 289 operators and 384,587 bytes to 224 operators and 162,275 bytes. Publication adds one operator and its SQL wrapper. Immutable metadata still contains all 66 Search instructions. A shared enter handler and return handler interpret that metadata. The focused native oracle checks traversal order, stop order, counts, captures, work, depth, and cache behavior.
+
+The first tenth-checkpoint build caught a missing field in a test-only Program constructor. The constructor was corrected before execution. Final lint also caught a redundant Boolean expression; its equivalent simpler expression was rebuilt. These failures are not counted as passing qualification.
+
+The catalog resource report now distinguishes compiler contracts. All 146 grammars must satisfy the 256,000-byte SQL limit. The ordered compiler additionally checks source, finite-control, emitted-operator, and active-return limits. The existing set and single-leaf answer compilers have different physical plans. Their missing ordered counters are not replaced with invented zero counts. Unknown compiler scopes fail qualification.
+
+The new performance gate rejects the previously published B110, B112, B507, and ASYNC221 results. Negative checks also reject changed answers, extra statements, changed fixtures, and admissions without a pinned budget. All 135 published ceilings remain unchanged. The ten earlier admissions retain their first native-correct diagnostic ceilings. B615 receives its first native-correct ceiling of 347,286,337 VM instructions. This is a regression ceiling, not an acceptable long-term execution target.
+
+The first full qualification is rejected. The behavioral suite reports 458 passes and one failure. The 257-operator test still expects the former refusal text, although the new source check correctly refuses it. Its assertion now requires the new source-limit message. No bound or behavior changed.
+
+That run passes all 146 catalog native comparisons and VM budgets. The new resource-report gate rejects twelve plans because its scope list omits the existing direct outcome emitter. Those plans report real ordered counters. The gate now applies the same ordered limits to both direct and workspace outcome scopes. It still rejects unknown scopes. The original failed report remains in the checkpoint evidence.
+
+All 231 preceding and 54 focused SQL/VM controls remain exact in this rejected checkpoint. The next qualification rebuilds the assertion change and reruns the complete suite and catalog gate.
+
+The rebuilt full suite passes 459 tests with zero failures and four explicitly ignored tests. One passing test records the known physical-stack discrepancy; it is not a native parity proof. All 231 preceding controls and 54 focused controls retain exact SQL hashes and VM counts. Formatting and both native lint configurations pass.
+
+Frozen B023 retains 246,364 VM instructions, 10,232 SQL bytes, one matching statement, and zero frame publications. Prepared median CPU is 4.353 ms against the reference's 31.388 ms. All SQL shape, VM, and prepared execution gates pass. Preparation remains outside those execution measurements.
+
+Final catalog qualification passes. All 146 grammars have native parity and positive witnesses on 597 files. Every pinned VM ceiling passes. Each grammar executes one matching statement and publishes zero capture frames. All queries fit 256,000 bytes; all 115 ordered plans also satisfy their source, finite-control, emitted-operator, and return-cell limits. The executable and all pinned inputs remained unchanged during qualification.
+
+The original 135 grammars fall from 1,142,977,128 to 1,114,422,856 VM instructions, a 2.5% reduction. The comparison reruns both baseline executables on the same 597-file inventory. The main changed cases are:
+
+| Grammar | Published VM | Final VM |
+| --- | ---: | ---: |
+| B110 | 1,053,807 | 1,042,522 |
+| B112 | 1,043,753 | 1,032,132 |
+| B507 | 25,073,720 | 22,062,247 |
+| ASYNC221 | 50,076,368 | 41,779,500 |
+| RET501 | 11,334,102 | 11,013,724 |
+
+The regressions came from planner choices, not an unavoidable price of native semantics. Thin wrappers and simple recursive tails had lost cheaper specialized plans. Local memo operations activated unnecessary global peak tracking. Repeated ancestor demands reevaluated an expensive total predicate helper. The repaired planner preserves specialized walks and uses local completed-answer memo transactions where their proof permits them.
+
+The full 146-grammar catalog still executes 2,390,172,088 VM instructions. SIM905 uses 449,083,864, B615 uses 347,286,337, and F632 uses 240,957,037. They create 1,581,869, 1,076,954, and 1,440,173 numeric continuation rows respectively. These are execution costs. Preparation does not explain them, and compact SQL alone does not remove them. The next structural target is repeated control transitions and helper demands within those queries.
+
+The acceptance failure in the previous batch was procedural: the regressions were measured but did not block publication. The new gate makes them blocking. It retains the earlier ceilings and rejects an admission without a budget. This fixes regression acceptance; it does not establish acceptable overall runtime.
+
+The final integration report is `benchmark/sql-relational-complete-catalog-integration.json`. The qualification record contains source hashes, executable hashes, tests, controls, and the rejected checkpoint. The compact coverage ledger links a compressed archive of all 146 EXPLAIN plans and native file traces. The driver still emits readable full reports and individual SQL files. Production replacement, physical stack-byte parity, aggregate storage bounds, deadlines, and the whole-job 100-execution budget remain unqualified.

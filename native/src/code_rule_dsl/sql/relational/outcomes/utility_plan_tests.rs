@@ -191,7 +191,7 @@ fn utility_plan_capturing_bodies_and_clause_identity() {
 
 #[test]
 fn utility_plan_bounds_and_cycles() {
-    let mut cases = vec![
+    let cases = vec![
         (
             json!({"matches":"v"}),
             json!({"v":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","has":{"stopBy":"neighbor","matches":"v"}}}]}}),
@@ -205,19 +205,9 @@ fn utility_plan_bounds_and_cycles() {
         (
             json!({"all":(0..257).map(|n|json!({"regex":format!("^.{{0,{n}}}$")})).collect::<Vec<_>>()}),
             json!({}),
-            "distinct lowered operator count",
+            "finite control: distinct normalized source operators exceed256",
         ),
     ];
-    let mut utils = json!({"u0":{"regex":"."}});
-    for n in 1..=9 {
-        utils[format!("u{n}")] =
-            json!({"all":[{"matches":format!("u{}",n-1)},{"matches":format!("u{}",n-1)}]});
-    }
-    cases.push((
-        json!({"matches":"u9"}),
-        utils,
-        "emitted composition operator count",
-    ));
     for (rule, utils, expected) in cases {
         let p = policy_utils(&[rule], utils);
         let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &p.inner.clauses[0].kind else {
@@ -227,6 +217,20 @@ fn utility_plan_bounds_and_cycles() {
             .err()
             .expect("bounded rejection");
         assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn utility_dag_is_shared_instead_of_rejected_for_exponential_expansion() {
+    let mut utils = json!({"u0":{"regex":"."}});
+    for n in 1..=9 {
+        utils[format!("u{n}")] =
+            json!({"all":[{"matches":format!("u{}",n-1)},{"matches":format!("u{}",n-1)}]});
+    }
+    let rules = [json!({"matches":"u9"})];
+    let p = policy_utils(&rules, utils);
+    for allowance in [0, 1, 8, 9, 10, 20, 100, 10000] {
+        check_work(&p, &rules, &["x; y;"], None, allowance);
     }
 }
 

@@ -1,7 +1,7 @@
 //! Summaries are computed once from immediate children, including shared utilities.
 use super::Op;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct Effects {
     pub reads_value: bool,
     pub uses_memo: bool,
@@ -32,6 +32,25 @@ impl Effects {
     pub fn of(op: &Op) -> Self {
         let mut result = Self::default();
         match op {
+            Op::Shared(body) => result = body.effects,
+            Op::FiniteProgram(program) => {
+                result = program.code[program.entry].effects;
+                result.fallible = true;
+                result.needs_peak = true;
+                result.file_memo = true;
+                result.uses_memo = true;
+                result.typed_exports = true;
+            }
+            Op::ParsedRecursive { program, .. } => {
+                for region in &program.regions {
+                    result.merge(region.effects);
+                }
+                result.fallible = true;
+                result.reads_value = true;
+                result.cache_fills = true;
+                result.typed_exports = true;
+                result.needs_peak = true;
+            }
             Op::MixedRecursive { program, .. } => {
                 for region in &program.regions {
                     result.merge(region.effects);
@@ -88,6 +107,13 @@ impl Effects {
                 result.file_memo |= child.uses_memo();
             }
             Op::Pattern(..) | Op::CaptureBind(_) => result.typed_exports = true,
+            Op::FieldRule { child, stop, .. } => {
+                result = child.effects;
+                result.merge(stop.effects);
+                result.walk_depth += 1;
+                result.typed_exports = true;
+                result.file_memo |= result.uses_memo;
+            }
             Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => {
                 result = child.effects;
                 result.walk_depth += 1;
@@ -122,8 +148,9 @@ impl Effects {
             }
             Op::PureRecursive(_) => {
                 result.fallible = true;
+                // Pure recomputation preserves cost and logical depth. An
+                // enclosing memo writer enables peak tracking when it needs it.
                 result.contains_chain = true;
-                result.needs_peak = true;
             }
             Op::Chain(..) | Op::Downward(..) => {
                 result.fallible = true;
@@ -137,10 +164,16 @@ impl Effects {
             Op::Charge(_, child) => {
                 result = child.effects;
                 result.fallible = true;
-                result.uses_memo = child.reads_value();
-                result.needs_peak |= result.uses_memo && result.contains_chain;
+                result.uses_memo |= child.reads_value();
+                result.needs_peak |= child.reads_value() && result.contains_chain;
                 // Only the keyed memo path measures per-invocation cache-fill deltas.
                 result.file_memo |= result.uses_memo && result.cache_fills;
+            }
+            Op::MemoPredicate(_, child) => {
+                result = child.effects;
+                result.fallible = true;
+                result.uses_memo = true;
+                result.file_memo = true;
             }
             Op::All(items) | Op::Any(items) => {
                 for child in items {

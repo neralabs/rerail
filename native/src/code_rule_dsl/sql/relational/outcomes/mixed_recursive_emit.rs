@@ -91,6 +91,9 @@ impl Sql {
         entry: usize,
         input: &Demand,
     ) -> Result<Output, String> {
+        if p.captures {
+            return self.mixed_capture_recursive(p, entry, input);
+        }
         let alias = format!("mixed_entry_{}", p.functions[0].memo);
         let mut code = vec![];
         let mut booleans = vec![];
@@ -138,16 +141,14 @@ impl Sql {
         let root_call = p.code.len();
         self.generation.operator_as("mixed recursive control")?;
         code.push(format!("({root_call},4,{entry})"));
-        let code = self.relation(
+        let code = self.constant_relation(
             "mixed recursive control",
             format!(
                 "SELECT column1 AS pc,column2 AS op,column3 AS a FROM (VALUES {})",
                 code.join(",")
             ),
-            true,
-            "immutable finite control",
         );
-        let children = self.relation(
+        let children = self.constant_relation(
             "mixed Boolean children",
             if booleans.is_empty() {
                 "SELECT NULL AS pc,NULL AS ordinal,NULL AS child WHERE 0".into()
@@ -157,8 +158,6 @@ impl Sql {
                     booleans.join(",")
                 )
             },
-            true,
-            "immutable ordered Boolean edges",
         );
         let layout = self.generation.memo_layout.clone();
         let column = |s| layout.as_ref().map_or(s, |l| l.column(s));
@@ -170,14 +169,12 @@ impl Sql {
                 .map_or(f.memo, |c| c.identity);
             functions.push(format!("({id},{},{identity})", f.entry));
         }
-        let functions = self.relation(
+        let functions = self.constant_relation(
             "mixed utility entries",
             format!(
                 "SELECT column1 AS id,column2 AS entry,column3 AS memo FROM (VALUES {})",
                 functions.join(",")
             ),
-            true,
-            "original utility identity,entry control",
         );
         let mut slots = input.slots.clone();
         if let Some(l) = &layout {
@@ -579,6 +576,7 @@ mod tests {
                             slots: Slots::new(),
                         };
                         let out = sql.emit(&plan, &input).unwrap();
+                        sql.publish_components();
                         let query = format!(
                             "WITH RECURSIVE {} SELECT truth,work FROM {}",
                             sql.definitions.join(",\n"),

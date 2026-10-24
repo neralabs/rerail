@@ -8,6 +8,7 @@ mod budget_leaf;
 mod call_unify;
 mod capture_cell;
 mod capture_env;
+mod capture_state;
 mod classify;
 mod continuation_store;
 mod cutover_tests;

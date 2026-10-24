@@ -13,6 +13,85 @@ fn multi_arm() -> Value {
     json!({"any":[{"kind":"identifier","regex":"^a$"},{"kind":"array","has":{"stopBy":"neighbor","not":{"regex":"^[\\[\\],]$"},"matches":"u"}},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"u"}}]})
 }
 #[test]
+fn acyclic_wrapper_keeps_ordinary_charge_and_specialized_recursive_descendant() {
+    let utils = json!({"u":{"any":[{"kind":"identifier","regex":"^a$"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"u"}}]},"wrapper":{"kind":"arguments","has":{"stopBy":"neighbor","matches":"u"}}});
+    let rules = [json!({"matches":"wrapper"})];
+    let policy = policy_utils(&rules, utils);
+    let grammar = &grammar_matchers(&policy)[0];
+    let mut lower = super::lower::Lower::new(grammar.language, false);
+    let plan = lower.plan(&grammar.matcher).unwrap();
+    assert!(matches!(plan.op, super::Op::Charge(..)));
+    assert!(!plan.effects.needs_peak);
+    for work in [0, 1, 2, 3, 4, 8, 16, 64, 1000] {
+        check_work(
+            &policy,
+            &rules,
+            &["f(((a)),((b))); f(b);", "f((((a))));"],
+            None,
+            work,
+        );
+    }
+}
+#[test]
+fn rich_acyclic_control_keeps_pure_function_fusion() {
+    let utils = json!({"u":{"any":[{"kind":"identifier","regex":"^a$"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"u"}}]},"rich":{"any":[{"kind":"identifier","regex":"^z$"},{"kind":"arguments","has":{"stopBy":"neighbor","not":{"matches":"u"}}}]}});
+    let rules = [json!({"matches":"rich"})];
+    let policy = policy_utils(&rules, utils);
+    let grammar = &grammar_matchers(&policy)[0];
+    let plan = super::lower::Lower::new(grammar.language, false)
+        .plan(&grammar.matcher)
+        .unwrap();
+    assert!(matches!(plan.op, super::Op::PureRecursive(_)));
+    for work in [0, 1, 2, 3, 4, 8, 32, 1000] {
+        check_work(&policy, &rules, &["f(((a)),((b))); z;"], None, work);
+    }
+}
+
+#[test]
+fn pure_recursion_tracks_peak_only_for_an_enclosing_memo_writer() {
+    let utils = json!({"u":universal(),"writer":{"all":[{"matches":"u"},{"value":{"gt":0}}]}});
+    for (name, needs_peak) in [("u", false), ("writer", true)] {
+        let rules = [json!({"matches":name})];
+        let policy = policy_utils(&rules, utils.clone());
+        let grammar = &grammar_matchers(&policy)[0];
+        let plan = super::lower::Lower::new(grammar.language, needs_peak)
+            .plan(&grammar.matcher)
+            .unwrap();
+        assert!(plan.effects.contains_chain);
+        assert_eq!(plan.effects.needs_peak, needs_peak);
+        for work in [0, 1, 2, 3, 4, 8, 32, 128, 1000] {
+            check_work(&policy, &rules, &["f([a,[a,a]]); f([b]);"], None, work);
+        }
+    }
+}
+#[test]
+fn independent_legacy_self_components_keep_their_specialized_forests() {
+    let utils = json!({
+        "leaf":{"any":[{"kind":"member_expression","has":{"field":"property","regex":"^x$"}},{"kind":"identifier","regex":"^x$"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"leaf"}}]},
+        "wrap":{"any":[{"matches":"leaf"},{"kind":"call_expression","has":{"field":"function","matches":"leaf"}},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"wrap"}}]}
+    });
+    let policy = policy_utils(&[json!({"matches":"wrap"})], utils.clone());
+    let grammar = &grammar_matchers(&policy)[0];
+    let plan = super::lower::Lower::new(grammar.language, false)
+        .plan(&grammar.matcher)
+        .unwrap();
+    let super::Op::RecursiveSearch { component, .. } = plan.op else {
+        panic!("legacy self component");
+    };
+    assert!(!component.memo);
+    let rules = [json!({"kind":"arguments","has":{"stopBy":"neighbor","matches":"wrap"}})];
+    let policy = policy_utils(&rules, utils);
+    for work in [0, 1, 2, 3, 4, 8, 16, 32, 128, 1000] {
+        check_work(
+            &policy,
+            &rules,
+            &["f(x,obj.x,(x),x()); f(obj.y,y);", "f((((x()))));"],
+            None,
+            work,
+        );
+    }
+}
+#[test]
 fn pure_recursive_parent_wrappers_and_multiarm_children_keep_exact_budgets() {
     let cases = [
         (

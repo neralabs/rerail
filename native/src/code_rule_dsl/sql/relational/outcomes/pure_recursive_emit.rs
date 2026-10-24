@@ -127,7 +127,7 @@ impl Sql {
             };
             values.push(format!("({pc},{op},{a},{b},{c})"));
         }
-        let code=self.relation("pure recursive finite control",format!("SELECT column1 AS pc,column2 AS op,column3 AS a,column4 AS b,column5 AS c FROM (VALUES {})",values.join(",")),true,"pc,operation,typed control targets");
+        let code=self.constant_relation("pure recursive finite control",format!("SELECT column1 AS pc,column2 AS op,column3 AS a,column4 AS b,column5 AS c FROM (VALUES {})",values.join(",")));
         let walk = format!("outcome{}", self.definitions.len());
         let depth = self.generation.depth_expression();
         let first = format!("CASE w.pc {} END", starts.join(" "));

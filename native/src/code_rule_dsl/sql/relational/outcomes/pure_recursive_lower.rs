@@ -6,6 +6,7 @@ use crate::code_rule_dsl::{
         terminals::pattern_vars,
     },
 };
+use ast_grep_core::matcher::Matcher;
 use std::collections::{BTreeMap, BTreeSet};
 
 type Key = (usize, usize);
@@ -116,19 +117,69 @@ impl Source {
             _ => Err(()),
         }
     }
-    fn progress(&self) -> bool {
-        let count = self.bodies.len();
-        let mut reach = vec![vec![false; count]; count];
-        for &(from, to, _) in &self.edges {
-            reach[from][to] = true;
+    fn reach(&self) -> Vec<Vec<bool>> {
+        let n = self.bodies.len();
+        let mut reach = vec![vec![false; n]; n];
+        for &(a, b, _) in &self.edges {
+            reach[a][b] = true;
         }
-        for k in 0..count {
-            for i in 0..count {
-                for j in 0..count {
+        for k in 0..n {
+            for i in 0..n {
+                for j in 0..n {
                     let joined = reach[i][k] && reach[k][j];
                     reach[i][j] |= joined;
                 }
             }
+        }
+        reach
+    }
+    fn legacy_root(&self, root: &UtilRef) -> bool {
+        let AstMatcher::Any(items) = &self.bodies[0] else {
+            return false;
+        };
+        let key = (root.table.as_ptr() as usize, root.index);
+        let Some(flags) = super::recursive_search_lower::singleton_arms(&self.bodies[0], key)
+        else {
+            return false;
+        };
+        if flags.iter().filter(|v| **v).count() != 1 || !flags.last().copied().unwrap_or(false) {
+            return false;
+        }
+        let reach = self.reach();
+        // Acyclic helper DAGs are profitably fused into this program. Separate
+        // cyclic components, or a standalone simple self loop, retain forests.
+        if reach.len() > 1 && !(1..reach.len()).any(|id| reach[id][id]) {
+            return false;
+        }
+        if (0..reach.len())
+            .filter(|id| reach[0][*id] && reach[*id][0])
+            .count()
+            != 1
+        {
+            return false;
+        }
+        let tail = items.last().unwrap();
+        let (guards, walk) = match tail {
+            AstMatcher::All(v) if !v.is_empty() => (&v[..v.len() - 1], v.last().unwrap()),
+            other => (&[][..], other),
+        };
+        let AstMatcher::Has(child, StopBy::Neighbor) = walk else {
+            return false;
+        };
+        if !matches!(child.rule(), AstMatcher::Util(_)) || !guards.iter().any(finite_kind_guard) {
+            return false;
+        }
+        items[..items.len() - 1]
+            .iter()
+            .all(|m| !references_utility(m, key))
+    }
+    fn progress(&self) -> bool {
+        let count = self.bodies.len();
+        let reach = self.reach();
+        // A single guarded neighbor delegation is cheaper around the existing
+        // specialized child. Rich acyclic controls still benefit from fusion.
+        if !reach[0][0] && thin_neighbor_wrapper(&self.bodies[0]) {
+            return false;
         }
         let mut recursive = false;
         let mut checked: BTreeSet<usize> = BTreeSet::new();
@@ -172,6 +223,61 @@ impl Source {
         recursive
     }
 }
+fn finite_kind_guard(m: &AstMatcher) -> bool {
+    match m {
+        AstMatcher::Kind(k) => k.potential_kinds().is_some(),
+        AstMatcher::All(v) => v.iter().any(finite_kind_guard),
+        AstMatcher::Any(v) => !v.is_empty() && v.iter().all(finite_kind_guard),
+        _ => false,
+    }
+}
+fn references_utility(m: &AstMatcher, key: Key) -> bool {
+    match m {
+        AstMatcher::Util(u) => (u.table.as_ptr() as usize, u.index) == key,
+        AstMatcher::All(v) | AstMatcher::Any(v) => v.iter().any(|m| references_utility(m, key)),
+        AstMatcher::Not(m) => references_utility(m, key),
+        AstMatcher::Has(c, _)
+        | AstMatcher::Inside(c, _)
+        | AstMatcher::Follows(c, _)
+        | AstMatcher::Precedes(c, _) => references_utility(c.rule(), key),
+        AstMatcher::Field(f) => references_utility(&f.rule, key),
+        _ => false,
+    }
+}
+
+fn local_guard(m: &AstMatcher) -> bool {
+    match m {
+        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => true,
+        AstMatcher::Pattern(p) => pattern_vars(p).is_empty(),
+        AstMatcher::All(items) | AstMatcher::Any(items) => items.iter().all(local_guard),
+        AstMatcher::Not(m) => local_guard(m),
+        _ => false,
+    }
+}
+fn thin_neighbor_wrapper(m: &AstMatcher) -> bool {
+    let (guards, tail) = match m {
+        AstMatcher::All(items) if !items.is_empty() => {
+            (&items[..items.len() - 1], items.last().unwrap())
+        }
+        other => (&[][..], other),
+    };
+    if !guards.iter().all(local_guard) {
+        return false;
+    }
+    match tail {
+        AstMatcher::Has(child, StopBy::Neighbor)
+        | AstMatcher::Inside(child, StopBy::Neighbor)
+        | AstMatcher::Follows(child, StopBy::Neighbor)
+        | AstMatcher::Precedes(child, StopBy::Neighbor) => {
+            matches!(child.rule(), AstMatcher::Util(_))
+        }
+        AstMatcher::Field(field) if matches!(field.stop, StopBy::Neighbor) => {
+            matches!(field.rule, AstMatcher::Util(_))
+        }
+        _ => false,
+    }
+}
+
 fn movement(progress: i8, delta: i8) -> i8 {
     if progress == 0 || progress == delta {
         delta
@@ -193,7 +299,7 @@ pub(super) fn try_lower(
         edges: vec![],
         operators: 0,
     };
-    if source.utility(util).is_err() || !source.progress() {
+    if source.utility(util).is_err() || !source.progress() || source.legacy_root(util) {
         return Ok(None);
     }
     let mut program = Program {

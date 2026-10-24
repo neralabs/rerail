@@ -22,6 +22,12 @@ mod effects;
 mod emit;
 mod field_end_tests;
 mod field_tests;
+mod finite_all_tests;
+mod finite_helper_tests;
+pub(super) mod finite_lower;
+mod finite_lower_tests;
+mod finite_recursive_tests;
+mod finite_shared_tests;
 mod format_tests;
 mod list_tests;
 mod lower;
@@ -34,6 +40,9 @@ mod nth_tests;
 mod parse_export_tests;
 mod parse_tests;
 mod pattern_tests;
+mod predicate_memo;
+#[cfg(test)]
+mod predicate_memo_tests;
 mod predicate_run_tests;
 mod pruning_tests;
 mod publication_tests;
@@ -64,7 +73,24 @@ enum Axis {
     Next,
 }
 
+/// Cost choice for dynamic parsed children. Both guarded forms retain the
+/// enclosing utility contract and the same atomic parse/child semantics.
+#[derive(Clone)]
+enum ParseSetup {
+    Plain,
+    HostKinds(Vec<u16>),
+    Parsed,
+}
+
+#[derive(Clone)]
 enum Op {
+    /// Transparent finite source DAG reference; no native utility boundary.
+    Shared(std::rc::Rc<Plan>),
+    FiniteProgram(std::rc::Rc<finite_lower::Program>),
+    ParsedRecursive {
+        program: std::rc::Rc<lower::parse_recursive_lower::Program>,
+        entry: usize,
+    },
     MixedRecursive {
         program: std::rc::Rc<lower::mixed_recursive_lower::Program>,
         entry: usize,
@@ -87,6 +113,8 @@ enum Op {
     },
     Value(usize),
     Charge(usize, std::rc::Rc<Plan>),
+    /// Physical cache of a proved total, utility-free predicate walk.
+    MemoPredicate(usize, std::rc::Rc<Plan>),
     /// Parsed documents spend utility entry work but native never memoizes them.
     TransientCharge(std::rc::Rc<Plan>),
     /// Functional recursive utility; its summary already includes utility entry.
@@ -120,6 +148,7 @@ enum Op {
     },
     Parse {
         term: usize,
+        setup: ParseSetup,
         child: Box<Plan>,
         exports: Vec<(usize, usize)>,
         hosted: bool,
@@ -129,6 +158,12 @@ enum Op {
         mapping: Vec<(usize, usize)>,
     },
     Constrained(Box<Plan>, Vec<(usize, Plan)>),
+    FieldRule {
+        inside: bool,
+        field: u16,
+        child: Box<Plan>,
+        stop: Box<Plan>,
+    },
     FieldNeighbor {
         inside: bool,
         field: u16,
@@ -154,6 +189,7 @@ enum Op {
     },
 }
 
+#[derive(Clone)]
 struct Plan {
     op: Op,
     effects: effects::Effects,
@@ -165,6 +201,7 @@ struct Plan {
     walk_filter: Option<WalkFilter>,
 }
 
+#[derive(Clone)]
 struct WalkFilter {
     kinds: Vec<u16>,
     // Required-text CNF lowered to one atomic regex per disjunction. Descendant/end only.
@@ -205,17 +242,87 @@ impl CaptureKind {
     }
 }
 
+fn resource_refusal(error: &str) -> bool {
+    error.contains("operator count exceeds") || error.contains("SQL text exceeds")
+}
+/// Physical selection is automatic and happens before any SQL execution.
+/// Existing recursive kernels stay intact unless their repeated bodies exceed
+/// the compilation budget. Only then expose their functions to the shared IR.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Composition {
+    Inline,
+    Functions,
+    RecursiveFunctions,
+}
+impl Composition {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Functions => "shared finite functions",
+            Self::RecursiveFunctions => "shared finite and recursive functions",
+        }
+    }
+}
+fn record_composition(profile: &mut serde_json::Value, shape: Composition, plan: &Plan) {
+    profile["compositionShape"] = serde_json::json!(shape.name());
+    if let Op::FiniteProgram(program) = &plan.op {
+        profile["finiteControlOperators"] = serde_json::json!(program.code.len());
+        profile["finiteFunctions"] = serde_json::json!(program.functions.len());
+        profile["finiteRegions"] = serde_json::json!(program.regions.len());
+    }
+}
+fn select_composition(
+    mut compile: impl FnMut(Composition) -> Result<Compiled, String>,
+) -> Result<Compiled, String> {
+    let mut refusals = Vec::new();
+    for shape in [
+        Composition::Inline,
+        Composition::Functions,
+        Composition::RecursiveFunctions,
+    ] {
+        match compile(shape) {
+            Ok(compiled) => return Ok(compiled),
+            Err(error) if resource_refusal(&error) => {
+                refusals.push(format!("{}: {error}", shape.name()))
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(refusals.join("; "))
+}
+fn finite_plan(mut plan: Plan, share_recursion: bool) -> Result<Plan, String> {
+    let program = finite_lower::lower_with_recursion(&plan, share_recursion)?;
+    plan.node_writes = program.node_writes.clone();
+    plan.op = Op::FiniteProgram(std::rc::Rc::new(program));
+    plan.effects = effects::Effects::of(&plan.op);
+    Ok(plan)
+}
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
+    select_composition(|shape| compile_mode(grammar, shape))
+}
+fn compile_mode(grammar: &GrammarMatcher, shape: Composition) -> Result<Compiled, String> {
+    let finite = shape != Composition::Inline;
     if grammar.transform.is_some() {
         return Err("outcome relations: transformed captures need a typed output contract".into());
     }
-    let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
-    let plan = lower.plan(&grammar.matcher)?;
+    let mut lower = if finite {
+        lower::Lower::new_finite(grammar.language, grammar.three_valued)
+    } else {
+        lower::Lower::new(grammar.language, grammar.three_valued)
+    };
+    lower.root_kinds = grammar.anchors.root_kinds().cloned();
+    let plan = predicate_memo::prepare(lower.plan(&grammar.matcher)?);
+    let plan = if finite {
+        finite_plan(plan, shape == Composition::RecursiveFunctions)?
+    } else {
+        plan
+    };
     let file_guard = grammar
         .file
         .as_ref()
         .map(|condition| super::file_guard::push(&mut lower.pure.program.terminals, condition));
     let mut profile = lower.profile(0);
+    record_composition(&mut profile, shape, &plan);
     let memo_layout = lower.memo_layout(plan.effects.needs_peak);
     let (sql, mut relations) = if plan.fallible() || grammar.file.is_some() {
         let (sql, mut relations) = emit::compile_jobs(
@@ -275,6 +382,17 @@ fn root_filter(grammar: &GrammarMatcher, file_guard: Option<usize>) -> String {
 
 /// Bounded workspace publication kernel. Terminal IDs share one batch namespace.
 pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Compiled, String> {
+    select_composition(|shape| compile_job_mode(grammars, work, shape))
+}
+fn compile_job_finite(grammars: &[&GrammarMatcher], work: i64) -> Result<Compiled, String> {
+    compile_job_mode(grammars, work, Composition::RecursiveFunctions)
+}
+fn compile_job_mode(
+    grammars: &[&GrammarMatcher],
+    work: i64,
+    shape: Composition,
+) -> Result<Compiled, String> {
+    let finite = shape != Composition::Inline;
     let mut terminals = vec![];
     let mut plans = vec![];
     let mut terminal_owners = vec![];
@@ -284,16 +402,27 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         if grammar.transform.is_some() {
             return Err("publication: transforms need their publication contract".into());
         }
-        let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
+        let mut lower = if finite {
+            lower::Lower::new_finite(grammar.language, grammar.three_valued)
+        } else {
+            lower::Lower::new(grammar.language, grammar.three_valued)
+        };
+        lower.root_kinds = grammar.anchors.root_kinds().cloned();
         lower.scope_owner = clause + 1;
         let terminal_base = terminals.len();
         lower.pure.program.terminals = terminals;
-        let plan = lower.plan(&grammar.matcher)?;
+        let plan = predicate_memo::prepare(lower.plan(&grammar.matcher)?);
+        let plan = if finite {
+            finite_plan(plan, shape == Composition::RecursiveFunctions)?
+        } else {
+            plan
+        };
         let file_guard = grammar
             .file
             .as_ref()
             .map(|condition| super::file_guard::push(&mut lower.pure.program.terminals, condition));
-        let profile = lower.profile(terminal_base);
+        let mut profile = lower.profile(terminal_base);
+        record_composition(&mut profile, shape, &plan);
         lowering.push(profile);
         memo_layouts.push(lower.memo_layout(plan.effects.needs_peak));
         terminals = lower.pure.program.terminals;
@@ -326,3 +455,22 @@ fn record_scope_contract(profile: &mut serde_json::Value) {
         "limitations": "Separately compiled groups sharing one scope lifetime need job-global clause tokens before production cutover."
     });
 }
+
+#[cfg(test)]
+#[path = "parse_recursive_tests.rs"]
+mod parse_recursive_tests;
+
+#[cfg(test)]
+#[path = "capture_recursive_tests.rs"]
+mod capture_recursive_tests;
+
+#[cfg(test)]
+mod finite_tests;
+
+#[cfg(test)]
+#[path = "field_stopped_tests.rs"]
+mod field_stopped_tests;
+
+#[cfg(test)]
+#[path = "finite_guard.rs"]
+mod finite_guard;

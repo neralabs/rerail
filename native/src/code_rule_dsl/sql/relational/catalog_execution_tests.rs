@@ -231,11 +231,16 @@ pub(super) fn check(
             compiled.terminals,
             |db, batch, _| -> Result<Value, String> {
                 super::super::leaves::register(db, batch).map_err(|e| e.to_string())?;
+                let prepare_started = crate::code_rule_dsl::sql::timing::Started::now();
                 let mut stmt = db
                     .prepare(&compiled.sql)
                     .map_err(|e| format!("prepare: {e}"))?;
+                let prepare = prepare_started.elapsed();
+                let return_rows = super::super::row::ROWS.get();
+                let return_cells = super::super::row::CELLS.get();
                 let trace = super::super::tests::ExecutionTrace::start(db);
                 let mut actual = vec![];
+                let started = crate::code_rule_dsl::sql::timing::Started::now();
                 {
                     let mut rows = stmt.query([]).map_err(|e| format!("query: {e}"))?;
                     while let Some(row) = rows.next().map_err(|e| format!("step: {e}"))? {
@@ -283,8 +288,23 @@ pub(super) fn check(
                         actual.push(json!([file, root, captures, failure]));
                     }
                 }
+                let elapsed = started.elapsed();
                 let executions = trace.count();
                 drop(trace);
+                // Explain and diagnostic reads are outside matching counters and timing.
+                let explain = db
+                    .prepare(&format!("EXPLAIN QUERY PLAN {}", compiled.sql))
+                    .map_err(|e| format!("explain prepare: {e}"))?
+                    .query_map([], |r| {
+                        Ok(json!([
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, i64>(1)?,
+                            r.get::<_, String>(3)?
+                        ]))
+                    })
+                    .map_err(|e| e.to_string())?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?;
                 let first_difference = expected
                     .iter()
                     .zip(&actual)
@@ -295,6 +315,14 @@ pub(super) fn check(
                 let passed = first_difference.is_none() && executions == 1;
                 Ok(json!({
                     "passed":passed,"matchingStatements":executions,"vm":stmt.get_status(rusqlite::StatementStatus::VmStep),
+                    "fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep),
+                    "automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),
+                    "sorts":stmt.get_status(rusqlite::StatementStatus::Sort),
+                    "prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,
+                    "executionCpuNs":elapsed.cpu,"executionWallNs":elapsed.wall,
+                    "typedReturnRows":super::super::row::ROWS.get()-return_rows,
+                    "typedReturnCells":super::super::row::CELLS.get()-return_cells,
+                    "explain":explain,
                     "nativeMatches":native_matches,"nativeFailures":native_traces.iter().filter(|r|r["failure"]!=0).count(),
                     "nativeRows":expected.len(),"sqlRows":actual.len(),"positiveFiles":positive_files,
                     "firstDifference":first_difference.map(|i|json!({"index":i,"expected":expected.get(i),"actual":actual.get(i)})),
@@ -308,6 +336,9 @@ pub(super) fn check(
     });
     let mut report = execution?;
     report["framePublications"] = json!(frames[4]);
+    report["nodeAdvances"] = json!(frames[11]);
+    report["nodeColumns"] = json!(frames[12]);
+    report["nodeFilters"] = json!(frames[13]);
     if frames[4] != 0 {
         report["passed"] = json!(false);
     }

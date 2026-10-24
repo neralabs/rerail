@@ -57,8 +57,26 @@ impl Lower {
                 .copied()
                 .filter(|slot| !self.slots[*slot].name.starts_with(&child_prefix)),
         );
+        let expensive = contains_parsed_recursion(&child, &mut std::collections::HashSet::new());
+        // Literal-only native candidate populations do not benefit from a host
+        // kind dispatch. Broader populations reject cheap nonhosts before opening
+        // the parser; literal-only populations defer setup until parsing succeeds.
+        let setup = if !expensive {
+            super::super::ParseSetup::Plain
+        } else if self.parsed_depth == 0
+            && self.hosted_depth == 0
+            && self
+                .root_kinds
+                .as_ref()
+                .is_some_and(|kinds| kinds.is_subset(&test.host_kinds))
+        {
+            super::super::ParseSetup::Parsed
+        } else {
+            super::super::ParseSetup::HostKinds(test.host_kinds.iter().copied().collect())
+        };
         let op = Op::Parse {
             term,
+            setup,
             child: Box::new(child),
             exports,
             hosted: test.host_sound.is_some(),
@@ -74,7 +92,7 @@ impl Lower {
             walk_filter: None,
         })
     }
-    fn parse_atomic(&mut self, test: &ParseTest) -> usize {
+    pub(super) fn parse_atomic(&mut self, test: &ParseTest) -> usize {
         let term = self.pure.program.terminals.len();
         self.pure.program.terminals.push(Terminal::Fact(FactTerm {
             verdicts: Box::new(super::super::super::parse_facts::ParseAtomic {
@@ -87,7 +105,7 @@ impl Lower {
     }
     /// Every admitted child must have an implementation for SubDoc identities.
     /// Unsupported capabilities are rejected during lowering, before any host parse runs.
-    fn admit_parsed_child(&self, plan: &Plan) -> Result<(), String> {
+    pub(super) fn admit_parsed_child(&self, plan: &Plan) -> Result<(), String> {
         match &plan.op {
             Op::Predicate(_) | Op::Unknown(_) | Op::Bind(_) | Op::CaptureBind(_) | Op::Pattern(..) => Ok(()),
             Op::Value(term) => match self.pure.program.terminals.get(*term) {
@@ -98,8 +116,9 @@ impl Lower {
                 for child in items { self.admit_parsed_child(child)?; }
                 Ok(())
             },
-            Op::TransientCharge(child) => self.admit_parsed_child(child),
-            Op::Charge(..) => Err("parse outcomes: parsed utilities must use transient entry charges".into()),
+            Op::TransientCharge(child) | Op::Shared(child) => self.admit_parsed_child(child),
+            Op::Charge(..) | Op::MemoPredicate(..) => Err("parse outcomes: parsed utilities must use transient entry charges".into()),
+            Op::FieldRule { child,stop,.. } => { self.admit_parsed_child(child)?; self.admit_parsed_child(stop) },
             Op::Not(child) | Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => self.admit_parsed_child(child),
             Op::Search(_,_,child,stop) | Op::Count { rule:child, stop, .. } => {
                 self.admit_parsed_child(child)?;
@@ -107,7 +126,7 @@ impl Lower {
                 Ok(())
             },
             Op::Parse { child, .. } => self.admit_parsed_child(child),
-            Op::Host{..}|Op::PureRecursive(_)|Op::NthChild{..}=>Ok(()),
+            Op::Host{..}|Op::PureRecursive(_)|Op::NthChild{..}|Op::ParsedRecursive{..}=>Ok(()),
             Op::CallFrame{body,..}=>self.admit_parsed_child(body),
             Op::MixedRecursive{program,..}=>{
                 if !program.bypass{return Err("parse outcomes: recursive control must bypass native utility memo on parsed documents".into());}
@@ -122,5 +141,137 @@ impl Lower {
             },
             _ => Err("parse outcomes: child requires a parsed document capability that is not implemented".into()),
         }
+    }
+}
+
+/// A recursive parsed child has dynamic document/continuation setup worth
+/// deferring until the authoritative atomic parse has returned a tree.
+fn contains_parsed_recursion(plan: &Plan, seen: &mut std::collections::HashSet<usize>) -> bool {
+    if !seen.insert(std::ptr::from_ref(plan) as usize) {
+        return false;
+    }
+    match &plan.op {
+        Op::ParsedRecursive { .. } => true,
+        Op::All(items) | Op::Any(items) => items.iter().any(|p| contains_parsed_recursion(p, seen)),
+        Op::Charge(_, p)
+        | Op::MemoPredicate(_, p)
+        | Op::TransientCharge(p)
+        | Op::Shared(p)
+        | Op::CallFrame { body: p, .. } => contains_parsed_recursion(p, seen),
+        Op::Not(p)
+        | Op::Parse { child: p, .. }
+        | Op::Host { child: p, .. }
+        | Op::FieldNeighbor { child: p, .. }
+        | Op::FieldEnd { child: p, .. } => contains_parsed_recursion(p, seen),
+        Op::FieldRule { child, stop, .. } => {
+            contains_parsed_recursion(child, seen) || contains_parsed_recursion(stop, seen)
+        }
+        Op::Search(_, _, child, stop)
+        | Op::Count {
+            rule: child, stop, ..
+        } => {
+            contains_parsed_recursion(child, seen)
+                || stop
+                    .as_ref()
+                    .is_some_and(|p| contains_parsed_recursion(p, seen))
+        }
+        Op::Constrained(core, terms) => {
+            contains_parsed_recursion(core, seen)
+                || terms
+                    .iter()
+                    .any(|(_, p)| contains_parsed_recursion(p, seen))
+        }
+        Op::MixedRecursive { program, .. } => program
+            .regions
+            .iter()
+            .any(|p| contains_parsed_recursion(p, seen)),
+        Op::RecursiveSearch { component, .. } => contains_parsed_recursion(&component.base, seen),
+        Op::FormatArgs {
+            unused, missing, ..
+        } => [unused, missing]
+            .into_iter()
+            .flatten()
+            .any(|p| contains_parsed_recursion(p, seen)),
+        Op::Binding {
+            core,
+            children,
+            occurrence,
+            ..
+        } => {
+            contains_parsed_recursion(core, seen)
+                || children
+                    .iter()
+                    .any(|(_, p)| contains_parsed_recursion(p, seen))
+                || occurrence
+                    .as_ref()
+                    .is_some_and(|p| contains_parsed_recursion(p, seen))
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod setup_tests {
+    use super::super::super::ParseSetup;
+    use super::*;
+    use crate::code_rule_dsl::{matcher::Semantic, test_support::grammar_matchers};
+    use serde_json::json;
+    #[test]
+    fn native_anchor_cost_choice_stays_in_original_document_context() {
+        let policy = super::super::super::parse_tests::policy(
+            "python",
+            json!({"matches":"walk"}),
+            json!({"walk":{"parse":{"grammar":"annotation","has":{"stopBy":"end","any":[{"kind":"identifier","capture":"T"},{"all":[{"kind":"string"},{"matches":"walk"}]}]}}}}),
+        );
+        let grammar = &grammar_matchers(&policy)[0];
+        let crate::code_rule_dsl::matcher::AstMatcher::Util(util) = &grammar.matcher else {
+            panic!("utility fixture");
+        };
+        let hosts = util
+            .with_target(|body| match body {
+                crate::code_rule_dsl::matcher::AstMatcher::Semantic(Semantic::Parse(test)) => {
+                    test.host_kinds.as_ref().clone()
+                }
+                _ => panic!("parse fixture"),
+            })
+            .unwrap();
+        let select = |parsed_depth, hosted_depth, kinds| {
+            util.with_target(|body| {
+                let crate::code_rule_dsl::matcher::AstMatcher::Semantic(Semantic::Parse(test)) =
+                    body
+                else {
+                    panic!("parse fixture");
+                };
+                let mut lower = Lower::new(grammar.language, grammar.three_valued);
+                lower.root_kinds = kinds;
+                lower.parsed_depth = parsed_depth;
+                lower.hosted_depth = hosted_depth;
+                match lower.parsed(test).unwrap().op {
+                    Op::Parse { setup, .. } => setup,
+                    _ => panic!("parse plan"),
+                }
+            })
+            .unwrap()
+        };
+        assert!(matches!(
+            select(0, 0, Some(hosts.clone())),
+            ParseSetup::Parsed
+        ));
+        assert!(matches!(select(0, 0, None), ParseSetup::HostKinds(_)));
+        let mut broad = hosts.clone();
+        broad.insert(u16::MAX);
+        assert!(matches!(
+            select(0, 0, Some(broad)),
+            ParseSetup::HostKinds(_)
+        ));
+        // Equal u16 values in another document do not establish kind identity.
+        assert!(matches!(
+            select(1, 0, Some(hosts.clone())),
+            ParseSetup::HostKinds(_)
+        ));
+        assert!(matches!(
+            select(0, 1, Some(hosts)),
+            ParseSetup::HostKinds(_)
+        ));
     }
 }

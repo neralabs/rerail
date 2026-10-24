@@ -1,8 +1,21 @@
+#[cfg(test)]
+#[path = "capture_recursive_depth_tests.rs"]
+mod capture_recursive_depth_tests;
+#[cfg(test)]
+#[path = "finite_emission_inventory_tests.rs"]
+mod finite_emission_inventory_tests;
+#[path = "finite_emit.rs"]
+mod finite_emit;
+#[cfg(test)]
+#[path = "finite_recursive_depth_tests.rs"]
+mod finite_recursive_depth_tests;
 #[path = "format_emit.rs"]
 mod format_emit;
 #[cfg(test)]
 #[path = "memo_recursive_depth_tests.rs"]
 mod memo_recursive_depth_tests;
+#[path = "mixed_capture_emit.rs"]
+mod mixed_capture_emit;
 #[path = "mixed_recursive_emit.rs"]
 mod mixed_recursive_emit;
 #[path = "peak_memo.rs"]
@@ -24,6 +37,8 @@ mod downward;
 mod field;
 #[path = "field_end.rs"]
 mod field_end;
+#[path = "field_stopped.rs"]
+mod field_stopped;
 #[path = "file_memo.rs"]
 mod file_memo;
 #[path = "memo.rs"]
@@ -34,10 +49,15 @@ mod ordered;
 mod parse_emit;
 #[path = "parse_host_emit.rs"]
 mod parse_host_emit;
+#[path = "parse_recursive_emit.rs"]
+mod parse_recursive_emit;
 #[path = "predicate.rs"]
 mod predicate;
 #[path = "predicate_fusion_tests.rs"]
 mod predicate_fusion_tests;
+#[cfg(test)]
+#[path = "predicate_memo_depth_tests.rs"]
+mod predicate_memo_depth_tests;
 #[path = "predicate_runs.rs"]
 mod predicate_runs;
 #[path = "publication.rs"]
@@ -82,6 +102,8 @@ pub(super) struct Generation {
     peak_tracking: bool,
     #[cfg(test)]
     disable_predicate_runs: bool,
+    #[cfg(test)]
+    unqualified_operator_inventory: bool,
     memo_bypass: bool,
     parse_hosts: std::collections::BTreeMap<usize, parse_host_emit::Context>,
     memo_layout: Option<std::rc::Rc<super::utility_memo::Layout>>,
@@ -115,7 +137,11 @@ impl Generation {
     }
     fn operator_as(&self, kind: &'static str) -> Result<(), String> {
         let count = self.operators.get();
-        if count == 256 {
+        #[cfg(test)]
+        let qualified = !self.unqualified_operator_inventory;
+        #[cfg(not(test))]
+        let qualified = true;
+        if count >= 256 && qualified {
             return Err(format!(
                 "outcome relations: emitted composition operator count exceeds 256; emitted categories {:?}; next {kind}",
                 self.operator_kinds.borrow()
@@ -129,8 +155,16 @@ impl Generation {
     /// Fused scalar/ordered programs consume their entire emitted tree. Utility
     /// replays must never use this path: their miss body is charged separately.
     fn tree(&self, plan: &Plan) -> Result<(), String> {
+        if let Op::Shared(body) = &plan.op {
+            return self.tree(body);
+        }
         self.operator_as("fused expression")?;
         match &plan.op {
+            Op::ParsedRecursive { program, .. } => {
+                for region in &program.regions {
+                    self.tree(region)?;
+                }
+            }
             Op::MixedRecursive { program, .. } => {
                 for region in &program.regions {
                     self.tree(region)?;
@@ -172,12 +206,18 @@ impl Generation {
                     self.tree(child)?;
                 }
             }
+            Op::FieldRule { child, stop, .. } => {
+                self.tree(child)?;
+                self.tree(stop)?;
+            }
             Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => self.tree(child)?,
             Op::CallFrame { body: child, .. } => self.tree(child)?,
             Op::Parse { child, .. } | Op::Host { child, .. } | Op::Not(child) => {
                 self.tree(child)?
             }
-            Op::Charge(_, child) | Op::TransientCharge(child) => self.tree(child)?,
+            Op::Charge(_, child) | Op::MemoPredicate(_, child) | Op::TransientCharge(child) => {
+                self.tree(child)?
+            }
             Op::Search(_, _, child, stop)
             | Op::Count {
                 rule: child, stop, ..
@@ -233,6 +273,9 @@ fn predicate_kinds(predicate: &Set) -> Option<std::collections::BTreeSet<u16>> {
 }
 
 fn kinds(plan: &Plan) -> Option<std::collections::BTreeSet<u16>> {
+    if let Op::Shared(body) = &plan.op {
+        return kinds(body);
+    }
     // Constraints run only after core success and inspect captured targets.
     // Only the core can prove necessary root kinds, including its effect order.
     if let Op::Constrained(core, _) = &plan.op {
@@ -298,6 +341,7 @@ impl Sql {
             return Ok(Some((test, true)));
         }
         Ok(Some(match &plan.op {
+            Op::Shared(body) => return Self::scalar(body, input),
             Op::NthChild {
                 step,
                 offset,
@@ -312,7 +356,9 @@ impl Sql {
                 ),
                 true,
             ),
-            Op::Value(_) | Op::Charge(..) | Op::TransientCharge(_) => return Ok(None),
+            Op::Value(_) | Op::Charge(..) | Op::MemoPredicate(..) | Op::TransientCharge(_) => {
+                return Ok(None);
+            }
             Op::Unknown(term) => (
                 format!("CASE WHEN node_regex({term},d.file,d.node) THEN 2 ELSE 1 END"),
                 false,
@@ -416,6 +462,9 @@ impl Sql {
     }
 
     fn emit(&mut self, plan: &Plan, input: &Demand) -> Result<Output, String> {
+        if let Op::Shared(body) = &plan.op {
+            return self.emit(body, input);
+        }
         if !self.generation.peak_tracking
             && self.generation.memo_clause.is_none()
             && memo::region(plan)?
@@ -434,7 +483,7 @@ impl Sql {
             Op::Constrained(..) => "ordered capture constraints",
             Op::Not(_) => "negation",
             Op::Count { .. } => "count outcome",
-            Op::Charge(..) | Op::TransientCharge(..) => "utility call",
+            Op::Charge(..) | Op::MemoPredicate(..) | Op::TransientCharge(..) => "utility call",
             Op::PureRecursive(..) => "pure recursive invocation",
             Op::MixedRecursive { .. } => "mixed recursive invocation",
             Op::RecursiveSearch { .. } => "semantic recursive invocation",
@@ -442,6 +491,17 @@ impl Sql {
         };
         self.generation.operator_as(operator)?;
         let body = match &plan.op {
+            Op::Shared(body) => return self.emit(body, input),
+            Op::FieldRule {
+                inside,
+                field,
+                child,
+                stop,
+            } => return self.field_stopped(*inside, *field, child, stop, input),
+            Op::FiniteProgram(program) => return self.finite_program(program, input),
+            Op::ParsedRecursive { program, entry } => {
+                return self.parsed_recursive(program, *entry, input);
+            }
             Op::MixedRecursive { program, entry } => {
                 return self.mixed_recursive(program, *entry, input);
             }
@@ -497,10 +557,13 @@ impl Sql {
             }
             Op::Parse {
                 term,
+                setup,
                 child,
                 exports,
                 hosted,
-            } => return self.parsed(*term, child, exports, *hosted, input),
+            } => {
+                return self.parsed(*term, setup, child, exports, *hosted, input);
+            }
             Op::Host {
                 parse,
                 child,
@@ -590,6 +653,15 @@ impl Sql {
                     "SELECT k,work,CASE truth WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE truth END AS truth FROM {}",
                     output.name
                 )
+            }
+            Op::MemoPredicate(id, child) => {
+                if !super::predicate_memo::eligible(child) {
+                    return Err("predicate memo: body lost its total utility-free proof".into());
+                }
+                let out =
+                    self.peak_utility((!self.generation.memo_bypass).then_some(*id), child, input)?;
+                self.profile.last_mut().unwrap()["predicateMemoProof"] = json!({"utilityCost":1,"utilityPeak":1,"selection":"overlapping current-node demand","captures":false,"typedCallbacks":false,"globalPeakTrackingRequired":false});
+                return Ok(out);
             }
             Op::Charge(_, child) | Op::TransientCharge(child) => {
                 if self.generation.peak_tracking {

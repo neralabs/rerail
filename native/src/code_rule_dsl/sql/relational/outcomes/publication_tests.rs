@@ -29,6 +29,17 @@ pub(super) fn check_work(
     fault: Option<&str>,
     allowance: i64,
 ) -> Value {
+    check_work_compiler(p, rules, sources, fault, allowance, super::compile_job)
+}
+
+pub(super) fn check_work_compiler(
+    p: &CompiledCodeRuleDsl,
+    rules: &[Value],
+    sources: &[&str],
+    fault: Option<&str>,
+    allowance: i64,
+    compiler: impl FnOnce(&[&matcher::GrammarMatcher], i64) -> Result<super::super::Compiled, String>,
+) -> Value {
     let grammars: Vec<_> = p
         .inner
         .clauses
@@ -133,7 +144,7 @@ pub(super) fn check_work(
     }
     expected.sort_by_key(|row| (row[0].as_u64(), row[1].as_u64(), row[2].as_u64()));
     let generation_start = std::time::Instant::now();
-    let compiled = super::compile_job(&grammars, allowance).unwrap();
+    let compiled = compiler(&grammars, allowance).unwrap();
     let generation_wall_ns = generation_start.elapsed().as_nanos();
     let (((actual, metrics), calls), budget_calls) = super::super::budget_leaf::trace(|| {
         value_probe::run_reached(fault, || {
@@ -171,12 +182,23 @@ pub(super) fn check_work(
                             .unwrap();
                         let executions = trace.count();
                         drop(trace);
+                        let execute_wall_ns = start.elapsed().as_nanos();
+                        let (state_rows,state_peak,state_scopes,scope_peak,continuation_rows,continuation_peak)=db.query_row("SELECT relation_state_rows(),relation_state_peak(),relation_state_scopes(),relation_state_scope_peak(),relation_continuation_rows(),relation_continuation_peak()",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?))).unwrap();
+                        assert_eq!(state_rows, 0, "completed SQL left typed capture snapshots");
+                        assert_eq!(
+                            state_scopes, 0,
+                            "completed SQL left capture invocation scopes"
+                        );
+                        assert_eq!(
+                            continuation_rows, 0,
+                            "completed SQL left continuation frames"
+                        );
                         let memo = super::super::memo_store::counts()
                             .into_iter()
                             .zip(memo_start)
                             .map(|(end, start)| end - start)
                             .collect::<Vec<_>>();
-                        let metrics = json!({"memoStorage":{"resets":memo[0],"lookups":memo[1],"hits":memo[2],"publications":memo[3],"integerCellsStored":memo[4]},"typedReturnRows":super::super::row::ROWS.get()-row_start,"typedReturnCells":super::super::row::CELLS.get()-cell_start,"matchingStatements":executions,"prepareWallNs":prepare,"prepareExecuteWallNs":start.elapsed().as_nanos(),"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep)});
+                        let metrics = json!({"memoStorage":{"resets":memo[0],"lookups":memo[1],"hits":memo[2],"publications":memo[3],"integerCellsStored":memo[4]},"typedReturnRows":super::super::row::ROWS.get()-row_start,"typedReturnCells":super::super::row::CELLS.get()-cell_start,"matchingStatements":executions,"prepareWallNs":prepare,"prepareExecuteWallNs":execute_wall_ns,"captureStateRows":state_rows,"captureStatePeak":state_peak,"captureScopes":state_scopes,"captureScopePeak":scope_peak,"continuationRows":continuation_rows,"continuationPeak":continuation_peak,"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep)});
                         (actual, metrics)
                     });
                     assert_eq!(frames[4], 0);

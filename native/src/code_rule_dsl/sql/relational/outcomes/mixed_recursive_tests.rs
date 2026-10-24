@@ -30,6 +30,29 @@ fn mixed_universal_all_any_not_and_search_preserve_unknown_and_reached_work() {
     }
 }
 #[test]
+fn mixed_readonly_unknown_regions_keep_finite_negation_captures_private() {
+    let mut body = universal();
+    for index in [0, 1] {
+        body["any"][index]["not"] = json!({"pattern":"f($PRIVATE)"});
+    }
+    let rules = [json!({"matches":"u"})];
+    let policy = policy_utils(&rules, json!({"u":body}));
+    let grammar = &grammar_matchers(&policy)[0];
+    let plan = super::lower::Lower::new(grammar.language, true)
+        .plan(&grammar.matcher)
+        .unwrap();
+    let super::Op::MixedRecursive { program, .. } = plan.op else {
+        panic!("mixed component");
+    };
+    assert!(
+        !program.captures,
+        "finite Not region already owns its private captures"
+    );
+    for work in [0, 1, 2, 4, 8, 32, 128, 1000] {
+        check_work(&policy, &rules, &["f([1,[x],0]);", "f([x,1]);"], None, work);
+    }
+}
+#[test]
 fn mixed_mutual_scc_and_readonly_capture_regions_share_native_memo_answers() {
     let utils = json!({
      "u":{"any":[{"kind":"number","compare":{"left":"EXPECTED","op":"eq","right":"EXPECTED","text":"tokens"},"value":{"gt":0}},{"kind":"array","not":{"has":{"stopBy":"neighbor","not":{"any":[{"regex":"^[\\[\\],]$"},{"matches":"v"}]}}}}]},
@@ -77,9 +100,9 @@ fn mixed_walk_directions_and_total_rule_stops_have_native_order() {
     }
 }
 #[test]
-fn mixed_declines_unproved_or_capture_writing_components_without_lowering_side_effects() {
+fn mixed_declines_unproved_or_unknown_capture_writing_components_without_lowering_side_effects() {
     for body in [
-        json!({"any":[{"pattern":"$P"},{"kind":"array","not":{"has":{"not":{"matches":"u"}}}}]}),
+        json!({"any":[{"pattern":"$P","value":{"gt":0}},{"kind":"array","not":{"has":{"not":{"matches":"u"}}}}]}),
         json!({"any":[{"value":{"gt":0}},{"resolves":{"binding":{"value":{"matches":"u"}}}}]}),
         json!({"any":[{"value":{"gt":0}},{"has":{"stopBy":"neighbor","inside":{"stopBy":"neighbor","matches":"u"}}}]}),
     ] {

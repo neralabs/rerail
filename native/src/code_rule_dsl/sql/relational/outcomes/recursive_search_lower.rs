@@ -32,7 +32,10 @@ struct Tail<'a> {
     target: &'a AstMatcher,
 }
 impl Lower {
-    pub(super) fn recursive_search(&mut self, util: &UtilRef) -> Result<Option<Op>, String> {
+    pub(in crate::code_rule_dsl::sql::relational::outcomes) fn recursive_search(
+        &mut self,
+        util: &UtilRef,
+    ) -> Result<Option<Op>, String> {
         let key = (util.table.as_ptr() as usize, util.index);
         let scoped = (
             key.0,
@@ -121,7 +124,7 @@ impl Lower {
             let base_count = items.len() - positions.len();
             if base_count > 1 {
                 self.operators += 1;
-                if self.operators > 256 {
+                if self.operators > 256 && !self.source_inventory_only() {
                     return Err(
                         "outcome relations: distinct lowered operator count exceeds 256".into(),
                     );
@@ -172,7 +175,6 @@ impl Lower {
             let ordered_bases = base_count > 1;
             let memo = !legacy
                 || base.uses_memo()
-                || (self.three_valued && ordered_bases && !base.writes.is_empty())
                 || matcher::reads_values(&AstMatcher::Util(util.clone()), &mut Default::default());
             let (guard, child_kinds) = match &arms[positions[0]] {
                 Arm::Search {

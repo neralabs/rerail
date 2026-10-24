@@ -19,6 +19,8 @@ pub(super) mod mixed_recursive_lower;
 mod parse_host_lower;
 #[path = "parse_lower.rs"]
 mod parse_lower;
+#[path = "parse_recursive_lower.rs"]
+pub(super) mod parse_recursive_lower;
 #[path = "pure_recursive_lower.rs"]
 pub(super) mod pure_recursive_lower;
 #[path = "recursive_search_lower.rs"]
@@ -44,6 +46,15 @@ mod capture_predicate_lower;
 #[path = "format_lower.rs"]
 mod format_lower;
 
+#[path = "finite_all.rs"]
+mod finite_all;
+#[path = "finite_diagnostics.rs"]
+mod finite_diagnostics;
+#[path = "finite_shared.rs"]
+mod finite_shared;
+#[path = "finite_source.rs"]
+mod finite_source;
+
 type CallContext = (usize, usize, bool, bool);
 type ScopedUtility = (usize, usize, String, bool, bool);
 type SharedPlan<T> = (usize, Rc<T>);
@@ -57,6 +68,7 @@ pub(super) struct Lower {
     language: GrammarDialect,
     /// Unique within the statement's BatchScopes lifetime, independent of matcher addresses.
     pub(super) scope_owner: usize,
+    pub(super) root_kinds: Option<std::collections::BTreeSet<u16>>,
     pub pure: super::super::lower::Lowerer,
     pub slots: Vec<Slot>,
     active: HashSet<(usize, usize)>,
@@ -73,6 +85,19 @@ pub(super) struct Lower {
     downward: HashMap<(usize, usize), (usize, Rc<super::super::recursive_downward::Downward>)>,
     recursive_searches: HashMap<ScopedUtility, SharedPlan<recursive_search_lower::RecursiveSearch>>,
     operators: usize,
+    finite_mode: bool,
+    finite_cache: HashMap<ScopedUtility, Plan>,
+    finite_shared: HashMap<String, Rc<Plan>>,
+    finite_predicates: Vec<super::super::ir::Set>,
+    finite_owners: HashMap<usize, String>,
+    finite_names: HashMap<(usize, usize), String>,
+    finite_visits: std::collections::BTreeMap<String, usize>,
+    finite_seen: HashSet<usize>,
+    finite_repeated: usize,
+    finite_flattened: usize,
+    #[cfg(test)]
+    unqualified_source_inventory: bool,
+    finite_inventory: std::collections::BTreeMap<String, usize>,
     utility_calls: usize,
     three_valued: bool,
     parsed_depth: usize,
@@ -80,6 +105,7 @@ pub(super) struct Lower {
     parse_hosts: Vec<parse_host_lower::Scope>,
     span_slots: Slots,
     span_links: Vec<(usize, usize)>,
+    parsed_components: parse_recursive_lower::Components,
     nths: HashMap<usize, usize>,
 }
 
@@ -88,6 +114,7 @@ impl Lower {
         Self {
             language: dialect,
             scope_owner: 1,
+            root_kinds: None,
             pure: super::super::lower::Lowerer::new(dialect),
             slots: vec![],
             active: HashSet::new(),
@@ -104,6 +131,19 @@ impl Lower {
             downward: HashMap::new(),
             recursive_searches: HashMap::new(),
             operators: 0,
+            finite_mode: false,
+            finite_cache: HashMap::new(),
+            finite_shared: HashMap::new(),
+            finite_predicates: Vec::new(),
+            finite_owners: HashMap::new(),
+            finite_names: HashMap::new(),
+            finite_visits: std::collections::BTreeMap::new(),
+            finite_seen: HashSet::new(),
+            finite_repeated: 0,
+            finite_flattened: 0,
+            #[cfg(test)]
+            unqualified_source_inventory: false,
+            finite_inventory: std::collections::BTreeMap::new(),
             utility_calls: 0,
             three_valued,
             parsed_depth: 0,
@@ -111,12 +151,56 @@ impl Lower {
             parse_hosts: vec![],
             span_slots: Slots::new(),
             span_links: Vec::new(),
+            parsed_components: HashMap::new(),
             nths: HashMap::new(),
         }
     }
 
+    pub fn new_finite(dialect: GrammarDialect, three_valued: bool) -> Self {
+        Self {
+            finite_mode: true,
+            ..Self::new(dialect, three_valued)
+        }
+    }
+
+    pub(super) fn source_inventory_only(&self) -> bool {
+        #[cfg(test)]
+        {
+            self.unqualified_source_inventory
+        }
+        #[cfg(not(test))]
+        {
+            false
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn new_unqualified_inventory(dialect: GrammarDialect, three_valued: bool) -> Self {
+        Self {
+            unqualified_source_inventory: true,
+            ..Self::new_finite(dialect, three_valued)
+        }
+    }
     pub fn profile(&self, terminal_base: usize) -> serde_json::Value {
-        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len()+self.mixed_components.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"utilityBodyLowerings":self.utilities.len()+self.mixed_components.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"recursiveComponents":self.chains.len()+self.downward.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
+        let mut profile = serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len()+self.mixed_components.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"utilityBodyLowerings":self.utilities.len()+self.mixed_components.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"recursiveComponents":self.chains.len()+self.downward.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base});
+        if self.finite_mode {
+            profile["finiteSourceVisits"] = serde_json::json!(self.finite_visits);
+            profile["finiteMemoNames"] = serde_json::json!(
+                self.utility_origins
+                    .iter()
+                    .filter_map(|(id, (key, _))| self
+                        .finite_names
+                        .get(key)
+                        .map(|name| (id.to_string(), name.clone())))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            );
+            profile["finiteSourceInventory"] = serde_json::json!(self.finite_inventory);
+            profile["finiteRepeatedSourceVisits"] = serde_json::json!(self.finite_repeated);
+            profile["finiteUniqueAstVisited"] = serde_json::json!(self.finite_seen.len());
+            profile["finiteSetDefinitions"] = serde_json::json!(self.finite_predicates.len());
+            profile["finiteSharedDefinitions"] = serde_json::json!(self.finite_shared.len());
+            profile["finiteFlattenedAll"] = serde_json::json!(self.finite_flattened);
+        }
+        profile
     }
 
     pub(super) fn memo_layout(&self, force: bool) -> Option<Rc<super::utility_memo::Layout>> {
@@ -251,8 +335,28 @@ impl Lower {
     }
 
     pub fn plan(&mut self, matcher: &AstMatcher) -> Result<Plan, String> {
+        self.finite_visit(matcher);
+        if let AstMatcher::Util(util) = matcher
+            && let Some(plan) = self.finite_cached(util)
+        {
+            self.utility_calls += 1;
+            self.finite_register_source(util);
+            return Ok(plan);
+        }
+        let key = self.finite_signature(matcher);
+        if let Some(plan) = self.finite_shared(&key) {
+            return Ok(plan);
+        }
+        let plan = self.plan_inner(matcher)?;
+        self.finite_remember(matcher, &plan);
+        Ok(self.finite_define(key, plan))
+    }
+    fn plan_inner(&mut self, matcher: &AstMatcher) -> Result<Plan, String> {
+        if let Some(plan) = self.finite_predicate(matcher)? {
+            return Ok(plan);
+        }
         self.operators += 1;
-        if self.operators > 256 {
+        if self.operators > 256 && !self.source_inventory_only() {
             return Err("outcome relations: distinct lowered operator count exceeds 256".into());
         }
         let mut mentions = Slots::new();
@@ -325,8 +429,13 @@ impl Lower {
                 Op::Unknown(term)
             }
             AstMatcher::All(items) | AstMatcher::Any(items) => {
-                let children = items
-                    .iter()
+                let ordered = if matches!(matcher, AstMatcher::All(_)) {
+                    self.finite_all_items(items)
+                } else {
+                    items.iter().collect()
+                };
+                let children = ordered
+                    .into_iter()
                     .map(|m| self.plan(m))
                     .collect::<Result<Vec<_>, _>>()?;
                 for child in &children {
@@ -344,6 +453,31 @@ impl Lower {
                 let child = self.plan(inner)?;
                 mentions = child.mentions.clone();
                 Op::Not(Box::new(child))
+            }
+            AstMatcher::Field(field) if matches!(field.stop, StopBy::Rule(_)) => {
+                let mut child = self.plan(&field.rule)?;
+                if !self.three_valued
+                    && let Some((kinds, _)) =
+                        crate::code_rule_dsl::matcher::walk_candidate_filter(&field.rule)
+                {
+                    child.walk_filter = Some(super::WalkFilter {
+                        kinds,
+                        text: vec![],
+                    });
+                }
+                let StopBy::Rule(stop) = &field.stop else {
+                    unreachable!()
+                };
+                let stop = self.plan(stop)?;
+                mentions = child.mentions.clone();
+                writes = child.writes.clone();
+                node_writes = child.node_writes.clone();
+                Op::FieldRule {
+                    inside: field.inside,
+                    field: field.field,
+                    child: Box::new(child),
+                    stop: Box::new(stop),
+                }
             }
             AstMatcher::Field(field) if matches!(field.stop, StopBy::Neighbor | StopBy::End) => {
                 let mut child = self.plan(&field.rule)?;
@@ -459,6 +593,10 @@ impl Lower {
             }
             AstMatcher::Util(util) => {
                 self.utility_calls += 1;
+                self.finite_register_source(util);
+                if self.finite_acyclic(util) {
+                    return self.finite_utility(util);
+                }
                 let key = (util.table.as_ptr() as usize, util.index);
                 let scoped_key = (
                     key.0,
@@ -475,7 +613,14 @@ impl Lower {
                 } else {
                     None
                 };
-                if let Some(program) = parsed_pure {
+                if let Some(op) = self.parsed_recursive(util)? {
+                    if let Op::ParsedRecursive { program, entry } = &op {
+                        mentions = program.mentions.clone();
+                        writes = program.outputs[*entry].clone();
+                        node_writes = writes.clone();
+                    }
+                    op
+                } else if let Some(program) = parsed_pure {
                     Op::PureRecursive(Rc::new(program))
                 } else if let Some((id, chain)) = self.chains.get(&key) {
                     Op::Chain(*id, Rc::clone(chain))
@@ -516,8 +661,10 @@ impl Lower {
                 {
                     Op::PureRecursive(Rc::new(program))
                 } else if let Some(op) = self.mixed_recursive(util)? {
-                    if let Op::MixedRecursive { program, .. } = &op {
+                    if let Op::MixedRecursive { program, entry } = &op {
                         mentions = program.mentions.clone();
+                        writes = program.functions[*entry].writes.clone();
+                        node_writes = writes.clone();
                     }
                     op
                 } else if let Some(op) = self.recursive_search(util)? {
@@ -591,13 +738,14 @@ impl Lower {
             );
             effects.cache_fills = Self::cache_fills(matcher);
         }
-        Ok(Plan {
+        let plan = Plan {
             effects,
             op,
             mentions,
             writes,
             node_writes,
             walk_filter: None,
-        })
+        };
+        Ok(plan)
     }
 }

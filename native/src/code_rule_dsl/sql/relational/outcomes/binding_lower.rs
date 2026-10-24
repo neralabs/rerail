@@ -209,7 +209,10 @@ fn any_plan(plan: &Plan, predicate: fn(&Plan) -> bool) -> bool {
         }
         Op::RecursiveSearch { component, .. } => any_plan(&component.base, predicate),
         Op::All(items) | Op::Any(items) => items.iter().any(|p| any_plan(p, predicate)),
-        Op::Charge(_, child) | Op::CallFrame { body: child, .. } => any_plan(child, predicate),
+        Op::Shared(child)
+        | Op::Charge(_, child)
+        | Op::MemoPredicate(_, child)
+        | Op::CallFrame { body: child, .. } => any_plan(child, predicate),
         Op::Not(child)
         | Op::Parse { child, .. }
         | Op::FieldNeighbor { child, .. }

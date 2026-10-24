@@ -1161,3 +1161,29 @@ Final evidence is in [the recursive catalog integration report](../benchmark/sql
 Of the preceding 101 grammars, 96 retain exact SQL, VM counts, and outputs on the same expanded fixture inventory. Five change physical shape while retaining exact outputs. B507 rises from 22,062,220 to 25,073,720 VM instructions. ASYNC221 rises from 41,775,854 to 50,072,645. Exact depth and memo bookkeeping contributes to these costs. Do not describe this coverage batch as a catalog-wide performance improvement.
 
 Frozen B023 retains 246,364 VM instructions, 10,232 SQL bytes, one matching statement, and zero frame publications. Prepared median CPU is 4.479 ms against 32.460 ms for the reference. Preparation remains a separate one-off cost. These results keep the existing performance and shape gates open for this workload; they do not qualify the complete-job execution budget.
+
+## Catalog completion and enforced regression budgets, 2026-10-24
+
+This checkpoint supersedes the 135-grammar admission and regression acceptance above. The compiler now admits all 146 catalog grammars. The final qualification uses all 597 fixture files, including a new positive semantic-annotation fixture.
+
+The eleven former refusals required three changes. Captured recursion carries persistent capture handles through typed continuations. Parsed recursion carries document identity and explicit exports. Finite utility functions share their bodies while preserving each call's native memo identity. SQL still composes child rules; atomic native facts do not evaluate whole child programs.
+
+Physical selection has one automatic entry point. It retains an inline plan when that plan fits. After a resource refusal, it tries shared finite functions, then shared recursive functions. Only the selected SQL executes. For the largest plan, immutable instruction metadata replaces repeated Search SQL templates. Existing plans retain their cheaper specialized traversal shapes where they satisfy the limits.
+
+The complete catalog gate is:
+
+```sh
+python3 benchmark/relational-catalog-qualification.py /path/to/frozen/test-binary /path/to/new/output-directory
+```
+
+It requires 146 admissions, native fixture parity, a positive witness for each grammar, and every pinned VM ceiling. Each grammar must execute one matching statement and publish no capture frames. Every query must fit 256,000 SQL bytes. Ordered plans must also fit 256 source operators, 256 finite instructions, 256 emitted operators, and 128 active typed return cells. The existing set and single-leaf answer compilers retain their own physical contracts. They do not report fictitious ordered counters.
+
+The driver pins the executable, source files, fixtures, and budget file. It records preparation separately from execution and saves every SQL query and EXPLAIN plan. A missing budget, changed output, unknown compiler scope, or changed input rejects the run. Existing ceilings cannot rise to accommodate a coverage change.
+
+Regression closure does not qualify the remaining execution shape. SIM905, B615, and F632 still account for roughly one billion VM instructions together. Their continuation traffic is the next measured target. A change there must reduce repeated control transitions while preserving native work, order, cache replay, captures, and reached failures. Preparation improvements cannot satisfy that execution gate.
+
+Production replacement, native physical stack-byte equivalence, aggregate storage bounds, deadlines, and complete-job batching within 100 executions remain separate failed or unqualified gates. One statement per grammar does not satisfy the whole-job budget.
+
+Final qualification passes all 146 admissions and native fixture comparisons, all VM ceilings, all applicable resource limits, and all 285 prior SQL/VM controls. The full suite reports 459 passing tests and no failures. Both native lint configurations pass. The original 135 grammars use 2.5% fewer VM instructions. The complete catalog still uses 2.390 billion instructions, so the performance transition is not complete.
+
+See [the complete catalog integration report](../benchmark/sql-relational-complete-catalog-integration.json), [the qualification record](../benchmark/sql-relational-cutover-evidence.json), and [the coverage ledger](../benchmark/sql-relational-cutover-coverage.json). Full EXPLAIN plans and native file traces are preserved in `benchmark/sql-relational-catalog-trace.json.gz`.
