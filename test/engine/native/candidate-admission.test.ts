@@ -85,3 +85,37 @@ it.skipIf(!required)("relational preparation does not reactivate an excluded loc
   expect(trace.filter(t => t.phase === "anchor-batch")).toHaveLength(1);
   expect(trace.filter(t => t.phase === "anchor-lower" && t.name === "template").map(t => t.detail.plans)).toEqual([2]);
 }, 30_000);
+
+it.skipIf(!required)("a plan that exceeds its lowering bound preserves earlier shared producers", () => {
+  function capture(complex: boolean) {
+    const program = `
+      import { readFileSync } from 'node:fs';
+      import { loadNativeBinding } from ${JSON.stringify(engine)};
+      const native=loadNativeBinding(),caps=JSON.parse(readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8'));
+      caps.limits.maxVisitsPerNode=0;
+      const clause=(id,rule)=>({id,forbid:{ast:{language:'python',rule}},violation:{code:'ROW',message:'Row',anchor:'witness.span'}});
+      const simple={kind:'identifier',regex:'^v[0-9]+$'};
+      const clauses=[clause('first',simple),...(${complex}?[clause('bounded',{kind:'identifier',all:Array.from({length:80},(_,i)=>({regex:'^.{0,'+(i+3)+'}$'}))})]:[]),clause('last',simple)];
+      const rule=native.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id:'rollback',revision:1,mode:'log',clauses}),'json',JSON.stringify(caps));
+      const ws=new native.CodeRuleDslWorkspace();ws.addCodeRule(rule);
+      try {console.log(await ws.applyAsync(JSON.stringify({revision:1,removed:[],files:[{path:'a.py',language:'python',source:'v0\\n'}]})));}finally{ws.close();}
+    `;
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+      encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, RERAIL_PROFILE: "1" },
+    });
+    expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
+    const result = JSON.parse(child.stdout.trim()).evaluation;
+    expect(result.failures).toEqual([]);
+    expect(result.violations).toHaveLength(complex ? 3 : 2);
+    const profiles = child.stderr.split("\n").filter(l => l.startsWith("RERAIL_CODE_RULE_PROFILE ")).map(l => JSON.parse(l.slice(25)));
+    expect(profiles.length).toBeGreaterThan(0);
+    expect(profiles.reduce((n, p) => n + p.anchorPlanBroadenings, 0)).toBe(complex ? 1 : 0);
+    const trace = child.stderr.split("\n").filter(l => l.startsWith("RERAIL_TRACE ")).map(l => JSON.parse(l.slice(13)));
+    const lower = trace.filter(t => t.phase === "anchor-lower" && t.name === "template");
+    expect(lower).toHaveLength(1);
+    return lower[0].detail.materializations;
+  }
+  const baseline = capture(false);
+  expect(capture(true), "failed-plan rollback must not rematerialize the earlier identical selector").toBe(baseline);
+}, 60_000);

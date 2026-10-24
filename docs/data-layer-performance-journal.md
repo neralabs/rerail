@@ -10,6 +10,19 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Lowering rollback loses shared work: red
+
+Stable authored order alone records 14,699 engine submissions, with complete findings and reconciled coverage.
+Evidence: `.rerail/profiles/sql-recovery-compiler-20261023/ordered-acceptance/capture`.
+This result rejects an aggregate improvement claim from ordering alone.
+
+The next public-API test places an over-budget selector between two identical selectors.
+All three rules retain their findings. The complex selector broadens exactly once, as intended.
+However, its rollback clears earlier successful reuse caches and increases physical materializations from seven to eight.
+Evidence: `rollback-red-2` (5.710 seconds). The earlier `rollback-red` invocation contains a test-program syntax error, not behavioral evidence.
+The required fix retains cache entries whose dependencies survive the checkpoint and removes entries from the failed branch.
+The implementation must avoid copying the growing complete cache before every plan.
+
 ### Compiler connection setup: green
 
 Compiler connections now use the shared limits and SQL function registration without runtime PRAGMAs.
