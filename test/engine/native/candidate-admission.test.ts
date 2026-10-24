@@ -14,13 +14,15 @@ function run(exclusion: string, files = 1) {
       format:'rerail.policy/v1',id,revision:1,mode:'log',scope,clauses:[{id:'match',
       forbid:{ast},violation:{code:'MATCH',message:'Match',anchor:'witness.span'}}]}),'json',caps);
     const ast={language:'python',rule:{pattern:'target($X)'}};
-    const ws=new native.CodeRuleDslWorkspace(); ws.addCodeRule(rule('active',ast));
+    const ws=new native.CodeRuleDslWorkspace();
     const exclusion=${JSON.stringify(exclusion)};
+    ws.addCodeRule(rule('active',ast,exclusion==='domain'?{include:['a/**'],exclude:[]}:undefined));
+    if(exclusion==='domain')ws.addCodeRule(rule('other',ast,{include:['b/**'],exclude:[]}));
     if(exclusion==='path')ws.addCodeRule(rule('excluded',ast,{include:['excluded/**'],exclude:[]}));
     if(exclusion==='text')ws.addCodeRule(rule('excluded',{...ast,rule:{pattern:'absent($X)'}}));
     if(exclusion==='syntax')ws.addCodeRule(rule('excluded',{...ast,syntax:'invalid'}));
     if(exclusion==='language')ws.addCodeRule(rule('excluded',{language:'typescript',rule:{pattern:'target($X)'}}));
-    const files=Array.from({length:${files}},(_,i)=>({path:'f'+i+'.py',language:'python',source:'target(1)\\n'}));
+    const files=Array.from({length:${files}},(_,i)=>({path:(exclusion==='domain'?(i%2?'a/':'b/'):'')+'f'+i+'.py',language:'python',source:'target(1)\\n'}));
     try {
       const result=JSON.parse(await ws.applyAsync(JSON.stringify({revision:1,files,removed:[]}))).evaluation;
       console.log(JSON.stringify(result));
@@ -53,4 +55,11 @@ it.skipIf(!required)("files with the same admitted frontier share one broad cand
   expect(batches).toHaveLength(1);
   expect(batches[0].detail.files).toHaveLength(20);
   expect(trace.filter(t => t.phase === "anchor-lower" && t.name === "template").map(t => t.detail.plans)).toEqual([1]);
+}, 30_000);
+
+
+it.skipIf(!required)("preparation keeps disjoint rule file domains separate", () => {
+  const trace = run("domain", 20);
+  expect(trace.filter(t => t.phase === "anchor-batch").map(t => t.detail.files.length)).toEqual([10, 10]);
+  expect(trace.filter(t => t.phase === "anchor-lower" && t.name === "template").map(t => t.detail.plans)).toEqual([1, 1]);
 }, 30_000);
