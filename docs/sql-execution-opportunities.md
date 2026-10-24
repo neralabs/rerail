@@ -9,6 +9,26 @@ The workload includes positive and clean state-tripwire observations through sna
 It is the complete small guard, not the full data-layer repository. These counts must not be extrapolated linearly to the repository.
 The [count ledger](../fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json) records source hashes, witnesses, formulas, dependencies, and overlap.
 
+## R5-A implementation result
+
+The complete guard now submits **3,685 statements**, down from **7,733**: **4,048 removed**.
+This exceeds the full 3,474 target by 574. The final 100 limit remains enforced and still fails.
+The measured candidate lifecycle has four store creates, four indexes, 380 population statements, 324 deletes, and four final drops.
+Its total is 716, compared with 4,764 before this chunk.
+The population count exceeds the original 250 planning cap. Retirement falls much further than the modeled 1,028 boundaries.
+The complete replacement cost, including every setup and cleanup statement, is below the 1,290 budget.
+
+Logical bindings share one nonunique `(producer, fid, pre)` index within each execution domain.
+The compiler batches independent roots before rendering their shared WITH scope.
+A batch completes every member, including empty members. Each member retains its own last-use release.
+The existing dependency scheduler supplies retained read/write barriers. It does not acquire a general graph runtime.
+The fixed expansion budget limits preparation growth. Different schemas retain separate storage.
+Captures include the store setup, logical slots, batch members, full logical graph, and executable schedule.
+The standalone `candidate_owner` command recompiles frozen plans through the production ownership compiler.
+The `cache_budget` command replays the captured schedule, including shared-owner setup and retirement.
+
+R5-B below is repriced from 3,685 submissions. It cannot claim the retirement savings already achieved here.
+
 ## Measured inventory
 
 | Execution family | Engine submissions |
@@ -29,7 +49,7 @@ The SQL report assigns global query IDs. Inventory rows resolve through the repo
 
 ## Ranked opportunities
 
-These are **net planning targets**, not achieved reductions or guarantees about an unimplemented design.
+The R5-A rows preserve the original planning targets. Its measured result is above. R5-B remains a planning target.
 Current execution counts are measured. Replacement budgets must pass a compiled-plan audit and complete runtime accounting.
 
 | Rank | Opportunity | Before | Replacement budget | Net removal target | Delivery chunk |
@@ -37,7 +57,7 @@ Current execution counts are measured. Replacement budgets must pass a compiled-
 | 1 | Maintain candidate key indexes across producer fills | 1,588 | 4 indexes | **1,584** | R5-A |
 | 2 | Batch typed candidate population, including initial store creation | 1,588 | 250 fills + 4 store creates | **1,334** | R5-A |
 | 3 | Share relational backing, indexes, statistics, and retirement | 2,130 | At most 1,130 | **At least 1,000; provisional** | R5-B |
-| 4 | Coalesce candidate retirement after operator batching | 1,028 after R5-A | At most 200 | **828** | R5-B |
+| 4 | Coalesce candidate retirement after operator batching | 324 after R5-A | At most 200 | **124** | R5-B |
 | 5 | Retire candidate rows at existing boundaries instead of dropping each table | 1,588 | 1,028 deletes + 4 final store drops | **556** | R5-A |
 | 6 | Bound clause-reader configuration to four readers per observed execution context | 136 PRAGMAs | At most 32 | **104** | R5-B |
 | 7 | Replace executed empty syntax-schema CTAS with validated prepare-only metadata | 68 | 0 | **68** | R5-B |
@@ -46,9 +66,11 @@ The 68 schema probes end in `LIMIT 0`. Their removal must preserve column names,
 The 136 PRAGMAs belong to 68 clause connections. The proposed pool allows 16 readers across the four observed execution contexts.
 New attachment, isolation, publication, or maintenance statements count against the net delivery target.
 
-## R5-A: candidate ownership and typed operation batching
+## R5-A: original candidate ownership and batching budget
 
 **Target: remove 3,474 submissions, reducing the complete job from 7,733 to at most 4,259.**
+
+This original component budget remains below for comparison. The implementation result above exceeds its full net-removal target.
 
 The current selector lifecycle costs 4,764 submissions: one table creation, one index creation, and one drop for each of 1,588 producers.
 The replacement budget is:
@@ -85,15 +107,15 @@ and the [existing lifetime scheduler](../native/src/code_rule_dsl/matcher/anchor
 
 ## R5-B: shared relational backing and complete lifetimes
 
-**Provisional target: remove at least 2,000 additional submissions, reaching at most 2,259 after R5-A.**
+**Repriced target: remove 1,296 additional submissions from 3,685, reaching at most 2,389.**
 
 | Component | Current or modeled baseline | Replacement cap | Net target |
 | --- | ---: | ---: | ---: |
 | Relational object, index, statistics, and retirement lifecycle | 2,130 | 1,130 | 1,000 |
-| Candidate row retirement after R5-A | 1,028 | 200 | 828 |
+| Candidate row retirement after R5-A | 324 | 200 | 124 |
 | Clause connection PRAGMAs | 136 | 32 | 104 |
 | Empty syntax-schema CTAS | 68 | 0 | 68 |
-| **Net target** | | | **2,000** |
+| **Net target** | | | **1,296** |
 
 First audit schemas, input bindings, typed options, source generations, and closed domains.
 Equal SQL text alone does not prove shared data. Do not count an unverified producer reuse as a saving.
@@ -118,8 +140,8 @@ The existing [shared-storage contract test](../scripts/profiling/preparation/src
 
 ## Accounting and delivery gates
 
-R5-A receives credit for replacing 1,588 candidate drops with 1,028 deletes and four final drops.
-R5-B receives credit only for the subsequent reduction from 1,028 deletes to 200.
+R5-A receives credit for replacing 1,588 candidate drops with 324 deletes and four final drops.
+R5-B receives credit only for the subsequent reduction from 324 deletes to 200.
 The second chunk does not claim the original drop savings again.
 Relational lifecycle counts exclude the PRAGMAs and empty schema probes priced separately.
 After each accepted chunk, reprice the next chunk from the new complete trace and subtract work already removed.
@@ -131,7 +153,7 @@ Fewer submissions do not permit a CPU or memory regression. The rejected family-
 Count replacement INSERTs, DELETEs, schema changes, transactions, publication, and cleanup.
 Retain the fixed 100 limit without resets, reclassification, or truncated findings.
 
-The two targets leave at most 2,259 submissions, still 2,159 above the final limit.
+The accepted R5-A result and repriced R5-B target leave at most 2,389 submissions, still 2,289 above the final limit.
 That remainder needs another measured inventory. No invented saving is assigned to it now.
 CPU-only improvements, cheaper private CTEs, and speculative cache hits do not contribute to the submission targets.
 SQLite internal executions remain separately reported and do not inflate the projected engine savings.

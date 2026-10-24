@@ -8,7 +8,7 @@ pub struct Input<'a> {
     pub temporary: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Action {
     Prepare(usize),
     Query(usize),
@@ -20,10 +20,16 @@ pub struct Schedule {
     pub peak_relations: usize,
 }
 
-impl Schedule {
-    /// Inputs contain compiler-generated SQL; user strings are bound parameters.
-    /// Retained writes are ordered against both earlier readers and earlier writers.
-    pub fn new(inputs: &[Input<'_>], queries: &[String]) -> Self {
+/// The same preparation graph supplies scheduling and compatible physical grouping.
+pub struct Dependencies<'a> {
+    pub prerequisites: Vec<Vec<usize>>,
+    consumers: Vec<Vec<usize>>,
+    names: HashMap<&'a str, usize>,
+    writers: HashMap<&'a str, usize>,
+}
+
+impl<'a> Dependencies<'a> {
+    pub fn new(inputs: &[Input<'a>]) -> Self {
         static IDENTIFIER: LazyLock<regex::Regex> = LazyLock::new(|| {
             regex::Regex::new(r"[A-Za-z_][A-Za-z_0-9]*").expect("generated identifier")
         });
@@ -97,6 +103,44 @@ impl Schedule {
             );
             dependencies.push(needs.into_iter().collect::<Vec<_>>());
         }
+        Self {
+            prerequisites: dependencies,
+            consumers,
+            names,
+            writers: resources
+                .into_iter()
+                .filter_map(|(name, access)| access.writer.map(|writer| (name, writer)))
+                .collect(),
+        }
+    }
+}
+
+impl Schedule {
+    /// Inputs contain compiler-generated SQL; user strings are bound parameters.
+    /// Retained writes are ordered against both earlier readers and earlier writers.
+    #[allow(dead_code)] // Used by standalone replay and low-level compiler tests.
+    pub fn new(inputs: &[Input<'_>], queries: &[String]) -> Self {
+        let groups: Vec<_> = (0..inputs.len()).map(|i| vec![i]).collect();
+        Self::batched(inputs, queries, Dependencies::new(inputs), &groups)
+    }
+
+    /// A batch completes each logical member, including members with zero rows.
+    /// Storage liveness remains per member; it does not follow the batch's last consumer.
+    pub fn batched(
+        inputs: &[Input<'_>],
+        queries: &[String],
+        graph: Dependencies<'_>,
+        groups: &[Vec<usize>],
+    ) -> Self {
+        static IDENTIFIER: LazyLock<regex::Regex> = LazyLock::new(|| {
+            regex::Regex::new(r"[A-Za-z_][A-Za-z_0-9]*").expect("generated identifier")
+        });
+        let Dependencies {
+            prerequisites: dependencies,
+            consumers,
+            names,
+            writers,
+        } = graph;
         let results: Vec<Vec<_>> = queries
             .iter()
             .map(|sql| {
@@ -107,7 +151,7 @@ impl Schedule {
                             .get(token.as_str())
                             .copied()
                             .into_iter()
-                            .chain(resources.get(token.as_str()).and_then(|a| a.writer))
+                            .chain(writers.get(token.as_str()).copied())
                     })
                     .collect::<BTreeSet<_>>()
                     .into_iter()
@@ -127,37 +171,66 @@ impl Schedule {
             .collect();
         let mut actions = Vec::new();
         let mut ready = vec![false; inputs.len()];
-        fn visit(index: usize, deps: &[Vec<usize>], ready: &mut [bool], actions: &mut Vec<Action>) {
+        let mut owner = vec![0; inputs.len()];
+        for (g, members) in groups.iter().enumerate() {
+            for &i in members {
+                owner[i] = g;
+            }
+        }
+        let prerequisites: Vec<Vec<_>> = groups
+            .iter()
+            .map(|members| {
+                members
+                    .iter()
+                    .flat_map(|&i| dependencies[i].iter().copied())
+                    .map(|i| owner[i])
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect()
+            })
+            .collect();
+        fn visit(
+            index: usize,
+            deps: &[Vec<usize>],
+            groups: &[Vec<usize>],
+            ready: &mut [bool],
+            actions: &mut Vec<Action>,
+        ) {
             let mut pending = vec![(index, false)];
-            while let Some((i, expanded)) = pending.pop() {
-                if ready[i] {
+            while let Some((g, expanded)) = pending.pop() {
+                if ready[g] {
                     continue;
                 }
                 if expanded {
-                    ready[i] = true;
-                    actions.push(Action::Prepare(i));
+                    ready[g] = true;
+                    actions.push(Action::Prepare(groups[g][0]));
                 } else {
-                    pending.push((i, true));
-                    pending.extend(deps[i].iter().rev().map(|&n| (n, false)));
+                    pending.push((g, true));
+                    pending.extend(deps[g].iter().rev().map(|&n| (n, false)));
                 }
             }
         }
+        ready.resize(groups.len(), false);
         for (q, needs) in results.iter().enumerate() {
             for &i in needs {
-                visit(i, &dependencies, &mut ready, &mut actions);
+                visit(owner[i], &prerequisites, groups, &mut ready, &mut actions);
             }
             actions.push(Action::Query(q));
         }
-        // Retained maintenance (for example clearing vocabulary_pending) must still run.
-        for i in 0..inputs.len() {
-            visit(i, &dependencies, &mut ready, &mut actions);
+        for i in 0..groups.len() {
+            visit(i, &prerequisites, groups, &mut ready, &mut actions);
         }
         let mut last = vec![0; inputs.len()];
         for (position, action) in actions.iter().enumerate() {
             let needs = match *action {
                 Action::Prepare(i) => {
-                    last[i] = position;
-                    &consumers[i]
+                    for &member in &groups[owner[i]] {
+                        last[member] = position;
+                        for &source in &consumers[member] {
+                            last[source] = position;
+                        }
+                    }
+                    continue;
                 }
                 Action::Query(q) => &result_inputs[q],
                 Action::Release(_) => unreachable!(),
@@ -175,8 +248,11 @@ impl Schedule {
         let mut scheduled = Vec::with_capacity(actions.len() + names.len());
         let (mut live, mut peak_relations) = (0usize, 0usize);
         for (position, action) in actions.into_iter().enumerate() {
-            if matches!(action, Action::Prepare(i) if inputs[i].temporary) {
-                live += 1;
+            if let Action::Prepare(i) = action {
+                live += groups[owner[i]]
+                    .iter()
+                    .filter(|&&j| inputs[j].temporary)
+                    .count();
             }
             peak_relations = peak_relations.max(live);
             scheduled.push(action);

@@ -167,3 +167,29 @@ The copied packet IDs permit an exact intermediate comparison across the two pro
 Allocation-accounted replay timings are diagnostic. Run complete-process CPU controls separately with tracing disabled.
 This rewrite removes VM materialization work; it does not reduce engine-submitted statement counts.
 The [journal](../../../docs/data-layer-performance-journal.md#selector-sql-owners-2026-10-24) records the accepted cleanup and rejected family-packing experiments.
+
+## Shared candidate ownership replay
+
+Candidate captures now use format v3. They include store setup, producer slots, batch members, and the executable schedule.
+Use `cache_budget` to replay that schedule directly. Do not reconstruct a schedule from the rendered SQL.
+The shared store's writes would hide the separate logical input lifetimes.
+
+For an older frozen capture, `candidate_owner` applies the production ownership compiler to its original logical graph.
+It preserves consumer ordinals for an exact intermediate multiset comparison. Use a fresh output directory.
+
+```sh
+cargo build --release --locked --manifest-path scripts/profiling/preparation/Cargo.toml --bin candidate_owner --bin cache_budget
+scripts/profiling/preparation/target/release/candidate_owner \
+  /path/to/candidate.json /path/to/logical-graph.json \
+  .rerail/profiles/candidate-owner/candidate.json
+scripts/profiling/preparation/target/release/cache_budget \
+  .rerail/profiles/candidate-owner/candidate.json 1024 512 \
+  .rerail/profiles/candidate-owner/memory.json
+```
+
+Current captures include the logical graph in their `graph` field. Keep its array with the frozen source capture.
+The recompiler rejects an existing result, an existing copied database, or an already shared program.
+It adds no runtime engine option. Compare complete-process CPU separately with tracing and allocation accounting disabled.
+The fixed guard also records `chunk-a-budget.json`. This progress check requires all 3,474 expected removals.
+The final 100-submission gate remains independent and mandatory.
+SQL batch duration belongs to the batch. Use its captured logical membership when analyzing producer costs.

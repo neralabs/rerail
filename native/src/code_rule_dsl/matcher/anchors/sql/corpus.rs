@@ -264,7 +264,7 @@ impl Corpus {
             crate::code_rule_dsl::profile::trace::Span::start("anchor-lower", "template");
         let statement = Arc::new(super::lower::batch_files(plans, lang, &[]));
         #[cfg(feature="code-rule-profile")]
-        lower.detail(||serde_json::json!({"plans":plans.len(),"files":0,"template":true,"sqlBytes":statement.queries.iter().map(String::len).sum::<usize>()+statement.stages.iter().map(|s|s.sql.len()).sum::<usize>(),"materializations":statement.stages.len(),"resultQueries":statement.queries.len()}));
+        lower.detail(||serde_json::json!({"plans":plans.len(),"files":0,"template":true,"sqlBytes":statement.queries.iter().map(String::len).sum::<usize>()+statement.stages.iter().map(|s|s.sql.len()).sum::<usize>(),"materializations":statement.preparations(false),"resultQueries":statement.queries.len()}));
         if ids.iter().all(|id| state.plans.contains_key(id)) {
             state.templates.insert(key, Arc::clone(&statement));
         }
@@ -308,11 +308,7 @@ impl Corpus {
                 .map(|(_, file)| (file.fid, file.nodes))
                 .collect();
             let statement = Self::template(state, lang, ids, plans);
-            let stages = statement
-                .stages
-                .iter()
-                .filter(|s| !(covered && s.covering))
-                .count();
+            let stages = statement.preparations(covered);
             let mut packed = HashMap::new();
             let mut current = None;
             let mut positions = Vec::new();

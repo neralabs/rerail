@@ -66,10 +66,10 @@ pub(super) fn save(
             Value::Blob(v) => serde_json::json!({"kind":"blob","value":v}),
         })
         .collect();
-    let stages:Vec<_>=statement.stages.iter().map(|stage|{
+    let stages:Vec<_>=statement.stages.iter().enumerate().map(|(i,stage)|{
         let node=nodes.get(&stage.name);
         let definition=statement.graph.iter().find_map(|cte|cte.strip_prefix(&format!("{}(",stage.name)).and_then(|s|s.split_once(") AS ")));
-        serde_json::json!({"name":stage.name,"sql":stage.sql,"index":stage.index,"temporary":stage.temporary,"relationId":node.map(|n|n.id),"class":node.map(|n|format!("{:?}",n.class)),"columns":definition.map(|d|d.0),"body":definition.map(|d|d.1)})
+        serde_json::json!({"name":stage.name,"sql":stage.sql,"slot":statement.ownership.slot(i),"members":statement.ownership.members(i),"index":stage.index,"temporary":stage.temporary,"relationId":node.map(|n|n.id),"class":node.map(|n|format!("{:?}",n.class)),"columns":definition.map(|d|d.0),"body":definition.map(|d|d.1)})
     }).collect();
     let mut versions = store
         .db
@@ -124,7 +124,7 @@ pub(super) fn save(
         serde_json::to_vec_pretty(&manifest).expect("producer manifest"),
     )
     .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
-    let output = serde_json::json!({"format":"rerail.candidate-replay/v2","variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"parameters":parameters,"admissions":statement.admissions,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
+    let output = serde_json::json!({"format":"rerail.candidate-replay/v3","variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"graph":statement.graph,"setup":statement.ownership.setup,"sharedStore":super::lower::ownership::STORE,"parameters":parameters,"admissions":statement.admissions,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
     std::fs::write(
         directory.join(format!("{stem}.json")),
         serde_json::to_vec_pretty(&output).expect("serializable candidate capture"),
