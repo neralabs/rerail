@@ -10,6 +10,22 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Rollback control correction and empty runtime schemas: red
+
+The seven-to-eight materialization assertion used an incomplete control.
+The broadened selector legitimately consumes a kind relation that the original control never uses.
+The corrected control explicitly consumes that relation in both variants.
+It passes on the unchanged earlier addon, including consecutive failures and reused parameter values.
+Evidence: `rollback-control-correction` (9.512 seconds).
+The uncommitted cache-pruning implementation changes neither complete-job statement counts nor this valid control. It is removed.
+The previous entry records a rejected interpretation, not proof of duplicated materialization.
+
+The combined 120-observation replay catches six failures from empty runtime syntax sources.
+The existing syntax test checks only empty findings and misses the execution failure.
+Its stronger assertion now rejects `compiler schemas cannot be executed` in `empty-schema-red` (5.020 seconds).
+The runtime empty-source loader calls the same schema helper as compilation.
+The target gives compiler adapters and executable empty runtime tables separate entry points over shared declarations.
+
 ### Lowering rollback loses shared work: red
 
 Stable authored order alone records 14,699 engine submissions, with complete findings and reconciled coverage.

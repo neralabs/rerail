@@ -62,7 +62,7 @@ it.skipIf(!required)("validates independent input and syntax schemas without exe
       expect(events.filter(e => e.kind === "sql")).toHaveLength(catalogue.executionCoverage.completed);
       for (const event of events) if (event.kind === "sql") {
         const sql = queries.get(event.query)!.sql;
-        if (event.origin === "engine") submitted.push(sql);
+        submitted.push(sql);
         if (/^\s*CREATE\s+(?:TEMP\s+)?(?:VIRTUAL\s+)?TABLE\b/i.test(sql)) ddl.push(sql);
       }
     }
