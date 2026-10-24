@@ -742,7 +742,7 @@ pub(in crate::code_rule_dsl) fn compiler_schema(
         .into_iter()
         .map(|(name, declaration)| {
             let columns = super::schema::register(db, &name, declaration).map_err(sql_error)?;
-            Ok((name, columns))
+            Ok((name, Arc::new(columns)))
         })
         .collect()
 }

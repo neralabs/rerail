@@ -17,7 +17,8 @@ pub(crate) struct Column {
     pub(crate) declared_type: String,
 }
 pub(crate) type Columns = Vec<Column>;
-pub(crate) type Registry = std::collections::BTreeMap<String, Columns>;
+pub(crate) type SharedColumns = std::sync::Arc<Columns>;
+pub(crate) type Registry = std::collections::BTreeMap<String, SharedColumns>;
 
 pub(crate) fn describe(db: &Connection, name: &str) -> Result<Columns> {
     Ok(db
@@ -56,6 +57,18 @@ fn failure(message: &str) -> rusqlite::Error {
 }
 
 pub(crate) fn register(db: &Connection, name: &str, declaration: String) -> Result<Columns> {
+    install(db, name, declaration)?;
+    describe(db, name)
+}
+
+/// Resolve and validate an already-known declaration without copying its columns again.
+pub(crate) fn bind(db: &Connection, name: &str, declaration: String) -> Result<()> {
+    install(db, name, declaration)?;
+    db.prepare(&format!("SELECT * FROM {}", quote(name)))?;
+    Ok(())
+}
+
+fn install(db: &Connection, name: &str, declaration: String) -> Result<()> {
     // CREATE TABLE rejects SQLite's reserved object names, even for unused inputs.
     if name.to_ascii_lowercase().starts_with("sqlite_") {
         return Err(failure("object name reserved for internal use"));
@@ -65,9 +78,9 @@ pub(crate) fn register(db: &Connection, name: &str, declaration: String) -> Resu
         CString::new(declaration).map_err(|_| failure("invalid schema declaration"))?;
     const MODULE: Module<Schema> = Module::eponymous_only_module();
     db.create_module(module.as_c_str(), &MODULE, Some(declaration))?;
-    // Force xConnect now, outside the authored-query authorizer. This also checks
-    // unused declarations for duplicate columns and other SQLite schema errors.
-    describe(db, name)
+    // Both callers force xConnect outside the authored-query authorizer. Unused
+    // declarations still receive SQLite's duplicate-column and schema checks.
+    Ok(())
 }
 
 #[repr(C)]
@@ -169,6 +182,12 @@ mod tests {
                 "CREATE TABLE input(path TEXT, id INTEGER, value)".to_owned(),
             )?;
             db.prepare("SELECT i.path,i.id,j.value FROM input i JOIN input j ON i.id=j.id")?;
+            bind(
+                &db,
+                "cached",
+                "CREATE TABLE cached(path TEXT,id INT)".to_owned(),
+            )?;
+            db.prepare("SELECT path,id FROM cached")?;
             Ok(())
         })();
         // SAFETY: remove the callback before its counter goes out of scope.

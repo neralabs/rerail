@@ -1,9 +1,15 @@
-//! Bounded, document-owned metadata. Complete keys compare without hash aliases;
+//! Bounded, process-owned metadata. Complete keys compare without hash aliases;
 //! rows, statements and SQLite connections never enter this cache.
-use super::{Columns, Registry};
+use super::{Columns, Registry, SharedColumns};
 use std::collections::{BTreeMap, VecDeque};
 const MAX_ENTRIES: usize = 128;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
+
+pub(crate) fn shared() -> parking_lot::MutexGuard<'static, Cache> {
+    static SCHEMAS: std::sync::LazyLock<parking_lot::Mutex<Cache>> =
+        std::sync::LazyLock::new(Default::default);
+    SCHEMAS.lock()
+}
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Key {
@@ -49,15 +55,15 @@ fn column_bytes(columns: &Columns) -> usize {
 }
 #[derive(Default)]
 pub(crate) struct Cache {
-    entries: BTreeMap<Key, Columns>,
+    entries: BTreeMap<Key, SharedColumns>,
     order: VecDeque<Key>,
     bytes: usize,
 }
 impl Cache {
-    pub(crate) fn get(&self, key: &Key) -> Option<&Columns> {
+    pub(crate) fn get(&self, key: &Key) -> Option<&SharedColumns> {
         self.entries.get(key)
     }
-    pub(crate) fn insert(&mut self, key: Key, columns: Columns) {
+    pub(crate) fn insert(&mut self, key: Key, columns: SharedColumns) {
         // Keys are owned by both the lookup map and FIFO queue. Charge both copies.
         let bytes = 2 * key.bytes() + column_bytes(&columns);
         if bytes > MAX_BYTES || self.entries.contains_key(&key) {

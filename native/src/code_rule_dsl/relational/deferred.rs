@@ -22,7 +22,7 @@ pub(in crate::code_rule_dsl) fn validate(
                 .clone()
         })
         .collect::<Vec<_>>();
-    super::schema::register(db, &backing, super::schema::declaration(&backing, &columns))
+    super::schema::bind(db, &backing, super::schema::declaration(&backing, &columns))
         .map_err(sql_error)?;
     let allowed = BTreeSet::from([backing.clone()]);
     let mut reads_source = false;
