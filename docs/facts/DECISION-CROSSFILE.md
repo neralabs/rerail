@@ -23,6 +23,15 @@ Same replay for every row: 40 worktrees from `~/tempo-qe/workspaces47`, S3's 1,1
 4. **P3a's finding closes the loop:** nothing beyond membership must be maintained for exactness; maintained state buys latency only. M2 holds 325 MB flat and is exact; what it lacks is the 500 ms, and 84% of each dead-code recompute is the linker. So the one structure worth maintaining is the reference graph, compactly, and the rules above it should be local queries.
 5. **Exactness and latency were never the problem.** Every design that ran was exact, and maintained latency is 60–170 ms p95. The problem is the product of rule shape × maintenance granularity.
 
+## Y1 + Y2 (built after the wave; the design the table pointed at)
+
+| Piece | Memory | Per-edit p50 / p95 / p99 | Exact | Open |
+|---|---|---|---|---|
+| **Y1** maintained reference graph: linker as keyed tables + cached per-key queries recording their read sets; readers of changed keys re-run lowest level first; base → 8 cluster overlays → worktree deltas | base **72 MB**; overlays 193 MB (22–26 MB each); 40 deltas 32 MB at load, 50 MB at edit 1,000 (≈ 29 KB per diverging file); plus shared strings 89 MB and per-file inputs 288 MB. Heap 869 MB loaded / 956 MB at 1,000 | **0.73 / 2.4 / 3.9 ms** single-file; commits and bulk 45–205 ms, max 1.5 s | base = native's 145,431 edges; maintained = from-scratch at all 1,151 checks | frozen-layer compaction (est. 1.5–2×) not landed; query bodies hand-written per SQL stage (I8); two semantic deviations from the SQL linker with zero-count counters |
+| **Y2** dead code and `exported-families` as local queries over the graph | dead code: a maintained reached set with levels, 12 B per state, **24 MB for 41 worktrees as base + delta** (182 MB as copies); `exported-families` 1–1.4 MB per worktree | dead code scoped **0.07 / 1.5 / 3.1 ms** (unscoped 150–310 ms); `exported-families` scoped 0.005 / 0.04 / 0.09 ms (unscoped 11 ms) | 4,931 = 4,931 and 0 = 0 on the oracle tree; 340 replay checks 0 differences; 800 random deletion steps 0 differences | the nine symbol-table inputs still come from the dataflow (not costed); per-definition traits per file; Y1 not wired in |
+
+**Reading.** Together they replace 30–70 GB of arrangements with ≈ 0.9 GB today, of which the graph's own state (base + overlays + deltas) is ≈ 300 MB and the rest is strings and per-file input rows that the content store should serve; latency is milliseconds. Dead code's global reachability is the one property that needs maintained state, and it costs 24 MB across 41 worktrees when kept as a levelled reached set over the graph rather than as a dataflow fixpoint. Rule-shape item confirmed for Jeremy: 85% of the reached states are per-method dispatch searches; keyed by class they would drop to 135K states.
+
 ## Conclusion for the decision
 
 The target (250 MB for 40 worktrees, hundreds of rules, ≤ 500 ms) is unreachable by any engine design over these rules as authored. What it takes is a change on the rule side and a different maintenance granularity on the engine side, together:
