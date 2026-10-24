@@ -5,7 +5,8 @@ Same replay for every row: 40 worktrees from `~/tempo-qe/workspaces47`, S3's 1,1
 | Design | Memory: load / after edits | Per-edit p50 / p95 / p99 | Exact | Breaks | Verdict |
 |---|---|---|---|---|---|
 | **M0** today: full differential-dataflow maintenance | 28–30 GB / 42 GB (1,000) | 17 / 62 / 190 ms (locked) | yes | — | reference point |
-| **M1** compaction in place (P3a, 2 of 7 steps) | 18.9 GB / — | — / 58 / — | yes | — | not enough; X1/X2 bound the rest |
+| **M1** full maintenance compacted (P3a final: one presence, cross-plan stage sharing R37, interner sweep; compact records not built) | 18.4 GB / 32.5 GB (1,000) | 39 / 131 / 442 ms | yes, 0 diff | — | **fail**: floor ≈ 15 GB in row values alone |
+| **M2** hybrid (P3a): membership + per-content exports + last results; every plan recomputed per edit unless D1 says its exports are unchanged | **325 MB heap / 470 MB footprint**, ≈ 85 MB if the store serves exports; flat (+22 MB over 1,000 edits) | 38.8 / 48.8 / 80.6 **s** (dead code 32 s, `exported-families` 2.6 s uncontended; the other three ≤ 10 ms) | yes, 0 diff on prefix and full replay | I8 for recomputed plans | **fail on latency only**; the only model within an order of magnitude of 250 MB |
 | **X1** arrange only what operators need, column pruning | 16.0 GB / 17.0 GB (prefix) | 43 / 172 / 393 ms (load 40–80) | yes, 0 diff | nothing | **killed**: 123M records remain, all read by delta maintenance |
 | **X2** u32 columns, one evicting interner | 10.2 GB / 10.7 GB (prefix) | 36 / 99 / 343 ms (unlocked) | yes, 0 diff | nothing (limits panic instead of refusing) | **killed**: 53 B/record is the floor; 630 MB of strings stay live because records hold them |
 | X1 + X2 (arithmetic) | ≈ 6.7 GB / ≈ 7.5 GB | — | — | — | 25–30× over target |
@@ -19,7 +20,8 @@ Same replay for every row: 40 worktrees from `~/tempo-qe/workspaces47`, S3's 1,1
 1. **Full maintenance cannot reach the target by engineering.** The floor after every generic cut is ≈ 50 B × ≈ 120M records ≈ 6–7 GB for five plans, and the records are what delta maintenance reads. At 50 B/record the target admits ≈ 5M arranged records, i.e. two orders of magnitude fewer than these five rules need as written. Hundreds of rules make it worse linearly (X6: +19M records per dead-code-shaped rule, +20K per light rule; 32–45 light rules alone exhaust 250 MB).
 2. **Recompute cannot reach the latency target as the rules are written.** Dead code and `exported-families` depend on global fixpoints and global windows; an edit changes their inputs 88% of the time and a recompute costs 5–70 s. No demand-scoping side condition holds for any of the five plans (X4, X5).
 3. **The shared fact layer works and is cheap on the per-file side** (X6: exact, 0.3–0.7 ms per rule per file, facts once per content, linear in N), but it does not change the cross-file arithmetic: the membership-dependent state is the symbol table and the reference graph, 19M + 61M records, before any rule.
-4. **Exactness and latency were never the problem.** Every design that ran was exact, and maintained latency is 60–170 ms p95. The problem is the product of rule shape × maintenance granularity.
+4. **P3a's finding closes the loop:** nothing beyond membership must be maintained for exactness; maintained state buys latency only. M2 holds 325 MB flat and is exact; what it lacks is the 500 ms, and 84% of each dead-code recompute is the linker. So the one structure worth maintaining is the reference graph, compactly, and the rules above it should be local queries.
+5. **Exactness and latency were never the problem.** Every design that ran was exact, and maintained latency is 60–170 ms p95. The problem is the product of rule shape × maintenance granularity.
 
 ## Conclusion for the decision
 
