@@ -101,6 +101,8 @@ pub(super) fn compile(
         capabilities.limits.max_regex_pattern_bytes,
         Arc::clone(&work),
     )?;
+    #[cfg(feature = "code-rule-profile")]
+    db.context(serde_json::json!({"scope":"compile", "producer":"relational-schema-validation", "path":path}));
     let mut tables = BTreeSet::new();
     let mut inputs = Vec::new();
     for (name, value) in input_spec {
