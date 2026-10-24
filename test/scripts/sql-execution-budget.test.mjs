@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { executionBudget, requireExecutionBudget, sqlCategory } from "../../benchmark/sql-profile/execution-budget.mjs";
 import { buildReport } from "../../benchmark/sql-profile/report.mjs";
@@ -17,9 +17,10 @@ const parity = () => ({ format: "rerail.data-layer-parity/v1", commit: "b".repea
   ] });
 const job = (counts = [25, 25, 25, 25]) => ({
   sessions: counts.length, captureCoverage: { complete: true, problems: [] },
-  queries: [{ kind: "sql", sql: "SELECT 1", runs: counts.reduce((sum, n) => sum + n, 0) }],
+  queries: [{ kind: "sql", sql: "SELECT 1", runs: counts.reduce((sum, n) => sum + n, 0), originRuns: { engine: counts.reduce((sum, n) => sum + n, 0), sqliteInternal: 0, unknown: 0 } }],
   executionCoverage: counts.map((n, i) => ({ session: `worker-${i}`, pid: 42, source: "code-rule-dsl",
-    fromSessionStart: true, started: n, completed: n, running: 0, observed: n })),
+    fromSessionStart: true, started: n, completed: n, running: 0, observed: n,
+    origins: { engine: { started: n, completed: n, running: 0 }, sqliteInternal: { started: 0, completed: 0, running: 0 }, unknown: { started: 0, completed: 0, running: 0 } } })),
   workload: { executor: "relational", nativeSha256: hash, results: { parity: true, exitCode: 0, timedOut: false, conformance: parity() } },
 });
 
@@ -147,7 +148,8 @@ test("the CI workload refuses an existing output directory without rewriting its
 
 test("the CI launcher independently rejects a missing or bypassed execution gate", () => {
   const launcher = resolve("scripts/profiling/sql-budget.mjs");
-  const original = JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-06-recording.json"));
+  const fixture = "fixtures/host/data-layer-port/batch-06-recording.json";
+  const original = JSON.parse(readFileSync(fixture));
   original.events = original.events.filter(e => [
     "test_rejects_lazy_result_private_step_ref_access",
     "test_collector_uses_generated_return_kinds_without_recomputing_project_map",
@@ -155,7 +157,7 @@ test("the CI launcher independently rejects a missing or bypassed execution gate
   for (const count of [null, 100, 101]) {
     const sandbox = mkdtempSync(join(tmpdir(), "rerail-budget-bypass-"));
     try {
-      const source = join(sandbox, "fixtures", "host", "data-layer-port"); mkdirSync(source, { recursive: true });
+      const source = join(sandbox, dirname(fixture)); mkdirSync(source, { recursive: true });
       writeFileSync(join(source, "batch-06-recording.json"), JSON.stringify(original));
       const tools = join(sandbox, "scripts", "profiling"); mkdirSync(tools, { recursive: true });
       // Simulate a broken controller that reports success without enforcing the budget.
@@ -173,5 +175,32 @@ test("the CI launcher independently rejects a missing or bypassed execution gate
       assert.equal(child.status, count === 100 ? 0 : 1, `count=${count}\n${child.stdout}\n${child.stderr}`);
       if (count === 101) assert.match(child.stderr, /101\/100; budget-exceeded/);
     } finally { rmSync(sandbox, { recursive: true, force: true }); }
+  }
+});
+
+
+test("100 engine submissions remain bounded while every SQLite internal execution stays visible", () => {
+  const report = job([100]);
+  const session = report.executionCoverage[0];
+  session.started = session.completed = session.observed = 600;
+  session.origins.sqliteInternal = { started: 500, completed: 500, running: 0 };
+  report.queries.push({ kind: "sql", sql: "REPLACE INTO ftsk_docsize VALUES(?,?,?)", runs: 500,
+    originRuns: { engine: 0, sqliteInternal: 500, unknown: 0 } });
+  const budget = requireExecutionBudget(report);
+  assert.equal(budget.observed, 100);
+  assert.equal(budget.sqliteInternal, 500);
+  assert.equal(budget.totalObserved, 600);
+  report.queries[0].runs++; report.queries[0].originRuns.engine++;
+  session.started++; session.completed++; session.observed++;
+  session.origins.engine.started++; session.origins.engine.completed++;
+  assert.throws(() => requireExecutionBudget(report), /101\/100; budget-exceeded/);
+});
+
+test("a small capture without reconciled origin evidence cannot satisfy the engine submission gate", () => {
+  for (const mutate of [r => { delete r.queries[0].originRuns; }, r => { delete r.executionCoverage[0].origins; },
+    r => { r.queries[0].originRuns.unknown = 1; r.queries[0].originRuns.engine = 0; },
+    r => { r.executionCoverage[0].origins.engine.completed = 0; }]) {
+    const report = job([1]); mutate(report);
+    assert.throws(() => requireExecutionBudget(report), /invalid-capture/);
   }
 });
