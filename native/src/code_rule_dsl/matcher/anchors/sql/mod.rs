@@ -7,7 +7,6 @@ mod corpus;
 mod execute;
 pub(in crate::code_rule_dsl) use corpus::{Corpus, CorpusSlot};
 mod functions;
-mod frontier;
 mod graph;
 #[path = "store/kinds.rs"]
 mod kind_postings;

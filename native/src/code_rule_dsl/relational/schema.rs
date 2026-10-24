@@ -116,7 +116,7 @@ mod tests {
         unsafe {
             rusqlite::ffi::sqlite3_trace_v2(
                 db.handle(),
-                rusqlite::ffi::SQLITE_TRACE_STMT as u32,
+                rusqlite::ffi::SQLITE_TRACE_STMT,
                 Some(trace),
                 (&executions as *const AtomicUsize).cast_mut().cast(),
             );

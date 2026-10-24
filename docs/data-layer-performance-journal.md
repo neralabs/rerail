@@ -10,6 +10,16 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Compiler connection setup: green
+
+Compiler connections now use the shared limits and SQL function registration without runtime PRAGMAs.
+Runtime connections retain both storage PRAGMAs.
+The public twelve-clause compiler test records zero executed SQL and passes.
+All 303 focused native-facing tests pass in `setup-green` (20.326 seconds).
+The standalone host Clippy check passes in `host-clippy-final`.
+The corpus helper moves into `sql/corpus/` to retain the repository limit of 25 files per code directory.
+This source organization change does not select another execution path.
+
 ### Compiler connection setup: red
 
 The stronger public compiler test requires zero executed SQL when a clause declares no stages.
