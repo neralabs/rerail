@@ -121,7 +121,8 @@ impl Corpus {
             .cloned()
     }
 
-    /// The only production candidate-query entry point: plans and files are batched together.
+    /// Test convenience for a frontier over every published file.
+    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn prepare(
         &self,
         plans: &BTreeMap<u32, Vec<Arc<AnchorPlan>>>,

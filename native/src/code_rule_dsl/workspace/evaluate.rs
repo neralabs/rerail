@@ -58,25 +58,6 @@ pub(super) fn candidate_grammar<'a>(
     grammar_matcher(matchers, file).expect("AST candidate has a grammar matcher")
 }
 
-/// The same syntax and text decision gates both SQL preparation and final matching.
-fn candidate_admitted<'a>(
-    grammar: &'a GrammarMatcher,
-    source: &str,
-    errors: &SyntaxErrors,
-    searched: &mut rustc_hash::FxHashMap<&'a str, bool>,
-) -> bool {
-    grammar
-        .invalid_syntax
-        .is_none_or(|invalid| invalid != errors.is_empty())
-        && grammar.text.as_ref().is_none_or(|text| {
-            text.holds_with(source, &mut |source: &str, literal| {
-                *searched.entry(literal).or_insert_with(|| {
-                    memchr::memmem::find(source.as_bytes(), literal.as_bytes()).is_some()
-                })
-            })
-        })
-}
-
 pub(super) struct PreparedAst {
     doc: Option<tape::TapeDoc>,
     lines: Arc<LineTable>,
@@ -147,7 +128,7 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
                         && limits.max_files != 0
                         && !file.failures.contains_key(id)
                         && !failures.contains_key(id)
-                        && candidate_admitted(grammar, &file.input.source, &errors, &mut searched)
+                        && grammar.admits_source(&file.input.source, &errors, &mut searched)
                         && gates.admit(grammar))
                     .then(|| Arc::clone(&grammar.anchors))
                 })
@@ -808,7 +789,7 @@ fn evaluate_ast_file(
             .zip(&grammars)
             .map(|(id, grammar)| {
                 !file.failures.contains_key(id)
-                    && candidate_admitted(grammar, &file.input.source, &errors, &mut searched)
+                    && grammar.admits_source(&file.input.source, &errors, &mut searched)
                     && gates.admit(grammar)
             })
             .collect::<Vec<_>>();

@@ -100,6 +100,15 @@ Findings remain complete: 800 expected identifier violations and no failures.
 `publication-red` records the statement-count failure against the local-admission addon.
 This first publication slice does not satisfy the whole-job boundary required by R3.
 
+The snapshot and relational admission tests now pass, including the zero-cache-miss check.
+An omitted text-excluded plan also bypasses final matching, so it cannot become a fallback tree walk.
+Relational preparation no longer expands every workspace rule over the complete corpus.
+Restored missing sources retain publication and admitted demand for their active relational rules.
+The old unrestricted corpus preparation helper is test-only.
+The combined `admission-publication-green` run passes 300 tests and exposes one existing profiling-stream interleaving failure in the producer-shape test.
+The behavioral admission checks all pass; the interleaved JSON failure requires a separate instrumentation fix.
+Conditional cross-file activation still needs the staged producer work. R2 remains open for that part.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.

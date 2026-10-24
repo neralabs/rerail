@@ -31,7 +31,9 @@ use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 pub(super) use analysis::RequiredText;
 pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::AnchorPlan;
-pub(super) use anchors::sql::{Corpus, CorpusSlot, FileAnchorIndex, anchor_plans};
+pub(super) use anchors::sql::{
+    Corpus, CorpusSlot, FileAnchorIndex, anchor_plans, anchor_plans_for_file,
+};
 pub(super) use arguments::{Arguments, Passed, SlotKind};
 pub(super) use arguments_sql::SQL_CALL_KINDS;
 use ast_grep_core::matcher::Matcher;
@@ -125,6 +127,24 @@ pub(super) struct GrammarMatcher {
 /// Whole-root matching: production matches each candidate root within a clause `begin_clause` set
 /// up (`match_rule`); `match_root` sets one up per root, for tests.
 impl GrammarMatcher {
+    /// Share cheap syntax and text admission across preparation and matching.
+    pub(super) fn admits_source<'a>(
+        &'a self,
+        source: &str,
+        errors: &crate::code_rule_dsl::soundness::SyntaxErrors,
+        searched: &mut rustc_hash::FxHashMap<&'a str, bool>,
+    ) -> bool {
+        self.invalid_syntax
+            .is_none_or(|invalid| invalid != errors.is_empty())
+            && self.text.as_ref().is_none_or(|text| {
+                text.holds_with(source, &mut |source: &str, literal| {
+                    *searched.entry(literal).or_insert_with(|| {
+                        memchr::memmem::find(source.as_bytes(), literal.as_bytes()).is_some()
+                    })
+                })
+            })
+    }
+
     /// Whether a file whose own source type is `file` may get this matcher: one its
     /// `when.sourceType` lists, or, while the file's syntax is unread (`None`), a module or
     /// CommonJS listed.
