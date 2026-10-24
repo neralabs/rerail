@@ -8,6 +8,30 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Selector SQL owners: 2026-10-24
+
+### Target shape and two-rule regression: red
+
+This phase starts from `66f6a522` and its frozen child-demand addon.
+The complete small job submits 7,733 engine statements. The first frontier constructs 393 indexed `(fid, pre)` tables.
+These tables mostly represent different logical selectors. Combining their semantic identities would be incorrect.
+The target shares physical construction and storage among independent selectors, while preserving each producer's identity.
+
+Each compatible ready group uses one SQL owner with `(producer, fid, pre)` rows and one nonunique index on those columns.
+A selector reads its own producer tag through an inline SQL projection.
+UNION ALL preserves duplicate rows and empty members. Tags preserve different selectors with overlapping rows.
+The owner builds once and remains until its last consumer across all result packets.
+Dependent selectors remain in later groups. Retained read/write hazards also constrain group placement.
+Existing dependency analysis supplies these barriers; this change requires no new generic scheduler or native evaluator.
+Other schemas retain their current physical representation in this slice.
+
+The red test uses two rules, two independent kind selectors, 130 clauses, and two result packets.
+It requires one executed table construction, one index construction, and one retirement while preserving all 130 findings.
+Captures must identify the physical owner and its logical members.
+Tests must also cover bags, empty members, typed keys, dependency chains, retained-write hazards, failure, retry, and wide groups.
+Acceptance compares complete findings, execution counts, CPU, and SQLite memory against the frozen baseline.
+The fixed 100-submission gate remains unchanged.
+
 ## Shared child demand: 2026-10-24
 
 ### Field-qualified dependency waves: green
