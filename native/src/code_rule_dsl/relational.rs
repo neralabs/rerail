@@ -88,6 +88,18 @@ fn sql_error(error: rusqlite::Error) -> napi::Error {
 }
 
 pub(super) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+    let db = validation_connection(max_pattern, work)?;
+    db.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA analysis_limit=1000;")
+        .map_err(sql_error)?;
+    Ok(db)
+}
+
+/// Compiler sessions prepare authored queries and retain only empty stage schemas.
+/// Runtime storage configuration belongs to `connection`, not schema validation.
+pub(super) fn validation_connection(
+    max_pattern: usize,
+    work: Arc<AtomicUsize>,
+) -> Result<Database> {
     let db = Database::open().map_err(sql_error)?;
     db.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
@@ -99,8 +111,6 @@ pub(super) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<D
         1024 * 1024,
     )
     .map_err(sql_error)?;
-    db.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA analysis_limit=1000;")
-        .map_err(sql_error)?;
     let flags = FunctionFlags::SQLITE_UTF8
         | FunctionFlags::SQLITE_DETERMINISTIC
         | FunctionFlags::SQLITE_INNOCUOUS;

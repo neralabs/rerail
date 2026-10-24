@@ -97,7 +97,7 @@ pub(super) fn compile(
         }
     }
     let work = Arc::new(AtomicUsize::new(usize::MAX));
-    let db = relational::connection(
+    let db = relational::validation_connection(
         capabilities.limits.max_regex_pattern_bytes,
         Arc::clone(&work),
     )?;
