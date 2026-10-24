@@ -2,10 +2,10 @@
 
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
 Conditional admission, whole-job publication, and R4–R7 remain open.
-The latest measured job has 8,669 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
+The latest measured job has 7,733 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
 Compiler input/syntax validation uses prepare-only schemas. Compiler stages share bounded SQLite-inferred metadata across documents.
 Runtime producer execution and whole-job lifetimes remain open. Aggregate CPU recovery is unresolved.
-All work uses the current worktree. Named spans and deterministic frontier composition now have tested implementation slices.
+All work uses the current worktree. Named span/child demand and deterministic frontier composition now have tested implementation slices.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
 ## Required outcome
@@ -342,6 +342,15 @@ This plan creates no Linear tickets and adds no optional production execution pa
 
 
 ## Recovery evidence from this iteration
+
+The child-demand slice reduces the reproducible 8,669-submission guard to 7,733 submissions in two complete captures.
+Field-qualified requests share one SQL fill per dependency wave, while distinct field bindings remain separate.
+Completed absence, source changes, rollback, and retry retain tested semantics under the existing SQL owner.
+The first frontier reduces child fills from 246 to 11 and retains 393 temporary selector tables.
+Across nine matched pairs, median CPU changes from 1.740 to 1.708 seconds, with overlapping ranges.
+The SQLite stepping heap peak remains unchanged. CPU and process memory recovery remain open.
+Candidate preparation and cleanup still require 5,532 submissions and remain the next measured target.
+The [journal](data-layer-performance-journal.md#shared-child-demand-2026-10-24) and checked evidence retain all nine pairs and scope limits.
 
 The [journal](data-layer-performance-journal.md#recovery-tdd-2026-10-23) records each red test, implementation, green run, and remaining requirement.
 Local candidate preparation now respects admitted plan/file domains and keeps compatible files batched.

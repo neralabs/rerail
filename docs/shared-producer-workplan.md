@@ -134,6 +134,18 @@ The first paired CPU and allocation comparison occurs here, rather than after WP
 
 ## WP3: extend structural sharing and simplify empty work
 
+The first child-field slice is implemented and measured.
+Independent field-qualified requests share one SQL fill per real dependency wave, including requests from separate rules and result packets.
+Different field options remain separate bindings. NULL child results complete their keys in the existing SQL owner.
+Tests cover overlap, absence, invalidation, rollback, retry, empty demand, and dependent child/span waves.
+The small guard repeats at 7,733 engine submissions, compared with 8,669 before this slice.
+The first captured frontier reduces child fills from 246 to 11 while retaining 393 temporary selector tables.
+Across nine matched pairs, median CPU changes from 1.740 to 1.708 seconds, with overlapping ranges.
+SQLite's measured heap peak remains unchanged. This result establishes no substantial CPU or process memory gain.
+The [child-demand evidence](../fixtures/host/data-layer-port/profiling/shared-child-demand-recovery-20261024.json) retains all trials and limitations.
+Scoped node demand, empty relations, selector ownership, and broader acceptance remain open.
+The universal node-property fill already executes once in the measured frontiers.
+
 Node-property and child-field producers adopt the same contract and binding mechanism.
 Different child fields remain different bindings under one public contract.
 An absent child still completes its requested key.

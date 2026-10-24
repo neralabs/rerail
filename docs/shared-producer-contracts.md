@@ -1,9 +1,9 @@
 # Named shared producers
 
-Status: engine contract catalog, live candidate exports, and the first physical span-sharing slice are implemented.
+Status: the engine contract catalog, live candidate exports, and physical span and child demand waves are implemented.
 Decoder reuse now uses registered binding IDs. Candidate captures export actual consumers and pinned source versions.
-The existing retained SQL tables remain the physical owners. Independent span demand now shares one fill per dependency wave.
-Other property fills and repeated selector construction remain open.
+The existing retained SQL tables remain the physical owners. Independent span and child demand share fills per dependency wave.
+Scoped node-property fills and repeated selector construction remain open.
 The [implementation workplan](shared-producer-workplan.md) defines the ordered commits, acceptance checks, and measurement gates.
 
 This design simplifies [execution stages](sql-execution-stages.md) and [materialization ownership](sql-materialization-shape.md).
@@ -60,6 +60,11 @@ The producer contract determines this distinction. The planner does not guess fr
 
 Two child requests with different `field` options have different bindings under the same contract.
 That difference is valid, rather than a name clash.
+Their field-qualified requests can share one SQL submission without merging those bindings.
+The physical transport deduplicates `(fid, pre, field)` keys before calling the existing child decoder.
+The `decoded_children` owner stores a row with NULL `child` for a completed absence.
+A later missing-coverage check tests for an absent owner row, rather than a NULL answer.
+Child and span dependencies introduce separate barriers when later selectors require earlier answers.
 Two definitions of the same contract name with different schemas or implementations cause a compilation error.
 The compiler reports both origins and the differing fields.
 

@@ -1,0 +1,1028 @@
+{
+  "format": "rerail.shared-child-demand-recovery/v1",
+  "date": "2026-10-24",
+  "baselineCommit": "a63782d7",
+  "tddRedCommit": "2bfefe52",
+  "status": "batched child transport selected; aggregate CPU and 100-submission recovery remain open",
+  "implementation": {
+    "owner": "existing decoded_children SQL table keyed by (fid,pre,field)",
+    "transport": "deduplicated field-qualified missing keys, one SQL fill per real dependency wave",
+    "completion": "NULL child is a completed absence; missing coverage uses d.fid IS NULL",
+    "bindings": "different field options remain distinct syntax.child_fields.v1 bindings",
+    "invalidation": "existing source replacement and foreign-key cascade",
+    "primitives": "unchanged nera_child callback; no native fact cache",
+    "dependencyChange": "child and span lookups both add barriers; real child dependencies increase span fills from two to five",
+    "limitations": [
+      "scalar child traversal algorithm unchanged",
+      "temporary selector ownership unchanged",
+      "no generic scheduler or optional execution algorithm"
+    ]
+  },
+  "guardBefore": {
+    "limit": 100,
+    "observed": 8669,
+    "totalObserved": 9663,
+    "sqliteInternal": 994,
+    "unknownOrigins": 0,
+    "accepted": false,
+    "status": "budget-exceeded",
+    "problems": [],
+    "countsByPhaseAndOrigin": {
+      "connectionSetup": {
+        "engine": 372,
+        "sqliteInternal": 32
+      },
+      "filePublication": {
+        "engine": 36,
+        "sqliteInternal": 32
+      },
+      "catalogPublication": {
+        "engine": 12
+      },
+      "candidatePreparation": {
+        "engine": 4252
+      },
+      "cleanup": {
+        "engine": 2216
+      },
+      "relationalEvaluation": {
+        "engine": 1781,
+        "sqliteInternal": 930
+      }
+    },
+    "path": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance",
+    "budgetSha256": "320db8ef02e955117562860f43da74dbe470aaa1876a0158e30a1a4bf13f0ec1"
+  },
+  "guardAfter": {
+    "limit": 100,
+    "observed": 7733,
+    "totalObserved": 8727,
+    "sqliteInternal": 994,
+    "unknownOrigins": 0,
+    "accepted": false,
+    "status": "budget-exceeded",
+    "problems": [],
+    "countsByPhaseAndOrigin": {
+      "connectionSetup": {
+        "engine": 372,
+        "sqliteInternal": 32
+      },
+      "filePublication": {
+        "engine": 36,
+        "sqliteInternal": 32
+      },
+      "catalogPublication": {
+        "engine": 12
+      },
+      "candidatePreparation": {
+        "engine": 3316
+      },
+      "cleanup": {
+        "engine": 2216
+      },
+      "relationalEvaluation": {
+        "engine": 1781,
+        "sqliteInternal": 930
+      }
+    },
+    "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance",
+    "budgetSha256": "6cdb467c78913a3f2113350d84316962c1e9e5422aeac25ddef22a479d2b67d9"
+  },
+  "guardRepeat": {
+    "limit": 100,
+    "observed": 7733,
+    "totalObserved": 8727,
+    "sqliteInternal": 994,
+    "unknownOrigins": 0,
+    "accepted": false,
+    "status": "budget-exceeded",
+    "problems": [],
+    "countsByPhaseAndOrigin": {
+      "connectionSetup": {
+        "engine": 372,
+        "sqliteInternal": 32
+      },
+      "filePublication": {
+        "engine": 36,
+        "sqliteInternal": 32
+      },
+      "catalogPublication": {
+        "engine": 12
+      },
+      "candidatePreparation": {
+        "engine": 3316
+      },
+      "cleanup": {
+        "engine": 2216
+      },
+      "relationalEvaluation": {
+        "engine": 1781,
+        "sqliteInternal": 930
+      }
+    },
+    "path": ".rerail/profiles/child-demand-recovery-20261024/child-repeat",
+    "budgetSha256": "4b1215ddf38e32927f5b7e8c727f3bae747c4bbdbcc6013aa7a6e1c98162b6d1"
+  },
+  "engineSubmissionReductionPercent": 10.797093090321841,
+  "frontiersBefore": [
+    {
+      "path": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-0.json",
+      "sha256": "265b0680547590540180f4dfd5c615d6e3f4a78ef4737eac6bf119cc0a077442",
+      "stages": 647,
+      "temporaryTables": 393,
+      "childFills": 246,
+      "spanFills": 2,
+      "peakLiveRelations": 100,
+      "resultPackets": 1,
+      "stageSha256": "266c414897d0287d86444e697ef81a69c304ce0a15dea554fa52eb7d3b586008"
+    },
+    {
+      "path": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-1.json",
+      "sha256": "a504fadaa10aae21528b95d3bdc9a787d3593e09acba6f12b30684c63ac11165",
+      "stages": 647,
+      "temporaryTables": 393,
+      "childFills": 246,
+      "spanFills": 2,
+      "peakLiveRelations": 100,
+      "resultPackets": 1,
+      "stageSha256": "266c414897d0287d86444e697ef81a69c304ce0a15dea554fa52eb7d3b586008"
+    },
+    {
+      "path": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-2.json",
+      "sha256": "4eebf0cd7b5b3669fe7cbf0373607441e8892a540d9da690d5e0e9c9bdfc45fe",
+      "stages": 659,
+      "temporaryTables": 401,
+      "childFills": 250,
+      "spanFills": 2,
+      "peakLiveRelations": 100,
+      "resultPackets": 1,
+      "stageSha256": "acf6e56b56c9cbc62d2b23d20bc7cb0c89b1f8062defdd48da749c7f4627f74c"
+    },
+    {
+      "path": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-3.json",
+      "sha256": "f74312f73064be0bfa2b3b85bfb94cccbfba5a9cac2792393f90da24d29a3761",
+      "stages": 659,
+      "temporaryTables": 401,
+      "childFills": 250,
+      "spanFills": 2,
+      "peakLiveRelations": 100,
+      "resultPackets": 1,
+      "stageSha256": "acf6e56b56c9cbc62d2b23d20bc7cb0c89b1f8062defdd48da749c7f4627f74c"
+    }
+  ],
+  "frontiersAfter": [
+    {
+      "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-0.json",
+      "sha256": "72aaa7024073f0e34c2b2a4aaeb67379abd0c88165af6592e99f6bc33eafa449",
+      "stages": 415,
+      "temporaryTables": 393,
+      "childFills": 11,
+      "spanFills": 5,
+      "peakLiveRelations": 93,
+      "resultPackets": 1,
+      "stageSha256": "a6e18cae380de3d72c0914e2193894c4a4b6dd67cc49f4f4597421d4853a5f20"
+    },
+    {
+      "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-1.json",
+      "sha256": "b978c2a0eb35489f6dfe8f5acc0fb84940591d9d2a0dacbf7b6b7ba657270550",
+      "stages": 415,
+      "temporaryTables": 393,
+      "childFills": 11,
+      "spanFills": 5,
+      "peakLiveRelations": 93,
+      "resultPackets": 1,
+      "stageSha256": "a6e18cae380de3d72c0914e2193894c4a4b6dd67cc49f4f4597421d4853a5f20"
+    },
+    {
+      "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-2.json",
+      "sha256": "53709fcb23a2f03cc300e3b09126c35c18f39a49646fb6878719fee779e3bba2",
+      "stages": 423,
+      "temporaryTables": 401,
+      "childFills": 11,
+      "spanFills": 5,
+      "peakLiveRelations": 91,
+      "resultPackets": 1,
+      "stageSha256": "856c7481e8f7f9819a6cbf843f3f6e19f2efe78be4e94024c241f147faa39b02"
+    },
+    {
+      "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-3.json",
+      "sha256": "42912e6dcbd161c3c91b3b41d9e1caf4e49f62473a8cdf7c79a1dcc7280ca0d1",
+      "stages": 423,
+      "temporaryTables": 401,
+      "childFills": 11,
+      "spanFills": 5,
+      "peakLiveRelations": 91,
+      "resultPackets": 1,
+      "stageSha256": "856c7481e8f7f9819a6cbf843f3f6e19f2efe78be4e94024c241f147faa39b02"
+    }
+  ],
+  "matchedCpu": {
+    "prior": {
+      "medianCpuMs": 1739.994,
+      "cpuRangeMs": [
+        1628.437,
+        1776.261
+      ],
+      "medianMaxRssKiB": 337952,
+      "maxRssRangeKiB": [
+        331632,
+        374656
+      ],
+      "initialThreeMedianCpuMs": 1711.444,
+      "followupSixMedianCpuMs": 1747.8204999999998,
+      "trials": [
+        {
+          "trial": 0,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-0/cpu.json",
+          "sha256": "e9992d62b82cf02ae3b52699942e3750d5e31aafeedaab7d836145f8b4cda455",
+          "passed": true,
+          "userMs": 1565.858,
+          "systemMs": 92.694,
+          "cpuMs": 1658.552,
+          "wallMs": 2217.3116250000003,
+          "maxRSSRaw": 374656,
+          "memory": {
+            "rss": 329246112,
+            "heapTotal": 108281856,
+            "heapUsed": 40648712,
+            "external": 53156855,
+            "arrayBuffers": 45530835
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-0/parity.json",
+            "sha256": "b079ec4dd3990d2cd5b3413d79efe2eaa692f64c66530eb902f4d15180e23117",
+            "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 1,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-1/cpu.json",
+          "sha256": "f1154b6a9be52259a35b0d45c169b55fade7bcf94af5267427602fa7829f6aaa",
+          "passed": true,
+          "userMs": 1654.693,
+          "systemMs": 92.187,
+          "cpuMs": 1746.88,
+          "wallMs": 2199.7843749999997,
+          "maxRSSRaw": 341344,
+          "memory": {
+            "rss": 294822920,
+            "heapTotal": 107659264,
+            "heapUsed": 41514136,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-1/parity.json",
+            "sha256": "eef88b3e35476b1dd9d5bf938832bc265157287c96cae1c8251e37038d72aae3",
+            "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 2,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-2/cpu.json",
+          "sha256": "83d4b417f21ccc2dc3d1d4521cf5ccb85918c84ff101d194061b1950413356df",
+          "passed": true,
+          "userMs": 1621.4,
+          "systemMs": 90.044,
+          "cpuMs": 1711.444,
+          "wallMs": 2332.16425,
+          "maxRSSRaw": 337952,
+          "memory": {
+            "rss": 291087824,
+            "heapTotal": 108806144,
+            "heapUsed": 40204992,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-2/parity.json",
+            "sha256": "ecbd2e35cc36b2ea1136230845a137edd9939aeff543b6fc93e95007ea881d3e",
+            "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 3,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-3/cpu.json",
+          "sha256": "03d2a493ff992c6c8cf33c50f08f40cb54a901888f5ce7837ff70dfc6bf09b5f",
+          "passed": true,
+          "userMs": 1647.755,
+          "systemMs": 92.239,
+          "cpuMs": 1739.994,
+          "wallMs": 1818.9400409999998,
+          "maxRSSRaw": 333824,
+          "memory": {
+            "rss": 286614704,
+            "heapTotal": 105283584,
+            "heapUsed": 34168152,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-3/parity.json",
+            "sha256": "b44ea06f507fd29f95c1441c0b02d21a7eee4f940551f907e574d5f3cd2256ba",
+            "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 4,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-4/cpu.json",
+          "sha256": "d445674da6169e2c5c66d176241fcef1e69653e440f2d5078d46065ace5bf26c",
+          "passed": true,
+          "userMs": 1667.807,
+          "systemMs": 87.84,
+          "cpuMs": 1755.647,
+          "wallMs": 1673.327458,
+          "maxRSSRaw": 333024,
+          "memory": {
+            "rss": 287024448,
+            "heapTotal": 106070016,
+            "heapUsed": 34199768,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-4/parity.json",
+            "sha256": "f5511cbab1eb758f4d89f4b1d26fdd8999583a4c98c914d9c618388a0876fadf",
+            "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 5,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-5/cpu.json",
+          "sha256": "34031bf684b82e36ae57066a4835eb093a9d32881f4eb15d745df28530f69abc",
+          "passed": true,
+          "userMs": 1572.29,
+          "systemMs": 85.291,
+          "cpuMs": 1657.581,
+          "wallMs": 1548.9662090000002,
+          "maxRSSRaw": 335632,
+          "memory": {
+            "rss": 289891408,
+            "heapTotal": 105283584,
+            "heapUsed": 34226840,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-5/parity.json",
+            "sha256": "9b713f61284908deaafbf545eac701aa44acd87246cb1e7006514214faef0673",
+            "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 6,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-6/cpu.json",
+          "sha256": "f9ffe7cc32398a645d976b06ac0892d875f82bd4b56fab724ab7fec3f0a8fccc",
+          "passed": true,
+          "userMs": 1561.235,
+          "systemMs": 67.202,
+          "cpuMs": 1628.437,
+          "wallMs": 1505.444334,
+          "maxRSSRaw": 340752,
+          "memory": {
+            "rss": 293708808,
+            "heapTotal": 105807872,
+            "heapUsed": 34222664,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-6/parity.json",
+            "sha256": "4a4f63b3229054c9220655867fb94b30f7e3205d531fd623a1a9e5d126c10eab",
+            "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 7,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-7/cpu.json",
+          "sha256": "a6002c3bc8a91da6831f4a83b8c3c3999a4b1b47726ffc440a72314290fa9c1b",
+          "passed": true,
+          "userMs": 1684.743,
+          "systemMs": 74.697,
+          "cpuMs": 1759.44,
+          "wallMs": 1660.847,
+          "maxRSSRaw": 338560,
+          "memory": {
+            "rss": 292938928,
+            "heapTotal": 110133248,
+            "heapUsed": 41741736,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-7/parity.json",
+            "sha256": "74ced2eb6361fe7c37266078fed52c5df4ebe16a70306983b4fe1e9cea6922a8",
+            "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 8,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-8/cpu.json",
+          "sha256": "305c3a44e5788e90781f5aedba70df0526fd25ba43eab966504775249b1b2c1a",
+          "passed": true,
+          "userMs": 1698.706,
+          "systemMs": 77.555,
+          "cpuMs": 1776.261,
+          "wallMs": 1769.524375,
+          "maxRSSRaw": 331632,
+          "memory": {
+            "rss": 285058392,
+            "heapTotal": 106053632,
+            "heapUsed": 34411912,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-prior-8/parity.json",
+            "sha256": "fcf420e795483a0c8db3edbc1ca3a298997e79a50044316f71ef714fe45231f7",
+            "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        }
+      ]
+    },
+    "child": {
+      "medianCpuMs": 1708.247,
+      "cpuRangeMs": [
+        1610.341,
+        1790.968
+      ],
+      "medianMaxRssKiB": 338928,
+      "maxRssRangeKiB": [
+        331872,
+        380224
+      ],
+      "initialThreeMedianCpuMs": 1764.221,
+      "followupSixMedianCpuMs": 1681.661,
+      "trials": [
+        {
+          "trial": 0,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-0/cpu.json",
+          "sha256": "ca2d277de5232e5daa5308bbb28ab243a43636304e3f684cc26a75f96db82601",
+          "passed": true,
+          "userMs": 1607.142,
+          "systemMs": 101.105,
+          "cpuMs": 1708.247,
+          "wallMs": 1767.0706249999998,
+          "maxRSSRaw": 333936,
+          "memory": {
+            "rss": 287237080,
+            "heapTotal": 111230976,
+            "heapUsed": 41188840,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-0/parity.json",
+            "sha256": "87494693497126b0282f088337a59e32e551b7d94dc36667547082fd49ae98f3",
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 1,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-1/cpu.json",
+          "sha256": "2a126f98f9e0d0be1c50ca65411fcf55ed79c09c2d9d7071946b2b4fa1a163d6",
+          "passed": true,
+          "userMs": 1686.696,
+          "systemMs": 104.272,
+          "cpuMs": 1790.968,
+          "wallMs": 2228.043125,
+          "maxRSSRaw": 340784,
+          "memory": {
+            "rss": 294544968,
+            "heapTotal": 108806144,
+            "heapUsed": 40787344,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-1/parity.json",
+            "sha256": "aecf819c15b395b2de40b8ca028b817b0c2bea35f25044cb222028476ee4ace7",
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 2,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-2/cpu.json",
+          "sha256": "eb11f39650da00b3ec482122cec19e58d035f19031791d99925a5f0eefbb6116",
+          "passed": true,
+          "userMs": 1661.362,
+          "systemMs": 102.859,
+          "cpuMs": 1764.221,
+          "wallMs": 2315.8435,
+          "maxRSSRaw": 380224,
+          "memory": {
+            "rss": 336111296,
+            "heapTotal": 106184704,
+            "heapUsed": 40296784,
+            "external": 53179479,
+            "arrayBuffers": 45553459
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-2/parity.json",
+            "sha256": "d05988903101c23fd02fb7a0595a57c0a677aab7857db65ffb94f81fca7fdc02",
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 3,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-3/cpu.json",
+          "sha256": "021ca62cb3bfbd7fbfa32cb3d36bf59ef746efa65c8ee23d4b47ad6e6d2f95d0",
+          "passed": true,
+          "userMs": 1589.764,
+          "systemMs": 87.441,
+          "cpuMs": 1677.205,
+          "wallMs": 1682.0352500000001,
+          "maxRSSRaw": 345552,
+          "memory": {
+            "rss": 298345504,
+            "heapTotal": 110116864,
+            "heapUsed": 40558352,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-3/parity.json",
+            "sha256": "6bdad107b9f821a05b2ddfa2581788433d3a90e9c24cc0a6b20b0e02676e466b",
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 4,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-4/cpu.json",
+          "sha256": "b0e1ca409de9723b77696b03bda7988636b802cdeca62966debbb9f9b6011800",
+          "passed": true,
+          "userMs": 1633.174,
+          "systemMs": 78.98,
+          "cpuMs": 1712.154,
+          "wallMs": 1606.400541,
+          "maxRSSRaw": 335840,
+          "memory": {
+            "rss": 288564760,
+            "heapTotal": 104759296,
+            "heapUsed": 34233288,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-4/parity.json",
+            "sha256": "4f67c66950615d21178c0bbcc69e7816c8602ebddc63bd441941c74b77bdf28c",
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 5,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-5/cpu.json",
+          "sha256": "03e9320071c9e39856c04294a76b720799e8da403f09e448a26148c0f3539856",
+          "passed": true,
+          "userMs": 1574.182,
+          "systemMs": 77.273,
+          "cpuMs": 1651.455,
+          "wallMs": 1555.988792,
+          "maxRSSRaw": 338496,
+          "memory": {
+            "rss": 292808288,
+            "heapTotal": 105283584,
+            "heapUsed": 34204696,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-5/parity.json",
+            "sha256": "bbe02b943f5bdd3fe483a98b89b5071597feadb32c363dbbc916be85085a584e",
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 6,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-6/cpu.json",
+          "sha256": "eee03f59b46d13844c9e6b619da45a6f8c9ec7aa120c4109b973053221f0ec75",
+          "passed": true,
+          "userMs": 1543.564,
+          "systemMs": 66.777,
+          "cpuMs": 1610.341,
+          "wallMs": 1526.728917,
+          "maxRSSRaw": 338928,
+          "memory": {
+            "rss": 291841440,
+            "heapTotal": 107773952,
+            "heapUsed": 40330792,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-6/parity.json",
+            "sha256": "49b95ae7c5bce5cc591fcd7a57af63dc449e5ce202c8a67f5dd496e400178e95",
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 7,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-7/cpu.json",
+          "sha256": "44b61ad61e7a7f4c8cb6f64e427a0ddec6153ff06c941efd6802595d30d14a1f",
+          "passed": true,
+          "userMs": 1620.494,
+          "systemMs": 65.623,
+          "cpuMs": 1686.117,
+          "wallMs": 1558.788084,
+          "maxRSSRaw": 340656,
+          "memory": {
+            "rss": 294954760,
+            "heapTotal": 105807872,
+            "heapUsed": 34273064,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-7/parity.json",
+            "sha256": "33603455cfea6aa758bcbf8670bc3de48de9de7bb8dc131b8ffd886d174ce61f",
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        },
+        {
+          "trial": 8,
+          "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-8/cpu.json",
+          "sha256": "0c1d57326bbcbb21250fe01b87cefae5ee40ea7eac7b0b6704bcc7f6b5de121b",
+          "passed": true,
+          "userMs": 1678.617,
+          "systemMs": 75.532,
+          "cpuMs": 1754.149,
+          "wallMs": 1734.130959,
+          "maxRSSRaw": 331872,
+          "memory": {
+            "rss": 284714616,
+            "heapTotal": 105545728,
+            "heapUsed": 34233240,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          },
+          "parity": {
+            "path": ".rerail/profiles/child-demand-recovery-20261024/cpu-child-8/parity.json",
+            "sha256": "82b31c999446300508b6534a3544d2df85441a45964daa969517c746ba5b5327",
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+            "replayedCalls": 2,
+            "positiveCalls": 1,
+            "cleanCalls": 1,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "engineFailures": 0,
+            "executionPathDifferences": 0,
+            "missingCoverage": []
+          }
+        }
+      ]
+    }
+  },
+  "medianCpuReductionPercent": 1.8245465214247747,
+  "pairedCpuDifferenceMs": [
+    49.695000000000164,
+    44.087999999999965,
+    52.777000000000044,
+    -62.78899999999999,
+    -43.49299999999994,
+    -6.125999999999976,
+    -18.096000000000004,
+    -73.32300000000009,
+    -22.11200000000008
+  ],
+  "cpuInterpretation": "initial three pairs regress 3.08%; six additional pairs reverse direction; all nine medians improve 1.82% with overlapping ranges; no substantial speedup established",
+  "memoryDiagnostic": {
+    "prior": {
+      "path": ".rerail/profiles/child-demand-recovery-20261024/memory-prior.json",
+      "sha256": "8a2cfb2f85f3cce3218d31fd71159aa574a4be48364bce5afef1bfdd5d533c2f",
+      "cacheBudgetKiB": {
+        "main": 1024,
+        "temp": 512
+      },
+      "capture": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-0.json",
+      "heapPeakScope": "stepping, index construction, finalization; compilation peaks are separate",
+      "rows": 161,
+      "stages": 647,
+      "peakLiveRelations": 100,
+      "statementCounters": {
+        "fullscanSteps": 316,
+        "scope": "stage and result statements; index and release batches excluded",
+        "sorts": 1815,
+        "vmSteps": 81781
+      },
+      "sqlCpuMs": 94.482619,
+      "sqliteCompileCpuMs": 56.548272,
+      "stepHeapPeakBytes": 19793328,
+      "compileHeapPeakBytes": 3397936,
+      "finalCacheCounters": {
+        "cacheBytes": 615040,
+        "cacheHits": 12038,
+        "cacheMisses": 259,
+        "cacheSpills": 282,
+        "cacheWrites": 401
+      }
+    },
+    "child": {
+      "path": ".rerail/profiles/child-demand-recovery-20261024/memory-child.json",
+      "sha256": "65c36ee04c9251340e2c8a9ec9c628f654edcf379c04be9b681e28f5d695fbea",
+      "cacheBudgetKiB": {
+        "main": 1024,
+        "temp": 512
+      },
+      "capture": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-0.json",
+      "heapPeakScope": "stepping, index construction, finalization; compilation peaks are separate",
+      "rows": 161,
+      "stages": 415,
+      "peakLiveRelations": 93,
+      "statementCounters": {
+        "fullscanSteps": 320,
+        "scope": "stage and result statements; index and release batches excluded",
+        "sorts": 1815,
+        "vmSteps": 75068
+      },
+      "sqlCpuMs": 81.290498,
+      "sqliteCompileCpuMs": 48.186213,
+      "stepHeapPeakBytes": 19793328,
+      "compileHeapPeakBytes": 3397936,
+      "finalCacheCounters": {
+        "cacheBytes": 615040,
+        "cacheHits": 12142,
+        "cacheMisses": 180,
+        "cacheSpills": 207,
+        "cacheWrites": 322
+      }
+    }
+  },
+  "correctness": {
+    "nativeTests": 311,
+    "nativeFiles": 14,
+    "standaloneSqlTests": 48,
+    "fixedBudgetTests": 11,
+    "sourceCorpus": {
+      "path": ".rerail/profiles/child-demand-recovery-20261024/child-source-parity/parity.json",
+      "sha256": "c31b076227fb681d1e3ba80ef82f032ca5195e26d388ca6e8af4185c651902d4",
+      "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+      "replayedCalls": 120,
+      "positiveCalls": 60,
+      "cleanCalls": 60,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "missingCoverage": []
+    },
+    "guardParity": {
+      "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/parity.json",
+      "sha256": "12147fe99a5021ea867729ac0dbcec783328cfcb7954e63d55ed00fa44a7e3c6",
+      "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+      "replayedCalls": 2,
+      "positiveCalls": 1,
+      "cleanCalls": 1,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "missingCoverage": []
+    },
+    "manifestCheckValid": true,
+    "editTransitions": "target(value) -> owner.target() -> target(value); findings 2 -> 1 -> 2 without failures",
+    "notRun": "full 3210-observation corpus, full repository and aggregate recovery acceptance",
+    "producerGate": "All 8 mandatory producer-shape test files pass after moving the child-demand test."
+  },
+  "validation": [
+    "native Clippy with and without profiling",
+    "standalone all-target Clippy",
+    "npm run check",
+    "native and standalone Rust formatting",
+    "git diff --check",
+    "relocated child-demand tests: 2 pass"
+  ],
+  "method": {
+    "workers": 4,
+    "build": "opt1 engine, deps3, no LTO, 256 codegen units; code-rule-profile enabled in both binaries",
+    "allocator": "same system allocator shim /tmp/librerail_jemalloc_check_shim.dylib",
+    "cpuScope": "process.cpuUsage around complete replay including policy validation/compilation, snapshot/workspace evaluation, parity and cleanup",
+    "order": "nine alternating fresh-process pairs; initial three and six followup trials retained; no own builds/tests/diagnostics concurrent with timing",
+    "tracing": false,
+    "memory": "process.resourceUsage maxRSS in KiB; SQLite replay heap and cache counters separate from process RSS",
+    "machine": "shared host; ranges overlap; no full repository claim",
+    "recordingSha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4",
+    "priorAddonSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+    "childAddonSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+    "commands": {
+      "cpu": [
+        ".rerail/profiles/child-demand-recovery-20261024/cpu.py",
+        ".rerail/profiles/child-demand-recovery-20261024/cpu-followup.py"
+      ],
+      "verification": ".rerail/profiles/child-demand-recovery-20261024/verify.py",
+      "guard": [
+        "node",
+        "scripts/profiling/sql-budget.mjs",
+        ".rerail/profiles/child-demand-recovery-20261024/child-acceptance"
+      ],
+      "repeatGuard": [
+        "node",
+        "scripts/profiling/sql-budget.mjs",
+        ".rerail/profiles/child-demand-recovery-20261024/child-repeat"
+      ],
+      "memoryPrior": [
+        "/tmp/rerail-preparation-target/release/cache_budget",
+        ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-0.json",
+        "1024",
+        "512",
+        ".rerail/profiles/child-demand-recovery-20261024/memory-prior.json"
+      ],
+      "memoryChild": [
+        "/tmp/rerail-preparation-target/release/cache_budget",
+        ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-0.json",
+        "1024",
+        "512",
+        ".rerail/profiles/child-demand-recovery-20261024/memory-child.json"
+      ],
+      "finalUnit": [
+        "/opt/homebrew/opt/rust/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--manifest-path",
+        "scripts/profiling/preparation/Cargo.toml",
+        "--lib"
+      ],
+      "static": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "build": {
+        "environment": {
+          "CARGO_TARGET_DIR": "/tmp/rerail-data-layer-target",
+          "JEMALLOC_OVERRIDE": "/tmp/librerail_jemalloc_check_shim.dylib",
+          "CARGO_PROFILE_RELEASE_LTO": "false",
+          "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "256"
+        },
+        "argv": [
+          "/opt/homebrew/opt/rust/bin/cargo",
+          "build",
+          "--release",
+          "--locked",
+          "--offline",
+          "--manifest-path",
+          "native/Cargo.toml",
+          "--features",
+          "code-rule-profile",
+          "--config",
+          "profile.release.package.rerail-engine.opt-level=1"
+        ]
+      },
+      "relocatedChildTests": [
+        "node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "test/engine/native/recovery/child-demand.test.ts"
+      ],
+      "producerGate": [
+        "node",
+        "scripts/profiling/producer-shape.mjs"
+      ],
+      "verificationNote": "The earlier verify.py run uses the pre-move test path. The relocated command and producer gate verify its final path."
+    }
+  },
+  "remaining": [
+    "100-submission gate still fails at 7733",
+    "candidate preparation 3316 and cleanup 2216 engine submissions",
+    "393/401 temporary selector tables and their indexes remain per normal frontier",
+    "universal node-property fill already one; scoped node demand and empty relations remain WP3 work",
+    "conditional admission, cross-frontier owners and complete-job lifetimes remain open"
+  ],
+  "evidenceDirectory": ".rerail/profiles/child-demand-recovery-20261024"
+}
