@@ -93,6 +93,13 @@ The first still prepares a text-excluded clause. The second reactivates an exclu
 `remaining-admission-red` records both behavioral failures against the local-admission addon (10.970 seconds).
 These failures explain why local admission alone removes only part of the eager frontier.
 
+The R3 publication red test counts actual SQL executions for four files with 200 identifier values each.
+It observes 275 kind inserts, 32 field inserts, 28 kind-frequency inserts, 28 file-kind inserts, 808 value-posting inserts, and 28 coverage inserts.
+The required shape uses one language-catalog batch per table and one publication batch per file and table.
+Findings remain complete: 800 expected identifier violations and no failures.
+`publication-red` records the statement-count failure against the local-admission addon.
+This first publication slice does not satisfy the whole-job boundary required by R3.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
