@@ -10,7 +10,7 @@ The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization
 
 The [ranked execution opportunities](sql-execution-opportunities.md) now define the delivery size.
 R5-A targets 3,474 net removals. R5-B provisionally targets at least 2,000 additional removals.
-Each implementation delivery must remove at least 1,000 complete-job engine submissions, with CPU, memory, and parity gates intact.
+Each implementation delivery must remove its full expected count: 3,474 for R5-A, with CPU, memory, and parity gates intact.
 Small TDD commits support these chunks. They do not complete a phase by themselves.
 
 ## Required outcome

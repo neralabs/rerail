@@ -160,7 +160,7 @@
     "status": "not assigned fictitious savings; reprofile and rank the remaining executions after the two delivery chunks"
   },
   "deliveryRules": [
-    "each implementation chunk must remove at least 1000 actual engine submissions against the preceding accepted checkpoint",
+    "each implementation delivery must remove its chunk's full expected number of actual engine submissions against the preceding accepted checkpoint; R5-A requires at least 3474",
     "TDD commits may be smaller, but do not stop the delivery phase at a micro-optimization",
     "net targets include replacement inserts, deletes, setup, transactions, publication and cleanup",
     "validate complete parity, CPU and memory; a count reduction does not permit a CPU or memory regression",
