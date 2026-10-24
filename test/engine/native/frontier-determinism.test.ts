@@ -24,11 +24,14 @@ it.skipIf(!required)("keeps admission and physical producers identical for permu
   for (const language of report.languages) {
     expect(language.variants.map((v: { order: string }) => v.order)).toEqual(["forward", "reverse", "rotated", "interleaved"]);
     const first = language.variants[0];
+    for (const field of ["stageSha256", "producerSha256", "parametersSha256"])
+      expect(first[field], field).toMatch(/^[0-9a-f]{64}$/);
     expect(first.plans).toBeGreaterThan(1);
     expect(first.admissions.some((a: [number, number, boolean]) => a[2])).toBe(true);
     for (const variant of language.variants.slice(1)) {
       expect(variant.admissions, `${variant.order}: cache warmth must not change admission or the per-plan bound`).toEqual(first.admissions);
       expect(variant.stageSha256, `${variant.order}: producer placement must not follow allocation or caller order`).toBe(first.stageSha256);
+      expect(variant.producerSha256).toBe(first.producerSha256);
       expect(variant.parametersSha256).toBe(first.parametersSha256);
       expect(variant.resultQueries).toBe(first.resultQueries);
       expect(variant.peakLiveRelations).toBe(first.peakLiveRelations);

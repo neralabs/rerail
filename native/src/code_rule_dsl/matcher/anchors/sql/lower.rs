@@ -29,8 +29,6 @@ pub(super) struct Admission {
 pub(super) struct Statement {
     pub admissions: Vec<Admission>,
     #[cfg(feature = "code-rule-profile")]
-    pub original: Option<Box<Statement>>,
-    #[cfg(feature = "code-rule-profile")]
     pub producers: crate::code_rule_dsl::producers::Registry<u32>,
     #[cfg(feature = "code-rule-profile")]
     pub consumers: Vec<usize>,
@@ -582,12 +580,7 @@ pub(super) fn batch(
     )
 }
 
-fn batch_scope(
-    plans: &[&AnchorPlan],
-    lang: u32,
-    fids: Option<&[i64]>,
-    path_glob: Option<&str>,
-) -> Statement {
+fn scope(lang: u32, fids: Option<&[i64]>, path_glob: Option<&str>) -> Lower {
     let mut lower = Lower::new(lang);
     let lang_parameter = lower.parameter(i64::from(lang));
     let mut files =
@@ -605,104 +598,150 @@ fn batch_scope(
         .ctes
         .push(format!("cf(fid) AS MATERIALIZED ({files})"));
     lower.ctes.push("all_nodes(fid,pre) AS NOT MATERIALIZED (SELECT f.fid,p.value FROM cf JOIN file f ON f.fid=cf.fid CROSS JOIN generate_series(0,f.nodes-1,1) p)".into());
-    let mut arms = Vec::new();
+    lower
+}
+
+fn batch_scope(
+    plans: &[&AnchorPlan],
+    lang: u32,
+    fids: Option<&[i64]>,
+    path_glob: Option<&str>,
+) -> Statement {
+    use super::graph::program::Program;
+    let mut program = Program::default();
+    let mut roots = Vec::new();
+    let mut indexed_nodes = BTreeSet::new();
+    let mut decoded_nodes: std::collections::BTreeMap<
+        usize,
+        (Option<usize>, Property, BTreeSet<usize>),
+    > = std::collections::BTreeMap::new();
+    let mut predicates = std::collections::BTreeMap::new();
     let mut admissions = Vec::new();
     for (qid, plan) in plans.iter().enumerate() {
+        // Admission belongs to the individual plan. Another consumer's cached
+        // producers cannot expand or shrink this plan's existing 256-node allowance.
+        let mut lower = scope(lang, fids, path_glob);
         lower.consumer = qid;
         let checkpoint = lower.ctes.len();
-        let parameters = lower.parameters.len();
-        let indexed = lower.indexed.clone();
-        let decoding = lower.decoding.clone();
         lower.limit = checkpoint + 256;
-        let selected = match lower.plan(plan, lower.all()) {
-            Ok(selected) => {
-                admissions.push(Admission {
-                    consumer: qid,
-                    generated: lower.ctes.len() - checkpoint,
-                    broadened: false,
-                });
-                selected
-            }
+        let attempted = lower.plan(plan, lower.all());
+        admissions.push(Admission {
+            consumer: qid,
+            generated: lower.ctes.len() - checkpoint,
+            broadened: attempted.is_err(),
+        });
+        let selected = match attempted {
+            Ok(selected) => selected,
             Err(()) => {
-                admissions.push(Admission {
-                    consumer: qid,
-                    generated: lower.ctes.len() - checkpoint,
-                    broadened: true,
-                });
                 #[cfg(feature = "code-rule-profile")]
                 crate::code_rule_dsl::profile::record_anchor_plan_broadening();
-                lower.ctes.truncate(checkpoint);
-                lower.parameters.truncate(parameters);
-                lower.indexed = indexed;
-                lower.decoding = decoding;
-                lower.utilities.clear();
-                lower.roots.clear();
-                // Names from the discarded branch can be assigned again. Retain no stale aliases.
-                lower.reuse = Reuse::default();
-                // Bound generated-statement size. Broadening candidates never loses a match;
-                // execution remains in SQLite and the authoritative matcher still confirms.
+                // Discard the entire failed fragment, including predicates, parameters
+                // and reuse state. Earlier fragments already belong to the shared program.
+                lower = scope(lang, fids, path_glob);
+                lower.consumer = qid;
+                lower.limit = lower.ctes.len() + 256;
                 match &plan.root_kinds {
                     Some(kinds) => lower.kinds(kinds).unwrap_or_else(|_| lower.all()),
                     None => lower.all(),
                 }
             }
         };
-        arms.push(format!(
-            "SELECT {qid} AS qid,fid,pre FROM {}",
-            selected.name
-        ));
+        let definitions = Definitions::new(std::mem::take(&mut lower.ctes));
+        let live = definitions
+            .live(&format!("SELECT fid,pre FROM {}", selected.name))
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let nodes = program.add(&live, &lower.parameters, lang);
+        roots.push((nodes[&selected.name].id, qid));
+        for name in lower.indexed {
+            if let Some(node) = nodes.get(&name) {
+                indexed_nodes.insert(node.id);
+            }
+        }
+        for (name, demand) in lower.decoding {
+            let Some(node) = nodes.get(&name) else {
+                continue;
+            };
+            let scope = if demand.scope == "all_nodes" {
+                None
+            } else {
+                Some(nodes[&demand.scope].id)
+            };
+            decoded_nodes
+                .entry(node.id)
+                .and_modify(|(previous, property, consumers)| {
+                    assert!(
+                        *previous == scope && *property == demand.property,
+                        "shared decoder definition"
+                    );
+                    consumers.extend(&demand.consumers);
+                })
+                .or_insert((scope, demand.property, demand.consumers));
+        }
+        for (name, (language, expression)) in lower.predicates {
+            let Some(node) = nodes.get(&name) else {
+                continue;
+            };
+            let value = |parameter: &str| {
+                lower.parameters[parameter
+                    .strip_prefix('?')
+                    .expect("bound value")
+                    .parse::<usize>()
+                    .expect("parameter index")
+                    - 1]
+                .clone()
+            };
+            predicates
+                .entry(node.id)
+                .or_insert_with(|| (value(&language), value(&expression)));
+        }
     }
+    let layout = program.finish();
+    // Group output arms by the canonical producer, while retaining caller identities.
+    // Packet boundaries then depend on shared work rather than allocation order.
+    roots.sort_unstable_by_key(|&(node, qid)| (layout.ranks[&node], qid));
+    let mut arms = roots
+        .iter()
+        .map(|(node, qid)| format!("SELECT {qid} AS qid,fid,pre FROM {}", layout.names[node]))
+        .collect::<Vec<_>>();
     if arms.is_empty() {
         arms.push("SELECT 0 AS qid,0 AS fid,0 AS pre WHERE 0".into());
     }
-    // Definitions span the complete policy frontier. Only result emission is chunked;
-    // SQLite limits compound SELECT terms, not the number of shared producers.
-    let queries: Vec<_> = arms
+    let queries = arms
         .chunks(128)
         .map(|arms| arms.join(" UNION ALL ") + " ORDER BY qid,fid,pre")
         .collect();
-    #[cfg(feature = "code-rule-profile")]
-    let mut original = std::env::var_os("RERAIL_SQL_PROFILE_DIR").map(|_| {
-        Box::new(finish_decoded(
-            lower.ctes.clone(),
-            queries.clone(),
-            lower.parameters.clone(),
-            lower.indexed.clone(),
-            lower.decoding.clone(),
-        ))
-    });
-    let (ctes, aliases) = super::graph::compact(lower.ctes, &lower.parameters, lang);
-    let queries = queries
-        .iter()
-        .map(|query| super::graph::rename(query, &aliases))
-        .collect();
-    let indexed = lower
-        .indexed
+    let indexed = indexed_nodes
         .into_iter()
-        .map(|name| aliases.get(&name).cloned().unwrap_or(name))
+        .map(|node| layout.names[&node].clone())
         .collect();
-    let mut decoding: HashMap<String, decode::Demand> = HashMap::new();
-    for (name, mut demand) in lower.decoding {
-        demand.scope = aliases.get(&demand.scope).cloned().unwrap_or(demand.scope);
-        let name = aliases.get(&name).cloned().unwrap_or(name);
-        decoding
-            .entry(name)
-            .and_modify(|existing| existing.consumers.extend(&demand.consumers))
-            .or_insert(demand);
-    }
-    let mut statement = finish_decoded(ctes, queries, lower.parameters, indexed, decoding);
-    statement.admissions = admissions;
-    let values: BTreeSet<_> = lower
-        .predicates
-        .iter()
-        .filter(|(name, _)| {
-            statement
-                .graph
-                .iter()
-                .any(|cte| cte.starts_with(&format!("{}(", aliases.get(*name).unwrap_or(name))))
+    let decoding = decoded_nodes
+        .into_iter()
+        .map(|(node, (scope, property, consumers))| {
+            (
+                layout.names[&node].clone(),
+                decode::Demand {
+                    scope: scope
+                        .map_or_else(|| "all_nodes".into(), |scope| layout.names[&scope].clone()),
+                    property,
+                    consumers,
+                },
+            )
         })
-        .map(|(_, (lang, expression))| format!("({lang},{expression},0)"))
         .collect();
+    let values: BTreeSet<_> = predicates
+        .values()
+        .map(|(language, expression)| {
+            format!(
+                "({},{},0)",
+                layout.bound(language),
+                layout.bound(expression)
+            )
+        })
+        .collect();
+    let mut statement = finish_decoded(layout.ctes, queries, layout.parameters, indexed, decoding);
+    statement.admissions = admissions;
     if !values.is_empty() {
         let stages = [
             (
@@ -734,16 +773,8 @@ fn batch_scope(
             covering: false,
         })
         .collect::<Vec<_>>();
-        #[cfg(feature = "code-rule-profile")]
-        if let Some(raw) = original.as_mut() {
-            raw.stages.splice(0..0, stages.clone());
-        }
         statement.stages.splice(0..0, stages);
         statement.reschedule();
-        #[cfg(feature = "code-rule-profile")]
-        if let Some(raw) = original.as_mut() {
-            raw.reschedule();
-        }
     }
     #[cfg(feature = "code-rule-profile")]
     {
@@ -755,16 +786,6 @@ fn batch_scope(
     statement.language = lang;
     statement.files = fids.unwrap_or_default().to_vec();
     statement.file_scope = fids.is_some();
-    #[cfg(feature = "code-rule-profile")]
-    {
-        if let Some(raw) = original.as_mut() {
-            raw.language = lang;
-            raw.consumers = statement.consumers.clone();
-            raw.files = statement.files.clone();
-            raw.file_scope = statement.file_scope;
-        }
-        statement.original = original;
-    }
     statement
 }
 
@@ -978,8 +999,6 @@ fn finish_decoded(
     );
     Statement {
         admissions: Vec::new(),
-        #[cfg(feature = "code-rule-profile")]
-        original: None,
         #[cfg(feature = "code-rule-profile")]
         producers,
         #[cfg(feature = "code-rule-profile")]

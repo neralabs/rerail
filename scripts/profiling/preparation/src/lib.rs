@@ -54,6 +54,11 @@ mod shared_storage;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/waves.rs"]
 mod waves;
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/graph.rs"]
+mod graph;
+
 pub mod composition;
 pub mod fts;
 pub mod residency;

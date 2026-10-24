@@ -172,6 +172,13 @@ Cross-clause storage sharing remains a separate, explicit milestone.
 
 ## Implemented catalog boundary
 
+Candidate admission now occurs independently for each plan before shared producer composition.
+The compiler compares complete generated definitions, including schemas, typed bound values, and dependency identities.
+Canonical topological numbering gives the composed program reproducible SQL names and placement.
+Those aliases are local program names. They are not sharing identities across different frontiers or source generations.
+The existing named contracts and complete input bindings remain the authority for persistent shared data.
+Each composed program has one pinned tape/domain source slot. Incompatible file-domain definitions cannot enter that same program.
+
 The trusted catalog lives in `native/src/code_rule_dsl/producers/`.
 The decoder defines `syntax.node_properties.v1`, `syntax.source_spans.v1`, and `syntax.child_fields.v1` beside their implementations.
 Complete ordered binding values establish identity. The catalog uses no digest equality or SQL equivalence heuristic.
@@ -192,6 +199,12 @@ Empty-output producers still require separate completion records. Other structur
 Normal `--sql-profile` captures write `producer-plan-*.json` beside candidate replays.
 Pass those files to the existing `shared_work.py check` command.
 Exports contain diagnostic JSON metadata. Runtime fact rows remain in SQL.
+
+The `candidateFrontierAudit()` diagnostic compiles fixed permutations of the same plan objects through the normal compiler.
+The [CLI](../scripts/profiling/frontier-audit.mjs) writes its results and returns nonzero for order-dependent admission or placement.
+The audit performs no candidate SQL execution. Initial policy compilation retains its existing SQLite validation.
+New candidate captures contain independent admission records and the selected program only.
+The old uncompacted diagnostic variant is retired from new captures.
 
 The early connection check selects physical public owner tables for future scoped readers.
 It passes publication barriers, pinned WAL snapshots, rollback, private scratch, and forbidden private-table reads with the production authorizer.

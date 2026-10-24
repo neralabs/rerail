@@ -92,7 +92,11 @@ The one-pass planner adds no algorithm switch or generic scheduler.
 
 Complete recovery remains open. The selected guard submits 9,481 statements versus 9,113 at the catalog checkpoint.
 Named provenance exposes changed clause order under allocation-address sorting and different upstream lowered frontiers.
-The next slice must isolate this effect with fixed compiled-plan permutations and make producer composition independent of heap placement.
+That effect now has a fixed-plan reproducer and a selected implementation.
+Each plan receives independent bounded lowering before complete producer definitions enter canonical composition.
+All four permutations of the 139-plan state rule now produce matching admission, parameters, producer definitions, stages, and lifetimes.
+The small guard repeats at 8,669 submissions. Matched CPU improves from 2.318 seconds to 1.617 seconds.
+The fixed 100-submission limit and broader repository acceptance remain open.
 Do not repeat the rejected authored-order or work-estimate heuristics without new evidence.
 The [wave evidence](../fixtures/host/data-layer-port/profiling/shared-span-waves-20261024.json) retains all CPU controls, counts, and the frozen-frontier comparison.
 

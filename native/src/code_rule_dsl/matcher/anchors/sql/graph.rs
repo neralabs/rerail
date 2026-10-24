@@ -3,15 +3,17 @@
 use rusqlite::types::Value;
 use std::collections::HashMap;
 use std::sync::LazyLock;
+#[path = "graph/program.rs"]
+pub(super) mod program;
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Class {
     File,
     Vocabulary,
     Request,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 enum Part {
     Sql(String),
     Reference(usize),
@@ -19,7 +21,7 @@ enum Part {
     FileDomain,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct Definition {
     version: u32,
     language: u32,
@@ -54,6 +56,33 @@ fn parameter(value: &Value) -> Vec<u8> {
     encoded
 }
 
+fn parse_parts(body: &str, values: &[Value], nodes: &HashMap<String, Node>) -> (Vec<Part>, bool) {
+    static TOKENS: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"\?[0-9]+|[A-Za-z_][A-Za-z_0-9]*").expect("generated tokens")
+    });
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut request = false;
+    for token in TOKENS.find_iter(body) {
+        let replacement = if let Some(index) = token.as_str().strip_prefix('?') {
+            let index: usize = index.parse().expect("bound parameter");
+            Some(Part::Parameter(parameter(&values[index - 1])))
+        } else if let Some(child) = nodes.get(token.as_str()) {
+            request |= child.class == Class::Request;
+            Some(Part::Reference(child.id))
+        } else {
+            None
+        };
+        if let Some(replacement) = replacement {
+            parts.push(Part::Sql(body[start..token.start()].to_owned()));
+            parts.push(replacement);
+            start = token.end();
+        }
+    }
+    parts.push(Part::Sql(body[start..].to_owned()));
+    (parts, request)
+}
+
 impl Graph {
     pub fn register(
         &mut self,
@@ -61,8 +90,6 @@ impl Graph {
         values: &[Value],
         language: u32,
     ) -> HashMap<String, Node> {
-        static TOKENS: LazyLock<regex::Regex> =
-            LazyLock::new(|| regex::Regex::new(r"\?[0-9]+|[A-Za-z_][A-Za-z_0-9]*").unwrap());
         let mut nodes: HashMap<String, Node> = HashMap::new();
         for cte in ctes {
             let (head, body) = cte.split_once(") AS ").expect("generated CTE");
@@ -81,27 +108,11 @@ impl Graph {
                 if name == "cf" {
                     class = Class::Request;
                 }
-                let mut start = 0;
-                for token in TOKENS.find_iter(body) {
-                    let end = token.end();
-                    let replacement = if let Some(index) = token.as_str().strip_prefix('?') {
-                        let index: usize = index.parse().expect("bound parameter index");
-                        Some(Part::Parameter(parameter(&values[index - 1])))
-                    } else if let Some(child) = nodes.get(token.as_str()) {
-                        if child.class == Class::Request {
-                            class = Class::Request;
-                        }
-                        Some(Part::Reference(child.id))
-                    } else {
-                        None
-                    };
-                    if let Some(replacement) = replacement {
-                        parts.push(Part::Sql(body[start..token.start()].to_owned()));
-                        parts.push(replacement);
-                        start = end;
-                    }
+                let (parsed, request) = parse_parts(body, values, &nodes);
+                parts = parsed;
+                if request {
+                    class = Class::Request;
                 }
-                parts.push(Part::Sql(body[start..].to_owned()));
                 // Global aggregate/choice results depend on the requested domain. Window
                 // frontiers remain scratch initially, even when partitioned by file.
                 if body.contains("count(") || body.contains(" OVER") || body.contains(" LIMIT ") {
@@ -130,43 +141,6 @@ impl Graph {
         *n += 1;
         previous
     }
-}
-
-pub(super) fn rename(sql: &str, aliases: &HashMap<String, String>) -> String {
-    static TOKENS: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"[A-Za-z_][A-Za-z_0-9]*").unwrap());
-    TOKENS
-        .replace_all(sql, |captures: &regex::Captures<'_>| {
-            aliases
-                .get(&captures[0])
-                .cloned()
-                .unwrap_or_else(|| captures[0].to_owned())
-        })
-        .into_owned()
-}
-
-/// Equal templates share one producer within this request, including their bag semantics.
-/// This does not retain a request-dependent expression across different file domains.
-pub(super) fn compact(
-    ctes: Vec<String>,
-    parameters: &[Value],
-    language: u32,
-) -> (Vec<String>, HashMap<String, String>) {
-    let nodes = Graph::default().register(&ctes, parameters, language);
-    let mut first: HashMap<usize, String> = HashMap::new();
-    let mut aliases = HashMap::new();
-    let mut result = Vec::new();
-    for cte in ctes {
-        let name = cte.split_once('(').unwrap().0.to_owned();
-        let id = nodes[&name].id;
-        if let Some(existing) = first.get(&id) {
-            aliases.insert(name, existing.clone());
-        } else {
-            result.push(rename(&cte, &aliases));
-            first.insert(id, name);
-        }
-    }
-    (result, aliases)
 }
 
 #[cfg(test)]
@@ -222,35 +196,6 @@ mod tests {
         assert_eq!(nodes["s"].class, Class::File);
         assert_eq!(nodes["choice"].class, Class::Request);
         assert_eq!(nodes["result"].class, Class::Request);
-    }
-
-    #[test]
-    fn compaction_preserves_duplicate_rows_and_scope_dependencies() {
-        let (ctes, aliases) = compact(
-            vec![
-                "a(fid,pre) AS MATERIALIZED (SELECT 1,2 UNION ALL SELECT 1,2)".into(),
-                "b(fid,pre) AS MATERIALIZED (SELECT 1,2 UNION ALL SELECT 1,2)".into(),
-                "c(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM b)".into(),
-                "d(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM a)".into(),
-            ],
-            &[],
-            1,
-        );
-        assert_eq!(ctes.len(), 2);
-        let sql = format!(
-            "WITH {} {}",
-            ctes.join(","),
-            rename("SELECT * FROM c UNION ALL SELECT * FROM d", &aliases)
-        );
-        let db = rusqlite::Connection::open_in_memory().unwrap();
-        let mut q = db.prepare(&sql).unwrap();
-        assert_eq!(
-            q.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
-                .unwrap()
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .unwrap(),
-            vec![(1, 2); 4]
-        );
     }
 
     #[test]
