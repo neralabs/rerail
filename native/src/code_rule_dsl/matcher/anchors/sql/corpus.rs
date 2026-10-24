@@ -7,8 +7,6 @@ use parking_lot::Mutex;
 use rusqlite::Result;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::{cell::RefCell, sync::Arc};
-#[path = "corpus/frontier.rs"]
-mod frontier;
 
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Corpus {
@@ -157,7 +155,10 @@ impl Corpus {
             if plans.is_empty() {
                 continue;
             }
-            let (plans, ids) = frontier::frontier(plans);
+            let mut plans = plans.clone();
+            plans.sort_unstable_by_key(|p| Arc::as_ptr(p) as usize);
+            plans.dedup_by_key(|p| Arc::as_ptr(p) as usize);
+            let ids = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect();
             groups
                 .entry((file.lang, ids))
                 .or_insert_with(|| (plans, HashSet::new()))

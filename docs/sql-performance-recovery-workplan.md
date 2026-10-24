@@ -2,7 +2,8 @@
 
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
 Conditional admission, whole-job publication, and R4–R7 remain open.
-The final measured job has 10,443 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
+The latest measured job has 9,695 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
+Compiler input/syntax validation no longer executes DDL. Compiler stage schemas and shared runtime producers remain open.
 All work uses the current worktree. WP1 remains pending.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
@@ -167,6 +168,22 @@ Reconcile and report SQLite internal execution separately. Every engine helper s
 The FTS audit proves one bulk insert of 101 documents executes 109 SQLite statements internally and externally.
 The user resolves that conflict by applying the limit to engine submissions; the required FTS layout stays intact.
 The tracer uses SQLite callback origin evidence. It does not classify SQL by table names or omit internal measurements.
+
+### R3 compiler checkpoint
+
+Compiler input and syntax declarations now use prepare-only SQLite modules.
+Twelve independent clauses without stages execute zero SQL during compilation.
+SQLite still checks column declarations, names, query fields, authorizer decisions, and stage CTAS affinity.
+Compiler initialization omits runtime PRAGMAs. Runtime connections retain those settings.
+Empty runtime syntax sources use executable SQL tables over the same column declarations.
+
+The selected small capture removes 406 connection-setup submissions, from 904 to 498.
+Its complete job still submits 9,695 statements. Its 194 compiler stage CTAS executions already exceed the job allowance.
+The 136-connection lifetime problem remains open. This slice does not establish whole-job schema reuse or complete R3.
+Authored-order and work-estimate replacements regress CPU controls and are removed.
+Allocation-dependent lowering remains a measured R4 risk. Named producer discovery must remove incidental address ordering.
+The [journal](data-layer-performance-journal.md#selected-compiler-recovery-checkpoint) records the accepted changes and rejected controls.
+The [checked evidence](../fixtures/host/data-layer-port/profiling/sql-recovery-compiler-20261023.json) preserves all matched CPU trials and correctness results.
 
 ## R4: establish shared producers and remove repeated construction
 

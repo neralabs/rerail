@@ -10,6 +10,73 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Selected compiler recovery checkpoint
+
+The selected implementation removes compiler input/syntax DDL and runtime PRAGMAs from compiler initialization.
+It retains SQLite validation, the existing stage CTAS boundaries, and executable empty runtime syntax tables.
+The empty-runtime regression now passes its stronger failure assertion.
+The original physical candidate order remains. Both ordering experiments and cache pruning are absent from production.
+
+The complete small capture records **9,695 engine submissions**, **994 SQLite internal executions**, and **10,689 total executions**.
+All native counters, raw events, and session receipts reconcile. Findings complete with no failures or parity differences.
+The original 100-submission gate correctly returns nonzero after the complete replay.
+Connection setup falls from 904 to 498 submissions: 406 fewer setup statements.
+The captured previous checkpoint has 10,443 engine submissions. Its physical lowering order depends on allocation addresses.
+The remaining count difference cannot establish a stable compiler-only saving. R4 must remove that incidental ordering.
+
+Three alternating fresh-process pairs compare the previous checkpoint with the selected implementation.
+Median CPU falls from **2,374.190 ms to 2,266.036 ms**, a **4.56%** reduction for this small workload.
+The respective ranges are 2,216.678–2,434.455 ms and 2,168.529–2,326.142 ms.
+The ranges overlap. These shared-host measurements do not establish a statistically reliable gain or repository-wide recovery.
+Reported median peak RSS is 357,360 KiB before and 346,496 KiB after. Aggregate memory acceptance remains open.
+Both binaries use the same opt1 engine, dependency optimization, profiling feature, system allocator shim, and four workers.
+Detailed SQL and span capture stay disabled for every CPU control.
+
+The selected addon passes **304 native-facing tests** across eleven files in `selected-functional` (12.832 seconds).
+One combined replay passes **120 original observations across 60 rules**, with 60 positive and 60 clean observations.
+It reports zero false positives, false negatives, execution failures, or path differences (`selected-parity`, 13.490 seconds).
+This selection does not replace the complete 3,210-observation corpus or the full repository workload.
+The 24 standalone SQL tests, native and standalone Clippy checks, formatting, and `npm run check` pass.
+The profiling tools retain their passing 26 Node tests and 75 Python tests.
+
+The selected capture still contains 194 compiler stage CTAS executions, 4,924 candidate submissions, and 2,444 cleanup submissions.
+Compiler stage boundaries alone exceed 100 before the complete runtime workload participates.
+The next recovery slices need compiler stage schemas, whole-job publication, named shared physical producers, and broad SQL consumers.
+No unsupported engine-feature ticket follows from the rejected experiments.
+
+Checked evidence: [compiler recovery checkpoint](../fixtures/host/data-layer-port/profiling/sql-recovery-compiler-20261023.json).
+Detailed evidence stays in `.rerail/profiles/sql-recovery-compiler-20261023/`.
+
+### Work-estimate physical order: rejected
+
+The bounded work-estimate candidate passes 304 native tests and all 120 selected source observations.
+Its complete-job count remains 14,699 engine submissions, with 994 SQLite internal executions.
+Its median CPU is 2,461.281 ms versus the matched checkpoint median of 2,381.320 ms: a 3.36% regression.
+Evidence: `work-order-functional`, `work-order-parity`, `work-order-acceptance`, and `cpu-{baseline,work-order}-{0,1,2}`.
+This candidate does not justify a new ordering heuristic.
+
+Both ordering replacements are removed. The production corpus retains its earlier physical order.
+The two first-seen-order unit tests describe a rejected implementation choice, not a required rule semantic.
+The compiler adapter and connection changes remain for a separate matched control.
+Allocation-dependent broadening remains an observed risk for R4. Named shared producer identities must replace this incidental ordering during that work.
+The cache-pruning candidate also remains removed. No alternate algorithm or new configuration flag remains.
+
+### Authored physical order: rejected CPU control
+
+Three alternating fresh-process controls compare the previous checkpoint with the compiler adapters and authored physical order.
+The previous checkpoint median is 2,368.800 ms CPU. Its range is 2,267.492–2,707.701 ms.
+The candidate median is 2,475.716 ms CPU. Its range is 2,456.084–2,520.751 ms.
+All six small replays preserve findings. Detailed SQL and span capture stay disabled.
+The candidate regresses median CPU by 4.51% and increases engine submissions from 10,443 to 14,699.
+The earlier checkpoint count comes from its preserved capture, not a new claim of count stability under address sorting.
+These measurements reject authored order as the physical lowering strategy.
+Evidence: `cpu-before-{0,1,2}` and `cpu-after-{0,1,2}` in the compiler recovery directory.
+
+The next candidate retains authored consumer identities but lowers smaller producers first.
+A bounded structural work estimate orders lowering and never uses allocation addresses.
+Consumer result arms remain in authored order. SQLite and the authoritative matcher retain execution semantics.
+The candidate has one production path and needs the same count, CPU, and corpus checks before selection.
+
 ### Rollback control correction and empty runtime schemas: red
 
 The seven-to-eight materialization assertion used an incomplete control.
