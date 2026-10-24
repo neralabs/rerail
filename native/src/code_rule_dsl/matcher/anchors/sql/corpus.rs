@@ -131,54 +131,99 @@ impl Corpus {
             return Ok(());
         };
         for (&lang, plans) in plans {
-            for plan in plans {
-                state
-                    .plans
-                    .entry(Arc::as_ptr(plan) as usize)
-                    .or_insert_with(|| Arc::clone(plan));
+            Self::prepare_group(state, lang, plans, None)?;
+        }
+        Ok(())
+    }
+
+    /// Batch only admitted plan/file pairs. Equal frontiers share one SQL request.
+    pub(in crate::code_rule_dsl) fn prepare_files(
+        &self,
+        demands: &BTreeMap<String, Vec<Arc<AnchorPlan>>>,
+    ) -> Result<()> {
+        let mut guard = self.state.lock();
+        let Some(state) = guard.as_mut() else {
+            return Ok(());
+        };
+        type Domain = (Vec<Arc<AnchorPlan>>, HashSet<String>);
+        let mut groups = BTreeMap::<(u32, Vec<usize>), Domain>::new();
+        for (path, plans) in demands {
+            let Some(file) = state.files.get(path) else {
+                continue;
+            };
+            if plans.is_empty() {
+                continue;
             }
-            // Discover covering demands across the full plan frontier before executing any
-            // bounded group. A sparse early group must not force a later universal re-decode.
-            let mut covering = std::collections::BTreeSet::new();
-            for group in std::iter::once(plans.as_slice()) {
-                let ids: Vec<_> = group.iter().map(|p| Arc::as_ptr(p) as usize).collect();
-                let missing: Vec<_> = state
-                    .files
-                    .values()
-                    .filter(|f| {
-                        f.lang == lang
-                            && !f.structural
-                            && ids.iter().any(|id| !f.roots.contains_key(id))
-                    })
-                    .map(|f| f.fid)
-                    .collect();
-                if missing.is_empty() {
-                    continue;
-                }
-                let refs: Vec<_> = group.iter().map(Arc::as_ref).collect();
-                if Self::template(state, lang, &ids, &refs).universal {
-                    covering.extend(missing);
-                }
+            let mut plans = plans.clone();
+            plans.sort_unstable_by_key(|p| Arc::as_ptr(p) as usize);
+            plans.dedup_by_key(|p| Arc::as_ptr(p) as usize);
+            let ids = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect();
+            groups
+                .entry((file.lang, ids))
+                .or_insert_with(|| (plans, HashSet::new()))
+                .1
+                .insert(path.clone());
+        }
+        for ((lang, _), (plans, paths)) in groups {
+            Self::prepare_group(state, lang, &plans, Some(&paths))?;
+        }
+        Ok(())
+    }
+
+    fn prepare_group(
+        state: &mut State,
+        lang: u32,
+        plans: &[Arc<AnchorPlan>],
+        paths: Option<&HashSet<String>>,
+    ) -> Result<()> {
+        for plan in plans {
+            state
+                .plans
+                .entry(Arc::as_ptr(plan) as usize)
+                .or_insert_with(|| Arc::clone(plan));
+        }
+        // Discover covering demands across the full plan frontier before executing any
+        // bounded group. A sparse early group must not force a later universal re-decode.
+        let mut covering = std::collections::BTreeSet::new();
+        for group in std::iter::once(plans) {
+            let ids: Vec<_> = group.iter().map(|p| Arc::as_ptr(p) as usize).collect();
+            let missing: Vec<_> = state
+                .files
+                .iter()
+                .filter(|(path, f)| {
+                    paths.is_none_or(|paths| paths.contains(*path))
+                        && f.lang == lang
+                        && !f.structural
+                        && ids.iter().any(|id| !f.roots.contains_key(id))
+                })
+                .map(|(_, f)| f.fid)
+                .collect();
+            if missing.is_empty() {
+                continue;
             }
-            let covering: Vec<_> = covering.into_iter().collect();
-            for files in covering.chunks(16_384) {
-                super::execute::prepare_structural(&state.writer, files)?;
-                let ready: HashSet<_> = files.iter().copied().collect();
-                for file in state.files.values_mut().filter(|f| ready.contains(&f.fid)) {
-                    Arc::make_mut(file).structural = true;
-                }
-                state.data_statements += 6 + files.len().div_ceil(128);
+            let refs: Vec<_> = group.iter().map(Arc::as_ref).collect();
+            if Self::template(state, lang, &ids, &refs).universal {
+                covering.extend(missing);
             }
-            for plans in std::iter::once(plans.as_slice()) {
-                let ids: Vec<_> = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect();
-                let refs: Vec<_> = plans.iter().map(Arc::as_ref).collect();
-                let result = Self::select_group(state, lang, &ids, &refs, true);
-                #[cfg(feature = "code-rule-profile")]
-                if result.is_err() {
-                    crate::code_rule_dsl::profile::record_anchor_batch_failure();
-                }
-                result?;
+        }
+        let covering: Vec<_> = covering.into_iter().collect();
+        for files in covering.chunks(16_384) {
+            super::execute::prepare_structural(&state.writer, files)?;
+            let ready: HashSet<_> = files.iter().copied().collect();
+            for file in state.files.values_mut().filter(|f| ready.contains(&f.fid)) {
+                Arc::make_mut(file).structural = true;
             }
+            state.data_statements += 6 + files.len().div_ceil(128);
+        }
+        for plans in std::iter::once(plans) {
+            let ids: Vec<_> = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect();
+            let refs: Vec<_> = plans.iter().map(Arc::as_ref).collect();
+            let result = Self::select_group(state, lang, &ids, &refs, true, paths);
+            #[cfg(feature = "code-rule-profile")]
+            if result.is_err() {
+                crate::code_rule_dsl::profile::record_anchor_batch_failure();
+            }
+            result?;
         }
         Ok(())
     }
@@ -211,12 +256,15 @@ impl Corpus {
         ids: &[usize],
         plans: &[&AnchorPlan],
         covered: bool,
+        paths: Option<&HashSet<String>>,
     ) -> Result<()> {
         let files: Vec<_> = state
             .files
             .iter()
-            .filter(|(_, file)| {
-                file.lang == lang && ids.iter().any(|id| !file.roots.contains_key(id))
+            .filter(|(path, file)| {
+                paths.is_none_or(|paths| paths.contains(*path))
+                    && file.lang == lang
+                    && ids.iter().any(|id| !file.roots.contains_key(id))
             })
             .map(|(path, file)| (path.clone(), Arc::clone(file)))
             .collect();
@@ -229,7 +277,7 @@ impl Corpus {
         if !active.is_empty() && active.len() < ids.len() {
             let ids: Vec<_> = active.iter().map(|&i| ids[i]).collect();
             let plans: Vec<_> = active.iter().map(|&i| plans[i]).collect();
-            return Self::select_group(state, lang, &ids, &plans, covered);
+            return Self::select_group(state, lang, &ids, &plans, covered, paths);
         }
         // Keep bind counts bounded, without issuing a query for each file or rule.
         for files in files.chunks(16_384) {
@@ -326,7 +374,7 @@ impl Corpus {
             .iter()
             .map(|&plan| plan as *const AnchorPlan as usize)
             .collect();
-        Self::select_group(state, lang, &ids, plans, false)
+        Self::select_group(state, lang, &ids, plans, false, None)
     }
 
     #[cfg(test)]
