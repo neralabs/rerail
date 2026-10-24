@@ -170,6 +170,10 @@ The [optimized evidence](../fixtures/host/data-layer-port/profiling/fts-bulk-pub
 This result supports whole-frontier `INSERT ... SELECT`, rather than suspending user triggers or changing the FTS layout.
 Whole-job integration remains pending; the isolated result does not predict aggregate linter CPU.
 
+The final inventory check separates stage release from construction.
+A DROP under a candidate producer currently inherits the preparation phase, hiding cleanup in that total.
+`cleanup-inventory-red` fails on that classification while preserving the exact execution total.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.

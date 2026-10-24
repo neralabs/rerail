@@ -258,19 +258,21 @@ test("execution inventory retains event attribution when identical SQL crosses p
     { context: {}, thread: "worker-3" },
   ].map((event, i) => ({ ...event, kind: "sql", origin: "engine", query: 0, startNs: i, cpuNs: 10, selfCpuNs: 10, wallNs: 10, selfWallNs: 10, rows: 0, changes: 0 }));
   events.push({ ...events[0], kind: "operator", query: 1, selfCpuNs: 1000, completed: true });
+  events.push({ ...events[2], query: 2 });
   writeFileSync(join(raw, "profile-9-0.json"), JSON.stringify({ version: 1, pid: 9, events: events.length, queries: [
     { id: 0, kind: "sql", sql: "SELECT 1", plan: [], bytecode: [] }, { id: 1, kind: "operator", sql: "enclosing operator" },
+    { id: 2, kind: "sql", sql: "DROP TABLE scratch", plan: [], bytecode: [] },
   ] }));
   writeFileSync(join(raw, "profile-9-0.jsonl"), events.map(JSON.stringify).join("\n") + "\n");
   try {
     const report = await buildReport(raw, directory);
-    assert.equal(report.executionInventory.total, 5);
-    assert.equal(report.executionInventory.selfCpuNs, 50);
+    assert.equal(report.executionInventory.total, 6);
+    assert.equal(report.executionInventory.selfCpuNs, 60);
     assert.deepEqual(report.executionInventory.phases, {
       connectionSetup: 1, catalogPublication: 0, filePublication: 1, candidatePreparation: 1,
-      relationalEvaluation: 1, cleanup: 0, unknown: 1,
+      relationalEvaluation: 1, cleanup: 1, unknown: 1,
     });
-    assert.equal(report.executionInventory.entries.length, 5);
+    assert.equal(report.executionInventory.entries.length, 6);
     assert.ok(report.executionInventory.entries.every(e => !("sql" in e)), "inventory refers to the shared query catalogue without duplicating SQL");
     assert.ok(report.queries.every(q => !("bytecode" in q) && !("plan" in q)), "plans have one physical representation in the query catalogue");
     const candidate = report.executionInventory.entries.find(e => e.phase === "candidatePreparation");
