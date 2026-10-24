@@ -1,11 +1,11 @@
 # Shared producer implementation workplan
 
-Status: implementation plan. Runtime work has not started.
+Status: WP1 has its first implementation. Physical shared execution remains open.
 The [SQL recovery workplan](sql-performance-recovery-workplan.md) now defines the execution order after the aggregate regression.
 Its acceptance, accounting, eligibility, and publication steps precede WP1.
 WP1 starts at recovery step R4 in this same worktree.
 The [contract design](shared-producer-contracts.md), [execution stages](sql-execution-stages.md), and [ownership invariant](sql-materialization-shape.md) define the target.
-WP1 will use this worktree after the [aggregate checkpoint](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23).
+WP1 uses this worktree after the [aggregate checkpoint](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23).
 That checkpoint records a 19.93-fold first-50 cold CPU regression and failed full-repository 60-rule execution.
 Source-corpus parity passes, but it does not replace the failed repository gate.
 
@@ -17,7 +17,7 @@ This document creates no Linear issues.
 ## Existing foundation
 
 The discovery CLI and declaration checker already work, with 25 focused tests and CI coverage.
-They identify proposed sharing and conflicting names, but the compiler does not export actual contract bindings yet.
+They identify proposed sharing and conflicting names. Candidate compilation now exports actual structural contract bindings and consumer provenance.
 The engine retains decoded properties, spans, and children in SQL.
 The new work must eliminate repeated demand computation and intermediate construction around those retained facts.
 Adding names to already shared rows alone does not establish a performance improvement.
@@ -45,6 +45,13 @@ WP1 also includes an early connection-contract check for WP5, before the design 
 
 ## WP1: establish names and observable bindings
 
+Implemented: trusted engine catalog, full typed binding comparisons, clash diagnostics, live candidate exports, and the early scoped-reader storage check.
+Decoder binding IDs now drive same-selector reuse. Exports resolve input slots from actual source membership and digests.
+Rule IDs, clause IDs, policy digests, result indices, and selectors identify consumers.
+File paths and authored lines remain unavailable from the current policy API.
+The registry currently serves structural integer options and direct tape inputs. Pack declarations and dependent producer bindings remain later work.
+No physical span-fill coalescing or completion controller follows from this catalog checkpoint.
+
 The engine registry lives under `native/src/code_rule_dsl/producers/`.
 Contracts remain beside the SQL or Rust implementations they describe.
 The first contracts cover node properties, source spans, and child fields in the existing decoder.
@@ -68,6 +75,11 @@ An early storage check exercises one workspace writer and two scoped readers wit
 It covers publication barriers, private scratch survival, reader closure, and forbidden backing-table access.
 This check establishes the connection contract. It does not add a second production execution path.
 Any incompatible assumption requires a design correction before WP5.
+
+The early check selects a physical public owner table. One writer and two readers preserve WAL snapshots, atomic publication, rollback, and private scratch.
+The production authorizer rejects private-table access and writes while admitting the public owner and its aggregates.
+The protected-view alternative fails on SQLite count optimization and ambiguous CTE accessor labels.
+Its existing generated-view exception remains unchanged and must not become the shared-owner isolation mechanism.
 
 ## WP2: deliver the first shared execution path
 
@@ -229,10 +241,10 @@ The historical roughly 1,400-second observation cannot establish a CPU ratio unl
 
 ## Measurement gates
 
-WP1 will start in this worktree after the [aggregate checkpoint](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23).
+WP1 starts in this worktree after the [aggregate checkpoint](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23).
 That checkpoint supersedes the small controls below as the broad execution reference.
 Its final evidence records the addon, sources, complete corpus coverage, and repository CPU measurements.
-WP1 remains pending during checkpoint validation.
+The 2026-10-24 catalog checkpoint begins WP1 after that validation. The broader recovery gate remains failing.
 
 The earlier installed baseline is addon `86846fe45e731c10b44beecb54cbfb35b7610c2eafb71f199ce3840969c07b6d`.
 The [lifetime evidence](../fixtures/host/data-layer-port/profiling/sql-relation-lifetimes-20261023.json) retains its sources and trials.

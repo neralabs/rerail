@@ -101,6 +101,47 @@ fn save_variant(
             ))
         })?
         .collect::<Result<Vec<_>>>()?;
+    let generation = serde_json::to_string(&versions).expect("source versions");
+    let mut manifest = statement
+        .producers
+        .manifest(store.db.path().unwrap_or_default(), |_| {
+            crate::code_rule_dsl::producers::External {
+                name: format!("syntax-tape-language-{}", statement.language),
+                generation: generation.clone(),
+            }
+        });
+    let origins = store.origins.lock();
+    for binding in manifest["bindings"].as_array_mut().expect("binding array") {
+        let consumers = binding["consumers"]
+            .as_array()
+            .expect("consumer array")
+            .iter()
+            .flat_map(|consumer| {
+                let label = consumer.as_str().expect("consumer label");
+                let names = label
+                    .strip_prefix("candidate-result.")
+                    .and_then(|s| s.split_once(' '))
+                    .and_then(|(id, _)| id.parse::<usize>().ok())
+                    .and_then(|qid| statement.consumers.get(qid))
+                    .and_then(|id| origins.get(id));
+                match names {
+                    Some(names) => names
+                        .iter()
+                        .map(|name| format!("{name}: {label}"))
+                        .collect::<Vec<_>>(),
+                    None => vec![label.to_owned()],
+                }
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        binding["consumers"] = serde_json::json!(consumers);
+        binding["origin"] = consumers.into_iter().collect::<Vec<_>>().join(", ").into();
+    }
+    drop(origins);
+    std::fs::write(
+        directory.join(format!("producer-plan-{}-{id}.json", std::process::id())),
+        serde_json::to_vec_pretty(&manifest).expect("producer manifest"),
+    )
+    .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
     let output = serde_json::json!({"format":"rerail.candidate-replay/v2","variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"parameters":parameters,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
     std::fs::write(
         directory.join(format!("{stem}.json")),

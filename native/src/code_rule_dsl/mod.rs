@@ -17,6 +17,7 @@ mod package_manifest;
 mod php_literal;
 mod php_view;
 mod placement;
+mod producers;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
 mod query;

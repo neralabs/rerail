@@ -511,6 +511,8 @@ fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
             Err(error) => eprintln!("SQL AST batch source unavailable: {error}"),
         }
     }
+    #[cfg(feature = "code-rule-profile")]
+    corpus.record_origins(std::iter::once(code_rule));
     if let Err(error) = corpus.prepare_files(&demands) {
         eprintln!("SQL AST corpus batch unavailable; retaining authoritative candidates: {error}");
     }

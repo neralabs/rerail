@@ -22,6 +22,10 @@ struct Set {
 pub(super) struct Statement {
     #[cfg(feature = "code-rule-profile")]
     pub original: Option<Box<Statement>>,
+    #[cfg(feature = "code-rule-profile")]
+    pub producers: crate::code_rule_dsl::producers::Registry<u32>,
+    #[cfg(feature = "code-rule-profile")]
+    pub consumers: Vec<usize>,
     pub graph: Vec<String>,
     pub language: u32,
     pub files: Vec<i64>,
@@ -59,6 +63,9 @@ struct Lower {
     reuse: Reuse,
     decoding: HashMap<String, decode::Demand>,
     predicates: HashMap<String, (String, String)>,
+    producers: crate::code_rule_dsl::producers::Registry<u32>,
+    consumer: usize,
+    producer_bindings: HashMap<Property, usize>,
 }
 
 /// SQL set identities, independent of the matcher's conservative exactness metadata.
@@ -71,7 +78,7 @@ struct Reuse {
     integers: HashMap<i64, usize>,
     values: HashMap<(String, bool, Option<BTreeSet<u16>>), Set>,
     terms: HashMap<(String, bool), String>,
-    decoded: HashMap<(String, Property), String>,
+    decoded: HashMap<(String, usize), String>,
     kinds: HashMap<String, BTreeSet<u16>>,
 }
 
@@ -88,6 +95,9 @@ impl Lower {
             reuse: Reuse::default(),
             decoding: HashMap::new(),
             predicates: HashMap::new(),
+            producers: Default::default(),
+            consumer: 0,
+            producer_bindings: HashMap::new(),
         }
     }
     fn parameter(&mut self, value: impl Into<Value>) -> String {
@@ -589,6 +599,7 @@ fn batch_scope(
     lower.ctes.push("all_nodes(fid,pre) AS NOT MATERIALIZED (SELECT f.fid,p.value FROM cf JOIN file f ON f.fid=cf.fid CROSS JOIN generate_series(0,f.nodes-1,1) p)".into());
     let mut arms = Vec::new();
     for (qid, plan) in plans.iter().enumerate() {
+        lower.consumer = qid;
         let checkpoint = lower.ctes.len();
         let parameters = lower.parameters.len();
         let indexed = lower.indexed.clone();
@@ -649,14 +660,15 @@ fn batch_scope(
         .into_iter()
         .map(|name| aliases.get(&name).cloned().unwrap_or(name))
         .collect();
-    let decoding = lower
-        .decoding
-        .into_iter()
-        .map(|(name, mut demand)| {
-            demand.scope = aliases.get(&demand.scope).cloned().unwrap_or(demand.scope);
-            (aliases.get(&name).cloned().unwrap_or(name), demand)
-        })
-        .collect();
+    let mut decoding: HashMap<String, decode::Demand> = HashMap::new();
+    for (name, mut demand) in lower.decoding {
+        demand.scope = aliases.get(&demand.scope).cloned().unwrap_or(demand.scope);
+        let name = aliases.get(&name).cloned().unwrap_or(name);
+        decoding
+            .entry(name)
+            .and_modify(|existing| existing.consumers.extend(&demand.consumers))
+            .or_insert(demand);
+    }
     let mut statement = finish_decoded(ctes, queries, lower.parameters, indexed, decoding);
     let values: BTreeSet<_> = lower
         .predicates
@@ -711,6 +723,13 @@ fn batch_scope(
             raw.reschedule();
         }
     }
+    #[cfg(feature = "code-rule-profile")]
+    {
+        statement.consumers = plans
+            .iter()
+            .map(|p| *p as *const AnchorPlan as usize)
+            .collect();
+    }
     statement.language = lang;
     statement.files = fids.unwrap_or_default().to_vec();
     statement.file_scope = fids.is_some();
@@ -718,6 +737,7 @@ fn batch_scope(
     {
         if let Some(raw) = original.as_mut() {
             raw.language = lang;
+            raw.consumers = statement.consumers.clone();
             raw.files = statement.files.clone();
             raw.file_scope = statement.file_scope;
         }
@@ -784,6 +804,21 @@ fn finish_decoded(
         indexed.remove("all_nodes");
         if let Some(all) = ctes.iter_mut().find(|cte| cte.starts_with("all_nodes(")) {
             *all="all_nodes(fid,pre) AS NOT MATERIALIZED (SELECT d.fid,d.pre FROM cf CROSS JOIN decoded_properties d ON d.fid=cf.fid)".into();
+        }
+    }
+    #[cfg(feature = "code-rule-profile")]
+    let mut producers = crate::code_rule_dsl::producers::Registry::default();
+    #[cfg(feature = "code-rule-profile")]
+    for demand in ctes
+        .iter()
+        .filter_map(|cte| decoding.get(cte.split_once('(').expect("CTE columns").0))
+    {
+        for &consumer in &demand.consumers {
+            demand.property.binding(
+                &mut producers,
+                0,
+                format!("candidate-result.{consumer} selector {}", demand.scope),
+            );
         }
     }
     let graph = ctes.clone();
@@ -905,6 +940,10 @@ fn finish_decoded(
     Statement {
         #[cfg(feature = "code-rule-profile")]
         original: None,
+        #[cfg(feature = "code-rule-profile")]
+        producers,
+        #[cfg(feature = "code-rule-profile")]
+        consumers: Vec::new(),
         graph,
         language: 0,
         files: Vec::new(),

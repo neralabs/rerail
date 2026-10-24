@@ -566,6 +566,10 @@ pub(super) fn evaluate_batched_relations(
             eprintln!("SQL AST preparation unavailable for {path}: {error}");
         }
     }
+    #[cfg(feature = "code-rule-profile")]
+    state
+        .anchor_corpus
+        .record_origins(catalog.iter().map(|(_, rule, _)| rule.as_ref()));
     if let Err(error) = state.anchor_corpus.prepare_files(&demands) {
         eprintln!("SQL AST corpus batch unavailable; retaining authoritative candidates: {error}");
     }

@@ -1,8 +1,8 @@
 # Named shared producers
 
-Status: selected design, with offline discovery and declaration checks implemented.
-The runtime contract registry and compiler export remain implementation work.
-The existing SQL engine and addon remain unchanged by this design and its tools.
+Status: engine contract catalog and live candidate exports are implemented. Physical shared execution remains open.
+Decoder reuse now uses registered binding IDs. Candidate captures export actual consumers and pinned source versions.
+The existing retained SQL tables remain the physical owners. Separate fill statements still execute around those owners.
 The [implementation workplan](shared-producer-workplan.md) defines the ordered commits, acceptance checks, and measurement gates.
 
 This design simplifies [execution stages](sql-execution-stages.md) and [materialization ownership](sql-materialization-shape.md).
@@ -152,8 +152,10 @@ The runtime registry must accept definitions from trusted engine or validated pa
 
 ## Compiler tooling integration
 
-The compiler will export contracts and resolved bindings before it renders SQL.
-Each binding will retain every rule, clause, source location, and demand source that uses it.
+The candidate compiler exports live structural bindings through normal SQL capture.
+Each binding retains rule ID, clause ID, policy digest, result index, and selector name.
+The policy API does not supply an authored file path or line. The export does not invent those locations.
+Contract origins identify the engine implementation. Synthetic clauses retain their compiled clause IDs.
 Private stages will export their qualified identities separately from public producer names.
 This export will let the checker connect shared work directly to authored rules.
 
@@ -162,7 +164,32 @@ Runtime profiles will use the same IDs for attempts, completion, reads, and reti
 An explain report will connect a name to its declaration, implementation, bindings, consumers, and coverage.
 Static discovery remains useful after named sharing because private rules can still repeat extractable work.
 
-The first runtime milestone registers structural property contracts and unifies their bindings across rule consumers.
+The first catalog milestone registers structural property contracts and unifies their bindings across rule consumers.
 It preserves the existing SQL-owned data and batched access paths.
 The next milestone promotes reviewed derived producers and connects completion to the compiled frontier controller.
 Cross-clause storage sharing remains a separate, explicit milestone.
+
+## Implemented catalog boundary
+
+The trusted catalog lives in `native/src/code_rule_dsl/producers/`.
+The decoder defines `syntax.node_properties.v1`, `syntax.source_spans.v1`, and `syntax.child_fields.v1` beside their implementations.
+Complete ordered binding values establish identity. The catalog uses no digest equality or SQL equivalence heuristic.
+Child-field options are typed integers. The initial catalog does not accept pack declarations or additional scalar option types.
+Conflicting definitions report both origins and every differing definition field.
+Selectors, result packets, and consumer names remain outside binding identity.
+
+Lowering uses a language-qualified input slot within its local catalog.
+Capture resolves that slot against the actual workspace database and its complete ordered `(fid, language, digest)` generations.
+The exported snapshot identifies that workspace database. The generation descriptor contains actual membership and digests.
+Templates never retain a resolved generation across edits. Unused or rolled-back decoder branches do not enter the export.
+These catalog IDs do not yet reserve work, publish completion, or suppress separate fill statements.
+
+Normal `--sql-profile` captures write `producer-plan-*.json` beside candidate replays.
+Pass those files to the existing `shared_work.py check` command.
+Exports contain diagnostic JSON metadata. Runtime fact rows remain in SQL.
+
+The early connection check selects physical public owner tables for future scoped readers.
+It passes publication barriers, pinned WAL snapshots, rollback, private scratch, and forbidden private-table reads with the production authorizer.
+The protected-view experiment fails: SQLite loses view context for a count shortcut, and CTEs can impersonate accessor labels.
+The existing generated-view exception remains unchanged. Do not extend it to shared owners.
+WP5 must retain this physical-owner boundary and must not treat that legacy exception as a general isolation mechanism.

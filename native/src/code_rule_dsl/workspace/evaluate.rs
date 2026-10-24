@@ -151,6 +151,10 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
             .saturating_mul(demands.values().map(Vec::len).sum::<usize>() as u64)
             .max(1),
     );
+    #[cfg(feature = "code-rule-profile")]
+    context
+        .anchor_corpus
+        .record_origins(context.code_rules.iter().map(Arc::as_ref));
     if let Err(error) = work.run(|| context.anchor_corpus.prepare_files(&demands)) {
         eprintln!("SQL AST batch unavailable; retaining authoritative candidates: {error}");
     }
