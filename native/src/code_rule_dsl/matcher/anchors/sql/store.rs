@@ -157,7 +157,7 @@ impl Store {
             tokens.push_str(&kind_token(lang * LANG_STRIDE + u32::from(kind)));
         }
         #[cfg(feature = "code-rule-profile")]
-        self.db.stage("ast-index-put");
+        self.db.context(serde_json::json!({"component":"ast-index", "stage":"ast-index-put", "path":path, "generation":doc.index_source_digest()}));
         let tx = self.db.unchecked_transaction()?;
         if !known_language {
             tx.execute(

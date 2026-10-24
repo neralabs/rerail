@@ -26,6 +26,8 @@ pub(super) fn request(store: &Store, files: &[i64]) -> Result<()> {
 
 pub(super) fn prepare_structural(store: &Store, files: &[i64]) -> Result<()> {
     #[cfg(feature = "code-rule-profile")]
+    store.db.context(serde_json::json!({"component":"ast-index", "stage":"candidate-preparation", "producer":"decoded-structure", "fileDomain":files}));
+    #[cfg(feature = "code-rule-profile")]
     let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
         crate::code_rule_dsl::profile::Phase::Selection,
     );
@@ -78,6 +80,8 @@ pub(super) fn rows_for(
     covered: bool,
     mut emit: impl FnMut(usize, i64, usize),
 ) -> Result<()> {
+    #[cfg(feature = "code-rule-profile")]
+    store.db.context(serde_json::json!({"component":"ast-index", "stage":"candidate-preparation", "producer":"anchor-frontier", "binding":statement.language, "fileDomain":files}));
     store.readers.clear();
     #[cfg(feature = "code-rule-profile")]
     let nodes = if crate::code_rule_dsl::profile::trace::enabled()

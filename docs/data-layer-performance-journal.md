@@ -30,6 +30,19 @@ It places identical SQL in compiler, publication, candidate, relational, and unk
 Enclosing operator CPU must not inflate SQL counts or SQL CPU.
 `.rerail/profiles/sql-recovery-tdd-20261023/inventory-red` fails because the report has no execution inventory.
 
+The green inventory counts each raw SQL event before query-text aggregation.
+It retains session, worker, producer, binding, generation, file domain, consumer, stage, SQL CPU, and VM steps.
+Missing identities remain null. Unknown phases remain explicit. Enclosing native spans do not count twice.
+All 23 Node profiling tests pass in `.rerail/profiles/sql-recovery-tdd-20261023/inventory-green`.
+The native library Clippy check passes with profiling enabled in `inventory-clippy` (26.394 seconds).
+
+The original capture reconciles to 24,159 statements in `baseline-inventory.json`.
+Its phases contain 464 setup, 1,232 catalog publication, 3,339 relational evaluation, and 19,124 unknown executions.
+The older index context remains active during later candidate queries, so that attribution cannot be trusted.
+New captures set explicit compiler, publication, structural-preparation, and candidate-frontier origins.
+Compilation still validates through SQLite. This step changes observation, not the rule execution algorithm.
+The next runtime step removes eager preparation for excluded local rule/file pairs.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.

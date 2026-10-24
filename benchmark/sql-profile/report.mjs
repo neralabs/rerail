@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { actionableSummary, summaryMarkdown } from "./summary.mjs";
 import { executionBudget, JOB_SQL_EXECUTION_LIMIT } from "./execution-budget.mjs";
 import { captureCoverage } from "./coverage.mjs";
+import { ExecutionInventory } from "./inventory.mjs";
 
 export const thresholds = Object.freeze({ highVmPerRow: 1000, minimumVm: 100_000, emptyVm: 10_000,
   repeatedRuns: 100, smallCpuNs: 1_000_000, expansion: 10, expandedRows: 1000, indexBuilds: 10,
@@ -52,6 +53,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   const queries = [];
   const contexts = new Map();
   const executionCoverage = [], firstExecutions = [];
+  const inventory = new ExecutionInventory();
   const clauseNames = new Map((workload.results?.sql?.report?.profile?.clauses ?? []).map(clause => [clause.statement, clause]));
   const trace = openSync(join(outputDirectory, "trace.json"), "w");
   writeSync(trace, '{"displayTimeUnit":"ms","traceEvents":[');
@@ -84,6 +86,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         if (!query) throw new Error(`Missing query ${event.query} in ${name}`);
         if (event.kind !== query.kind) throw new Error(`Trace kind mismatch in ${name}`);
         eventCount++; localEvents++;
+        inventory.add(event, query, name);
         if (event.kind === "sql") {
           localSql++;
           if (localSql <= JOB_SQL_EXECUTION_LIMIT + 1) firstExecutions.push({
@@ -137,6 +140,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   const summary = Object.fromEntries(fields.map(key => [key, queries.reduce((n, q) => n + (key === "cpuNs" || key === "wallNs" ? (q.kind === "sql" ? q[key] : 0) : q[key]), 0)]));
   const report = { version: 1, workload, thresholds, eventCount, sessions: files.length, summary,
     executionCoverage, captureCoverage: captureCoverage(rawDirectory, executionCoverage),
+    executionInventory: inventory.finish(queries.filter(q => q.kind === "sql").reduce((n, q) => n + q.runs, 0)),
     firstOverBudget: firstExecutions.sort((a, b) => a.startNs - b.startNs || a.session.localeCompare(b.session))[JOB_SQL_EXECUTION_LIMIT] ?? null,
     accounting: "Ranked CPU uses SQL CPU plus operator CPU excluding child SQL. SQL spans exclude preparation; operator spans include preparation. Parsing and other pipeline phases outside these spans are not attributed. Inclusive operator times overlap SQL. Aggregate wall time sums worker spans, not workload latency. Profiling callback and serialization overhead affect timings. EXPLAIN uses unbound NULL parameters after execution. Query plans describe SQLite choices, not actual loop counts. Frame counters cover frame tables; terminal internals are included in SQL time but have no callback breakdown. Rows are returned, changed, or published rows; shared rows are not copies. Summed row counts include operator and SQL observations of the same rows. Threshold flags are review candidates, not correctness failures.",
     contexts: [...contexts.values()].sort((a, b) => b.selfCpuNs - a.selfCpuNs), queries };
@@ -151,8 +155,10 @@ export function writeReport(report, outputDirectory) {
   const hash = path => createHash("sha256").update(readFileSync(path)).digest("hex");
   report.analysis = { version: 1, reporterSha256: hash(new URL(import.meta.url)),
     executionBudgetSha256: hash(new URL("./execution-budget.mjs", import.meta.url)),
+    inventorySha256: hash(new URL("./inventory.mjs", import.meta.url)),
     summarySha256: hash(new URL("./summary.mjs", import.meta.url)) };
   writeFileSync(join(outputDirectory, "summary.md"), summaryMarkdown(report));
+  if (report.executionInventory) writeFileSync(join(outputDirectory, "execution-inventory.json"), JSON.stringify(report.executionInventory, null, 2) + "\n");
   writeFileSync(join(outputDirectory, "execution-budget.json"), JSON.stringify(report.executionBudget, null, 2) + "\n");
   writeFileSync(join(outputDirectory, "profile.json"), JSON.stringify(report, null, 2) + "\n");
   const lines = [summaryMarkdown(report), "", "# Complete query catalogue", "", `Output parity: ${report.workload?.results?.parity ?? "unavailable"}.`, "", report.accounting, "",
