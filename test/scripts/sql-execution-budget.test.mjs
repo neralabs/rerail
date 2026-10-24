@@ -264,3 +264,18 @@ test("chunk B requires all 1296 removals from the accepted 3685 checkpoint",()=>
   assert.equal(executionReduction(job([2389]),target).finalLimit,100);
   assert.equal(executionReduction(job([2389]),target).finalLimitAccepted,false);
 });
+
+
+test("chunk C requires its complete 1261 removal and keeps the final 100 gate",()=>{
+  const ledger=JSON.parse(readFileSync(new URL("../../fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json",import.meta.url),"utf8"));
+  const chunk=ledger.orderedDeliveryChunks.find(c=>c.id==="R5-C");
+  assert.equal(chunk.netRemovalTarget,1261);assert.equal(chunk.wholeJobAfterTarget,989);
+  const target={baseline:2250,removal:1261};
+  assert.equal(executionReduction(job([989]),target).accepted,true);
+  assert.equal(executionReduction(job([990]),target).accepted,false);
+  assert.equal(executionReduction(job([1250]),target).accepted,false,"1000 removals do not complete C");
+  assert.equal(executionReduction(job([989]),target).finalLimit,100);
+  assert.equal(executionReduction(job([989]),target).finalLimitAccepted,false);
+  const launcher=readFileSync(new URL("../../scripts/profiling/sql-budget.mjs",import.meta.url),"utf8");
+  assert.match(launcher,/chunk-c-budget\.json/);
+});

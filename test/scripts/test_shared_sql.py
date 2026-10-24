@@ -23,6 +23,29 @@ def resolve(value, entry, oracle=False):
 
 
 class SharedSqlTests(unittest.TestCase):
+    def test_state_frontends_use_native_syntax_and_explicit_empty_admission(self):
+        path = Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json'
+        policy = json.loads(path.read_text())
+        expected = {'state-signatures-1': (1, 18, 'file'), 'state-flow-1': (5, 25, 'file'),
+                    'state-projection-recovery-2': (4, 7, 'file'), 'state-flow-project-1': (5, 27, 'repository')}
+        for clause in policy['clauses']:
+            if clause['id'] not in expected:
+                continue
+            plan = clause['relational']
+            inputs, stages, partition = expected[clause['id']]
+            self.assertEqual(len(plan['inputs']), inputs, clause['id'])
+            self.assertEqual(len(plan['stages']), stages, clause['id'])
+            self.assertEqual(plan['partitionBy'], partition)
+            self.assertEqual(plan['requireNonemptyInput'], 'syntax_gate')
+            self.assertEqual(plan['syntax']['gate'], 'syntax_gate')
+            self.assertFalse({'nodes', 'edges', 'ownership', 'syntax_rows_0', 'syntax_rows_1'} & {s['name'] for s in plan['stages']})
+            descendants = next(s for s in plan['stages'] if s['name'] == 'descendants')
+            self.assertEqual(descendants['reachability']['syntax'], 'nodes')
+            self.assertIn('expand', descendants['reachability']['roots'])
+            if 'arguments' in {s['name'] for s in plan['stages']}:
+                arguments = next(s for s in plan['stages'] if s['name'] == 'arguments')
+                self.assertIn('n.text', arguments['query'])
+
     def test_conditional_reachability_limits_graph_domains_without_losing_isolated_roots(self):
         from data_layer_six.ast_relations import batched_reachability
         clause = {'id': 'quality-conditional-1', 'relational': {'stages': [S('descendants', "WITH RECURSIVE roots(__path,id) AS (SELECT __path,id FROM nodes WHERE kind='type'), walk(__path,root,node) AS (SELECT __path,id,id FROM roots) SELECT * FROM walk")]}}
