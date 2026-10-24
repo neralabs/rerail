@@ -88,6 +88,11 @@ No execution has an unknown phase. Undeclared producer bindings and generations 
 This is a count comparison, not an unprofiled CPU improvement claim.
 Snapshot and global relational preparation still account for eager work that the local change cannot remove.
 
+The next R2 red tests cover snapshot preparation and the later relational preparation pass.
+The first still prepares a text-excluded clause. The second reactivates an excluded local rule and executes another candidate batch.
+`remaining-admission-red` records both behavioral failures against the local-admission addon (10.970 seconds).
+These failures explain why local admission alone removes only part of the eager frontier.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
