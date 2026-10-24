@@ -1,7 +1,7 @@
 fn main() {
     let output = std::env::args()
         .nth(1)
-        .expect("usage: fts-publication NEW_OUTPUT_JSON");
+        .expect("usage: fts_publication NEW_OUTPUT_JSON");
     let report = rerail_sql_preparation_lab::fts::experiment();
     let mut file = std::fs::OpenOptions::new()
         .write(true)

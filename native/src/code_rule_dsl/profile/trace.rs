@@ -32,43 +32,6 @@ fn emit_to(writer: &mut impl Write, prefix: &str, value: Value) -> std::io::Resu
     writer.write_all(line.as_bytes())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn trace_line_is_serialized_before_entering_the_shared_output_stream() {
-        #[derive(Default)]
-        struct Output {
-            calls: usize,
-            bytes: Vec<u8>,
-        }
-        impl Write for Output {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.calls += 1;
-                self.bytes.extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let mut output = Output::default();
-        emit_to(
-            &mut output,
-            "RERAIL_TRACE",
-            json!({"phase":"producer-wave", "detail":{"files":[1,2,3],"message":"capture"}}),
-        )
-        .unwrap();
-        assert_eq!(
-            output.calls, 1,
-            "formatting fragments allow other stderr writers to split JSON records"
-        );
-        let line = std::str::from_utf8(&output.bytes).unwrap();
-        assert_eq!(line.lines().count(), 1);
-        assert!(serde_json::from_str::<Value>(line.strip_prefix("RERAIL_TRACE ").unwrap()).is_ok());
-    }
-}
-
 pub(crate) struct Context(Option<Attribution>);
 impl Context {
     pub(crate) fn enter(rule: &str, clause: &str, path: Option<&str>) -> Self {
@@ -144,5 +107,42 @@ impl Drop for Span {
                 }),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn trace_line_is_serialized_before_entering_the_shared_output_stream() {
+        #[derive(Default)]
+        struct Output {
+            calls: usize,
+            bytes: Vec<u8>,
+        }
+        impl Write for Output {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.calls += 1;
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut output = Output::default();
+        emit_to(
+            &mut output,
+            "RERAIL_TRACE",
+            json!({"phase":"producer-wave", "detail":{"files":[1,2,3],"message":"capture"}}),
+        )
+        .unwrap();
+        assert_eq!(
+            output.calls, 1,
+            "formatting fragments allow other stderr writers to split JSON records"
+        );
+        let line = std::str::from_utf8(&output.bytes).unwrap();
+        assert_eq!(line.lines().count(), 1);
+        assert!(serde_json::from_str::<Value>(line.strip_prefix("RERAIL_TRACE ").unwrap()).is_ok());
     }
 }

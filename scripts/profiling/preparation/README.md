@@ -120,3 +120,25 @@ python3 test/scripts/test_sql_composition.py
 ```
 
 The [design](../../../docs/sql-composition-opportunities.md) and [journal](../../../docs/data-layer-performance-journal.md) record decisions and integration limits.
+
+
+## FTS publication boundaries
+
+The `fts_publication` binary isolates publication with the exact production positional FTS declaration.
+It compares 32 bulk inserts with separate transactions, those inserts within one transaction, and one complete bulk insert.
+It stages 1,024 files with 256 tokens each before measurement and rotates the order across three trials.
+CPU includes FTS publication and commit. Setup and verification remain outside that interval.
+Every variant must preserve positional vocabulary rows, deletion, and replacement.
+
+```sh
+cargo build --release --locked --manifest-path scripts/profiling/preparation/Cargo.toml --bin fts_publication
+python3 scripts/profiling/run.py --trace off --deadline 115 \
+  --output .rerail/profiles/fts-publication/control -- \
+  scripts/profiling/preparation/target/release/fts_publication \
+  .rerail/profiles/fts-publication/result.json
+```
+
+Use new controller and result paths. The executable refuses to overwrite a result.
+This binary has no production execution switch.
+The [recorded experiment](../../../fixtures/host/data-layer-port/profiling/fts-bulk-publication-20261023.json) preserves raw trials and build identity.
+The result motivates broad publication across ingestion packets. It does not establish a complete-pipeline speedup.
