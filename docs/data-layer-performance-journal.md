@@ -3204,6 +3204,15 @@ Validation covers 400 native tests in each build, the producer gate, the positiv
 Typechecking and Clippy pass in both build modes.
 The [promotion evidence](../fixtures/host/data-layer-port/profiling/sql-shape-decisions.json) records the exact scope and hashes.
 
+### 2026-10-24: R5-A acceptance starts with a failing ownership test
+
+The delivery must remove all 3,474 planned submissions from baseline `188fb8f4`.
+A reduction of 1,000 does not complete R5-A. The fixed guard must finish at or below 4,259 submissions.
+The first regression test requires one indexed SQL store for two independent selectors.
+It fails against the frozen baseline addon: two creates, two indexes, and two drops instead of one each.
+The failing command uses `RERAIL_REQUIRE_PRODUCER_SHAPE=1` and the existing selector-materialization native test.
+No production change is included in this red commit.
+
 ## Future entries
 
 Each new entry must identify the hypothesis, baseline commit, workload hashes, build configuration, and exact commands.

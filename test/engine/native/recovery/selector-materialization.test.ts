@@ -8,7 +8,7 @@ const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../../src/engine/index.ts", import.meta.url).href;
 const capabilities = new URL("../../../../native/src/code_rule_dsl/capabilities.json", import.meta.url).href;
 
-it.skipIf(!required)("pipelines each selector into its physical owner without a second ephemeral copy", () => {
+it.skipIf(!required)("shares one indexed SQL owner across independent selector producers", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-selector-family-"));
   try {
     const program = `
@@ -48,10 +48,12 @@ it.skipIf(!required)("pipelines each selector into its physical owner without a 
         releases += Number(sql.startsWith("DROP TABLE temp."));
       }
     }
-    expect([creates, indexes, releases], "distinct selectors retain their physical owners").toEqual([2, 2, 2]);
-    const owners = candidates[0].stages.filter((s: {temporary: boolean; index: string}) => s.temporary && s.index === "fid,pre");
+    expect([creates, indexes, releases], "one index belongs to the execution domain, not to each selector").toEqual([1, 1, 1]);
+    const owners = candidates[0].stages.filter((s: {slot?: number}) => s.slot !== undefined);
     expect(owners).toHaveLength(2);
-    for (const owner of owners)
-      expect(owner.sql, "the CTAS owner is the materialization boundary").toContain(`${owner.name}(fid,pre) AS NOT MATERIALIZED`);
+    expect(new Set(owners.map((s: {slot: number}) => s.slot)).size).toBe(2);
+    expect(candidates[0].setup).toHaveLength(2);
+    expect(candidates[0].setup[1]).toContain('producer,fid,pre');
+
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 45_000);

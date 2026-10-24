@@ -1,6 +1,6 @@
 # SQL execution reduction opportunities
 
-The delivery unit is now a reduction of at least **1,000 engine submissions** on the complete fixed guard workload.
+Each implementation delivery must remove its chunk's **full expected number of engine submissions** on the complete fixed guard workload.
 Small TDD commits can support that delivery. They do not complete a performance phase on their own.
 This plan supersedes the earlier practice of stopping after a small optimization slice.
 
@@ -124,8 +124,8 @@ The second chunk does not claim the original drop savings again.
 Relational lifecycle counts exclude the PRAGMAs and empty schema probes priced separately.
 After each accepted chunk, reprice the next chunk from the new complete trace and subtract work already removed.
 
-A chunk is complete only when the complete job removes at least 1,000 engine submissions against the preceding accepted checkpoint.
-Its own stated target must also be met. Do not stop after a supporting micro-optimization or a small green test.
+A chunk is complete only when the complete job removes its full stated target against the preceding accepted checkpoint.
+R5-A must remove at least 3,474 submissions; a 1,000-submission reduction does not complete this chunk. Do not stop after a supporting micro-optimization or a small green test.
 Require complete parity, execution coverage, matched CPU controls, and memory measurements.
 Fewer submissions do not permit a CPU or memory regression. The rejected family-packing implementation remains rejected.
 Count replacement INSERTs, DELETEs, schema changes, transactions, publication, and cleanup.
