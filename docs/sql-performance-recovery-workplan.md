@@ -1,18 +1,21 @@
 # SQL performance recovery workplan
 
-Status: R0 is implemented and the real acceptance job fails at 24,159/100 executions.
-Runtime recovery steps R1–R7 remain pending.
+Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
+Conditional admission, whole-job publication, and R4–R7 remain open.
+The latest measured all-SQL count is 22,181; the clarified engine-submission boundary needs a fresh annotated capture.
 All work uses the current worktree. WP1 remains pending.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
 ## Required outcome
 
-One complete cold job executes at most **100 SQL statements**, across all workers and connections.
+One complete cold job submits at most **100 SQL statements from the engine**, across all workers and connections.
+The user clarified this boundary after the FTS bulk-publication audit.
+SQLite internal executions remain separately counted and reconciled. They do not consume the engine allowance.
 This limit comes from `jeremy/sql-capture-demand-spikes`, commit `c109a915`.
 The profiler import omitted that gate and its execution-coverage checks.
 The producer-shape tests counted selected native passes. They did not enforce the SQL execution limit.
 
-Each execution counts, including cached statements, publication, schema setup, indexes, transactions, matching, and cleanup.
+Each engine submission counts, including cached statements, publication, schema setup, indexes, host helper statements, transactions, matching, and cleanup.
 An `execute_batch` call counts every SQL statement inside it.
 A file, rule, input batch, result packet, connection, or worker never resets the allowance.
 Diagnostic EXPLAIN and enclosing native timing spans do not consume the allowance.
@@ -67,7 +70,7 @@ Deliverables:
 - Add a mandatory CI workload with original positive and clean state-tripwire observations.
 
 The initial CI workload is a small regression guard. It does not establish whole-repository acceptance.
-Its findings must complete before the gate reports the excess executions.
+Its findings must complete before the gate reports the excess engine submissions.
 The current engine remains an expected acceptance failure until recovery removes the excess work.
 No skipped test, increased allowance, or optional production path converts that failure into a pass.
 
@@ -159,9 +162,11 @@ TDD ladder:
 5. Increase input batches without increasing the complete-job execution allowance.
 6. Measure temporary bytes, retained bytes, peak memory, and publication CPU together.
 
-Completion requires actual statement counts under the intended workload, including internal and helper SQL that the tracer observes.
-If the required index layout conflicts with the limit, record the exact conflict before changing either requirement.
-Do not redefine the counter to conceal the conflict.
+Completion requires actual engine-submission counts under the intended workload.
+Reconcile and report SQLite internal execution separately. Every engine helper statement still consumes the fixed allowance.
+The FTS audit proves one bulk insert of 101 documents executes 109 SQLite statements internally and externally.
+The user resolves that conflict by applying the limit to engine submissions; the required FTS layout stays intact.
+The tracer uses SQLite callback origin evidence. It does not classify SQL by table names or omit internal measurements.
 
 ## R4: establish shared producers and remove repeated construction
 
@@ -253,3 +258,25 @@ R0 → R1 → R2 → R3 → R4 → R5 → R6 → R7.
 Each step ends with a reviewable change, regression evidence, execution counts, CPU, memory, and a journal entry.
 WP1 starts within R4 in this same worktree.
 This plan creates no Linear tickets and adds no optional production execution path.
+
+
+## Recovery evidence from this iteration
+
+The [journal](data-layer-performance-journal.md#recovery-tdd-2026-10-23) records each red test, implementation, green run, and remaining requirement.
+Local candidate preparation now respects admitted plan/file domains and keeps compatible files batched.
+Snapshot and later relational preparation preserve that admission. Excluded text does not become a fallback root walk.
+The fixed guard workload decreases from 24,159 to 22,181 total SQLite executions after the local slice alone.
+Complete findings and trace coverage pass. These counts precede the clarified origin boundary and the later runtime slices.
+
+Typed publication reduces six insert families from 1,199 executions to 18 for four files and preserves all 800 findings.
+The production helper tests cover variable limits, typed bindings, empty batches, failures, and rollback.
+The change retains the ast-index-spike FTS layout and SQL ownership.
+Whole-job publication still requires a source-admission boundary across the 288 ingestion requests.
+It cannot be implemented by repeating these batches independently for each request.
+
+R2 remains open for conditional cross-file activation through dependency phases.
+R3 remains open for whole-job publication and compiler schema lifetimes.
+R4 must then establish named physical owners and shared missing coverage, including empty results.
+R5 must coalesce compatible consumers while preserving the 100-submission guard.
+R6 and R7 retain their failure, memory, and matched aggregate CPU requirements.
+No aggregate recovery claim follows from these small cases.

@@ -138,6 +138,16 @@ The native red case requires the real FTS document helpers to carry SQLite-inter
 `origin-budget-red` and `origin-tracer-red` both fail before the tracer and gate changes.
 Origin must come from SQLite's trace callback decoration, not table names or the number of open cursors.
 
+The origin green tests pass: 25 Node profiling cases and eight production-tracer tests.
+`origin-budget-green` completes in 2.698 seconds; `origin-tracer-green` completes in 4.236 seconds.
+SQLite's bundled trace callback marks nested VDBE execution with an extra comment prefix.
+The tracer compares that callback text against the canonical statement, so authored leading comments remain engine submissions.
+A second host query while another result cursor is open remains an engine submission.
+Native counters, raw events, query aggregates, and per-origin session totals must all reconcile.
+Unknown or missing origins fail acceptance. Older captures cannot prove the newly clarified boundary.
+The fixed 100 limit covers every engine submission across all connections and workers.
+A complete capture with 100 submissions plus 500 internal executions passes; submission 101 fails.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
