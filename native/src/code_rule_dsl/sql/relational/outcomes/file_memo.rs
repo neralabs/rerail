@@ -40,7 +40,7 @@ impl Sql {
             "d.hit IS NULL AND d.work>0",
             &body.writes,
             ("d.file", "d.node", "d.work-1"),
-            self.generation.clone(),
+            self.generation.entered(),
         )?;
         let width = 2 + body.writes.len();
         let (return_width, fill_column, replay_cost) = if body.effects.cache_fills {

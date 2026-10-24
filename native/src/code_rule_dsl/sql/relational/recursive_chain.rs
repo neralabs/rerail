@@ -1,16 +1,25 @@
-//! Standalone experiment, deliberately not an outcome-compiler admission path.
-//! Answers and utility charges are exact for the recognized chain shape. Logical
-//! depth is modeled separately; native stack-byte checks and incoming outcome
-//! utility levels still block production integration.
+//! Typed functional recursive chains with shared suffix summaries.
+//! Summaries include utility entry costs and relative logical depth. Native
+//! stack-byte parity is not claimed; callers supply incoming utility levels.
 use super::{
     emit,
     ir::{Edge, Set},
     lower::Lowerer,
 };
 use crate::code_rule_dsl::{
-    matcher::{AstMatcher, GrammarMatcher, StopBy},
-    sql::terminals::Terminal,
+    matcher::{AstMatcher, GrammarMatcher, StopBy, UtilRef},
+    sql::terminals::{Terminal, pattern_vars},
 };
+
+use ast_grep_core::matcher::Matcher;
+
+/// A monotone, capture-free recursive component. Neither predicate invokes utilities.
+#[derive(Clone, Debug)]
+pub(super) struct Chain {
+    pub base: Set,
+    pub guard: Set,
+    pub edge: Edge,
+}
 
 pub(super) struct Kernel {
     /// WITH RECURSIVE definitions. Caller supplies chain_input(file,node), whose
@@ -57,85 +66,141 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Kernel, String> {
     if !grammar.applies {
         return Err("chain: inactive grammar".into());
     }
-    let identity = (util.table.as_ptr() as usize, util.index);
     let mut lower = Lowerer::new(grammar.language);
-    let (base, guard, edge) = util
-        .with_target(|body| {
-            let AstMatcher::Any(items) = body else {
-                return Err("chain: ordered two-alternative body required".into());
-            };
-            if items.len() != 2 {
-                return Err("chain: exactly two alternatives required".into());
-            }
-            pure(&items[0])?;
-            let (related, edge) = match &items[1] {
-                AstMatcher::Inside(r, StopBy::Neighbor) => (r, Edge::Parent),
-                AstMatcher::Follows(r, StopBy::Neighbor) => (r, Edge::Previous),
-                AstMatcher::Precedes(r, StopBy::Neighbor) => (r, Edge::Next),
-                _ => return Err("chain: single parent/previous/next continuation required".into()),
-            };
-            let candidate = related.rule();
-            let guards: &[AstMatcher] = match candidate {
-                AstMatcher::All(items) if !items.is_empty() => {
-                    self_call(items.last().unwrap(), identity)?;
-                    &items[..items.len() - 1]
+    let chain = try_lower(util, &mut lower)?.ok_or("chain: unsupported recursive utility shape")?;
+    Ok(Kernel {
+        definitions: chain.definitions("chain_input", "chain")?,
+        terminals: lower.program.terminals,
+    })
+}
+
+/// Unsupported shapes leave the supplied lowerer untouched. Complete syntactic
+/// proof precedes lowering, including pattern captures and kind identities.
+pub(super) fn try_lower(util: &UtilRef, lower: &mut Lowerer) -> Result<Option<Chain>, String> {
+    let identity = (util.table.as_ptr() as usize, util.index);
+    util.with_target(|body| {
+        let AstMatcher::Any(items) = body else {
+            return Ok(None);
+        };
+        if items.len() != 2 || pure(&items[0]).is_err() {
+            return Ok(None);
+        }
+        let (related, edge) = match &items[1] {
+            AstMatcher::Inside(r, StopBy::Neighbor) => (r, Edge::Parent),
+            AstMatcher::Follows(r, StopBy::Neighbor) => (r, Edge::Previous),
+            AstMatcher::Precedes(r, StopBy::Neighbor) => (r, Edge::Next),
+            _ => return Ok(None),
+        };
+        let guards = match related.rule() {
+            AstMatcher::All(terms) if !terms.is_empty() => {
+                if self_call(terms.last().unwrap(), identity).is_err() {
+                    return Ok(None);
                 }
-                _ => {
-                    self_call(candidate, identity)?;
-                    &[]
-                }
-            };
-            for guard in guards {
-                pure(guard)?;
+                &terms[..terms.len() - 1]
             }
-            let base = lower.set(&items[0])?;
-            let guard = Set::Intersect(
+            candidate => {
+                if self_call(candidate, identity).is_err() {
+                    return Ok(None);
+                }
+                &[]
+            }
+        };
+        if guards.iter().any(|guard| pure(guard).is_err()) {
+            return Ok(None);
+        }
+        Ok(Some(Chain {
+            base: lower.set(&items[0])?,
+            guard: Set::Intersect(
                 guards
                     .iter()
-                    .map(|g| lower.set(g))
+                    .map(|guard| lower.set(guard))
                     .collect::<Result<_, _>>()?,
-            );
-            Ok::<_, String>((base, guard, edge))
-        })
-        .ok_or("chain: missing utility body")??;
-    let base = emit::condition(&base, "n")?;
-    let guard = emit::condition(&guard, "p")?;
-    let column = match edge {
-        Edge::Parent => "parent",
-        Edge::Previous => "prev",
-        Edge::Next => "next",
-        _ => unreachable!(),
-    };
-    // Each demanded key has one successor. UNION deduplicates shared suffixes;
-    // reverse UNION ALL emits each key once, without carrying an origin column.
-    let definitions = format!(
-        r#"
-chain_demand(file,node) AS (
- SELECT file,node FROM chain_input
+            ),
+            edge,
+        }))
+    })
+    .unwrap_or(Ok(None))
+}
+
+impl Chain {
+    /// Necessary kinds of the continuation candidate, suitable for an indexed
+    /// global summary domain. None means the guard has no finite kind proof.
+    pub fn guard_kinds(&self) -> Option<Vec<u16>> {
+        use std::collections::BTreeSet;
+        fn necessary(set: &Set) -> Option<BTreeSet<u16>> {
+            match set {
+                Set::Kinds(kinds) => Some(kinds.iter().copied().collect()),
+                Set::Empty => Some(BTreeSet::new()),
+                Set::Intersect(items) => items
+                    .iter()
+                    .filter_map(necessary)
+                    .reduce(|left, right| left.intersection(&right).copied().collect()),
+                Set::Union(items) => {
+                    let mut kinds = BTreeSet::new();
+                    for item in items {
+                        kinds.extend(necessary(item)?);
+                    }
+                    Some(kinds)
+                }
+                _ => None,
+            }
+        }
+        necessary(&self.guard).map(|kinds| kinds.into_iter().collect())
+    }
+
+    pub fn edge_column(&self) -> Result<&'static str, String> {
+        match self.edge {
+            Edge::Parent => Ok("parent"),
+            Edge::Previous => Ok("prev"),
+            Edge::Next => Ok("next"),
+            Edge::Child => Err("chain: child edges are not functional".into()),
+        }
+    }
+
+    /// Caller supplies valid node keys in `input(file,node)`. Duplicates are allowed.
+    /// Output `{prefix}_summary(file,node,truth,cost,peak)` includes root entry.
+    pub fn definitions(&self, input: &str, prefix: &str) -> Result<String, String> {
+        fn identifier(name: &str) -> bool {
+            let mut chars = name.chars();
+            chars
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        if !identifier(input) || !identifier(prefix) {
+            return Err("chain: input and prefix must be SQL identifiers".into());
+        }
+        let base = emit::condition(&self.base, "n")?;
+        let guard = emit::condition(&self.guard, "p")?;
+        let column = self.edge_column()?;
+        // Each demanded key has one successor. UNION deduplicates shared suffixes;
+        // reverse UNION ALL emits each key once, without carrying an origin column.
+        Ok(format!(
+            r#"
+{prefix}_demand(file,node) AS (
+ SELECT file,node FROM {input}
  UNION
- SELECT p.file,p.id FROM chain_demand d
+ SELECT p.file,p.id FROM {prefix}_demand d
  JOIN node n ON n.file=d.file AND n.id=d.node
  JOIN node p ON p.file=n.file AND p.id=n.{column}
  WHERE NOT ({base}) AND ({guard})
 ),
-chain_local(file,node,base,next) AS MATERIALIZED (
+{prefix}_local(file,node,base,next) AS MATERIALIZED (
  SELECT n.file,n.id,({base}),
  CASE WHEN NOT ({base}) AND p.id IS NOT NULL AND ({guard}) THEN p.id END
- FROM chain_demand d JOIN node n ON n.file=d.file AND n.id=d.node
+ FROM {prefix}_demand d JOIN node n ON n.file=d.file AND n.id=d.node
  LEFT JOIN node p ON p.file=n.file AND p.id=n.{column}
 ),
-chain_summary(file,node,truth,cost,peak) AS (
- SELECT file,node,base,1,1 FROM chain_local WHERE next IS NULL
+{prefix}_summary(file,node,truth,cost,peak) AS (
+ SELECT file,node,base,1,1 FROM {prefix}_local WHERE next IS NULL
  UNION ALL
  SELECT l.file,l.node,s.truth,s.cost+1,s.peak+1
- FROM chain_summary s JOIN chain_local l ON l.file=s.file AND l.next=s.node
+ FROM {prefix}_summary s JOIN {prefix}_local l ON l.file=s.file AND l.next=s.node
 )"#
-    );
-    Ok(Kernel {
-        definitions,
-        terminals: lower.program.terminals,
-    })
+        ))
+    }
 }
+
 fn self_call(matcher: &AstMatcher, identity: (usize, usize)) -> Result<(), String> {
     match matcher {
         AstMatcher::Util(u) if (u.table.as_ptr() as usize, u.index) == identity => Ok(()),
@@ -144,9 +209,9 @@ fn self_call(matcher: &AstMatcher, identity: (usize, usize)) -> Result<(), Strin
 }
 fn pure(matcher: &AstMatcher) -> Result<(), String> {
     match matcher {
-        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never | AstMatcher::Pattern(_) => {
-            Ok(())
-        }
+        AstMatcher::Kind(kind) if kind.potential_kinds().is_some() => Ok(()),
+        AstMatcher::Pattern(pattern) if pattern_vars(pattern).is_empty() => Ok(()),
+        AstMatcher::Regex(_) | AstMatcher::Never => Ok(()),
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             for i in items {
                 pure(i)?;
@@ -158,8 +223,7 @@ fn pure(matcher: &AstMatcher) -> Result<(), String> {
         | AstMatcher::Has(r, StopBy::Neighbor)
         | AstMatcher::Follows(r, StopBy::Neighbor)
         | AstMatcher::Precedes(r, StopBy::Neighbor) => pure(r.rule()),
-        // Lowerer additionally rejects every pattern with captures. In particular,
-        // no nonrecursive utility may hide charges/depth inside a guard or base.
+        // No utility may hide charges/depth inside a guard or base.
         _ => {
             Err("chain: predicate needs total capture-free utility-free neighbor-set proof".into())
         }
@@ -180,6 +244,68 @@ mod tests {
 
     fn body() -> Value {
         json!({"any":[{"inside":{"stopBy":"neighbor","kind":"call"},"precedes":{"stopBy":"neighbor","any":[{"kind":"argument_list"},{"kind":"generator_expression"}]}},{"inside":{"stopBy":"neighbor","kind":"parenthesized_expression","matches":"u"}}]})
+    }
+    #[test]
+    fn global_guard_domain_requires_a_kind_proof_for_every_union_arm() {
+        let kinds = |guard| {
+            Chain {
+                base: Set::Empty,
+                guard,
+                edge: Edge::Parent,
+            }
+            .guard_kinds()
+        };
+        assert_eq!(kinds(Set::Intersect(vec![])), None);
+        assert_eq!(
+            kinds(Set::Intersect(vec![
+                Set::Regex(0),
+                Set::Kinds(vec![3, 1, 3])
+            ])),
+            Some(vec![1, 3])
+        );
+        assert_eq!(
+            kinds(Set::Union(vec![Set::Kinds(vec![1]), Set::Regex(0)])),
+            None
+        );
+        assert_eq!(
+            kinds(Set::Union(vec![Set::Kinds(vec![1]), Set::Kinds(vec![3])])),
+            Some(vec![1, 3])
+        );
+        assert_eq!(
+            kinds(Set::Intersect(vec![
+                Set::Kinds(vec![1]),
+                Set::Kinds(vec![3])
+            ])),
+            Some(vec![])
+        );
+    }
+    #[test]
+    fn unsupported_chain_leaves_shared_lowerer_untouched() {
+        let p = policy(
+            json!({"matches":"u"}),
+            json!({"u":{"any":[{"regex":"seed"},{"inside":{"stopBy":"neighbor","all":[{"regex":"guard"},{"pattern":"$X"},{"matches":"u"}]}}]}}),
+        );
+        let grammars = grammar_matchers(&p);
+        let grammar = &grammars[0];
+        let AstMatcher::Util(util) = &grammar.matcher else {
+            panic!("utility root required")
+        };
+        let mut lower = Lowerer::new(grammar.language);
+        assert!(try_lower(util, &mut lower).unwrap().is_none());
+        assert!(lower.program.terminals.is_empty());
+        assert!(lower.program.relations.is_empty());
+
+        let p = policy(json!({"matches":"u"}), json!({"u":body()}));
+        let grammars = grammar_matchers(&p);
+        let AstMatcher::Util(util) = &grammars[0].matcher else {
+            panic!("utility root required")
+        };
+        let chain = try_lower(util, &mut lower).unwrap().unwrap();
+        let definitions = chain.definitions("reached_keys", "component_1").unwrap();
+        assert!(definitions.contains("component_1_summary(file,node,truth,cost,peak)"));
+        assert!(definitions.contains("SELECT file,node FROM reached_keys"));
+        assert!(!definitions.contains("chain_input"));
+        assert!(chain.definitions("reached keys", "component_1").is_err());
     }
     #[test]
     fn recognizes_identity_and_refuses_hidden_effects_or_branching() {

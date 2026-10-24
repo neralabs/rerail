@@ -231,7 +231,7 @@ impl Local {
             &format!("({guard}) AND d.memo_hit IS NULL AND d.work>0"),
             &body.writes,
             ("d.file", "d.node", "d.work-1"),
-            sql.generation.clone(),
+            sql.generation.entered(),
         )?;
         let choice = |arms: &[String]| {
             if arms.is_empty() {

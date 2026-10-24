@@ -1,4 +1,6 @@
 use super::super::ir::Set;
+#[path = "chain.rs"]
+mod chain;
 #[path = "constraints.rs"]
 mod constraints;
 #[path = "field.rs"]
@@ -43,8 +45,16 @@ pub(super) struct Sql {
 pub(super) struct Generation {
     operators: std::rc::Rc<std::cell::Cell<usize>>,
     memo_clause: Option<usize>,
+    utility_depth: u32,
+    components: std::rc::Rc<std::cell::RefCell<chain::Components>>,
 }
 impl Generation {
+    fn entered(&self) -> Self {
+        Self {
+            utility_depth: self.utility_depth.saturating_add(1),
+            ..self.clone()
+        }
+    }
     fn operator(&self) -> Result<(), String> {
         let count = self.operators.get();
         if count == 256 {
@@ -300,6 +310,7 @@ impl Sql {
             _ => "outcome",
         };
         let body = match &plan.op {
+            Op::Chain(id, chain) => return self.chain(*id, chain, input),
             Op::BoundLeaf {
                 term,
                 inputs,
@@ -383,7 +394,7 @@ impl Sql {
                     "d.work>0",
                     &child.writes,
                     ("d.file", "d.node", "d.work-1"),
-                    self.generation.clone(),
+                    self.generation.entered(),
                 )?;
                 let columns = fields(&child.writes, |slot| {
                     let index = child.writes.iter().position(|s| s == &slot).unwrap();

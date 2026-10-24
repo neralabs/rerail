@@ -7,6 +7,7 @@ mod budget_tests;
 mod capture_predicate_tests;
 mod capture_walk_tests;
 mod catalog_tests;
+mod chain_tests;
 mod composition_budget_tests;
 mod constraint_tests;
 mod constraint_walk_tests;
@@ -51,6 +52,8 @@ enum Op {
     Unknown(usize),
     Value(usize),
     Charge(usize, std::rc::Rc<Plan>),
+    /// Functional recursive utility; its summary already includes utility entry.
+    Chain(usize, std::rc::Rc<super::recursive_chain::Chain>),
     Bind(usize),
     /// Atomic structural pattern, with outputs in terminal capture order.
     Pattern(usize, Vec<usize>, Option<Vec<u16>>),

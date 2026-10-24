@@ -5615,3 +5615,95 @@ The complete-coverage gate still fails with 76 refusals: 55 recursive outcomes, 
 Source and executable hashes, fixture inventory, exact output hashes, per-file work traces, and generated SQL hashes are retained in the coverage and qualification artifacts.
 `benchmark/sql-relational-catalog-expansion.json` retains both B413 queries and the matching comparison for the same 70 grammars.
 The checkpoint remains test-only. Production replacement, complete-job batching, recursive resource equivalence, and aggregate list-memory qualification are not complete.
+
+## Catalog continuation: shared recursive suffixes
+
+The next contract admits capture-free, functional recursion through a parent or adjacent sibling.
+Two ordered alternatives define the component: a total base predicate, then a guarded call to the same utility.
+The compiler proves utility identity, predicate purity, capture independence, and a finite kind filter for continuation.
+Unsupported recursive shapes retain an explicit refusal.
+
+Three GPT-6.1 Sol audits had restricted assignments: recursive components, parsed-tree composition, and format-argument composition.
+The recursive agent then changed only the recognizer, typed operator, lowering cache, and effect summary.
+A second agent added focused integration tests in one file.
+The primary agent owns statement-level emission, depth propagation, integration review, and all test execution.
+
+The shared suffix relation has the key `(file,node)` and five columns: file, node, truth, cost, and peak depth.
+It lives at statement scope, outside correlated programs for individual roots.
+Its domain contains guard-eligible nodes in files with candidate roots.
+The node kind index selects that domain, and recursive propagation visits each suffix once.
+Each reached invocation still pays its full native logical cost.
+The setup cost is linear in the guard domain, including eligible nodes outside reached branches.
+
+The integration review found a separate memo boundary.
+A value-reading utility that contains a chain can reuse an answer from a shallower invocation.
+The existing memo stores cost but no peak depth, so that combination requires an explicit refusal until the memo contract changes.
+Logical depth and actual stack bytes remain distinct contracts.
+The SQL plan enforces the 256-level logical limit, but native stack-byte equivalence remains unqualified.
+This checkpoint remains test-only and does not permit production replacement.
+
+Parsed-tree and format-argument audits confirm that both require child composition in SQL.
+Atomic native helpers can produce parsed documents and typed candidate facts, but cannot execute arbitrary child rules.
+Five format policies have capture-free parsed children, but their host utilities also require downward recursive scheduling.
+Binding-site composition similarly needs typed target facts and ordered child transactions.
+These contracts remain separate from the functional-chain implementation.
+
+The first diagnostic run passes four focused tests and rejects one invalid test fixture before SQL execution.
+The fixture requested an anonymous comma as a public kind, but the public DSL accepts only named kinds.
+The corrected sibling tests use named statements and retain a separate anonymous-comma barrier check.
+The next run passes all six integration tests and the SQL logical-depth boundary test.
+The latter checks incoming levels 0, 1, 253, 254, 255, and 256 against an entry-by-entry oracle.
+It does not substitute for native stack-byte qualification.
+
+Shared roots at nesting depths 8, 32, and 128 use 8,098, 29,602, and 115,618 VM instructions.
+The SQL remains 6,224 bytes.
+Adding 512 unrelated declarations leaves the small sample at 1,523 instructions and 20 node advances.
+Adding 8, 32, and 128 disconnected guard groups raises work to 3,279, 9,423, and 33,999 instructions.
+This result exposes the linear cost of the broader guard domain.
+Explained plans show indexed reverse propagation on `(file,next)` and indexed invocation lookups on `(file,node)`.
+A skipped branch uses three node advances and does not scan its recursive suffix domain.
+
+The diagnostic catalog run admits 76 grammars and passes all 76 on 595 files.
+Every admitted grammar has a positive witness.
+The six additions are ASYNC210, ASYNC222, ASYNC250, ASYNC251, F622, and F633.
+The preceding 70 grammars retain identical SQL hashes and VM counts.
+These are separate grammar executions, not a fused complete job.
+
+The broader query shape still requires work.
+On the full fixture batch, each added ASYNC grammar uses approximately 32.85 million VM instructions.
+F622 uses 1,064,442 instructions, and F633 uses 124,571,068 instructions.
+Shared suffixes remove repeated recursion, but the surrounding ordered root programs remain expensive.
+These measurements establish new coverage, not overall performance qualification or production readiness.
+
+The expanded zero-work probe exposes unnecessary summary materialization.
+A reached invocation with no allowance uses 877 instructions with no disconnected guard groups and 31,342 with 128 groups.
+The outer-join condition preserves the logical result but does not prevent SQLite from preparing the shared summary.
+The correction moves the lookup into a correlated typed return with an entry guard before summary access.
+The new gate requires constant VM instructions and node advances for both skipped and exhausted invocations.
+
+The guarded lookup passes the new regression.
+Exhausted calls now use 588 VM instructions and three node advances at every tested guard-domain size.
+Wholly skipped branches retain 699 instructions and three advances.
+The largest exhausted sample drops from 31,342 instructions to 588.
+Successful shared-root samples use 8,283, 30,315, and 118,443 instructions, with 6,386 SQL bytes.
+The guard adds approximately 2.4% to those successful samples and prevents unnecessary preparation on immediate failure.
+Disconnected guard groups still produce linear setup work: 3,335, 9,575, and 34,535 instructions.
+
+Final qualification passes all 263 relational tests, ten B023 fixture checks, two candidate checks, one adversarial check, and the frozen corpus check.
+All 231 preceding and 54 focused SQL/VM controls remain unchanged.
+Frozen B023 retains 246,364 VM instructions, 10,232 SQL bytes, one matching statement, and zero frame publications.
+Median prepared execution is 4.264 ms against 32.294 ms for the reference, across nine executions per query.
+Preparation remains a separate one-time cost, and every existing CPU, VM, and shape gate passes without threshold changes.
+Formatting, workspace Clippy, and profiling-feature Clippy also pass.
+
+The final catalog run passes all 76 admitted grammars on all 595 fixtures, with a positive witness for each grammar.
+The preceding 70 retain their exact SQL hashes, VM counts, and output hashes.
+The complete-coverage gate still fails with 70 explicit refusals.
+The final ASYNC samples use approximately 33.05 million VM instructions each.
+F622 uses 1,073,630 instructions, and F633 uses 124,812,572 instructions.
+Those remaining costs require further structural work outside the shared-chain component.
+
+`benchmark/sql-relational-chain-integration.json` retains the new SQL, explained plans, failing zero-work measurements, corrected growth samples, and grammar comparisons.
+The coverage and qualification artifacts retain source and executable hashes, exact output hashes, fixture inventory, and per-file native work traces.
+The code and evidence remain on the personal branch, separate from Tim's branch.
+Production replacement, native stack-byte equivalence, general recursion, aggregate memory qualification, and complete-job batching remain incomplete.

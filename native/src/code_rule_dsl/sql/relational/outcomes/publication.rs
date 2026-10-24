@@ -29,8 +29,10 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
     let mut payload_cases = vec![];
     let mut clauses = vec![];
     let mut composition = vec![];
+    let mut recursive_components = 0;
     for (clause, &(plan, slots, applies, root_filter)) in plans.iter().enumerate() {
         sql.generation = super::Generation::default();
+        sql.generation.components.borrow_mut().clause = clause;
         sql.generation.memo_clause = super::file_memo::needed(plan).then_some(clause);
         let reset = if sql.generation.memo_clause.is_some() {
             let init = sql.relation(
@@ -47,6 +49,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
             name: sql.relation("publication root demand",format!("SELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node,{work} AS work,ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS ordinal FROM node n{reset} WHERE {} AND {}",usize::from(applies),root_filter),true,"k,file,node,ordinal"),
             slots: Slots::new(),
         };
+        sql.generation.components.borrow_mut().roots = roots.name.clone();
         let output = if plan.fallible() {
             let (query, profile) = program(
                 plan,
@@ -73,6 +76,8 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
         } else {
             sql.emit(plan, &roots)?.name
         };
+        recursive_components += sql.generation.components.borrow().len();
+        sql.publish_components();
         composition.push(sql.generation.operators.get());
         let mut observed: Vec<_> = plan.writes.iter().copied().collect();
         observed.sort_by_key(|&s| &slots[s].name);
@@ -133,6 +138,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
         return Err("publication: SQL text exceeds 256000 bytes".into());
     }
     let mut profile = json!({"scope":"Workspace clause/file failure publication kernel","clauses":clauses,"relations":sql.profile,"compositionOperators":composition,"outcomes":{"false":0,"true":1,"unknown":2,"depth":-1,"work":-2,"scope":-3,"value":-4},"failureColumn":4,"remainingWorkColumn":5,"initialWork":work,"publicationWidth":5+width,"nativeComposition":false,"flags":["Fallible clauses sequence roots within each file; total clauses retain set composition.","Provisional matches are withheld until the clause/file outcome is complete."],"limitations":["Work accounting covers the admitted outcome operators. Utility answers use local typed columns or clause/file keyed storage when traversal extends their lifetime. Native depth limits and deadlines remain unproved.","Native depth/stack budgets, decisions and enumeration remain unproved.","This publication contract is for workspace local clauses. Stateless query aggregation has a different failure scope."]});
+    profile["recursiveComponents"] = json!(recursive_components);
     if clauses.len() == 1 {
         for key in [
             "outcomeDemand",

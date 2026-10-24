@@ -12,6 +12,7 @@ pub(super) struct Effects {
     pub cache_fills: bool,
     /// Exports may refer to descendants, so a root-binding bitmask is insufficient.
     pub typed_exports: bool,
+    pub contains_chain: bool,
 }
 impl Effects {
     fn merge(&mut self, child: Self) {
@@ -22,6 +23,7 @@ impl Effects {
         self.file_memo |= child.file_memo;
         self.cache_fills |= child.cache_fills;
         self.typed_exports |= child.typed_exports;
+        self.contains_chain |= child.contains_chain;
     }
     pub fn of(op: &Op) -> Self {
         let mut result = Self::default();
@@ -49,6 +51,10 @@ impl Effects {
             Op::Value(_) => {
                 result.reads_value = true;
                 result.fallible = true;
+            }
+            Op::Chain(..) => {
+                result.fallible = true;
+                result.contains_chain = true;
             }
             Op::Not(child) => result = child.effects,
             Op::Charge(_, child) => {

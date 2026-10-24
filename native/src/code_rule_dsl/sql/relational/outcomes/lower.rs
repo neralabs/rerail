@@ -33,6 +33,7 @@ pub(super) struct Lower {
     pub slots: Vec<Slot>,
     active: HashSet<(usize, usize)>,
     utilities: HashMap<(usize, usize), (usize, Rc<Plan>)>,
+    chains: HashMap<(usize, usize), (usize, Rc<super::super::recursive_chain::Chain>)>,
     operators: usize,
     utility_calls: usize,
     three_valued: bool,
@@ -47,6 +48,7 @@ impl Lower {
             slots: vec![],
             active: HashSet::new(),
             utilities: HashMap::new(),
+            chains: HashMap::new(),
             operators: 0,
             utility_calls: 0,
             three_valued,
@@ -54,7 +56,7 @@ impl Lower {
     }
 
     pub fn profile(&self, terminal_base: usize) -> serde_json::Value {
-        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len(),"utilityBodyLowerings":self.utilities.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
+        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len()+self.chains.len(),"utilityBodyLowerings":self.utilities.len()+self.chains.len(),"recursiveComponents":self.chains.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
     }
 
     fn slot(&mut self, name: &str, kind: CaptureKind) -> Result<usize, String> {
@@ -328,26 +330,43 @@ impl Lower {
             AstMatcher::Util(util) => {
                 self.utility_calls += 1;
                 let key = (util.table.as_ptr() as usize, util.index);
-                let (id, child) = if let Some((id, child)) = self.utilities.get(&key) {
-                    (*id, Rc::clone(child))
-                } else {
-                    if !self.active.insert(key) {
-                        return Err(
-                            "outcome relations: recursive outcomes need a component contract"
-                                .into(),
-                        );
+                if let Some((id, chain)) = self.chains.get(&key) {
+                    Op::Chain(*id, Rc::clone(chain))
+                } else if let Some(chain) =
+                    super::super::recursive_chain::try_lower(util, &mut self.pure)?
+                {
+                    if chain.guard_kinds().is_none() {
+                        return Err("outcome relations: recursive outcomes require a finite continuation kind filter for shared chain summaries".into());
                     }
-                    let result = util.with_target(|rule| self.plan(rule));
-                    self.active.remove(&key);
-                    let child = Rc::new(result.ok_or("outcome relations: missing utility")??);
-                    let id = self.utilities.len();
-                    self.utilities.insert(key, (id, Rc::clone(&child)));
-                    (id, child)
-                };
-                mentions = child.mentions.clone();
-                writes = child.writes.clone();
-                node_writes = child.node_writes.clone();
-                Op::Charge(id, child)
+                    let id = self.chains.len();
+                    let chain = Rc::new(chain);
+                    self.chains.insert(key, (id, Rc::clone(&chain)));
+                    Op::Chain(id, chain)
+                } else {
+                    let (id, child) = if let Some((id, child)) = self.utilities.get(&key) {
+                        (*id, Rc::clone(child))
+                    } else {
+                        if !self.active.insert(key) {
+                            return Err(
+                                "outcome relations: recursive outcomes need a component contract"
+                                    .into(),
+                            );
+                        }
+                        let result = util.with_target(|rule| self.plan(rule));
+                        self.active.remove(&key);
+                        let child = Rc::new(result.ok_or("outcome relations: missing utility")??);
+                        let id = self.utilities.len();
+                        self.utilities.insert(key, (id, Rc::clone(&child)));
+                        (id, child)
+                    };
+                    if child.reads_value() && child.effects.contains_chain {
+                        return Err("outcome relations: memoized recursive outcomes need peak-depth answers".into());
+                    }
+                    mentions = child.mentions.clone();
+                    writes = child.writes.clone();
+                    node_writes = child.node_writes.clone();
+                    Op::Charge(id, child)
+                }
             }
             _ => {
                 let missing = match matcher {

@@ -79,7 +79,11 @@ impl Shared<'_> {
         ]),&[],true)?;
         let miss = format!("d.{reached} AND d.{hit} IS NULL AND d.{start}>0");
         let inherited = self.memo.proven.clone();
-        let (answer, _) = self.emit(body, &miss)?;
+        let caller_generation = self.sql.generation.clone();
+        self.sql.generation = caller_generation.entered();
+        let result = self.emit(body, &miss);
+        self.sql.generation = caller_generation;
+        let (answer, _) = result?;
         // A body is optional on an outer memo hit. Its compile-time replay proofs
         // cannot escape this boundary; its runtime typed answers do escape.
         self.memo.proven = inherited;

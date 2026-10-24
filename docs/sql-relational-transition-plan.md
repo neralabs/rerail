@@ -998,3 +998,48 @@ The final named first-refusal ledger is:
 
 Qualification passes 254 relational tests and preserves all 285 preceding SQL/VM control profiles.
 Frozen B023 also preserves every existing shape and VM gate.
+
+## Catalog continuation: functional recursive chains
+
+The test compiler now admits 76 of 146 grammars, up from 70.
+The six additions are ASYNC210, ASYNC222, ASYNC250, ASYNC251, F622, and F633.
+The component contract requires a pure base, a capture-free guard, and one monotone parent or sibling continuation.
+A finite guard-kind proof selects the shared domain.
+SQL stores suffix answers once per component and statement, keyed by file and node.
+Every reached invocation retains its full logical utility cost.
+
+This admission does not imply native stack-byte equivalence.
+The chain contract checks logical depth before each recursive entry charge and includes the caller's utility depth.
+Value-reading utility ancestors that contain a chain remain refused because their memo answers lack peak depth.
+The complete-coverage gate and production cutover remain closed.
+
+The first-refusal ledger now contains:
+
+| Missing contract | Grammars |
+| --- | ---: |
+| General recursive outcomes | 49 |
+| Parsed-tree composition | 9 |
+| Format-argument composition | 6 |
+| Binding-site composition | 3 |
+| Parameterized utility calls | 2 |
+| Recursive negation or region dependency | 1 |
+
+The next recursive contract must handle ordered downward candidates, including anonymous tokens and unsuccessful child calls.
+A single named-child shortcut cannot preserve native work or depth.
+Parsed-tree and format-argument contracts must expose typed documents and candidates before SQL executes their child plans.
+Binding-site contracts likewise require target facts, followed by ordered child transactions.
+
+The new performance gates cover shared suffixes, disconnected guard regions, indexed lookups, and skipped or exhausted invocations.
+A zero-work regression caught eager materialization through an outer join.
+A guarded correlated lookup reduces the largest failing sample from 31,342 to 588 VM instructions.
+The shared domain still includes disconnected guard nodes within candidate files, so its preparation cost remains linear in that domain.
+
+The added catalog coverage also exposes expensive surrounding outcome programs.
+Shared recursion does not resolve the ordered root-program overhead in F633 and the added ASYNC rules.
+Further work must preserve finite allowances while batching those total structural prefixes and their costs.
+`benchmark/sql-relational-chain-integration.json` records the SQL, explained plans, growth samples, and grammar measurements.
+The complete-job 100-execution gate remains a separate requirement before production replacement.
+
+Final qualification passes 263 relational tests and all 285 preceding SQL/VM controls.
+All 76 admitted grammars match native results on all 595 fixtures, with a positive witness for each grammar.
+Frozen B023 retains 246,364 VM instructions and passes its existing CPU and query-shape gates.
