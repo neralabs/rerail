@@ -359,6 +359,9 @@ fn positional_fts_bulk_publication_exposes_per_document_helper_executions() {
             })
             .count();
         assert_eq!(helpers, files as usize);
+        assert!(events.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).filter(|event| {
+            state.queries[event["query"].as_u64().unwrap() as usize]["sql"].as_str().unwrap().starts_with("REPLACE INTO")
+        }).all(|event| event["origin"] == "sqliteInternal"));
         assert!(publication > helpers);
         println!(
             "FTS_BULK_BUDGET {}",

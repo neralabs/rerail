@@ -132,6 +132,12 @@ SQLite source confirms cached internal document-size statements and transaction-
 The contentless-delete layout rejects `columnsize=0`; suspending user triggers does not suspend FTS5's update method.
 The next FTS experiment compares batched publication with transaction boundaries across packets and the complete job.
 
+The user confirms the limit applies to engine-submitted statements and requires separate internal counts.
+The new red Node cases accept 100 submissions plus 500 observed SQLite internal executions, reject submission 101, and reject missing origin evidence.
+The native red case requires the real FTS document helpers to carry SQLite-internal attribution.
+`origin-budget-red` and `origin-tracer-red` both fail before the tracer and gate changes.
+Origin must come from SQLite's trace callback decoration, not table names or the number of open cursors.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
