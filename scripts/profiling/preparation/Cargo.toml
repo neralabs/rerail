@@ -11,7 +11,7 @@ default = ["code-rule-profile"]
 code-rule-profile = []
 
 [dependencies]
-rusqlite = { version = "=0.40.2", features = ["bundled", "limits", "functions", "hooks", "vtab", "series", "modern_sqlite"] }
+rusqlite = { version = "=0.40.2", features = ["bundled", "limits", "functions", "hooks", "vtab", "series", "modern_sqlite", "column_decltype"] }
 regex = "=1.13.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

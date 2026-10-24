@@ -8,12 +8,54 @@ use std::{
     borrow::Cow,
     ffi::{CStr, CString, c_int},
 };
+#[path = "schema/cache.rs"]
+pub(crate) mod cache;
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct Column {
+    pub(crate) name: String,
+    pub(crate) declared_type: String,
+}
+pub(crate) type Columns = Vec<Column>;
+pub(crate) type Registry = std::collections::BTreeMap<String, Columns>;
+
+pub(crate) fn describe(db: &Connection, name: &str) -> Result<Columns> {
+    Ok(db
+        .prepare(&format!("SELECT * FROM {}", quote(name)))?
+        .columns()
+        .iter()
+        .map(|column| Column {
+            name: column.name().to_owned(),
+            declared_type: column.decl_type().unwrap_or("").to_owned(),
+        })
+        .collect())
+}
+fn quote(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+pub(crate) fn declaration(name: &str, columns: &[Column]) -> String {
+    format!(
+        "CREATE TABLE {} ({})",
+        quote(name),
+        columns
+            .iter()
+            .map(|column| {
+                if column.declared_type.is_empty() {
+                    quote(&column.name)
+                } else {
+                    format!("{} {}", quote(&column.name), quote(&column.declared_type))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
 
 fn failure(message: &str) -> rusqlite::Error {
     rusqlite::Error::ModuleError(message.to_owned())
 }
 
-pub(crate) fn register(db: &Connection, name: &str, declaration: String) -> Result<()> {
+pub(crate) fn register(db: &Connection, name: &str, declaration: String) -> Result<Columns> {
     // CREATE TABLE rejects SQLite's reserved object names, even for unused inputs.
     if name.to_ascii_lowercase().starts_with("sqlite_") {
         return Err(failure("object name reserved for internal use"));
@@ -25,8 +67,7 @@ pub(crate) fn register(db: &Connection, name: &str, declaration: String) -> Resu
     db.create_module(module.as_c_str(), &MODULE, Some(declaration))?;
     // Force xConnect now, outside the authored-query authorizer. This also checks
     // unused declarations for duplicate columns and other SQLite schema errors.
-    db.prepare(&format!("SELECT * FROM \"{}\"", name.replace('"', "\"\"")))?;
-    Ok(())
+    describe(db, name)
 }
 
 #[repr(C)]
