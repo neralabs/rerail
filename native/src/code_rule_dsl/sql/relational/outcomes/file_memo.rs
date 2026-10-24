@@ -1,7 +1,7 @@
 //! Clause/file answer lifetime for utilities reached through traversal.
 //! SQL owns lookup, miss composition, charge replay, and completed-answer publication.
 use super::ordered::nested::{bridge, program};
-use super::{Demand, Output, Plan, Sql, fields, value};
+use super::{Demand, Op, Output, Plan, Sql, fields, value};
 use serde_json::json;
 
 #[path = "fill_cost.rs"]
@@ -19,18 +19,34 @@ impl Sql {
         input: &Demand,
     ) -> Result<Output, String> {
         let clause = self.generation.memo_clause.expect("clause answer scope");
+        let memo_layout = self.generation.memo_layout.clone();
+        let layout = memo_layout.as_ref();
+        let contract = layout.and_then(|layout| layout.contracts.get(&utility));
+        let memo_identity = contract.map_or(utility, |contract| contract.identity);
+        let memo_column = |slot: usize| layout.map_or(slot, |layout| layout.column(slot));
         let identity = format!(
-            "m.clause IS {clause} AND m.utility IS {utility} AND m.file IS d.file AND m.node IS d.node"
+            "m.clause IS {clause} AND m.utility IS {memo_identity} AND m.file IS d.file AND m.node IS d.node"
         );
-        let keys = input
-            .slots
+        // Parameter calls read only mapped caller captures. Other live caller
+        // captures remain available for rollback but do not change the answer key.
+        let mut key_slots = if matches!(&body.op, Op::CallFrame { .. }) {
+            body.mentions.clone()
+        } else {
+            input.slots.clone()
+        };
+        if let Some(layout) = layout {
+            let scope = contract.and_then(|contract| contract.scope.as_ref());
+            key_slots.retain(|slot| layout.capture(*slot, scope));
+        }
+        key_slots.extend(&self.generation.following);
+        let keys = key_slots
             .iter()
-            .map(|&s| format!(" AND m.k{s} IS {}", value(input, "d", s)))
+            .map(|&s| format!(" AND m.k{} IS {}", memo_column(s), value(input, "d", s)))
             .collect::<String>();
         let hit_exports = body
             .writes
             .iter()
-            .map(|s| format!(",m.o{s} AS hit{s}"))
+            .map(|s| format!(",m.o{} AS hit{s}", memo_column(*s)))
             .collect::<String>();
         let lookup = self.relation("clause utility keyed lookup", format!("SELECT d.*,m.truth AS hit,m.cost AS cost{hit_exports} FROM {} d LEFT JOIN relation_memo m ON m.mode IS 0 AND {identity}{keys}", input.name), true, "demand,prior truth,cost,exports");
         let (mut query, profile) = program(
@@ -77,11 +93,25 @@ impl Sql {
         let supplied = body
             .writes
             .iter()
-            .map(|s| format!(" AND m.v{s} IS CASE WHEN d.tested=1 THEN d.e{s} END"))
+            .map(|s| {
+                format!(
+                    " AND m.v{} IS CASE WHEN d.tested=1 THEN d.e{s} END",
+                    memo_column(*s)
+                )
+            })
             .collect::<String>();
         let columns = fields(&body.writes, |s| format!("d.e{s}"));
         let name = self.relation("clause utility completed answer publication", format!("SELECT d.k,d.remaining AS work,COALESCE(m.truth,d.tested) AS truth{columns} FROM {tested} d LEFT JOIN relation_memo m ON m.mode IS CASE WHEN d.hit IS NULL AND d.tested>=0 THEN 1 END AND {identity}{keys} AND m.vtruth IS d.tested AND m.vcost IS {replay_cost}{supplied}"), true, "k,truth,work,exports");
-        self.profile.last_mut().unwrap()["memo"] = json!({"lifetime":"statement clause/file","key":["clause","utility","file","node","all incoming captures"],"storage":"indexed integer scratch relation","recursiveStateColumnsAdded":0,"utility":utility});
+        self.profile.last_mut().unwrap()["memo"] = json!({"lifetime":"statement clause/file","key":["clause","utility","file","node",if matches!(&body.op, Op::CallFrame { .. }) { "mapped caller captures" } else { "all incoming captures" }],"storage":"indexed integer scratch relation","recursiveStateColumnsAdded":0,"utility":utility});
+        if layout.is_some() {
+            self.profile.last_mut().unwrap()["canonicalMemo"] = json!({
+                "body":utility,"identity":memo_identity,
+                "scope":contract.and_then(|contract|contract.scope.as_ref()),
+                "keyColumns":key_slots.iter().map(|slot|(*slot,memo_column(*slot))).collect::<Vec<_>>(),
+                "exportColumns":body.writes.iter().map(|slot|(*slot,memo_column(*slot))).collect::<Vec<_>>(),
+                "followingColumns":self.generation.following,
+            });
+        }
         Ok(Output { name })
     }
 }

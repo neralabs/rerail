@@ -9,13 +9,6 @@ pub(super) fn contains_walk(plan: &Plan) -> bool {
     // Pattern witnesses also need full typed returns rather than root-binding masks.
     plan.effects.walk_depth > 0 || plan.effects.typed_exports
 }
-fn check_depth(plan: &Plan, walks: usize) -> Result<(), String> {
-    if walks + plan.effects.walk_depth > 4 {
-        return Err("nested ordered traversal depth exceeds 4".into());
-    }
-    Ok(())
-}
-
 /// The outer SELECT binds w, n, and (for caller captures) d. Inner CTE names have lexical scope.
 pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     plan: &Plan,
@@ -24,8 +17,20 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     guard: &str,
     exports: &Slots,
     location: (&str, &str, &str),
-    generation: super::super::Generation,
+    mut generation: super::super::Generation,
 ) -> Result<(String, Value), String> {
+    // Budget the emitted typed return chain, including truth/work cells. Wide
+    // child contracts consume more storage than narrow children at equal depth.
+    // Operator and SQL-byte limits separately bound composition and preparation.
+    generation.return_cells = generation
+        .return_cells
+        .checked_add(2 + exports.len())
+        .filter(|cells| *cells <= 128)
+        .ok_or("nested typed-return payload exceeds 128 active cells")?;
+    generation
+        .return_peak
+        .set(generation.return_peak.get().max(generation.return_cells));
+    let return_cells = generation.return_cells;
     let (file, node, work) = location;
     // A node-local child need not allocate a demand/result CTE pair.
     // Unknown or binding prefixes keep the general typed composition contract.
@@ -88,7 +93,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
         generation,
     };
     let slots = if fresh {
-        Slots::new()
+        sql.generation.following.clone()
     } else if plan.uses_memo() {
         input.slots.clone()
     } else {
@@ -115,7 +120,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     );
     Ok((
         query,
-        json!({"relations":sql.profile,"exports":exports,"singleReachedDemand":true}),
+        json!({"relations":sql.profile,"exports":exports,"singleReachedDemand":true,"activeReturnCells":return_cells,"returnCellBudget":128}),
     ))
 }
 pub(in crate::code_rule_dsl::sql::relational::outcomes) fn bridge(
@@ -138,10 +143,6 @@ pub(super) fn emit(
     bounds: Option<Bounds>,
     input: &Demand,
 ) -> Result<Output, String> {
-    check_depth(rule, 1)?;
-    if let Some(stop) = stop {
-        check_depth(stop, 1)?;
-    }
     let exports = if bounds.is_none() {
         rule.writes.clone()
     } else {

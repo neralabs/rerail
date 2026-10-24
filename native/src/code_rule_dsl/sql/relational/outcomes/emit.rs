@@ -1,4 +1,12 @@
+#[path = "format_emit.rs"]
+mod format_emit;
 use super::super::ir::Set;
+#[path = "binding_emit.rs"]
+mod binding_emit;
+#[path = "binding_occurrence.rs"]
+mod binding_occurrence;
+#[path = "call_emit.rs"]
+mod call_emit;
 #[path = "chain.rs"]
 mod chain;
 #[path = "constraints.rs"]
@@ -15,10 +23,14 @@ mod file_memo;
 pub(super) mod memo;
 #[path = "ordered.rs"]
 mod ordered;
+#[path = "parse_emit.rs"]
+mod parse_emit;
 #[path = "predicate.rs"]
 mod predicate;
 #[path = "publication.rs"]
 mod publication;
+#[path = "recursive_search_emit.rs"]
+mod recursive_search_emit;
 #[path = "repeat_cost.rs"]
 mod repeat_cost;
 #[path = "repeat_walk.rs"]
@@ -45,12 +57,24 @@ pub(super) struct Sql {
 /// after the emitter selects a miss body, a replay, or a fused scalar expression.
 #[derive(Clone, Default)]
 pub(super) struct Generation {
+    memo_layout: Option<std::rc::Rc<super::utility_memo::Layout>>,
+    following: Slots,
+    /// Active correlated-return payload, separate from source-level walk depth.
+    return_cells: usize,
+    return_peak: std::rc::Rc<std::cell::Cell<usize>>,
     operators: std::rc::Rc<std::cell::Cell<usize>>,
     memo_clause: Option<usize>,
     utility_depth: u32,
+    dynamic_depth: Option<String>,
     components: std::rc::Rc<std::cell::RefCell<chain::Components>>,
 }
 impl Generation {
+    fn depth_expression(&self) -> String {
+        self.dynamic_depth.as_ref().map_or_else(
+            || self.utility_depth.to_string(),
+            |depth| format!("({depth})+{}", self.utility_depth),
+        )
+    }
     fn entered(&self) -> Self {
         Self {
             utility_depth: self.utility_depth.saturating_add(1),
@@ -71,8 +95,29 @@ impl Generation {
     fn tree(&self, plan: &Plan) -> Result<(), String> {
         self.operator()?;
         match &plan.op {
+            Op::FormatArgs {
+                unused, missing, ..
+            } => {
+                for child in [unused, missing].into_iter().flatten() {
+                    self.tree(child)?;
+                }
+            }
             Op::All(items) | Op::Any(items) => {
                 for child in items {
+                    self.tree(child)?;
+                }
+            }
+            Op::Binding {
+                core,
+                children,
+                occurrence,
+                ..
+            } => {
+                self.tree(core)?;
+                for (_, child) in children {
+                    self.tree(child)?;
+                }
+                if let Some(child) = occurrence {
                     self.tree(child)?;
                 }
             }
@@ -83,8 +128,9 @@ impl Generation {
                 }
             }
             Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => self.tree(child)?,
-            Op::Not(child) => self.tree(child)?,
-            Op::Charge(_, child) => self.tree(child)?,
+            Op::CallFrame { body: child, .. } => self.tree(child)?,
+            Op::Parse { child, .. } | Op::Not(child) => self.tree(child)?,
+            Op::Charge(_, child) | Op::TransientCharge(child) => self.tree(child)?,
             Op::Search(_, _, child, stop)
             | Op::Count {
                 rule: child, stop, ..
@@ -212,7 +258,7 @@ impl Sql {
                 ),
                 true,
             ),
-            Op::Value(_) | Op::Charge(..) => return Ok(None),
+            Op::Value(_) | Op::Charge(..) | Op::TransientCharge(_) => return Ok(None),
             Op::Unknown(term) => (
                 format!("CASE WHEN node_regex({term},d.file,d.node) THEN 2 ELSE 1 END"),
                 false,
@@ -312,8 +358,43 @@ impl Sql {
             _ => "outcome",
         };
         let body = match &plan.op {
+            Op::FormatArgs {
+                term,
+                inputs,
+                unused,
+                missing,
+            } => {
+                return self.format_args(
+                    plan,
+                    *term,
+                    inputs,
+                    unused.as_deref(),
+                    missing.as_deref(),
+                    input,
+                );
+            }
+            Op::Binding {
+                core,
+                children,
+                occurrence_slot,
+                occurrence,
+            } => {
+                return self.binding(
+                    plan,
+                    core,
+                    children,
+                    *occurrence_slot,
+                    occurrence.as_deref(),
+                    input,
+                );
+            }
+            Op::Parse { term, child } => return self.parsed(*term, child, input),
+            Op::CallFrame { body, mapping } => return self.call_frame(body, mapping, input),
             Op::Chain(id, chain) => return self.chain(*id, chain, input),
             Op::Downward(id, component) => return self.downward(*id, component, input),
+            Op::RecursiveSearch { id, component } => {
+                return self.recursive_search(*id, component, input);
+            }
             Op::BoundLeaf {
                 term,
                 inputs,
@@ -386,15 +467,24 @@ impl Sql {
                     output.name
                 )
             }
-            Op::Charge(utility, child) => {
-                if self.generation.memo_clause.is_some() && child.reads_value() {
+            Op::Charge(_, child) | Op::TransientCharge(child) => {
+                if let Op::Charge(utility, _) = &plan.op
+                    && self.generation.memo_clause.is_some()
+                    && child.reads_value()
+                {
                     return self.memo_utility(*utility, child, input);
                 }
+                let depth = self.generation.depth_expression();
+                let guard = if self.generation.dynamic_depth.is_some() {
+                    format!("d.work>0 AND ({depth})<256")
+                } else {
+                    "d.work>0".into()
+                };
                 let (query, profile) = ordered::nested::program(
                     child,
                     input,
                     false,
-                    "d.work>0",
+                    &guard,
                     &child.writes,
                     ("d.file", "d.node", "d.work-1"),
                     self.generation.entered(),
@@ -403,7 +493,17 @@ impl Sql {
                     let index = child.writes.iter().position(|s| s == &slot).unwrap();
                     format!("r.c{}", index + 2)
                 });
-                let name = self.relation("utility entry charge", format!("SELECT d.k,COALESCE(r.c1,0) AS work,CASE WHEN d.work=0 THEN -2 ELSE r.c0 END AS truth{columns} FROM {} d {}",input.name,ordered::nested::bridge(&query,2+child.writes.len())),true,"k,work,truth,captures");
+                let depth_failure = if self.generation.dynamic_depth.is_some() {
+                    format!("WHEN ({depth})>=256 THEN -1 ")
+                } else {
+                    String::new()
+                };
+                let remaining = if self.generation.dynamic_depth.is_some() {
+                    "COALESCE(r.c1,d.work)"
+                } else {
+                    "COALESCE(r.c1,0)"
+                };
+                let name = self.relation("utility entry charge", format!("SELECT d.k,{remaining} AS work,CASE {depth_failure}WHEN d.work=0 THEN -2 ELSE r.c0 END AS truth{columns} FROM {} d {}",input.name,ordered::nested::bridge(&query,2+child.writes.len())),true,"k,work,truth,captures");
                 self.profile.last_mut().unwrap()["childPrograms"] = json!({"utility":profile});
                 return Ok(Output { name });
             }
@@ -792,6 +892,7 @@ pub(super) fn compile(
             "outcomes":{"false":0,"true":1,"unknown":2},"nativeComposition":false,
             "captures":observed.iter().map(|&id|json!({"name":slots[id].name,"slot":id,"kind":slots[id].kind.name()})).collect::<Vec<_>>(),
             "relations":sql.profile,"compositionOperators":[sql.generation.operators.get()],
+            "nestedReturnCells":[sql.generation.return_peak.get()],"nestedReturnCellBudget":128,
             "limitations":["Native work and stack/depth budgets remain unproved.","Following values, traversal depth beyond four, recursion, enumeration, and full-file failure publication remain unproved."],
             "flags":["Ordered node-local capture programs admit at most 61 slots and Boolean depth 16; masks keep recursive state at ten columns.","Only total structural search plans may evaluate candidates before ordered reduction.","Counts use reached candidate visits and carry a native work allowance."]
         }),

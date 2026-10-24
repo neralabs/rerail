@@ -29,10 +29,18 @@ impl Leaves {
                 "relational pattern: capture-bearing terminal".into(),
             ));
         }
-        let Some(file) = self.0.files.get(file) else {
+        if let Some(file) = self.0.files.get(file) {
+            return Ok(node < file.facts.len()
+                && term.pattern.match_node(node_at(&file.root, node)).is_some());
+        }
+        let Some(sub) = self.0.subfile(file) else {
             return Ok(false);
         };
-        Ok(node < file.facts.len() && term.pattern.match_node(node_at(&file.root, node)).is_some())
+        Ok(node < sub.facts.len()
+            && term
+                .pattern
+                .match_node(sub.root.adopt(sub.root.root().get_doc().node(node)))
+                .is_some())
     }
 }
 
@@ -45,6 +53,9 @@ pub(in crate::code_rule_dsl::sql) fn register(
     super::bound_leaf::register(db, batch)?;
     super::memo_store::register(db)?;
     super::budget_leaf::register(db, batch)?;
+    super::parse_facts::register(db, batch)?;
+    super::format_facts::register(db, batch)?;
+    super::outcomes::register_binding_facts(db, batch)?;
     let calls = Arc::new(AtomicUsize::new(0));
     super::pattern_leaf::register(db, batch, &calls)?;
     let leaves = Leaves(AssertUnwindSafe(Arc::clone(batch)));
@@ -61,10 +72,27 @@ pub(in crate::code_rule_dsl::sql) fn register(
             EQUALITY_REQUESTS.set(EQUALITY_REQUESTS.get() + 1);
             let left = ctx.get::<u32>(1)?;
             let right = ctx.get::<u32>(2)?;
-            let file = &equality.0.files[file];
+            if let Some(file) = equality.0.files.get(file) {
+                if left >= file.facts.len() || right >= file.facts.len() {
+                    return Err(Error::ModuleError("capture equality: invalid node".into()));
+                }
+                let mut env = ast_grep_core::meta_var::MetaVarEnv::new();
+                env.insert("capture", node_at(&file.root, left));
+                return Ok(env.insert("capture", node_at(&file.root, right)).is_some());
+            }
+            let sub = equality
+                .0
+                .subfile(file)
+                .ok_or_else(|| Error::ModuleError("capture equality: invalid file".into()))?;
+            if left >= sub.facts.len() || right >= sub.facts.len() {
+                return Err(Error::ModuleError(
+                    "capture equality: invalid parsed node".into(),
+                ));
+            }
+            let at = |id| sub.root.adopt(sub.root.root().get_doc().node(id));
             let mut env = ast_grep_core::meta_var::MetaVarEnv::new();
-            env.insert("capture", node_at(&file.root, left));
-            Ok(env.insert("capture", node_at(&file.root, right)).is_some())
+            env.insert("capture", at(left));
+            Ok(env.insert("capture", at(right)).is_some())
         },
     )?;
     db.create_scalar_function(
@@ -74,10 +102,18 @@ pub(in crate::code_rule_dsl::sql) fn register(
         move |ctx| {
             let file = ctx.get::<u32>(0)? as usize;
             let node = ctx.get::<u32>(1)?;
-            let Some(file) = keys.0.files.get(file) else {
+            let named_leaf = if let Some(file) = keys.0.files.get(file) {
+                node < file.facts.len() && node_at(&file.root, node).is_named_leaf()
+            } else if let Some(sub) = keys.0.subfile(file) {
+                node < sub.facts.len()
+                    && sub
+                        .root
+                        .adopt(sub.root.root().get_doc().node(node))
+                        .is_named_leaf()
+            } else {
                 return Err(Error::ModuleError("capture demand: missing file".into()));
             };
-            if node >= file.facts.len() || !node_at(&file.root, node).is_named_leaf() {
+            if !named_leaf {
                 return Err(Error::ModuleError(
                     "capture demand: composite capture requires structural equality keys".into(),
                 ));

@@ -1092,3 +1092,44 @@ Final catalog qualification passes all 78 admitted grammars on all 595 fixtures,
 The preceding 76 retain exact SQL hashes, VM counts, and output hashes.
 B110 and B112 use one matching statement each, with zero frame publications.
 Frozen B023 also retains its exact SQL/VM shape and passes all existing prepared-execution gates.
+
+## Larger catalog batch: semantic bases and child transactions
+
+This batch advances admission from 78 to 101 of 146 grammars. The catalog checkpoint passes exact native parity on 595 files. Every admitted grammar has a positive fixture witness.
+
+The implementation adds these contracts together:
+
+- Binding resolution returns target facts and an ordered occurrence list. SQL evaluates site, value, annotation, and occurrence children.
+- Parsed trees use registered subfiles. SQL evaluates supported children, including annotation patterns and literal values.
+- Parameter calls isolate private captures. Memo keys use native utility identities, logical capture names, and active binding context.
+- Format analysis returns ordered candidates. SQL handles candidate tests, incomplete inputs, unknown, and capture rollback.
+- Recursive wrappers accept nonmemo semantic and capture-bearing base programs. A shared structural forest supplies ordered entries without copying ancestor/descendant pairs.
+- Nested pure components receive the runtime utility depth of their semantic caller.
+
+Parsed-document utility calls deliberately bypass memo storage. Native does not memoize those calls. They still spend entry work and contribute to utility depth.
+
+The previous four-walk limit no longer controls admission. The compiler instead limits active typed returns to 128 cells. Existing emitted-operator and SQL-byte limits still apply. Tests admit 16-level examples and refuse a 32-level example that exceeds this resource bound. This is a compiler resource contract, not proof of native stack-byte equivalence.
+
+The semantic recursion width sample uses constant SQL size as input grows. Removing a redundant one-arm alternative reduces its largest sample from 105,788 to 92,659 VM instructions. SQL size falls from 8,018 to 7,308 bytes. Deeper traversal samples scale nearly linearly with independent root count. Their preparation cost still grows with nesting depth and is reported separately.
+
+The remaining 45 first refusals are:
+
+| Missing contract | Grammars |
+| --- | ---: |
+| General recursive outcomes | 36 |
+| Recursive parameter calls | 2 |
+| Parsed exported spans or host hooks | 4 |
+| Cyclic base dependencies | 2 |
+| Recursive negation or region dependency | 1 |
+
+The next implementation boundary is memoized recursive utility return. Begin with a failing native/SQL test that revisits a completed false sibling before a later successful sibling. Add work exhaustion and a cache hit that does not fit the remaining logical depth.
+
+SQL must publish each completed sibling before evaluating the next sibling. A successful descendant must then publish its open ancestors in return order. Each answer needs exact replay cost, cache-fill exclusion, and peak depth. A flat preorder scan cannot reconstruct that publication order after execution. The next scheduler therefore needs explicit entry, base, and return phases with narrow control metadata.
+
+Coverage gains do not establish native-speed parity. Newly admitted E721 still exceeds 100 million VM instructions in the diagnostic catalog run. ASYNC221 and ASYNC230 exceed 38 million. Their surrounding ordered root programs need further batching and shape work. Keep these measurements visible while completing contracts.
+
+The full-coverage, complete-job 100-execution, resource, and production-cutover gates remain closed. This batch does not add a production opt-in path.
+
+Final qualification passes 308 relational tests and all 285 preceding SQL/VM controls. All 101 admitted grammars pass the complete fixture batch. The preceding 78 retain identical SQL, VM counts, and outputs. Frozen B023 retains 246,364 VM instructions and 10,232 SQL bytes. Its prepared median CPU time is 4.085 ms against the 32.029 ms reference. All existing performance and shape gates pass.
+
+`benchmark/sql-relational-broad-catalog-integration.json` contains the batch evidence and new grammar SQL. The coverage ledger records 45 remaining refusals. These results qualify this larger test-compiler batch; they do not open the production-cutover gates.

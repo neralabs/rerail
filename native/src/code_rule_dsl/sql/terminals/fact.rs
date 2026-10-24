@@ -94,6 +94,42 @@ pub(in crate::code_rule_dsl::sql) trait Verdicts:
         (Err("budget verdict requires an atomic leaf".into()), 0)
     }
 
+    #[cfg(test)]
+    fn format_test(&self) -> Option<&crate::code_rule_dsl::matcher::FormatArgs> {
+        None
+    }
+    #[cfg(test)]
+    fn format_owner(&self) -> usize {
+        0
+    }
+
+    #[cfg(test)]
+    fn parsed_test(&self) -> Option<&crate::code_rule_dsl::matcher::ParseTest> {
+        None
+    }
+
+    #[cfg(test)]
+    fn parsed_owner(&self) -> usize {
+        0
+    }
+
+    #[cfg(test)]
+    fn supports_tree_budget(&self) -> bool {
+        false
+    }
+
+    #[cfg(test)]
+    fn tree_budget_verdict(
+        &self,
+        _node: Node<'_, SubDoc>,
+        work: usize,
+    ) -> (std::result::Result<Option<bool>, String>, usize) {
+        (
+            Err("budget verdict requires a parsed atomic leaf".into()),
+            work,
+        )
+    }
+
     fn rows<'t>(
         &self,
         node: Node<'t, TapeDoc>,
@@ -160,6 +196,26 @@ impl Verdicts for Leaf {
         );
         (verdict.map_err(|limit| format!("{limit:?}")), left)
     }
+    #[cfg(test)]
+    fn supports_tree_budget(&self) -> bool {
+        true
+    }
+
+    #[cfg(test)]
+    fn tree_budget_verdict(
+        &self,
+        node: Node<'_, SubDoc>,
+        work: usize,
+    ) -> (std::result::Result<Option<bool>, String>, usize) {
+        let (verdict, left) = crate::code_rule_dsl::matcher::leaf_verdict_budget(
+            &self.0,
+            node,
+            &MetaVarEnv::new(),
+            work,
+        );
+        (verdict.map_err(|limit| format!("{limit:?}")), left)
+    }
+
     fn rows<'t>(
         &self,
         node: Node<'t, TapeDoc>,

@@ -9,12 +9,13 @@ pub(super) struct Components {
     pub(super) clause: usize,
     pub(super) roots: String,
     definitions: BTreeMap<usize, String>,
+    pub(super) semantic: BTreeMap<usize, String>,
     pub(super) downward: BTreeMap<usize, (String, BTreeMap<u32, String>)>,
 }
 
 impl Components {
     pub(super) fn len(&self) -> usize {
-        self.definitions.len() + self.downward.len()
+        self.definitions.len() + self.downward.len() + self.semantic.len()
     }
 }
 
@@ -22,6 +23,10 @@ impl Sql {
     /// This is called once at the statement boundary, never in a correlated child.
     pub(super) fn publish_components(&mut self) {
         let components = self.generation.components.borrow();
+        for (id, definitions) in &components.semantic {
+            self.definitions.push(definitions.clone());
+            self.profile.push(json!({"operator":"shared semantic recursion forest","component":id,"scope":"statement","nativeComposition":false,"materializedCaptures":false}));
+        }
         for (id, (definitions, depths)) in &components.downward {
             self.definitions.push(definitions.clone());
             self.definitions.extend(depths.values().cloned());
@@ -82,7 +87,14 @@ impl Sql {
             }
             prefix
         };
-        let levels = 256u32.saturating_sub(self.generation.utility_depth);
+        let levels = self.generation.dynamic_depth.as_ref().map_or_else(
+            || {
+                256u32
+                    .saturating_sub(self.generation.utility_depth)
+                    .to_string()
+            },
+            |_| format!("MAX(0,256-({}))", self.generation.depth_expression()),
+        );
         // Base is tested before continuation, including for roots outside the guard domain.
         let local = self.relation("recursive invocation base", format!(
             "SELECT d.k,d.file,d.work,n.{edge} AS next,CASE WHEN d.work>0 AND {levels}>0 THEN ({base}) ELSE 0 END AS base FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node", input.name

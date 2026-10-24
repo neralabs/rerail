@@ -138,20 +138,44 @@ unsafe impl VTabCursor for Cursor<'_> {
         let Some(Terminal::Fact(term)) = self.batch.program.terminals.get(term) else {
             return Err(Error::ModuleError("budget leaf: invalid terminal".into()));
         };
-        let file_data = self
-            .batch
-            .files
-            .get(file)
-            .ok_or_else(|| Error::ModuleError("budget leaf: invalid file".into()))?;
-        if node >= file_data.facts.len() {
-            return Err(Error::ModuleError("budget leaf: invalid node".into()));
-        }
         super::leaves::VALUE_REQUESTS.set(super::leaves::VALUE_REQUESTS.get() + 1);
         let probes = crate::code_rule_dsl::matcher::value_probe::position();
-        let (verdict, left) = with_scopes(file, file_data, || {
-            term.verdicts
-                .budget_verdict(node_at(&file_data.root, node), work)
-        });
+        let ((verdict, left), text) = if let Some(file_data) = self.batch.files.get(file) {
+            if node >= file_data.facts.len() {
+                return Err(Error::ModuleError("budget leaf: invalid node".into()));
+            }
+            let at = node_at(&file_data.root, node);
+            let text = at.text().into_owned();
+            (
+                with_scopes(file, file_data, || term.verdicts.budget_verdict(at, work)),
+                text,
+            )
+        } else if let Some(sub) = self.batch.subfile(file) {
+            if node >= sub.facts.len() {
+                return Err(Error::ModuleError(
+                    "budget leaf: invalid parsed node".into(),
+                ));
+            }
+            let at = sub.root.adopt(sub.root.root().get_doc().node(node));
+            let text = at.text().into_owned();
+            let host = self
+                .batch
+                .files
+                .get(sub.host)
+                .ok_or_else(|| Error::ModuleError("budget leaf: invalid parsed host".into()))?;
+            let _tables = sub
+                .table
+                .clone()
+                .map(crate::code_rule_dsl::matcher::SubTables::enter);
+            (
+                with_scopes(sub.host, host, || {
+                    term.verdicts.tree_budget_verdict(at, work)
+                }),
+                text,
+            )
+        } else {
+            return Err(Error::ModuleError("budget leaf: invalid file".into()));
+        };
         self.truth = match verdict {
             Ok(Some(true)) => 1,
             Ok(Some(false)) => 0,
@@ -160,8 +184,9 @@ unsafe impl VTabCursor for Cursor<'_> {
         };
         self.work = i64::try_from(left)
             .map_err(|_| Error::ModuleError("budget leaf: allowance overflow".into()))?;
+        let trace_host = self.batch.subfile(file).map(|sub| sub.host);
         record(
-            serde_json::json!({"terminal":term_id,"file":file,"node":node,"input":work,"truth":self.truth,"remaining":self.work,"text":node_at(&file_data.root,node).text(),"valueCalls":crate::code_rule_dsl::matcher::value_probe::since(probes)}),
+            serde_json::json!({"terminal":term_id,"file":trace_host.unwrap_or(file),"parsedFile":trace_host.map(|_| file),"node":node,"input":work,"truth":self.truth,"remaining":self.work,"text":text,"valueCalls":crate::code_rule_dsl::matcher::value_probe::since(probes)}),
         );
         self.done = false;
         Ok(())

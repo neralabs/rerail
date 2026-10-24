@@ -162,25 +162,6 @@ fn nested_stops_are_private_and_preserve_axis_order() {
 }
 
 #[test]
-fn nested_depth_is_bounded_before_sql_execution() {
-    let mut body = inner();
-    for depth in 1..=4 {
-        body = json!({"kind":"array","has":body,"stopBy":"neighbor"});
-        let grammar = json!({"kind":"arguments","has":body});
-        if depth < 4 {
-            let source = format!("f({}1{});", "[".repeat(depth), "]".repeat(depth));
-            parity(grammar, &[&source]);
-        } else {
-            let p = policy(grammar, json!({}));
-            let Err(error) = super::super::compile(&grammar_matchers(&p)[0]) else {
-                panic!("accepted five traversal levels");
-            };
-            assert!(error.contains("depth exceeds 4"), "{error}");
-        }
-    }
-}
-
-#[test]
 fn nested_walks_scale_with_reached_inner_outer_and_root_work() {
     let mut samples = vec![];
     for dimension in [

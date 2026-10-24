@@ -259,17 +259,20 @@ fn catalog_atomic_followed_values_preserve_unknown_failure_and_memo() {
 }
 
 #[test]
-fn catalog_atomic_refuses_parsed_composition_without_a_contract() {
+fn catalog_atomic_refuses_parsed_exports_without_a_typed_contract() {
     let p = policy(
         "python",
-        json!({"parse":{"grammar":"testChars","kind":"char"}}),
+        json!({"parse":{"grammar":"testChars","has":{"kind":"char","capture":"C"}}}),
         json!({}),
     );
     let grammar = &grammar_matchers(&p)[0];
     let error = super::compile(grammar)
         .err()
-        .expect("no parsed composition contract");
-    assert!(error.contains("leaf or operator lacks"), "{error}");
+        .expect("no parsed export contract");
+    assert!(
+        error.contains("exported spans need a typed contract"),
+        "{error}"
+    );
 }
 
 #[test]

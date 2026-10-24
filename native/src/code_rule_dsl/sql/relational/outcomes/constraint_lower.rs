@@ -11,7 +11,8 @@ impl Lower {
         let mut node_writes = core.node_writes.clone();
         let mut constraints = Vec::new();
         for (name, matcher) in &constrained.constraints {
-            let existing = self.slots.iter().position(|slot| slot.name == *name);
+            let qualified = format!("{}{name}", self.namespace);
+            let existing = self.slots.iter().position(|slot| slot.name == qualified);
             let target = match existing {
                 Some(slot) => slot,
                 None => self.slot(name, CaptureKind::Node)?,

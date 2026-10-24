@@ -28,6 +28,34 @@ impl Effects {
     pub fn of(op: &Op) -> Self {
         let mut result = Self::default();
         match op {
+            Op::FormatArgs {
+                unused, missing, ..
+            } => {
+                for child in [unused, missing].into_iter().flatten() {
+                    result.merge(child.effects);
+                }
+                result.reads_value = true;
+                result.fallible = true;
+                result.typed_exports = true;
+                result.file_memo |= result.uses_memo;
+                result.walk_depth += 1;
+            }
+            Op::CallFrame { body, .. } => {
+                result = body.effects;
+                result.reads_value = true;
+                result.uses_memo = true;
+                result.file_memo = true;
+                result.fallible = true;
+                result.typed_exports = true;
+            }
+            Op::Parse { child, .. } => {
+                result = child.effects;
+                result.reads_value = true;
+                result.fallible = true;
+                result.walk_depth += 1;
+                result.file_memo |= child.uses_memo();
+                result.typed_exports = true;
+            }
             Op::Pattern(..) => result.typed_exports = true,
             Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => {
                 result = child.effects;
@@ -52,11 +80,21 @@ impl Effects {
                 result.reads_value = true;
                 result.fallible = true;
             }
+            Op::RecursiveSearch { component, .. } => {
+                result = component.base.effects;
+                result.fallible = true;
+                result.contains_chain = true;
+                result.typed_exports = true;
+            }
             Op::Chain(..) | Op::Downward(..) => {
                 result.fallible = true;
                 result.contains_chain = true;
             }
             Op::Not(child) => result = child.effects,
+            Op::TransientCharge(child) => {
+                result = child.effects;
+                result.fallible = true;
+            }
             Op::Charge(_, child) => {
                 result = child.effects;
                 result.fallible = true;

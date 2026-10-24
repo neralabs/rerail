@@ -160,10 +160,9 @@ fn downward_retains_outer_unknown_capture_and_publication_transactions() {
 }
 
 #[test]
-fn downward_rejects_impure_bases_and_general_cycles() {
+fn downward_rejects_memoized_bases_and_general_cycles() {
     for utilities in [
         json!({"u":{"any":[{"value":{"eq":1}},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"u"}}]}}),
-        json!({"u":{"any":[{"pattern":"$X"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"u"}}]}}),
         json!({"u":{"any":[{"regex":"^1$"},{"has":{"stopBy":"neighbor","matches":"v"}}]},"v":{"has":{"stopBy":"neighbor","matches":"u"}}}),
     ] {
         let p = policy_utils(
@@ -175,6 +174,15 @@ fn downward_rejects_impure_bases_and_general_cycles() {
             super::compile(&grammars[0]).is_err(),
             "unsupported component admitted"
         );
+    }
+}
+
+#[test]
+fn downward_capture_base_commits_before_recursive_continuation() {
+    let rules = [json!({"kind":"parenthesized_expression","matches":"u"})];
+    let utilities = json!({"u":{"any":[{"pattern":"$X"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"u"}}]}});
+    for work in 0..=8 {
+        check(&rules, utilities.clone(), &["(1); (((2)));"], work);
     }
 }
 

@@ -23,6 +23,14 @@ mod resolve;
 mod run;
 mod semantic;
 #[cfg(test)]
+mod sql_format_facts;
+#[cfg(test)]
+mod sql_parse_facts;
+#[cfg(test)]
+pub(super) use sql_format_facts::sql_format_budget;
+#[cfg(test)]
+pub(super) use sql_parse_facts::sql_parse_budget;
+#[cfg(test)]
 mod tests;
 mod transform;
 mod util;
@@ -497,6 +505,8 @@ pub(super) fn leaf_verdict_budget<'tree, D: Doc>(
     )
 }
 
+#[cfg(test)]
+pub(in crate::code_rule_dsl) mod sql_binding_facts;
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod sql_bound_leaf;
 

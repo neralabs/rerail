@@ -410,7 +410,7 @@ impl UtilRef {
     /// The captures the referenced utility may read or bind, sorted: all its verdict reads of its
     /// caller's bindings. `Some(None)` where it holds a term that reads more (`context_free`),
     /// `None` where its table is gone.
-    pub(super) fn scope(&self) -> Option<Option<Scope>> {
+    pub(in crate::code_rule_dsl) fn scope(&self) -> Option<Option<Scope>> {
         let table = self.table.upgrade()?;
         let scope = table.scopes.get(self.index)?.get_or_init(|| {
             self.with_target(|rule| {

@@ -1,9 +1,14 @@
 //! Explicit outcomes with sequencing barriers for reached atomic value leaves.
 //! SQL owns composition. Bindings are typed columns; unknown is never SQL NULL.
 mod atomic_predicate_tests;
+mod binding_facts;
+mod binding_occurrence_tests;
+mod binding_tests;
+pub(super) use binding_facts::register as register_binding_facts;
 mod binds_tests;
 mod bound_tests;
 mod budget_tests;
+mod call_tests;
 mod capture_predicate_tests;
 mod capture_walk_tests;
 mod catalog_tests;
@@ -16,22 +21,27 @@ mod effects;
 mod emit;
 mod field_end_tests;
 mod field_tests;
+mod format_tests;
 mod list_tests;
 mod lower;
 mod memo_tests;
 mod nested_memo_tests;
+mod nested_shape_tests;
 mod nested_tests;
+mod parse_tests;
 mod pattern_tests;
 mod predicate_run_tests;
 mod pruning_tests;
 mod publication_tests;
 mod reached_tests;
+mod recursive_search_tests;
 mod repeat_any_tests;
 mod repeat_utility_tests;
 mod repeat_walk_tests;
 mod shared_memo_tests;
 mod tests;
 mod traversal_memo_tests;
+mod utility_memo;
 mod utility_plan_tests;
 
 use super::{Compiled, ir::Set};
@@ -49,13 +59,25 @@ enum Axis {
 }
 
 enum Op {
+    FormatArgs {
+        term: usize,
+        inputs: Vec<usize>,
+        unused: Option<Box<Plan>>,
+        missing: Option<Box<Plan>>,
+    },
     Predicate(Set),
     Unknown(usize),
     Value(usize),
     Charge(usize, std::rc::Rc<Plan>),
+    /// Parsed documents spend utility entry work but native never memoizes them.
+    TransientCharge(std::rc::Rc<Plan>),
     /// Functional recursive utility; its summary already includes utility entry.
     Chain(usize, std::rc::Rc<super::recursive_chain::Chain>),
     Downward(usize, std::rc::Rc<super::recursive_downward::Downward>),
+    RecursiveSearch {
+        id: usize,
+        component: std::rc::Rc<lower::recursive_search_lower::RecursiveSearch>,
+    },
     Bind(usize),
     /// Atomic structural pattern, with outputs in terminal capture order.
     Pattern(usize, Vec<usize>, Option<Vec<u16>>),
@@ -64,6 +86,20 @@ enum Op {
         inputs: Vec<usize>,
         outputs: Vec<usize>,
         kinds: Option<Vec<u16>>,
+    },
+    Binding {
+        core: Box<Plan>,
+        children: Vec<(usize, Plan)>,
+        occurrence_slot: usize,
+        occurrence: Option<Box<Plan>>,
+    },
+    Parse {
+        term: usize,
+        child: Box<Plan>,
+    },
+    CallFrame {
+        body: std::rc::Rc<Plan>,
+        mapping: Vec<(usize, usize)>,
     },
     Constrained(Box<Plan>, Vec<(usize, Plan)>),
     FieldNeighbor {
@@ -114,7 +150,7 @@ struct Slot {
     kind: CaptureKind,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum CaptureKind {
     Node,
     List,
@@ -146,10 +182,12 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
     let plan = lower.plan(&grammar.matcher)?;
     let mut profile = lower.profile(0);
+    let memo_layout = lower.memo_layout();
     let (sql, mut relations) = if plan.fallible() {
         let (sql, mut relations) = emit::compile_jobs(
             &[(&plan, &lower.slots, grammar.applies, &root_filter(grammar))],
             i64::MAX,
+            &[memo_layout],
         )?;
         relations["terminalOwners"] =
             serde_json::json!(vec![0; lower.pure.program.terminals.len()]);
@@ -198,6 +236,7 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
     let mut plans = vec![];
     let mut terminal_owners = vec![];
     let mut lowering = vec![];
+    let mut memo_layouts = vec![];
     for (clause, grammar) in grammars.iter().enumerate() {
         if grammar.transform.is_some() {
             return Err("publication: transforms need their publication contract".into());
@@ -209,6 +248,7 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         let plan = lower.plan(&grammar.matcher)?;
         let profile = lower.profile(terminal_base);
         lowering.push(profile);
+        memo_layouts.push(lower.memo_layout());
         terminals = lower.pure.program.terminals;
         let roots = root_filter(grammar);
         terminal_owners.resize(terminals.len(), clause);
@@ -218,7 +258,7 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         .iter()
         .map(|(plan, slots, applies, roots)| (plan, slots.as_slice(), *applies, roots.as_str()))
         .collect();
-    let (sql, mut relations) = emit::compile_jobs(&borrowed, work)?;
+    let (sql, mut relations) = emit::compile_jobs(&borrowed, work, &memo_layouts)?;
     relations["terminalOwners"] = serde_json::json!(terminal_owners);
     record_scope_contract(&mut relations);
     for (index, profile) in lowering.iter_mut().enumerate() {

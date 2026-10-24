@@ -7,8 +7,16 @@ use ast_grep_core::{matcher::PatternNode, meta_var::MetaVariable};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+#[path = "binding_lower.rs"]
+mod binding_lower;
+#[path = "call_lower.rs"]
+mod call_lower;
 #[path = "constraint_lower.rs"]
 mod constraint_lower;
+#[path = "parse_lower.rs"]
+mod parse_lower;
+#[path = "recursive_search_lower.rs"]
+pub(super) mod recursive_search_lower;
 
 #[path = "pattern_lower.rs"]
 mod pattern_lower;
@@ -25,6 +33,11 @@ mod bound_lower;
 #[path = "capture_predicate_lower.rs"]
 mod capture_predicate_lower;
 
+#[path = "format_lower.rs"]
+mod format_lower;
+
+type UtilityOrigin = ((usize, usize), Option<std::collections::BTreeSet<String>>);
+
 pub(super) struct Lower {
     language: GrammarDialect,
     /// Unique within the statement's BatchScopes lifetime, independent of matcher addresses.
@@ -32,12 +45,21 @@ pub(super) struct Lower {
     pub pure: super::super::lower::Lowerer,
     pub slots: Vec<Slot>,
     active: HashSet<(usize, usize)>,
-    utilities: HashMap<(usize, usize), (usize, Rc<Plan>)>,
+    utilities: HashMap<(usize, usize, String), (usize, Rc<Plan>)>,
+    namespace: String,
+    logical_names: Vec<Option<String>>,
+    metadata_origins: Vec<Option<usize>>,
+    utility_origins: HashMap<usize, UtilityOrigin>,
+    call_bodies: HashMap<(usize, usize), (usize, Rc<Plan>)>,
+    call_sites: HashMap<usize, usize>,
     chains: HashMap<(usize, usize), (usize, Rc<super::super::recursive_chain::Chain>)>,
     downward: HashMap<(usize, usize), (usize, Rc<super::super::recursive_downward::Downward>)>,
+    recursive_searches:
+        HashMap<(usize, usize, String), (usize, Rc<recursive_search_lower::RecursiveSearch>)>,
     operators: usize,
     utility_calls: usize,
     three_valued: bool,
+    parsed_depth: usize,
 }
 
 impl Lower {
@@ -49,19 +71,67 @@ impl Lower {
             slots: vec![],
             active: HashSet::new(),
             utilities: HashMap::new(),
+            namespace: String::new(),
+            logical_names: vec![],
+            metadata_origins: vec![],
+            utility_origins: HashMap::new(),
+            call_bodies: HashMap::new(),
+            call_sites: HashMap::new(),
             chains: HashMap::new(),
             downward: HashMap::new(),
+            recursive_searches: HashMap::new(),
             operators: 0,
             utility_calls: 0,
             three_valued,
+            parsed_depth: 0,
         }
     }
 
     pub fn profile(&self, terminal_base: usize) -> serde_json::Value {
-        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len()+self.chains.len()+self.downward.len(),"utilityBodyLowerings":self.utilities.len()+self.chains.len()+self.downward.len(),"recursiveComponents":self.chains.len()+self.downward.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
+        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"utilityBodyLowerings":self.utilities.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"recursiveComponents":self.chains.len()+self.downward.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
+    }
+
+    pub(super) fn memo_layout(&self) -> Option<Rc<super::utility_memo::Layout>> {
+        if self.call_bodies.is_empty() {
+            return None;
+        }
+        let mut identities = std::collections::BTreeMap::new();
+        for (&id, (key, _)) in &self.utility_origins {
+            identities
+                .entry(*key)
+                .and_modify(|prior: &mut usize| *prior = (*prior).min(id))
+                .or_insert(id);
+        }
+        let contracts = self
+            .utility_origins
+            .iter()
+            .map(|(&id, (key, scope))| {
+                (
+                    id,
+                    super::utility_memo::Contract {
+                        identity: identities[key],
+                        scope: scope.clone(),
+                    },
+                )
+            })
+            .collect();
+        Some(Rc::new(super::utility_memo::Layout::new(
+            &self.slots,
+            &self.logical_names,
+            &self.metadata_origins,
+            contracts,
+        )))
+    }
+
+    pub(super) fn following_origin(&mut self, slot: usize, origin: usize) {
+        // Native FOLLOWING identifies the original child matcher, independently
+        // of the private SQL namespace in which that matcher was lowered.
+        self.metadata_origins[slot] = Some(origin);
     }
 
     fn slot(&mut self, name: &str, kind: CaptureKind) -> Result<usize, String> {
+        let logical_name = (!name.starts_with('\0')).then(|| name.to_owned());
+        let name = format!("{}{name}", self.namespace);
         if let Some(id) = self.slots.iter().position(|slot| slot.name == name) {
             if self.slots[id].kind != kind {
                 return Err(
@@ -75,10 +145,9 @@ impl Lower {
             return Err("outcome relations: binding width exceeds 128 columns".into());
         }
         let id = self.slots.len();
-        self.slots.push(Slot {
-            name: name.into(),
-            kind,
-        });
+        self.logical_names.push(logical_name);
+        self.metadata_origins.push(None);
+        self.slots.push(Slot { name, kind });
         Ok(id)
     }
 
@@ -146,6 +215,10 @@ impl Lower {
         let mut writes = Slots::new();
         let mut node_writes = Slots::new();
         let op = match matcher {
+            AstMatcher::Call(call) => return self.call(call),
+            AstMatcher::Semantic(Semantic::Binding(_)) => return self.binding(matcher),
+            AstMatcher::Semantic(Semantic::Parse(test)) => return self.parsed(test),
+            AstMatcher::Semantic(Semantic::FormatArgs(test)) => return self.format_args(test),
             AstMatcher::Constrained(constrained) => return self.constrained(constrained),
             AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
                 Op::Predicate(self.pure.set(matcher)?)
@@ -173,7 +246,9 @@ impl Lower {
                     op
                 }
             }
-            AstMatcher::Semantic(Semantic::Value(test)) if !test.reading.literal => {
+            AstMatcher::Semantic(Semantic::Value(test))
+                if !test.reading.literal || self.parsed_depth > 0 =>
+            {
                 self.atomic(matcher)
             }
             AstMatcher::Semantic(Semantic::Resolves(_)) => self.atomic(matcher),
@@ -332,6 +407,11 @@ impl Lower {
             AstMatcher::Util(util) => {
                 self.utility_calls += 1;
                 let key = (util.table.as_ptr() as usize, util.index);
+                let scoped_key = (
+                    key.0,
+                    key.1,
+                    format!("{}@parsed={}", self.namespace, self.parsed_depth > 0),
+                );
                 if let Some((id, chain)) = self.chains.get(&key) {
                     Op::Chain(*id, Rc::clone(chain))
                 } else if let Some(chain) =
@@ -364,8 +444,15 @@ impl Lower {
                     let downward = Rc::new(downward);
                     self.downward.insert(key, (id, Rc::clone(&downward)));
                     Op::Downward(id, downward)
+                } else if let Some(op) = self.recursive_search(util)? {
+                    if let Op::RecursiveSearch { component, .. } = &op {
+                        mentions = component.base.mentions.clone();
+                        writes = component.base.writes.clone();
+                        node_writes = component.base.node_writes.clone();
+                    }
+                    op
                 } else {
-                    let (id, child) = if let Some((id, child)) = self.utilities.get(&key) {
+                    let (id, child) = if let Some((id, child)) = self.utilities.get(&scoped_key) {
                         (*id, Rc::clone(child))
                     } else {
                         if !self.active.insert(key) {
@@ -378,7 +465,12 @@ impl Lower {
                         self.active.remove(&key);
                         let child = Rc::new(result.ok_or("outcome relations: missing utility")??);
                         let id = self.utilities.len();
-                        self.utilities.insert(key, (id, Rc::clone(&child)));
+                        self.utilities.insert(scoped_key, (id, Rc::clone(&child)));
+                        let scope = util
+                            .scope()
+                            .flatten()
+                            .map(|names| names.iter().map(|name| name.to_string()).collect());
+                        self.utility_origins.insert(id, (key, scope));
                         (id, child)
                     };
                     if child.reads_value() && child.effects.contains_chain {
@@ -387,7 +479,11 @@ impl Lower {
                     mentions = child.mentions.clone();
                     writes = child.writes.clone();
                     node_writes = child.node_writes.clone();
-                    Op::Charge(id, child)
+                    if self.parsed_depth > 0 {
+                        Op::TransientCharge(child)
+                    } else {
+                        Op::Charge(id, child)
+                    }
                 }
             }
             _ => {

@@ -3,7 +3,7 @@ use crate::code_rule_dsl::sql::relational::{emit::condition, recursive_downward:
 
 /// Definitions are published once at the statement boundary. The finite guard
 /// domain and its immediate children include anonymous children and failed calls.
-pub(super) fn definitions(
+pub(in crate::code_rule_dsl::sql::relational::outcomes) fn definitions(
     component: &Downward,
     prefix: &str,
     roots: &str,

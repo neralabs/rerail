@@ -4,7 +4,7 @@ use crate::code_rule_dsl::sql::relational::{emit::condition, recursive_downward:
 use serde_json::json;
 
 #[path = "downward_shape.rs"]
-mod shape;
+pub(super) mod shape;
 
 impl Sql {
     pub(super) fn downward(
@@ -13,7 +13,13 @@ impl Sql {
         component: &Downward,
         input: &Demand,
     ) -> Result<Output, String> {
-        let levels = 256u32.saturating_sub(self.generation.utility_depth);
+        let static_levels = 256u32.saturating_sub(self.generation.utility_depth);
+        let dynamic = self.generation.dynamic_depth.is_some();
+        let levels = if dynamic {
+            format!("MAX(0,256-({}))", self.generation.depth_expression())
+        } else {
+            static_levels.to_string()
+        };
         let prefix = {
             let mut components = self.generation.components.borrow_mut();
             let prefix = format!("downward{}_{}", components.clause, id);
@@ -24,13 +30,16 @@ impl Sql {
                     .insert(id, (definitions, Default::default()));
             }
             let (_, depths) = components.downward.get_mut(&id).unwrap();
-            if !depths.contains_key(&levels) {
+            if !dynamic && !depths.contains_key(&static_levels) {
                 if depths.len() >= 16 {
                     return Err(
                         "downward recursion: more than 16 distinct incoming depth domains".into(),
                     );
                 }
-                depths.insert(levels, shape::depth_definitions(&prefix, levels));
+                depths.insert(
+                    static_levels,
+                    shape::depth_definitions(&prefix, static_levels),
+                );
             }
             prefix
         };
@@ -40,12 +49,18 @@ impl Sql {
         let local = self.relation("downward invocation predicates", format!(
             "SELECT d.k,d.file,d.node,d.work,CASE WHEN d.work>0 AND {levels}>0 THEN ({base}) ELSE 0 END AS base,CASE WHEN d.work>0 AND {levels}>0 THEN ({guard}) ELSE 0 END AS active FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node",input.name
         ), true, "k,file,node,work,base,active");
-        let lookup = bridge(
-            &format!(
+        let lookup_query = if dynamic {
+            // Runtime depth comes from a reached semantic wrapper. Search only its
+            // shared interval; no per-origin depth-state table is materialized.
+            format!(
+                "SELECT s.truth,s.cost,(SELECT MIN(n.rank)-s.rank FROM {prefix}_ranked n WHERE n.file=s.file AND n.tree=s.tree AND n.rank BETWEEN s.rank AND s.finish AND n.depth>=s.depth+({levels})) FROM {prefix}_summary s WHERE d.work>0 AND {levels}>0 AND NOT d.base AND d.active AND s.file=d.file AND s.node=d.node"
+            )
+        } else {
+            format!(
                 "SELECT s.truth,s.cost,b.charged FROM {prefix}_summary s LEFT JOIN {prefix}_depth{levels} b ON b.file=s.file AND b.node=s.node WHERE d.work>0 AND {levels}>0 AND NOT d.base AND d.active AND s.file=d.file AND s.node=d.node"
-            ),
-            3,
-        );
+            )
+        };
+        let lookup = bridge(&lookup_query, 3);
         let measured = self.relation("downward invocation shared range",format!(
             "SELECT d.k,d.work,CASE WHEN d.base THEN 1 ELSE COALESCE(r.c0,0) END AS truth,COALESCE(r.c1,1) AS cost,CASE WHEN {levels}=0 THEN 0 ELSE r.c2 END AS breach FROM {local} d {lookup}"
         ),true,"k,work,truth,cost,charges before depth breach");

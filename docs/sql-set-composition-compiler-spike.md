@@ -5790,3 +5790,43 @@ The complete-coverage gate still fails with 68 explicit refusals.
 The coverage and qualification artifacts retain source and executable hashes, fixture inventory, exact outputs, and native per-file work traces.
 The checkpoint remains test-only.
 Production replacement, effectful recursion, native stack-byte equivalence, aggregate memory qualification, and complete-job batching remain incomplete.
+
+### Larger catalog batch: integration in progress (2026-10-24)
+
+The user requested larger batches instead of repeated two-grammar checkpoints. This batch integrates four contracts before catalog qualification: binding targets and occurrences, parsed trees, parameter frames, and format arguments. Three GPT-6.1 Sol agents own separate implementation areas. The parent reviews shared changes and runs the integrated gates.
+
+The binding resolver returns facts only. SQL sequences target children and occurrence candidates. Parsed trees use the existing subfile registry and atomic budget accounting. Parameter calls isolate private captures and use call-site memo keys. Format analysis returns ordered candidates; SQL evaluates their child rules.
+
+The first compile found an overly narrow visibility declaration in the new parse helper. No execution evidence came from that build. The declaration was corrected before the second build. Tests and catalog counts remain unqualified until the integrated binary passes.
+
+The next recursive scheduler keeps a shared structural forest and evaluates semantic base cases only when reached. Its first contract excludes native memoized recursive utilities. It must preserve ordered children, entry charges, logical depth, unknown, and capture rollback. Native stack-byte equivalence remains outside the existing qualification.
+
+The first executable checkpoint passed catalog parity for 91 of 146 grammars, compared with 78 at the previous commit. All admitted grammars had positive fixture witnesses. The new admissions cover binding-backed exec/eval, six format-argument rules, three semantic resolution wrappers, repeated variable keys, and debugger calls. These are diagnostic results from `/tmp/rerail-broad-phase1/engine`, not the final source qualification.
+
+Targeted binding, occurrence, call, format, and recursive-search suites passed at this checkpoint. Three parsed-tree tests failed because lowering still rejected literal-value leaves inside parsed documents. The fix restricts that admission to parsed children and associates their instrumentation with the host file. A new test checks parsed value probes and utility replay across two files.
+
+Review also found that private call namespaces could prevent native-equivalent memo sharing with ordinary utilities. The next checkpoint normalizes memo identities and capture columns across frames. It preserves physical capture isolation. The native utility scope determines which logical captures enter each key.
+
+The second catalog checkpoint passes all 101 admitted grammars, including 23 new admissions. Nested semantic bases now compose with pure chain and downward summaries at runtime utility depth. A direct depth oracle checks failure precedence at incoming levels 0, 1, 253, 254, 255, and 256.
+
+The four-walk proxy limit was replaced with a budget on actual active typed returns. The bound is 128 cells. A scaling test initially expected a 32-level fixture to fit, but that fixture exceeds the bound. The test now records this expected resource refusal and measures admitted depths separately. The bound was not raised.
+
+Review found two additional memo contracts. Binding context must identify the original child rule across private capture namespaces. Parsed-document utilities must bypass memo storage. New probe and finite-work tests cover both cases. The final focused checkpoint passes seven call-frame tests, seven parse tests, three format tests, and three deeper-walk tests.
+
+The final source also removes a redundant one-arm base alternative in semantic recursion. At widths 8, 32, and 128, VM instructions fall from 8,948 / 28,316 / 105,788 to 7,939 / 24,883 / 92,659. SQL remains constant across widths and shrinks from 8,018 to 7,308 bytes.
+
+Native lint initially found three mechanical issues: a needless borrow, a complex inline type, and a redundant string conversion. Those were corrected before the frozen qualification build. The qualification driver now pins all new atomic helper sources and the utility-scope helper.
+
+The first full regression run reported 305 passes and one obsolete refusal assertion. It expected a whole-node capture base to be rejected. That base is now supported. The assertion was replaced with finite-work native parity for capture-before-continuation behavior. Refusals for memoized bases and general cycles remain tested. Catalog parity still passed for all 101 admitted grammars during that run. Final qualification is repeated from a new frozen binary after this test correction.
+
+The corrected full semantic suite passed 307 tests. A later key-layout review found an additional cross-namespace collision: a node capture and a count can share a name and integer carrier value. Native memo keys distinguish those types. Canonical SQL columns now use both logical name and capture kind. An adversarial test forces equal carrier values and checks two native and SQL probes in both invocation orders. Qualification is repeated after this correction; the preceding run is retained as diagnostic evidence.
+
+The typed-key regression initially failed policy validation because its zero-minimum count omitted a maximum. The fixture now specifies an exact zero count before adding the node-ordinal offset. The corrected regression passes both invocation orders. This fixture correction did not change the engine contract or resource bounds.
+
+Final frozen qualification passes 308 relational tests, all 285 preceding SQL/VM controls, and all 101 admitted catalog grammars. The catalog uses 595 files and has a positive witness for every admitted grammar. The preceding 78 retain exact SQL hashes, VM counts, and output hashes. The 23 new grammars each use one matching statement and zero frame publications.
+
+Frozen B023 retains 246,364 VM instructions and 10,232 SQL bytes. Its nine prepared executions have a median CPU time of 4.085 ms, compared with 32.029 ms for the reference. Preparation remains a separate one-off cost. All existing CPU, VM, and query-shape gates pass. Native formatting and both clippy configurations also pass.
+
+The full-coverage gate still fails as intended with 45 explicit refusals. Production replacement, complete-job execution limits, actual native stack-byte parity, and aggregate storage-byte limits remain unqualified. E721 still uses 102,275,790 VM instructions; ASYNC221 uses 41,753,849 and ASYNC230 uses 38,910,778. These measurements expose remaining outer-program overhead rather than evidence of native-speed parity.
+
+`benchmark/sql-relational-broad-catalog-integration.json` records the new grammar SQL, scaling samples, resource contracts, unchanged controls, and remaining refusals. The coverage ledger and qualification evidence contain the frozen executable and source hashes. The transition plan now specifies the next failing test and return-phase contract for memoized recursion.

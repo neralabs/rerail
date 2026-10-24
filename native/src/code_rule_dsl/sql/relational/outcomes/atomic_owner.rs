@@ -20,6 +20,18 @@ impl Verdicts for OwnedLeaf {
         with_sql_clause_owner(self.owner, || self.leaf.budget_verdict(node, work))
     }
 
+    fn supports_tree_budget(&self) -> bool {
+        true
+    }
+
+    fn tree_budget_verdict(
+        &self,
+        node: Node<'_, crate::code_rule_dsl::literal::SubDoc>,
+        work: usize,
+    ) -> (Result<Option<bool>, String>, usize) {
+        with_sql_clause_owner(self.owner, || self.leaf.tree_budget_verdict(node, work))
+    }
+
     fn rows<'t>(
         &self,
         node: Node<'t, TapeDoc>,
