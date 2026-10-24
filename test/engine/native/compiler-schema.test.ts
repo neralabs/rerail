@@ -30,7 +30,7 @@ it("retains finite schemas, case-insensitive name collisions, and the SQL author
   expect(() => compile(query, { eligible: input, sqlite_hidden: input })).toThrow();
 });
 
-it.skipIf(!required)("validates independent input and syntax schemas without executing relation DDL", () => {
+it.skipIf(!required)("validates independent input and syntax schemas without executing SQL", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-compiler-schema-"));
   try {
     const program = `
@@ -54,6 +54,7 @@ it.skipIf(!required)("validates independent input and syntax schemas without exe
     const catalogues = readdirSync(directory).filter(f => /^profile-.*\.json$/.test(f));
     expect(catalogues.length, "profiling evidence is required").toBeGreaterThan(0);
     const ddl: string[] = [];
+    const submitted: string[] = [];
     for (const file of catalogues) {
       const catalogue = JSON.parse(readFileSync(join(directory, file), "utf8"));
       const queries = new Map<number, { sql: string }>(catalogue.queries.map((q: { id: number; sql: string }) => [q.id, q]));
@@ -61,9 +62,11 @@ it.skipIf(!required)("validates independent input and syntax schemas without exe
       expect(events.filter(e => e.kind === "sql")).toHaveLength(catalogue.executionCoverage.completed);
       for (const event of events) if (event.kind === "sql") {
         const sql = queries.get(event.query)!.sql;
+        if (event.origin === "engine") submitted.push(sql);
         if (/^\s*CREATE\s+(?:TEMP\s+)?(?:VIRTUAL\s+)?TABLE\b/i.test(sql)) ddl.push(sql);
       }
     }
     expect(ddl, "compilation must register opaque schemas, without executed input/syntax CREATEs").toEqual([]);
+    expect(submitted, "prepare-only compilation needs no runtime connection PRAGMAs").toEqual([]);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 40_000);

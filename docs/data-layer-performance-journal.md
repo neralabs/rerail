@@ -10,6 +10,14 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Compiler connection setup: red
+
+The stronger public compiler test requires zero executed SQL when a clause declares no stages.
+The adapter addon fails on 24 runtime PRAGMAs across twelve prepare-only compiler sessions.
+Evidence: `.rerail/profiles/sql-recovery-compiler-20261023/setup-red`.
+The target separates compiler connection initialization from runtime storage configuration.
+Both purposes retain the same limits, function registration, and authorizer. Runtime PRAGMAs remain mandatory for runtime sessions.
+
 ### Candidate frontier allocation order: green
 
 The production helper now retains first-seen consumer order and removes duplicate Arc identities.
