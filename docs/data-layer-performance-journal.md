@@ -10,6 +10,23 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Compiler schema recovery: adapter verification
+
+The public schema test now passes. Registration executes no relation DDL.
+Three direct production-adapter tests pass, including SQLite CTAS affinity equivalence and expression non-execution.
+The original SQLite authorizer rejects metadata reads, writes, unknown columns, unknown tables, parameters, and unsafe functions.
+Case-insensitive input collisions and reserved SQLite names remain invalid, including unused inputs.
+Native Clippy and `npm run check` pass.
+The focused native-facing suites pass 303 tests across eleven files (`schema-green` and `runtime-green`).
+
+The complete small replay preserves findings but records 11,641 engine submissions and 994 SQLite internal executions.
+Evidence: `.rerail/profiles/sql-recovery-compiler-20261023/schema-acceptance/capture`.
+Connection setup falls by 278 statements. Candidate preparation increases by 1,088 and cleanup increases by 388.
+This capture rejects a net performance claim for the adapter slice alone.
+The investigation finds that `Corpus::prepare_files` sorts execution plans by Arc allocation address.
+Changing compiler allocation can therefore change lowering order, reuse, and per-plan broadening.
+The next TDD ladder separates unordered demand identity from authored execution order before another CPU comparison.
+
 ### Compiler schema recovery: red
 
 The next R3 test compiles twelve independent relational clauses through the public API.
