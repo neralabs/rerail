@@ -17,10 +17,10 @@
  * runtime), the recorder's runtime pin digests as recording.lock records them, every gates.yaml setting the adapter
  * reads (the upstream block, the whole ESLint block, rerail.in_scope), the "Not copied" prefixes of the pack's
  * UPSTREAM.md files, the digest of the recorder's adapter code for the tool-pack's adapter (ADAPTER_SOURCES), which
- * decides what the recorder asks upstream and how it reads the answer, and the digest of the recorder code that turns
- * upstream's answers into tree files (RECORDER_SOURCES). Moving any of them is a new config id, under which every
- * answer is asked again; a record keeps one config id's files. An answer exists exactly while its file does, so the
- * recorder asks upstream only about the names a tree lacks, and the gates check by existence.
+ * decides what the recorder asks upstream and how it reads the answer, and RECORDING_FORMAT, the version of the tree
+ * the recorder writes from upstream's answers. Moving any of them is a new config id, under which every answer is
+ * asked again; a record keeps one config id's files. An answer exists exactly while its file does, so the recorder asks
+ * upstream only about the names a tree lacks, and the gates check by existence.
  *
  * Every file is canonicalText, so an answer has one form and the archive is a function of the answers alone.
  */
@@ -36,7 +36,7 @@ import { canonicalText, type RecordedParser } from "./schema.js";
 export { RECORDING_ARCHIVE, RECORDING_ARCHIVE_FORMAT };
 
 /** The config object's own format: a change to what the config id hashes is a new format, and a new id. */
-const CONFIG_FORMAT = 3;
+const CONFIG_FORMAT = 4;
 const TOP_LEVEL = new Set(RECORDING_TREE_ROOTS.map((root) => root.replace(/\/$/u, "")));
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -87,23 +87,18 @@ export const ADAPTER_SOURCES: Record<GatesManifest["adapter"], readonly string[]
 };
 
 /**
- * The recorder code, besides an adapter's own, that turns upstream's answers into tree files: record.ts (the case
- * layouts, the not-copied skip, the rule records and spans, the corpus and verdict asks), tree.ts (case keys and the
- * files a rule and the tool are written as), schema.ts (spans and the canonical text every file is) and
- * corpus-answers.ts (the answer and verdict files). A change to any of them could write another file under a name a
- * locked answer already has, so its digest is part of the config id and the parsers id, and the answers are asked
- * again. Code that only names a file (engine.ts's fileTypeOf, in a case key and a verdict path) is left out: a change
- * to a name leaves the old answer unnamed, and the recorder asks for it again.
+ * The version of the tree the recorder writes for the same upstream output: the files it writes from upstream's
+ * answers (record.ts's case layouts, not-copied skip, rule records and spans; tree.ts's case keys and rule and tool
+ * files; schema.ts's spans and canonical text; corpus-answers.ts's answer and verdict files). Bump it whenever the
+ * recorder writes a different tree for the same upstream output (its keys, file layout, encodings, span handling, or
+ * what is recorded), so every tool-pack records again rather than mixing files the old recorder wrote under names a
+ * new one would write otherwise; never for a refactor or a comment. It is part of the config id and the parsers id,
+ * and test/conformance/recorders/recording-format.test.ts pins the tree the recorder writes for a fixture tool-pack,
+ * so a change to it fails until this is bumped and the pin updated.
  */
-export const RECORDER_SOURCES: readonly string[] = [
-  `${RECORDERS}/record.ts`,
-  "conformance/port-readiness/recording/tree.ts",
-  "conformance/port-readiness/recording/schema.ts",
-  "conformance/port-readiness/recording/corpus-answers.ts",
-];
+export const RECORDING_FORMAT = 1;
 
 const sourcesDigests = new Map<GatesManifest["adapter"], string>();
-let recorderDigest: string | undefined;
 
 /** trackedDigest of an adapter's ADAPTER_SOURCES in this package, once per process: the same in the gates and the recorder. */
 export function adapterSourcesDigest(adapter: GatesManifest["adapter"]): string {
@@ -113,12 +108,6 @@ export function adapterSourcesDigest(adapter: GatesManifest["adapter"]): string 
     sourcesDigests.set(adapter, digest);
   }
   return digest;
-}
-
-/** trackedDigest of RECORDER_SOURCES in this package, once per process: the same in the gates and the recorder. */
-export function recorderSourcesDigest(): string {
-  recorderDigest ??= trackedDigest(ROOT, RECORDER_SOURCES);
-  return recorderDigest;
 }
 
 /** An UPSTREAM.md line naming an upstream path prefix nothing is copied from (conformance/pack-validation.ts reads it too). */
@@ -151,9 +140,9 @@ export function answerConfig(root: string, manifest: GatesManifest, runtimes: Ru
   const { upstream, eslint } = manifest;
   return {
     format: CONFIG_FORMAT,
+    recording: RECORDING_FORMAT,
     adapter: manifest.adapter,
     sources: adapterSourcesDigest(manifest.adapter),
-    recorder: recorderSourcesDigest(),
     repository: upstream.repository,
     commit: upstream.commit,
     version: upstream.version,
@@ -178,9 +167,9 @@ export function treeConfigs(tree: RecordingTree): string[] {
   return tree.list("config/").map((path) => /^config\/([0-9a-f]{64})\.json$/u.exec(path)?.[1]).filter((id): id is string => id !== undefined);
 }
 
-/** The parsers id: the sha256 of the canonical text of the recorded parser list, the adapter's sources digest and the recorder's. */
+/** The parsers id: the sha256 of the canonical text of the recorded parser list, the adapter's sources digest and RECORDING_FORMAT. */
 export function parsersId(adapter: GatesManifest["adapter"], parsers: readonly RecordedParser[]): string {
-  return sha256(canonicalText({ parsers, sources: adapterSourcesDigest(adapter), recorder: recorderSourcesDigest() }));
+  return sha256(canonicalText({ parsers, sources: adapterSourcesDigest(adapter), recording: RECORDING_FORMAT }));
 }
 
 /** Read access to a tree, by its paths: an extracted directory, or files in memory. */

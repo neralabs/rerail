@@ -10,99 +10,14 @@ import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-r
 import { answerConfig, archiveCachePath, cacheArchive, cachedTree, configId, memoryTree, notCopiedPrefixes, treeDirectory, treeFiles } from "../../../conformance/port-readiness/recording/archive.js";
 import { CONTEXT_FILES } from "../../../conformance/port-readiness/recording/corpus-answers.js";
 import { gatesRecordingSchema, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
-import { recordingLockSchema, recordingLockText } from "../../../conformance/port-readiness/recording/store.js";
+import { recordingLockText } from "../../../conformance/port-readiness/recording/store.js";
 import { loadRecording } from "../../../conformance/port-readiness/recording/tree.js";
 import { createRecordedAdapter, readRecordedInputs } from "../../../conformance/port-readiness/recorded-adapter.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import { CASE_LAYOUTS, checkRecording, committedSources, diffRecording, listedCopies, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources, type RecordOptions } from "../../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, checkRecording, committedSources, diffRecording, listedCopies, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources } from "../../../conformance/recorders/port-readiness/record.js";
 import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies, withoutMachinePaths } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
-
-const MANIFEST = `adapter: bandit
-rerail:
-  pack: demo
-  project: bandit
-upstream:
-  name: PyCQA/bandit
-  repository: https://github.com/PyCQA/bandit
-  commit: ${"a".repeat(40)}
-  version: 1.9.4
-  license: Apache-2.0
-  recommended_configs:
-    - default
-  runtime: bandit-1.9.4
-popularity:
-  observed_on: 2026-10-06
-  evidence:
-    - a fake upstream
-known_gaps: []
-`;
-
-const SOURCE = "import pickle\npickle.loads(b'')\n";
-const span = { startLine: 1, startCol: 0, endLine: null, endCol: 17 };
-
-// Options in the order Bandit's shell_injection gen_config builds them, not sorted: a re-record that reads the locked
-// recording back from its key-sorted files must still find nothing moved.
-const OPTIONS = [{ subprocess: ["subprocess.Popen"], shell: ["os.system"], no_shell: ["os.execl"] }];
-
-const fakeAdapter: AdapterFactory = async () => ({
-  identity: { bandit: "1.9.4" },
-  packChecks: [{ id: "upstream-commit", ok: true, detail: "fake" }],
-  licenseText: "LICENSE TEXT\n",
-  rule: (name) => (name === "B301" ? { name, implementation: ["bandit/blacklists/calls.py"], tests: ["examples/pickle_deserialize.py"], deprecation: null, recommended: { config: "default", options: OPTIONS }, notOnRealCode: null } : undefined),
-  implementationNames: () => new Set(["loads", "pickle"]),
-  sharedImplementationNames: () => new Set(["qualname"]),
-  implementationRegexes: () => [/pick\w+/iu],
-  fixtureWords: () => new Set(["pickle", "loads"]),
-  fixtureTexts: () => [SOURCE],
-  keywords: new Set(["import"]),
-  commentVocabulary: new Set(["nosec"]),
-  inScopeSamples: ["src/example.py"],
-  cases: () => [{ fixture: "examples/pickle_deserialize.py", variant: "default", path: "pickle_deserialize.py", source: SOURCE, skipped: null, expected: [span], markup: null }],
-  toSpan: (_name, _source, start) => ({ startLine: 0, startCol: start, endLine: null, endCol: 3 }),
-  inCorpus: (path) => path.endsWith(".py"),
-  lintCorpus: async (files: CorpusFile[]): Promise<UpstreamFile[]> => files.map((file) => ({ file, excluded: null, findings: new Map([["B301", [span]]]) })),
-  parserVerdicts: async (files) => files.map(() => [{ parser: "cpython 3.14.0", syntax: [], grammar: [] }]),
-}) satisfies PackAdapter;
-
-/** A factory that records the rules each live adapter is made for: making one is running upstream. */
-function counted(factory: AdapterFactory): { factory: AdapterFactory; made: string[][] } {
-  const made: string[][] = [];
-  return { made, factory: async (pack, names, cacheRoot, runner) => {
-    made.push([...names]);
-    return factory(pack, names, cacheRoot, runner);
-  } };
-}
-
-/** A tool-pack directory for the fake Bandit, naming `rules`. */
-function demoToolPack(rules: string[] = ["B301"]): string {
-  const root = mkdtempSync(join(tmpdir(), "port-readiness-record-"));
-  mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
-  mkdirSync(join(root, "packs/demo/licenses/bandit"), { recursive: true });
-  writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST);
-  writeFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "# Bandit\n\n| File | Upstream path | Copy |\n|---|---|---|\n| `upstream/bandit/fixtures/assert.py` | `examples/assert.py` | verbatim |\n");
-  nameRules(root, rules);
-  return root;
-}
-
-function nameRules(root: string, rules: string[]): void {
-  writeFileSync(join(root, "packs/demo/conformance.json"), JSON.stringify({ rules: rules.map((rule) => ({ id: `bandit-${rule}`, upstream: { tool: "bandit", rule }, policy: `rules/${rule}.json` })) }));
-}
-
-const corpusFile = (path: string, sha: string, task = "demo-task"): CorpusFile => ({ task, repository: "demo/demo", path, source: SOURCE, sha256: sha.repeat(64) });
-
-function optionsFor(root: string, factory: AdapterFactory, goldens: () => CorpusFile[], adapter = "bandit"): RecordOptions {
-  return {
-    root, pack: "demo", tool: "bandit", cacheRoot: join(root, "cache"), runner: { run: () => Promise.reject(new Error("no commands")) },
-    adapters: { [adapter]: factory },
-    // Upstream's bytes of a test file: twoRules' cases name the rule in their source.
-    upstreamBytes: (fixture: string) => Buffer.from(/B30\d/u.test(fixture) ? `${SOURCE}# ${/B30\d/u.exec(fixture)![0]}\n` : SOURCE, "utf8"),
-    corpusFiles: async () => goldens(),
-    runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
-  };
-}
-
-const lockOf = (root: string) => recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
+import { corpusFile, counted, demoToolPack, fakeAdapter, lockOf, MANIFEST, nameRules, optionsFor, SOURCE, span } from "./record-fixture.js";
 
 test("a fake adapter's answers are recorded as one archive the gates read back, and a record with nothing missing runs no upstream", async () => {
   const root = demoToolPack(["B301", "B999", "F401"]);

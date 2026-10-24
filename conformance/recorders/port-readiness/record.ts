@@ -649,7 +649,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const previous = mode.full === true ? new Map<string, Buffer>() : lockedTree(root, cacheRoot, pack, tool);
   const before = memoryTree(previous);
   const lockedTool = loadTool(before, id);
-  if (mode.corpus === true && lockedTool === undefined) throw new Error(`${label} holds no recording at this branch's config (its pins, runtime pins, gates.yaml, not-copied prefixes or recorder code moved, or it was never recorded): ${whole}`);
+  if (mode.corpus === true && lockedTool === undefined) throw new Error(`${label} holds no recording at this branch's config (its pins, runtime pins, gates.yaml, not-copied prefixes, adapter code or recording format moved, or it was never recorded): ${whole}`);
   const lockedParsers = lockedTool === undefined ? undefined : parsersId(manifest.adapter, lockedTool.parsers);
   const lockedRules = new Set(recordedRuleNames(before, id));
   const lockedAbsent = new Set(lockedTool?.absent ?? []);

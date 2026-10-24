@@ -250,6 +250,13 @@ everything from nothing, and `--prune` drops what no recorded rule and no golden
 finds upstream now answers otherwise, record with `--full`, as it says. A lock from before the one archive (v2 or v3,
 naming `recording.json`) is refused: delete it and record the tool-pack again.
 
+A tool-pack's config id moves with its adapter's code (`ADAPTER_SOURCES` in
+`conformance/port-readiness/recording/archive.ts`), so a fix to an adapter asks every answer again. The rest of the
+recorder (`record.ts`, `recording/tree.ts`, `recording/schema.ts`, `recording/corpus-answers.ts`) moves it only
+through `RECORDING_FORMAT` in the same file: a refactor or a comment there asks nothing again, and a change to the
+tree it writes for the same upstream output fails `test/conformance/recorders/recording-format.test.ts` until you bump
+`RECORDING_FORMAT` and update the test's pin, after which every tool-pack records again.
+
 ## Licence of contributions
 
 Rerail is licensed under the Apache License 2.0. By submitting a contribution you agree that it is licensed under

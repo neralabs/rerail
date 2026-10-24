@@ -21,8 +21,8 @@ import { buildRecordingLock, readRecordingLock, recordingLockSchema, recordingLo
 import { readGatesManifest, recordedRuntimes, type GatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { canonicalText, gatesRecordingSchema, type GatesRecording } from "../../../conformance/port-readiness/recording/schema.js";
 import {
-  ADAPTER_SOURCES, adapterSourcesDigest, answerConfig, archiveCachePath, cacheArchive, cachedTree, checkTreePaths, configId, memoryTree, packTree, parsersId, RECORDER_SOURCES,
-  recorderSourcesDigest, RECORDING_ARCHIVE_FORMAT, treeDirectory, treeFiles, unpackArchive,
+  ADAPTER_SOURCES, adapterSourcesDigest, answerConfig, archiveCachePath, cacheArchive, cachedTree, checkTreePaths, configId, memoryTree, packTree, parsersId, RECORDING_ARCHIVE_FORMAT,
+  RECORDING_FORMAT, treeDirectory, treeFiles, unpackArchive,
 } from "../../../conformance/port-readiness/recording/archive.js";
 import { answerKey, answerPath, answerText, fetchedContext, missingAnswers, neededAnswers, parseAnswer, verdictPath, type KeyContext } from "../../../conformance/port-readiness/recording/corpus-answers.js";
 import { caseAnswerPath, caseKey, loadRecording, loadRule, recordingFiles, ruleTreeDigest, textDigest, textPath } from "../../../conformance/port-readiness/recording/tree.js";
@@ -448,18 +448,16 @@ test("stillat/blade-parser's and PHPStan's corpus answers are keyed by the rules
   assert.equal(needed(["V1"]).answers.some((answer) => needed(["V1", "V2"]).answers.some((other) => other.path === answer.path)), false);
 });
 
-test("the config id and the parsers id name the recorder's adapter code and the code that files its answers", () => {
+test("the config id and the parsers id name the recorder's adapter code and the recording format", () => {
   const needed = neededAnswers({ root: PACKAGE_ROOT, manifest: gatesYaml("bandit"), runtimes: RUNTIMES, parsers: PARSERS, rules: ["B301"], files: [], context: ALONE });
   assert.equal(needed.config.sources, adapterSourcesDigest("bandit"));
-  assert.equal(needed.config.recorder, recorderSourcesDigest());
+  // The tree the recorder writes is versioned, not digested: recording-format.test.ts pins it, so a comment in the
+  // recorder asks nothing again and a change to what it writes fails until RECORDING_FORMAT is bumped.
+  assert.equal(needed.config.recording, RECORDING_FORMAT);
   assert.equal(needed.parsersId, parsersId("bandit", PARSERS));
   // The same parsers run by other adapter code are another parsers id.
   assert.notEqual(parsersId("ruff", PARSERS), parsersId("bandit", PARSERS));
   assert.notEqual(adapterSourcesDigest("ruff"), adapterSourcesDigest("bandit"));
-  // The recorder code every adapter files its answers through: the rule records, the keys, spans and canonical text.
-  for (const path of ["conformance/recorders/port-readiness/record.ts", "conformance/port-readiness/recording/tree.ts", "conformance/port-readiness/recording/schema.ts"]) {
-    assert.ok(RECORDER_SOURCES.includes(path), `RECORDER_SOURCES leaves out ${path}`);
-  }
 });
 
 test("the config id covers every gates.yaml setting the adapter reads and the pack's not-copied prefixes", () => {

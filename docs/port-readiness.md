@@ -115,10 +115,14 @@ An answer is named by everything it depends on, so it holds exactly while its na
   records, every `gates.yaml` setting an adapter reads (its `upstream` section, the whole `eslint` section, and
   `rerail.in_scope`), the "Not copied" prefixes of the pack's `UPSTREAM.md` files, a digest of the recorder's code
   for the tool-pack's adapter (`ADAPTER_SOURCES` in `archive.ts`: the adapter, its drivers, the language toolkits and
-  span units it reads, and `runtimes.ts`), and a digest of the recorder code that turns upstream's answers into tree
-  files (`RECORDER_SOURCES`: `record.ts`, `recording/tree.ts`, `recording/schema.ts` and
-  `recording/corpus-answers.ts`). A bump moves it, and so does a fix to an adapter or to how an answer is filed, and
-  every answer, on the goldens and on upstream's own tests, is asked again;
+  span units it reads, and `runtimes.ts`), and `RECORDING_FORMAT` (`archive.ts`), the version of the tree the recorder
+  writes from upstream's answers (`record.ts`, `recording/tree.ts`, `recording/schema.ts` and
+  `recording/corpus-answers.ts`). A bump moves it, and so does a fix to an adapter, and every answer, on the goldens
+  and on upstream's own tests, is asked again. A change to the rest of the recorder moves it only through
+  `RECORDING_FORMAT`, which is bumped whenever the recorder writes a different tree for the same upstream output (its
+  keys, file layout, encodings, span handling or what is recorded), never for a refactor or a comment:
+  `test/conformance/recorders/recording-format.test.ts` pins the tree it writes for a fixture tool-pack, and fails
+  until the format is bumped and the pin updated;
 - **the key**: the file's sha256, so a golden whose file changed needs a new answer; for Ruff also the `__init__.py`
   and `__init__.pyi` files above it the corpus holds; for PHPStan and Psalm, which analyse the files they are handed
   as one project, every golden file of the task, which the recorder hands them at once, for every recorded rule; for

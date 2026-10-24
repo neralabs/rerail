@@ -146,8 +146,10 @@ again from the verified archive otherwise. The gates read the recording at the o
 
 Each answer is named by everything it depends on, and only that, so it stays valid while its name does: `<config-id>`
 hashes upstream's pins, the runtimes' pin digests the lock records, the gates.yaml sections that say how upstream
-lints a file (`upstream`, and ESLint's plugin, release, environment and `.vue` parsers) and the recorder's code for the
-adapter (`ADAPTER_SOURCES`); `<rule>` is the rule with `/` written `~`. A case answer's `<key>` is its source's sha256
+lints a file (`upstream`, and ESLint's plugin, release, environment and `.vue` parsers), the recorder's code for the
+adapter (`ADAPTER_SOURCES`) and `RECORDING_FORMAT`, the version of the tree the recorder writes (bumped when it writes
+a different tree for the same upstream output, never for a refactor or a comment; `recording-format.test.ts` pins that
+tree); `<rule>` is the rule with `/` written `~`. A case answer's `<key>` is its source's sha256
 and a digest of the other inputs its adapter feeds upstream (recording/tree.ts `caseKey`: the path or file type, the
 variant, and for ESLint, Psalm and SQLFluff the case's place in upstream's tests, whose own configuration no recorded
 field holds; for PHP_CodeSniffer, tlint, stillat/blade-parser, PHPStan and SQLFluff also the rules recorded with it).
