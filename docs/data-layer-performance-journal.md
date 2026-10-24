@@ -54,6 +54,20 @@ The old path runs both plans over all twenty files in one unrestricted frontier.
 The required shape is two batches, each with one admitted plan and ten files.
 `.rerail/profiles/sql-recovery-tdd-20261023/domains-red` records this failure and the earlier two failures.
 
+The R2 local-preparation implementation passes all three green public-API tests in `admission-green` (9.162 seconds).
+Path, text, syntax, and language exclusions leave only the admitted plan.
+Twenty compatible files share one SQL batch. Two disjoint scopes produce two ten-file batches with one plan each.
+The preparation and final matching paths share syntax and text admission.
+Source generation remains part of the corpus file identity; this change does not merge generations.
+The candidate corpus restricts both structural preparation and selection to the admitted file set.
+The existing production SQL adapter remains authoritative for selection.
+
+Eight native-facing test files pass 295 tests in `admission-functional` (11.672 seconds).
+They cover relational evidence, syntax, deferred stages, completed reachability, broad producer waves, query parity, and matcher/runtime behavior.
+The native profiling library Clippy check passes (28.411 seconds), and all profiling tool checks pass in `tool-checks` (16.029 seconds).
+The optimized addon build finishes under the existing build approval (2 minutes 24 seconds).
+Snapshot preparation, relational re-preparation, and conditional activation still need admission changes; R2 remains open.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.

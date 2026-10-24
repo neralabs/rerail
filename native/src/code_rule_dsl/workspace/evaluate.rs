@@ -58,6 +58,25 @@ pub(super) fn candidate_grammar<'a>(
     grammar_matcher(matchers, file).expect("AST candidate has a grammar matcher")
 }
 
+/// The same syntax and text decision gates both SQL preparation and final matching.
+fn candidate_admitted<'a>(
+    grammar: &'a GrammarMatcher,
+    source: &str,
+    errors: &SyntaxErrors,
+    searched: &mut rustc_hash::FxHashMap<&'a str, bool>,
+) -> bool {
+    grammar
+        .invalid_syntax
+        .is_none_or(|invalid| invalid != errors.is_empty())
+        && grammar.text.as_ref().is_none_or(|text| {
+            text.holds_with(source, &mut |source: &str, literal| {
+                *searched.entry(literal).or_insert_with(|| {
+                    memchr::memmem::find(source.as_bytes(), literal.as_bytes()).is_some()
+                })
+            })
+        })
+}
+
 pub(super) struct PreparedAst {
     doc: Option<tape::TapeDoc>,
     lines: Arc<LineTable>,
@@ -68,15 +87,9 @@ pub(super) struct PreparedAst {
 }
 
 fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> {
-    use crate::code_rule_dsl::{
-        budget::Context,
-        matcher::{CorpusSlot, anchor_plans},
-    };
+    use crate::code_rule_dsl::{budget::Context, matcher::CorpusSlot};
     let _corpus = CorpusSlot::install(Arc::clone(context.anchor_corpus));
-    let plans = anchor_plans(context.code_rules.iter().map(Arc::as_ref));
-    if plans.is_empty() {
-        return Ok(());
-    }
+    let mut demands = BTreeMap::new();
     let mut grammars = BTreeMap::new();
     for job in jobs {
         let file = &mut job.file;
@@ -118,6 +131,29 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
         {
             eprintln!("SQL AST batch publication unavailable: {error}");
         }
+        if let Some(doc) = &doc {
+            let errors = SyntaxErrors::of_doc(doc);
+            let root = Root::doc(doc.clone());
+            let gates = FileGates::new(&file.input, root.root());
+            let mut searched = rustc_hash::FxHashMap::default();
+            let plans = file
+                .candidates
+                .ast
+                .iter()
+                .filter_map(|id| {
+                    let grammar = candidate_grammar(&context.code_rules[id.0], id.1, &file.input);
+                    let limits = &context.code_rules[id.0].capabilities.limits;
+                    (file.input.source.len() <= limits.max_source_bytes
+                        && limits.max_files != 0
+                        && !file.failures.contains_key(id)
+                        && !failures.contains_key(id)
+                        && candidate_admitted(grammar, &file.input.source, &errors, &mut searched)
+                        && gates.admit(grammar))
+                    .then(|| Arc::clone(&grammar.anchors))
+                })
+                .collect::<Vec<_>>();
+            demands.insert(file.input.path.clone(), plans);
+        }
         file.prepared = Some(Box::new(PreparedAst {
             doc,
             lines,
@@ -131,10 +167,10 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
     let mut work = Context::work(
         context.closed,
         super::CLAUSE_WORK_BUDGET
-            .saturating_mul(plans.values().map(Vec::len).sum::<usize>() as u64)
+            .saturating_mul(demands.values().map(Vec::len).sum::<usize>() as u64)
             .max(1),
     );
-    if let Err(error) = work.run(|| context.anchor_corpus.prepare(&plans)) {
+    if let Err(error) = work.run(|| context.anchor_corpus.prepare_files(&demands)) {
         eprintln!("SQL AST batch unavailable; retaining authoritative candidates: {error}");
     }
     Ok(())
@@ -764,11 +800,7 @@ fn evaluate_ast_file(
         // A clause whose matcher needs text the file lacks matches no root: it selects none. The
         // clauses share many literals, each searched for once.
         let mut searched = rustc_hash::FxHashMap::<&str, bool>::default();
-        let mut found = |text: &str, literal| {
-            *searched.entry(literal).or_insert_with(|| {
-                memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some()
-            })
-        };
+        let gates = FileGates::new(&file.input, root.root());
         let runs = file
             .candidates
             .ast
@@ -776,13 +808,8 @@ fn evaluate_ast_file(
             .zip(&grammars)
             .map(|(id, grammar)| {
                 !file.failures.contains_key(id)
-                    && grammar
-                        .invalid_syntax
-                        .is_none_or(|invalid| invalid != errors.is_empty())
-                    && grammar
-                        .text
-                        .as_ref()
-                        .is_none_or(|text| text.holds_with(&file.input.source, &mut found))
+                    && candidate_admitted(grammar, &file.input.source, &errors, &mut searched)
+                    && gates.admit(grammar)
             })
             .collect::<Vec<_>>();
         let plans = grammars
