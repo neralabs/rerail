@@ -109,6 +109,29 @@ The combined `admission-publication-green` run passes 300 tests and exposes one 
 The behavioral admission checks all pass; the interleaved JSON failure requires a separate instrumentation fix.
 Conditional cross-file activation still needs the staged producer work. R2 remains open for that part.
 
+The publication green test reduces those same six insert families from 1,199 executions to 18.
+The 800 findings remain complete. Both language catalogs use one statement each.
+Each file publishes one batch for frequency rows, kind postings, value postings, and coverage rows.
+Overflow records use the same bounded typed batching helper.
+Bindings stay below SQLite's variable limit and a 4,096-value cap. Empty batches execute no SQL.
+The helper transfers owned posting blobs without another copy where the caller already owns them.
+SQLite retains the same tables, FTS layout, vocabulary triggers, and rollback ownership.
+The production helper's isolated Rust test verifies type preservation, forced small batches, empty inputs, duplicate-key failure, and transaction rollback.
+`publication-unit` passes in 27.694 seconds. The profiling native library Clippy check passes in `recovery-clippy` (40.529 seconds).
+This is a per-publication improvement. Whole-job publication across ingestion packets remains pending.
+
+The FTS audit uses the exact production declaration and one bulk `INSERT ... SELECT`.
+One, ten, and 101 documents execute nine, 18, and 109 SQLite statements respectively.
+The internal document-size writes occur once per document. The production tracer test records each write.
+`fts-budget-audit` passes in 5.490 seconds and retains the exact results.
+The user then fixes the acceptance boundary at **100 engine-submitted statements**, with SQLite internal executions reported separately.
+The next tracer TDD step must distinguish those origins mechanically; historical traces lack the necessary callback annotation.
+The numeric limit stays 100. Engine DDL, publication, helper calls, transactions, cached executions, and cleanup all remain included.
+
+SQLite source confirms cached internal document-size statements and transaction-level posting-list buffering.
+The contentless-delete layout rejects `columnsize=0`; suspending user triggers does not suspend FTS5's update method.
+The next FTS experiment compares batched publication with transaction boundaries across packets and the complete job.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.

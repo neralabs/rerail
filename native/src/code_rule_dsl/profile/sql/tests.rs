@@ -322,3 +322,47 @@ fn callback_survives_a_session_move_between_workers() {
     let directory = std::thread::spawn(move || worker(owned)).join().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn positional_fts_bulk_publication_exposes_per_document_helper_executions() {
+    for files in [1, 10, 101] {
+        let directory = tempfile::tempdir().unwrap();
+        let connection = Connection::open_in_memory().unwrap();
+        // SAFETY: this profiler drops before its connection.
+        let profiler = unsafe { Profiler::new(&connection, directory.path()) }.unwrap();
+        // Use the production FTS declaration, including its contentless-delete layout.
+        connection
+            .execute_batch(
+                include_str!("../../matcher/anchors/sql/schema.sql")
+                    .split(';')
+                    .next()
+                    .unwrap(),
+            )
+            .unwrap();
+        let before = profiler.state.borrow().sql_started;
+        connection.execute("WITH RECURSIVE files(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM files WHERE id<?1) INSERT INTO ftsk(rowid,k) SELECT id,'k1' FROM files", [files]).unwrap();
+        let publication = profiler.state.borrow().sql_started - before;
+        profiler.checkpoint(&connection).unwrap();
+        let state = profiler.state.borrow();
+        assert_eq!(state.sql_started, state.sql_completed);
+        drop(state);
+        let events = std::fs::read_to_string(profiler.stem.with_extension("jsonl")).unwrap();
+        let state = profiler.state.borrow();
+        let helpers = events
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|event| {
+                let sql = state.queries[event["query"].as_u64().unwrap() as usize]["sql"]
+                    .as_str()
+                    .unwrap();
+                sql.starts_with("REPLACE INTO") && sql.contains("ftsk_docsize")
+            })
+            .count();
+        assert_eq!(helpers, files as usize);
+        assert!(publication > helpers);
+        println!(
+            "FTS_BULK_BUDGET {}",
+            json!({"files":files,"hostInsertStatements":1,"sqliteExecutions":publication,"documentHelpers":helpers})
+        );
+    }
+}

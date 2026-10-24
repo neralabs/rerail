@@ -5,6 +5,8 @@ use ast_grep_core::Doc;
 use rusqlite::OptionalExtension;
 use rusqlite::{Connection, Result, params};
 use std::path::Path;
+#[path = "store/publication.rs"]
+pub(super) mod publication;
 
 pub(super) const LANG_STRIDE: u32 = 1024;
 
@@ -165,19 +167,35 @@ impl Store {
                 params![lang, language::label(*doc.get_lang()).unwrap_or("test")],
             )?;
             let catalog = doc.get_lang().kinds();
-            let mut kinds = tx.prepare_cached("INSERT INTO kind VALUES(?1,?2,?3,?4)")?;
-            for code in 0..catalog.kind_count() as u16 {
-                kinds.execute(params![
-                    lang,
-                    code,
-                    catalog.kind_name(code),
-                    catalog.kind_is_named(code)
-                ])?;
-            }
-            let mut fields = tx.prepare_cached("INSERT INTO field VALUES(?1,?2,?3)")?;
-            for code in 1..=catalog.field_count() as u16 {
-                fields.execute(params![lang, code, catalog.field_name(code)])?;
-            }
+            publication::insert(
+                &tx,
+                "INSERT INTO kind",
+                "",
+                (0..catalog.kind_count() as u16).map(|code| {
+                    [
+                        i64::from(lang).into(),
+                        i64::from(code).into(),
+                        catalog
+                            .kind_name(code)
+                            .map_or(rusqlite::types::Value::Null, |name| name.to_owned().into()),
+                        catalog.kind_is_named(code).into(),
+                    ]
+                }),
+            )?;
+            publication::insert(
+                &tx,
+                "INSERT INTO field",
+                "",
+                (1..=catalog.field_count() as u16).map(|code| {
+                    [
+                        i64::from(lang).into(),
+                        i64::from(code).into(),
+                        catalog
+                            .field_name(code)
+                            .map_or(rusqlite::types::Value::Null, |name| name.to_owned().into()),
+                    ]
+                }),
+            )?;
         }
         if let Some(fid) = previous {
             remove(&tx, fid)?;
@@ -208,27 +226,50 @@ impl Store {
             "INSERT INTO fk VALUES(?1,?2,?3)",
             params![fid, lang, mask.as_slice()],
         )?;
-        let mut freq = tx.prepare_cached(
-            "INSERT INTO kfreq VALUES(?1,?2,?3)
-            ON CONFLICT(lang,code) DO UPDATE SET n=n+excluded.n",
+        publication::insert(
+            &tx,
+            "INSERT INTO kfreq",
+            "ON CONFLICT(lang,code) DO UPDATE SET n=n+excluded.n",
+            counts
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| **n != 0)
+                .map(|(code, &n)| [i64::from(lang).into(), (code as i64).into(), n.into()]),
         )?;
-        for (code, &n) in counts.iter().enumerate().filter(|(_, n)| **n != 0) {
-            freq.execute(params![lang, code as i64, n])?;
-            tx.execute(
-                "INSERT INTO file_kind_counts(fid,code,n,postings) VALUES(?1,?2,?3,?4)",
-                params![fid, code as i64, n, positions.segments[code]],
-            )?;
-        }
-        drop(freq);
+        publication::insert(
+            &tx,
+            "INSERT INTO file_kind_counts(fid,code,n,postings)",
+            "",
+            counts
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| **n != 0)
+                .map(|(code, &n)| {
+                    [
+                        fid.into(),
+                        (code as i64).into(),
+                        n.into(),
+                        std::mem::take(&mut positions.segments[code]).into(),
+                    ]
+                }),
+        )?;
         for (table, bytes) in [("parovf", image.parb), ("sizeovf", image.sizb)] {
-            let mut put = tx.prepare_cached(&format!("INSERT INTO {table} VALUES(?1,?2,?3)"))?;
-            for pair in bytes.chunks_exact(8) {
-                put.execute(params![
-                    fid,
-                    u32::from_le_bytes(pair[..4].try_into().expect("key width")),
-                    u32::from_le_bytes(pair[4..].try_into().expect("value width"))
-                ])?;
-            }
+            publication::insert(
+                &tx,
+                &format!("INSERT INTO {table}"),
+                "",
+                bytes.chunks_exact(8).map(|pair| {
+                    [
+                        fid.into(),
+                        i64::from(u32::from_le_bytes(pair[..4].try_into().expect("key width")))
+                            .into(),
+                        i64::from(u32::from_le_bytes(
+                            pair[4..].try_into().expect("value width"),
+                        ))
+                        .into(),
+                    ]
+                }),
+            )?;
         }
         value_image.put(&tx, fid, lang)?;
         tx.commit()?;

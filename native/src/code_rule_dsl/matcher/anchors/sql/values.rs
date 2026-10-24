@@ -1,7 +1,7 @@
 //! Persistent case-exact vocabulary and delta-coded value postings, following tape_store.py.
 //! SQLite's B-tree keys retain the full term, so hash collisions need no confirmation path.
 use crate::code_rule_dsl::tape::TapeDoc;
-use rusqlite::{Connection, Result, params};
+use rusqlite::{Connection, Result};
 use std::collections::BTreeMap;
 
 pub(super) const TERM_CAP: usize = 96;
@@ -158,23 +158,36 @@ impl<'a> Image<'a> {
         Ok(image)
     }
     pub fn put(&self, db: &Connection, fid: i64, lang: u32) -> Result<()> {
-        let mut put = db.prepare_cached("INSERT INTO vidx VALUES(?1,?2,?3,?4,?5)")?;
-        for (&(kind, term), pres) in &self.postings {
-            let mut sorted = pres.clone();
-            sorted.sort_unstable();
-            let packed = pack(&sorted);
-            put.execute(params![lang, term, fid, kind, packed])?;
-        }
-        let mut put = db.prepare_cached("INSERT INTO vcov VALUES(?1,?2,?3,?4,?5)")?;
-        for (&kind, &(bad, residue)) in &self.cover {
-            put.execute(params![
-                fid,
-                kind,
-                bad,
-                residue as i64,
-                pack(self.missing.get(&kind).map_or(&[], Vec::as_slice))
-            ])?;
-        }
+        super::store::publication::insert(
+            db,
+            "INSERT INTO vidx",
+            "",
+            self.postings.iter().map(|(&(kind, term), pres)| {
+                let mut sorted = pres.clone();
+                sorted.sort_unstable();
+                [
+                    i64::from(lang).into(),
+                    term.to_owned().into(),
+                    fid.into(),
+                    i64::from(kind).into(),
+                    pack(&sorted).into(),
+                ]
+            }),
+        )?;
+        super::store::publication::insert(
+            db,
+            "INSERT INTO vcov",
+            "",
+            self.cover.iter().map(|(&kind, &(bad, residue))| {
+                [
+                    fid.into(),
+                    i64::from(kind).into(),
+                    i64::from(bad).into(),
+                    (residue as i64).into(),
+                    pack(self.missing.get(&kind).map_or(&[], Vec::as_slice)).into(),
+                ]
+            }),
+        )?;
         Ok(())
     }
 }
