@@ -174,6 +174,53 @@ The final inventory check separates stage release from construction.
 A DROP under a candidate producer currently inherits the preparation phase, hiding cleanup in that total.
 `cleanup-inventory-red` fails on that classification while preserving the exact execution total.
 
+Cleanup now retains its producer identity but has a separate execution phase.
+All 25 Node profiling tests pass in `cleanup-inventory-green` (2.214 seconds).
+Offline regeneration preserves the 10,443 engine submissions and 994 SQLite internal executions.
+The rebuilt inventory contains 5,176 candidate construction, 2,534 cleanup, 1,781 relational evaluation, 904 setup, and 48 publication submissions.
+`final-inventory-rebuild` exits one solely because the unchanged 100-submission allowance fails.
+
+## Recovery checkpoint: 2026-10-23
+
+The [checkpoint evidence](../fixtures/host/data-layer-port/profiling/sql-recovery-checkpoint-20261023.json) records the final measured addon and exact controls.
+All original positive and clean state-tripwire observations pass snapshot and workspace parity.
+Every connection receipt and origin counter reconciles. No SQL execution has an unknown origin or phase.
+The complete job submits **10,443 engine statements**, plus **994 SQLite internal statements**.
+The 100-submission gate correctly returns nonzero after preserving all findings.
+Execution 101 still creates `syntax_21` during compiler schema validation.
+The gate is mandatory in CI, independent of the smaller producer-shape assertions.
+
+| Small state-tripwire workload | Frozen SQL checkpoint | Recovery checkpoint |
+| --- | ---: | ---: |
+| Total SQLite executions | 24,159 | 11,437 |
+| Median complete replay CPU, three fresh processes | 3,441.002 ms | 2,567.392 ms |
+| CPU range | 3,379.856–3,462.062 ms | 2,489.278–2,581.697 ms |
+| Reported process maxRSS, median raw KiB | 476,144 | 370,304 |
+
+Total executions decrease 52.66%. Complete replay CPU decreases 25.39% on this small case.
+The controls include policy compilation, both snapshot evaluations, and both workspace evaluations.
+Detailed SQL and span tracing remain off. Both addons retain aggregate profiling timers and the same optimization/allocator/worker settings.
+The shared host has competing external workloads. The raw ranges remain available.
+These results do not replace the whole-repository baseline or establish large-corpus memory recovery.
+The pre-SQL Rust reference rejects current reachability root column names and is excluded from this comparison.
+
+The final native-facing run passes all 301 focused tests in `final-functional` (23.504 seconds).
+It includes admission, publication, broad producer waves, SQL parity, runtime edits, and matcher behavior.
+Six additional bounded jobs pass 120 unchanged native source observations across all 60 ports: one positive and one clean per rule.
+All false-positive, false-negative, failure, and snapshot/workspace difference counts are zero.
+This is selected source coverage, not a rerun of all 3,210 original observations.
+The repository typecheck and all structure/boundary/path checks pass in `final-static` (55.349 seconds).
+All profiling tools pass 25 Node tests and 75 Python tests in `final-tools`.
+Eight production-tracer tests and 21 standalone SQL-host tests pass separately.
+The standalone host passes Clippy across all targets in `lab-clippy-2` (3.509 seconds).
+Native and standalone formatting checks pass.
+
+R2 still needs conditional cross-file activation.
+R3 still needs a complete-job admission/publication boundary and compiler schema reuse.
+R4–R7 remain open: named shared physical producers, bounded coalesced consumers, state-rule failure/memory correction, and full aggregate acceptance.
+The remaining 5,176 construction and 2,534 cleanup submissions motivate physical ownership across rules and packets.
+No acceptance requirement is marked complete because the numeric gate still fails.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.

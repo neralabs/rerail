@@ -2,6 +2,8 @@
 const phases = ["connectionSetup", "catalogPublication", "filePublication", "candidatePreparation", "relationalEvaluation", "cleanup", "unknown"];
 
 function phase(sql, context) {
+  const body = sql.replace(/^(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+/, "");
+  if (/^DROP\s+(?:TABLE|VIEW|INDEX)\b/i.test(body)) return "cleanup";
   if (context.executionPhase && phases.includes(context.executionPhase)) return context.executionPhase;
   if (context.scope === "compile") return "connectionSetup";
   if (context.component === "ast-index") {
