@@ -65,6 +65,67 @@ fn read_events(p: &std::path::Path) -> Vec<Event> {
         .collect()
 }
 
+/// `YGRAPH_Y2_EDGES=<file>` (Y2): each worktree's edges as `linked_edges` rows, in the format
+/// of `gen::y2dump` (`R`/`I` rows at load against worktree 1, `E <seq> <w> <group> <kind>
+/// <graph ms> <pairs added> <pairs removed>` then `D <diff> <row>` per changed row after each
+/// event), so Y2's rules read Y1's maintained graph instead of the dataflow's.
+struct Y2Edges {
+    out: std::io::BufWriter<std::fs::File>,
+    first: Vec<EdgeRow>,
+    prev: FxHashMap<u32, Vec<EdgeRow>>,
+}
+
+fn y2_row(sh: &Shared, r: &EdgeRow) -> String {
+    let s = |x: u32| serde_json::Value::String(sh.it.str(x).to_owned());
+    serde_json::to_string(&json!([s(r.0), r.1, r.2, s(r.3), r.4, r.5, s(r.6), s(r.7), r.8])).unwrap()
+}
+
+/// `a - b` over sorted rows, as (row, ±1).
+fn y2_diff<'a>(a: &'a [EdgeRow], b: &'a [EdgeRow]) -> Vec<(&'a EdgeRow, i32)> {
+    let (mut i, mut j, mut out) = (0, 0, Vec::new());
+    while i < a.len() || j < b.len() {
+        if j == b.len() || (i < a.len() && a[i] < b[j]) {
+            out.push((&a[i], 1));
+            i += 1;
+        } else if i == a.len() || b[j] < a[i] {
+            out.push((&b[j], -1));
+            j += 1;
+        } else {
+            i += 1;
+            j += 1;
+        }
+    }
+    out
+}
+
+impl Y2Edges {
+    fn from_env() -> Option<Y2Edges> {
+        let p = std::env::var_os("YGRAPH_Y2_EDGES")?;
+        Some(Y2Edges { out: std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(p).unwrap()), first: Vec::new(), prev: FxHashMap::default() })
+    }
+    /// Worktree `w`'s rows at load (or creation): the reference (worktree 1) or a difference.
+    fn init(&mut self, sh: &Shared, w: u32, rows: Vec<EdgeRow>) {
+        if self.prev.is_empty() {
+            for r in &rows {
+                writeln!(self.out, "R\t{w}\t0\t1\t{}", y2_row(sh, r)).unwrap();
+            }
+            self.first = rows.clone();
+        } else {
+            for (r, d) in y2_diff(&rows, &self.first) {
+                writeln!(self.out, "I\t{w}\t0\t{d}\t{}", y2_row(sh, r)).unwrap();
+            }
+        }
+        self.prev.insert(w, rows);
+    }
+    fn event(&mut self, sh: &Shared, seq: u64, w: u32, group: &str, kind: &str, st: &Step, rows: Vec<EdgeRow>) {
+        writeln!(self.out, "E\t{seq}\t{w}\t{group}\t{kind}\t{}\t{}\t{}", st.ms, st.edges_added.len(), st.edges_removed.len()).unwrap();
+        for (r, d) in y2_diff(&rows, &self.prev[&w]) {
+            writeln!(self.out, "D\t0\t{d}\t{}", y2_row(sh, r)).unwrap();
+        }
+        self.prev.insert(w, rows);
+    }
+}
+
 fn mb(b: usize) -> f64 {
     b as f64 / 1e6
 }
@@ -346,6 +407,14 @@ pub fn run(args: &[String]) {
         pairs.insert(*w, all_pairs(&mut sh, &belows[w], d).into_iter().collect());
     }
     let (mut delta_checks, mut delta_mismatch) = (0usize, 0usize);
+    let mut y2 = Y2Edges::from_env();
+    if let Some(y) = y2.as_mut() {
+        writeln!(y.out, "O\t0\tygraph:views/reference_edges").unwrap();
+        for (w, d) in &wts {
+            let rows = edge_rows(&sh, &belows[w], d);
+            y.init(&sh, *w, rows);
+        }
+    }
     for (i, ev) in events.iter().enumerate() {
         if ev.group == "new_worktree" || ev.group == "commit_init" {
             assert!(!wts.contains_key(&ev.worktree));
@@ -382,6 +451,16 @@ pub fn run(args: &[String]) {
             ps.remove(e);
         }
         ps.extend(st.edges_added.iter().copied());
+        if let Some(y) = y2.as_mut() {
+            let rows = edge_rows(&sh, below, &wts[&ev.worktree]);
+            if ev.group == "new_worktree" || ev.group == "commit_init" {
+                // `gen::y2dump`'s order: the creating event, then the new worktree's rows after it.
+                writeln!(y.out, "E\t{}\t{}\t{}\t{}\t{}\t0\t0", ev.seq, ev.worktree, ev.group, ev.kind, st.ms).unwrap();
+                y.init(&sh, ev.worktree, rows);
+            } else {
+                y.event(&sh, ev.seq, ev.worktree, &ev.group, &ev.kind, &st, rows);
+            }
+        }
         let d = &wts[&ev.worktree];
         per.push(json!({"seq": ev.seq, "worktree": ev.worktree, "group": ev.group, "kind": ev.kind, "step": st, "edges_added": st.edges_added.len(), "edges_removed": st.edges_removed.len(), "delta_bytes": d.bytes(), "divergence": divergence(d)}));
         if (i + 1) % check_every == 0 {
@@ -429,6 +508,9 @@ pub fn run(args: &[String]) {
         }
     }
     checks.finish();
+    if let Some(y) = y2.as_mut() {
+        y.out.flush().unwrap();
+    }
     let db_end: usize = wts.values().map(Delta::bytes).sum();
     fp_samples.push(json!({"at": "end", "mem": mem_json(), "delta_bytes": db_end, "cluster_bytes": cluster_bytes, "interner_bytes": sh.it.bytes()}));
     // exactness summary

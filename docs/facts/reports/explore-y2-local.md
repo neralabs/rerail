@@ -11,10 +11,26 @@ Branch `Moti-Velz/facts-engine-y2-local` from integration `685db3f76`. Code: `sp
 
 Kill line (neither rule scoped exactly and unscoped > 5 s): **not reached**. `exported-families` is scoped exactly with no maintained property; dead code is scoped exactly given one maintained property (reachability), and even unscoped it costs 150–310 ms over the graph, against 32 s (M2, linker included) and ≥ 7.6 s (X5, rule logic alone) on the set-at-a-time executor.
 
+**With Y1's maintained graph** (`2aecfee81`, merged here; the rules read its edges instead of the dataflow's):
+- Y1's edges = the dataflow's `views/reference_edges` after each of the 299 events (299 checks, 0 differences).
+- Both rules are still exact: 340 checks, 0 differences, same counts as above.
+- Per single-file edit (n = 298, p50 / p95 / p99 / max):
+
+  | Component | ms |
+  |---|---|
+  | Y1's graph step | 0.18 / 1.24 / 1.94 / 2.73 |
+  | applying the deltas to Y2's inputs | 0.04 / 0.36 / 0.76 / 1.20 |
+  | dead code, scoped | 0.06 / 1.26 / 2.67 / 8.48 |
+  | `exported-families`, scoped | 0.004 / 0.03 / 0.07 / 0.49 |
+  | **graph + both rules** | **0.35 / 2.64 / 4.53 / 9.36** |
+
+  Unscoped over Y1's edges: dead code 107 / 124 / 145 / 219 ms, `exported-families` 7.5 / 10.0 / 10.4 / 12.2 ms. This run was at lower machine load than § 3's, so its milliseconds are lower.
+- Run: `runs/20261023-223115-y1-edges-300`.
+
 What the per-edit figures include and exclude:
 - Included: the rule's own work after the edit's input deltas are known: scoping (`prepare`), edge diffs, reachability maintenance, findings (`finish`).
 - Excluded, and owned elsewhere:
-  - Y1's graph update (here the dataflow's `views/reference_edges`, recomputed per edit, as agreed until Y1 lands).
+  - The graph update: Y1's step, reported above. § 3 measures the rules over the dataflow's `views/reference_edges` instead.
   - The symbol table's update. It is taken from the dataflow's `proj_*` stages; it is not built here (§ 7).
   - Per-content traits (per-file side, X6: 0.27–0.72 ms per content per rule).
 - Applying the deltas to Y2's tables costs 0.05 / 0.40 / 0.91 / 1.5 ms per edit.
@@ -34,7 +50,10 @@ What the per-edit figures include and exclude:
   - each event's row deltas for the edited worktree.
   
   `y2/facts.rs` holds them as keyed multisets with the inverse indexes the queries read (the stand-in for Y1's `GraphView` plus the symbol table; one interner).
-- **Graph API used.** The rules read the reference graph only as `edges_from(def)` / `edges_to(def)`, keyed by (path, start) at both ends. Against Y1's `GraphRead` the adapter is `edges_from(path, fqname)` → `def(dst).(path, start)`, with the target kind read from `def(dst)` as Y1 does (agreed with Y1Graph; not wired, Y1 had not committed).
+- **Graph API used.** The rules read the reference graph only as `edges_from(def)` / `edges_to(def)`, keyed by (path, start) at both ends.
+  - Wired to Y1 through its `linked_edges` rows: `YGRAPH_Y2_EDGES=<file> facts-b ygraph replay …` writes each worktree's edge rows at load and their difference after each event, together with Y1's step time. This is a hook in `ygraph/replay.rs` on this branch only.
+  - `facts-b y2 --edges <file>` then replaces the dataflow's `views/reference_edges` with them and keeps the dataflow's rows as the check.
+  - Y1's `Step.edges_added/removed` are in DefId pairs, where DefId = (path, name, occurrence), stable across shifts. Y2 keys edges by position, so it takes the rows rather than the pairs. Keying Y2's definitions by Y1's DefId would also remove the "moved only" refinement of § 4 (Jeremy item 3).
 - **Driver.** `facts-b y2 --dump F --out D [--scratch-every N | --fuzz N --seed S]`. Per event: classify the deltas into presence changes, `prepare` both rules under the old state, apply, `finish`. Then the checks of § 2.
 
 ### 1.1 Dead code (`y2/dc.rs`)
@@ -81,6 +100,7 @@ DRed is slow because every definition has an edge to its module node and module 
 | Dead code vs the dataflow's stages | findings row for row; `reachable` 67,286 and `annotation_reachable` 67,288 as sets | same, `y2.log` |
 | `exported-families` vs the dataflow's stages | surfaces 10,870, groups 9,169, eligible 499 by count; the 489 family JSON strings equal | same |
 | **Replay prefix**: S3's events, `--limit 300`, all 41 worktrees touched, `--scratch-every 1` | **340 checks, 0 differences**. At every event: scoped findings = from-scratch findings = the dataflow's `dc__findings` / `ef__findings` (both rules); scoped reached set = scratch, per layer and in dispatch-state count; = the dataflow's `reachable` / `annotation_reachable`. 83 edits changed dead-code findings, 2 changed `exported-families` findings | `runs/20261023-211927-dump-replay-300/y2` |
+| Same, edges from **Y1's maintained graph** (`--edges`) | **340 checks, 0 differences**; Y1's edges = the dataflow's `reference_edges` (as sets of (path, start, target path, target start)) after all 299 events | `runs/20261023-223115-y1-edges-300/y2` |
 | Fuzz on the oracle tree: 2 × 400 steps, each removing or restoring 1–16 random rows across all 13 input tables, checked against scratch | **0 differences**. Up to 23,923 states unsupported and 22,895 toggled in a step; dead-code findings 4,931–5,350; `exported-families` findings 0–46 | `runs/20261023-210008-dump-oracle/y2-fuzz-e-s{1,2}` |
 
 The dataflow side of the replay check is M0's incremental engine. X6 checked it against the engine from scratch on this prefix (0 differences).
@@ -206,7 +226,11 @@ Both rules: the symbol table (§ 7).
    scripts/findings_parity.py D/y2/parity --clause y2:dc --check internal_dead_code --jobs … --suite …/s5-gate/suites/suite-b5.json   (y2:ef: public_api_triples)
    scripts/edges_parity.py D/y2/parity --clause y2:edges
    ```
-5. Numbers: `spikes/y2-local/y2_summary.py D/y2`.
-6. `cargo test -p facts-b`: 17 passed, 3 of them Y2's (the rule's `rx_replace` prefix chain, `imported_modules`, and the sibling-name inverse).
+5. With Y1's graph: `YGRAPH_Y2_EDGES=E/edges.tsv facts-b ygraph replay --out E/y1 --limit 300 --check-every 1000000 --no-check-load --workers 1`, then `facts-b y2 --dump D/dump.tsv --edges E/edges.tsv --out E/y2 --scratch-every 1`.
+6. Numbers: `spikes/y2-local/y2_summary.py D/y2`.
+7. `cargo test -p facts-b`: 18 passed (with Y1 merged), 3 of them Y2's (the rule's `rx_replace` prefix chain, `imported_modules`, and the sibling-name inverse).
 
-Commits on `Moti-Velz/facts-engine-y2-local` (not pushed): `fbce97df5` (code), and this report.
+Commits on `Moti-Velz/facts-engine-y2-local` (not pushed):
+- `fbce97df5`: the code.
+- `7317d4574`: the merge of Y1's `2aecfee81`.
+- The Y1 edge hook with `y2 --edges`, and this report.

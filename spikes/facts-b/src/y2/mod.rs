@@ -27,6 +27,8 @@ struct Event {
     paths: Vec<String>,
     rows: Vec<(usize, i32, Row)>,
     creates: bool,
+    /// Y1's edge export: (graph ms, pairs added, pairs removed) of the event's step.
+    graph: Option<(f64, usize, usize)>,
 }
 
 #[derive(Default)]
@@ -77,8 +79,15 @@ fn read_dump(p: &Path) -> Dump {
                 let seq = it.next().unwrap().parse().unwrap();
                 let w = it.next().unwrap().parse().unwrap();
                 let group = it.next().unwrap().to_owned();
-                let kind = it.next().unwrap_or("").to_owned();
-                d.events.push(Event { seq, w, group, kind, ..Default::default() });
+                let rest = it.next().unwrap_or("");
+                let mut f = rest.split('\t');
+                let kind = f.next().unwrap_or("").to_owned();
+                let graph = match (f.next(), f.next(), f.next()) {
+                    (Some(a), Some(b), Some(c)) => Some((a.parse().unwrap(), b.parse().unwrap(), c.parse().unwrap())),
+                    _ => None,
+                };
+                let creates = graph.is_some() && (group == "new_worktree" || group == "commit_init");
+                d.events.push(Event { seq, w, group, kind, creates, graph, ..Default::default() });
             }
             "P" => d.events.last_mut().unwrap().paths.push(it.next().unwrap().to_owned()),
             "D" => {
@@ -212,10 +221,38 @@ fn check(w: &World, dcs: &dc::Dc, efs: &ef::Ef, scratch: Option<(&dc::Dc, &ef::E
     ok
 }
 
-pub fn run(dump: &Path, out: &Path, scratch_every: usize) {
+/// The reference edges as (path, start, target path, target start), sorted.
+fn edge_keys(f: &Facts) -> Vec<(u32, i64, u32, i64)> {
+    let mut v: Vec<(u32, i64, u32, i64)> = f.refs_from.iter().flat_map(|(s, ts)| ts.iter().map(move |t| (s.0, s.1, t.0, t.1))).collect();
+    v.sort_unstable();
+    v
+}
+
+fn oracle_edge_keys(o: &Oracle) -> Vec<(u32, i64, u32, i64)> {
+    let mut v: Vec<(u32, i64, u32, i64)> = o.sets.get("views/reference_edges").map(|m| m.keys().map(|r| (r[0].s(), r[1].i(), r[3].s(), r[4].i())).collect()).unwrap_or_default();
+    v.sort_unstable();
+    v
+}
+
+/// `--edges FILE`: the reference edges from Y1's maintained graph (`YGRAPH_Y2_EDGES`), the
+/// dataflow's kept as the check.
+pub fn run(dump: &Path, out: &Path, scratch_every: usize, edges: Option<&Path>) {
     std::fs::create_dir_all(out).unwrap();
     let t = Instant::now();
-    let d = read_dump(dump);
+    let mut d = read_dump(dump);
+    let y1 = edges.map(|p| {
+        let e = read_dump(p);
+        // Refs come from Y1 only: the dataflow's go to the oracle side.
+        for (k, t) in d.tabs.iter_mut().enumerate() {
+            if *t == Some(Tab::Refs) {
+                *t = None;
+                assert!(d.outputs[k].ends_with("views/reference_edges"));
+            }
+        }
+        e
+    });
+    let y1_events: BTreeMap<(usize, u32), &Event> = y1.as_ref().map(|e| e.events.iter().map(|x| ((x.seq, x.w), x)).collect()).unwrap_or_default();
+    let (mut edge_checks, mut edge_diffs) = (0usize, 0usize);
     let read_s = t.elapsed().as_secs_f64();
     eprintln!("y2: dump read in {read_s:.1}s: {} reference rows, {} worktrees initialised, {} events", d.reference.len(), d.init.len(), d.events.len());
     let mut worktrees: Vec<u32> = d.reference_w.into_iter().chain(d.init.keys().copied()).collect();
@@ -234,6 +271,13 @@ pub fn run(dump: &Path, out: &Path, scratch_every: usize) {
         let mut rows = split(&d, &d.reference, &mut oracle);
         if Some(wt) != d.reference_w {
             rows.extend(split(&d, d.init.get(&wt).map_or(&[][..], Vec::as_slice), &mut oracle));
+        }
+        if let Some(e) = &y1 {
+            let refs = |rs: &[(usize, i32, Row)]| rs.iter().map(|(_, c, r)| (Tab::Refs, r.clone(), *c)).collect::<Vec<_>>();
+            rows.extend(refs(&e.reference));
+            if Some(wt) != e.reference_w {
+                rows.extend(refs(e.init.get(&wt).map_or(&[][..], Vec::as_slice)));
+            }
         }
         let mut world = World { facts: Facts::default(), oracle };
         world.facts.load(rows);
@@ -294,6 +338,13 @@ pub fn run(dump: &Path, out: &Path, scratch_every: usize) {
                     None => world.oracle.update(stage(&d.outputs[*k]), r, *c),
                 }
             }
+            let mut graph_ms = None;
+            if y1.is_some() {
+                let ye = y1_events.get(&(ev.seq, wt)).unwrap_or_else(|| panic!("event {} worktree {wt}: not in Y1's edge export", ev.seq));
+                assert_eq!((ye.group.as_str(), ye.kind.as_str()), (ev.group.as_str(), ev.kind.as_str()));
+                graph_ms = ye.graph.map(|g| g.0);
+                rows.extend(ye.rows.iter().map(|(_, c, r)| (Tab::Refs, r.clone(), *c)));
+            }
             let ta = Instant::now();
             let changes = world.facts.classify(&rows);
             let classify_ms = ta.elapsed().as_secs_f64() * 1e3;
@@ -308,6 +359,19 @@ pub fn run(dump: &Path, out: &Path, scratch_every: usize) {
             let ef_scoped = se.prepare_ms + se.finish_ms;
             let scratch = scratch_every > 0 && n % scratch_every == 0;
             let (mut dcu, mut efu) = (None, None);
+            if y1.is_some() {
+                // Y1's edges = the dataflow's `views/reference_edges` after the event.
+                edge_checks += 1;
+                if edge_keys(&world.facts) != oracle_edge_keys(&world.oracle) {
+                    edge_diffs += 1;
+                    diffs.push(json!({"event": ev.seq, "worktree": wt, "what": "Y1 edges vs dataflow reference_edges"}));
+                }
+            }
+            if let Some(g) = graph_ms {
+                let single = ev.group == "edit" || ev.group == "new_worktree_edit";
+                let gk = if single { "edit".to_owned() } else { ev.group.clone() };
+                lat.entry(format!("{gk}:graph_y1")).or_default().push(g);
+            }
             let ok = if scratch {
                 let t3 = Instant::now();
                 let d2 = dc::Dc::scratch(&world.facts);
@@ -335,7 +399,7 @@ pub fn run(dump: &Path, out: &Path, scratch_every: usize) {
             for c in &changes {
                 *tabs.entry(format!("{:?}", c.tab)).or_default() += 1;
             }
-            per_event.push(json!({"seq": ev.seq, "worktree": wt, "group": ev.group, "kind": ev.kind, "paths": ev.paths, "delta_rows": ev.rows.len(), "changes": changes.len(), "changes_by_table": tabs,
+            per_event.push(json!({"graph_ms": graph_ms, "seq": ev.seq, "worktree": wt, "group": ev.group, "kind": ev.kind, "paths": ev.paths, "delta_rows": ev.rows.len(), "changes": changes.len(), "changes_by_table": tabs,
                 "facts_ms": classify_ms + apply_ms, "dc_scoped_ms": dc_scoped, "ef_scoped_ms": ef_scoped, "dc_unscoped_ms": dcu, "ef_unscoped_ms": efu, "dc": sd, "ef": se, "exact": ok,
                 "dc_findings": dcs.finding_rows().len(), "ef_findings": efs.finding_rows().len()}));
             if diffs.len() > 50 {
@@ -353,7 +417,7 @@ pub fn run(dump: &Path, out: &Path, scratch_every: usize) {
         ls.insert(k.clone(), summary(v));
     }
     let (sn, sb) = facts::footprint();
-    let res = json!({"dump": dump.display().to_string(), "read_seconds": read_s, "worktrees": worktrees.len(), "checks": checks, "differences": diffs.len(), "first_differences": diffs.iter().take(30).collect::<Vec<_>>(), "latency_ms": ls, "loads": loads, "interner": {"strings": sn, "bytes": sb}, "scratch_every": scratch_every});
+    let res = json!({"edges": edges.map(|p| p.display().to_string()), "edge_checks": {"checks": edge_checks, "differences": edge_diffs}, "dump": dump.display().to_string(), "read_seconds": read_s, "worktrees": worktrees.len(), "checks": checks, "differences": diffs.len(), "first_differences": diffs.iter().take(30).collect::<Vec<_>>(), "latency_ms": ls, "loads": loads, "interner": {"strings": sn, "bytes": sb}, "scratch_every": scratch_every});
     std::fs::write(out.join("results.json"), serde_json::to_string_pretty(&res).unwrap()).unwrap();
     std::fs::write(out.join("events.json"), serde_json::to_string(&per_event).unwrap()).unwrap();
     eprintln!("y2: {} checks, {} differences; latency {}", checks, diffs.len(), serde_json::to_string(&ls).unwrap());

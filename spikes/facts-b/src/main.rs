@@ -96,7 +96,7 @@ fn main() {
         // `gnorm --real SPEC [--dump STAGE]`: compile and normalise the spec's repository plans
         // only (no exports read): the refusals, and the IR of the named stages.
         "gnorm" => gen::real::check(&PathBuf::from(arg(&args, "--real").expect("--real")), arg(&args, "--dump").as_deref()),
-        // `y2 --dump FILE --out DIR [--scratch-every N | --fuzz N --seed S]`: Y2's local-query rules over a greplay
+        // `y2 --dump FILE --out DIR [--scratch-every N] [--edges Y1_FILE] | --fuzz N --seed S`: Y2's local-query rules over a greplay
         // stage dump (`FACTS_Y2_DUMP`), scoped per event and checked against scratch and the dataflow.
         "y2" => match arg(&args, "--fuzz") {
             Some(n) => y2::fuzz(
@@ -109,6 +109,7 @@ fn main() {
                 &PathBuf::from(arg(&args, "--dump").expect("--dump")),
                 &PathBuf::from(arg(&args, "--out").expect("--out")),
                 arg(&args, "--scratch-every").map_or(1, |x| x.parse().unwrap()),
+                arg(&args, "--edges").map(PathBuf::from).as_deref(),
             ),
         },
         // `ygraph parity|replay …`: Y1's maintained reference graph (src/ygraph).
