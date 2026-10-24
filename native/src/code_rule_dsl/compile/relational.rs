@@ -342,7 +342,7 @@ pub(super) fn compile(
                 })
                 .transpose()?;
             let query = if reachability.is_some() {
-                "SELECT NULL AS __path,NULL AS root,NULL AS node WHERE 0".to_owned()
+                "SELECT CAST(NULL AS TEXT) AS __path,NULL AS root,NULL AS node WHERE 0".to_owned()
             } else {
                 text(
                     spec.get("query"),
@@ -424,7 +424,7 @@ pub(super) fn compile(
                 })
                 .transpose()?
                 .unwrap_or_default();
-            let stage = Stage {
+            let mut stage = Stage {
                 name,
                 query,
                 indexes,
@@ -432,6 +432,7 @@ pub(super) fn compile(
                 deferred,
                 stored_columns,
                 output_columns: columns,
+                declaration: Arc::from(""),
             };
             let schema_key = relational::schema::cache::Key::new(
                 &stage.query,
@@ -439,7 +440,7 @@ pub(super) fn compile(
                 schema_reads.iter(),
                 stage.deferred.keys(),
             );
-            let columns = {
+            let (columns, created) = {
                 let mut stage_schemas = relational::schema::cache::shared();
                 if let Some(columns) = stage_schemas.get(&schema_key) {
                     relational::schema::bind(
@@ -448,7 +449,7 @@ pub(super) fn compile(
                         relational::schema::declaration(&stage.name, columns),
                     )
                     .map_err(|error| invalid(format!("relational query: {error}")))?;
-                    Arc::clone(columns)
+                    (Arc::clone(columns), false)
                 } else {
                     relational::create_stage(&db, &stage, false, &work)?;
                     let columns = Arc::new(
@@ -456,10 +457,22 @@ pub(super) fn compile(
                             .map_err(|error| invalid(format!("relational query: {error}")))?,
                     );
                     stage_schemas.insert(schema_key, columns.clone());
-                    columns
+                    (columns, true)
                 }
             };
             reads_source |= relational::deferred::validate(&db, &stage, &columns)?;
+            let physical_columns = columns
+                .iter()
+                .filter(|c| !stage.deferred.contains_key(&c.name))
+                .cloned()
+                .collect::<Vec<_>>();
+            stage.declaration = relational::schema::declaration(
+                &relational::deferred::physical_name(&stage),
+                &physical_columns,
+            )
+            .replacen("CREATE TABLE", "CREATE TEMP TABLE", 1)
+            .into();
+            let columns = relational::deferred::expose(&db, &stage, columns, created)?;
             schemas.insert(stage.name.clone(), columns);
             tables.insert(stage.name.clone());
             stages.push(stage);

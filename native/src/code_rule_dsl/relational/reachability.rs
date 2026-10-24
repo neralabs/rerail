@@ -1,6 +1,6 @@
 //! SQLite owns graph normalization, bounded root batches, and cycle-safe closure.
 //! Consumers use a stable relation so another physical adapter need not change rules.
-use super::{Connection, Result, Stage, quote, sql_error};
+use super::{Result, Stage, quote, sql_error};
 use std::sync::{Arc, atomic::AtomicUsize};
 
 #[derive(Clone)]
@@ -14,7 +14,7 @@ pub(in crate::code_rule_dsl) struct Reachability {
 }
 
 pub(super) fn create(
-    db: &Connection,
+    db: &super::Database,
     stage: &Stage,
     spec: &Reachability,
     work: &Arc<AtomicUsize>,
@@ -46,7 +46,36 @@ pub(super) fn create(
          CREATE TEMP TABLE {keys}(__path TEXT NOT NULL,key,compact INTEGER PRIMARY KEY);
          INSERT INTO {keys}(__path,key)
            SELECT __path,id AS key FROM {roots} UNION SELECT __path,src FROM {edges} UNION SELECT __path,dst FROM {edges};
-         CREATE UNIQUE INDEX {key_text} ON {keys}(__path,key);
+",
+        root_query=spec.roots,edge_query=spec.edges,
+    )).map_err(sql_error)?;
+    if db.changes() == 0 {
+        // Both root and edge SELECTs have run. An empty normalized key catalog
+        // proves there is no graph to validate, index or traverse.
+        db.execute_batch(&format!(
+            "DROP TABLE {roots};DROP TABLE {edges};DROP TABLE {keys}"
+        ))
+        .map_err(sql_error)?;
+        db.storage
+            .borrow_mut()
+            .declare(
+                db,
+                &stage.name,
+                format!(
+                    "CREATE TEMP TABLE {}(__path TEXT,root,node)",
+                    quote(&stage.name)
+                ),
+                true,
+            )
+            .map_err(sql_error)?;
+        return Ok(());
+    }
+    db.storage
+        .borrow_mut()
+        .discard(db, &stage.name)
+        .map_err(sql_error)?;
+    db.execute_batch(&format!(
+        "         CREATE UNIQUE INDEX {key_text} ON {keys}(__path,key);
          CREATE TEMP TABLE {compact} AS SELECT a.compact AS src,b.compact AS dst FROM {edges} e
            JOIN {keys} a ON a.__path=e.__path AND a.key=e.src JOIN {keys} b ON b.__path=e.__path AND b.key=e.dst;
          CREATE INDEX {forward} ON {compact}(src,dst);
@@ -56,7 +85,6 @@ pub(super) fn create(
          CREATE TEMP TABLE {batch}(root INTEGER PRIMARY KEY,expand INTEGER NOT NULL);
          CREATE TEMP TABLE {pairs}(root INTEGER,node INTEGER,PRIMARY KEY(root,node)) WITHOUT ROWID;
          ANALYZE temp.{keys}; ANALYZE temp.{compact}; ANALYZE temp.{requests};",
-        root_query = spec.roots, edge_query = spec.edges,
         key_text = name("key_text"), forward = name("forward"),
     )).map_err(sql_error)?;
     #[cfg(feature = "code-rule-profile")]
@@ -134,4 +162,53 @@ pub(super) fn create(
         output = quote(&stage.name),
     )).map_err(sql_error)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn empty_catalog_needs_no_graph_storage_but_nonempty_edges_still_require_forest_validation() {
+        let work = Arc::new(AtomicUsize::new(1_000_000));
+        let db = super::super::connection(1024, work.clone()).unwrap();
+        db.execute_batch("CREATE TABLE roots(__path,id);CREATE TABLE edges(__path,src,dst)")
+            .unwrap();
+        let spec = Reachability {
+            roots: "SELECT * FROM roots".into(),
+            edges: "SELECT * FROM edges".into(),
+            batch_size: 16,
+            forest: true,
+            syntax: None,
+            expand: false,
+        };
+        let stage = Stage {
+            name: "reachable".into(),
+            query: String::new(),
+            indexes: vec![],
+            reachability: Some(spec.clone()),
+            deferred: Default::default(),
+            stored_columns: vec![],
+            output_columns: vec![],
+            declaration: Arc::from(""),
+        };
+        create(&db, &stage, &spec, &work).unwrap();
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM reachable", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM temp.sqlite_schema WHERE name LIKE '__reach_%'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        db.execute_batch("INSERT INTO edges VALUES('a.py',1,2),('a.py',2,1)")
+            .unwrap();
+        let error = create(&db, &stage, &spec, &work).unwrap_err();
+        assert!(error.reason.contains("cycle"), "{error}");
+    }
 }

@@ -4,6 +4,7 @@ This host compares physical SQL layouts over captured candidate inputs.
 It imports the production SQLite adapters, span codec, CPU clock, storage settings, and replay implementation directly.
 It does not parse ASTs or implement rule semantics.
 It has no active rule budget. The profiling controller supplies the hard command deadline.
+The scheduled replay tracks actual population counts, as production does, and skips retirement writes for proven empty candidate slots.
 
 Build the host with the same optimization level as the engine controls:
 

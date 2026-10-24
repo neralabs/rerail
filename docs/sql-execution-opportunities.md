@@ -109,6 +109,14 @@ and the [existing lifetime scheduler](../native/src/code_rule_dsl/matcher/anchor
 
 **Repriced target: remove 1,296 additional submissions from 3,685, reaching at most 2,389.**
 
+**Delivered: 1,435 removals; the complete guard now submits 2,250 statements.**
+Runtime relational work removes 1,157, reader configuration removes 128, and empty candidate retirement removes 150.
+Replacement writes and cleanup remain counted. The 68 compiler empty-schema probes remain unchanged.
+The target below is the original component budget; measured components meet the full net target through a different balance.
+Median CPU is roughly flat at 1,546 → 1,541 ms; median peak RSS is 335,536 → 332,960 KiB.
+See the [journal](data-layer-performance-journal.md#relational-storage-delivery-r5-b-2026-10-24) and
+[checked evidence](../fixtures/host/data-layer-port/profiling/relational-storage-recovery-20261024.json).
+
 | Component | Current or modeled baseline | Replacement cap | Net target |
 | --- | ---: | ---: | ---: |
 | Relational object, index, statistics, and retirement lifecycle | 2,130 | 1,130 | 1,000 |
@@ -141,7 +149,7 @@ The existing [shared-storage contract test](../scripts/profiling/preparation/src
 ## Accounting and delivery gates
 
 R5-A receives credit for replacing 1,588 candidate drops with 324 deletes and four final drops.
-R5-B receives credit only for the subsequent reduction from 324 deletes to 200.
+R5-B receives credit only for its measured subsequent reduction from 324 deletes to 174.
 The second chunk does not claim the original drop savings again.
 Relational lifecycle counts exclude the PRAGMAs and empty schema probes priced separately.
 After each accepted chunk, reprice the next chunk from the new complete trace and subtract work already removed.
@@ -153,7 +161,7 @@ Fewer submissions do not permit a CPU or memory regression. The rejected family-
 Count replacement INSERTs, DELETEs, schema changes, transactions, publication, and cleanup.
 Retain the fixed 100 limit without resets, reclassification, or truncated findings.
 
-The accepted R5-A result and repriced R5-B target leave at most 2,389 submissions, still 2,289 above the final limit.
+The accepted R5-A and R5-B results leave 2,250 submissions, still 2,150 above the final limit.
 That remainder needs another measured inventory. No invented saving is assigned to it now.
 CPU-only improvements, cheaper private CTEs, and speculative cache hits do not contribute to the submission targets.
 SQLite internal executions remain separately reported and do not inflate the projected engine savings.

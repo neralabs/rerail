@@ -51,7 +51,8 @@ fn columns_stream_in_bounded_batches_preserving_unicode_nulls_and_duplicates() {
         panic!()
     };
     let input = &plan.inputs[0].1;
-    let db = Connection::open_in_memory().unwrap();
+    let db =
+        super::super::Database::from_connection(Connection::open_in_memory().unwrap()).unwrap();
     super::super::create_input(
         &db,
         "facts",
@@ -104,7 +105,8 @@ fn failed_stream_rolls_back_previously_imported_batches() {
         panic!()
     };
     let input = &plan.inputs[0].1;
-    let db = Connection::open_in_memory().unwrap();
+    let db =
+        super::super::Database::from_connection(Connection::open_in_memory().unwrap()).unwrap();
     super::super::create_input(
         &db,
         "facts",

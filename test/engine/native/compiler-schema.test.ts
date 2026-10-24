@@ -82,7 +82,7 @@ it.skipIf(!required)("validates independent input and syntax schemas without exe
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 40_000);
 
-it.skipIf(!required)("infers repeated stage schemas once across document compilations in one cold job", () => {
+it.skipIf(!required)("infers each physical and deferred public schema once across document compilations in one cold job", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-stage-schema-"));
   try {
     const program = `
@@ -116,6 +116,9 @@ it.skipIf(!required)("infers repeated stage schemas once across document compila
     expect(statements.filter(sql => /^CREATE TEMP TABLE "copied" AS/.test(sql))).toHaveLength(1);
     expect(statements.filter(sql => /^ALTER TABLE/.test(sql))).toHaveLength(1);
     expect(statements.filter(sql => /(?:CREATE TEMP TABLE|DROP TABLE) "__stage_/.test(sql))).toEqual([]);
-    expect(statements).toHaveLength(3);
+    expect(statements.filter(sql => /^CREATE TEMP TABLE "__deferred_schema_seed" AS/.test(sql))).toHaveLength(1);
+    expect(statements.filter(sql => /^DROP TABLE "__deferred_schema_seed"/.test(sql))).toHaveLength(1);
+    expect(statements.filter(sql => /^DROP TABLE "seed"/.test(sql))).toHaveLength(1);
+    expect(statements, "SQLite infers both physical and public affinities once; subsequent documents execute no schema probes").toHaveLength(6);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 40_000);

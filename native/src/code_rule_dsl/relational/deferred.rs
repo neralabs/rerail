@@ -41,7 +41,7 @@ pub(in crate::code_rule_dsl) fn validate(
     Ok(reads_source)
 }
 
-pub(super) fn physical_name(stage: &Stage) -> String {
+pub(in crate::code_rule_dsl) fn physical_name(stage: &Stage) -> String {
     if stage.deferred.is_empty() {
         stage.name.clone()
     } else {
@@ -49,10 +49,7 @@ pub(super) fn physical_name(stage: &Stage) -> String {
     }
 }
 
-pub(super) fn view(db: &Connection, stage: &Stage) -> Result<()> {
-    if stage.deferred.is_empty() {
-        return Ok(());
-    }
+fn projection(stage: &Stage) -> String {
     let select = stage
         .output_columns
         .iter()
@@ -64,12 +61,66 @@ pub(super) fn view(db: &Connection, stage: &Stage) -> Result<()> {
         })
         .collect::<Vec<_>>()
         .join(",");
-    db.execute_batch(&format!(
-        "CREATE TEMP VIEW {} AS SELECT {select} FROM {}",
-        quote(&stage.name),
-        quote(&physical_name(stage))
-    ))
-    .map_err(sql_error)
+    format!("SELECT {select} FROM {}", quote(&physical_name(stage)))
+}
+
+pub(in crate::code_rule_dsl) fn expose(
+    db: &Connection,
+    stage: &Stage,
+    physical: super::schema::SharedColumns,
+    created: bool,
+) -> Result<super::schema::SharedColumns> {
+    if stage.deferred.is_empty() {
+        return Ok(physical);
+    }
+    let backing = physical_name(stage);
+    let input = super::schema::describe(db, &backing).map_err(sql_error)?;
+    let schemas = super::schema::Registry::from([(backing.clone(), std::sync::Arc::new(input))]);
+    let query = projection(stage);
+    let key = super::schema::cache::Key::new(&query, &schemas, schemas.keys(), std::iter::empty());
+    let mut cache = super::schema::cache::shared();
+    let columns = if let Some(columns) = cache.get(&key) {
+        columns.clone()
+    } else {
+        let name = format!("__deferred_schema_{}", stage.name);
+        db.execute_batch(&format!(
+            "CREATE TEMP TABLE {} AS SELECT * FROM ({query}) LIMIT 0",
+            quote(&name)
+        ))
+        .map_err(sql_error)?;
+        let columns = std::sync::Arc::new(super::schema::describe(db, &name).map_err(sql_error)?);
+        db.execute_batch(&format!("DROP TABLE {}", quote(&name)))
+            .map_err(sql_error)?;
+        cache.insert(key, columns.clone());
+        columns
+    };
+    if created {
+        db.execute_batch(&format!("DROP TABLE {}", quote(&stage.name)))
+            .map_err(sql_error)?;
+    }
+    super::schema::bind(
+        db,
+        &stage.name,
+        super::schema::declaration(&stage.name, &columns),
+    )
+    .map_err(sql_error)?;
+    Ok(columns)
+}
+
+pub(super) fn view(db: &super::Database, stage: &Stage) -> Result<()> {
+    if stage.deferred.is_empty() {
+        return Ok(());
+    }
+    let query = projection(stage);
+    db.storage
+        .borrow_mut()
+        .declare(
+            db,
+            &stage.name,
+            format!("CREATE TEMP VIEW {} AS {query}", quote(&stage.name)),
+            false,
+        )
+        .map_err(sql_error)
 }
 
 pub(super) fn release(db: &Connection, name: &str, stages: &[Stage]) -> Result<()> {

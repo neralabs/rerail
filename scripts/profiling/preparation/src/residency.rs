@@ -215,6 +215,7 @@ fn measure(
     let (mut live, mut peak, mut operation, mut next_sample) = (0usize, 0usize, 0usize, 128usize);
     let (mut prepare_ns, mut results_ns, mut release_ns) = (0u128, 0u128, 0u128);
     let mut rows = Vec::<(i64, i64, i64)>::new();
+    let mut populated = vec![false; stages.len()];
     let mut statements = Vec::new();
     let mut heap_peaks = Vec::new();
     let mut compile_ns = 0u128;
@@ -234,7 +235,10 @@ fn measure(
                 let (prepared, prepare_peak) = heap(true)?;
                 statements.push(json!({"name":inputs[i].name,"sqlBytes":inputs[i].sql.len(),"statementBytes":q.get_status(rusqlite::StatementStatus::MemUsed),"heapAfterPrepare":prepared,"preparePeakBytes":prepare_peak}));
                 let n = q.parameter_count();
-                q.execute(params_from_iter(&parameters[..n]))?;
+                let inserted = q.execute(params_from_iter(&parameters[..n]))?;
+                for &member in ownership.members(i) {
+                    populated[member] = inserted != 0;
+                }
                 count_steps(&q, &mut vm);
                 drop(q);
                 store.readers.clear();
@@ -281,7 +285,7 @@ fn measure(
                         }
                     })
                     .collect::<Vec<_>>();
-                let sql = ownership.release(&relation_names, &ids);
+                let sql = ownership.release(&relation_names, &ids, &populated);
                 store.db.execute_batch(&sql)?;
                 live -= group.len();
                 release_ns += thread_cpu_ns().unwrap() - started;

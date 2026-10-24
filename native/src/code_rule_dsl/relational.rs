@@ -9,6 +9,8 @@ use rusqlite::Connection;
 use rusqlite::functions::FunctionFlags;
 use rusqlite::hooks::Authorization;
 mod authorizer;
+mod pool;
+mod storage;
 
 mod anchors;
 mod batch;
@@ -41,6 +43,7 @@ pub(super) struct Stage {
     pub(super) deferred: BTreeMap<String, String>,
     pub(super) stored_columns: Vec<String>,
     pub(super) output_columns: Vec<String>,
+    pub(super) declaration: Arc<str>,
 }
 #[derive(Clone)]
 pub(super) struct References {
@@ -101,7 +104,11 @@ pub(super) fn validation_connection(
     max_pattern: usize,
     work: Arc<AtomicUsize>,
 ) -> Result<Database> {
-    let db = Database::open().map_err(sql_error)?;
+    configure(Database::open().map_err(sql_error)?, max_pattern, work)
+}
+fn configure(db: Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+    db.progress_handler(0, None::<fn() -> bool>)
+        .map_err(sql_error)?;
     db.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
         16 * 1024 * 1024,
@@ -236,8 +243,10 @@ pub(super) fn inspect_fields(
     result
 }
 
-pub(super) fn create_input(db: &Connection, name: &str, fields: &[String]) -> Result<()> {
-    db.execute(&input_schema(name, fields), [])
+pub(super) fn create_input(db: &Database, name: &str, fields: &[String]) -> Result<()> {
+    db.storage
+        .borrow_mut()
+        .declare(db, name, input_schema(name, fields), true)
         .map_err(sql_error)?;
     Ok(())
 }
@@ -252,7 +261,7 @@ pub(super) fn input_schema(name: &str, fields: &[String]) -> String {
     )
 }
 pub(super) fn create_stage(
-    db: &Connection,
+    db: &Database,
     stage: &Stage,
     materialize: bool,
     work: &Arc<AtomicUsize>,
@@ -288,33 +297,33 @@ pub(super) fn create_stage(
     } else {
         stage.name.clone()
     };
-    let mut statement = db
-        .prepare(&format!(
-            "CREATE TEMP TABLE {} AS {}",
-            quote(&physical),
-            if materialize {
-                if stage.deferred.is_empty() {
-                    stage.query.clone()
-                } else {
-                    format!(
-                        "SELECT {} FROM ({})",
-                        stage
-                            .stored_columns
-                            .iter()
-                            .map(|s| quote(s))
-                            .collect::<Vec<_>>()
-                            .join(","),
-                        stage.query
-                    )
-                }
-            } else {
-                // Runtime stages are tables. Keep that schema boundary while validating:
-                // nested views expand shared dependencies exponentially during prepare.
-                // LIMIT 0 creates the schema without evaluating authored expressions.
-                format!("SELECT * FROM ({}) LIMIT 0", stage.query)
-            }
-        ))
-        .map_err(sql_error)?;
+    let query = if materialize && !stage.deferred.is_empty() {
+        format!(
+            "SELECT {} FROM ({})",
+            stage
+                .stored_columns
+                .iter()
+                .map(|s| quote(s))
+                .collect::<Vec<_>>()
+                .join(","),
+            stage.query
+        )
+    } else {
+        stage.query.clone()
+    };
+    let sql = if materialize {
+        db.storage
+            .borrow_mut()
+            .declare(db, &physical, stage.declaration.to_string(), true)
+            .map_err(sql_error)?;
+        format!("INSERT INTO {} {query}", quote(&physical))
+    } else {
+        format!(
+            "CREATE TEMP TABLE {} AS SELECT * FROM ({query}) LIMIT 0",
+            quote(&physical)
+        )
+    };
+    let mut statement = db.prepare(&sql).map_err(sql_error)?;
     let executed = statement.execute([]).map_err(sql_error);
     #[cfg(feature = "code-rule-profile")]
     {
@@ -325,7 +334,11 @@ pub(super) fn create_stage(
             "workBefore":work_before,"workAfter":work.load(Ordering::Relaxed),"autoIndexRows":statement.get_status(StatementStatus::AutoIndex),"failed":executed.is_err()}));
         drop(span);
     }
-    executed?;
+    let inserted = executed?;
+    drop(statement);
+    if materialize {
+        db.storage.borrow_mut().written(&physical, inserted != 0);
+    }
     if !materialize {
         for column in stage
             .deferred
@@ -348,31 +361,37 @@ pub(super) fn create_stage(
             }
         }
     }
-    if materialize {
+    if materialize && inserted != 0 {
         for (index, fields) in stage.indexes.iter().enumerate() {
             #[cfg(feature = "code-rule-profile")]
             let _span = super::profile::trace::Span::start("sql-index", &stage.name);
-            db.execute(
-                &format!(
-                    "CREATE INDEX {} ON {} ({})",
-                    quote(&format!("__{}_{}", stage.name, index)),
-                    quote(&physical),
-                    fields
-                        .iter()
-                        .map(|field| quote(field))
-                        .collect::<Vec<_>>()
-                        .join(",")
-                ),
-                [],
-            )
-            .map_err(sql_error)?;
-        }
-        if !stage.indexes.is_empty() {
-            #[cfg(feature = "code-rule-profile")]
-            let _span = super::profile::trace::Span::start("sql-analyze", &stage.name);
-            db.execute(&format!("ANALYZE temp.{}", quote(&physical)), [])
+            db.storage
+                .borrow_mut()
+                .index(
+                    db,
+                    &physical,
+                    &format!("__{}_{}", stage.name, index),
+                    format!(
+                        "CREATE INDEX {} ON {} ({})",
+                        quote(&format!("__{}_{}", stage.name, index)),
+                        quote(&physical),
+                        fields
+                            .iter()
+                            .map(|field| quote(field))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ),
+                )
                 .map_err(sql_error)?;
         }
+    }
+    if materialize && !stage.indexes.is_empty() {
+        #[cfg(feature = "code-rule-profile")]
+        let _span = super::profile::trace::Span::start("sql-analyze", &stage.name);
+        db.storage
+            .borrow_mut()
+            .analyze(db, &physical, inserted)
+            .map_err(sql_error)?;
     }
     if materialize {
         deferred::view(db, stage)?;
@@ -414,7 +433,8 @@ struct Session<'a> {
     code_rule: &'a CompiledCodeRule,
     clause: &'a CompiledClause,
     plan: &'a Plan,
-    db: Database,
+    db: pool::Lease,
+    finished: std::cell::Cell<bool>,
     syntax_files: syntax::Files,
     syntax_trees: Vec<producer::Tree>,
     anchors: anchors::Anchors,
@@ -428,6 +448,7 @@ impl<'a> Session<'a> {
         clause: &'a CompiledClause,
         inputs: Inputs,
         metrics: &mut super::model::Metrics,
+        pool: &pool::Pool,
     ) -> Result<Self> {
         let snapshot = &inputs.snapshot;
         let supplied = inputs.facts;
@@ -448,7 +469,7 @@ impl<'a> Session<'a> {
         // Input writes spend one work unit per row. Adjust to the exact row/node allowance
         // below; no SQL stage can run before that check and all imports share this transaction.
         let work = Arc::new(AtomicUsize::new(usize::MAX));
-        let db = connection(limits.max_regex_pattern_bytes, Arc::clone(&work))?;
+        let db = pool.take(limits.max_regex_pattern_bytes, Arc::clone(&work))?;
         #[cfg(feature = "code-rule-profile")]
         db.context(json!({"scope":"relational", "ruleId":code_rule.id, "clauseId":clause.id,
             "path":(snapshot.files.len() == 1).then(|| snapshot.files[0].path.as_str()), "stage":"inputs"}));
@@ -477,9 +498,14 @@ impl<'a> Session<'a> {
                             .map(|p| p.field.clone())
                             .collect::<Vec<_>>();
                         create_input(&db, name, &fields)?;
-                        inputs::stream(
+                        let before = db.total_changes();
+                        let rows = inputs::stream(
                             &db, name, input, &work, code_rule, clause, snapshot, metrics,
-                        )
+                        )?;
+                        db.storage
+                            .borrow_mut()
+                            .written(name, db.total_changes() != before);
+                        Ok(rows)
                     })
                     .collect::<Result<Vec<_>>>()?
             }
@@ -540,6 +566,15 @@ impl<'a> Session<'a> {
         }
         let mut tables = BTreeSet::new();
         if let Some(spec) = &plan.syntax {
+            for name in std::iter::once(&spec.name)
+                .chain(spec.edges.iter())
+                .chain(spec.ownership.iter())
+            {
+                db.storage
+                    .borrow_mut()
+                    .discard(&db, name)
+                    .map_err(sql_error)?;
+            }
             tables.extend(syntax::load(&db, spec, &syntax_files, Arc::clone(&work))?);
         }
         for ((name, input), rows) in plan.inputs.iter().zip(rows) {
@@ -574,6 +609,7 @@ impl<'a> Session<'a> {
                         });
                 }
             }
+            let before = db.total_changes();
             insert::insert_rows(
                 &db,
                 name,
@@ -599,6 +635,9 @@ impl<'a> Session<'a> {
                 &work,
                 "relational input row budget exceeded",
             )?;
+            db.storage
+                .borrow_mut()
+                .written(name, db.total_changes() != before);
             tables.insert(name.clone());
             // SQL owns the copied values; only compact anchors remain necessary.
         }
@@ -620,6 +659,7 @@ impl<'a> Session<'a> {
                     .map(|field| (*field).to_owned())
                     .collect::<Vec<_>>(),
             )?;
+            let before = db.total_changes();
             insert::insert_rows(
                 &db,
                 "reference_edges",
@@ -647,6 +687,9 @@ impl<'a> Session<'a> {
                 &work,
                 "native reference row budget exceeded",
             )?;
+            db.storage
+                .borrow_mut()
+                .written("reference_edges", db.total_changes() != before);
             tables.insert("reference_edges".to_owned());
         }
         db.execute_batch("COMMIT").map_err(sql_error)?;
@@ -676,6 +719,7 @@ impl<'a> Session<'a> {
             clause,
             plan,
             db,
+            finished: std::cell::Cell::new(false),
             syntax_files,
             syntax_trees,
             anchors,
@@ -696,7 +740,7 @@ impl<'a> Session<'a> {
             .iter()
             .filter(|(_, last)| **last == self.next)
         {
-            deferred::release(&self.db, name, &self.plan.stages)?;
+            release_owned(&self.db, name, &self.plan.stages)?;
             self.tables.remove(name);
         }
         self.next += 1;
@@ -740,6 +784,11 @@ impl<'a> Session<'a> {
         let operation = self
             .db
             .operation(&format!("/*RELATIONAL_PUBLISH*/ {}", stage.name), self.next);
+        self.db
+            .storage
+            .borrow_mut()
+            .discard(&self.db, &stage.name)
+            .map_err(sql_error)?;
         output.publish(&self.db, &stage.name, &self.work)?;
         #[cfg(feature = "code-rule-profile")]
         operation
@@ -870,7 +919,48 @@ impl<'a> Session<'a> {
             finding["variables"]["row"] = json!(values);
             findings.push(finding);
         }
+        self.finished.set(true);
         Ok(findings)
+    }
+}
+fn release_owned(db: &Database, name: &str, stages: &[Stage]) -> Result<()> {
+    if let Some(stage) = stages.iter().find(|s| s.name == name)
+        && !stage.deferred.is_empty()
+    {
+        db.storage
+            .borrow_mut()
+            .retire(db, &deferred::physical_name(stage))
+            .map_err(sql_error)?;
+        return Ok(());
+    }
+    if db
+        .storage
+        .borrow_mut()
+        .retire(db, name)
+        .map_err(sql_error)?
+    {
+        return Ok(());
+    }
+    deferred::release(db, name, stages)
+}
+impl Drop for Session<'_> {
+    fn drop(&mut self) {
+        if !self.finished.get() {
+            return;
+        }
+        if self.db.progress_handler(0, None::<fn() -> bool>).is_err() {
+            return;
+        }
+        #[cfg(feature = "code-rule-profile")]
+        if self.db.checkpoint().is_err() {
+            return;
+        }
+        for name in &self.tables {
+            if release_owned(&self.db, name, &self.plan.stages).is_err() {
+                return;
+            }
+        }
+        self.db.reusable.set(true);
     }
 }
 

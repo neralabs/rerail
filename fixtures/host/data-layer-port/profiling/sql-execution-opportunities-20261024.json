@@ -133,7 +133,7 @@
       "addressableAtModelBoundary": 2658,
       "netRemovalTarget": 1296,
       "wholeJobAfterTarget": 2389,
-      "estimateStatus": "provisional acceptance target; schema and binding audit required",
+      "estimateStatus": "implemented; 1435 net removals against the full 1296 target on the complete fixed guard",
       "subOpportunities": [
         {
           "name": "shared relational object/index/statistics/retirement lifecycle",
@@ -168,13 +168,42 @@
           "assumption": "use validated cached schemas while preserving SQLite column names and affinities"
         }
       ],
-      "confidence": "addressable counts measured; net reduction unproven until compatible backing and lifetime plans are priced"
+      "confidence": "Measured complete execution, parity, and matched CPU/memory controls; not a full-repository recovery claim.",
+      "measuredResult": {
+        "engineSubmissions": 2250,
+        "sqliteInternalExecutions": 181,
+        "unknownOrigins": 0,
+        "netRemoval": 1435,
+        "fullTargetMet": true,
+        "runtimeClauseSql": {
+          "before": 2409,
+          "after": 1252,
+          "netRemoval": 1157
+        },
+        "readerPragmas": {
+          "before": 136,
+          "after": 8,
+          "netRemoval": 128
+        },
+        "candidateRetirement": {
+          "before": 324,
+          "after": 174,
+          "netRemoval": 150
+        },
+        "compilerEmptyCtas": {
+          "before": 68,
+          "after": 68,
+          "netRemoval": 0
+        },
+        "note": "Full net target exceeded. Replacement INSERTs and DELETEs count; the planned 68 compiler-probe removals remain unimplemented.",
+        "evidence": "relational-storage-recovery-20261024.json"
+      }
     }
   ],
   "remainingAfterBothTargets": {
-    "engineSubmissions": 2389,
-    "overFixedLimit": 2289,
-    "status": "not assigned fictitious savings; reprofile and rank the remaining executions after the two delivery chunks"
+    "engineSubmissions": 2250,
+    "overFixedLimit": 2150,
+    "status": "measured after accepted A and B; reprofile before assigning the next full delivery target"
   },
   "deliveryRules": [
     "each implementation delivery must remove its chunk's full expected number of actual engine submissions against the preceding accepted checkpoint; R5-A requires at least 3474",
@@ -186,10 +215,10 @@
   ],
   "overlapNotes": [
     "R5-A credits candidate DROP replacement down to 324 DELETE statements plus four final store drops",
-    "R5-B credits only a further 324-to-200 retirement reduction; 704 projected B retirement savings were already achieved in R5-A",
+    "R5-B credits only the measured 324-to-174 candidate DELETE reduction; original candidate DROP savings remain with R5-A",
     "R5-B relational lifecycle excludes the configuration PRAGMAs and 68 empty schema CTAS counted separately",
     "no source-input, vocabulary, or universal-fact caching benefit is added without a measured net execution reduction",
-    "994 SQLite internal executions remain separately reported; not part of engine-submission savings"
+    "SQLite internal executions fall from 994 to 181 in R5-B; reported separately and excluded from engine savings"
   ],
   "witnesses": {
     "other": [

@@ -701,7 +701,11 @@ fn declarations(spec: &Spec) -> Result<Vec<(String, String)>> {
             super::quote(&spec.name),
             fields
                 .iter()
-                .map(|n| super::quote(n))
+                .map(|n| match n.as_str() {
+                    "__path" => format!("{} TEXT", super::quote(n)),
+                    "__start" | "__end" => format!("{} INTEGER", super::quote(n)),
+                    _ => super::quote(n),
+                })
                 .collect::<Vec<_>>()
                 .join(",")
         ),
@@ -724,7 +728,11 @@ fn declarations(spec: &Spec) -> Result<Vec<(String, String)>> {
                     super::quote(name),
                     fields
                         .iter()
-                        .map(|n| super::quote(n))
+                        .map(|n| match *n {
+                            "__path" => format!("{} TEXT", super::quote(n)),
+                            "__start" | "__end" => format!("{} INTEGER", super::quote(n)),
+                            _ => super::quote(n),
+                        })
                         .collect::<Vec<_>>()
                         .join(",")
                 ),
