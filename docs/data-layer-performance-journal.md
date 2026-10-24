@@ -49,6 +49,11 @@ Twenty files still share one batch, but both eligible and excluded plans enter t
 `.rerail/profiles/sql-recovery-tdd-20261023/admission-red` records both behavioral failures (6.146 seconds).
 The mandatory producer-shape command now includes these preparation-admission checks.
 
+A further red case uses twenty files split between two disjoint rule scopes.
+The old path runs both plans over all twenty files in one unrestricted frontier.
+The required shape is two batches, each with one admitted plan and ten files.
+`.rerail/profiles/sql-recovery-tdd-20261023/domains-red` records this failure and the earlier two failures.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
