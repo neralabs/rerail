@@ -2,7 +2,7 @@
 
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
 Conditional admission, whole-job publication, and R4–R7 remain open.
-The latest measured all-SQL count is 22,181; the clarified engine-submission boundary needs a fresh annotated capture.
+The final measured job has 10,443 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
 All work uses the current worktree. WP1 remains pending.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
@@ -213,7 +213,7 @@ TDD ladder:
 4. Keep genuine dependency waves explicit and bounded.
 5. Reject SQL that meets the count limit but increases VM work, CPU, or peak memory.
 
-Completion requires at most 100 actual executions on the state and ten-rule workloads.
+Completion requires at most 100 engine submissions on the state and ten-rule workloads.
 Static operator counts and three native producer passes are supporting diagnostics, not substitutes for this gate.
 
 ## R6: remove execution failures and attribute memory
@@ -234,7 +234,7 @@ The unchanged and edit checks must also contain no retained failures.
 ## R7: accept the aggregate recovery
 
 Run each small acceptance workload in a fresh process and capture directory.
-Require complete parity, complete connection coverage, and at most 100 SQL executions.
+Require complete parity, complete connection coverage, and at most 100 engine-submitted SQL statements.
 Run matched CPU controls without tracing, census, SQL capture, or external sampling.
 Use identical inputs, build settings, allocator, workers, and ingestion requests within each comparison.
 
