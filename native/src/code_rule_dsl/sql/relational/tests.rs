@@ -388,12 +388,8 @@ fn relational_positive_parent_recursion_and_shared_utilities() {
 #[test]
 fn relational_unsupported_semantics_fail_closed() {
     let cases = vec![
-        (json!({"pattern":"$X"}), json!({}), "capture-bearing"),
-        (
-            json!({"follows":{"stopBy":"end","kind":"function_definition"}}),
-            json!({}),
-            "outside",
-        ),
+        (json!({"pattern":"f($$$ARGS)"}), json!({}), "list captures"),
+        (json!({"nthChild":1}), json!({}), "leaf or operator lacks"),
         (
             json!({"matches":"r"}),
             json!({"r":{"any":[{"kind":"identifier"},{"inside":{"stopBy":"neighbor","not":{"matches":"r"}}}]}}),

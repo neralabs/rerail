@@ -4,6 +4,9 @@ use super::ordered::nested::{bridge, program};
 use super::{Demand, Output, Plan, Sql, fields, value};
 use serde_json::json;
 
+#[path = "fill_cost.rs"]
+mod fill_cost;
+
 pub(super) fn needed(plan: &Plan) -> bool {
     plan.effects.file_memo
 }
@@ -30,7 +33,7 @@ impl Sql {
             .map(|s| format!(",m.o{s} AS hit{s}"))
             .collect::<String>();
         let lookup = self.relation("clause utility keyed lookup", format!("SELECT d.*,m.truth AS hit,m.cost AS cost{hit_exports} FROM {} d LEFT JOIN relation_memo m ON m.mode IS 0 AND {identity}{keys}", input.name), true, "demand,prior truth,cost,exports");
-        let (query, profile) = program(
+        let (mut query, profile) = program(
             body,
             input,
             false,
@@ -39,6 +42,17 @@ impl Sql {
             ("d.file", "d.node", "d.work-1"),
             self.generation.clone(),
         )?;
+        let width = 2 + body.writes.len();
+        let (return_width, fill_column, replay_cost) = if body.effects.cache_fills {
+            query = fill_cost::bracket(&query, width, "d.hit IS NULL AND d.work>0")?;
+            (
+                width + 1,
+                format!(",COALESCE(r.c{width},0) AS fill_cost"),
+                "MAX(0,d.work-d.remaining-d.fill_cost)",
+            )
+        } else {
+            (width, String::new(), "(d.work-d.remaining)")
+        };
         let exports = body
             .writes
             .iter()
@@ -50,15 +64,23 @@ impl Sql {
                 )
             })
             .collect::<String>();
-        let tested = self.relation("clause utility reached miss or replay", format!("SELECT d.*,CASE WHEN d.hit IS NOT NULL THEN CASE WHEN d.work<d.cost THEN -2 ELSE d.hit END WHEN d.work=0 THEN -2 ELSE r.c0 END AS tested,CASE WHEN d.hit IS NOT NULL THEN MAX(0,d.work-d.cost) WHEN d.work=0 THEN 0 ELSE r.c1 END AS remaining{exports} FROM {lookup} d {}", bridge(&query, 2 + body.writes.len())), true, "demand,tested,remaining,exports");
+        let tested = self.relation("clause utility reached miss or replay", format!("SELECT d.*,CASE WHEN d.hit IS NOT NULL THEN CASE WHEN d.work<d.cost THEN -2 ELSE d.hit END WHEN d.work=0 THEN -2 ELSE r.c0 END AS tested,CASE WHEN d.hit IS NOT NULL THEN MAX(0,d.work-d.cost) WHEN d.work=0 THEN 0 ELSE r.c1 END AS remaining{exports}{fill_column} FROM {lookup} d {}", bridge(&query, return_width)), true, "demand,tested,remaining,exports");
         self.profile.last_mut().unwrap()["childPrograms"] = json!({"miss":profile});
+        if body.effects.cache_fills {
+            self.profile.last_mut().unwrap()["cacheFillAccounting"] = json!({
+                "scope":"one reached utility miss",
+                "returnColumns":return_width,
+                "replayCost":"spent work minus native cache-fill delta",
+                "ordering":"materialized before counter, materialized typed result, after counter"
+            });
+        }
         let supplied = body
             .writes
             .iter()
             .map(|s| format!(" AND m.v{s} IS CASE WHEN d.tested=1 THEN d.e{s} END"))
             .collect::<String>();
         let columns = fields(&body.writes, |s| format!("d.e{s}"));
-        let name = self.relation("clause utility completed answer publication", format!("SELECT d.k,d.remaining AS work,COALESCE(m.truth,d.tested) AS truth{columns} FROM {tested} d LEFT JOIN relation_memo m ON m.mode IS CASE WHEN d.hit IS NULL AND d.tested>=0 THEN 1 END AND {identity}{keys} AND m.vtruth IS d.tested AND m.vcost IS (d.work-d.remaining){supplied}"), true, "k,truth,work,exports");
+        let name = self.relation("clause utility completed answer publication", format!("SELECT d.k,d.remaining AS work,COALESCE(m.truth,d.tested) AS truth{columns} FROM {tested} d LEFT JOIN relation_memo m ON m.mode IS CASE WHEN d.hit IS NULL AND d.tested>=0 THEN 1 END AND {identity}{keys} AND m.vtruth IS d.tested AND m.vcost IS {replay_cost}{supplied}"), true, "k,truth,work,exports");
         self.profile.last_mut().unwrap()["memo"] = json!({"lifetime":"statement clause/file","key":["clause","utility","file","node","all incoming captures"],"storage":"indexed integer scratch relation","recursiveStateColumnsAdded":0,"utility":utility});
         Ok(Output { name })
     }

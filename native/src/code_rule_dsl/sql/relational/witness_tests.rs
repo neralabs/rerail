@@ -355,8 +355,15 @@ fn complete_answers_reject_unbound_negative_inputs() {
         grammar.language,
     )));
     grammar.matcher = AstMatcher::All(vec![AstMatcher::Not(Box::new(pattern)), grammar.matcher]);
-    let Err(error) = super::compile(&grammar) else {
-        panic!("accepted unbound negative input")
+    let super::answers::Eligibility::NotApplicable(reason) =
+        super::answers::prepare(&grammar).unwrap()
+    else {
+        panic!("frontier accepted unbound negative input")
     };
-    assert!(error.contains("requires a bound input"), "{error}");
+    assert_eq!(reason, super::witness::ShapeReason::BoundProbeInput);
+    // The ordered outcome representation can express this rule without a bound frontier.
+    super::tests::measure(
+        &grammar,
+        &[("unbound.py".into(), "for x in xs:\n    f(x)\n".into())],
+    );
 }

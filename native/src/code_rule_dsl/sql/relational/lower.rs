@@ -7,6 +7,10 @@ use crate::code_rule_dsl::{
 use ast_grep_core::matcher::Matcher;
 use std::collections::HashMap;
 
+#[cfg(test)]
+#[path = "pure_catalog_tests.rs"]
+mod pure_catalog_tests;
+
 #[derive(Default)]
 pub(super) struct Lowerer {
     pub program: Program,
@@ -175,6 +179,15 @@ impl Lowerer {
                 let related = self.set(rule)?;
                 Set::Within(self.relation(related, "ancestor predicate"))
             }
+            AstMatcher::Inside(rule, by @ StopBy::Rule(_)) => {
+                self.linear_walk(Edge::Parent, rule, by)?
+            }
+            AstMatcher::Follows(rule, by @ (StopBy::End | StopBy::Rule(_))) => {
+                self.linear_walk(Edge::Previous, rule, by)?
+            }
+            AstMatcher::Precedes(rule, by @ (StopBy::End | StopBy::Rule(_))) => {
+                self.linear_walk(Edge::Next, rule, by)?
+            }
             AstMatcher::Has(rule, by @ (StopBy::End | StopBy::Rule(_))) => {
                 let seed = self.set(rule)?;
                 let seeds = self.relation(seed, "descendant predicate");
@@ -215,5 +228,36 @@ impl Lowerer {
                 );
             }
         })
+    }
+
+    /// For a total capture-free predicate, a walk observes existence only. At its next node,
+    /// a match succeeds even if that node stops the walk; otherwise a stop blocks continuation.
+    /// R(x) = target(next(x)) OR (!stop(next(x)) AND R(next(x))). The recursive reference is
+    /// behind a strict structural edge, so the existing component proof establishes termination.
+    fn linear_walk(&mut self, edge: Edge, rule: &AstMatcher, by: &StopBy) -> Result<Set, String> {
+        let predicate = self.set(rule)?;
+        let target = self.relation(predicate, "linear walk target");
+        let stop = match by {
+            StopBy::Rule(rule) => {
+                let predicate = self.set(rule)?;
+                Some(self.relation(predicate, "linear walk stop"))
+            }
+            StopBy::End => None,
+            StopBy::Neighbor => unreachable!("neighbor walks lower directly"),
+        };
+        // Reserve an identity before referring to the walk's own answers.
+        let id = self.relation(Set::Empty, "linear walk answers");
+        let continuation = match stop {
+            Some(stop) => Set::Intersect(vec![
+                Set::Complement(Box::new(Set::Reference(stop))),
+                Set::Reference(id),
+            ]),
+            None => Set::Reference(id),
+        };
+        self.program.relations[id].expression = Set::Preimage(
+            edge,
+            Box::new(Set::Union(vec![Set::Reference(target), continuation])),
+        );
+        Ok(Set::Reference(id))
     }
 }

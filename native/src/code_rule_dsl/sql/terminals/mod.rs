@@ -20,6 +20,8 @@ pub(super) use leaves::{
     BindingSites, BindsCandidates, BindsOthers, Exported, FormatPart, FormatSides, Occurrences,
     Parsed,
 };
+#[cfg(test)]
+pub(super) use pattern::typed_match;
 pub(super) use pattern::{PatternRow, PatternTable, fresh_match};
 use regex::Regex;
 pub(super) use text::TextTable;

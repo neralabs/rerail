@@ -905,3 +905,50 @@ Then replace the production compiler and scheduler in one cutover, using prepare
 Remove the old frame compiler from production reachability. Do not add per-clause fallback or runtime selection between SQL compilers.
 The complete-job gate still requires at most 100 actual executions and measured VM reduction against a fresh main-engine baseline.
 The current admission audit fails that replacement readiness gate; this phase does not replace the main compiler.
+
+## Catalog transition checkpoint: typed captures and atomic costs
+
+The replacement compiler now admits 38 of the 146 catalog grammars.
+All 38 pass exact native comparison across every checked-in upstream Python fixture: 595 files with no exclusions.
+The complete-coverage gate remains a failing test, with 108 refusals.
+This checkpoint does not replace the production compiler.
+
+The new contracts cover capture-free stopped ancestor and sibling walks, node captures in composite patterns, ordered capture constraints, and neighbor-field traversal.
+Atomic resolution, layout without capture inputs, absent arguments, and followed values retain native leaf evaluation.
+SQL owns traversal, Boolean composition, capture transactions, and utility replay.
+Typed applicability chooses the frontier or ordered representation before emission; compilation errors never trigger another compiler.
+
+Finite-budget tests found and corrected two cost contracts.
+Utility replay must exclude one-time native cache construction.
+Scope-sensitive leaves must also retain the identity of their owning clause.
+Constraints that share utilities with their caller require keyed memo storage, including calls in the constraint core.
+A prepared job starts a fresh scope lifetime; independently compiled groups still need job-global clause tokens.
+
+The next contract priorities are explicit:
+
+1. Add typed list-capture columns, including input unification and publication. They are the first refusal for 34 grammars.
+2. Add ordered recursive utility components. They are the first refusal for 49 grammars, with further recursive dependencies behind other refusals.
+3. Add argument bindings, comparisons, binding-site predicates, and parsed-tree composition. Preserve each native unknown and failure boundary.
+4. Qualify finite work, depth, deadlines, mixed-dialect routing, publication, and incremental context before production replacement.
+5. Build one shared job graph, split only at measured limits, and enforce the complete-job 100-execution gate.
+
+Neighbor fields do not imply support for longer field walks.
+Native field traversal has distinct stop behavior, which requires its own SQL contract.
+The catalog admission count does not certify full policy execution, and matching fixtures do not cover every semantic branch.
+
+The standalone pattern contract now has a physical scaling gate.
+With two call nodes and 32, 128, or 512 unrelated declarations, matching must use two pattern probes and two root node advances.
+The gate omits an explicit DSL kind, so the compiler must derive demand from the pattern itself.
+Capture constraints retain that root proof while evaluating each constraint at its captured node.
+
+Checkpoint evidence is recorded in:
+
+- `benchmark/sql-relational-cutover-coverage.json`: complete catalog ledger, fixture inventory, native/SQL output hashes, and remaining refusals.
+- `benchmark/sql-relational-cutover-evidence.json`: source and binary pins, earlier failed checks, final qualification, and preceding shape controls.
+- `benchmark/sql-relational-pattern-kind-experiment.json`: failing and corrected scaling results, generated SQL, and explained plans.
+
+To rerun the catalog checks, use the engine test binary from `cargo test -p rerail-engine --profile loop --features unbounded-work --no-run`.
+Set `RERAIL_RELATIONAL_CUTOVER_LEDGER` to a separate output path for each check.
+Run `relational_cutover_catalog_fixture_parity --ignored --nocapture --test-threads=1` for admitted-grammar parity.
+Run `relational_cutover_catalog_complete_coverage --ignored --nocapture --test-threads=1` for replacement coverage.
+The latter must fail until every catalog grammar has an admitted contract.

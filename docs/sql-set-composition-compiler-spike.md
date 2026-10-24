@@ -5375,3 +5375,126 @@ Artifacts:
 - `benchmark/sql-relational-candidate-demand-evidence.json`: final qualification, source and binary pins, and preceding controls.
 - `benchmark/sql-relational-candidate-experiments.json`: the baseline and all four candidates, including rejected gates, exact source patches, SQL, and loop profiles.
 - `benchmark/sql-relational-cutover-admission.json`: policy hashes, each grammar's admission result, and missing-contract counts.
+
+### 2026-10-23: Catalog contracts before compiler replacement
+
+The next phase uses three bounded agent mandates: pure relation coverage, atomic outcome contracts, and catalog validation.
+The root agent reviews their changes, owns integration, and runs the shared build and validation.
+No agent may change the production compiler, relax a gate, or add a native composition fallback.
+
+The coverage gate now visits all 146 grammars in 138 checked-in Python policies.
+A separate execution gate compares admitted grammars with native clause execution on all 595 upstream Python fixtures.
+It checks ordered roots, named capture payloads, and failure publication, and records fixture and policy hashes.
+A successful admission audit does not imply replacement readiness.
+The complete-coverage test deliberately fails while any grammar is refused.
+Publication features and finite resource limits still require separate qualification.
+
+The first checkpoint adds capture-free ancestor and sibling walks, including inclusive rule stops.
+The recursive relation contains node keys, without an origin-by-depth product.
+Four focused pure-relation tests pass.
+Catalog admission increases from 19 to 31 grammars; all 31 pass the 595-file native comparison.
+The complete-coverage gate fails with 115 refusals, as required.
+
+The atomic checkpoint admits explicit resolution, capture-free layout, absent-argument, and followed-value contracts.
+Three of five focused tests pass initially.
+The followed-value trace test fails, and the parsed-literal refusal fixture uses an invalid language.
+These failures are retained for investigation; this checkpoint is not qualified.
+The first build also found an unsupported SQLite `usize` extraction in the new test runner.
+The runner now extracts a checked SQLite `u32` file key before conversion.
+
+The next integration adds typed node witnesses for atomic patterns and ordered SQL capture constraints.
+List captures, parsed subdocuments, recursive outcome components, and constraint-only count publication remain explicit refusals.
+The planner selects representations through typed applicability before SQL emission.
+Invalid graphs, generation limits, and emission failures remain errors.
+The existing frontier plan remains subject to its frozen SQL-size and VM-work gates.
+Production replacement has not occurred.
+
+The second diagnostic build admits 37 grammars, and all 37 pass the complete fixture comparison.
+The remaining refusals are 34 list-capture contracts, 46 recursive outcome contracts, 28 other operator contracts, and one recursive-negation contract.
+These are first-refusal counts; a grammar can need several contracts.
+The complete-coverage gate still fails, with 109 refusals.
+
+The second focused run passes 186 tests and fails six.
+Two failures are invalid new fixtures: the parsed-literal language and an unconstrained zero-minimum count.
+Two old rejection tests now target supported behavior; they must test the narrower unsupported contract instead.
+One pattern test assumed that every anonymous-ellipsis alignment succeeds. It now compares each bound input with native matching.
+The remaining failure reveals a real finite-budget defect in followed-value utility replay.
+Native memoization excludes scope-cache construction from replay cost. SQL had replayed the entire first-call cost.
+
+The proposed correction brackets each reached utility miss, records its native cache-fill delta, and subtracts that delta from replay cost.
+The bracket belongs to one invocation, rather than a materialized batch of inputs.
+Fill-bearing utilities use keyed clause/file memo storage; unchanged total-cost proofs remain available for other utilities.
+Constraints also use keyed memo storage when they evaluate utilities at a captured node.
+Additional tests cover nested fills, multiple files, shared utilities, and repeated traversals.
+A separate two-clause test checks that scope costs are charged to each clause independently.
+These corrections await the next build and qualification.
+
+The source audit finds reachable recursive utilities in 70 refused grammars across 64 policies, including shared definitions and parameterized calls.
+That count overlaps the operator counts above. It is not an estimate of immediate admission gains.
+A neighbor-field contract is the next bounded addition; end and rule-stopped field traversals retain explicit refusals.
+
+Scope-sensitive atomic leaves now carry immutable clause ownership through a native guard.
+The guard selects the scope-charge key and restores it after the atomic call. It does not begin another clause.
+The current token is unique within one compiled plan and one `BatchScopes` job.
+A fresh job must reset that scope lifetime, including when it reuses a prepared statement.
+Separately compiled groups sharing one lifetime will need job-global tokens before production cutover.
+The compiler profile records this restriction.
+
+The neighbor-field addition selects `node.field` with `node.ffirst` before evaluating its child plan.
+It preserves the caller key and carries only the selected node into the child demand.
+Its tests include missing and repeated fields, captures, unknowns, reached budgets, and B303 fixture parity.
+A separate adversarial test combines constrained candidates, nested traversal, private stops, and failed-file rollback.
+The next build found a test oracle calling `unwrap` on a native stop type without `Debug`.
+That test now reports an explicit oracle failure without changing the production stop type.
+
+The next checkpoint passes all 207 tests, including the constraint-core memo-sharing regression.
+All 38 admitted grammars pass native comparison across the 595 fixtures, with positive witnesses for each grammar.
+The complete-coverage gate fails with 108 refusals: 34 list-capture contracts, 49 recursive outcome contracts, 24 other contracts, and one recursive-negation contract.
+The gate retains every policy and grammar. No refusal becomes a fallback.
+
+Frozen B023 still uses 246,364 VM instructions and 10,232 SQL bytes.
+Its median prepared CPU is 4.311 ms, versus 30.628 ms for the reference.
+All nine prepared executions agree, and all existing structural limits pass unchanged.
+All 231 preceding controls and 54 focused profiles retain their SQL hashes and VM counts.
+The focused profiles also retain their native outputs, reached calls, and work traces.
+
+A subsequent shape review finds a new amplification defect in standalone composite patterns.
+A rule such as `f($X)`, without an explicit kind predicate, scans every AST node before the atomic cursor rejects unrelated kinds.
+The source pattern already supplies the root-kind information, but the new outcome operator does not carry it to physical planning.
+The next gate fixes two call nodes and adds unrelated assignments at sizes 32, 128, and 512.
+It requires two pattern requests, one node filter, and two node advances at every size.
+This gate will first run against the uncorrected shape.
+
+The new gate fails against the uncorrected shape, as required.
+With 32, 128, and 512 unrelated declarations, it performs 241, 913, and 3,601 pattern requests.
+VM instructions grow from 13,089 through 49,377 to 194,529. The root node scan has no kind constraint.
+The pattern operator now carries the terminal's existing root-kind hints into demand planning.
+The first corrected run holds pattern requests and node advances at two for every size.
+Constraint plans also inherit necessary root kinds from their core, before constraints run at captured target nodes.
+That propagation retains the existing effect-order proof and never uses a constraint target's kind to filter roots.
+A separate regression checks constant pattern requests, exact native outputs, reached calls, and remaining finite work.
+Final native lint and qualification are in progress.
+
+The corrected standalone query uses 184 VM instructions at all three sizes.
+At 512 unrelated declarations, this removes 99.9% of its former VM work while retaining exact native captures.
+This is a scaling result for the new pattern contract, not a production-engine speedup.
+The bounded independent review finds no blockers in pattern hints or constraint-core propagation.
+Formatting, workspace Clippy, and profiling-feature Clippy pass.
+
+Final qualification passes 209 relational compiler tests, ten B023 fixture checks, two candidate checks, one adversarial check, and the frozen corpus check.
+The 231 preceding controls and 54 focused profiles retain their exact SQL hashes and VM counts.
+Frozen B023 retains 246,364 VM instructions, 10,232 SQL bytes, one matching statement, and zero frame publications.
+Its median prepared execution is 4.339 ms, versus 32.771 ms for the reference, across nine executions.
+Preparation remains a separate one-time measurement. All existing shape limits pass without adjustment.
+
+All 38 admitted grammars again pass the 595-file fixture batch, with a positive witness for each grammar.
+The complete-coverage test still fails with 108 refusals. Production replacement remains blocked.
+Their combined VM count is unchanged at 44,259,715 before and after root-kind pruning.
+This sum covers 38 separate grammar executions over all fixtures; it is not a fused complete-job measurement.
+These admitted rules already constrain their roots. The new physical improvement applies to standalone patterns without that explicit constraint.
+
+The committed coverage ledger preserves every refusal, fixture hash, output hash, VM count, and native file trace.
+File traces use groups with inclusive file-index ranges; those groups retain every original trace entry.
+The qualification artifact records earlier failed checks and final source, binary, corpus, and query pins.
+The pattern experiment preserves the failing baseline and corrected SQL, explained plans, counters, and scaling samples.
+Artifact paths and rerun commands are listed in `docs/sql-relational-transition-plan.md`.

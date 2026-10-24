@@ -1,4 +1,8 @@
 use super::super::ir::Set;
+#[path = "constraints.rs"]
+mod constraints;
+#[path = "field.rs"]
+mod field;
 #[path = "file_memo.rs"]
 mod file_memo;
 #[path = "memo.rs"]
@@ -58,6 +62,13 @@ impl Generation {
                     self.tree(child)?;
                 }
             }
+            Op::Constrained(core, constraints) => {
+                self.tree(core)?;
+                for (_, child) in constraints {
+                    self.tree(child)?;
+                }
+            }
+            Op::FieldNeighbor { child, .. } => self.tree(child)?,
             Op::Not(child) => self.tree(child)?,
             Op::Charge(_, child) => self.tree(child)?,
             Op::Search(_, _, child, stop)
@@ -96,6 +107,11 @@ fn needed(plan: &Plan) -> Slots {
 
 /// Necessary kinds for every nonfalse answer. Unknown never permits a false kind test.
 fn kinds(plan: &Plan) -> Option<std::collections::BTreeSet<u16>> {
+    // Constraints run only after core success and inspect captured targets.
+    // Only the core can prove necessary root kinds, including its effect order.
+    if let Op::Constrained(core, _) = &plan.op {
+        return kinds(core);
+    }
     if plan.fallible() {
         // Only a total conjunction prefix can reject a root before its first effect.
         return if let Op::All(items) = &plan.op {
@@ -112,6 +128,7 @@ fn kinds(plan: &Plan) -> Option<std::collections::BTreeSet<u16>> {
     }
     match &plan.op {
         Op::Predicate(Set::Kinds(k)) => Some(k.iter().copied().collect()),
+        Op::Pattern(_, _, kinds) => kinds.as_ref().map(|k| k.iter().copied().collect()),
         Op::Predicate(Set::Empty) => Some(Default::default()),
         Op::All(items) => items
             .iter()
@@ -250,11 +267,38 @@ impl Sql {
             Op::Unknown(_) => "unknown leaf",
             Op::Value(_) => "reached value leaf",
             Op::Bind(_) => "capture equality",
+            Op::Pattern(..) => "typed pattern witnesses",
+            Op::FieldNeighbor { .. } => "field neighbor",
+            Op::Constrained(..) => "ordered capture constraints",
             Op::Not(_) => "negation",
             Op::Count { .. } => "count outcome",
             _ => "outcome",
         };
         let body = match &plan.op {
+            Op::FieldNeighbor {
+                inside,
+                field,
+                child,
+            } => return self.field_neighbor(*inside, *field, child, input),
+            Op::Constrained(core, constraints) => {
+                return self.constrained(plan, core, constraints, input);
+            }
+            Op::Pattern(term, slots, _) => {
+                let inputs = slots
+                    .iter()
+                    .enumerate()
+                    .map(|(index, slot)| format!(" AND p.i{index} IS {}", value(input, "d", *slot)))
+                    .collect::<String>();
+                let exports = slots
+                    .iter()
+                    .enumerate()
+                    .map(|(index, slot)| format!(",p.c{index} AS c{slot}"))
+                    .collect::<String>();
+                format!(
+                    "SELECT d.k,d.work,p.truth{exports} FROM {} d CROSS JOIN relation_pattern_typed p ON p.term={term} AND p.file=d.file AND p.node=d.node{inputs}",
+                    input.name
+                )
+            }
             Op::Predicate(set) => format!(
                 "SELECT d.k,d.work,CASE WHEN {} THEN 1 ELSE 0 END AS truth FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node",
                 predicate::condition(set, "n")?,

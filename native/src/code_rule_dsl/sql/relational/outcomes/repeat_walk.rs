@@ -8,7 +8,7 @@ use serde_json::json;
 pub(super) use super::repeat_cost::Boolean;
 
 fn signature(plan: &Plan) -> Option<(Vec<Set>, usize)> {
-    if !plan.mentions.is_empty() || !plan.writes.is_empty() {
+    if !plan.mentions.is_empty() || !plan.writes.is_empty() || plan.effects.cache_fills {
         return None;
     }
     let Op::Search(Axis::Child, true, body, None) = &plan.op else {

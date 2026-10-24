@@ -4,6 +4,7 @@ mod analysis;
 mod answers;
 mod bound;
 mod budget_leaf;
+mod classify;
 mod cutover_tests;
 mod demand;
 mod emit;
@@ -13,6 +14,7 @@ pub(super) mod leaves;
 mod lower;
 mod memo_store;
 mod outcomes;
+mod pattern_leaf;
 mod physical;
 mod recursion;
 mod recursion_tests;
@@ -31,23 +33,20 @@ pub(super) struct Compiled {
 }
 
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
-    if grammar.three_valued {
-        return outcomes::compile(grammar);
-    }
-    if !crate::code_rule_dsl::matcher::CaptureAnalysis::default()
-        .mentions(&grammar.matcher)
-        .is_empty()
-    {
-        if grammar.three_valued
-            || grammar.transform.is_some()
-            || !crate::code_rule_dsl::matcher::CaptureAnalysis::default()
-                .counts(&grammar.matcher)
-                .is_empty()
-        {
-            return Err("relational compiler: unsupported capture effects or outcomes".into());
+    match classify::classify(grammar)? {
+        classify::Representation::OrderedOutcomes => return outcomes::compile(grammar),
+        classify::Representation::CapturedRelations => {
+            return match answers::prepare(grammar)? {
+                answers::Eligibility::Applicable(plan) => plan.emit(),
+                answers::Eligibility::NotApplicable(reason) => {
+                    let mut compiled = outcomes::compile(grammar)?;
+                    compiled.relations["frontierInapplicable"] =
+                        serde_json::json!(reason.to_string());
+                    Ok(compiled)
+                }
+            };
         }
-        return answers::compile(grammar)
-            .map_err(|e| format!("relational compiler: capture-bearing rules: {e}"));
+        classify::Representation::TotalRelations => {}
     }
     analysis::admit(grammar)?;
     let mut program = lower::compile(grammar)?;

@@ -7,7 +7,19 @@ use ast_grep_core::{matcher::PatternNode, meta_var::MetaVariable};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+#[path = "constraint_lower.rs"]
+mod constraint_lower;
+
+#[path = "pattern_lower.rs"]
+mod pattern_lower;
+
+#[path = "atomic_owner.rs"]
+mod atomic_owner;
+
 pub(super) struct Lower {
+    language: GrammarDialect,
+    /// Unique within the statement's BatchScopes lifetime, independent of matcher addresses.
+    pub(super) scope_owner: usize,
     pub pure: super::super::lower::Lowerer,
     pub slots: Vec<Slot>,
     active: HashSet<(usize, usize)>,
@@ -20,6 +32,8 @@ pub(super) struct Lower {
 impl Lower {
     pub fn new(dialect: GrammarDialect, three_valued: bool) -> Self {
         Self {
+            language: dialect,
+            scope_owner: 1,
             pure: super::super::lower::Lowerer::new(dialect),
             slots: vec![],
             active: HashSet::new(),
@@ -74,6 +88,37 @@ impl Lower {
         }
     }
 
+    /// Only node-local semantic leaves with no capture inputs or outputs use this cursor.
+    /// Composition and capture constraints remain SQL operators, never native callbacks.
+    fn atomic(&mut self, matcher: &AstMatcher) -> Op {
+        use crate::code_rule_dsl::sql::terminals::{FactTerm, Leaf, Terminal, Verdicts};
+        let id = self.pure.program.terminals.len();
+        let leaf = Leaf(matcher.clone());
+        let verdicts: Box<dyn Verdicts> = if Self::cache_fills(matcher) {
+            Box::new(atomic_owner::OwnedLeaf {
+                leaf,
+                owner: self.scope_owner,
+            })
+        } else {
+            Box::new(leaf)
+        };
+        self.pure.program.terminals.push(Terminal::Fact(FactTerm {
+            verdicts,
+            reads: vec![],
+        }));
+        Op::Value(id)
+    }
+
+    fn cache_fills(matcher: &AstMatcher) -> bool {
+        match matcher {
+            AstMatcher::Semantic(Semantic::Value(test)) => test.reading.follow,
+            AstMatcher::Semantic(
+                Semantic::Resolves(_) | Semantic::Arguments(_) | Semantic::Layout(_),
+            ) => true,
+            _ => false,
+        }
+    }
+
     pub fn plan(&mut self, matcher: &AstMatcher) -> Result<Plan, String> {
         self.operators += 1;
         if self.operators > 256 {
@@ -83,6 +128,7 @@ impl Lower {
         let mut writes = Slots::new();
         let mut node_writes = Slots::new();
         let op = match matcher {
+            AstMatcher::Constrained(constrained) => return self.constrained(constrained),
             AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
                 Op::Predicate(self.pure.set(matcher)?)
             }
@@ -102,19 +148,22 @@ impl Lower {
                     node_writes.insert(slot);
                     Op::Bind(slot)
                 } else {
-                    Op::Predicate(self.pure.set(matcher)?)
+                    let (op, slots) = self.pattern(pattern)?;
+                    mentions.extend(&slots);
+                    writes.extend(&slots);
+                    node_writes.extend(&slots);
+                    op
                 }
             }
-            AstMatcher::Semantic(Semantic::Value(test))
-                if !test.reading.follow && !test.reading.literal =>
-            {
-                use crate::code_rule_dsl::sql::terminals::{FactTerm, Leaf, Terminal};
-                let id = self.pure.program.terminals.len();
-                self.pure.program.terminals.push(Terminal::Fact(FactTerm {
-                    verdicts: Box::new(Leaf(matcher.clone())),
-                    reads: vec![],
-                }));
-                Op::Value(id)
+            AstMatcher::Semantic(Semantic::Value(test)) if !test.reading.literal => {
+                self.atomic(matcher)
+            }
+            AstMatcher::Semantic(Semantic::Resolves(_)) => self.atomic(matcher),
+            AstMatcher::Semantic(Semantic::Layout(test)) if test.reads().next().is_none() => {
+                self.atomic(matcher)
+            }
+            AstMatcher::Semantic(Semantic::Arguments(test)) if test.bind.is_empty() => {
+                self.atomic(matcher)
             }
             AstMatcher::TestUnknown(regex) => {
                 let super::super::ir::Set::Regex(term) =
@@ -144,6 +193,26 @@ impl Lower {
                 let child = self.plan(inner)?;
                 mentions = child.mentions.clone();
                 Op::Not(Box::new(child))
+            }
+            AstMatcher::Field(field) if matches!(field.stop, StopBy::Neighbor) => {
+                let mut child = self.plan(&field.rule)?;
+                if !self.three_valued
+                    && let Some((kinds, _)) =
+                        crate::code_rule_dsl::matcher::walk_candidate_filter(&field.rule)
+                {
+                    child.walk_filter = Some(super::WalkFilter {
+                        kinds,
+                        text: vec![],
+                    });
+                }
+                mentions = child.mentions.clone();
+                writes = child.writes.clone();
+                node_writes = child.node_writes.clone();
+                Op::FieldNeighbor {
+                    inside: field.inside,
+                    field: field.field,
+                    child: Box::new(child),
+                }
             }
             AstMatcher::Inside(..)
             | AstMatcher::Has(..)
@@ -242,8 +311,18 @@ impl Lower {
                     .into(),
             ),
         };
+        let mut effects = super::effects::Effects::of(&op);
+        if matches!(op, Op::Value(_)) {
+            // Resolution and layout may spend work without reading values. Native utility
+            // memoization depends on this distinction, including PHP's flow-sensitive names.
+            effects.reads_value = crate::code_rule_dsl::matcher::reads_values(
+                matcher,
+                &mut std::collections::BTreeSet::new(),
+            );
+            effects.cache_fills = Self::cache_fills(matcher);
+        }
         Ok(Plan {
-            effects: super::effects::Effects::of(&op),
+            effects,
             op,
             mentions,
             writes,

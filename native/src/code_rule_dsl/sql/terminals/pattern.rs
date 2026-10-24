@@ -206,8 +206,8 @@ pub(in crate::code_rule_dsl::sql) fn fresh_match(
     Some(values(term, &entry.facts, &env).into())
 }
 
-/// The frame owns the input tuple; only its integer row key crosses SQLite.
-pub(super) fn typed_match(
+/// Match one atomic pattern with nullable typed capture inputs supplied by the caller.
+pub(in crate::code_rule_dsl::sql) fn typed_match(
     batch: &Batch,
     term: &PatternTerm,
     file: u32,

@@ -891,6 +891,29 @@ fn fill_steps() -> usize {
     FILL_STEPS.get()
 }
 
+/// SQL test compiler's atomic cost accounting. Reading this counter evaluates no matcher.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn sql_cache_fill_steps() -> usize {
+    fill_steps()
+}
+
+/// An immutable SQL terminal owner selects the native per-clause scope charge key.
+/// This does not begin a clause or reset its allowance, memo tables, or unknown state.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn with_sql_clause_owner<T>(
+    owner: usize,
+    body: impl FnOnce() -> T,
+) -> T {
+    struct Reset(usize);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            resolve::CURRENT_CLAUSE.set(self.0);
+        }
+    }
+    let _reset = Reset(resolve::CURRENT_CLAUSE.replace(owner));
+    body()
+}
+
 thread_local! {
     static CLAUSE_STATE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }

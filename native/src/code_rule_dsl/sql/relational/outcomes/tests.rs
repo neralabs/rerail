@@ -258,7 +258,7 @@ fn outcomes_reject_unproved_effects_and_recursive_outcomes() {
             "recursive outcomes",
         ),
         (
-            json!({"value":{"type":"number","follow":true}}),
+            json!({"pattern":"$X","layout":{"before":{"to":"capture.X","breaks":{"eq":0}}}}),
             json!({}),
             "effect-free",
         ),

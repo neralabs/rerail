@@ -10,6 +10,128 @@ use crate::code_rule_dsl::matcher::{AstMatcher, CaptureAnalysis, GrammarMatcher,
 use ast_grep_core::{matcher::PatternNode, meta_var::MetaVariable};
 use std::collections::{BTreeSet, HashSet};
 
+/// A semantic-shape mismatch is a planning decision, not a failed compilation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ShapeReason {
+    RecursiveProducer,
+    ProducerShape,
+    MissingDescendant,
+    DescendantStop,
+    WholeCapture,
+    BindingEffect,
+    MissingCapture,
+    CaptureStop,
+    BoundFrontierInput,
+    DiscoveryEffect,
+    TruthContract,
+    NoFrontier,
+    SameCapture,
+    RecursiveAnswer,
+    UnnamedCapture,
+    MultipleProducers,
+    MissingProducer,
+    OutwardStop,
+    OutwardOperator,
+    MultipleProbeBindings,
+    MissingProbePath,
+    ProbeStop,
+    ProbeOperator,
+    BoundProbeInput,
+    RecursiveInput,
+    InputEffect,
+    FrontierCount,
+    PredicateContract,
+    CountContract,
+}
+impl std::fmt::Display for ShapeReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::RecursiveProducer => {
+                "capture demand: recursive capture producer needs a component plan"
+            }
+            Self::ProducerShape => {
+                "capture demand: producer needs one descendant binding search and pure conjuncts"
+            }
+            Self::MissingDescendant => "capture demand: no descendant binding search",
+            Self::DescendantStop => {
+                "capture demand: descendant search needs end or a pure inclusive stop"
+            }
+            Self::WholeCapture => "capture demand: only a single whole-node capture is admitted",
+            Self::BindingEffect => "capture demand: leaf binding has an unsupported capture effect",
+            Self::MissingCapture => "capture demand: missing whole-node capture",
+            Self::CaptureStop => "capture demand: capture-bearing stop needs an outcome contract",
+            Self::BoundFrontierInput => {
+                "capture demand: ordered search requires an already bound capture key"
+            }
+            Self::DiscoveryEffect => "capture demand: unsupported effect in the discovery path",
+            Self::TruthContract => "capture demand: only total untransformed matchers are admitted",
+            Self::NoFrontier => "capture demand: no admitted ordered frontier",
+            Self::SameCapture => "ordered answers: expected the same whole-node capture",
+            Self::RecursiveAnswer => {
+                "ordered answers: positive recursive capture needs an ordered component plan"
+            }
+            Self::UnnamedCapture => "ordered answers: unnamed capture keys are not admitted",
+            Self::MultipleProducers => {
+                "ordered answers: conjunction needs one outward capture producer"
+            }
+            Self::MissingProducer => "ordered answers: binding without a demand producer",
+            Self::OutwardStop => {
+                "ordered answers: unsupported ancestor choice outside the frontier"
+            }
+            Self::OutwardOperator => "ordered answers: unsupported outward capture operator",
+            Self::MultipleProbeBindings => {
+                "negative probe: multiple capture operations at one path node"
+            }
+            Self::MissingProbePath => "negative probe: missing capture path",
+            Self::ProbeStop => "negative probe: unsupported descendant stop",
+            Self::ProbeOperator => "negative probe: unsupported value-dependent operator",
+            Self::BoundProbeInput => {
+                "ordered answers: negative value probe requires a bound input capture"
+            }
+            Self::RecursiveInput => "ordered answers: recursive outward capture is not admitted",
+            Self::InputEffect => "ordered answers: unsupported input capture effect",
+            Self::FrontierCount => {
+                "ordered answers: exactly one independently bound frontier is currently admitted"
+            }
+            Self::PredicateContract => {
+                "ordered answers: semantic or effectful operators require outcome relations"
+            }
+            Self::CountContract => "ordered answers: count effects require outcome relations",
+        })
+    }
+}
+
+/// Only explicit shape rejections permit choosing another physical representation.
+/// Missing definitions, invalid graphs, limits, and emission errors remain fatal.
+#[derive(Debug)]
+pub(super) enum AdmissionError {
+    NotApplicable(ShapeReason),
+    Invalid(String),
+}
+impl From<ShapeReason> for AdmissionError {
+    fn from(reason: ShapeReason) -> Self {
+        Self::NotApplicable(reason)
+    }
+}
+impl From<String> for AdmissionError {
+    fn from(reason: String) -> Self {
+        Self::Invalid(reason)
+    }
+}
+impl From<&str> for AdmissionError {
+    fn from(reason: &str) -> Self {
+        Self::Invalid(reason.into())
+    }
+}
+impl std::fmt::Display for AdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotApplicable(reason) => reason.fmt(f),
+            Self::Invalid(reason) => f.write_str(reason),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Search {
     pub site: usize,
@@ -46,7 +168,7 @@ fn all(mut items: Vec<AstMatcher>) -> AstMatcher {
 fn terms(
     rule: &AstMatcher,
     active: &mut HashSet<(usize, usize)>,
-) -> Result<Vec<AstMatcher>, String> {
+) -> Result<Vec<AstMatcher>, AdmissionError> {
     match rule {
         AstMatcher::All(items) => {
             let mut out = Vec::new();
@@ -58,9 +180,7 @@ fn terms(
         AstMatcher::Util(u) if !pure(rule) => {
             let key = (u.table.as_ptr() as usize, u.index);
             if !active.insert(key) {
-                return Err(
-                    "capture demand: recursive capture producer needs a component plan".into(),
-                );
+                return Err(ShapeReason::RecursiveProducer.into());
             }
             let result = u
                 .with_target(|r| terms(r, active))
@@ -86,7 +206,7 @@ fn guard(rule: &AstMatcher) -> AstMatcher {
 
 fn producer(
     rule: &AstMatcher,
-) -> Result<(AstMatcher, AstMatcher, Option<AstMatcher>, String, bool), String> {
+) -> Result<(AstMatcher, AstMatcher, Option<AstMatcher>, String, bool), AdmissionError> {
     let mut predicates = Vec::new();
     let mut search = None;
     for term in terms(rule, &mut HashSet::new())? {
@@ -96,20 +216,15 @@ fn producer(
         }
         match term {
             AstMatcher::Has(body, stop) if search.is_none() => search = Some((body, stop)),
-            _ => return Err(
-                "capture demand: producer needs one descendant binding search and pure conjuncts"
-                    .into(),
-            ),
+            _ => return Err(ShapeReason::ProducerShape.into()),
         }
     }
-    let (body, stop) = search.ok_or("capture demand: no descendant binding search")?;
+    let (body, stop) = search.ok_or(ShapeReason::MissingDescendant)?;
     let leaf_stop = match stop {
         StopBy::End => None,
         StopBy::Rule(r) if pure(&r) => Some(*r),
         _ => {
-            return Err(
-                "capture demand: descendant search needs end or a pure inclusive stop".into(),
-            );
+            return Err(ShapeReason::DescendantStop.into());
         }
     };
     let mut leaf = Vec::new();
@@ -125,19 +240,15 @@ fn producer(
                     meta_var: MetaVariable::Capture(name, named),
                 } if capture.is_none() => capture = Some((name.clone(), *named)),
                 _ => {
-                    return Err(
-                        "capture demand: only a single whole-node capture is admitted".into(),
-                    );
+                    return Err(ShapeReason::WholeCapture.into());
                 }
             },
             _ => {
-                return Err(
-                    "capture demand: leaf binding has an unsupported capture effect".into(),
-                );
+                return Err(ShapeReason::BindingEffect.into());
             }
         }
     }
-    let (capture, named) = capture.ok_or("capture demand: missing whole-node capture")?;
+    let (capture, named) = capture.ok_or(ShapeReason::MissingCapture)?;
     Ok((all(predicates), all(leaf), leaf_stop, capture, named))
 }
 
@@ -179,7 +290,7 @@ impl Discovery {
         rule: &AstMatcher,
         context: AstMatcher,
         bound: &BTreeSet<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AdmissionError> {
         if pure(rule) {
             return Ok(());
         }
@@ -216,16 +327,11 @@ impl Discovery {
             }
             AstMatcher::Inside(body, StopBy::Rule(stop)) if !pure(body) => {
                 if !pure(stop) {
-                    return Err(
-                        "capture demand: capture-bearing stop needs an outcome contract".into(),
-                    );
+                    return Err(ShapeReason::CaptureStop.into());
                 }
                 let (ancestor_filter, leaf_filter, leaf_stop, capture, named) = producer(body)?;
                 if !bound.contains(&capture) {
-                    return Err(
-                        "capture demand: ordered search requires an already bound capture key"
-                            .into(),
-                    );
+                    return Err(ShapeReason::BoundFrontierInput.into());
                 }
                 self.searches.push(Search {
                     site: rule as *const AstMatcher as usize,
@@ -244,15 +350,15 @@ impl Discovery {
             | AstMatcher::Follows(body, _)
             | AstMatcher::Precedes(body, _) => self.visit(body, AstMatcher::All(vec![]), bound)?,
             AstMatcher::Pattern(_) => {}
-            _ => return Err("capture demand: unsupported effect in the discovery path".into()),
+            _ => return Err(ShapeReason::DiscoveryEffect.into()),
         }
         Ok(())
     }
 }
 
-pub(super) fn discover(grammar: &GrammarMatcher) -> Result<Vec<Search>, String> {
+pub(super) fn discover_typed(grammar: &GrammarMatcher) -> Result<Vec<Search>, AdmissionError> {
     if grammar.three_valued || grammar.transform.is_some() {
-        return Err("capture demand: only total untransformed matchers are admitted".into());
+        return Err(ShapeReason::TruthContract.into());
     }
     let mut discovery = Discovery {
         searches: vec![],
@@ -263,9 +369,13 @@ pub(super) fn discover(grammar: &GrammarMatcher) -> Result<Vec<Search>, String> 
         discovery.visit(&grammar.matcher, AstMatcher::All(vec![]), &BTreeSet::new())?;
     }
     if discovery.searches.is_empty() {
-        return Err("capture demand: no admitted ordered frontier".into());
+        return Err(ShapeReason::NoFrontier.into());
     }
     Ok(discovery.searches)
+}
+
+pub(super) fn discover(grammar: &GrammarMatcher) -> Result<Vec<Search>, String> {
+    discover_typed(grammar).map_err(|error| error.to_string())
 }
 
 /// Compile one independently inspectable frontier. This does not claim complete clause coverage.

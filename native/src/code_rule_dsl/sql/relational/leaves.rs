@@ -43,8 +43,9 @@ pub(in crate::code_rule_dsl::sql) fn register(
     super::row::register(db)?;
     super::memo_store::register(db)?;
     super::budget_leaf::register(db, batch)?;
-    let leaves = Leaves(AssertUnwindSafe(Arc::clone(batch)));
     let calls = Arc::new(AtomicUsize::new(0));
+    super::pattern_leaf::register(db, batch, &calls)?;
+    let leaves = Leaves(AssertUnwindSafe(Arc::clone(batch)));
     let count = Arc::clone(&calls);
     let keys = Leaves(AssertUnwindSafe(Arc::clone(batch)));
     let equality = Leaves(AssertUnwindSafe(Arc::clone(batch)));

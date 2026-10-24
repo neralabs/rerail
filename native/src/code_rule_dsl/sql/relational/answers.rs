@@ -5,6 +5,7 @@ use super::{
     ir::{self, Set},
     lower::Lowerer,
     physical, witness,
+    witness::{AdmissionError, ShapeReason},
 };
 use crate::code_rule_dsl::matcher::{AstMatcher, GrammarMatcher, StopBy};
 use ast_grep_core::{matcher::PatternNode, meta_var::MetaVariable};
@@ -47,7 +48,7 @@ struct Builder<'a> {
     origin_predicates: Vec<Set>,
 }
 impl Builder<'_> {
-    fn binding(&self, rule: &AstMatcher) -> Result<bool, String> {
+    fn binding(&self, rule: &AstMatcher) -> Result<bool, AdmissionError> {
         if let AstMatcher::Pattern(p) = rule
             && let PatternNode::MetaVar {
                 meta_var: MetaVariable::Capture(name, named),
@@ -56,7 +57,7 @@ impl Builder<'_> {
         {
             return Ok(*named);
         }
-        Err("ordered answers: expected the same whole-node capture".into())
+        Err(ShapeReason::SameCapture.into())
     }
     // Borrow original utility nodes: the frontier identity belongs to the source AST.
     fn terms<'a>(rule: &'a AstMatcher, out: &mut Vec<&'a AstMatcher>) {
@@ -68,7 +69,7 @@ impl Builder<'_> {
             out.push(rule);
         }
     }
-    fn answer(&mut self, rule: &AstMatcher) -> Result<Answer, String> {
+    fn answer(&mut self, rule: &AstMatcher) -> Result<Answer, AdmissionError> {
         if rule as *const AstMatcher as usize == self.search.site {
             return Ok(Answer::Frontier);
         }
@@ -79,7 +80,7 @@ impl Builder<'_> {
                     return Ok(answer.clone());
                 }
                 if !self.active.insert(key) {
-                    return Err("ordered answers: positive recursive capture needs an ordered component plan".into());
+                    return Err(ShapeReason::RecursiveAnswer.into());
                 }
                 let answer = u
                     .with_target(|r| self.answer(r))
@@ -103,9 +104,7 @@ impl Builder<'_> {
                     } else if matches!(term, AstMatcher::Pattern(_)) {
                         let named = self.binding(term)?;
                         if !named {
-                            return Err(
-                                "ordered answers: unnamed capture keys are not admitted".into()
-                            );
+                            return Err(ShapeReason::UnnamedCapture.into());
                         }
                         bind = true;
                         overwrite = answer.is_some();
@@ -117,10 +116,7 @@ impl Builder<'_> {
                         probes.push(probe);
                     } else {
                         if answer.is_some() {
-                            return Err(
-                                "ordered answers: conjunction needs one outward capture producer"
-                                    .into(),
-                            );
+                            return Err(ShapeReason::MultipleProducers.into());
                         }
                         answer = Some(self.answer(term)?);
                     }
@@ -136,7 +132,7 @@ impl Builder<'_> {
                     });
                 }
                 Ok(Answer::Filter(
-                    Box::new(answer.ok_or("ordered answers: binding without a demand producer")?),
+                    Box::new(answer.ok_or(ShapeReason::MissingProducer)?),
                     pure,
                     bind,
                     overwrite,
@@ -154,18 +150,15 @@ impl Builder<'_> {
                     StopBy::Neighbor => Axis::Child,
                     StopBy::End => Axis::Descendant,
                     _ => {
-                        return Err(
-                            "ordered answers: unsupported ancestor choice outside the frontier"
-                                .into(),
-                        );
+                        return Err(ShapeReason::OutwardStop.into());
                     }
                 },
                 Box::new(self.answer(body)?),
             )),
-            _ => Err("ordered answers: unsupported outward capture operator".into()),
+            _ => Err(ShapeReason::OutwardOperator.into()),
         }
     }
-    fn paths(&mut self, rule: &AstMatcher, probe: &mut Probe) -> Result<Vec<Path>, String> {
+    fn paths(&mut self, rule: &AstMatcher, probe: &mut Probe) -> Result<Vec<Path>, AdmissionError> {
         match rule {
             AstMatcher::Util(u) if !witness::pure(rule) => {
                 let key = (u.table.as_ptr() as usize, u.index);
@@ -203,15 +196,12 @@ impl Builder<'_> {
                         pure.push(self.lower.set(term)?);
                     } else {
                         if paths.is_some() {
-                            return Err(
-                                "negative probe: multiple capture operations at one path node"
-                                    .into(),
-                            );
+                            return Err(ShapeReason::MultipleProbeBindings.into());
                         }
                         paths = Some(self.paths(term, probe)?);
                     }
                 }
-                let mut paths = paths.ok_or("negative probe: missing capture path")?;
+                let mut paths = paths.ok_or(ShapeReason::MissingProbePath)?;
                 for path in &mut paths {
                     path.filters[0] =
                         Set::Intersect(vec![path.filters[0].clone(), Set::Intersect(pure.clone())]);
@@ -222,7 +212,7 @@ impl Builder<'_> {
                 let axis = match stop {
                     StopBy::Neighbor => Axis::Child,
                     StopBy::End => Axis::Descendant,
-                    _ => return Err("negative probe: unsupported descendant stop".into()),
+                    _ => return Err(ShapeReason::ProbeStop.into()),
                 };
                 let mut paths = self.paths(body, probe)?;
                 for path in &mut paths {
@@ -236,7 +226,7 @@ impl Builder<'_> {
                 edges: vec![],
                 end: End::Bind(self.binding(rule)?),
             }]),
-            _ => Err("negative probe: unsupported value-dependent operator".into()),
+            _ => Err(ShapeReason::ProbeOperator.into()),
         }
     }
 }
@@ -1050,7 +1040,7 @@ fn inputs(
     rule: &AstMatcher,
     bound: bool,
     active: &mut HashSet<(usize, usize)>,
-) -> Result<bool, String> {
+) -> Result<bool, AdmissionError> {
     if witness::pure(rule) {
         return Ok(bound);
     }
@@ -1072,9 +1062,7 @@ fn inputs(
         }
         AstMatcher::Not(_) => {
             if !bound {
-                return Err(
-                    "ordered answers: negative value probe requires a bound input capture".into(),
-                );
+                return Err(ShapeReason::BoundProbeInput.into());
             }
             Ok(bound)
         }
@@ -1082,7 +1070,7 @@ fn inputs(
         AstMatcher::Util(u) => {
             let key = (u.table.as_ptr() as usize, u.index);
             if !active.insert(key) {
-                return Err("ordered answers: recursive outward capture is not admitted".into());
+                return Err(ShapeReason::RecursiveInput.into());
             }
             let result = u
                 .with_target(|r| inputs(r, bound, active))
@@ -1090,18 +1078,88 @@ fn inputs(
             active.remove(&key);
             result
         }
-        _ => Err("ordered answers: unsupported input capture effect".into()),
+        _ => Err(ShapeReason::InputEffect.into()),
+    }
+}
+
+/// The accepted plan owns every semantic decision; emission cannot reselect a compiler.
+pub(super) struct PreparedAnswers {
+    program: ir::Program,
+    answer: Answer,
+    frontier: ir::CaptureDemand,
+    planned: Vec<physical::RelationPlan>,
+    used_kinds: Option<Vec<u16>>,
+    capture: String,
+}
+
+pub(super) enum Eligibility {
+    Applicable(Box<PreparedAnswers>),
+    NotApplicable(ShapeReason),
+}
+
+pub(super) fn prepare(grammar: &GrammarMatcher) -> Result<Eligibility, String> {
+    match prepare_inner(grammar) {
+        Ok(plan) => Ok(Eligibility::Applicable(Box::new(plan))),
+        Err(AdmissionError::NotApplicable(reason)) => Ok(Eligibility::NotApplicable(reason)),
+        Err(AdmissionError::Invalid(error)) => Err(error),
     }
 }
 
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
+    match prepare(grammar)? {
+        Eligibility::Applicable(plan) => plan.emit(),
+        Eligibility::NotApplicable(reason) => Err(reason.to_string()),
+    }
+}
+
+/// Capture purity alone does not establish totality: semantic leaves can read values or spend
+/// work. Check the structural contract before lowering predicates into unordered set relations.
+fn structural_contract(
+    rule: &AstMatcher,
+    visited: &mut HashSet<(usize, usize)>,
+) -> Result<(), AdmissionError> {
+    match rule {
+        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
+        }
+        AstMatcher::All(items) | AstMatcher::Any(items) => {
+            for item in items {
+                structural_contract(item, visited)?;
+            }
+        }
+        AstMatcher::Not(rule) => structural_contract(rule, visited)?,
+        AstMatcher::Inside(rule, stop)
+        | AstMatcher::Has(rule, stop)
+        | AstMatcher::Follows(rule, stop)
+        | AstMatcher::Precedes(rule, stop) => {
+            structural_contract(rule, visited)?;
+            if let StopBy::Rule(stop) = stop {
+                structural_contract(stop, visited)?;
+            }
+        }
+        AstMatcher::Util(util) => {
+            let key = (util.table.as_ptr() as usize, util.index);
+            if visited.insert(key) {
+                util.with_target(|rule| structural_contract(rule, visited))
+                    .ok_or("ordered answers: missing utility")??;
+            }
+        }
+        _ => return Err(ShapeReason::PredicateContract.into()),
+    }
+    Ok(())
+}
+
+fn prepare_inner(grammar: &GrammarMatcher) -> Result<PreparedAnswers, AdmissionError> {
+    structural_contract(&grammar.matcher, &mut HashSet::new())?;
+    if !crate::code_rule_dsl::matcher::CaptureAnalysis::default()
+        .counts(&grammar.matcher)
+        .is_empty()
+    {
+        return Err(ShapeReason::CountContract.into());
+    }
     inputs(&grammar.matcher, false, &mut HashSet::new())?;
-    let mut searches = witness::discover(grammar)?;
+    let mut searches = witness::discover_typed(grammar)?;
     if searches.len() != 1 {
-        return Err(
-            "ordered answers: exactly one independently bound frontier is currently admitted"
-                .into(),
-        );
+        return Err(ShapeReason::FrontierCount.into());
     }
     let search = searches.remove(0);
     let (lower, frontier, origins) = witness::lower_frontier(grammar, &search)?;
@@ -1182,28 +1240,49 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     } else {
         None
     };
-    let mut sql = Sql {
-        program: &program,
-        definitions: emit::capture_definitions(
-            &program,
-            &planned,
-            &frontier,
-            used_kinds.as_deref(),
-        )?,
-        next: 0,
-        shared: vec![],
-        probes: vec![],
-        leaves: vec![],
-    };
-    let output = sql.answer(&answer)?;
-    Ok(Compiled {
-        sql: format!(
-            "WITH RECURSIVE\n{}\nSELECT 0,file,node,json_array(witness) FROM {output} ORDER BY file,node",
-            sql.definitions.join(",\n")
-        ),
-        terminals: program.terminals,
-        relations: serde_json::json!({"scope":"Complete ordered single-leaf answer plan","capture":search.capture,"output":output,"usedValueKinds":used_kinds,"roots":frontier.roots,"demandDecisions":program.demand_decisions,"nativeComposition":false,"limitations":["Native work and stack/depth budgets remain outside this test-only kernel.","One bound frontier; positive recursive capture components and composite equality keys are not admitted."]}),
+    Ok(PreparedAnswers {
+        program,
+        answer,
+        frontier,
+        planned,
+        used_kinds,
+        capture: search.capture,
     })
+}
+
+impl PreparedAnswers {
+    pub(super) fn emit(self) -> Result<Compiled, String> {
+        let Self {
+            program,
+            answer,
+            frontier,
+            planned,
+            used_kinds,
+            capture,
+        } = self;
+        let mut sql = Sql {
+            program: &program,
+            definitions: emit::capture_definitions(
+                &program,
+                &planned,
+                &frontier,
+                used_kinds.as_deref(),
+            )?,
+            next: 0,
+            shared: vec![],
+            probes: vec![],
+            leaves: vec![],
+        };
+        let output = sql.answer(&answer)?;
+        Ok(Compiled {
+            sql: format!(
+                "WITH RECURSIVE\n{}\nSELECT 0,file,node,json_array(witness) FROM {output} ORDER BY file,node",
+                sql.definitions.join(",\n")
+            ),
+            terminals: program.terminals,
+            relations: serde_json::json!({"scope":"Complete ordered single-leaf answer plan","capture":capture,"output":output,"usedValueKinds":used_kinds,"roots":frontier.roots,"demandDecisions":program.demand_decisions,"nativeComposition":false,"limitations":["Native work and stack/depth budgets remain outside this test-only kernel.","One bound frontier; positive recursive capture components and composite equality keys are not admitted."]}),
+        })
+    }
 }
 
 #[test]
@@ -1254,5 +1333,85 @@ fn reference_shape_inclusive_descent_preserves_overlapping_branch_priority() {
             "{query}"
         );
         assert_eq!(query.contains("n.id>=b.id"), !reversed);
+    }
+}
+
+#[cfg(test)]
+mod preparation_tests {
+    use super::*;
+    use crate::code_rule_dsl::sql::relational::tests::policy;
+    use crate::code_rule_dsl::test_support::grammar_matchers;
+    use serde_json::{Value, json};
+
+    fn frontier() -> Value {
+        json!({"all":[
+            {"kind":"identifier","pattern":"$NAME"},
+            {"inside":{"stopBy":{"kind":"function_definition"},
+                "kind":"for_statement","has":{"stopBy":"end",
+                    "kind":"identifier","pattern":"$NAME"}}}
+        ]})
+    }
+
+    #[test]
+    fn ordered_preparation_distinguishes_shape_from_compilation_failure() {
+        for (rule, expected) in [
+            (json!({"pattern":"$NAME"}), ShapeReason::NoFrontier),
+            (
+                json!({"kind":"identifier","pattern":"$NAME","value":{"constant":true}}),
+                ShapeReason::PredicateContract,
+            ),
+            (
+                json!({"all":[frontier(),frontier()]}),
+                ShapeReason::FrontierCount,
+            ),
+        ] {
+            let policy = policy(rule, json!({}));
+            match prepare(&grammar_matchers(&policy)[0]).unwrap() {
+                Eligibility::NotApplicable(reason) => assert_eq!(reason, expected),
+                Eligibility::Applicable(_) => panic!("unexpected frontier admission"),
+            }
+        }
+    }
+
+    #[test]
+    fn ordered_preparation_owns_the_complete_plan_before_emission() {
+        let policy = policy(frontier(), json!({}));
+        let grammar = &grammar_matchers(&policy)[0];
+        let expected = compile(grammar).unwrap();
+        let Eligibility::Applicable(plan) = prepare(grammar).unwrap() else {
+            panic!("frontier shape must be admitted");
+        };
+        drop(policy);
+        let actual = plan.emit().unwrap();
+        assert_eq!(actual.sql, expected.sql);
+        assert_eq!(actual.relations, expected.relations);
+        assert!(actual.sql.contains("capture_demand"));
+    }
+
+    #[test]
+    fn ordered_preparation_keeps_physical_limit_and_graph_errors_fatal() {
+        let expansion: Vec<_> = (0..8)
+            .map(|i| json!({"any":[{"regex":format!("a{i}")},{"regex":format!("b{i}")}]}))
+            .collect();
+        let cases = [
+            (
+                json!({"all":[frontier(),{"all":expansion}]}),
+                json!({}),
+                "128",
+            ),
+            (
+                json!({"all":[frontier(),{"matches":"invalid"}]}),
+                json!({"invalid":{"any":[{"kind":"identifier"},
+                    {"inside":{"stopBy":"neighbor","not":{"matches":"invalid"}}}]}}),
+                "recursive negation",
+            ),
+        ];
+        for (rule, utils, message) in cases {
+            let policy = policy(rule, utils);
+            match prepare(&grammar_matchers(&policy)[0]) {
+                Err(error) => assert!(error.contains(message), "{error}"),
+                Ok(_) => panic!("physical failure became eligibility: {message}"),
+            }
+        }
     }
 }

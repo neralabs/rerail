@@ -3,13 +3,18 @@
 mod atomic_predicate_tests;
 mod budget_tests;
 mod capture_walk_tests;
+mod catalog_tests;
 mod composition_budget_tests;
+mod constraint_tests;
+mod constraint_walk_tests;
 mod effects;
 mod emit;
+mod field_tests;
 mod lower;
 mod memo_tests;
 mod nested_memo_tests;
 mod nested_tests;
+mod pattern_tests;
 mod predicate_run_tests;
 mod pruning_tests;
 mod publication_tests;
@@ -42,6 +47,14 @@ enum Op {
     Value(usize),
     Charge(usize, std::rc::Rc<Plan>),
     Bind(usize),
+    /// Atomic structural pattern, with outputs in terminal capture order.
+    Pattern(usize, Vec<usize>, Option<Vec<u16>>),
+    Constrained(Box<Plan>, Vec<(usize, Plan)>),
+    FieldNeighbor {
+        inside: bool,
+        field: u16,
+        child: Box<Plan>,
+    },
     All(Vec<Plan>),
     Any(Vec<Plan>),
     Not(Box<Plan>),
@@ -98,6 +111,7 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     } else {
         emit::compile(&plan, &lower.slots, grammar.applies)?
     };
+    record_scope_contract(&mut relations);
     profile["compositionOperators"] = relations["compositionOperators"][0].clone();
     relations["lowering"] = serde_json::json!([profile]);
     Ok(Compiled {
@@ -143,6 +157,7 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
             return Err("publication: transforms need their publication contract".into());
         }
         let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
+        lower.scope_owner = clause + 1;
         let terminal_base = terminals.len();
         lower.pure.program.terminals = terminals;
         let plan = lower.plan(&grammar.matcher)?;
@@ -159,6 +174,7 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         .collect();
     let (sql, mut relations) = emit::compile_jobs(&borrowed, work)?;
     relations["terminalOwners"] = serde_json::json!(terminal_owners);
+    record_scope_contract(&mut relations);
     for (index, profile) in lowering.iter_mut().enumerate() {
         profile["compositionOperators"] = relations["compositionOperators"][index].clone();
     }
@@ -168,4 +184,12 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         relations,
         terminals,
     })
+}
+
+fn record_scope_contract(profile: &mut serde_json::Value) {
+    profile["scopeOwnership"] = serde_json::json!({
+        "identity": "immutable clause index plus one within this compiled plan",
+        "lifetime": "one BatchScopes job; each job resets parked scope state",
+        "limitations": "Separately compiled groups sharing one scope lifetime need job-global clause tokens before production cutover."
+    });
 }

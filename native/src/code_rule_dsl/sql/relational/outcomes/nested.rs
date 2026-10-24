@@ -6,7 +6,8 @@ use super::{Axis, Bounds, Demand, Op, Output, Plan, Sql};
 use serde_json::{Value, json};
 
 pub(super) fn contains_walk(plan: &Plan) -> bool {
-    plan.effects.walk_depth > 0
+    // Pattern witnesses also need full typed returns rather than root-binding masks.
+    plan.effects.walk_depth > 0 || plan.effects.typed_exports
 }
 fn check_depth(plan: &Plan, walks: usize) -> Result<(), String> {
     if walks + plan.effects.walk_depth > 4 {

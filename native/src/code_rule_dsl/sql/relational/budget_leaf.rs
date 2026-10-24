@@ -35,6 +35,21 @@ pub(super) fn trace<T>(body: impl FnOnce() -> T) -> (T, Vec<serde_json::Value>) 
 }
 
 pub(super) fn register(db: &Connection, batch: &Arc<Batch>) -> Result<()> {
+    // These are observations of one atomic cache-accounting counter, not rule callbacks.
+    // They must remain nondeterministic so SQLite cannot hoist them out of a reached miss.
+    let flags = rusqlite::functions::FunctionFlags::SQLITE_UTF8;
+    db.create_scalar_function("relation_cache_fill_steps", 0, flags, |_| {
+        i64::try_from(crate::code_rule_dsl::matcher::sql_cache_fill_steps())
+            .map_err(|_| Error::ModuleError("cache-fill counter exceeds signed storage".into()))
+    })?;
+    db.create_scalar_function("relation_cache_fill_delta", 1, flags, |ctx| {
+        let start = ctx.get::<i64>(0)?;
+        let end = i64::try_from(crate::code_rule_dsl::matcher::sql_cache_fill_steps())
+            .map_err(|_| Error::ModuleError("cache-fill counter exceeds signed storage".into()))?;
+        end.checked_sub(start)
+            .filter(|delta| start >= 0 && *delta >= 0)
+            .ok_or_else(|| Error::ModuleError("cache-fill counter moved backwards".into()))
+    })?;
     const MODULE: Module<'static, Table> = Module::eponymous_only_module();
     db.create_module(c"relation_value_budget", &MODULE, Some(Arc::clone(batch)))
 }
