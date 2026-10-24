@@ -155,10 +155,7 @@ impl Corpus {
             if plans.is_empty() {
                 continue;
             }
-            let mut plans = plans.clone();
-            plans.sort_unstable_by_key(|p| Arc::as_ptr(p) as usize);
-            plans.dedup_by_key(|p| Arc::as_ptr(p) as usize);
-            let ids = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect();
+            let (plans, ids) = super::frontier::frontier(plans);
             groups
                 .entry((file.lang, ids))
                 .or_insert_with(|| (plans, HashSet::new()))
