@@ -59,6 +59,10 @@ mod waves;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/graph.rs"]
 mod graph;
 
+#[cfg(test)]
+#[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/children.rs"]
+mod children;
+
 pub mod composition;
 pub mod fts;
 pub mod residency;

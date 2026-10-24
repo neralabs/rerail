@@ -94,45 +94,23 @@ impl Demand {
         inline.with_extra(ctes, body)
     }
 
+    pub(super) fn child_population(
+        scopes: &std::collections::BTreeSet<(u16, String)>,
+        inline: &mut super::Definitions,
+    ) -> String {
+        let (ctes, body) = super::children::fill(scopes.iter().cloned());
+        inline.with_extra(ctes, body)
+    }
+
     /// Ordinary CTE dependencies determine execution order. These fills perform no host lookups.
-    pub(super) fn population(&self, inline: &mut super::Definitions) -> String {
-        let (_, table, columns) = self.property.shape();
-        let guard = self.property.guard();
-        let (function, selected) = match self.property {
-            Property::Node => ("nera_decode(s.fid,s.pre)".to_owned(), "nera_word(packed,0)-1,nera_word(packed,1),nera_word(packed,2),nera_word(packed,3),nera_word(packed,4)".to_owned()),
-            Property::Span => ("nera_span(s.fid,s.pre)".to_owned(), "nera_word(packed,0),nera_word(packed,1)".to_owned()),
-            Property::Child(field) => (format!("nera_child(s.fid,s.pre,{field})"), format!("{field},packed")),
-        };
-        let mut dependencies = Vec::new();
-        if self.property == Property::Node {
-            if self.scope == "all_nodes" {
-                dependencies.push("missing_files(fid) AS MATERIALIZED (SELECT cf.fid FROM cf LEFT JOIN decoded_files d ON d.fid=cf.fid WHERE d.fid IS NULL)".into());
-                return inline.with_extra(
-                    dependencies,
-                    "INSERT INTO decoded_properties SELECT f.fid,p.pre,p.parent,p.end,p.kind,p.field,p.flags FROM missing_files f JOIN file t ON t.fid=f.fid CROSS JOIN nera_nodes(f.fid,0,t.nodes) p LEFT JOIN decoded_properties d ON d.fid=f.fid AND d.pre=p.pre WHERE d.fid IS NULL",
-                );
-            }
-            dependencies.push(format!("needed(fid,pre) AS MATERIALIZED (SELECT DISTINCT s.fid,s.pre FROM {} s LEFT JOIN decoded_properties d ON d.fid=s.fid AND d.pre=s.pre WHERE d.fid IS NULL)",self.scope));
-            return inline.with_extra(
-                dependencies,
-                "INSERT INTO decoded_properties SELECT s.fid,p.pre,p.parent,p.end,p.kind,p.field,p.flags FROM needed s CROSS JOIN nera_nodes(s.fid,s.pre,s.pre+1) p",
-            );
+    pub(super) fn node_population(&self, inline: &mut super::Definitions) -> String {
+        assert!(self.property == Property::Node, "node-property producer");
+        if self.scope == "all_nodes" {
+            return inline.with_extra(vec!["missing_files(fid) AS MATERIALIZED (SELECT cf.fid FROM cf LEFT JOIN decoded_files d ON d.fid=cf.fid WHERE d.fid IS NULL)".into()],
+                "INSERT INTO decoded_properties SELECT f.fid,p.pre,p.parent,p.end,p.kind,p.field,p.flags FROM missing_files f JOIN file t ON t.fid=f.fid CROSS JOIN nera_nodes(f.fid,0,t.nodes) p LEFT JOIN decoded_properties d ON d.fid=f.fid AND d.pre=p.pre WHERE d.fid IS NULL");
         }
-        if self.property == Property::Node && self.scope == "all_nodes" {
-            dependencies.push("missing_files(fid) AS MATERIALIZED (SELECT cf.fid FROM cf LEFT JOIN decoded_files d ON d.fid=cf.fid WHERE d.fid IS NULL)".into());
-            dependencies.push("needed(fid,pre) AS MATERIALIZED (SELECT s.fid,s.pre FROM missing_files f CROSS JOIN all_nodes s LEFT JOIN decoded_properties d ON d.fid=s.fid AND d.pre=s.pre WHERE s.fid=f.fid AND d.fid IS NULL)".into());
-        } else {
-            dependencies.push(format!("needed(fid,pre) AS MATERIALIZED (SELECT DISTINCT s.fid,s.pre FROM {} s LEFT JOIN {table} d ON d.fid=s.fid AND d.pre=s.pre{guard} WHERE d.fid IS NULL)", self.scope));
-        }
-        dependencies.push(format!(
-            "decoded(fid,pre,packed) AS MATERIALIZED (SELECT s.fid,s.pre,{function} FROM needed s)"
-        ));
-        inline.with_extra(
-            dependencies,
-            &format!(
-                "INSERT INTO {table}(fid,pre,{columns}) SELECT fid,pre,{selected} FROM decoded"
-            ),
-        )
+        inline.with_extra(vec![format!("needed(fid,pre) AS MATERIALIZED (SELECT DISTINCT s.fid,s.pre FROM {} s LEFT JOIN decoded_properties d ON d.fid=s.fid AND d.pre=s.pre WHERE d.fid IS NULL)",self.scope)],
+            "INSERT INTO decoded_properties SELECT s.fid,p.pre,p.parent,p.end,p.kind,p.field,p.flags FROM needed s CROSS JOIN nera_nodes(s.fid,s.pre,s.pre+1) p")
     }
 }
 

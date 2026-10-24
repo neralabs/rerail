@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
-const engine = new URL("../../../src/engine/index.ts", import.meta.url).href;
-const capabilities = new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url).href;
+const engine = new URL("../../../../src/engine/index.ts", import.meta.url).href;
+const capabilities = new URL("../../../../native/src/code_rule_dsl/capabilities.json", import.meta.url).href;
 
 it.skipIf(!required)("batches distinct child-field bindings across two rules and result packets", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-child-demand-"));
@@ -51,3 +51,30 @@ it.skipIf(!required)("batches distinct child-field bindings across two rules and
     expect(fills, "ready fields share one SQL submission without merging their completion keys").toBe(1);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 45_000);
+
+it.skipIf(!required)("invalidates completed child answers when a file changes and changes back", () => {
+  const program = `
+    import {readFileSync} from 'node:fs';
+    import {loadNativeBinding} from ${JSON.stringify(engine)};
+    const native=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
+    const ws=new native.CodeRuleDslWorkspace();
+    for(const [id,field,kind] of [['callee','function','identifier'],['args','arguments','argument_list']]) {
+      ws.addCodeRule(native.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id,revision:1,mode:'log',
+        clauses:[{id:'selected',forbid:{ast:{language:'python',rule:{kind:'call',has:{field,kind}}}},
+        violation:{code:'MATCH',message:'Match',anchor:'witness.span'}}]}),'json',caps));
+    }
+    const results=[];
+    try {
+      for(const [i,source] of ['target(value)\\n','owner.target()\\n','target(value)\\n'].entries())
+        results.push(JSON.parse(await ws.applyAsync(JSON.stringify({revision:i+1,removed:[],files:[{path:'a.py',language:'python',source}]}))).evaluation);
+      console.log(JSON.stringify(results));
+    } finally {ws.close();}
+  `;
+  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+    encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
+  });
+  expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
+  const results = JSON.parse(child.stdout.trim());
+  expect(results.map((r: { failures: unknown[] }) => r.failures)).toEqual([[], [], []]);
+  expect(results.map((r: { violations: unknown[] }) => r.violations.length)).toEqual([2, 1, 2]);
+});

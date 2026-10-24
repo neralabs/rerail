@@ -1,4 +1,4 @@
-//! Specialized source-span dependency waves over compiler-generated CTEs.
+//! Specialized keyed-decoder dependency waves over compiler-generated CTEs.
 use std::{
     collections::{BTreeSet, HashMap},
     sync::LazyLock,
@@ -11,11 +11,11 @@ pub(super) fn identifiers(sql: &str) -> impl Iterator<Item = &str> {
     IDENTIFIER.find_iter(sql).map(|token| token.as_str())
 }
 
-/// A span lookup adds one barrier. Other generated operators inherit their input barriers.
+/// A batched lookup adds one barrier. Other generated operators inherit their input barriers.
 /// Recursive SQL stays inside its operation; this is not a general graph scheduler.
 pub(super) fn analyze(
     ctes: &[String],
-    spans: &BTreeSet<String>,
+    barriers: &BTreeSet<String>,
     query: &str,
 ) -> (HashMap<String, usize>, HashMap<String, usize>) {
     let names: Vec<_> = ctes
@@ -39,7 +39,7 @@ pub(super) fn analyze(
                 }
             }
         }
-        levels.push(level + usize::from(spans.contains(names[i])));
+        levels.push(level + usize::from(barriers.contains(names[i])));
     }
     for token in identifiers(query) {
         if let Some((_, uses)) = references.get_mut(token) {
@@ -61,15 +61,21 @@ pub(super) fn analyze(
 /// Bound each compound SELECT below SQLite's term limit without another host submission.
 /// Key deduplication belongs to the enclosing missing-coverage relation.
 pub(super) fn union(scopes: impl IntoIterator<Item = String>) -> String {
-    let mut arms = scopes
-        .into_iter()
-        .map(|scope| format!("SELECT fid,pre FROM {scope}"))
-        .collect::<Vec<_>>();
-    assert!(!arms.is_empty(), "a span wave has admitted demand");
+    compound(
+        "fid,pre",
+        scopes
+            .into_iter()
+            .map(|scope| format!("SELECT fid,pre FROM {scope}"))
+            .collect(),
+    )
+}
+
+pub(super) fn compound(columns: &str, mut arms: Vec<String>) -> String {
+    assert!(!arms.is_empty(), "a decoder wave has admitted demand");
     while arms.len() > 128 {
         arms = arms
             .chunks(128)
-            .map(|arms| format!("SELECT fid,pre FROM ({})", arms.join(" UNION ALL ")))
+            .map(|arms| format!("SELECT {columns} FROM ({})", arms.join(" UNION ALL ")))
             .collect();
     }
     arms.join(" UNION ALL ")
@@ -87,6 +93,25 @@ pub(super) fn fill(scopes: impl IntoIterator<Item = String>) -> (Vec<String>, &'
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn child_span_and_later_child_requests_keep_their_real_dependencies() {
+        let ctes = [
+            "roots(fid,pre) AS MATERIALIZED (VALUES(1,1))",
+            "children(fid,pre,child) AS NOT MATERIALIZED (SELECT fid,pre,2 FROM roots)",
+            "selected(fid,pre) AS MATERIALIZED (SELECT fid,child FROM children WHERE child IS NOT NULL)",
+            "spans(fid,pre,start,len) AS MATERIALIZED (SELECT fid,pre,0,1 FROM selected)",
+            "filtered(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM spans WHERE len>0)",
+            "later(fid,pre,child) AS NOT MATERIALIZED (SELECT fid,pre,3 FROM filtered)",
+        ].map(str::to_owned);
+        let (levels, _) = analyze(
+            &ctes,
+            &BTreeSet::from(["children".into(), "spans".into(), "later".into()]),
+            "SELECT * FROM later",
+        );
+        assert_eq!(levels["children"], 1);
+        assert_eq!(levels["spans"], 2);
+        assert_eq!(levels["later"], 3);
+    }
     #[test]
     fn independent_selectors_share_a_wave_and_dependent_source_predicates_wait() {
         let ctes = [

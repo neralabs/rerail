@@ -10,6 +10,63 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Shared child demand: 2026-10-24
 
+### Field-qualified dependency waves: green
+
+The test from `2bfefe52` now preserves 130 findings across two rules and two result packets with one child-fill execution.
+Different field options retain separate `syntax.child_fields.v1` bindings.
+The transport unions `(fid, pre, field)` requests from existing selectors and deduplicates missing keys before decoding.
+The existing `decoded_children` SQL table owns both child answers and completion.
+A NULL child completes its requested key. The missing-coverage join tests `d.fid IS NULL`, rather than `d.child IS NULL`.
+Publication retains the existing transaction and source-version invalidation.
+
+Child and span lookups now both introduce dependency barriers.
+A later lookup waits for selectors that depend on earlier child or span answers.
+The specialized wave planner remains sufficient. This change adds no generic scheduler, execution switch, or native fact cache.
+The existing `nera_child` scalar still performs each missing-key lookup. This slice does not change its traversal algorithm.
+
+Two fresh complete-job captures each record **7,733 engine submissions**, **994 SQLite internal executions**, and **8,727 total executions**.
+The baseline records 8,669 engine submissions. The decrease is **936 submissions, or 10.80%**.
+Complete findings and connection coverage reconcile. The fixed 100-submission gate correctly still fails.
+Candidate preparation decreases from 4,252 to 3,316 submissions. Cleanup remains at 2,216.
+The first captured frontier decreases from 647 to 415 stages and from 246 to 11 child fills.
+Span fills increase from two to five because the planner now represents their child dependencies explicitly.
+Temporary selector tables remain at 393. Peak live relations decrease from 100 to 93.
+The second frontier retains 401 temporary tables and decreases from 659 to 423 stages, with 11 child fills.
+Its peak live relation count decreases from 100 to 91.
+
+The first three alternating CPU pairs show a 3.08% median regression, from 1,711.444 to 1,764.221 ms.
+Six follow-up pairs reverse that direction. All trials remain in the evidence; no trial is discarded.
+Across all nine fresh-process pairs, median process CPU decreases from **1,739.994 to 1,708.247 ms**, or **1.82%**.
+The before range is 1,628.437–1,776.261 ms. The after range is 1,610.341–1,790.968 ms.
+These ranges overlap. This result does not establish a substantial CPU gain.
+Median reported peak RSS is 337,952 KiB before and 338,928 KiB after, also with overlapping ranges.
+Both archives use the same build settings, allocator shim, frozen observations, and four workers.
+Tracing stays disabled. Own builds, tests, and diagnostic captures finish before each timing series.
+
+A separate SQLite replay uses the first captured observation and unchanged 1 MiB main and 512 KiB temporary cache targets.
+Both programs produce 161 candidate rows and the same 19,793,328-byte stepping heap peak.
+Compilation peaks also remain at 3,397,936 bytes.
+Stage/result VM steps decrease from 81,781 to 75,068; sorts remain at 1,815.
+Cache misses decrease from 259 to 180, writes from 401 to 322, and spills from 282 to 207.
+These replay counters explain SQL behavior. They do not measure total retained ownership or establish process memory recovery.
+
+Validation passes **311 native-facing tests**, **48 standalone SQL tests**, and **120 original observations across 60 rules**.
+The source observations include 60 positive and 60 clean cases, with no diagnostic differences or engine failures.
+Tests cover overlapping demand, different fields, completed absence, empty demand, source replacement, rollback, retry, and 700 tagged requests.
+The production edit test preserves findings `2 → 1 → 2` as a source changes and changes back.
+All eleven fixed-budget regression tests and the exported producer-manifest check pass.
+Native Clippy passes with and without profiling. Standalone Clippy, static checks, formatting, and patch checks pass.
+Static checks first find 26 files in `test/engine/native/`, above its limit of 25.
+The child-demand test moves into its `recovery/` subdirectory; its explicit CI and producer-gate references move with it.
+
+The decision retains batched child transport because it reduces submissions and preserves shared SQL ownership.
+The remaining candidate preparation and cleanup total **5,532 submissions**, about 72% of the engine count.
+Repeated temporary selector construction, indexes, and cleanup remain the next measured target.
+The universal node-property fill already executes once in these frontiers; scoped node demand and empty-relation simplification remain open.
+WP3 and aggregate recovery remain incomplete. This slice does not establish full-corpus or repository acceptance.
+Checked evidence: [shared child demand](../fixtures/host/data-layer-port/profiling/shared-child-demand-recovery-20261024.json).
+Raw captures, commands, and all nine CPU pairs remain in `.rerail/profiles/child-demand-recovery-20261024/`.
+
 ### Different fields in one ready wave: red
 
 The next phase starts from `a63782d7` and its stable 8,669-submission guard.

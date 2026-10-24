@@ -10,6 +10,7 @@ use decode::Property;
 #[path = "lower/render.rs"]
 mod render;
 use render::Definitions;
+mod children;
 pub(super) mod lifetime;
 mod waves;
 #[cfg(feature = "code-rule-profile")]
@@ -860,13 +861,15 @@ fn finish_decoded(
             );
         }
     }
-    let span_names = decoding
+    let barrier_names = decoding
         .iter()
-        .filter(|(_, demand)| demand.property == Property::Span)
+        .filter(|(_, demand)| matches!(demand.property, Property::Span | Property::Child(_)))
         .map(|(name, _)| name.clone())
         .collect();
-    let (levels, uses) = waves::analyze(&ctes, &span_names, &query);
+    let (levels, uses) = waves::analyze(&ctes, &barrier_names, &query);
     let mut span_scopes: std::collections::BTreeMap<usize, BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    let mut child_scopes: std::collections::BTreeMap<usize, BTreeSet<(u16, String)>> =
         std::collections::BTreeMap::new();
     let mut stage_levels = HashMap::new();
     let graph = ctes.clone();
@@ -880,7 +883,7 @@ fn finish_decoded(
         let mut scope = Definitions::new(ctes.iter().filter(|cte| cte.starts_with("cf(")).cloned());
         stages.push(Stage {
             name: "decode_all_nodes".into(),
-            sql: demand.population(&mut scope),
+            sql: demand.node_population(&mut scope),
             index: None,
             temporary: false,
             covering: true,
@@ -905,8 +908,13 @@ fn finish_decoded(
                     .entry(levels[name])
                     .or_default()
                     .insert(demand.scope.clone());
+            } else if let Property::Child(field) = demand.property {
+                child_scopes
+                    .entry(levels[name])
+                    .or_default()
+                    .insert((field, demand.scope.clone()));
             } else {
-                let sql = demand.population(&mut inline);
+                let sql = demand.node_population(&mut inline);
                 let stage_name = format!("decode_{name}");
                 stage_levels.insert(stage_name.clone(), (levels[name], 1));
                 stages.push(Stage {
@@ -982,7 +990,18 @@ fn finish_decoded(
             covering: false,
         });
     }
-    // Stable order preserves every non-span dependency within a wave. A span fill
+    for (level, scopes) in child_scopes {
+        let name = format!("decode_child_fields_wave_{level}");
+        stage_levels.insert(name.clone(), (level, 0));
+        stages.push(Stage {
+            name,
+            sql: decode::Demand::child_population(&scopes, &mut inline),
+            index: None,
+            temporary: false,
+            covering: false,
+        });
+    }
+    // Stable order preserves every unbatched dependency within a wave. A decoder fill
     // follows all its lower-wave selectors and precedes readers in its own wave.
     stages.sort_by_cached_key(|stage| stage_levels.get(&stage.name).copied().unwrap_or((0, 1)));
     let queries: Vec<_> = queries.iter().map(|query| inline.render(query)).collect();
