@@ -205,7 +205,7 @@
       "baseline": "after measured R5-B: 2250 complete-job engine submissions",
       "netRemovalTarget": 1261,
       "wholeJobAfterTarget": 989,
-      "estimateStatus": "bounded scope: frontend migration measures 761 removals; complete-empty admission models another 500; production delivery pending",
+      "estimateStatus": "delivered: 1275 actual removals; original target 1261 retained",
       "clauses": [
         "state-signatures-1",
         "state-flow-1",
@@ -244,7 +244,26 @@
         ]
       },
       "specification": "docs/sql-execution-chunk-c.md",
-      "evidencePlan": "sql-execution-chunk-c-20261024.json"
+      "evidencePlan": "sql-execution-chunk-c-20261024.json",
+      "measuredResult": {
+        "engineSubmissions": 975,
+        "sqliteInternalExecutions": 106,
+        "unknownOrigins": 0,
+        "netRemoval": 1275,
+        "wholeTargetMet": true,
+        "fixedLimit": 100,
+        "fixedLimitAccepted": false,
+        "excess": 875,
+        "evidence": "state-domain-admission-recovery-20261024.json",
+        "byPhase": {
+          "connectionSetup": 229,
+          "filePublication": 36,
+          "catalogPublication": 12,
+          "candidatePreparation": 308,
+          "cleanup": 24,
+          "relationalEvaluation": 366
+        }
+      }
     }
   ],
   "remainingAfterBothTargets": {
@@ -413,5 +432,10 @@
     "engineSubmissions": 989,
     "overFixedLimit": 889,
     "status": "projected only; rank subsequent work after actual C delivery, without assigning invented savings"
+  },
+  "remainingAfterCDelivery": {
+    "engineSubmissions": 975,
+    "overFixedLimit": 875,
+    "status": "measured; rank subsequent work from the remaining complete inventory without assigning unproven savings"
   }
 }

@@ -41,7 +41,7 @@ def literals(values):return '('+','.join(q(v) for v in sorted(values))+')'
 def choice(option,yes,no):return {'$option':option,'cases':{'true':yes,'false':no}}
 
 def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block'):
- from .ast_relations import trim_ast_projection,typed_input_partitions,batched_reachability,defer_node_text,shared_syntax_relations,narrow_ast_ordinals
+ from .ast_relations import trim_ast_projection,typed_input_partitions,batched_reachability,defer_node_text,shared_syntax_relations,whole_file_syntax_relations,narrow_ast_ordinals
  from .sql_columns import narrow_columns
  quality=name=='serverplan_quality'
  utils=dict(utils or {})
@@ -55,6 +55,13 @@ def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block
      if stage['name']=='returns':stage.setdefault('indexes',[]).append(['__path','__start','__end'])
    if not plan.get('locations') and not clause['id'].startswith('quality-conditional') and clause['id']!='quality-project-taxonomy':
     plan.setdefault('partitionBy','file')
+   if name=='serverplan_state_tripwires' and clause['id'] in {'state-signatures-1','state-flow-1','state-projection-recovery-2','state-flow-project-1'}:
+    # These generators select every CST node in each admitted file, including the
+    # closed repository domain. Keep each detector's existing source/option gate.
+    batched_reachability(clause,forest=True)
+    whole_file_syntax_relations(clause)
+    plan['requireNonemptyInput']='syntax_gate'
+    continue
    if quality and shared_syntax_relations(clause):
     narrow_columns(plan)
     continue

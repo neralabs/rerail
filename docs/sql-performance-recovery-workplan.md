@@ -1,8 +1,9 @@
 # SQL performance recovery workplan
 
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
-Conditional admission, whole-job publication, and R4–R7 remain open.
-The latest fixed guard has 2,250 engine submissions and 181 SQLite internal executions. The 100-submission gate still fails.
+General conditional candidate admission, whole-job publication, and R4–R7 remain open.
+Bounded C adds explicit admission for complete empty input domains.
+The latest fixed guard has 975 engine submissions and 106 SQLite internal executions. The 100-submission gate still fails by 875.
 The historical 7,733 checkpoint remains below; full-repository CPU recovery is unresolved.
 Compiler input/syntax validation uses prepare-only schemas. Compiler stages share bounded SQLite-inferred metadata across documents.
 Runtime producer execution and whole-job lifetimes remain open. Aggregate CPU recovery is unresolved.
@@ -15,8 +16,9 @@ Each implementation delivery must remove its full expected count, with CPU, memo
 The [R5-B journal](data-layer-performance-journal.md#relational-storage-delivery-r5-b-2026-10-24) records the complete accounting and matched controls.
 Small TDD commits support these chunks. They do not complete a phase by themselves.
 The [bounded C specification](sql-execution-chunk-c.md) selects four state syntax frontends and explicit empty-domain admission.
-C requires 1,261 actual removals and at most 989 complete-guard submissions. The final 100 limit remains unchanged.
-General shared execution remains later work. Smaller TDD checkpoints do not complete C.
+C delivers 1,275 actual removals against its unchanged 1,261 target and 989 ceiling.
+The [C journal](data-layer-performance-journal.md#state-syntax-domain-delivery-r5-c-2026-10-24) records the implementation and checks.
+The final 100 limit remains unchanged. General shared execution remains later work.
 
 ## Required outcome
 

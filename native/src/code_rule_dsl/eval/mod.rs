@@ -431,6 +431,7 @@ pub(super) fn evaluate_clauses(
                         code_rule,
                         clause,
                         inputs: super::relational::Inputs {
+                            gate: None,
                             file_local: false,
                             rows: None,
                             facts: Vec::new(),

@@ -267,7 +267,7 @@ test("chunk B requires all 1296 removals from the accepted 3685 checkpoint",()=>
 
 
 test("chunk C requires its complete 1261 removal and keeps the final 100 gate",()=>{
-  const ledger=JSON.parse(readFileSync(new URL("../../fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json",import.meta.url),"utf8"));
+  const ledger=JSON.parse(readFileSync("fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json","utf8"));
   const chunk=ledger.orderedDeliveryChunks.find(c=>c.id==="R5-C");
   assert.equal(chunk.netRemovalTarget,1261);assert.equal(chunk.wholeJobAfterTarget,989);
   const target={baseline:2250,removal:1261};

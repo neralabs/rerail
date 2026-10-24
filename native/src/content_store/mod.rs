@@ -255,7 +255,7 @@ impl From<std::io::Error> for StoreError {
 
 pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);

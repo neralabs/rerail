@@ -128,6 +128,8 @@ jobs:
               - 'test/engine/native/frontier-determinism.test.ts'
               - 'test/engine/native/recovery/child-demand.test.ts'
               - 'test/engine/native/recovery/relational-storage.test.ts'
+              - 'test/engine/native/recovery/input-admission.test.ts'
+              - 'test/engine/native/recovery/state-syntax-domain.test.ts'
               - 'test/engine/native/recovery/selector-materialization.test.ts'
               - 'scripts/profiling/frontier-audit.mjs'
               - 'package.json'
@@ -246,6 +248,7 @@ jobs:
             ${{ runner.temp }}/rerail-sql-budget/provenance.json
             ${{ runner.temp }}/rerail-sql-budget/chunk-a-budget.json
             ${{ runner.temp }}/rerail-sql-budget/chunk-b-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-c-budget.json
             ${{ runner.temp }}/rerail-sql-budget/capture/profile.json
             ${{ runner.temp }}/rerail-sql-budget/capture/parity.json
             ${{ runner.temp }}/rerail-sql-budget/capture/summary.txt

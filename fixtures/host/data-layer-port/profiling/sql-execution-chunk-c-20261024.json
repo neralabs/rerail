@@ -805,5 +805,14 @@
       "sha256": "67183d22e1d3baf644a24c1bce2e03142a88335b5a5ebe031307bbcc6576464a"
     }
   ],
-  "specification": "docs/sql-execution-chunk-c.md"
+  "specification": "docs/sql-execution-chunk-c.md",
+  "implementationDelivery": {
+    "evidence": "state-domain-admission-recovery-20261024.json",
+    "engineSubmissions": 975,
+    "netRemoval": 1275,
+    "originalTarget": 1261,
+    "originalCeiling": 989,
+    "fixedLimitAccepted": false,
+    "excess": 875
+  }
 }

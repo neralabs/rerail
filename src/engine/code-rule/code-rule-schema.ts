@@ -1429,6 +1429,7 @@ export const codeRuleClauseSchema = z
       .strict()
       .optional(),
     relational: z.object({
+      requireNonemptyInput: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/).optional(),
       partitionBy: z.enum(["file", "repository"]).optional(),
       syntax: z.object({ name: nonEmptyString, gate: nonEmptyString, fields: z.array(nonEmptyString).max(32).optional(), columns: z.array(nonEmptyString).max(256).optional(), excludeKinds: z.array(nonEmptyString).max(32).optional(), emptyTextKinds: z.array(nonEmptyString).max(32).optional(), edges: nonEmptyString.optional(), ownership: nonEmptyString.optional(), owners: z.record(nonEmptyString,z.object({kind:nonEmptyString,outermost:z.boolean().optional()}).strict()).optional() }).strict().optional(),
       locations: z.array(z.string().min(1).max(4096).refine(path => !/[\\:\u0000]/u.test(path) && path.split("/").every(part => part !== "" && part !== "." && part !== ".."),
@@ -1448,7 +1449,8 @@ export const codeRuleClauseSchema = z
         constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional(),
       }).strict().optional(),
       query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(),
-    }).strict().refine(plan => plan.partitionBy !== "file" || (plan.references === undefined && plan.locations === undefined),
+    }).strict().refine(plan => plan.requireNonemptyInput === undefined || Object.hasOwn(plan.inputs, plan.requireNonemptyInput),
+      "requireNonemptyInput must name a declared input.").refine(plan => plan.partitionBy !== "file" || (plan.references === undefined && plan.locations === undefined),
       "File partitions cannot declare references or diagnostic locations.").optional(),
     llm: z.unknown().optional(),
     define: codeRuleDefineSchema.optional(),

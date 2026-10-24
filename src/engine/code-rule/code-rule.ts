@@ -187,6 +187,8 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
 
 /** Finite SQL joins and recursive walks over projected native evidence tables. */
 export interface CodeRuleDslRelational {
+  /** Skip SQL when this declared evidence input is complete and empty. */
+  requireNonemptyInput?: string;
   /** Authored file-start diagnostic locations, including files absent from the input inventory. */
   locations?: string[];
   /** Evaluate independent inputs and SQL stages per file, caching final local findings. */

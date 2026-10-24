@@ -35,13 +35,15 @@ class SharedSqlTests(unittest.TestCase):
             inputs, stages, partition = expected[clause['id']]
             self.assertEqual(len(plan['inputs']), inputs, clause['id'])
             self.assertEqual(len(plan['stages']), stages, clause['id'])
-            self.assertEqual(plan['partitionBy'], partition)
+            self.assertEqual(resolve(plan['partitionBy'], 'all'), partition)
+            if clause['id'] in {'state-flow-1', 'state-projection-recovery-2'}:
+                self.assertEqual(resolve(plan['partitionBy'], 'scan_project_sources'), 'repository')
             self.assertEqual(plan['requireNonemptyInput'], 'syntax_gate')
             self.assertEqual(plan['syntax']['gate'], 'syntax_gate')
             self.assertFalse({'nodes', 'edges', 'ownership', 'syntax_rows_0', 'syntax_rows_1'} & {s['name'] for s in plan['stages']})
             descendants = next(s for s in plan['stages'] if s['name'] == 'descendants')
             self.assertEqual(descendants['reachability']['syntax'], 'nodes')
-            self.assertIn('expand', descendants['reachability']['roots'])
+            self.assertEqual('expand' in descendants['reachability']['roots'], clause['id'] != 'state-signatures-1')
             if 'arguments' in {s['name'] for s in plan['stages']}:
                 arguments = next(s for s in plan['stages'] if s['name'] == 'arguments')
                 self.assertIn('n.text', arguments['query'])

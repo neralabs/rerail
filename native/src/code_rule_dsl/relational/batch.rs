@@ -1,5 +1,5 @@
 //! Admit SQL consumers by resident capacity, then run broad structural waves.
-use super::{Evaluation, Inputs, Job, Session, failure, producer, sql_error};
+use super::{Evaluation, Inputs, Job, Preparation, Session, failure, producer, sql_error};
 use crate::code_rule_dsl::model::{CompiledCodeRule, Metrics};
 use crate::code_rule_dsl::{budget::Context, model::CompiledClause};
 use std::collections::VecDeque;
@@ -12,6 +12,7 @@ struct Stats {
     partitions: usize,
     peak_sessions: usize,
     peak_sql_bytes: usize,
+    skipped_empty: usize,
 }
 struct Ready<'a> {
     index: usize,
@@ -72,7 +73,12 @@ pub(super) fn evaluate(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
 }
 pub(super) fn evaluate_prepared(
     jobs: Vec<Job<'_>>,
-    prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause) -> super::Result<()>,
+    prepare: impl FnMut(
+        &mut Inputs,
+        &CompiledCodeRule,
+        &CompiledClause,
+        Preparation,
+    ) -> super::Result<()>,
 ) -> Vec<Evaluation> {
     run_prepared(
         jobs,
@@ -83,13 +89,18 @@ pub(super) fn evaluate_prepared(
     .0
 }
 fn run(jobs: Vec<Job<'_>>, input_limit: usize, sql_limit: usize) -> (Vec<Evaluation>, Stats) {
-    run_prepared(jobs, input_limit, sql_limit, |_, _, _| Ok(()))
+    run_prepared(jobs, input_limit, sql_limit, |_, _, _, _| Ok(()))
 }
 fn run_prepared(
     jobs: Vec<Job<'_>>,
     input_limit: usize,
     sql_limit: usize,
-    mut prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause) -> super::Result<()>,
+    mut prepare: impl FnMut(
+        &mut Inputs,
+        &CompiledCodeRule,
+        &CompiledClause,
+        Preparation,
+    ) -> super::Result<()>,
 ) -> (Vec<Evaluation>, Stats) {
     #[cfg(feature = "code-rule-profile")]
     let mut trace = crate::code_rule_dsl::profile::trace::Span::start(
@@ -140,8 +151,36 @@ fn run_prepared(
                         "producer-prepare",
                         "admitted-session",
                     );
+                    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
                     let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
-                    prepare(&mut job.inputs, job.code_rule, job.clause)?;
+                    let crate::code_rule_dsl::model::ClauseKind::Relational(plan) =
+                        &job.clause.kind
+                    else {
+                        return Err(super::invalid("expected relational job"));
+                    };
+                    if plan.require_nonempty.is_some() {
+                        super::admission::limits(job.code_rule, &job.inputs.snapshot)?;
+                        prepare(
+                            &mut job.inputs,
+                            job.code_rule,
+                            job.clause,
+                            Preparation::Gate,
+                        )?;
+                        if !super::admission::check(
+                            job.code_rule,
+                            job.clause,
+                            &mut job.inputs,
+                            &mut extraction,
+                        )? {
+                            return Ok(None);
+                        }
+                    }
+                    prepare(
+                        &mut job.inputs,
+                        job.code_rule,
+                        job.clause,
+                        Preparation::Body,
+                    )?;
                     Session::new(
                         job.code_rule,
                         job.clause,
@@ -149,10 +188,16 @@ fn run_prepared(
                         &mut extraction,
                         &pool,
                     )
+                    .map(Some)
                 });
                 results[index].metrics.merge(extraction);
                 let mut session = match session {
-                    Ok(s) => s,
+                    Ok(Some(s)) => s,
+                    Ok(None) => {
+                        stats.skipped_empty += 1;
+                        observe(&mut results[index], job.clause, &job.budget);
+                        continue;
+                    }
                     Err(e) => {
                         error(
                             &mut results[index],
@@ -230,7 +275,7 @@ fn run_prepared(
         execute(cohort, &mut results, &mut allowance, input_limit);
     }
     #[cfg(feature = "code-rule-profile")]
-    trace.detail(|| serde_json::json!({"capacityPartitions":stats.partitions,"peakSuspendedSessions":stats.peak_sessions,"peakSuspendedSqlBytes":stats.peak_sql_bytes,"inputCapacityBytes":input_limit,"sqlAdmissionBytes":sql_limit}));
+    trace.detail(|| serde_json::json!({"emptyAdmissions":stats.skipped_empty,"capacityPartitions":stats.partitions,"peakSuspendedSessions":stats.peak_sessions,"peakSuspendedSqlBytes":stats.peak_sql_bytes,"inputCapacityBytes":input_limit,"sqlAdmissionBytes":sql_limit}));
     (results, stats)
 }
 fn execute(

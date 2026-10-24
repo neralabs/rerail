@@ -32,6 +32,10 @@ The [bounded C specification](sql-execution-chunk-c.md) now selects four state s
 
 ## Measured inventory
 
+The inventory in this section preserves the original 7,733-submission baseline.
+After bounded C, the complete guard measures 975 submissions, with 875 remaining above the final limit.
+The [C journal](data-layer-performance-journal.md#state-syntax-domain-delivery-r5-c-2026-10-24) records the current phase inventory.
+
 | Execution family | Engine submissions |
 | --- | ---: |
 | Candidate selector table construction | 1,588 |
@@ -51,7 +55,8 @@ The SQL report assigns global query IDs. Inventory rows resolve through the repo
 ## Ranked opportunities
 
 The A and B rows preserve their original component budgets. Both measured deliveries appear in this document.
-C has a fixed scope and a 1,261-removal delivery target, supported by the frontend experiment and empty-session audit.
+C delivers 1,275 removals against its fixed 1,261-removal target, reaching 975 complete-guard submissions.
+The frontend experiment and empty-session audit preserve the original price for that delivery.
 Current execution counts are measured. Replacement budgets must pass a compiled-plan audit and complete runtime accounting.
 
 | Rank | Opportunity | Before | Replacement budget | Net removal target | Delivery chunk |
