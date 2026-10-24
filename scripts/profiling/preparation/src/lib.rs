@@ -3,9 +3,6 @@
 mod clock;
 #[cfg(test)]
 use clock::thread_cpu_ns;
-#[cfg(test)]
-#[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/corpus/frontier.rs"]
-mod frontier;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/functions.rs"]
 mod functions;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/lifetime.rs"]

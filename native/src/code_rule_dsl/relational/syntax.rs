@@ -672,8 +672,8 @@ fn columns(spec: &Spec) -> Vec<(String, Column)> {
     }
     columns
 }
-pub(in crate::code_rule_dsl) fn schema(db: &Connection, spec: &Spec) -> Result<Vec<String>> {
-    let mut names = vec![spec.name.clone()];
+fn declarations(spec: &Spec) -> Result<Vec<(String, String)>> {
+    let mut declarations = Vec::new();
     let selected = columns(spec);
     if spec.columns.len()
         != spec
@@ -694,9 +694,8 @@ pub(in crate::code_rule_dsl) fn schema(db: &Connection, spec: &Spec) -> Result<V
         ));
     }
     let fields = selected.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
-    super::schema::register(
-        db,
-        &spec.name,
+    declarations.push((
+        spec.name.clone(),
         format!(
             "CREATE TABLE {} ({})",
             super::quote(&spec.name),
@@ -706,8 +705,7 @@ pub(in crate::code_rule_dsl) fn schema(db: &Connection, spec: &Spec) -> Result<V
                 .collect::<Vec<_>>()
                 .join(",")
         ),
-    )
-    .map_err(sql_error)?;
+    ));
     for (name, fields) in [
         (spec.edges.as_ref(), vec!["__path", "src", "dst", "ordinal"]),
         (
@@ -719,9 +717,8 @@ pub(in crate::code_rule_dsl) fn schema(db: &Connection, spec: &Spec) -> Result<V
         ),
     ] {
         if let Some(name) = name {
-            super::schema::register(
-                db,
-                name,
+            declarations.push((
+                name.clone(),
                 format!(
                     "CREATE TABLE {} ({})",
                     super::quote(name),
@@ -731,12 +728,33 @@ pub(in crate::code_rule_dsl) fn schema(db: &Connection, spec: &Spec) -> Result<V
                         .collect::<Vec<_>>()
                         .join(",")
                 ),
-            )
-            .map_err(sql_error)?;
-            names.push(name.clone());
+            ));
         }
     }
-    Ok(names)
+    Ok(declarations)
+}
+
+pub(in crate::code_rule_dsl) fn compiler_schema(
+    db: &Connection,
+    spec: &Spec,
+) -> Result<Vec<String>> {
+    declarations(spec)?
+        .into_iter()
+        .map(|(name, declaration)| {
+            super::schema::register(db, &name, declaration).map_err(sql_error)?;
+            Ok(name)
+        })
+        .collect()
+}
+
+fn schema(db: &Connection, spec: &Spec) -> Result<Vec<String>> {
+    declarations(spec)?
+        .into_iter()
+        .map(|(name, declaration)| {
+            db.execute_batch(&declaration).map_err(sql_error)?;
+            Ok(name)
+        })
+        .collect()
 }
 fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
     let selected = facts.select(&spec.exclude_kinds, false)?;

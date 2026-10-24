@@ -217,7 +217,7 @@ pub(super) fn compile(
                     .field_codes
                     .insert(field.clone(), grammar.field_code(field).unwrap_or(0));
             }
-            relational::syntax::schema(&db, &syntax)?;
+            relational::syntax::compiler_schema(&db, &syntax)?;
             Ok(syntax)
         })
         .transpose()?;
