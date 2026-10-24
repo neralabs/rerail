@@ -21,6 +21,18 @@ const HANDLE: usize = MODE + 1;
 const PARENT: usize = MODE + 2;
 const VALUES: usize = MODE + 3;
 const WIDTH: usize = VALUES + CELLS;
+thread_local! {
+    // Cumulative traffic, independent of the live-row and peak gauges.
+    static TRAFFIC: std::cell::Cell<[u64; 4]> = const { std::cell::Cell::new([0; 4]) };
+}
+pub(super) fn traffic() -> [u64; 4] {
+    TRAFFIC.get()
+}
+fn record(index: usize, count: u64) {
+    let mut totals = TRAFFIC.get();
+    totals[index] += count;
+    TRAFFIC.set(totals);
+}
 #[derive(Clone)]
 struct Row {
     parent: Option<i64>,
@@ -186,6 +198,8 @@ unsafe impl VTabCursor for Cursor<'_> {
                     children: 0,
                 };
                 store.rows.insert(self.handle, row.clone());
+                record(0, 1);
+                record(3, CELLS as u64);
                 store.peak = store.peak.max(store.rows.len());
                 self.row = Some(row);
             }
@@ -193,12 +207,14 @@ unsafe impl VTabCursor for Cursor<'_> {
                 let h = get(HANDLE).ok_or_else(|| invalid("missing handle"))?;
                 self.handle = h;
                 if mode == 0 {
+                    record(2, 1);
                     self.row = store.rows.get(&h).cloned();
                 } else if let Some(row) = store.rows.get(&h) {
                     if row.children != 0 {
                         return Err(invalid("pop has active children"));
                     }
                     let row = store.rows.remove(&h).unwrap();
+                    record(1, 1);
                     if let Some(parent) = row.parent {
                         store
                             .rows
@@ -236,6 +252,48 @@ unsafe impl VTabCursor for Cursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn traffic_counts_successful_mutations_and_survives_reset() {
+        let db = Connection::open_in_memory().unwrap();
+        let store = register(&db).unwrap();
+        let before = traffic();
+        let h: i64 = db
+            .query_row(
+                "SELECT handle FROM relation_continuation WHERE mode IS 1 AND v0 IS 7",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let value: i64 = db
+            .query_row(
+                "SELECT c0 FROM relation_continuation WHERE mode IS 0 AND h IS ?1",
+                [h],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, 7);
+        let value: i64 = db
+            .query_row(
+                "SELECT c0 FROM relation_continuation WHERE mode IS 2 AND h IS ?1",
+                [h],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, 7);
+        let absent: i64 = db
+            .query_row(
+                "SELECT count(*) FROM relation_continuation WHERE mode IS 2 AND h IS ?1",
+                [h],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(absent, 0);
+        store.lock().unwrap().reset();
+        assert_eq!(
+            std::array::from_fn::<_, 4, _>(|i| traffic()[i] - before[i]),
+            [1, 1, 1, 12]
+        );
+    }
     #[test]
     fn independent_chains_pop_exact_records_and_release_storage() {
         let db = Connection::open_in_memory().unwrap();

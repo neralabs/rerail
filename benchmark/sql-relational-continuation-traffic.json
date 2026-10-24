@@ -1,0 +1,1769 @@
+{
+  "scope": "597 files, baseline compiler plus diagnostic continuation counters",
+  "summary": {
+    "admitted": 146,
+    "clauses": 146,
+    "executionFailed": 0,
+    "executionPassed": 146,
+    "grammars": 146,
+    "noPositiveWitness": 0,
+    "policies": 138,
+    "policyCompilationErrors": 0,
+    "refusalReasons": {},
+    "refused": 0
+  },
+  "clauses": [
+    {
+      "policy": "packs/python/rules/bandit-b101-assert-used.json",
+      "clause": "assert-used",
+      "vm": 494,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b102-exec-used.json",
+      "clause": "exec-call",
+      "vm": 4018878,
+      "typedReturnRows": 29329,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b110-try-except-pass.json",
+      "clause": "try-except-pass",
+      "vm": 1042522,
+      "typedReturnRows": 4957,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b112-try-except-continue.json",
+      "clause": "try-except-continue",
+      "vm": 1032132,
+      "typedReturnRows": 4928,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b113-request-without-timeout.json",
+      "clause": "request-without-timeout",
+      "vm": 7472352,
+      "typedReturnRows": 49139,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b301-pickle.json",
+      "clause": "unsafe-deserialization",
+      "vm": 1657942,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b302-marshal.json",
+      "clause": "bandit:B302",
+      "vm": 1657087,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b303-md5.json",
+      "clause": "weak-hash",
+      "vm": 1743110,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b305-cipher-modes.json",
+      "clause": "bandit:B305",
+      "vm": 1657030,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b306-mktemp-q.json",
+      "clause": "bandit:B306",
+      "vm": 2276987,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b307-eval.json",
+      "clause": "eval-call",
+      "vm": 4018698,
+      "typedReturnRows": 29326,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b308-mark-safe.json",
+      "clause": "bandit:B308",
+      "vm": 1659595,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b310-urllib-urlopen.json",
+      "clause": "bandit:B310",
+      "vm": 1657543,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b311-random.json",
+      "clause": "bandit:B311",
+      "vm": 1657771,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b312-telnetlib.json",
+      "clause": "bandit:B312",
+      "vm": 1657030,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b313-xml-bad-celementtree.json",
+      "clause": "bandit:B313",
+      "vm": 1657201,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b314-xml-bad-elementtree.json",
+      "clause": "bandit:B314",
+      "vm": 1657201,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b315-xml-bad-expatreader.json",
+      "clause": "bandit:B315",
+      "vm": 1657030,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b316-xml-bad-expatbuilder.json",
+      "clause": "bandit:B316",
+      "vm": 1657087,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b317-xml-bad-sax.json",
+      "clause": "bandit:B317",
+      "vm": 4140207,
+      "typedReturnRows": 21828,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b318-xml-bad-minidom.json",
+      "clause": "B318",
+      "vm": 1657087,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b319-xml-bad-pulldom.json",
+      "clause": "B319",
+      "vm": 1657087,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b321-ftplib.json",
+      "clause": "B321",
+      "vm": 1657030,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b323-unverified-context.json",
+      "clause": "B323",
+      "vm": 1657030,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b401-import-telnetlib.json",
+      "clause": "B401",
+      "vm": 383038,
+      "typedReturnRows": 2494,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b402-import-ftplib.json",
+      "clause": "B402",
+      "vm": 383124,
+      "typedReturnRows": 2494,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b405-import-xml-etree.json",
+      "clause": "B405",
+      "vm": 1058375,
+      "typedReturnRows": 7482,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b406-import-xml-sax.json",
+      "clause": "B406",
+      "vm": 765639,
+      "typedReturnRows": 3804,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b407-import-xml-expat.json",
+      "clause": "B407",
+      "vm": 567864,
+      "typedReturnRows": 3741,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b408-import-xml-minidom.json",
+      "clause": "B408",
+      "vm": 567875,
+      "typedReturnRows": 3741,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b409-import-xml-pulldom.json",
+      "clause": "B409",
+      "vm": 567875,
+      "typedReturnRows": 3741,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b411-import-xmlrpclib.json",
+      "clause": "B411",
+      "vm": 383254,
+      "typedReturnRows": 2494,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b413-import-pycrypto.json",
+      "clause": "B413",
+      "vm": 3990340,
+      "typedReturnRows": 29928,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b415-import-pyghmi.json",
+      "clause": "B415",
+      "vm": 383315,
+      "typedReturnRows": 2494,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b502-ssl-with-bad-version.json",
+      "clause": "B502",
+      "vm": 3874533,
+      "typedReturnRows": 31210,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b505-weak-cryptographic-key.json",
+      "clause": "weak-cryptographic-key",
+      "vm": 14576398,
+      "typedReturnRows": 96036,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b507-ssh-no-host-key-verification.json",
+      "clause": "b507",
+      "vm": 22062247,
+      "typedReturnRows": 157123,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b606-start-process-with-no-shell.json",
+      "clause": "bandit-b606",
+      "vm": 1659196,
+      "typedReturnRows": 13380,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b610-django-extra-used.json",
+      "clause": "django-extra-used",
+      "vm": 7415770,
+      "typedReturnRows": 37176,
+      "continuationTraffic": {
+        "peekRequests": 822,
+        "pops": 3244,
+        "pushes": 3244,
+        "reservedCellsWritten": 38928
+      }
+    },
+    {
+      "policy": "packs/python/rules/bandit-b615-huggingface-unsafe-download.json",
+      "clause": "b615",
+      "vm": 347286337,
+      "typedReturnRows": 1076954,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 305554,
+        "pushes": 305554,
+        "reservedCellsWritten": 3666648
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async100-cancel-scope-no-checkpoint.json",
+      "clause": "cancel-scope-no-checkpoint",
+      "vm": 2009188,
+      "typedReturnRows": 9805,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async105-trio-sync-call.json",
+      "clause": "trio-sync-call",
+      "vm": 11599127,
+      "typedReturnRows": 56976,
+      "continuationTraffic": {
+        "peekRequests": 4475,
+        "pops": 8950,
+        "pushes": 8950,
+        "reservedCellsWritten": 107400
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async115-async-zero-sleep.json",
+      "clause": "trio-sleep",
+      "vm": 13845229,
+      "typedReturnRows": 86596,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async115-async-zero-sleep.json",
+      "clause": "anyio-sleep",
+      "vm": 13872555,
+      "typedReturnRows": 86822,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async116-long-sleep-not-forever.json",
+      "clause": "trio-sleep",
+      "vm": 13845765,
+      "typedReturnRows": 86600,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async116-long-sleep-not-forever.json",
+      "clause": "anyio-sleep",
+      "vm": 13872421,
+      "typedReturnRows": 86821,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async210-blocking-http-call-in-async-function.json",
+      "clause": "blocking-http-call",
+      "vm": 33075751,
+      "typedReturnRows": 296856,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async221-run-process-in-async-function.json",
+      "clause": "run-process",
+      "vm": 41779500,
+      "typedReturnRows": 317093,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async222-wait-for-process-in-async-function.json",
+      "clause": "wait-for-process",
+      "vm": 33074779,
+      "typedReturnRows": 296856,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async230-blocking-open-call-in-async-function.json",
+      "clause": "blocking-open",
+      "vm": 38935079,
+      "typedReturnRows": 300592,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async250-blocking-input-in-async-function.json",
+      "clause": "blocking-input",
+      "vm": 33074617,
+      "typedReturnRows": 296856,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-async251-blocking-sleep-in-async-function.json",
+      "clause": "blocking-sleep",
+      "vm": 33074455,
+      "typedReturnRows": 296856,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b002-unary-prefix-increment-decrement.json",
+      "clause": "unary-prefix-increment",
+      "vm": 1190,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b002-unary-prefix-increment-decrement.json",
+      "clause": "unary-prefix-decrement",
+      "vm": 1495,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b003-assignment-to-os-environ.json",
+      "clause": "assignment-to-os-environ",
+      "vm": 296552,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b004-unreliable-callable-check.json",
+      "clause": "unreliable-callable-check",
+      "vm": 7672262,
+      "typedReturnRows": 54807,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b005-strip-with-multi-characters.json",
+      "clause": "strip-with-multi-characters",
+      "vm": 26423944,
+      "typedReturnRows": 163657,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 6,
+        "pushes": 6,
+        "reservedCellsWritten": 72
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b007-unused-loop-control-variable.json",
+      "clause": "unused-loop-control-variable",
+      "vm": 46812093,
+      "typedReturnRows": 309673,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 334,
+        "pushes": 334,
+        "reservedCellsWritten": 4008
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b007-unused-loop-control-variable.json",
+      "clause": "unused-loop-control-variable-uncertain",
+      "vm": 46594059,
+      "typedReturnRows": 309673,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 334,
+        "pushes": 334,
+        "reservedCellsWritten": 4008
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b009-get-attr-with-constant.json",
+      "clause": "getattr-with-constant",
+      "vm": 6061420,
+      "typedReturnRows": 41064,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b010-set-attr-with-constant.json",
+      "clause": "set-attr-with-constant",
+      "vm": 5393825,
+      "typedReturnRows": 42396,
+      "continuationTraffic": {
+        "peekRequests": 176,
+        "pops": 352,
+        "pushes": 352,
+        "reservedCellsWritten": 4224
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b011-assert-false.json",
+      "clause": "assert-false",
+      "vm": 4009,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b013-redundant-tuple-in-exception-handler.json",
+      "clause": "redundant-tuple-in-exception-handler",
+      "vm": 756602,
+      "typedReturnRows": 4894,
+      "continuationTraffic": {
+        "peekRequests": 72,
+        "pops": 144,
+        "pushes": 144,
+        "reservedCellsWritten": 1728
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b014-duplicate-handler-exception.json",
+      "clause": "duplicate-handler-exception",
+      "vm": 933695,
+      "typedReturnRows": 3677,
+      "continuationTraffic": {
+        "peekRequests": 377,
+        "pops": 844,
+        "pushes": 844,
+        "reservedCellsWritten": 10128
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b016-raise-literal.json",
+      "clause": "raise-literal",
+      "vm": 189585,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b020-loop-variable-overrides-iterator.json",
+      "clause": "loop-variable-overrides-iterator",
+      "vm": 134123888,
+      "typedReturnRows": 522925,
+      "continuationTraffic": {
+        "peekRequests": 8061,
+        "pops": 171941,
+        "pushes": 171941,
+        "reservedCellsWritten": 2063292
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b021-f-string-docstring.json",
+      "clause": "f-string-docstring",
+      "vm": 6502286,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b022-useless-contextlib-suppress.json",
+      "clause": "useless-contextlib-suppress",
+      "vm": 12004340,
+      "typedReturnRows": 30726,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b023-function-uses-loop-variable.json",
+      "clause": "function-uses-loop-variable",
+      "vm": 96115,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b025-duplicate-try-block-exception.json",
+      "clause": "duplicate-try-block-exception",
+      "vm": 83278505,
+      "typedReturnRows": 368944,
+      "continuationTraffic": {
+        "peekRequests": 86265,
+        "pops": 134969,
+        "pushes": 134969,
+        "reservedCellsWritten": 1619628
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b026-star-arg-unpacking-after-keyword-arg.json",
+      "clause": "star-arg-unpacking-after-keyword-arg",
+      "vm": 59228,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b028-no-explicit-stacklevel.json",
+      "clause": "no-explicit-stacklevel",
+      "vm": 19052183,
+      "typedReturnRows": 169101,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b029-except-with-empty-tuple.json",
+      "clause": "except-with-empty-tuple",
+      "vm": 118412,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b032-unintentional-type-annotation.json",
+      "clause": "unintentional-type-annotation",
+      "vm": 2945179,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b033-duplicate-value.json",
+      "clause": "duplicate-value",
+      "vm": 13615296,
+      "typedReturnRows": 103168,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 119,
+        "pushes": 119,
+        "reservedCellsWritten": 1428
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b034-re-sub-positional-args.json",
+      "clause": "re-sub-positional-args",
+      "vm": 15087100,
+      "typedReturnRows": 80309,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b039-mutable-contextvar-default.json",
+      "clause": "mutable-contextvar-default",
+      "vm": 10498879,
+      "typedReturnRows": 78155,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 29,
+        "pushes": 29,
+        "reservedCellsWritten": 348
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b904-raise-without-from-inside-except.json",
+      "clause": "raise-without-from-inside-except",
+      "vm": 733224,
+      "typedReturnRows": 2980,
+      "continuationTraffic": {
+        "peekRequests": 539,
+        "pops": 700,
+        "pushes": 700,
+        "reservedCellsWritten": 8400
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-b905-zip-without-explicit-strict.json",
+      "clause": "zip-without-explicit-strict",
+      "vm": 11571217,
+      "typedReturnRows": 55772,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-e711-none-comparison.json",
+      "clause": "none-comparison",
+      "vm": 664442,
+      "typedReturnRows": 2458,
+      "continuationTraffic": {
+        "peekRequests": 538,
+        "pops": 1184,
+        "pushes": 1184,
+        "reservedCellsWritten": 14208
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-e721-type-comparison.json",
+      "clause": "type-comparison",
+      "vm": 102374104,
+      "typedReturnRows": 1172923,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-e722-bare-except.json",
+      "clause": "bare-except",
+      "vm": 20590,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-e742-ambiguous-class-name.json",
+      "clause": "ambiguous-class-name",
+      "vm": 106720,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-e743-ambiguous-function-name.json",
+      "clause": "ambiguous-function-name",
+      "vm": 106720,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f403-undefined-local-with-import-star.json",
+      "clause": "undefined-local-with-import-star",
+      "vm": 435248,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f405-undefined-local-with-import-star-usage.json",
+      "clause": "undefined-local-with-import-star-usage",
+      "vm": 29978053,
+      "typedReturnRows": 208474,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 625,
+        "pushes": 625,
+        "reservedCellsWritten": 7500
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f406-undefined-local-with-nested-import-star-usage.json",
+      "clause": "undefined-local-with-nested-import-star-usage",
+      "vm": 177387,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f407-future-feature-not-defined.json",
+      "clause": "future-feature-not-defined",
+      "vm": 4939838,
+      "typedReturnRows": 28125,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f501-percent-format-invalid-format.json",
+      "clause": "percent-format-invalid-format",
+      "vm": 527193,
+      "typedReturnRows": 3808,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 3,
+        "pushes": 3,
+        "reservedCellsWritten": 36
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f502-percent-format-expected-mapping.json",
+      "clause": "percent-format-expected-mapping",
+      "vm": 486914,
+      "typedReturnRows": 2591,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f503-percent-format-expected-sequence.json",
+      "clause": "percent-format-expected-sequence",
+      "vm": 572844,
+      "typedReturnRows": 3004,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f504-percent-format-extra-named-arguments.json",
+      "clause": "percent-format-extra-named-arguments",
+      "vm": 208336,
+      "typedReturnRows": 1415,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f505-percent-format-missing-argument.json",
+      "clause": "percent-format-missing-argument",
+      "vm": 222446,
+      "typedReturnRows": 1478,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f506-percent-format-mixed-positional-and-named.json",
+      "clause": "percent-format-mixed-positional-and-named",
+      "vm": 576538,
+      "typedReturnRows": 4137,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 3,
+        "pushes": 3,
+        "reservedCellsWritten": 36
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f507-percent-format-positional-count-mismatch.json",
+      "clause": "percent-format-positional-count-mismatch",
+      "vm": 319087,
+      "typedReturnRows": 2261,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f508-percent-format-star-requires-sequence.json",
+      "clause": "percent-format-star-requires-sequence",
+      "vm": 444742,
+      "typedReturnRows": 2434,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f509-percent-format-unsupported-format-character.json",
+      "clause": "percent-format-unsupported-format-character",
+      "vm": 477390,
+      "typedReturnRows": 3441,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 3,
+        "pushes": 3,
+        "reservedCellsWritten": 36
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f521-string-dot-format-invalid-format.json",
+      "clause": "string-dot-format-invalid-format",
+      "vm": 1733560,
+      "typedReturnRows": 14564,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f522-string-dot-format-extra-named-arguments.json",
+      "clause": "string-dot-format-extra-named-arguments",
+      "vm": 1910019,
+      "typedReturnRows": 13545,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f523-string-dot-format-extra-positional-arguments.json",
+      "clause": "string-dot-format-extra-positional-arguments",
+      "vm": 1910291,
+      "typedReturnRows": 13540,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f524-string-dot-format-missing-arguments.json",
+      "clause": "string-dot-format-missing-arguments",
+      "vm": 1906157,
+      "typedReturnRows": 13510,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f525-string-dot-format-mixing-automatic.json",
+      "clause": "string-dot-format-mixing-automatic",
+      "vm": 1781918,
+      "typedReturnRows": 14990,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f541-f-string-missing-placeholders.json",
+      "clause": "f-string-missing-placeholders",
+      "vm": 193645,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f601-multi-value-repeated-key-literal.json",
+      "clause": "multi-value-repeated-key-literal",
+      "vm": 13455178,
+      "typedReturnRows": 65881,
+      "continuationTraffic": {
+        "peekRequests": 1451,
+        "pops": 10386,
+        "pushes": 10386,
+        "reservedCellsWritten": 124632
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f602-multi-value-repeated-key-variable.json",
+      "clause": "multi-value-repeated-key-variable",
+      "vm": 15275029,
+      "typedReturnRows": 85378,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f622-multiple-starred-expressions.json",
+      "clause": "multiple-starred-expressions",
+      "vm": 1073643,
+      "typedReturnRows": 7377,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f632-is-literal.json",
+      "clause": "is-literal",
+      "vm": 240957037,
+      "typedReturnRows": 1440173,
+      "continuationTraffic": {
+        "peekRequests": 254,
+        "pops": 131436,
+        "pushes": 131436,
+        "reservedCellsWritten": 1577232
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f633-invalid-print-syntax.json",
+      "clause": "invalid-print-syntax",
+      "vm": 116106429,
+      "typedReturnRows": 953530,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f701-break-outside-loop.json",
+      "clause": "break-outside-loop",
+      "vm": 427332,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f702-continue-outside-loop.json",
+      "clause": "continue-outside-loop",
+      "vm": 427306,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f706-return-outside-function.json",
+      "clause": "return-outside-function",
+      "vm": 1746808,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f707-default-except-not-last.json",
+      "clause": "default-except-not-last",
+      "vm": 39321,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f722-forward-annotation-syntax-error.json",
+      "clause": "forward-annotation-syntax-error",
+      "vm": 5608239,
+      "typedReturnRows": 45475,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 40,
+        "pushes": 40,
+        "reservedCellsWritten": 480
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f722-forward-annotation-syntax-error.json",
+      "clause": "forward-annotation-semantic-syntax-error",
+      "vm": 5968218,
+      "typedReturnRows": 50634,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 35,
+        "pushes": 35,
+        "reservedCellsWritten": 420
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f722-forward-annotation-syntax-error.json",
+      "clause": "forward-annotation-await-outside-function",
+      "vm": 6253546,
+      "typedReturnRows": 54345,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 35,
+        "pushes": 35,
+        "reservedCellsWritten": 420
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f822-undefined-export.json",
+      "clause": "undefined-export",
+      "vm": 1414100,
+      "typedReturnRows": 3597,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f823-undefined-local.json",
+      "clause": "undefined-local",
+      "vm": 8218890,
+      "typedReturnRows": 21195,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f842-unused-annotation.json",
+      "clause": "unused-annotation",
+      "vm": 9574648,
+      "typedReturnRows": 21195,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-f901-raise-not-implemented.json",
+      "clause": "raise-not-implemented",
+      "vm": 22220,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-pie794-duplicate-class-field-definition.json",
+      "clause": "duplicate-class-field-definition",
+      "vm": 15281962,
+      "typedReturnRows": 84889,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-pie796-non-unique-enums.json",
+      "clause": "non-unique-enums",
+      "vm": 36157943,
+      "typedReturnRows": 219431,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-pie796-non-unique-enums.json",
+      "clause": "non-unique-enums-stub",
+      "vm": 863372,
+      "typedReturnRows": 5502,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-pie800-unnecessary-spread.json",
+      "clause": "unnecessary-spread",
+      "vm": 6489,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-pie804-unnecessary-dict-kwargs.json",
+      "clause": "unnecessary-dict-kwargs",
+      "vm": 313188,
+      "typedReturnRows": 1880,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 6,
+        "pushes": 6,
+        "reservedCellsWritten": 72
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-pie807-reimplemented-container-builtin.json",
+      "clause": "reimplemented-container-builtin",
+      "vm": 40302,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-pie810-multiple-starts-ends-with.json",
+      "clause": "multiple-starts-ends-with",
+      "vm": 7132058,
+      "typedReturnRows": 30766,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 7813,
+        "pushes": 7813,
+        "reservedCellsWritten": 93756
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-ret501-unnecessary-return-none.json",
+      "clause": "unnecessary-return-none",
+      "vm": 11013724,
+      "typedReturnRows": 30243,
+      "continuationTraffic": {
+        "peekRequests": 14374,
+        "pops": 15971,
+        "pushes": 15971,
+        "reservedCellsWritten": 191652
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-ret502-implicit-return-value.json",
+      "clause": "implicit-return-value",
+      "vm": 846682,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-ret505-superfluous-else-return.json",
+      "clause": "superfluous-else-return",
+      "vm": 2487000,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-ret506-superfluous-else-raise.json",
+      "clause": "superfluous-else-raise",
+      "vm": 2495723,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-ret507-superfluous-else-continue.json",
+      "clause": "superfluous-else-continue",
+      "vm": 2497421,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-ret508-superfluous-else-break.json",
+      "clause": "superfluous-else-break",
+      "vm": 2497363,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim101-duplicate-isinstance-call.json",
+      "clause": "duplicate-isinstance-call",
+      "vm": 21442365,
+      "typedReturnRows": 83110,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 22865,
+        "pushes": 22865,
+        "reservedCellsWritten": 274380
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim107-return-in-try-except-finally.json",
+      "clause": "return-in-try-except-finally",
+      "vm": 49380,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim109-compare-with-tuple.json",
+      "clause": "compare-with-tuple",
+      "vm": 1784464,
+      "typedReturnRows": 9420,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim112-uncapitalized-environment-variables.json",
+      "clause": "uncapitalized-environment-variables",
+      "vm": 12090952,
+      "typedReturnRows": 86235,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 9,
+        "pushes": 9,
+        "reservedCellsWritten": 108
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim113-enumerate-for-loop.json",
+      "clause": "enumerate-for-loop",
+      "vm": 27915627,
+      "typedReturnRows": 64320,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 17535,
+        "pushes": 17535,
+        "reservedCellsWritten": 210420
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim208-double-negation.json",
+      "clause": "double-negation",
+      "vm": 7911,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim210-if-expr-with-true-false.json",
+      "clause": "if-expr-with-true-false",
+      "vm": 30746,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim211-if-expr-with-false-true.json",
+      "clause": "if-expr-with-false-true",
+      "vm": 29907,
+      "typedReturnRows": 0,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim212-if-expr-with-twisted-arms.json",
+      "clause": "if-expr-with-twisted-arms",
+      "vm": 216220,
+      "typedReturnRows": 602,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim300-yoda-conditions.json",
+      "clause": "yoda-conditions",
+      "vm": 7301623,
+      "typedReturnRows": 25777,
+      "continuationTraffic": {
+        "peekRequests": 763,
+        "pops": 8927,
+        "pushes": 8927,
+        "reservedCellsWritten": 107124
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim905-split-static-string.json",
+      "clause": "split-static-string",
+      "vm": 449083864,
+      "typedReturnRows": 1581869,
+      "continuationTraffic": {
+        "peekRequests": 147,
+        "pops": 426911,
+        "pushes": 426911,
+        "reservedCellsWritten": 5122932
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-sim910-dict-get-with-none-default.json",
+      "clause": "dict-get-with-none-default",
+      "vm": 11321077,
+      "typedReturnRows": 53349,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 12,
+        "pushes": 12,
+        "reservedCellsWritten": 144
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-t100-debugger.json",
+      "clause": "debugger-import",
+      "vm": 3080441,
+      "typedReturnRows": 13291,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    },
+    {
+      "policy": "packs/python/rules/ruff-t100-debugger.json",
+      "clause": "debugger-call",
+      "vm": 6125798,
+      "typedReturnRows": 35615,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 0,
+        "pushes": 0,
+        "reservedCellsWritten": 0
+      }
+    }
+  ]
+}

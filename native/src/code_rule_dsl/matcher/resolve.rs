@@ -891,15 +891,16 @@ struct FileScopes {
     /// Whether the file is a Python stub (`Reading::stub`).
     stub: bool,
     /// Values decoded so far, by node, grammar and reading (`value`, `compare` over values).
-    values: HashMap<ValueKey, Rc<Value>>,
+    values: HashMap<(usize, ValueKey), Rc<Value>>,
     /// Structures read so far, by node and equality (`compare`'s structural modes).
     structures: HashMap<(usize, Equality), Rc<Option<Vec<Tok>>>>,
-    /// Literals parsed so far, by node and grammar (`parse`); `None` is a literal whose value is
-    /// not known.
-    parses: HashMap<(usize, Grammar), Option<Arc<SubTree>>>,
+    /// Literals parsed so far, by clause owner, node and grammar (`parse`). SQL
+    /// parks file scopes across clauses; each owner must still pay its first fill.
+    /// `None` is a literal whose value is not known.
+    parses: HashMap<(usize, usize, Grammar), Option<Arc<SubTree>>>,
     /// Strings parsed so far, by node, reading and grammar (`formatArgs` over a PHP format that
     /// is no literal); `None` is a parse whose value is not known.
-    value_parses: HashMap<(ValueKey, Grammar), Option<Arc<SubTree>>>,
+    value_parses: HashMap<(usize, ValueKey, Grammar), Option<Arc<SubTree>>>,
     /// The file's lines, per linter's terminators (`layout`, `suppress`), built on first use.
     lines: [Option<Rc<LineTable>>; 2],
     /// The file's ESLint directive comments (`suppress.eslint`), read on first use.
@@ -1044,15 +1045,21 @@ fn file_path() -> Option<Arc<str>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.path.clone()))
 }
 
-/// A value decoded earlier in this file.
+/// A value decoded earlier by this clause owner and reading in this file.
 pub(super) fn memoized_value(key: &ValueKey) -> Option<Rc<Value>> {
-    FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.values.get(key).cloned()))
+    FILE_SCOPES.with_borrow(|slot| {
+        slot.as_ref().and_then(|slot| {
+            super::read_clause_state();
+            slot.values.get(&(CURRENT_CLAUSE.get(), *key)).cloned()
+        })
+    })
 }
 
 pub(super) fn memoize_value(key: ValueKey, value: &Rc<Value>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
-            slot.values.insert(key, Rc::clone(value));
+            slot.values
+                .insert((CURRENT_CLAUSE.get(), key), Rc::clone(value));
         }
     });
 }
@@ -1313,31 +1320,46 @@ pub(crate) fn file_sqlfluff(read: impl FnOnce() -> SqlfluffIndex) -> Rc<Sqlfluff
     index
 }
 
-/// A literal parsed earlier in this file: `Some(None)` when its value is not known.
+/// A literal parsed earlier by this clause owner in this file: `Some(None)` when
+/// its value is not known. A parked SQL file scope may contain several owners.
 pub(super) fn memoized_parse(key: &(usize, Grammar)) -> Option<Option<Arc<SubTree>>> {
-    FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.parses.get(key).cloned()))
+    FILE_SCOPES.with_borrow(|slot| {
+        slot.as_ref().and_then(|slot| {
+            super::read_clause_state();
+            slot.parses
+                .get(&(CURRENT_CLAUSE.get(), key.0, key.1))
+                .cloned()
+        })
+    })
 }
 
 pub(super) fn memoize_parse(key: (usize, Grammar), tree: Option<Arc<SubTree>>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
-            slot.parses.insert(key, tree);
+            slot.parses
+                .insert((CURRENT_CLAUSE.get(), key.0, key.1), tree);
         }
     });
 }
 
-/// A string value parsed earlier in this file: `Some(None)` when it is not known.
+/// A string value parsed earlier by this clause owner in this file: `Some(None)`
+/// when it is not known. The reading remains part of the value key.
 pub(super) fn memoized_value_parse(key: &(ValueKey, Grammar)) -> Option<Option<Arc<SubTree>>> {
     FILE_SCOPES.with_borrow(|slot| {
-        slot.as_ref()
-            .and_then(|slot| slot.value_parses.get(key).cloned())
+        slot.as_ref().and_then(|slot| {
+            super::read_clause_state();
+            slot.value_parses
+                .get(&(CURRENT_CLAUSE.get(), key.0, key.1))
+                .cloned()
+        })
     })
 }
 
 pub(super) fn memoize_value_parse(key: (ValueKey, Grammar), tree: Option<Arc<SubTree>>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
-            slot.value_parses.insert(key, tree);
+            slot.value_parses
+                .insert((CURRENT_CLAUSE.get(), key.0, key.1), tree);
         }
     });
 }

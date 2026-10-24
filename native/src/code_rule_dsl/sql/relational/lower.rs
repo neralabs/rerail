@@ -20,10 +20,17 @@ pub(super) struct Lowerer {
 }
 
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Program, String> {
+    compile_with_prefix(grammar, 0)
+}
+pub(super) fn compile_with_prefix(
+    grammar: &GrammarMatcher,
+    prefix: usize,
+) -> Result<Program, String> {
     let mut lower = Lowerer {
         dialect: Some(grammar.language),
         ..Lowerer::default()
     };
+    lower.program.terminals = super::seed_terminals(prefix);
     lower.program.relations.push(Relation {
         source: "clause".into(),
         expression: Set::Empty,
@@ -44,6 +51,12 @@ impl Lowerer {
             dialect: Some(dialect),
             ..Self::default()
         }
+    }
+
+    pub(super) fn with_prefix(dialect: GrammarDialect, prefix: usize) -> Self {
+        let mut lower = Self::new(dialect);
+        lower.program.terminals = super::seed_terminals(prefix);
+        lower
     }
 
     pub(super) fn relation(&mut self, expression: Set, source: &str) -> usize {

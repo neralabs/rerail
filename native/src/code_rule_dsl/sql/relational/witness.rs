@@ -383,7 +383,14 @@ pub(super) fn lower_frontier(
     grammar: &GrammarMatcher,
     search: &Search,
 ) -> Result<(Lowerer, CaptureDemand, usize), String> {
-    let mut lower = Lowerer::new(grammar.language);
+    lower_frontier_with_prefix(grammar, search, 0)
+}
+pub(super) fn lower_frontier_with_prefix(
+    grammar: &GrammarMatcher,
+    search: &Search,
+    prefix: usize,
+) -> Result<(Lowerer, CaptureDemand, usize), String> {
+    let mut lower = Lowerer::with_prefix(grammar.language, prefix);
     lower.relation(Set::Empty, "frontier outputs");
     let mut add = |rule: &AstMatcher, source: &str| -> Result<usize, String> {
         let set = lower.set(rule)?;

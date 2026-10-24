@@ -16,12 +16,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) struct Fixture {
-    path: String,
-    source: String,
+pub(in crate::code_rule_dsl::sql::relational) struct Fixture {
+    pub(in crate::code_rule_dsl::sql::relational) path: String,
+    pub(in crate::code_rule_dsl::sql::relational) source: String,
 }
 
-pub(super) fn fixtures(root: &Path) -> Vec<Fixture> {
+pub(in crate::code_rule_dsl::sql::relational) fn fixtures(root: &Path) -> Vec<Fixture> {
     fn collect(path: &Path, paths: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(path).unwrap() {
             let entry = entry.unwrap();
@@ -138,7 +138,7 @@ fn schema(compiled: &Compiled, grammar: &GrammarMatcher) -> Result<Vec<String>, 
     Ok(names)
 }
 
-pub(super) fn check(
+pub(in crate::code_rule_dsl::sql::relational) fn check(
     grammar: &GrammarMatcher,
     compiled: Compiled,
     fixtures: &[Fixture],
@@ -231,13 +231,17 @@ pub(super) fn check(
             compiled.terminals,
             |db, batch, _| -> Result<Value, String> {
                 super::super::leaves::register(db, batch).map_err(|e| e.to_string())?;
+                let return_rows = super::super::row::ROWS.get();
+                let return_cells = super::super::row::CELLS.get();
+                let continuation_start = super::super::continuation_store::traffic();
+                let stages =
+                    super::super::spike_stages::run(db, &compiled.relations, &compiled.sql)?;
                 let prepare_started = crate::code_rule_dsl::sql::timing::Started::now();
                 let mut stmt = db
                     .prepare(&compiled.sql)
                     .map_err(|e| format!("prepare: {e}"))?;
                 let prepare = prepare_started.elapsed();
-                let return_rows = super::super::row::ROWS.get();
-                let return_cells = super::super::row::CELLS.get();
+
                 let trace = super::super::tests::ExecutionTrace::start(db);
                 let mut actual = vec![];
                 let started = crate::code_rule_dsl::sql::timing::Started::now();
@@ -289,7 +293,8 @@ pub(super) fn check(
                     }
                 }
                 let elapsed = started.elapsed();
-                let executions = trace.count();
+                let final_executions = trace.count();
+                let executions = final_executions + stages.executions;
                 drop(trace);
                 // Explain and diagnostic reads are outside matching counters and timing.
                 let explain = db
@@ -312,16 +317,23 @@ pub(super) fn check(
                     .or_else(|| {
                         (expected.len() != actual.len()).then_some(expected.len().min(actual.len()))
                     });
-                let passed = first_difference.is_none() && executions == 1;
-                Ok(json!({
-                    "passed":passed,"matchingStatements":executions,"vm":stmt.get_status(rusqlite::StatementStatus::VmStep),
-                    "fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep),
-                    "automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),
-                    "sorts":stmt.get_status(rusqlite::StatementStatus::Sort),
-                    "prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,
-                    "executionCpuNs":elapsed.cpu,"executionWallNs":elapsed.wall,
+                let passed =
+                    first_difference.is_none() && executions == stages.expected_statements();
+                let mut report = json!({
+                    "passed":passed,"matchingStatements":executions,"vm":i64::from(stmt.get_status(rusqlite::StatementStatus::VmStep))+stages.vm,
+                    "fullscanSteps":i64::from(stmt.get_status(rusqlite::StatementStatus::FullscanStep))+stages.fullscan,
+                    "automaticIndexRows":i64::from(stmt.get_status(rusqlite::StatementStatus::AutoIndex))+stages.automatic_index,
+                    "sorts":i64::from(stmt.get_status(rusqlite::StatementStatus::Sort))+stages.sorts,
+                    "prepareCpuNs":prepare.cpu+stages.prepare.cpu,"prepareWallNs":prepare.wall+stages.prepare.wall,
+                    "executionCpuNs":elapsed.cpu+stages.execution.cpu,"executionWallNs":elapsed.wall+stages.execution.wall,
                     "typedReturnRows":super::super::row::ROWS.get()-return_rows,
                     "typedReturnCells":super::super::row::CELLS.get()-return_cells,
+                    "continuationTraffic": {
+                        "pushes":super::super::continuation_store::traffic()[0]-continuation_start[0],
+                        "pops":super::super::continuation_store::traffic()[1]-continuation_start[1],
+                        "peekRequests":super::super::continuation_store::traffic()[2]-continuation_start[2],
+                        "reservedCellsWritten":super::super::continuation_store::traffic()[3]-continuation_start[3]
+                    },
                     "explain":explain,
                     "nativeMatches":native_matches,"nativeFailures":native_traces.iter().filter(|r|r["failure"]!=0).count(),
                     "nativeRows":expected.len(),"sqlRows":actual.len(),"positiveFiles":positive_files,
@@ -330,7 +342,12 @@ pub(super) fn check(
                     "captureNames":names,"nativeFileTraces":native_traces,"sqlSha256":sql_sha,
                     "coverageGap":if native_matches==0 { Some("No positive native witness in the complete fixture batch; empty-result parity does not cover successful publication.") } else { None },
                     "failureContract":"Native clause/file failures discard provisional matches. SQL failure tags and surviving outputs are compared. No fault injection or finite allowance sweep in this gate."
-                }))
+                });
+                if stages.active() {
+                    report["stageExecution"] = stages.profile();
+                    report["finalStatement"] = json!({"matchingStatements":final_executions,"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep),"sorts":stmt.get_status(rusqlite::StatementStatus::Sort),"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"executionCpuNs":elapsed.cpu,"executionWallNs":elapsed.wall});
+                }
+                Ok(report)
             },
         )
     });

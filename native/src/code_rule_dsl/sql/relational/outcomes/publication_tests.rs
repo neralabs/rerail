@@ -157,10 +157,17 @@ pub(super) fn check_work_compiler(
                         let memo_start = super::super::memo_store::counts();
                         let row_start = super::super::row::ROWS.get();
                         let cell_start = super::super::row::CELLS.get();
+                        let continuation_start = super::super::continuation_store::traffic();
+                        let stages =
+                            super::super::spike_stages::run(db, &compiled.relations, &compiled.sql)
+                                .unwrap();
                         let start = std::time::Instant::now();
+                        let prepare_started = crate::code_rule_dsl::sql::timing::Started::now();
                         let mut stmt = db.prepare(&compiled.sql).unwrap();
                         let prepare = start.elapsed().as_nanos();
+                        let prepare_cpu = prepare_started.elapsed().cpu;
                         let trace = ExecutionTrace::start(db);
+                        let final_started = crate::code_rule_dsl::sql::timing::Started::now();
                         let actual: Vec<Value> = stmt
                             .query_map([], |r| {
                                 let tag = r.get::<_, i64>(4)?;
@@ -180,7 +187,9 @@ pub(super) fn check_work_compiler(
                             .unwrap()
                             .collect::<rusqlite::Result<_>>()
                             .unwrap();
-                        let executions = trace.count();
+                        let final_elapsed = final_started.elapsed();
+                        let final_executions = trace.count();
+                        let executions = final_executions + stages.executions;
                         drop(trace);
                         let execute_wall_ns = start.elapsed().as_nanos();
                         let (state_rows,state_peak,state_scopes,scope_peak,continuation_rows,continuation_peak)=db.query_row("SELECT relation_state_rows(),relation_state_peak(),relation_state_scopes(),relation_state_scope_peak(),relation_continuation_rows(),relation_continuation_peak()",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?))).unwrap();
@@ -198,11 +207,23 @@ pub(super) fn check_work_compiler(
                             .zip(memo_start)
                             .map(|(end, start)| end - start)
                             .collect::<Vec<_>>();
-                        let metrics = json!({"memoStorage":{"resets":memo[0],"lookups":memo[1],"hits":memo[2],"publications":memo[3],"integerCellsStored":memo[4]},"typedReturnRows":super::super::row::ROWS.get()-row_start,"typedReturnCells":super::super::row::CELLS.get()-cell_start,"matchingStatements":executions,"prepareWallNs":prepare,"prepareExecuteWallNs":execute_wall_ns,"captureStateRows":state_rows,"captureStatePeak":state_peak,"captureScopes":state_scopes,"captureScopePeak":scope_peak,"continuationRows":continuation_rows,"continuationPeak":continuation_peak,"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep)});
+                        let mut metrics = json!({"memoStorage":{"resets":memo[0],"lookups":memo[1],"hits":memo[2],"publications":memo[3],"integerCellsStored":memo[4]},"typedReturnRows":super::super::row::ROWS.get()-row_start,"typedReturnCells":super::super::row::CELLS.get()-cell_start,"matchingStatements":executions,"prepareWallNs":prepare+u128::from(stages.prepare.wall),"prepareExecuteWallNs":execute_wall_ns+u128::from(stages.prepare.wall)+u128::from(stages.execution.wall),"captureStateRows":state_rows,"captureStatePeak":state_peak,"captureScopes":state_scopes,"captureScopePeak":scope_peak,"continuationRows":continuation_rows,"continuationPeak":continuation_peak,"continuationTraffic":super::super::continuation_store::traffic().into_iter().zip(continuation_start).map(|(end,start)|end-start).collect::<Vec<_>>(),"vmSteps":i64::from(stmt.get_status(rusqlite::StatementStatus::VmStep))+stages.vm,"automaticIndexRows":i64::from(stmt.get_status(rusqlite::StatementStatus::AutoIndex))+stages.automatic_index,"fullscanSteps":i64::from(stmt.get_status(rusqlite::StatementStatus::FullscanStep))+stages.fullscan});
+                        if stages.active() {
+                            metrics["stageExecution"] = stages.profile();
+                            metrics["finalStatement"] = json!({"matchingStatements":final_executions,"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep),"prepareCpuNs":prepare_cpu,"prepareWallNs":prepare,"executionCpuNs":final_elapsed.cpu,"executionWallNs":final_elapsed.wall});
+                            metrics["prepareCpuNs"] = json!(prepare_cpu + stages.prepare.cpu);
+                            metrics["executionCpuNs"] =
+                                json!(final_elapsed.cpu + stages.execution.cpu);
+                            metrics["executionWallNs"] =
+                                json!(final_elapsed.wall + stages.execution.wall);
+                        }
                         (actual, metrics)
                     });
                     assert_eq!(frames[4], 0);
-                    assert_eq!(metrics["matchingStatements"], 1);
+                    let expected_statements = compiled.relations["spikeStages"]
+                        .as_array()
+                        .map_or(1, |s| s.len() + 1);
+                    assert_eq!(metrics["matchingStatements"], expected_statements);
                     let explain: Vec<_> = db
                         .prepare(&format!("EXPLAIN QUERY PLAN {}", compiled.sql))
                         .unwrap()
@@ -431,4 +452,54 @@ fn publication_multiple_failures_are_isolated_and_empty_files_are_empty() {
             .unwrap()
             .contains("1..32")
     );
+}
+
+#[test]
+fn spike_stages_control_counts_ctas_index_work_and_preserves_native_probes() {
+    let rules = [value()];
+    let p = policy(&rules);
+    let sources = ["f(1,2,3);", "g(4,5);"];
+    let ordinary = check_work(&p, &rules, &sources, None, 100);
+    assert_eq!(
+        ordinary["metrics"]["execution"]["matchingStatements"],
+        json!(1)
+    );
+    assert!(ordinary["metrics"]["execution"]["stageExecution"].is_null());
+    for allowance in [0, 1, 100] {
+        for fault in [None, Some("2")] {
+            let result =
+                check_work_compiler(&p, &rules, &sources, fault, allowance, |grammars, work| {
+                    let mut compiled = super::compile_job(grammars, work)?;
+                    let needle = "FROM node n";
+                    if !compiled.sql.contains(needle) {
+                        return Err("stage control: root node input not found".into());
+                    }
+                    compiled.sql = compiled.sql.replacen(
+                        needle,
+                        "FROM stage_control cut JOIN node n ON n.file=cut.file AND n.id=cut.node",
+                        1,
+                    );
+                    compiled.relations["spikeStages"] = json!([
+                        "CREATE TEMP TABLE stage_control AS SELECT file,id AS node FROM node",
+                        "CREATE UNIQUE INDEX stage_control_key ON stage_control(file,node)"
+                    ]);
+                    Ok(compiled)
+                });
+            let metrics = &result["metrics"]["execution"];
+            assert_eq!(metrics["matchingStatements"], json!(3));
+            let stages = &metrics["stageExecution"];
+            assert_eq!(stages["stageExecutions"], json!(2));
+            assert_eq!(stages["statements"].as_array().unwrap().len(), 2);
+            let stage_vm = stages["vmSteps"].as_i64().unwrap();
+            assert!(stage_vm > 0);
+            assert_eq!(
+                metrics["vmSteps"].as_i64().unwrap(),
+                stage_vm + metrics["finalStatement"]["vmSteps"].as_i64().unwrap()
+            );
+            assert!(
+                metrics["vmSteps"].as_i64().unwrap()
+                    > metrics["finalStatement"]["vmSteps"].as_i64().unwrap()
+            );
+        }
+    }
 }

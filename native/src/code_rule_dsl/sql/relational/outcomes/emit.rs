@@ -51,6 +51,9 @@ mod parse_emit;
 mod parse_host_emit;
 #[path = "parse_recursive_emit.rs"]
 mod parse_recursive_emit;
+#[cfg(test)]
+#[path = "parsed_relation_spike.rs"]
+mod parsed_relation_spike;
 #[path = "predicate.rs"]
 mod predicate;
 #[path = "predicate_fusion_tests.rs"]
@@ -73,7 +76,8 @@ mod repeat_cost;
 #[path = "repeat_walk.rs"]
 mod repeat_walk;
 use super::{Axis, Op, Plan, Slot, Slots};
-pub(super) use publication::compile_jobs;
+pub(super) use ordered::nested::bridge;
+pub(super) use publication::{compile_jobs, compile_jobs_with_base};
 use serde_json::{Value, json};
 
 #[path = "nth_batch_tests.rs"]

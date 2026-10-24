@@ -1,0 +1,678 @@
+{
+  "scope": "S0-S7 executable structural reference spikes; not a production compiler cutover",
+  "baselineCommit": "049c5873",
+  "parentCommit": "2dc203cf",
+  "validation": {
+    "spikeSuites": 13,
+    "spikeTests": 73,
+    "spikesPassed": true,
+    "binarySha256": "1794ed655d0afc0d9d96e0c7eea3969fe0a056f4e8d376258511c15ff1bb20da",
+    "sourcesUnchanged": true,
+    "catalogPassed": true,
+    "clippyWorkspaceAllTargets": true,
+    "clippyCodeRuleProfileAllTargets": true,
+    "catalogSummary": {
+      "admitted": 146,
+      "clauses": 146,
+      "executionFailed": 0,
+      "executionPassed": 146,
+      "grammars": 146,
+      "noPositiveWitness": 0,
+      "policies": 138,
+      "policyCompilationErrors": 0,
+      "refusalReasons": {},
+      "refused": 0
+    },
+    "fullEngineSuite": {
+      "passed": 2150,
+      "failed": 0,
+      "ignored": 54,
+      "binarySha256": "af73e83504ff632e89090beba64660d0082063a99372e6b7c2bd940bef8dd2d4",
+      "scope": "Build17 includes all final production changes. Final runner rechecks every subsequently changed test reference.",
+      "subsequentChanges": [
+        "native/src/code_rule_dsl/sql/relational/outcomes/b615_import_callee_spike.rs",
+        "native/src/code_rule_dsl/sql/relational/outcomes/b615_suffix_spike.rs",
+        "native/src/code_rule_dsl/sql/relational/outcomes/sim905_effect_spike.rs",
+        "native/src/code_rule_dsl/sql/relational/outcomes/sim905_effect_spike_tests.rs",
+        "native/src/code_rule_dsl/sql/relational/outcomes/sim905_full_spike.rs",
+        "native/src/code_rule_dsl/sql/relational/outcomes/sim905_full_spike_tests.rs",
+        "benchmark/relational-structural-spikes.py"
+      ]
+    },
+    "defaultCatalogVmSteps": 2390172088
+  },
+  "executionAccounting": {
+    "counted": [
+      "matching",
+      "CTAS/population",
+      "index creation/maintenance",
+      "ANALYZE",
+      "prepared-job resets"
+    ],
+    "separate": [
+      "preparation",
+      "EXPLAIN",
+      "diagnostic cardinality reads"
+    ],
+    "oneOffPreparationExcluded": true
+  },
+  "sim905": {
+    "baselineVm": 449083864,
+    "baselineTypedTransfers": 1581869,
+    "baselineContinuationPushes": 426911,
+    "reference": {
+      "passed": true,
+      "vm": 35866088,
+      "matchingStatements": 12,
+      "typedReturnRows": 31103,
+      "typedReturnCells": 126504,
+      "continuationTraffic": {
+        "peekRequests": 0,
+        "pops": 2539,
+        "pushes": 2539,
+        "reservedCellsWritten": 30468
+      },
+      "nativeMatches": 77,
+      "nativeRows": 77,
+      "sqlRows": 77,
+      "nativeOutputSha256": "02b7d774758789b34575e21f5fcf5f986386620d30d49cc5d47d9ed2dde0d8c3",
+      "sqlOutputSha256": "02b7d774758789b34575e21f5fcf5f986386620d30d49cc5d47d9ed2dde0d8c3",
+      "nodeAdvances": 170890,
+      "framePublications": 0
+    },
+    "totalSqlBytes": 50384,
+    "largestStatementBytes": 22123,
+    "vmLimit": 44908386,
+    "typedTransferLimit": 158186,
+    "fused": {
+      "accepted": false,
+      "candidate": "fused pure producers",
+      "prepareFailure": "too many references to \"node\": max 65535",
+      "productionSwitch": false,
+      "sqlBytes": 46387,
+      "stagedReferenceRetained": true
+    },
+    "vmReductionFactor": 12.521127589939555
+  },
+  "f632": {
+    "baselineVm": 240957037,
+    "baselineTypedTransfers": 1440173,
+    "baselineContinuationPushes": 131436,
+    "reference": {
+      "passed": true,
+      "vm": 19227542,
+      "matchingStatements": 1,
+      "typedReturnRows": 41489,
+      "typedReturnCells": 240964,
+      "continuationTraffic": {
+        "peekRequests": 254,
+        "pops": 8544,
+        "pushes": 8544,
+        "reservedCellsWritten": 102528
+      },
+      "nativeMatches": 42,
+      "nativeRows": 42,
+      "sqlRows": 42,
+      "nativeOutputSha256": "ad9ef251e2d2aa6ca371eb005ff01d11dcc0670e20c67bbd607e111bedd96ae1",
+      "sqlOutputSha256": "ad9ef251e2d2aa6ca371eb005ff01d11dcc0670e20c67bbd607e111bedd96ae1",
+      "nodeAdvances": 175555,
+      "framePublications": 0
+    },
+    "sqlBytes": 7831,
+    "vmReductionFactor": 12.531868972123426
+  },
+  "b615": {
+    "scope": "Captured recursive helper and 19 real imported-callee transfers; not full B615",
+    "selectedPhysicalPlan": "indexed-parent-links",
+    "planMatrix": [
+      {
+        "plan": "baseline",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 53962
+      },
+      {
+        "plan": "unique",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 55561
+      },
+      {
+        "plan": "unique-ordered",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 57432
+      },
+      {
+        "plan": "unique-analyzed",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 63443
+      },
+      {
+        "plan": "indexed-parent-links",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 48455
+      },
+      {
+        "plan": "baseline",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 61978
+      },
+      {
+        "plan": "unique",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 63577
+      },
+      {
+        "plan": "unique-ordered",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 65448
+      },
+      {
+        "plan": "unique-analyzed",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 71459
+      },
+      {
+        "plan": "indexed-parent-links",
+        "ambientThreeValued": false,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 22,
+        "canonicalEdges": 21,
+        "totalVmSteps": 56471
+      },
+      {
+        "plan": "baseline",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 289018
+      },
+      {
+        "plan": "unique",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 294361
+      },
+      {
+        "plan": "unique-ordered",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 301848
+      },
+      {
+        "plan": "unique-analyzed",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 302743
+      },
+      {
+        "plan": "indexed-parent-links",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 183767
+      },
+      {
+        "plan": "baseline",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 333370
+      },
+      {
+        "plan": "unique",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 338713
+      },
+      {
+        "plan": "unique-ordered",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 346200
+      },
+      {
+        "plan": "unique-analyzed",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 347095
+      },
+      {
+        "plan": "indexed-parent-links",
+        "ambientThreeValued": false,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 70,
+        "canonicalEdges": 69,
+        "totalVmSteps": 228119
+      },
+      {
+        "plan": "baseline",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 195900
+      },
+      {
+        "plan": "unique",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 206137
+      },
+      {
+        "plan": "unique-ordered",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 205450
+      },
+      {
+        "plan": "unique-analyzed",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 216548
+      },
+      {
+        "plan": "indexed-parent-links",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 176490
+      },
+      {
+        "plan": "baseline",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 211084
+      },
+      {
+        "plan": "unique",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 221321
+      },
+      {
+        "plan": "unique-ordered",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 220634
+      },
+      {
+        "plan": "unique-analyzed",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 231732
+      },
+      {
+        "plan": "indexed-parent-links",
+        "ambientThreeValued": true,
+        "depth": 8,
+        "rootMode": "all",
+        "distinctDemands": 18,
+        "canonicalNodes": 150,
+        "canonicalEdges": 133,
+        "totalVmSteps": 191674
+      },
+      {
+        "plan": "baseline",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1342092
+      },
+      {
+        "plan": "unique",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1381993
+      },
+      {
+        "plan": "unique-ordered",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1379242
+      },
+      {
+        "plan": "unique-analyzed",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1403737
+      },
+      {
+        "plan": "indexed-parent-links",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "outer",
+        "distinctDemands": 2,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1015338
+      },
+      {
+        "plan": "baseline",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1501132
+      },
+      {
+        "plan": "unique",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1541033
+      },
+      {
+        "plan": "unique-ordered",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1538282
+      },
+      {
+        "plan": "unique-analyzed",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1562777
+      },
+      {
+        "plan": "indexed-parent-links",
+        "ambientThreeValued": true,
+        "depth": 32,
+        "rootMode": "all",
+        "distinctDemands": 66,
+        "canonicalNodes": 582,
+        "canonicalEdges": 517,
+        "totalVmSteps": 1174378
+      }
+    ],
+    "stickyFailureCounterexample": [
+      {
+        "ambientThreeValued": false,
+        "contract": "sticky failure follows only cached utility sites; no new body/work/captures/publication",
+        "nativePeak": 6,
+        "nativeTruth": -2,
+        "nativeWork": 0,
+        "order": "immediate inner warm256 then cold outer work4",
+        "outcomes": [
+          {
+            "cachedFollowerCleanup": false,
+            "relativePeak": 6,
+            "truth": -2,
+            "work": 0
+          },
+          {
+            "cachedFollowerCleanup": true,
+            "relativePeak": 6,
+            "truth": -2,
+            "work": 0
+          }
+        ]
+      },
+      {
+        "ambientThreeValued": true,
+        "contract": "sticky failure follows only cached utility sites; no new body/work/captures/publication",
+        "nativePeak": 6,
+        "nativeTruth": -2,
+        "nativeWork": 0,
+        "order": "immediate inner warm256 then cold outer work4",
+        "outcomes": [
+          {
+            "cachedFollowerCleanup": false,
+            "relativePeak": 3,
+            "truth": -2,
+            "work": 0
+          },
+          {
+            "cachedFollowerCleanup": true,
+            "relativePeak": 6,
+            "truth": -2,
+            "work": 0
+          }
+        ]
+      }
+    ]
+  },
+  "wholeJob": {
+    "passed": true,
+    "files": 597,
+    "grammars": 146,
+    "matchingExecutions": 24,
+    "nativeRows": 2477,
+    "sqlRows": 2477,
+    "contract": "work-aware statement packing; native outputs and published remaining work; no cross-rule VM sharing claim",
+    "vmSteps": 2777339105,
+    "largestStatementBytes": 255548
+  },
+  "commonCompilerGates": {
+    "totalSqlBytesAndVmRelativeToReferenceMax": 1.25,
+    "wholeJobExecutionMax": 100,
+    "statementSqlBytesMax": 256000,
+    "sourceFiniteAndEmittedOperatorsMax": 256,
+    "operatorAndReturnBudgetScope": "per clause, unchanged from existing compiler",
+    "returnCellsMax": 128,
+    "existingCatalogVmBudgetsUnchanged": true
+  },
+  "notQualified": [
+    "Production compiler cutover",
+    "Full B615 replacement",
+    "Arbitrary mutual recursion",
+    "General captured-schema sharing",
+    "Native physical stack-byte equivalence",
+    "Aggregate storage limits and deadlines",
+    "Production incremental invalidation"
+  ],
+  "selectedReferenceSourceHashes": {
+    "native/src/code_rule_dsl/matcher/resolve.rs": "86da5c6bd7302bbc70dff1a50366565c76dd774848dd044c4f35fa6c60e9948e",
+    "native/src/code_rule_dsl/matcher/sql_depth_spike.rs": "8bbe8e3759e6bf83b4b3d661c79d98b5f720d154181477dec2b5482b3c615c52",
+    "native/src/code_rule_dsl/sql/relational/job_relation_spike.rs": "8c464ac9badfc6103d2d041e9697ac3af318bfe07c637bdd8ef5c307357c9e64",
+    "native/src/code_rule_dsl/sql/relational/outcomes/b615_binding_boundary_spike.rs": "32e3965324f3394d2a116b7f7a1fa70f61588cad177de617d61e3df3b3bdde57",
+    "native/src/code_rule_dsl/sql/relational/outcomes/b615_captured_relation_spike.rs": "ddbf853efbba9361a956894c96fd92acdef3b1346b2ef4174268d0fa4d84faf1",
+    "native/src/code_rule_dsl/sql/relational/outcomes/b615_import_callee_spike.rs": "1692173f54d7f000af11ec2a592531c532694e909300b6fd4f55d1e4e9077f3b",
+    "native/src/code_rule_dsl/sql/relational/outcomes/b615_interval_spike.rs": "a0d0f6cd54aa562443a807bf1259c79352858796b741491df33297f5c223c965",
+    "native/src/code_rule_dsl/sql/relational/outcomes/b615_suffix_spike.rs": "694a4e5e2b9115451ceb9b4f8af1d1b8aeef139e2921b54332ac97cc021aab49",
+    "native/src/code_rule_dsl/sql/relational/outcomes/cost_relation_dynamic_spike.rs": "db0a91dbf81f907d95ee51f56d0df64947c1c4d1662d92233e07b4807bf9f379",
+    "native/src/code_rule_dsl/sql/relational/outcomes/cost_relation_spike.rs": "f74a5d28fefc503d1ab4fd2c86d32ee6801ba8c5407fdeb887e962dbbb50b0a6",
+    "native/src/code_rule_dsl/sql/relational/outcomes/cost_relation_spike_tests.rs": "0a34f052456d96b3489f6d096b3fe06fb6dbf2aecb9f5112446e2b4bbebd9783",
+    "native/src/code_rule_dsl/sql/relational/outcomes/demand_relation_spike.rs": "75e0bbfe22430b03b9cbf961694f1753f75264f826b4281380631de7de748adc",
+    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "4f80224cb98c9fa8fac835ddb805ab4762c9c5107ef6b6d2f9aa757b9ff55212",
+    "native/src/code_rule_dsl/sql/relational/outcomes/parsed_relation_spike.rs": "5b82874358a03ad73bdabe1817bc3c142db49796f11cbbf5077196d4227548dd",
+    "native/src/code_rule_dsl/sql/relational/outcomes/parsed_relation_spike_tests.rs": "731a6e488dde286c3c7fa52487401cad15e5eab06a07b30829b3dc79b3517bfe",
+    "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "10d6190086822d0a24103808a0a95d2fa0fc56249b92fffd2863b145a978306f",
+    "native/src/code_rule_dsl/sql/relational/outcomes/sim905_effect_spike.rs": "18b77341226fc918388360788a6f72e73d8f6e815a807b09cde3f031405bf5eb",
+    "native/src/code_rule_dsl/sql/relational/outcomes/sim905_effect_spike_tests.rs": "9b0565061b6a135bffc382f71a9f10db53cec971912b687d29dd27aebdb7c4b8",
+    "native/src/code_rule_dsl/sql/relational/outcomes/sim905_full_spike.rs": "409743b0afc3c5e957a9a11c75188a2f27776b6abf1d12cdd96292efc66d2059",
+    "native/src/code_rule_dsl/sql/relational/outcomes/sim905_full_spike_tests.rs": "9aba2697bd171fd2b3ee0a5b1a9d0eb022b86c966eef267af5892ce3d003fb79",
+    "native/src/code_rule_dsl/sql/relational/outcomes/sim905_literal_cost_spike.rs": "c356e6032eed0e1a647169a46df11dc1752075b6a08862e148f7e6c3e2a74f12",
+    "native/src/code_rule_dsl/sql/relational/outcomes/sim905_pure_cost_spike.rs": "1abebc97bd7a6796abec03ba95bae708ced3624462d0e4ed1d6e4897f886c6e2",
+    "native/src/code_rule_dsl/sql/relational/outcomes/sim905_relation_spike.rs": "a2038dad07bb5453374e93c4850d1ab1ee6d811b0c3a8fcfb44850da644c971c",
+    "native/src/code_rule_dsl/sql/relational/outcomes/sim905_source_spike.rs": "55d75053f8d9b2b0afe6ce33931bd0b36502c939fe1eb76c451886576152dc15",
+    "native/src/code_rule_dsl/sql/relational/spike_stages.rs": "d019c573cc2917367a91e70729fc3c091b365e9616c2320e3ec4c6619c77529b",
+    "native/src/code_rule_dsl/sql/relational/staged_job_spike.rs": "26623085fe4edfdc274e40514264fc8eceb401fdcbf16f4665ceea28aaebe19c",
+    "native/src/code_rule_dsl/sql/spikes/artifacts.rs": "d3ca2fe640d5c7b93da391b8b4875f6b8d28d742ef5590c119d62619f3cc0c1b",
+    "native/src/code_rule_dsl/sql/spikes/frontier.rs": "493271e4f671c3d1354ae5b6a8b1887fec937fc8bd81a408d0b65417d69a97d1",
+    "native/src/code_rule_dsl/sql/spikes/mod.rs": "659d42121e3864a31c20e55b4b64a6838454217e1158b6bda5d95095839cb232",
+    "native/src/code_rule_dsl/sql/spikes/packed.rs": "c1f3f8bb5c8223b2d879c3e7577b806f350708a816dcd4f1d23ca20a95ef5bef",
+    "native/src/code_rule_dsl/sql/spikes/query_measure.rs": "5cb41eba28d5b8789c62dfcaa973d002192647a0c80070f3facab8753b7ae4bc",
+    "native/src/code_rule_dsl/sql/spikes/query_shapes.rs": "6701933a1f6e26e35c7fd7cd78a41bb755e587c2dd3f9251cd508e94554bdb61",
+    "native/src/code_rule_dsl/sql/spikes/query_variants.rs": "035d2ee608d35df7edf61b3434ba704f2c35df48543131bc3384827d62cffcc5",
+    "native/src/code_rule_dsl/sql/spikes/query_workload.rs": "300d23e3db31c6ced1d615d628e3dfa35a58b8146cb3ed78225cf103348ca2d4",
+    "native/src/code_rule_dsl/sql/spikes/sharing.rs": "75569718fe13463a5e679fb35e21548e73d63e73c749f57b1f44287cc9f05cd2",
+    "native/src/code_rule_dsl/sql/spikes/views.rs": "ea28d5365b54979ed36e0729c19d77da21bce11d947730ead56779fffe696c58",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/adapter.rs": "61ba6512e833d95700bf93870857997d4a9d3090032c712141b364a89e197984",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/amplification/benchmark.rs": "53109620205511f851a3c6d8db0c7756bcc22149fcbed1d158739036b23dfe67",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/amplification/constants.rs": "cf15667e3228b75e108e5439dd204d450ddfd3dc7225890c5509b05a7d9546aa",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/amplification/domains.rs": "0e966038d0de2f735fb6fa8cb904bc95dfcf7a71c6c200d8122a31378a36bbe6",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/amplification/guards.rs": "c03d890825387c2f1ad1fc3819b9013f0c643015bc07595ecd84c3d8043cfdc1",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/amplification/machine.rs": "a90cb17ae8d5e6a6ad7c7868c4d0cf3bbebe9c3c8005015356def96d071d3744",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/amplification/mod.rs": "d2301c3f667358e67515acc3ef814fda62112ed73e810e5538b48221cbbc5ec3",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/amplification/relational.rs": "4e8bec3fe0d5730d6a94d765f35fb6fcd1f591b6db9355788bee4ca05152bcc7",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/amplification/tests.rs": "4ee16e4884138d99180bf22e8d27b9669b8b268c9154d0f1385ebb572d7365f5",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs": "35dcfe22f012b26e6df359407f70df4b5c91bd4ec67a72206b34315372ec5c40",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/buffers.rs": "b9226082bc01c1401d26ed057a47b5980644fe4afc144bfba05539925eff1a3d",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/composition.rs": "5cdfd4aa8ef8cd2d177f5c7e7e9e0eae2aeaad556fa2c6bc4393c440b84abb88",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/crossfile.rs": "0619efed64f90140627d97b58fd7c3c859f9096be31923b57df81085740a61d5",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/direct.rs": "2b6b6e13a7f49d88acfe095e91d95b0f4c86c22118b84b92d6801948e1d96c10",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/each.rs": "8a943b76d7a8deb5aef4438e5380ef11166f741ef37b73db6ba90a68aacc6990",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/graph.rs": "625cfa7931d06ae29c0a2c1f48f238ea9371e5bf25aac861821d58b7074c41f0",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/homogeneous.rs": "ffe0250975403033bac9f9e772782b43d078b467c2b595ebb4c14880e48146b9",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/inputs.rs": "cd46fac5217baaf37159898f2c43dfe3b6f10e1024eb13f46fc8810fbc33a6d9",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/integer_keys.rs": "1fee535af79fce877b3b98dbb18de9a3a2e1201bfe38a2efa0376a9c9a1f5502",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/lex.rs": "f88eb5657636aa53247cae5bfb28031dfb3e9a1379f5f668fd750eacaff0cdba",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/mod.rs": "664200a7d03d202a34a328624fc7eef702c6d2d71c755d8f75c94e9e309222f8",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/physical.rs": "578ef277ebfc2b5da2169e8299295b47d5ec7facb550740bb32d124de987997e",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/profile.rs": "22bc781026147cb546641ca298a00aa384a8452e7cac4c7a8b3684545a879276",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/recursive.rs": "d46558bbbe937979d5a9a95633136cfe6de691bddf9e0bdf52bdee6678c170b3",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/recursive_machine.rs": "631b226ab3115950cec398fbe7fa1609d8d77c72e67d5285e100b9ca7b0ee11a",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/recursive_machine_tests.rs": "e911a0dda8a35062e2fddce1d29e0fa9e73fe5df1bfdd494c3d3ff7678198887",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/run.rs": "81e71c024ca779afdd247e1d038a33adc4444fd3a03a2d39050b840d7fe20685",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/scan.rs": "d0181688903ce92739468fae878c2296910e11db81d172fd6ca9118203fd456b",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/shapes.rs": "a13136fb994c5cd0921c7721e2517743f27711b16e268aa4fa2054a8d3fed3fe",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/terminal_set.rs": "32287abb4d9179f729a6a42dab9dd679561dab25ba9788cefe5e0d45db1831b6",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/tests.rs": "12ac36ecb77bc95fe3075e8ac3a6430c579e35e044ca0628455d4960642be0dc",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/workload.rs": "8f6d7276aa13f539dc15424dbc9720052947ae49ea7cfaa1d91e6495aa3ae462",
+    "native/src/code_rule_dsl/sql/relational/outcomes/sim905_relation_spike.sql": "b3cc97dca1b1524a32f0d54ef840f69497c82dc849401670d402b2d3b9c67d67",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/b023.sql": "cc8df01875dc99d3afc75b2efceb4cbe47732647267d973ec85be2f410784eba",
+    "benchmark/relational-structural-spikes.py": "430bb5cabcd991d08fb439b3ad1ca14e326eee2473d30ff0527548343e9e973a"
+  }
+}

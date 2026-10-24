@@ -1268,3 +1268,28 @@ The first experimental gate requires at least tenfold fewer VM instructions: at 
 The profile must count demands, distinct producer keys, producer evaluations, child-result transfers, continuation pushes and pops, and recursive states. Counts need operator provenance. Timed execution must remain separate from diagnostic instrumentation and preparation.
 
 After the reference passes, generic compiler lowering must match it within 25% for SQL bytes and VM instructions. All 146 native comparisons and existing VM ceilings must still pass. The next transfer cases are B615 for shared captured demands and F632 for parsed documents and broad root costs. Failed targets require another reference design before compiler expansion.
+
+## Executable spike program
+
+The user authorized all spikes required to specify the structural transition. Each item needs executable evidence and an explicit disposition. A failed experiment remains visible and changes the design. No experiment becomes a production option.
+
+| Spike | Required evidence | Acceptance or decision |
+| --- | --- | --- |
+| S0: attribution | Actual continuation pushes, pops, peeks, child transfers, and producer evaluations | Counters distinguish live storage, cumulative traffic, and static plan sites. |
+| S1: costs and effects | Batched pure answers, exact budget prefixes, depth boundaries, and invalid-summary counterexamples | Native work and reached effects agree. Ordinary Boolean composition requires no continuations. |
+| S2: shared demands | Projected typed keys, separate memo identity, captured witnesses, and materialization variants | Computation scales with distinct semantic demands, not caller count. |
+| S3: SIM905 reference | Actual catalog policy, full fixture batch, adversarial inputs, work and effect boundaries | At least tenfold fewer VM instructions and child-result transfers. |
+| S4: captured recursion | B615 helper and recursive-demand transfer, context isolation, and early witness reduction | Positive native parity and an executable contract for remaining composition. |
+| S5: parsed recursion | F632 root classification, parsed-document identity, reached parsing, and exact rejected-root work | Positive native parity, no text-only sharing, and bounded local recursive state. |
+| S6: job composition | Shared producers across rules/files, resource-aware partitioning, and actual statement counts | A small bounded number of statements, with 100 as a hard ceiling. |
+| S7: compiler specification | Typed relation contracts, emitter mapping, physical alternatives, and measured limits | Each proposed operation has a passing spike or an explicit unresolved requirement. |
+
+The final report must distinguish prototype coverage from production qualification. Synthetic scaling cases cannot substitute for real-policy parity. A refusal demonstrates a boundary but does not count as a successful positive transfer.
+
+
+The spike implementation and measured dispositions are specified in
+[Structural SQL compiler contracts](sql-relational-structural-spike-spec.md).
+The executable runner is `benchmark/relational-structural-spikes.py`.
+The evidence summary is `benchmark/sql-relational-structural-spikes.json`.
+
+The next implementation phase must replace per-operation finite control with closed answer producers and a narrow ordered effect frontier. Start with common lowering for the accepted SIM905 and F632 references. Require total SQL bytes and VM instructions within 125% of those references before expanding admission. Keep the current compiler until exact native observations, catalog ceilings, and the complete-job budget pass together.

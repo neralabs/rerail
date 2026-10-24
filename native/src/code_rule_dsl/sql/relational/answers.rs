@@ -1098,7 +1098,13 @@ pub(super) enum Eligibility {
 }
 
 pub(super) fn prepare(grammar: &GrammarMatcher) -> Result<Eligibility, String> {
-    match prepare_inner(grammar) {
+    prepare_with_prefix(grammar, 0)
+}
+pub(super) fn prepare_with_prefix(
+    grammar: &GrammarMatcher,
+    prefix: usize,
+) -> Result<Eligibility, String> {
+    match prepare_inner(grammar, prefix) {
         Ok(plan) => Ok(Eligibility::Applicable(Box::new(plan))),
         Err(AdmissionError::NotApplicable(reason)) => Ok(Eligibility::NotApplicable(reason)),
         Err(AdmissionError::Invalid(error)) => Err(error),
@@ -1148,7 +1154,10 @@ fn structural_contract(
     Ok(())
 }
 
-fn prepare_inner(grammar: &GrammarMatcher) -> Result<PreparedAnswers, AdmissionError> {
+fn prepare_inner(
+    grammar: &GrammarMatcher,
+    prefix: usize,
+) -> Result<PreparedAnswers, AdmissionError> {
     structural_contract(&grammar.matcher, &mut HashSet::new())?;
     if !crate::code_rule_dsl::matcher::CaptureAnalysis::default()
         .counts(&grammar.matcher)
@@ -1162,7 +1171,7 @@ fn prepare_inner(grammar: &GrammarMatcher) -> Result<PreparedAnswers, AdmissionE
         return Err(ShapeReason::FrontierCount.into());
     }
     let search = searches.remove(0);
-    let (lower, frontier, origins) = witness::lower_frontier(grammar, &search)?;
+    let (lower, frontier, origins) = witness::lower_frontier_with_prefix(grammar, &search, prefix)?;
     let mut origin_predicates = vec![Set::Reference(origins)];
     conjuncts(
         &lower.program.relations[origins].expression,

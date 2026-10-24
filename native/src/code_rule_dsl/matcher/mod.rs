@@ -1,4 +1,9 @@
 mod analysis;
+#[cfg(test)]
+mod sql_depth_spike;
+#[cfg(test)]
+pub(in crate::code_rule_dsl) use sql_depth_spike::match_at_depth;
+
 mod anchors;
 mod arguments;
 mod arguments_sql;

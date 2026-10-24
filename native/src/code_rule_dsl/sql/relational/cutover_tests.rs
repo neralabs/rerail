@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path};
 
 #[path = "catalog_execution_tests.rs"]
-mod execution;
+pub(super) mod execution;
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))

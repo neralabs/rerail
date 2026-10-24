@@ -306,7 +306,11 @@ impl Lower {
         use crate::code_rule_dsl::sql::terminals::{FactTerm, Leaf, Terminal, Verdicts};
         let id = self.pure.program.terminals.len();
         let leaf = Leaf(matcher.clone());
-        let verdicts: Box<dyn Verdicts> = if Self::cache_fills(matcher) {
+        // Even non-following values have a cold decode cache per clause owner.
+        // This ownership does not change cache_fills effects or emitted SQL.
+        let verdicts: Box<dyn Verdicts> = if Self::cache_fills(matcher)
+            || matches!(matcher, AstMatcher::Semantic(Semantic::Value(_)))
+        {
             Box::new(atomic_owner::OwnedLeaf {
                 leaf,
                 owner: self.scope_owner,

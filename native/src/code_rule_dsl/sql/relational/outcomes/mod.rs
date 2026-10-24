@@ -1,9 +1,25 @@
 //! Explicit outcomes with sequencing barriers for reached atomic value leaves.
 //! SQL owns composition. Bindings are typed columns; unknown is never SQL NULL.
 mod atomic_predicate_tests;
+#[cfg(test)]
+mod b615_binding_boundary_spike;
+#[cfg(test)]
+mod b615_captured_relation_spike;
 mod binding_facts;
 mod binding_occurrence_tests;
 mod binding_tests;
+#[cfg(test)]
+mod cost_relation_spike;
+#[cfg(test)]
+mod demand_relation_spike;
+#[cfg(test)]
+mod sim905_effect_spike;
+#[cfg(test)]
+mod sim905_full_spike;
+#[cfg(test)]
+mod sim905_pure_cost_spike;
+#[cfg(test)]
+mod sim905_relation_spike;
 pub(super) use binding_facts::register as register_binding_facts;
 mod binding_region_tests;
 mod binds_tests;
@@ -300,7 +316,21 @@ fn finite_plan(mut plan: Plan, share_recursion: bool) -> Result<Plan, String> {
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     select_composition(|shape| compile_mode(grammar, shape))
 }
+pub(super) fn compile_namespaced(
+    grammar: &GrammarMatcher,
+    prefix: usize,
+    clause: usize,
+) -> Result<Compiled, String> {
+    select_composition(|shape| compile_mode_namespaced(grammar, shape, Some((prefix, clause))))
+}
 fn compile_mode(grammar: &GrammarMatcher, shape: Composition) -> Result<Compiled, String> {
+    compile_mode_namespaced(grammar, shape, None)
+}
+fn compile_mode_namespaced(
+    grammar: &GrammarMatcher,
+    shape: Composition,
+    namespace: Option<(usize, usize)>,
+) -> Result<Compiled, String> {
     let finite = shape != Composition::Inline;
     if grammar.transform.is_some() {
         return Err("outcome relations: transformed captures need a typed output contract".into());
@@ -310,6 +340,10 @@ fn compile_mode(grammar: &GrammarMatcher, shape: Composition) -> Result<Compiled
     } else {
         lower::Lower::new(grammar.language, grammar.three_valued)
     };
+    if let Some((prefix, clause)) = namespace {
+        lower.pure.program.terminals = super::seed_terminals(prefix);
+        lower.scope_owner = clause + 1;
+    }
     lower.root_kinds = grammar.anchors.root_kinds().cloned();
     let plan = predicate_memo::prepare(lower.plan(&grammar.matcher)?);
     let plan = if finite {
@@ -324,8 +358,8 @@ fn compile_mode(grammar: &GrammarMatcher, shape: Composition) -> Result<Compiled
     let mut profile = lower.profile(0);
     record_composition(&mut profile, shape, &plan);
     let memo_layout = lower.memo_layout(plan.effects.needs_peak);
-    let (sql, mut relations) = if plan.fallible() || grammar.file.is_some() {
-        let (sql, mut relations) = emit::compile_jobs(
+    let (sql, mut relations) = if plan.fallible() || grammar.file.is_some() || namespace.is_some() {
+        let (sql, mut relations) = emit::compile_jobs_with_base(
             &[(
                 &plan,
                 &lower.slots,
@@ -334,6 +368,7 @@ fn compile_mode(grammar: &GrammarMatcher, shape: Composition) -> Result<Compiled
             )],
             i64::MAX,
             &[memo_layout],
+            namespace.map_or(0, |(_, clause)| clause),
         )?;
         relations["terminalOwners"] =
             serde_json::json!(vec![0; lower.pure.program.terminals.len()]);

@@ -6029,3 +6029,169 @@ The proposed transition separates reusable computation, native work and effects,
 The source review revisits ast-index `_subtree_ctes`, `_mat`, and `_probe_semi` at the previously pinned revision. It also revisits PR 2539's named classifier and relation CTE composition. These sources support relation reuse and controlled intermediate size. They do not justify reordering Rerail's observable operations.
 
 The transition plan now specifies a SIM905 reference query as the first executable spike. Its proposed gates require tenfold reductions in VM instructions and typed result transfers. The compiler then must match the accepted reference within 25% for SQL size and VM instructions. No speedup is claimed before those measurements. Complete-job batching remains a separate mandatory gate.
+
+### Structural spike program started
+
+The user authorized the complete executable spike program. The transition plan now lists S0 through S7 with acceptance criteria. The starting revision is `2dc203cf`.
+
+Three existing GPT-6.1 Sol agents have constrained file ownership. Their assignments cover cost summaries, captured demand sharing, and parsed-document transfer. The root agent owns instrumentation, SIM905, job composition, integration, and final qualification. Agents cannot build, commit, or change existing emitters without root review.
+
+The first review rejected a proposed captured-demand experiment based only on precomputed semantic fact flags. Its replacement must derive helper results from atomic AST facts and include a native B615 helper oracle. Synthetic demand matrices remain useful for scaling, but cannot establish native policy equivalence.
+
+### Baseline attribution and first contract checks
+
+The instrumented catalog run passes all 146 grammars on 597 files. VM counts match the previous baseline. The new continuation counters distinguish real numeric records from typed child-result transfers.
+
+| Grammar | Pushes | Pops | Peek requests | Reserved numeric cells written |
+| --- | ---: | ---: | ---: | ---: |
+| SIM905 | 426,911 | 426,911 | 147 | 5,122,932 |
+| B615 | 305,554 | 305,554 | 0 | 3,666,648 |
+| F632 | 131,436 | 131,436 | 254 | 1,577,232 |
+
+The first diagnostic build passed five demand-sharing tests and three cost-summary tests. One cost test incorrectly required a physical memo hit. The native reached-Value trace already proved the relevant replay behavior. That assertion was removed; native parity remains mandatory. This diagnostic build does not qualify later source edits.
+
+Review corrected a second fixture assumption: a direct parsed utility has selective native root anchors. Its original test did not prove broad-root cost compression. The replacement uses an unrestricted pure first arm and separately checks the actual F632 root.
+
+The job-packing spike assigns terminal IDs before lowering. Closed branches receive separate clause, memo, and scope identities. Packing alone cannot establish shared computation or lower VM counts.
+
+### First complete diagnostic execution
+
+Build 5 compiled every initial spike. The counter tests, native depth-hook restoration, demand matrix, and SIM905 result-only reference pass. Cost-summary, numeric-effect, parsed-frontier, and complete-job tests exposed failures. Their logs remain in the diagnostic evidence.
+
+The SIM905 result-only reference returns the same 77 matches on all 597 files. It executes 5,198,507 VM instructions, versus 449,083,864 for the current compiler. It uses no typed child-result transfers or numeric continuations. This is an 86.4-fold VM reduction. Speculative integer evaluation still prevents acceptance as a native-equivalent replacement.
+
+The demand matrix also confirms the intended scaling. With 16 files and 32 callers, 1,024 logical demands contain only 32 distinct semantic keys. A correlated producer executes 1,024 times and consumes 1,205,219 VM instructions. The materialized join executes 32 times and consumes 46,009 instructions. These are synthetic scaling results, not whole-B615 results.
+
+The failed gates exposed concrete errors: a peak expectation at rejected entry, an unguarded continuation lookup, unsupported parsed fixtures, and incomplete catalog enumeration. The job harness used a helper that returned only the first clause from each policy. Its replacement must retain the 146-grammar assertion. No acceptance threshold changed.
+
+Review also rejected a B615 transfer that derived syntax in Rust and inserted one result per demand. That microtest can check a cost contract, but cannot prove the required SQL shape. The replacement must derive recursive demands and summaries in batched SQL.
+
+### Native effect contracts and whole-job packing
+
+Build 6 passes all five pure-cost tests and all three numeric-effect tests. The numeric frontier matches native reached Values, finite work, completed memo replay, and incoming logical-depth boundaries. Its SQL pop operation now guards the virtual-table mode itself. A surrounding CTE filter alone did not prevent an invalid lookup.
+
+The full catalog packing test passes 2,477 native output rows across 146 grammars and 597 files. It uses 23 matching executions. The largest statement is 255,531 bytes. Total work is 2,390,684,956 VM instructions. Packing meets the execution budget but leaves almost all computation unchanged.
+
+The ordinary compiler remains unchanged under this instrumentation and namespace refactor. A second catalog run retains all 146 SQL hashes, VM counts, and output hashes exactly.
+
+Review of normalized SIM905 order found another important constraint. Keyword value helpers run before keyword-name rejection. Positional helpers can also run before position rejection. A result-only query can filter these candidates early; a native-equivalent query must preserve their work and reached Values. The full reference must represent those rejected attempts explicitly or prove a pure cost summary for them.
+
+### Demand restriction and captured memo boundaries
+
+Build 8 passes the new demand-restriction control. A pure summary over one requested subtree consumes 6,231 VM instructions, versus 2,840,462 for broad construction. Both variants return identical truth, work cost, and relative peak. This proves the current-node/descendant closure for the admitted pure language. It does not prove closure for ancestor, binding, or sibling operations.
+
+The B615 structural producer reports zero accepted demands among 4,460 catalog callees. Its chosen direct `.transformers.from_pretrained` subdomain is therefore a contract experiment, not a catalog performance transfer. The main fixture instead uses imported AutoModel, AutoTokenizer, load_dataset, and hub functions. The next boundary experiment must include reached binding targets and first-fill scope work.
+
+A scalar captured cost trace also misses native cache history. An inner helper can be warm while an outer helper is cold. A cached subtree can report its complete depth peak before discovering insufficient work. The interval experiment represents utility entry and completion boundaries separately from shared result production. Its tests include inner-first calls and changed capture inputs.
+
+### A stronger job gate finds a pre-existing work gap
+
+The packing oracle now compares remaining work at each published row. The previous output-only gate passed 23 statements. The stronger gate rejects B002: native spends one utility step, while the set-only compiler reports the original allowance.
+
+This is a compiler contract gap, not a packing namespace collision. The set classifier admits recursive utilities whose answers are total, then omits their observable work. The experimental job compiler now routes grammars with utilities through the existing ordered work emitter. The new relation compiler must preserve work alongside shared pure answers instead. The ordinary production selector remains unchanged during these spikes.
+
+The full SIM905 experiment also exceeded SQLite's 65,535-reference preparation limit after depth became a data column. The next experiment uses explicit materialization stages and counts all their work. SQL size and reference expansion are separate planning limits.
+
+### Staged SIM905 exposes the remaining amplification
+
+Build 11 passes the stage-accounting controls. Every CTAS and index build contributes to matching statement count, VM work, and execution time. Preparation and EXPLAIN remain separate.
+
+The first staged SIM905 plan returns all 77 native matches in 12 executions. Its largest statement is 49,523 bytes. It fails the performance gate at 631,071,243 VM instructions. Receiver summaries consume 132,824,062 instructions. Separator summaries consume 410,776,985. The final effect/publication statement consumes 73,523,429. Materialization solves the preparation limit but does not fix an inefficient pure producer.
+
+The next design separates metadata cases with constant pure costs from cases that need string analysis or numeric effects. It also batches consecutive pure failures before the next reached callback. The old performance ceiling remains unchanged.
+
+A finite-work oracle catches another order error. In the translated keyword fallback, the positional `any` runs before the `not` keyword-presence guard. The first staged reference moved that presence guard earlier and undercharged work. Correct keyword priority in the result set does not prove correct reached execution.
+
+F632 passes all nine focused contracts and full fixture parity. Its VM count falls from 240,957,037 to 19,227,542. Typed child-result transfers fall from 1,440,173 to 41,489. Numeric continuation pushes fall from 131,436 to 8,544. These results retain native work, parsed exports, failures, and the tested logical-depth boundaries.
+
+The expanded materialization matrix now contains 240 capture samples and 120 membership samples. Inlining wins all tested single-caller capture cases. A shared materialized join wins all tested cases with 2, 4, 8, or 32 callers. These measurements support a reuse-sensitive planning rule, not an unconditional materialization hint.
+
+### Closed producers still need selective physical lowering
+
+Build 13 passes SIM905 finite-work, rejected-suffix, reached-Value, and helper-depth comparisons. Constant node-kind strata and pure-failure gap compression reduce the full reference to 134,232,109 VM instructions. Typed transfers fall to 31,103 and continuation pushes to 2,539. The unchanged 44,908,386-instruction gate still rejects the plan.
+
+Stage cardinalities now accompany SQL and EXPLAIN. Diagnostic row counts are outside matching execution and are labeled accordingly. The candidate table contains 29,766 rows. Receiver and separator summaries contain 7,026 and 17,492 rows. Despite those small outputs, separator construction consumes 94,424,775 instructions. Receiver construction consumes 15,240,411. The final effect/publication query consumes 10,778,798. The unresolved pure DAG, rather than numeric continuation traffic, is now the measured bottleneck.
+
+A new positive Unknown fixture reaches the original integer-size limit. The full reference agrees with native behavior. An additional test expectation incorrectly assumed three replay steps; native reports four. That assertion must follow the original matcher, without changing its observed output or work.
+
+The specification also records a possible captured-recursion amplification. Materializing an interval trace per root repeats shared suffixes. A scaling experiment must include SQL population and index construction, not only subsequent frontier consumption.
+
+### Work-aware job and real imported-callee transfer
+
+Build 13 passes the strengthened complete-job comparison: 146 grammars, 597 files, 2,477 native rows, and exact remaining work at every publication. The job uses 24 matching statements. Its largest statement is 255,548 bytes. It executes 2,777,339,105 VM instructions, including the ordered fallback needed to retain charges for total utility grammars. This establishes the execution-count budget, not a VM improvement.
+
+Two finite-allowance controls expose a separate publication defect. The SQL failure arm includes its reached node, while a native clause/file failure has no node. The prior readers normalized this difference away. The raw job reader now requires NULL and preserves the failure tag and remaining work.
+
+The B615 imported-callee tests pass on 19 positive AutoModel/AutoTokenizer calls from real fixtures. They include API capture, cold scope fill, warm replay, and finite-work failure. The admitted domain starts with an absent API capture at incoming depth zero. Alias, bare-call, and other API families remain explicit positive-native refusals. This is a successful binding-boundary transfer, not a full B615 replacement.
+
+### Validation scope and cache ownership review
+
+The full engine suite was also run against diagnostic binary 13. It passed 2,125 tests. Four failures were the known structural-spike gates. Nine Git-workspace tests failed because the user Git wrapper was invoked inside temporary repositories without its shell support file. The allocator purge test failed because this earlier validation binary used a malloc compatibility shim.
+
+The next validation binary links the available real jemalloc archive. The full-suite environment selects system Git for temporary repository tests. No test assertion or production allocator behavior changes to accommodate those environment failures.
+
+The cache review extends ownership to decoded values. Two cloned grammars can share the same Reading ID, so a parse-only owner key is insufficient. The new controls repeat that reader within a clause and reuse it from another owner. They include scalar Value callbacks and PHP format parsing from a decoded concatenation. The expected contract is warm within the owner and cold across owners.
+
+### SIM905 reference passes the structural gate
+
+Build 16 passes all four full-reference tests and all five numeric-effect tests. The full 597-file SIM905 reference executes 35,850,853 VM instructions, versus the 449,083,864 baseline. It performs 31,103 typed transfers and 2,539 continuation pushes. All 12 statements count, including four table populations and seven indexes. The largest statement is 20,525 bytes; the total program is 48,786 bytes.
+
+The accepted change replaces the unresolved per-expression DAG with utility-level projections. Original string-part predicates are computed over demanded strings. Source-order CASE expressions carry truth, work, and depth through t-string, f-string, plain-string, and bytes-string boundaries. The generic dynamic-depth emitter remains a differential control. Receiver summary work falls to 2,920,929 instructions and separator summary work to 8,363,001.
+
+The raw job oracle now passes all seven tests, including finite failures, cloned semantic readers, and PHP decoded format strings. The full catalog still passes published work and outputs in 24 executions.
+
+The flattened B615 scaling experiment confirms the suspected shape problem. At depth 32 with all roots and two capture variants, 66 demands materialize 1,320 interval rows for only 70 unique suffix answers. Total setup and consumption cost is 369,074 instructions. The next control shares canonical utility nodes and edges instead of flattening each root trace.
+
+The staged-family control also passes. Across 146 rules and 16 files, shared producers visit 96 candidate nodes instead of 7,008. Including both table populations and indexes, VM work falls from 391,113 to 114,484. The staged version uses five executions. For two rules, staging is more expensive, confirming that the planner must account for reuse.
+
+### Admission proof and ambient context
+
+Build 17 passes the reference source-admission controls. Independent compilations retain the same descriptor. Changed method guards, stop rules, integer bounds, numeric kinds, minus predicates, file conditions, and transforms are refused. Utility identities use source digests and semantic descriptors, not allocation pointers or cache IDs.
+
+A final B615 review found a context difference in the helper experiments. Extracting hf-callee as a standalone grammar gives two-valued mode. The full B615 clause uses three-valued mode, which changes native candidate pruning. Recursive helper calls can then reach punctuation that the isolated helper skips. The shared-suffix transfer must test the original full-clause context explicitly. Earlier isolated-helper results retain their narrower scope.
+
+The first fused-producer construction also fails preparation with a missing private CTE name. This is not accepted as evidence that staging is necessary. The generator must first preserve CTE scope when it combines the closed producer graphs.
+
+### Full engine and prepared execution checks
+
+Diagnostic binary 17 passes the full engine suite: 2,150 tests passed, zero failed, and 54 were ignored. This run uses real jemalloc and system Git for temporary-repository tests. All production cache/publication fixes are included.
+
+The prepared-family test creates two empty schemas once and prepares five statements once. Each subsequent job counts two resets, two populations, and final matching. Rule batches change from 2 to 146 to 32. Native results remain exact and no stale rows survive. With 16 files, the 146-rule job uses 105,676 VM instructions and five executions, with zero preparations during the job.
+
+The first shared-suffix B615 graph passes its isolated-helper native contracts. At depth 32 and both capture variants, all roots share 70 utility nodes and 69 call edges. The flattened control stores 1,320 interval rows. Total VM work falls from 369,074 to 205,612 for all roots. However, the outer-root-only case regresses from 65,010 to 160,684. Edge construction alone consumes 80,534 instructions for 69 edges. The physical join plan needs investigation before accepting this representation as an unconditional improvement.
+
+### Valid fused graph reaches the planner limit
+
+Build 18 hoists the original closed definition graph without reparsing SQL. Each relation has one owner and one allocated name. The fused candidate is 44,789 bytes, but SQLite rejects it with `too many references to "node": max 65535`. This is a genuine planner limit. The staged 12-statement reference remains the selected shape.
+
+Build 18 also passes both B615 ambient-mode transfers. The shared-suffix graph preserves original three-valued context, punctuation-call order, comment guards, cold/warm memo behavior, finite work, logical depth, and API captures. The 19 imported-callee paths also pass with the original full-clause context preserved. The graph's physical edge construction remains the final tuning experiment.
+
+### Failure followers and the recursive producer bottleneck
+
+Build 19 passes the four edge-layout controls in both ambient modes. Unique indexes, forced join order, and ANALYZE all cost more than the baseline after setup is counted. The edge join is no longer the main cost. At depth 32, the hf answer producer uses 118,434 instructions in two-valued mode and 351,213 in three-valued mode. The final physical experiment moves parent links and punctuation-prefix costs into one indexed relation before recursion.
+
+A separate failure-path audit finds an observable memo read after a sticky work failure. Warm the immediate inner B615 utility, then invoke its cold parent with four work units. Native three-valued execution records a peak of six; immediate abort records three. The spike now follows the original remaining utility sites in memo-only mode. It performs no additional body execution, work spending, capture writes, or memo publication. Numeric Any and child-search boundaries receive equivalent controls.
+
+These cases add a compiler requirement: failure successors must retain source order and capture context. They cannot reuse normal success edges or simply discard the remaining frontier. This behavior is specified independently of the selected physical join plan.
+
+### Indexed parent links win; native owner identity matters
+
+Build 20 passes every B615 physical variant and all captured/binding controls. Parent links win all eight depth, root-density, and ambient-mode comparisons. At depth 32, the recursive answer producer falls from 118,434 to 4,691 VM instructions in two-valued mode. Three-valued execution falls from 351,213 to 13,279. The added relation and index are included in every total. Parent links become the reference default; the other plans remain explicit controls.
+
+The same build rejects the new numeric sticky-failure fixture before its SQL comparison. Its warm and cold helpers use different GrammarMatcher addresses. Native decoded-value reads make their memos clause-owned, so the cold helper correctly cannot recall that entry. The corrected fixture changes the selected helper inside one stable owner. Its positive peak assertion and all native-work gates remain unchanged. This failure confirms that physical sharing cannot erase logical owner identity.
+
+With memo-only numeric failure followers enabled, full SIM905 remains under its unchanged gate: 35,866,088 VM instructions and 31,103 typed transfers. The reference has 50,384 total SQL bytes and a 22,123-byte largest statement. B615 all-root three-valued frontier consumption remains expensive at 760,550 instructions; the specification records that cost instead of claiming a complete captured-recursion solution.
+
+### Frozen structural qualification
+
+Build 22 passes all 73 structural tests across 13 suites. The runner records no changed source hashes and an unchanged test executable. Both workspace Clippy and the code-rule-profile configuration pass with warnings denied. Formatting and whitespace checks pass.
+
+Final SIM905 uses 35,866,088 VM instructions in 12 statements. F632 uses 19,227,542 in one statement. Their original baselines use 449,083,864 and 240,957,037 respectively. Full-job packing passes all 146 grammars, 597 files, 2,477 output rows, and exact published remaining work in 24 executions. Its 2,777,339,105 instructions are reported as batching feasibility, not a speedup.
+
+The earlier full engine run passed 2,150 tests, with zero failures and 54 ignored. A source-hash comparison confirms that all later changes affect only test reference modules and their runner. The final structural run rechecks those modules, including the new original-context and sticky-failure controls. The evidence archive preserves both runs rather than claiming one combined full-suite execution.
+
+The plan and specification now include the selected physical shapes, the failed alternatives, compiler interfaces, and hard implementation gates. Production cutover, full B615 composition, arbitrary mutual recursion, and native physical stack-byte equivalence remain separate qualification requirements.
+
+The final independent catalog qualification also passes. All 146 grammars have positive native witnesses, zero refusals, zero execution failures, and unchanged resource ceilings. Aggregate default-compiler work remains 2,390,172,088 VM instructions. This confirms that the new reference reductions are not yet a production-wide speedup.
+
+The compact evidence is `benchmark/sql-relational-structural-spikes.json`. The compressed trace contains 223 files, including generated SQL, query plans, stage counts, native comparisons, failed checkpoints, and validation logs. Every archived file has a checked SHA-256 entry. No production compiler selection flag was introduced.

@@ -36,6 +36,8 @@ mod recursive_downward;
 mod row;
 mod sibling_state;
 mod span_capture;
+#[cfg(test)]
+mod spike_stages;
 pub(super) mod tests;
 pub(super) mod witness;
 pub(super) mod witness_tests;
@@ -80,8 +82,15 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
 }
 
 fn compile_total(grammar: &GrammarMatcher) -> Result<Compiled, String> {
+    compile_total_with_prefix(grammar, 0)
+}
+fn compile_total_with_prefix(grammar: &GrammarMatcher, prefix: usize) -> Result<Compiled, String> {
     analysis::admit(grammar)?;
-    let mut program = lower::compile(grammar)?;
+    let mut program = if prefix == 0 {
+        lower::compile(grammar)?
+    } else {
+        lower::compile_with_prefix(grammar, prefix)?
+    };
     // Check the original dependency graph before specializing any consumer.
     physical::plan(&program)?;
     demand::apply(&mut program);
@@ -116,4 +125,51 @@ fn compile_total(grammar: &GrammarMatcher) -> Result<Compiled, String> {
         terminals: program.terminals,
         relations,
     })
+}
+
+// Prefix IDs are assigned before lowering. SQL is never reparsed or rewritten.
+fn seed_terminals(prefix: usize) -> Vec<Terminal> {
+    if prefix == 0 {
+        return vec![];
+    }
+    let empty = regex::Regex::new(r"\b\B").expect("empty regex");
+    (0..prefix)
+        .map(|_| Terminal::Regex(empty.clone()))
+        .collect()
+}
+
+#[cfg(test)]
+mod job_relation_spike;
+#[cfg(test)]
+mod staged_job_spike;
+
+pub(super) fn compile_namespaced(
+    grammar: &GrammarMatcher,
+    prefix: usize,
+    clause: usize,
+) -> Result<Compiled, String> {
+    // Packed jobs expose remaining work. Set-only compilation can erase utility
+    // charges even when result truth is total; retain the ordered work contract.
+    if grammar.file.is_some() || !grammar.utils.names.is_empty() {
+        return outcomes::compile_namespaced(grammar, prefix, clause);
+    }
+    match classify::classify(grammar)? {
+        classify::Representation::OrderedOutcomes => {
+            outcomes::compile_namespaced(grammar, prefix, clause)
+        }
+        classify::Representation::CapturedRelations => {
+            match answers::prepare_with_prefix(grammar, prefix)? {
+                answers::Eligibility::Applicable(plan) => plan.emit(),
+                answers::Eligibility::NotApplicable(_) => {
+                    outcomes::compile_namespaced(grammar, prefix, clause)
+                }
+            }
+        }
+        classify::Representation::TotalRelations => {
+            match compile_total_with_prefix(grammar, prefix) {
+                Ok(compiled) => Ok(compiled),
+                Err(_) => outcomes::compile_namespaced(grammar, prefix, clause),
+            }
+        }
+    }
 }

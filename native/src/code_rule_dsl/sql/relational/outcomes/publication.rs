@@ -9,6 +9,14 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
     work: i64,
     memo_layouts: &[Option<std::rc::Rc<super::super::utility_memo::Layout>>],
 ) -> Result<(String, Value), String> {
+    compile_jobs_with_base(plans, work, memo_layouts, 0)
+}
+pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs_with_base(
+    plans: &[(&Plan, &[Slot], bool, &str)],
+    work: i64,
+    memo_layouts: &[Option<std::rc::Rc<super::super::utility_memo::Layout>>],
+    clause_base: usize,
+) -> Result<(String, Value), String> {
     if work < 0 {
         return Err("publication: negative work allowance".into());
     }
@@ -36,7 +44,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
         sql.generation = super::Generation::default();
         sql.generation.peak_tracking = plan.effects.needs_peak;
         sql.generation.memo_layout = memo_layouts.get(clause).cloned().flatten();
-        sql.generation.components.borrow_mut().clause = clause;
+        sql.generation.components.borrow_mut().clause = clause_base + clause;
         sql.generation.memo_clause = (plan.effects.needs_peak
             || super::file_memo::needed(plan)
             || (plan.uses_memo()
@@ -45,16 +53,19 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
                     .memo_layout
                     .as_ref()
                     .is_some_and(|layout| layout.has_spans())))
-        .then_some(clause);
+        .then_some(clause_base + clause);
+        let memo_clause = clause_base + clause;
         let reset = if sql.generation.memo_clause.is_some() || plan.effects.sibling_cache {
             let reset_expression = if plan.effects.sibling_cache {
                 if sql.generation.memo_clause.is_some() {
-                    format!("relation_memo_reset({clause})*relation_sibling_reset({clause})")
+                    format!(
+                        "relation_memo_reset({memo_clause})*relation_sibling_reset({memo_clause})"
+                    )
                 } else {
-                    format!("relation_sibling_reset({clause})")
+                    format!("relation_sibling_reset({memo_clause})")
                 }
             } else {
-                format!("relation_memo_reset({clause})")
+                format!("relation_memo_reset({memo_clause})")
             };
             let init = sql.relation(
                 "clause utility storage initialization",
@@ -165,7 +176,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
         "clause,file,node,failure,work",
     );
     let query = format!(
-        "WITH RECURSIVE\n{}\n-- final matches\nSELECT m.clause,m.file,m.node,CASE m.clause {} END AS payload,0 AS failure,m.work FROM {raw} m WHERE m.truth=1 AND NOT EXISTS (SELECT 1 FROM {failures} f WHERE f.clause=m.clause AND f.file=m.file)\nUNION ALL\nSELECT clause,file,node,'[]',truth,work FROM {failures}\nORDER BY 1,2,3",
+        "WITH RECURSIVE\n{}\n-- final matches\nSELECT m.clause,m.file,m.node,CASE m.clause {} END AS payload,0 AS failure,m.work FROM {raw} m WHERE m.truth=1 AND NOT EXISTS (SELECT 1 FROM {failures} f WHERE f.clause=m.clause AND f.file=m.file)\nUNION ALL\nSELECT clause,file,NULL,'[]',truth,work FROM {failures}\nORDER BY 1,2,3",
         sql.definitions.join(",\n"),
         payload_cases.join(" ")
     );
