@@ -148,6 +148,10 @@ test("the CI workload refuses an existing output directory without rewriting its
 test("the CI launcher independently rejects a missing or bypassed execution gate", () => {
   const launcher = resolve("scripts/profiling/sql-budget.mjs");
   const original = JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-06-recording.json"));
+  original.events = original.events.filter(e => [
+    "test_rejects_lazy_result_private_step_ref_access",
+    "test_collector_uses_generated_return_kinds_without_recomputing_project_map",
+  ].some(name => e.test.endsWith(`::${name}`)));
   for (const count of [null, 100, 101]) {
     const sandbox = mkdtempSync(join(tmpdir(), "rerail-budget-bypass-"));
     try {

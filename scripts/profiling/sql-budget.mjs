@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
+import { executionBudget, requireExecutionBudget } from "../../benchmark/sql-profile/execution-budget.mjs";
 
 if (process.argv.length !== 3) throw new Error("Usage: node scripts/profiling/sql-budget.mjs NEW_OUTPUT_DIRECTORY");
 const directory = resolve(process.argv[2]);
@@ -32,11 +33,11 @@ const child = spawnSync("python3", ["scripts/profiling/run.py", "--trace", "off"
   "--output", capture, "--", process.execPath, "--import", "tsx", "conformance/data-layer/replay.ts",
   "--recording", input, "--output", join(capture, "parity.json")], { stdio: "inherit", timeout: 118_000 });
 if (child.error) throw child.error;
-const budgetPath = join(capture, "sql", "execution-budget.json");
-if (existsSync(budgetPath)) {
-  const budget = JSON.parse(readFileSync(budgetPath));
-  console.log(`SQL execution budget: ${budget.status}; ${budget.observed}/${budget.limit} actual executions for the complete cold job.`);
-  if (budget.firstOverBudget) console.log(`Execution 101: ${budget.firstOverBudget.sql}`);
-  for (const problem of budget.problems) console.error(problem);
-}
+const reportPath = join(capture, "sql", "profile.json");
+if (!existsSync(reportPath)) throw new Error("Missing complete SQL execution report; acceptance fails closed.");
+const report = JSON.parse(readFileSync(reportPath));
+const budget = executionBudget(report);
+console.log(`SQL execution budget: ${budget.status}; ${budget.observed}/${budget.limit} actual executions for the complete cold job.`);
+if (budget.firstOverBudget) console.log(`Execution 101: ${budget.firstOverBudget.sql}`);
+requireExecutionBudget(report);
 process.exitCode = child.status ?? 1;

@@ -19,6 +19,12 @@ The red invocation is `.rerail/profiles/sql-recovery-tdd-20261023/guard-red`.
 It fails because the launcher returns zero for the missing-report case, where failure is required.
 This is a behavioral failure, before the launcher implementation changes.
 
+Red commit: `640b74a2`. The launcher now requires the complete report and independently recomputes acceptance.
+It rejects missing evidence and forged passing summaries. The allowance remains fixed at 100.
+The green invocation is `.rerail/profiles/sql-recovery-tdd-20261023/guard-green`.
+All 22 Node profiling tests pass, including the 100/101 boundary and cross-worker accounting tests.
+The real workload remains a budget failure at 24,159 executions; this fix does not claim runtime recovery.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
