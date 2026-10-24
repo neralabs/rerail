@@ -142,3 +142,28 @@ Use new controller and result paths. The executable refuses to overwrite a resul
 This binary has no production execution switch.
 The [recorded experiment](../../../fixtures/host/data-layer-port/profiling/fts-bulk-publication-20261023.json) preserves raw trials and build identity.
 The result motivates broad publication across ingestion packets. It does not establish a complete-pipeline speedup.
+
+## Private owner projection replay
+
+The `owner_projection` binary applies the production CTE rewrite to an existing candidate SQL capture.
+It streams each owner's final `(fid, pre)` projection into CTAS while preserving upstream shared CTEs.
+It copies the database and preserves parameters, stages, packet consumer IDs, and the dependency schedule.
+It does not execute rule decisions or select a different engine algorithm.
+
+```sh
+cargo build --release --locked --manifest-path scripts/profiling/preparation/Cargo.toml --bin owner_projection --bin cache_budget
+scripts/profiling/preparation/target/release/owner_projection \
+  /path/to/candidate.json .rerail/profiles/owner-projection/candidate.json
+python3 scripts/profiling/run.py --trace off --deadline 115 \
+  --output .rerail/profiles/owner-projection/measurement -- \
+  scripts/profiling/preparation/target/release/cache_budget \
+  .rerail/profiles/owner-projection/candidate.json 1024 512 \
+  .rerail/profiles/owner-projection/memory.json
+```
+
+Use a fresh output directory. The rewrite refuses an existing output file or copied database.
+Compare the original and rewritten row multisets, VM counters, compilation peaks, and stepping heap peaks.
+The copied packet IDs permit an exact intermediate comparison across the two programs.
+Allocation-accounted replay timings are diagnostic. Run complete-process CPU controls separately with tracing disabled.
+This rewrite removes VM materialization work; it does not reduce engine-submitted statement counts.
+The [journal](../../../docs/data-layer-performance-journal.md#selector-sql-owners-2026-10-24) records the accepted cleanup and rejected family-packing experiments.

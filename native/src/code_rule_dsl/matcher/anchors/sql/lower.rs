@@ -945,6 +945,11 @@ fn finish_decoded(
         // multiply beyond SQLite's preparation limits; each physical table resets the cost.
         let shared = indexed.contains(name) || (uses[name] > 1 && cost >= 32);
         expansion.insert(name.as_str(), if shared { 1 } else { cost });
+        let cte = if shared {
+            render::owned(cte, name)
+        } else {
+            cte
+        };
         inline.push(cte);
         if shared {
             // CTAS otherwise inherits empty affinity from FTS columns and compound CTEs.

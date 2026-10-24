@@ -4,6 +4,8 @@ Status: the engine contract catalog, live candidate exports, and physical span a
 Decoder reuse now uses registered binding IDs. Candidate captures export actual consumers and pinned source versions.
 The existing retained SQL tables remain the physical owners. Independent span and child demand share fills per dependency wave.
 Scoped node-property fills and repeated selector construction remain open.
+Physical `(fid, pre)` owners now stream their final projection into CTAS without a second private ephemeral copy.
+Shared upstream CTEs retain their boundaries. Generic selector-family packing remains rejected because measured CPU regresses.
 The [implementation workplan](shared-producer-workplan.md) defines the ordered commits, acceptance checks, and measurement gates.
 
 This design simplifies [execution stages](sql-execution-stages.md) and [materialization ownership](sql-materialization-shape.md).

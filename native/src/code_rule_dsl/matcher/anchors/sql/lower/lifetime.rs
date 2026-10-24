@@ -72,6 +72,7 @@ impl Schedule {
             let tokens: BTreeSet<_> = IDENTIFIER
                 .find_iter(input.sql)
                 .map(|t| t.as_str())
+                .filter(|name| names.contains_key(name) || resources.contains_key(name))
                 .collect();
             let mut needs: BTreeSet<_> = tokens
                 .iter()

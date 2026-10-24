@@ -28,7 +28,8 @@ mod postings;
 #[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/reader.rs"]
 mod reader;
-#[cfg(test)]
+// The replay CLI uses the same owner-projection rewrite as production.
+#[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/render.rs"]
 mod render;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/replay.rs"]
@@ -65,6 +66,7 @@ mod children;
 
 pub mod composition;
 pub mod fts;
+pub mod owner_projection;
 pub mod residency;
 
 mod code_rule_dsl {
