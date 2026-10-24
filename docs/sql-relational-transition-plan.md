@@ -1187,3 +1187,84 @@ Production replacement, native physical stack-byte equivalence, aggregate storag
 Final qualification passes all 146 admissions and native fixture comparisons, all VM ceilings, all applicable resource limits, and all 285 prior SQL/VM controls. The full suite reports 459 passing tests and no failures. Both native lint configurations pass. The original 135 grammars use 2.5% fewer VM instructions. The complete catalog still uses 2.390 billion instructions, so the performance transition is not complete.
 
 See [the complete catalog integration report](../benchmark/sql-relational-complete-catalog-integration.json), [the qualification record](../benchmark/sql-relational-cutover-evidence.json), and [the coverage ledger](../benchmark/sql-relational-cutover-coverage.json). Full EXPLAIN plans and native file traces are preserved in `benchmark/sql-relational-catalog-trace.json.gz`.
+
+## Structural execution transition after complete catalog admission
+
+This analysis uses commit `049c5873` and its qualified 597-file catalog. It proposes changes. It adds no engine implementation or new performance result.
+
+The current compiler shares SQL text, but it still interprets ordinary composition in SQL. SIM905 uses 61 finite instructions, one shared function, and 19 SQL regions. B615 uses 249 instructions, 21 functions, and 48 regions. F632 uses the inline emitter, but its publication demand includes every AST node. Its nested children still execute through correlated result transfers.
+
+The following values come from the final catalog profile. Materialization sites are static EXPLAIN entries, not runtime invocation counts.
+
+| Grammar | VM instructions | Typed child-result transfers | Materialization sites | Correlated scalar subqueries |
+| --- | ---: | ---: | ---: | ---: |
+| SIM905 | 449,083,864 | 1,581,869 | 368 | 167 |
+| B615 | 347,286,337 | 1,076,954 | 336 | 165 |
+| F632 | 240,957,037 | 1,440,173 | 153 | 80 |
+
+Together, these queries account for 43.4% of catalog VM instructions. The fixture inventory contains 385,321 source bytes. This is a different corpus from the frozen B023 benchmark.
+
+The child-result counter measures `relation_row` cursor inputs in `row.rs`. It does not measure allocations in `continuation_store.rs`. The earlier summary called these continuation records, which was incorrect. The current catalog does not attribute VM instructions to individual regions or count total continuation pushes and pops.
+
+### 1. Separate computation from observable execution
+
+`Effects.fallible` currently combines work exhaustion, depth failure, value failure, and parser effects. `publication.rs` sequences all roots for a fallible plan. A utility charge alone can cause this choice. `FiniteProgram` also activates peak tracking, memo storage, and typed exports globally.
+
+The compiler needs separate properties for safe speculation, work cost, depth requirements, memo effects, reached callbacks, and capture exports. A pure result producer needs explicit identity and demand. A separate contract must describe its native work and effects.
+
+For a proved region, its result can include truth, selected witnesses, work cost, and relative depth peak. A scalar cost summary is valid only where earlier cache state cannot change that cost. Stateful memo operations and reached callbacks retain explicit ordered boundaries. The compiler must not pre-evaluate a throwing value or parser callback.
+
+Budget-only roots can use prefix costs where the cost proof permits them. The first unaffordable root must preserve the exact failure and remaining-work contract. A boundary root can require a finer internal prefix. This does not permit a generic shortcut for all fallible clauses.
+
+### 2. Share relations across demand sets
+
+An acyclic utility body must produce a keyed relation over its distinct demands. Callers join its completed answers. Ordinary conjunctions, alternatives, and negations must not require program-counter transitions or continuation records.
+
+The physical key includes document identity, node identity, semantic context, and the capture inputs that the producer actually reads. Language, parse grammar, host context, and scope constrain sharing. Native memo identities remain separate from shared physical producers. Two callers can share computation without merging their observable cache contracts.
+
+The relation IR must carry keys, uniqueness, demand, witness order, and effects before SQL emission. Existing `Set` and captured-answer plans provide reusable foundations. Extending those plans is preferable to another instruction representation in `finite_lower.rs`.
+
+### 3. Bound intermediate relations before reuse
+
+Pure structural regions can start from selective evidence and join toward their callers. Capture-free existence branches use semijoins. Witness branches select the required first answer before joining upward. Every relation carries only its required key and live outputs.
+
+Repeated producers must have explicit, stable demand inputs. Single-use projections can remain inline. Materialization belongs after demand restriction and reduction. A materialization hint inside a correlated per-node child does not establish shared computation across roots.
+
+This is the applicable ast-index pattern: selective anchors, reduced subtree identities, measured probe shapes, and deliberate materialization. PR 2539 contributes named typed relations and composed CTE dependencies. Neither source proves Rerail's ordered work, memo, or failure semantics.
+
+### 4. Limit recursive control to recursive components
+
+Parenthesis traversal, monotone structural search, and recursive predicate classification need narrow relations for their recursive components. Their rows represent document, node, component state, and required witnesses. They must not carry a generic instruction stack for surrounding finite composition.
+
+Ordered or context-dependent recursion can retain a component-local continuation contract. Ordinary callers must remain relational. Parsed recursion also needs document and host identity in its demands. Parse callbacks remain reached operations. Successful parsed documents can supply shared structural relations after that boundary.
+
+### 5. Plan complete jobs over the shared relation graph
+
+The physical planner must choose plans for execution work, not only SQL size. `select_composition` currently chooses the first representation that compiles within resource limits. This is insufficient for performance.
+
+The job compiler must combine producers across all files and compatible rules. A small number of phase statements can handle preparation limits and indexed intermediate relations. Statement partitioning must follow dependencies and resource limits. It must not introduce host loops per node, rule invocation, or recursive round.
+
+The whole-job 100-execution gate remains mandatory. Per-grammar qualification alone cannot pass it. Preparation stays separate from repeated execution measurements.
+
+### First executable reference: SIM905
+
+The next spike must implement one hand-designed SIM905 reference query before changing general lowering. Its structural producers cover argument positions, keyword selection, string classification, and parenthesis traversal. Its demands must preserve native argument checks before receiver checks. Selecting only `.split` calls first is invalid without accounting for the earlier reached work and effects.
+
+The intended flow is:
+
+```text
+root demands
+  -> argument structure and distinct helper demands
+  -> shared structural classifications
+  -> reached value checks and argument outcomes
+  -> reached receiver demands and receiver outcomes
+  -> native work, memo, and failure publication
+```
+
+The reference must preserve the translated policy, including keyword priority, comments, parentheses, unknowns, and ordered failures. It must not substitute Ruff's intended rule semantics.
+
+The first experimental gate requires at least tenfold fewer VM instructions: at most 44,908,386 on the frozen fixture batch. Typed child-result transfers must also decrease by at least tenfold. These are proposed acceptance targets, not predicted results or final performance goals. Ordinary Boolean composition must allocate no continuation records. Existing native outputs, work boundaries, depth, cache replay, and reached-callback tests remain mandatory.
+
+The profile must count demands, distinct producer keys, producer evaluations, child-result transfers, continuation pushes and pops, and recursive states. Counts need operator provenance. Timed execution must remain separate from diagnostic instrumentation and preparation.
+
+After the reference passes, generic compiler lowering must match it within 25% for SQL bytes and VM instructions. All 146 native comparisons and existing VM ceilings must still pass. The next transfer cases are B615 for shared captured demands and F632 for parsed documents and broad root costs. Failed targets require another reference design before compiler expansion.

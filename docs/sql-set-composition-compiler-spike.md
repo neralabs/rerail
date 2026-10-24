@@ -6008,8 +6008,24 @@ The original 135 grammars fall from 1,142,977,128 to 1,114,422,856 VM instructio
 
 The regressions came from planner choices, not an unavoidable price of native semantics. Thin wrappers and simple recursive tails had lost cheaper specialized plans. Local memo operations activated unnecessary global peak tracking. Repeated ancestor demands reevaluated an expensive total predicate helper. The repaired planner preserves specialized walks and uses local completed-answer memo transactions where their proof permits them.
 
-The full 146-grammar catalog still executes 2,390,172,088 VM instructions. SIM905 uses 449,083,864, B615 uses 347,286,337, and F632 uses 240,957,037. They create 1,581,869, 1,076,954, and 1,440,173 numeric continuation rows respectively. These are execution costs. Preparation does not explain them, and compact SQL alone does not remove them. The next structural target is repeated control transitions and helper demands within those queries.
+The full 146-grammar catalog still executes 2,390,172,088 VM instructions. SIM905 uses 449,083,864, B615 uses 347,286,337, and F632 uses 240,957,037. They perform 1,581,869, 1,076,954, and 1,440,173 typed child-result transfers respectively. These counters do not measure numeric continuation allocations. These are execution costs. Preparation does not explain them, and compact SQL alone does not remove them. The next structural target is repeated control transitions and helper demands within those queries.
 
 The acceptance failure in the previous batch was procedural: the regressions were measured but did not block publication. The new gate makes them blocking. It retains the earlier ceilings and rejects an admission without a budget. This fixes regression acceptance; it does not establish acceptable overall runtime.
 
 The final integration report is `benchmark/sql-relational-complete-catalog-integration.json`. The qualification record contains source hashes, executable hashes, tests, controls, and the rejected checkpoint. The compact coverage ledger links a compressed archive of all 146 EXPLAIN plans and native file traces. The driver still emits readable full reports and individual SQL files. Production replacement, physical stack-byte parity, aggregate storage bounds, deadlines, and the whole-job 100-execution budget remain unqualified.
+
+### Structural review after complete catalog admission
+
+The user requested the next structural changes after the regression fixes. This review uses commit `049c5873`, the final SQL files, and the archived EXPLAIN plans. No engine code or performance result changes in this review.
+
+Counter inspection corrects an attribution error in the preceding summary. `typedReturnRows` counts `relation_row` cursor inputs. It does not count allocations in `relation_continuation`. The earlier phrase "numeric continuation rows" is corrected. Total stack pushes and pops still require instrumentation. Static EXPLAIN materialization counts also do not establish runtime invocation counts.
+
+SIM905 has 61 finite instructions, one shared function, and 19 regions. Its plan contains 368 materialization sites and 167 correlated scalar subqueries. B615 has 249 instructions, 21 functions, and 48 regions. Its plan contains 336 materialization sites and 165 correlated scalar subqueries. F632 has 33 source operators but 153 materialization sites and 80 correlated scalar subqueries. Its root demand includes every AST node.
+
+The compiler contains two sources of structural overhead. Shared finite functions use program-counter control for ordinary composition. Nested emitters instantiate child plans for individual demands. The single `fallible` property also makes budget-only computation inherit sequential root publication. Smaller SQL and fewer statements do not eliminate this work.
+
+The proposed transition separates reusable computation, native work and effects, and clause publication. Acyclic bodies become demand-keyed relations. Pure structural producers use selective anchors, semijoins, and reduced witnesses. Only actual recursive components retain recursive control. Native cache identities, reached callbacks, and finite-budget behavior remain explicit contracts.
+
+The source review revisits ast-index `_subtree_ctes`, `_mat`, and `_probe_semi` at the previously pinned revision. It also revisits PR 2539's named classifier and relation CTE composition. These sources support relation reuse and controlled intermediate size. They do not justify reordering Rerail's observable operations.
+
+The transition plan now specifies a SIM905 reference query as the first executable spike. Its proposed gates require tenfold reductions in VM instructions and typed result transfers. The compiler then must match the accepted reference within 25% for SQL size and VM instructions. No speedup is claimed before those measurements. Complete-job batching remains a separate mandatory gate.
