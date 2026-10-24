@@ -174,6 +174,8 @@ impl Corpus {
                 continue;
             }
             let mut plans = plans.clone();
+            // Addresses deduplicate live handles and key this cache only. The compiler
+            // independently admits fragments and canonically composes physical work.
             plans.sort_unstable_by_key(|p| Arc::as_ptr(p) as usize);
             plans.dedup_by_key(|p| Arc::as_ptr(p) as usize);
             let ids = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect();

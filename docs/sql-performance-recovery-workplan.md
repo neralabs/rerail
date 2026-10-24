@@ -2,10 +2,10 @@
 
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
 Conditional admission, whole-job publication, and R4–R7 remain open.
-The latest measured job has 9,481 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
+The latest measured job has 8,669 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
 Compiler input/syntax validation uses prepare-only schemas. Compiler stages share bounded SQLite-inferred metadata across documents.
 Runtime producer execution and whole-job lifetimes remain open. Aggregate CPU recovery is unresolved.
-All work uses the current worktree. WP1 has its catalog/export checkpoint, and WP2 has its first shared span execution slice.
+All work uses the current worktree. Named spans and deterministic frontier composition now have tested implementation slices.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
 ## Required outcome
@@ -231,6 +231,25 @@ Before another property extraction, make frontier construction reproducible:
 
 The earlier cache-pruning control was invalid and remains rejected. It is not evidence for this new root cause.
 Conditional admission, whole-job publication, general completion, and cross-clause readers remain open.
+
+### R4 deterministic frontier checkpoint
+
+The fixed-plan audit confirms the cause: forward order admits 54 broadened plans, while reverse order broadens 64 of the same 139 plans.
+The existing bound charges newly generated work after earlier plans populate reuse state.
+Independent bounded fragments now separate admission from shared composition.
+Full typed producer definitions establish sharing. Canonical topological numbering establishes physical placement and output-packet grouping.
+All four permutations now produce 1,503 stages and 65 broadened plans, with matching producer and stage definitions.
+The 256-node allowance remains unchanged. No cost-order heuristic or alternate executor is introduced.
+
+The complete small guard now repeats at 8,669 engine submissions, down from 9,481.
+Matched CPU decreases from 2,318.369 ms to 1,617.488 ms on this small workload.
+Correctness covers 309 native tests, 44 standalone SQL tests, and 120 original positive/clean observations.
+The [canonical-frontier evidence](../fixtures/host/data-layer-port/profiling/canonical-frontier-recovery-20261024.json) preserves all results and qualifications.
+
+Next, coalesce remaining node/child demand and repeated selector construction on this stable frontier.
+Preparation and cleanup still account for 6,468 submissions. Relational evaluation adds another 1,781.
+Whole-job publication, general completion, cross-clause readers, and repository acceptance remain open.
+The fixed 100-submission gate continues to fail and must remain mandatory.
 
 This step implements WP1 and the first useful execution slice from WP2.
 Use the [named contracts](shared-producer-contracts.md) and the existing discovery and clash tools.

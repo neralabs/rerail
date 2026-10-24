@@ -10,6 +10,58 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Frontier determinism: 2026-10-24
 
+### Independent admission and canonical composition: green
+
+The permutation test from `bc3417cd` now passes on all four orders of the same 139 compiled plans.
+Each order produces **1,503 stages and 65 broadened plans**.
+Producer definitions, physical stage definitions, parameter layouts, per-plan admission, result-packet counts, and peak live relations match.
+The audit compares hashes as diagnostic labels. Sharing itself uses full typed definition equality.
+
+The compiler now lowers each plan under its own existing 256-node allowance.
+It discards a failed fragment completely, then constructs the conservative fallback in fresh state.
+Live fragments enter one producer program. Equivalent SQL templates share through their complete schemas, bound values, and dependency identities.
+Canonical topological numbering determines names and placement before physical SQL lowering.
+Result packets group canonical producers while retaining the caller's consumer IDs.
+Allocation addresses remain local handle and cache keys. They no longer control admission or physical producer placement.
+The legacy alias-compaction path and its extra uncompacted capture are removed. Historical captures remain readable.
+This implementation compiles SQL. SQLite still executes the rules and owns the fact rows.
+
+The final addon passes **309 native-facing tests**, **44 standalone SQL tests**, and **120 original observations across 60 rules**.
+The original observations include 60 positive and 60 clean cases, with zero diagnostic differences or engine failures.
+The standalone tests cover canonical aliases, typed parameters, bag multiplicity, domain separation, and recursion inside a SQL operation.
+All eleven fixed-budget regression tests pass. The 100-submission limit remains mandatory.
+Native Clippy passes with and without profiling. Standalone Clippy, static checks, formatting, and patch checks pass.
+Static validation first finds a directory-size violation. Moving the audit beside the lowering helpers resolves it.
+Production Clippy finds an unread graph field. The diagnostic audit now includes the logical producer graph in its equality checks.
+
+Fresh complete-job captures consistently record **8,669 engine submissions**, **994 SQLite internal executions**, and **9,663 total executions**.
+The previous checkpoint records 9,481 engine submissions. The decrease is **812 submissions, or 8.56%**.
+Complete findings and all connection coverage reconcile. The unchanged 100-submission gate correctly still fails.
+Candidate preparation decreases from 4,836 to 4,252 submissions. Cleanup decreases from 2,444 to 2,216.
+The two captured frontier shapes have 647 and 659 stages, compared with 761 and 721 before this change.
+Both now peak at 100 live relations and retain two shared span fills.
+
+Three alternating fresh-process pairs compare the frozen `e237b5a0` addon with the selected implementation.
+Median process CPU decreases from **2,318.369 ms to 1,617.488 ms**, or **30.23%**.
+The before range is 2,297.111–2,511.919 ms. The after range is 1,610.712–1,683.899 ms.
+All three selected runs use less CPU than all three baseline runs.
+Reported median peak RSS is 360,800 KiB before and 343,728 KiB after. Those memory ranges overlap.
+Both binaries use identical build settings, allocator shim, input observations, and four workers.
+Detailed tracing remains disabled, and own builds, tests, and diagnostic runs finish before timing.
+The host remains shared. This small workload does not establish repository-wide recovery.
+
+A separate SQLite diagnostic replay uses the same first source observation and production cache budgets.
+Peak live relations decrease from 114 to 100. The stepping heap peak decreases from 22,828,464 to 19,793,328 bytes.
+These figures describe SQLite replay allocation, rather than process RSS or retained ownership.
+The candidate row counts differ: 135 before and 161 after. Independent bounded admission can produce broader candidate supersets.
+Final diagnostic parity passes. The full corpus and repository checks remain necessary before broad acceptance.
+
+The remaining preparation and cleanup submissions total 6,468, about 75% of engine submissions in this case.
+The next slice can now measure their repeated materialization against a reproducible frontier.
+Node/child demand coalescing, selector ownership across frontiers, broad SQL consumers, whole-job publication, and session lifetimes remain open.
+Checked evidence: [canonical frontier recovery](../fixtures/host/data-layer-port/profiling/canonical-frontier-recovery-20261024.json).
+Raw captures, all timing trials, the red audit, and commands remain in `.rerail/profiles/frontier-recovery-20261024/`.
+
 ### Same-object plan permutations: red
 
 The next phase starts from `e237b5a0`.

@@ -12,25 +12,7 @@ pub(super) fn save(
     nodes: &HashMap<String, Node>,
     files: &[i64],
 ) -> Result<()> {
-    save_variant(store, statement, nodes, "normal", files)?;
-    if let Some(original) = &statement.original {
-        let original_nodes =
-            store
-                .graph
-                .lock()
-                .register(&original.graph, &original.parameters, original.language);
-        save_variant(store, original, &original_nodes, "uncompacted", files)?;
-    }
-    Ok(())
-}
-
-fn save_variant(
-    store: &Store,
-    statement: &Statement,
-    nodes: &HashMap<String, Node>,
-    variant: &str,
-    files: &[i64],
-) -> Result<()> {
+    let variant = "normal";
     let Some(directory) = std::env::var_os("RERAIL_SQL_PROFILE_DIR") else {
         return Ok(());
     };
@@ -142,7 +124,7 @@ fn save_variant(
         serde_json::to_vec_pretty(&manifest).expect("producer manifest"),
     )
     .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
-    let output = serde_json::json!({"format":"rerail.candidate-replay/v2","variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"parameters":parameters,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
+    let output = serde_json::json!({"format":"rerail.candidate-replay/v2","variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"parameters":parameters,"admissions":statement.admissions,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
     std::fs::write(
         directory.join(format!("{stem}.json")),
         serde_json::to_vec_pretty(&output).expect("serializable candidate capture"),

@@ -41,14 +41,16 @@ pub(in crate::code_rule_dsl) fn candidate_frontier_audit(
                 .map(|a| (permutation[a.consumer], a.generated, a.broadened))
                 .collect();
             admissions.sort_unstable();
-            variants.push(json!({"order":name,"plans":plans.len(),"stages":stages.len(),"physicalBuilds":statement.stages.iter().filter(|s|s.temporary).count(),"stageSha256":hex_digest(&serde_json::to_vec(&stages).expect("stage metadata")),"parametersSha256":hex_digest(&serde_json::to_vec(&parameters).expect("bound values")),"admissions":admissions,"resultQueries":statement.queries.len(),"peakLiveRelations":statement.schedule.peak_relations}));
+            variants.push(json!({"order":name,"plans":plans.len(),"stages":stages.len(),"physicalBuilds":statement.stages.iter().filter(|s|s.temporary).count(),"producerSha256":hex_digest(&serde_json::to_vec(&statement.graph).expect("producer graph")),"stageSha256":hex_digest(&serde_json::to_vec(&stages).expect("stage metadata")),"parametersSha256":hex_digest(&serde_json::to_vec(&parameters).expect("bound values")),"admissions":admissions,"resultQueries":statement.queries.len(),"peakLiveRelations":statement.schedule.peak_relations}));
         }
         let stable = variants.iter().all(|v| {
             [
                 "stageSha256",
+                "producerSha256",
                 "parametersSha256",
                 "admissions",
                 "resultQueries",
+                "peakLiveRelations",
             ]
             .iter()
             .all(|k| v[k] == variants[0][k])
