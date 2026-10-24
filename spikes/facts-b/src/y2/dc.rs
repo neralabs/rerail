@@ -14,8 +14,8 @@
 //! left (found through `pred`, a superset each candidate of which is verified against `succ`);
 //! the removal cascades to higher-level successors in increasing level, then every removed state
 //! with any reached predecessor is re-derived and propagated. (Plain DRed, which over-deletes
-//! the whole forward closure, removed and re-derived 386K of 830K states on a third of the
-//! replay's edits: the module nodes make that closure most of the graph.)
+//! the whole forward closure, removed and re-derived up to 388K of a worktree's 400K states on a
+//! third of the replay's edits: the module nodes make that closure most of the graph.)
 //!
 //! Scoping (exact; see `prepare`): an edit's presence changes name keys; `prepare` collects, under
 //! the old state, every state whose `succ` or root predicate reads one of those keys (inverse
