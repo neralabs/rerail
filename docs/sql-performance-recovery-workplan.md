@@ -2,10 +2,10 @@
 
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
 Conditional admission, whole-job publication, and R4–R7 remain open.
-The latest measured job has 9,095 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
+The latest measured job has 9,113 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
 Compiler input/syntax validation uses prepare-only schemas. Compiler stages share bounded SQLite-inferred metadata across documents.
-Runtime producers and whole-job lifetimes remain open. The latest small CPU comparison regresses by 4.68%; CPU recovery is unresolved.
-All work uses the current worktree. WP1 remains pending.
+Runtime producer execution and whole-job lifetimes remain open. Aggregate CPU recovery is unresolved.
+All work uses the current worktree. WP1 now has a structural catalog/export checkpoint.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
 ## Required outcome
@@ -199,6 +199,17 @@ Matched median CPU increases from 2,479.402 ms to 2,595.351 ms. The count reduct
 The [stage-schema evidence](../fixtures/host/data-layer-port/profiling/sql-stage-schema-recovery-20261023.json) records both control groups and the unresolved CPU requirement.
 
 ## R4: establish shared producers and remove repeated construction
+
+The 2026-10-24 checkpoint implements trusted structural contracts and live source-pinned candidate exports.
+Registered binding IDs drive same-selector decoder reuse. Definitions and complete typed bindings establish sharing without digest equality.
+Exports preserve rule, clause, policy digest, result index, and selector provenance.
+The early writer/reader check selects physical public owners. The legacy generated-view exception cannot provide general reader isolation.
+Its count shortcut and CTE accessor problems remain explicit follow-up work.
+
+The state guard has one span binding with 117 consumer/selector references, but still submits 22 separate span fills per normal frontier.
+The guard remains failing at 9,113 engine submissions. No physical coalescing follows from the catalog alone.
+The next slice must turn ready demand under that binding into one broad fill per necessary dependency wave.
+The [foundation evidence](../fixtures/host/data-layer-port/profiling/shared-producer-foundation-20261024.json) records correctness, complete counts, and matched CPU controls.
 
 This step implements WP1 and the first useful execution slice from WP2.
 Use the [named contracts](shared-producer-contracts.md) and the existing discovery and clash tools.

@@ -11,6 +11,7 @@ pub(super) enum Property {
 pub(super) struct Demand {
     pub(super) scope: String,
     pub(super) property: Property,
+    pub(super) consumers: std::collections::BTreeSet<usize>,
 }
 impl Property {
     fn shape(self) -> (&'static str, &'static str, &'static str) {
@@ -29,8 +30,20 @@ impl Property {
 }
 impl Lower {
     pub(super) fn decoded(&mut self, scope: &Set, property: Property) -> String {
-        let key = (scope.name.clone(), property);
+        let binding = *self.producer_bindings.entry(property).or_insert_with(|| {
+            property.binding(
+                &mut self.producers,
+                self.lang,
+                format!("candidate-result.{}", self.consumer),
+            )
+        });
+        let key = (scope.name.clone(), binding);
         if let Some(name) = self.reuse.decoded.get(&key) {
+            self.decoding
+                .get_mut(name)
+                .expect("decoded selector")
+                .consumers
+                .insert(self.consumer);
             return name.clone();
         }
         // The physical planner shares the demand source or hoists a covering universal demand.
@@ -65,6 +78,7 @@ impl Lower {
             Demand {
                 scope: scope.name.clone(),
                 property,
+                consumers: std::collections::BTreeSet::from([self.consumer]),
             },
         );
         self.reuse.decoded.insert(key, name.clone());
@@ -111,5 +125,78 @@ impl Demand {
                 "INSERT INTO {table}(fid,pre,{columns}) SELECT fid,pre,{selected} FROM decoded"
             ),
         )
+    }
+}
+
+impl Property {
+    /// One trusted declaration per algorithm. Selectors request keys; they are not binding options.
+    pub(super) fn binding(
+        self,
+        registry: &mut crate::code_rule_dsl::producers::Registry<u32>,
+        language: u32,
+        consumer: String,
+    ) -> usize {
+        use crate::code_rule_dsl::producers::{Binding, Column, Contract, Definition, OptionValue};
+        use std::collections::BTreeMap;
+        let (name, function, output) = match self {
+            Self::Node => (
+                "syntax.node_properties.v1",
+                "nera_nodes",
+                "parent,end,kind,field,flags",
+            ),
+            Self::Span => ("syntax.source_spans.v1", "nera_span", "start,len"),
+            Self::Child(_) => ("syntax.child_fields.v1", "nera_child", "field,child"),
+        };
+        let mut columns = "fid,pre"
+            .split(',')
+            .chain(output.split(','))
+            .map(|name| Column {
+                name: name.into(),
+                kind: "integer".into(),
+                nullable: false,
+            })
+            .collect::<Vec<_>>();
+        if let Self::Child(_) = self {
+            columns.last_mut().expect("child column").nullable = true;
+        }
+        let options: BTreeMap<String, OptionValue> = if let Self::Child(field) = self {
+            BTreeMap::from([("field".into(), OptionValue::Integer(i64::from(field)))])
+        } else {
+            BTreeMap::new()
+        };
+        let contract = registry
+            .register(Contract {
+                name: name.into(),
+                origin: concat!(file!(), ":Property::binding").into(),
+                definition: Definition {
+                    inputs: BTreeMap::from([("tape".into(), "syntax-tape".into())]),
+                    options: options
+                        .keys()
+                        .map(|name| (name.clone(), "integer".into()))
+                        .collect(),
+                    columns,
+                    key: vec!["fid".into(), "pre".into()],
+                    completion: "keys".into(),
+                    multiplicity: "set".into(),
+                    ordering: vec![],
+                    implementation: BTreeMap::from([
+                        ("backend".into(), "sqlite-native-function".into()),
+                        ("symbol".into(), function.into()),
+                        ("revision".into(), "1".into()),
+                    ]),
+                },
+            })
+            .expect("trusted engine producer declaration");
+        registry
+            .bind(
+                Binding {
+                    contract,
+                    inputs: BTreeMap::from([("tape".into(), language)]),
+                    options,
+                    domain: None,
+                },
+                consumer,
+            )
+            .expect("trusted engine producer binding")
     }
 }

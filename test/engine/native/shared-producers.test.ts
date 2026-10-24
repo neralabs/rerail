@@ -39,6 +39,10 @@ it.skipIf(!required)("exports real shared structural bindings with pinned source
     const spans = manifests.flatMap(m => m.bindings).filter(b => b.contract === "syntax.source_spans.v1");
     expect(spans.length).toBeGreaterThan(0);
     expect(spans.some(b => b.consumers.length >= 2), "different selectors must reference one span binding").toBe(true);
+    const consumers = spans.flatMap(b => b.consumers).join("\n");
+    expect(consumers).toContain("rule names clause selected");
+    expect(consumers).toContain("rule calls clause selected");
+    expect(consumers).toContain("policy sha256:");
     for (const binding of spans) {
       expect(binding.inputs.tape.external.generation).toMatch(/[A-F0-9]{64}/);
       expect(binding.inputs.tape.external.generation).not.toMatch(/placeholder|pending|illustrative/);

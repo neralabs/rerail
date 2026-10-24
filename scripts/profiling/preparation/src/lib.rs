@@ -40,6 +40,16 @@ mod wire;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/working_set.rs"]
 mod working_set;
 
+#[cfg(test)]
+#[path = "../../../../native/src/code_rule_dsl/producers/mod.rs"]
+mod producers;
+
+#[cfg(test)]
+#[path = "../../../../native/src/code_rule_dsl/relational/authorizer.rs"]
+mod authorizer;
+#[cfg(test)]
+mod shared_storage;
+
 pub mod composition;
 pub mod fts;
 pub mod residency;

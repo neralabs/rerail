@@ -38,6 +38,24 @@ struct State {
 }
 
 impl Corpus {
+    #[cfg(feature = "code-rule-profile")]
+    pub(in crate::code_rule_dsl) fn record_origins<'a>(
+        &self,
+        rules: impl IntoIterator<Item = &'a crate::code_rule_dsl::model::CompiledCodeRule>,
+    ) {
+        if std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_none() {
+            return;
+        }
+        let guard = self.state.lock();
+        let Some(state) = guard.as_ref() else {
+            return;
+        };
+        let mut origins = state.writer.origins.lock();
+        for (plan, names) in super::plans::origins(rules) {
+            origins.entry(plan).or_default().extend(names);
+        }
+    }
+
     #[cfg(all(test, feature = "code-rule-profile"))]
     pub(super) fn preparation_counts(&self) -> (u64, usize) {
         let guard = self.state.lock();

@@ -31,6 +31,9 @@ pub(super) fn kind_token(code: u32) -> String {
 pub(super) struct Store {
     #[cfg(feature = "code-rule-profile")]
     pub(super) graph: parking_lot::Mutex<super::graph::Graph>,
+    #[cfg(feature = "code-rule-profile")]
+    pub(super) origins:
+        parking_lot::Mutex<std::collections::HashMap<usize, std::collections::BTreeSet<String>>>,
     // Close incremental read cursors before the database destroys its SQL callbacks.
     pub(super) readers: super::reader::Readers,
     pub db: crate::code_rule_dsl::relational::database::Database,
@@ -82,6 +85,8 @@ impl Store {
         Ok(Self {
             #[cfg(feature = "code-rule-profile")]
             graph: parking_lot::Mutex::default(),
+            #[cfg(feature = "code-rule-profile")]
+            origins: parking_lot::Mutex::default(),
             readers,
             db,
             values,

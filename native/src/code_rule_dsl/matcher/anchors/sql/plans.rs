@@ -140,3 +140,59 @@ pub(in crate::code_rule_dsl) fn for_file(
         })
         .collect()
 }
+
+/// Diagnostic provenance stays outside binding identity and does not activate any plan.
+#[cfg(feature = "code-rule-profile")]
+pub(super) fn origins<'a>(
+    rules: impl IntoIterator<Item = &'a CompiledCodeRule>,
+) -> std::collections::HashMap<usize, std::collections::BTreeSet<String>> {
+    fn query(
+        q: &Query,
+        origin: &str,
+        out: &mut std::collections::HashMap<usize, std::collections::BTreeSet<String>>,
+    ) {
+        match q {
+            Query::Ast { matchers, .. } => {
+                for matcher in matchers {
+                    out.entry(Arc::as_ptr(&matcher.anchors) as usize)
+                        .or_default()
+                        .insert(origin.into());
+                }
+            }
+            Query::SelectWhen { select, exists } => {
+                query(select, origin, out);
+                query(exists, origin, out);
+            }
+            Query::Regex { .. } => {}
+        }
+    }
+    let mut out = std::collections::HashMap::new();
+    for rule in rules {
+        for clause in &rule.clauses {
+            let origin = format!(
+                "rule {} clause {} policy {}",
+                rule.id, clause.id, rule.digest
+            );
+            match &clause.kind {
+                ClauseKind::Forbid(q) => query(q, &origin, &mut out),
+                ClauseKind::RequireEach { subject, evidence } => {
+                    query(&subject.ast.query, &origin, &mut out);
+                    query(&evidence.ast.query, &origin, &mut out);
+                }
+                ClauseKind::Budget { query: input, .. } => {
+                    query(&input.ast.query, &origin, &mut out)
+                }
+                ClauseKind::Relational(plan) => {
+                    for (_, input) in &plan.inputs {
+                        query(&input.ast.query, &origin, &mut out);
+                    }
+                    if let Some(reference) = &plan.references {
+                        query(&reference.query, &origin, &mut out);
+                    }
+                }
+                ClauseKind::Llm => {}
+            }
+        }
+    }
+    out
+}

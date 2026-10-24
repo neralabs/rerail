@@ -10,6 +10,62 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Shared producer foundation: 2026-10-24
 
+### Structural catalog and real exports: green
+
+The public export test from `9db86048` now passes.
+Trusted declarations name node properties, source spans, and child fields beside the production decoder.
+The catalog compares complete ordered binding values. Child fields use typed integer options.
+Different selectors and consumers share a binding. Different input generations, options, names, and sealed domains remain distinct.
+Conflicting definitions report both origins and all differing fields.
+The decoder uses registered binding IDs for same-selector reuse. This change does not coalesce separate physical fills.
+
+Normal SQL captures now contain `producer-plan-*.json` manifests accepted by the existing declaration checker.
+Only live decoder demands enter the export. Compaction preserves the combined provenance of merged demands.
+Consumers retain rule ID, compiled clause ID, policy digest, result index, and selector name.
+The API does not supply authored file paths or lines. The export does not invent those locations.
+Actual database membership and source digests resolve the lowering-local input slots at capture time.
+Templates retain no resolved generation across edits. JSON remains diagnostic metadata, while runtime fact rows remain in SQL.
+
+The early storage experiment uses the production SQLite settings and the production relational authorizer.
+One writer and two readers preserve publication barriers, pinned WAL snapshots, rollback, and independent private scratch.
+The selected public physical owner admits ordinary reads and aggregates. Private-table reads, writes, and unrelated private-table aliases remain denied.
+
+The protected-view alternative fails two checks.
+SQLite reports a backing read without an accessor during its `count(*)` shortcut, so the existing authorizer rejects that aggregate.
+A CTE can also impersonate an accessor label used by the existing generated-view exception.
+Evidence: `storage-unit-labeled/stderr.log` and `storage-unit-projection/stderr.log`.
+The selected physical-owner check passes in `storage-direct-owner`.
+The legacy exception remains unchanged. WP5 must not extend it or treat it as a general isolation mechanism.
+Its broader correction remains explicit follow-up work. No Linear ticket was created.
+
+All **307 focused native tests**, **33 standalone SQL tests**, **11 fixed-budget Node tests**, and **25 discovery/checker Python tests** pass.
+The final addon also passes **120 original observations across 60 rules**, including 60 positive and 60 clean observations.
+It reports zero false positives, false negatives, engine failures, or execution-path differences.
+Native Clippy passes with and without profiling. Standalone Clippy, `npm run check`, formatting, and patch checks pass.
+Two initial builds expose implementation errors, which are corrected before the final addon and validation runs.
+
+The complete small guard records **9,113 engine submissions**, **994 SQLite internal executions**, and **10,107 total executions** across 136 connections.
+Findings complete and all execution coverage reconciles. The fixed 100-submission gate correctly returns nonzero.
+This count is 18 higher than the previous capture. Allocation-dependent physical ordering remains, and no statement reduction is claimed.
+The eight real manifests pass declaration checks without errors or clashes. They contain 56 resolved binding groups.
+One span binding has 117 consumer/selector references. Each normal frontier still executes 22 separate span-fill statements.
+That gap identifies the next physical coalescing requirement.
+
+Three alternating fresh-process CPU pairs compare the frozen `e847fd7b` addon with the catalog implementation.
+Median process CPU is **2,390.952 ms before** and **2,299.499 ms after**, a 3.82% decrease on this small workload.
+The respective ranges are 2,369.510–2,447.855 ms and 2,223.825–2,337.324 ms.
+Reported median peak RSS is 412,064 KiB before and 334,976 KiB after.
+The binaries use identical build settings, allocator shim, workload, and four workers. Detailed tracing stays disabled.
+Own builds, tests, and diagnostic captures finish before timing. The host remains shared.
+These observations do not establish aggregate recovery or attribute a speed or memory gain to catalog registration.
+
+WP1 has its first catalog/export checkpoint. Private authored-stage exports and authored file/line provenance remain outside this slice.
+WP2 must union ready selector demand by binding and dependency wave, then publish rows and completion atomically.
+It must remove separate fills while preserving admission, empty results, edits, cancellation, and packet lifetimes.
+Whole-job publication, session lifetimes, and full repository acceptance remain open.
+Checked evidence: [shared producer foundation](../fixtures/host/data-layer-port/profiling/shared-producer-foundation-20261024.json).
+Raw runs and commands remain in `.rerail/profiles/shared-producers-20261024/`.
+
 ### Real compiler export: red
 
 The next phase starts from `e847fd7b` in the same worktree.
