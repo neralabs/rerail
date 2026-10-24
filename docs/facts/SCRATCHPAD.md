@@ -108,6 +108,8 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 
 ## Log
 
+- Y1Graph (maintained compact reference graph, X5's update rule, base + delta) and Y2Local (dead code and exported-families as local queries over the graph, with scoping proofs) launched in parallel on a shared `Graph`/`GraphView` API; the nine finished exploration worktrees removed (branches kept).
+
 - P3aMemory done (6 h 32 min): M1 vs M2 table added to DECISION-CROSSFILE.md. Smallest membership-maintained set for exactness: none beyond membership; state buys latency only.
 
 - Exploration wave reported (X1–X6, 38 min–3 h 25 min each). P3c-2: native parity 0 differences on 40 worktrees; first findings p95 181 ms (24.7 ms excluding the largest bucket); one rule (`sync_async_signatures/transaction-connection`, nodes^1.86) is the per-file latency problem and is a rule-shape item; daemon floor 170 MB + 30 MB per thread; cross-file off the engine thread. Decision table written.
