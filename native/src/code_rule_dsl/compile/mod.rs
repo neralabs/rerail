@@ -339,6 +339,7 @@ pub(super) fn compile_document(
     let mut required_ast = BTreeSet::new();
     let mut requires_llm = false;
     let mut ids = BTreeSet::new();
+    let mut stage_schemas = super::relational::schema::cache::Cache::default();
     for (index, clause) in clauses.iter().enumerate() {
         let path = format!("/clauses/{index}");
         let id = if is_define(clause) {
@@ -351,6 +352,7 @@ pub(super) fn compile_document(
                 &defines,
                 &mut required_ast,
                 &mut requires_llm,
+                &mut stage_schemas,
             )?;
             let id = value.id.clone();
             // Every reported clause answers to a `rerail-ignore` naming its code rule.
@@ -389,6 +391,7 @@ fn compile_clause(
     defines: &Defines,
     required_ast: &mut BTreeSet<(String, String)>,
     requires_llm: &mut bool,
+    stage_schemas: &mut super::relational::schema::cache::Cache,
 ) -> Result<CompiledClause> {
     let clause = object(value, path)?;
     reject_unknown(
@@ -547,6 +550,7 @@ fn compile_clause(
             capabilities,
             defines,
             required_ast,
+            stage_schemas,
         )?),
         "llm" => {
             *requires_llm = true;

@@ -33,6 +33,7 @@ pub(super) fn compile(
     capabilities: &Capabilities,
     defines: &Defines,
     required_ast: &mut BTreeSet<(String, String)>,
+    stage_schemas: &mut relational::schema::cache::Cache,
 ) -> Result<Plan> {
     let spec = object(value, path)?;
     reject_unknown(
@@ -104,6 +105,7 @@ pub(super) fn compile(
     #[cfg(feature = "code-rule-profile")]
     db.context(serde_json::json!({"scope":"compile", "producer":"relational-schema-validation", "path":path}));
     let mut tables = BTreeSet::new();
+    let mut schemas = relational::schema::Registry::new();
     let mut inputs = Vec::new();
     for (name, value) in input_spec {
         if !relational::identifier(name) {
@@ -143,8 +145,11 @@ pub(super) fn compile(
                 "{path}/inputs/{name}: projected fields must be distinct relation identifiers"
             )));
         }
-        relational::schema::register(&db, name, relational::input_schema(name, &fields))
-            .map_err(|error| invalid(format!("relational query: {error}")))?;
+        schemas.insert(
+            name.clone(),
+            relational::schema::register(&db, name, relational::input_schema(name, &fields))
+                .map_err(|error| invalid(format!("relational query: {error}")))?,
+        );
         tables.insert(name.clone());
         inputs.push((name.clone(), input));
     }
@@ -217,7 +222,7 @@ pub(super) fn compile(
                     .field_codes
                     .insert(field.clone(), grammar.field_code(field).unwrap_or(0));
             }
-            relational::syntax::compiler_schema(&db, &syntax)?;
+            schemas.extend(relational::syntax::compiler_schema(&db, &syntax)?);
             Ok(syntax)
         })
         .transpose()?;
@@ -234,7 +239,7 @@ pub(super) fn compile(
         calls.insert("not".to_owned(),serde_json::json!({"kind":"function_definition"}));
         let query = super::compile_query(&serde_json::json!({"ast":{"language":"python","rule":{"kind":"function_definition","calls":calls}}}),&at,capabilities,defines,required_ast)?;
         let key = query.calls().first().ok_or_else(||invalid("native graph term was not compiled"))?.through.links;
-        relational::schema::register(&db,"reference_edges",relational::input_schema("reference_edges",&relational::REFERENCE_FIELDS.iter().map(|field|(*field).to_owned()).collect::<Vec<_>>())).map_err(|error|invalid(format!("relational query: {error}")))?;
+        schemas.insert("reference_edges".to_owned(),relational::schema::register(&db,"reference_edges",relational::input_schema("reference_edges",&relational::REFERENCE_FIELDS.iter().map(|field|(*field).to_owned()).collect::<Vec<_>>())).map_err(|error|invalid(format!("relational query: {error}")))?);
         tables.insert("reference_edges".to_owned());
         Ok(relational::References { query,key })
     }).transpose()?;
@@ -345,6 +350,7 @@ pub(super) fn compile(
                 )?
             };
             let (mut columns, reads, source) = relational::inspect_fields(&db, &query, &tables)?;
+            let schema_reads = reads.keys().cloned().collect::<Vec<_>>();
             reads_source |= source;
             for (name, fields) in reads {
                 input_fields.entry(name.clone()).or_default().extend(fields);
@@ -426,8 +432,28 @@ pub(super) fn compile(
                 stored_columns,
                 output_columns: columns,
             };
-            relational::create_stage(&db, &stage, false, &work)?;
-            reads_source |= relational::deferred::validate(&db, &stage)?;
+            let schema_key = relational::schema::cache::Key::new(
+                &stage.query,
+                &schemas,
+                schema_reads.iter(),
+                stage.deferred.keys(),
+            );
+            let columns = if let Some(columns) = stage_schemas.get(&schema_key) {
+                relational::schema::register(
+                    &db,
+                    &stage.name,
+                    relational::schema::declaration(&stage.name, columns),
+                )
+                .map_err(|error| invalid(format!("relational query: {error}")))?
+            } else {
+                relational::create_stage(&db, &stage, false, &work)?;
+                let columns = relational::schema::describe(&db, &stage.name)
+                    .map_err(|error| invalid(format!("relational query: {error}")))?;
+                stage_schemas.insert(schema_key, columns.clone());
+                columns
+            };
+            reads_source |= relational::deferred::validate(&db, &stage, &columns)?;
+            schemas.insert(stage.name.clone(), columns);
             tables.insert(stage.name.clone());
             stages.push(stage);
         }

@@ -737,12 +737,12 @@ fn declarations(spec: &Spec) -> Result<Vec<(String, String)>> {
 pub(in crate::code_rule_dsl) fn compiler_schema(
     db: &Connection,
     spec: &Spec,
-) -> Result<Vec<String>> {
+) -> Result<super::schema::Registry> {
     declarations(spec)?
         .into_iter()
         .map(|(name, declaration)| {
-            super::schema::register(db, &name, declaration).map_err(sql_error)?;
-            Ok(name)
+            let columns = super::schema::register(db, &name, declaration).map_err(sql_error)?;
+            Ok((name, columns))
         })
         .collect()
 }

@@ -10,6 +10,22 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Repeated compiler stage schemas: green
+
+The document-owned cache passes all 306 focused native tests in `stage-green` (34.888 seconds).
+The two-document test executes six statements instead of repeating inference for all 24 clauses.
+SQLite infers each stage once per document. Deferred-expression validation executes no DDL.
+Six production schema tests pass, including affinity, changed input types, column order, and metadata bounds.
+The cache preserves each clause's SQL and authorizer validation. Invalid deferred expressions still fail after a cache hit.
+Native Clippy, standalone Clippy, and the static repository checks pass.
+
+The small guard completes findings and reconciles all coverage, but fails the fixed gate at 9,293 submissions.
+Compiler stage CREATEs fall from 194 to 134. Additional input-schema differences prevent unsafe sharing of identical SQL strings.
+Evidence: `.rerail/profiles/sql-stage-recovery-20261023/stage-acceptance/capture`.
+These counts do not establish a CPU gain. Matched CPU controls remain pending.
+The next slice extends immutable schema reuse across document compilations in the same cold process.
+That scope matches the complete-job budget and requires the same typed keys and bounded retention.
+
 ### Repeated compiler stage schemas: red
 
 The next R3 test compiles two documents, each with twelve clauses that repeat the same two-stage pipeline.

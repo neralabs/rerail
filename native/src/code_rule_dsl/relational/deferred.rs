@@ -2,23 +2,28 @@
 use super::{Connection, Result, Stage, inspect, quote, sql_error};
 use std::collections::BTreeSet;
 
-pub(in crate::code_rule_dsl) fn validate(db: &Connection, stage: &Stage) -> Result<bool> {
+pub(in crate::code_rule_dsl) fn validate(
+    db: &Connection,
+    stage: &Stage,
+    columns: &[super::schema::Column],
+) -> Result<bool> {
     if stage.deferred.is_empty() {
         return Ok(false);
     }
     let backing = format!("__stage_{}", stage.name);
-    db.execute_batch(&format!(
-        "CREATE TEMP TABLE {} AS SELECT {} FROM {} LIMIT 0",
-        quote(&backing),
-        stage
-            .stored_columns
-            .iter()
-            .map(|s| quote(s))
-            .collect::<Vec<_>>()
-            .join(","),
-        quote(&stage.name)
-    ))
-    .map_err(sql_error)?;
+    let columns = stage
+        .stored_columns
+        .iter()
+        .map(|name| {
+            columns
+                .iter()
+                .find(|c| &c.name == name)
+                .expect("validated stored column")
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    super::schema::register(db, &backing, super::schema::declaration(&backing, &columns))
+        .map_err(sql_error)?;
     let allowed = BTreeSet::from([backing.clone()]);
     let mut reads_source = false;
     for (field, expression) in &stage.deferred {
@@ -33,8 +38,6 @@ pub(in crate::code_rule_dsl) fn validate(db: &Connection, stage: &Stage) -> Resu
         )?;
         reads_source |= source;
     }
-    db.execute_batch(&format!("DROP TABLE {}", quote(&backing)))
-        .map_err(sql_error)?;
     Ok(reads_source)
 }
 

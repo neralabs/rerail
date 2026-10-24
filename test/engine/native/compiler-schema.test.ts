@@ -30,6 +30,17 @@ it("retains finite schemas, case-insensitive name collisions, and the SQL author
   expect(() => compile(query, { eligible: input, sqlite_hidden: input })).toThrow();
 });
 
+it("validates each deferred expression even when an earlier clause populated the schema cache", () => {
+  const native=loadNativeBinding(),caps=readFileSync(new URL(capabilities),"utf8");
+  const clause=(id:string,expression:string)=>({id,relational:{inputs:{input:{evidence:{as:"file",query:{ast:{language:"python",rule:{kind:"module"}}},project:{path:"file.path"}}}},
+    stages:[{name:"seed",query:"SELECT __path,__start,__end FROM input",deferred:{later:expression}}],
+    query:"SELECT __path AS path,__start AS start_byte,__end AS end_byte FROM seed",key:["path"]},violation:{code:"ROW",message:"Row",anchor:"witness.span"}});
+  const compile=(expression:string)=>native.CodeRuleDslRuntime.compile(JSON.stringify({format:"rerail.policy/v1",id:"deferred-cache",revision:1,mode:"log",clauses:[clause("first","__start+1"),clause("second",expression)]}),"json",caps);
+  expect(()=>compile("__start+2")).not.toThrow();
+  for(const expression of ["missing_column+1","random()","(SELECT __path FROM input)"])
+    expect(()=>compile(expression),expression).toThrow();
+});
+
 it.skipIf(!required)("validates independent input and syntax schemas without executing SQL", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-compiler-schema-"));
   try {
