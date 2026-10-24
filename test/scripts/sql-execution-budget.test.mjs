@@ -252,3 +252,15 @@ test("chunk A requires its full 3474 reduction and does not relax the final 100 
   assert.equal(executionReduction(incomplete,target).accepted,false);
   assert.throws(()=>executionReduction(job([3685]),{baseline:7733,removal:0}),/explicit/);
 });
+
+test("chunk B requires all 1296 removals from the accepted 3685 checkpoint",()=>{
+  const ledger=JSON.parse(readFileSync("fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json"));
+  const chunk=ledger.orderedDeliveryChunks.find(c=>c.id==="R5-B");
+  assert.equal(chunk.netRemovalTarget,1296);assert.equal(chunk.wholeJobAfterTarget,2389);
+  const target={baseline:3685,removal:1296};
+  assert.equal(executionReduction(job([2389]),target).accepted,true);
+  assert.equal(executionReduction(job([2390]),target).accepted,false);
+  assert.equal(executionReduction(job([2685]),target).accepted,false,"a 1000-removal nibble does not complete B");
+  assert.equal(executionReduction(job([2389]),target).finalLimit,100);
+  assert.equal(executionReduction(job([2389]),target).finalLimitAccepted,false);
+});
