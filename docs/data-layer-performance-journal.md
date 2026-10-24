@@ -68,6 +68,13 @@ The native profiling library Clippy check passes (28.411 seconds), and all profi
 The optimized addon build finishes under the existing build approval (2 minutes 24 seconds).
 Snapshot preparation, relational re-preparation, and conditional activation still need admission changes; R2 remains open.
 
+The fresh admission acceptance run completes parity but exposes an inventory storage error.
+Repeating full SQL text in every inventory entry pushes report serialization past Node's string-size limit.
+The engine target succeeds; the outer gate correctly rejects the missing complete report.
+`admission-acceptance/capture` retains the raw streams for offline repair, without rerunning the workload.
+The storage regression test requires inventory entries to reference the shared query catalogue.
+`inventory-storage-red` fails on duplicated SQL text before the reporter fix.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
