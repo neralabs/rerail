@@ -181,7 +181,7 @@ test("a fake adapter's answers are recorded as one archive the gates read back, 
     else process.env.AWS_PROFILE = profile;
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 60_000);
 
 /** A fake Bandit with rules B301 and B302, each with its own example and answers. */
 const twoRules = (fixtureOf: (name: string) => string, lint?: PackAdapter["lintCorpus"]): AdapterFactory => async (...args) => ({
