@@ -86,6 +86,14 @@ impl Lower {
     }
 }
 impl Demand {
+    pub(super) fn span_population(
+        scopes: &std::collections::BTreeSet<String>,
+        inline: &mut super::Definitions,
+    ) -> String {
+        let (ctes, body) = super::waves::fill(scopes.iter().cloned());
+        inline.with_extra(ctes, body)
+    }
+
     /// Ordinary CTE dependencies determine execution order. These fills perform no host lookups.
     pub(super) fn population(&self, inline: &mut super::Definitions) -> String {
         let (_, table, columns) = self.property.shape();

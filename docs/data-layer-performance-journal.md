@@ -10,6 +10,63 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Shared producer foundation: 2026-10-24
 
+### Shared span dependency waves: green
+
+The two-rule, two-packet test from `5a0bdf6a` now executes one physical span fill and preserves all 130 findings.
+Live span selectors contribute keys to one SQL fill per necessary dependency wave.
+The fill reads existing selector tables, deduplicates missing keys, and publishes into the existing `decoded_spans` owner.
+It does not embed those selector definitions again or create another fact owner.
+Later span-dependent predicates retain later waves. Consumer materialization keeps expensive source predicates after the demanded-key fence.
+The controller remains specialized. Recursive SQL stays inside its declared operation.
+
+Each valid span key produces one row. That row records the fact and completed coverage atomically under the existing transaction.
+Empty selector demand contains no keys. General producers with empty output still need explicit completion records in later work.
+The SQL helper tests cover overlap, repeated consumption, empty demand, distinct source IDs, invalidation, rollback, and retry.
+Balanced compound SELECTs handle 700 demand sources within one submitted statement.
+All **308 focused native tests**, **37 standalone SQL tests**, and **120 original positive/clean corpus observations** pass.
+Native and standalone Clippy pass, including native builds with and without profiling. Static checks and formatting pass.
+
+The first wave implementation repeats generated-SQL token scanning for wave analysis.
+Its matched CPU median regresses from 2,234.975 ms to 2,472.817 ms, or 10.64%.
+That implementation is replaced. Wave levels now share the existing reference-count pass, and stage sorting caches its keys.
+The earlier trials remain recorded. The separate control groups cannot establish a causal timing estimate for that scan alone.
+
+The selected version records **9,481 engine submissions**, **994 SQLite internal executions**, and **10,475 total executions** across 136 connections.
+Complete findings and trace coverage pass. The unchanged 100-submission gate still fails.
+Each normal captured frontier now has **two span fills**, compared with 22 in the catalog checkpoint.
+However, the complete-job count increases from 9,113 to 9,481. There is no net submission improvement.
+Candidate preparation submits 4,836 statements, cleanup submits 2,444, and relational evaluation submits 1,781.
+
+The new provenance export identifies an existing source of unstable physical work.
+The catalog capture first attributes result zero to `state-signatures-1`.
+The initial wave capture first attributes it to `production-ir-construction` under the same policy digest and original observation.
+That snapshot frontier has 1,333 stages, compared with 703 in the catalog capture.
+The selected version has 761 stages there, while another frontier has 721 stages versus the catalog's 715.
+The frontiers differ before span grouping. Raw allocation-address ordering in `Corpus::prepare_files` remains a concrete cause of changing input order.
+The exact interaction with bounded lowering and producer reuse needs a fixed-plan permutation test.
+This finding does not revive the earlier rejected cache-pruning claim or justify another unproved ordering heuristic.
+
+Three alternating fresh-process pairs compare the catalog addon with the selected one-pass wave planner.
+Median process CPU is **2,516.352 ms before** and **2,444.173 ms after**, a 2.87% decrease.
+The ranges overlap: 2,290.043–2,657.838 ms before and 2,374.218–2,779.836 ms after.
+Reported median peak RSS is 375,024 KiB before and 367,312 KiB after.
+These small shared-host controls establish no aggregate speed or memory recovery.
+Own builds, tests, and diagnostic captures finish before the timing controls. Detailed tracing stays disabled.
+
+A separate frozen-frontier control holds the database, parameters, selectors, consumers, and scheduler fixed.
+Its split variant replaces each broad fill with one fill per existing scope, without changing the other stage definitions.
+The three-process median SQL CPU is **108.291 ms for 22 split fills** and **104.903 ms for two broad fills**.
+Both variants emit 48 candidate rows and retain a peak of 97 live relations.
+Their SQLite stepping heap peaks are effectively equal, about 20.98 MB. Their compilation heap peaks are about 3.62 MB.
+The small timing ranges overlap. This diagnostic supports the batching shape without a large speedup claim.
+
+Decision: keep one-pass batched dependency waves for spans, without an algorithm flag.
+The next recovery slice must make frontier construction independent of allocation addresses and earlier producer-cache warmth.
+It must prove this on fixed plan permutations before another aggregate optimization claim.
+Other property fills, repeated selector construction, whole-job publication, session lifetimes, and complete repository acceptance remain open.
+Checked evidence: [shared span waves](../fixtures/host/data-layer-port/profiling/shared-span-waves-20261024.json).
+All raw controls and rejected trials remain in `.rerail/profiles/shared-producers-20261024/`.
+
 ### Shared span dependency waves: red
 
 The next test uses two rules with 65 clauses each, so candidate emission requires two result packets.

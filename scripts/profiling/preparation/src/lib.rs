@@ -50,6 +50,10 @@ mod authorizer;
 #[cfg(test)]
 mod shared_storage;
 
+#[cfg(test)]
+#[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/waves.rs"]
+mod waves;
+
 pub mod composition;
 pub mod fts;
 pub mod residency;

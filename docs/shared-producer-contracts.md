@@ -1,8 +1,9 @@
 # Named shared producers
 
-Status: engine contract catalog and live candidate exports are implemented. Physical shared execution remains open.
+Status: engine contract catalog, live candidate exports, and the first physical span-sharing slice are implemented.
 Decoder reuse now uses registered binding IDs. Candidate captures export actual consumers and pinned source versions.
-The existing retained SQL tables remain the physical owners. Separate fill statements still execute around those owners.
+The existing retained SQL tables remain the physical owners. Independent span demand now shares one fill per dependency wave.
+Other property fills and repeated selector construction remain open.
 The [implementation workplan](shared-producer-workplan.md) defines the ordered commits, acceptance checks, and measurement gates.
 
 This design simplifies [execution stages](sql-execution-stages.md) and [materialization ownership](sql-materialization-shape.md).
@@ -182,7 +183,11 @@ Lowering uses a language-qualified input slot within its local catalog.
 Capture resolves that slot against the actual workspace database and its complete ordered `(fid, language, digest)` generations.
 The exported snapshot identifies that workspace database. The generation descriptor contains actual membership and digests.
 Templates never retain a resolved generation across edits. Unused or rolled-back decoder branches do not enter the export.
-These catalog IDs do not yet reserve work, publish completion, or suppress separate fill statements.
+Catalog IDs do not provide a general admission or completion controller.
+The first physical slice groups live span demand for one tape binding by dependency wave.
+It reads existing selector tables and publishes missing rows into `decoded_spans` under the owning transaction.
+Each valid span key has one output row, so that row also records completed coverage.
+Empty-output producers still require separate completion records. Other structural properties retain their previous fill paths.
 
 Normal `--sql-profile` captures write `producer-plan-*.json` beside candidate replays.
 Pass those files to the existing `shared_work.py check` command.

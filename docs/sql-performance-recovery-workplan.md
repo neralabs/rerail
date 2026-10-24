@@ -2,10 +2,10 @@
 
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
 Conditional admission, whole-job publication, and R4–R7 remain open.
-The latest measured job has 9,113 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
+The latest measured job has 9,481 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
 Compiler input/syntax validation uses prepare-only schemas. Compiler stages share bounded SQLite-inferred metadata across documents.
 Runtime producer execution and whole-job lifetimes remain open. Aggregate CPU recovery is unresolved.
-All work uses the current worktree. WP1 now has a structural catalog/export checkpoint.
+All work uses the current worktree. WP1 has its catalog/export checkpoint, and WP2 has its first shared span execution slice.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
 ## Required outcome
@@ -210,6 +210,27 @@ The state guard has one span binding with 117 consumer/selector references, but 
 The guard remains failing at 9,113 engine submissions. No physical coalescing follows from the catalog alone.
 The next slice must turn ready demand under that binding into one broad fill per necessary dependency wave.
 The [foundation evidence](../fixtures/host/data-layer-port/profiling/shared-producer-foundation-20261024.json) records correctness, complete counts, and matched CPU controls.
+
+The next slice is implemented for spans. Independent live selectors share one SQL fill per necessary dependency wave.
+The two-rule, two-packet test preserves all 130 findings with one physical span-fill execution.
+The state guard has two fills per normal frontier. Existing selector tables and the retained span owner remain the storage boundary.
+The planner shares generated-reference analysis with its existing pass. It adds no algorithm flag or general scheduler.
+
+The complete count nevertheless increases to 9,481 because upstream lowered frontiers differ under allocation-address ordering.
+The selected CPU control has overlapping ranges and establishes no aggregate recovery.
+The [wave evidence](../fixtures/host/data-layer-port/profiling/shared-span-waves-20261024.json) records the rejected extra scan, the selected controls, and a frozen-frontier comparison.
+
+Before another property extraction, make frontier construction reproducible:
+
+1. Capture identical compiled plans in explicit permutations, preserving logical consumer identities and input generations.
+2. Record full lowered producer definitions, broadening decisions, physical builds, and complete engine submissions for each permutation.
+3. Prove the exact source of the observed work difference. Separate bounded lowering from utility reuse and later physical placement.
+4. Define producer identities and per-plan admission before composing the shared physical graph. Heap addresses must remain lookup details.
+5. Preserve the existing lowering bound and the fixed 100-submission limit. Do not replace them with another ordering heuristic.
+6. Require equal logical results and stable shared build counts before matched CPU and memory controls.
+
+The earlier cache-pruning control was invalid and remains rejected. It is not evidence for this new root cause.
+Conditional admission, whole-job publication, general completion, and cross-clause readers remain open.
 
 This step implements WP1 and the first useful execution slice from WP2.
 Use the [named contracts](shared-producer-contracts.md) and the existing discovery and clash tools.
