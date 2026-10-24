@@ -8,12 +8,48 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Bounded C scope and frontend experiment: 2026-10-24
+
+The user rejected the architecture-wide C proposal because it specified an outcome without a bounded implementation scope.
+The [replacement specification](sql-execution-chunk-c.md) selects exactly four state-analysis frontends and one generic nonempty-input precondition.
+It excludes job-wide storage, general derived-producer sharing, compiler-affinity redesign, and a replacement scheduler.
+The fixed delivery target is 1,261 actual removals, from 2,250 to at most 989 complete-guard engine submissions.
+The final 100 limit remains unchanged. The projected remainder is 889 above that limit.
+
+The concrete omission is the state frontend's 25 typed AST input partitions.
+The quality rules already use the tape-backed syntax path, but these four state consumers still reconstruct nodes, edges, ownership, and staging unions.
+An isolated generated-policy transformation uses the existing B addon to replace those frontends.
+It preserves the other 28 detector clauses and the file/repository partitions.
+The prototype is not the production generator implementation.
+
+The unchanged guard measures 1,489 engine submissions, 115 SQLite internal executions, and zero unknown origins.
+That is 761 measured engine removals.
+All 77 recorded state observations pass: 64 positive and 13 clean, with zero parity differences or failures.
+A separate output-gated control also passes all 77 observations.
+That control suppresses output for an empty syntax gate but still executes its SQL. It does not demonstrate early-admission savings.
+
+The remaining trace contains nine complete empty-gate state sessions with 500 engine statements, plus two nonempty state-flow sessions.
+A gate before connection admission models another 500 removals without extra SQL.
+The trace audit finds no deleted empty-session schema creation that supplies either surviving flow session.
+The combined 1,261 target remains subject to complete production accounting, rather than subtraction alone.
+No implementation checkpoint is accepted yet.
+
+Five alternating fresh-process pairs compare the original and transformed policy under the same addon, workers, allocator, and recording.
+Median CPU is 1,060.459 → 427.484 ms, a 59.7% decrease.
+Median peak RSS is 325,600 → 285,312 KiB.
+These controls cover only the frontend experiment and small guard. They are independent of the earlier B timing series.
+They do not measure the unimplemented input precondition or the complete repository.
+
+The [checked scope evidence](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) retains the exact consumers, transformed schemas, sessions, trials, and artifact hashes.
+Raw policies, transformation code, controls, and reports reside under `.rerail/profiles/chunk-c-scope-20261024/`.
+All experiment commands complete within the 115-second deadline. No production code or Linear tickets change during this scoping work.
+
 ## Complete shared execution specification R5-C: 2026-10-24
 
-Status: design only. No additional implementation or performance improvement follows from this entry.
+Status: superseded by the bounded C specification. This architecture-wide proposal did not deliver an implementation.
 A and B remove 5,483 submissions but leave 2,250. Their original combined budget also leaves approximately that remainder.
-The [C specification](sql-execution-chunk-c.md) assigns the entire remaining 2,150-execution gap to one delivery.
-Its unchanged complete guard must finish at 100 or fewer engine submissions.
+The proposal in `15930629` assigns the entire remaining 2,150-execution gap to one delivery.
+That proposal requires 100 or fewer engine submissions. The replacement bounded scope does not retain that delivery target.
 
 C requires shared populated owners and completion across compatible consumers, rather than only empty schema and connection reuse.
 It includes typed operation batches, private pipelines, version membership, scoped readers, and complete producer lifetimes.

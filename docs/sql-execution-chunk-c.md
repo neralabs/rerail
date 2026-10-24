@@ -1,263 +1,238 @@
-# Chunk C: complete shared execution and the cold SQL budget
+# Chunk C: state syntax domains and empty-domain admission
 
-Status: specification. The replacement schedule and CPU improvement remain unproven.
-The accepted baseline is `24998a39`, after chunks A and B.
-The [count ledger](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) records the frozen evidence and this delivery contract.
+Status: bounded specification, supported by an isolated migration experiment.
+This specification supersedes the architecture-wide C proposal in `15930629`.
+The production baseline remains B, commit `24998a39`, with 2,250 complete-guard engine submissions.
+The [scope evidence](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) records measurements, the admission model, and artifact hashes.
 
-## Required result
+## Fixed delivery
 
-**C must remove at least 2,150 actual engine submissions: 2,250 → at most 100.**
-The target covers the unchanged complete guard, including cold compilation, both observations, both evaluation paths, and cleanup.
-No remainder passes to an unspecified later chunk.
-Smaller TDD commits support this delivery. They do not complete it.
+C changes exactly four state-analysis frontends and adds one generic input precondition.
+The frontends use the engine's existing tape-backed syntax relations instead of reconstructing them through AST projections and SQL.
+The precondition prevents SQL execution for a complete empty input domain.
+Detector inference and decisions remain in SQL.
 
-C must also compute shared derived data once for compatible consumers.
-Reuse of an empty table, a connection, or a query string does not establish this property.
-CPU must improve on representative nonempty work, with no matched guard or memory regression.
-An execution-count reduction alone does not complete C.
+| Consumer | Input relations before → after | SQL stages before → after | Partition |
+| --- | ---: | ---: | --- |
+| `state-signatures-1` | 25 → 1 | 23 → 18 | File |
+| `state-flow-1` | 29 → 5 | 30 → 25 | File |
+| `state-projection-recovery-2` | 28 → 4 | 12 → 7 | File |
+| `state-flow-project-1` | 29 → 5 | 32 → 27 | Repository |
 
-## What A and B leave
+All four replace 25 `syntax_*` input partitions with one `syntax_gate` input.
+They remove `syntax_rows_0`, `syntax_rows_1`, `nodes`, `edges`, and `ownership` from their SQL stage lists.
+The existing syntax adapter supplies `nodes`, `edges`, and `ownership` through declared fields and owner relations.
+The remaining raw-string and project-mode inputs retain their current definitions.
+All 28 other state detector clauses retain their definitions.
+Other rule policies remain byte-identical.
 
-| Remaining engine work | Measured submissions | Required replacement |
-| --- | ---: | --- |
-| Connection and compiler setup | 244 | One cold infrastructure lifecycle and SQLite-owned schema inference |
-| File publication | 36 | Bulk publication of required document versions, without duplicate imports |
-| Catalog publication | 12 | One grammar catalog publication per backing store |
-| Candidate preparation | 702 | Typed operation batches over shared owners and indexed facts |
-| Relational evaluation | 1,091 | Shared derived producers, fused private pipelines, and batched emission |
-| Cleanup | 165 | Complete owner lifetimes and bulk retirement |
-| **Total** | **2,250** | **At most 100, including every replacement statement** |
+**Delivery target: remove at least 1,261 engine submissions, from 2,250 to at most 989.**
+The target includes replacement work across the complete unchanged guard.
+C remains one delivery. Generator, language, runtime, and test commits cannot claim separate completion.
+The final fixed limit remains 100. C's target leaves 889 excess submissions for subsequent measured work.
 
-These categories are disjoint. Opportunities inside them overlap and must not receive separate additive credit.
-There are also 181 SQLite internal executions. They remain separately reported.
+## Measured scope and price
 
-The trace exposes four repeated AST-store lifecycles and 68 compiler empty-schema probes.
-Candidate storage still executes 380 population statements and 174 retirement DELETEs.
-Relational execution still creates 489 objects, inserts into stages 310 times, and executes 39 ANALYZE statements.
-It also executes 68 BEGIN/COMMIT pairs and 74 result or helper SELECTs.
-These counts explain why empty-backing reuse does not complete shared execution.
+The isolated frontend migration uses the unchanged B addon and the unchanged guard recording.
+It changes only the four frontends and their required field-identity references.
+The complete guard measures 1,489 engine submissions, 115 SQLite internal executions, and zero unknown origins.
+The guard retains both observations and both stateless and workspace execution paths.
 
-## Target execution shape
+| Engine phase | B | Frontend experiment | Net removal |
+| --- | ---: | ---: | ---: |
+| Connection and compiler setup | 244 | 243 | 1 |
+| File publication | 36 | 36 | 0 |
+| Catalog publication | 12 | 12 | 0 |
+| Candidate preparation | 702 | 308 | 394 |
+| Cleanup | 165 | 60 | 105 |
+| Relational evaluation | 1,091 | 830 | 261 |
+| **Total** | **2,250** | **1,489** | **761** |
 
-The engine compiles one evaluation plan for the admitted rule set.
-The plan spans candidate selection, structural demand, derived SQL, and result consumers.
-It retains distinct logical evaluations, snapshots, rule budgets, and authorization scopes.
-Transport packets and clause sessions do not define ownership or semantic completion.
+Nine remaining state sessions have no `syntax_gate` rows. Their complete relational SQL costs 500 statements.
+Two state-flow sessions have a nonempty gate and retain their SQL execution.
+The nine empty sessions cost 94 signature, 68 flow, 62 projection, and 276 repository-flow statements.
+These costs include input transactions, tables, derived stages, results, and cleanup.
+They exclude SQLite internal executions.
 
-The existing specialized scheduler becomes a controller over compiled operation descriptors and dependency arrays.
-It advances affected ready operations, rather than creating a task for each node or rule instance.
-Recursive inference remains inside declared SQL or existing native operations.
-A generic graph scheduler and a native rule interpreter are unnecessary.
+| Component | Proven or modeled net removal |
+| --- | ---: |
+| Existing syntax-path migration, measured | 761 |
+| Pre-SQL rejection of nine complete empty domains, modeled | 500 |
+| Added SQL for the input precondition | 0 |
+| **Required delivery removal** | **1,261** |
 
-```mermaid
-flowchart LR
-    A[Eligible rules and pinned inputs] --> B[Intern producer bindings]
-    B --> C[Compile dependencies and owner lifetimes]
-    C --> D[Collect ready demand]
-    D --> E[Batch SQL or structural operations]
-    E --> F[Publish rows and completion]
-    F --> D
-    F --> G[Read shared owners and emit findings]
-    G --> H[Retire after final demand and reader]
+The two surviving flow sessions use cold connections in the experiment.
+The trace audit finds no removed empty-session schema creation that supplies either surviving session.
+Pool and schema changes still require complete runtime reconciliation during delivery.
+The 989 total is an acceptance target, not a completed engine measurement.
+A result above 989 does not complete C, even if it removes more than 1,000 statements.
+
+## Frontend transformation
+
+The production generator applies this transformation before `typed_input_partitions` expands `raw_nodes`.
+It does not reverse-engineer the checked-in 25 partitions.
+The generic lowering helper accepts a verified whole-file syntax domain, independent of a linter-specific clause name.
+Generator call sites select exactly the four consumers in this specification.
+No engine code recognizes state detector names.
+
+The helper preserves the existing AST gate for each consumer.
+It replaces node and optional-field captures with a module witness, while retaining all source, path, and option predicates.
+The resulting gate projects the file path and identifies the files visible to the syntax adapter.
+A row-selective subtree predicate does not qualify as a whole-file domain.
+The existing quality-conditional rejection of such conversion remains mandatory.
+
+The syntax declaration uses the existing excluded kinds and derives its demanded fields from the trimmed source projection.
+It declares nearest function, nearest class, and outermost function owners through the existing adapter.
+Source text remains an immutable source slice. C adds no complete row-vector cache or JSON property store.
+Prepared document facts and field indexes retain the current shared lifetime and capacity limits.
+
+The transformation replaces field identity expressions with the corresponding canonical field IDs.
+All joins retain file qualification.
+Internal IDs can differ in representation, but node correspondence, field absence, ordering, and output identity meaning must remain equivalent.
+The direct relation comparison normalizes node IDs to `(path, kind, start, end)` before comparing bags.
+
+Argument relations retain `text` when their consumers require it.
+The quality helper's deferred-text assumption cannot remove state argument text.
+`returnKindsHex` templates and all option branches remain intact.
+C does not extend column-demand rewriting to scalar templates or introduce deferred text into these state clauses.
+
+The existing syntax reachability path supplies descendants.
+Its roots retain the current root set and `expand` expression.
+C does not change the difference between expansion from a root and traversal through that node for another root.
+No new reachability algorithm or native detector implementation enters this delivery.
+
+The repository consumer keeps `partitionBy: repository`.
+Its gate selects complete files under the current entry-point predicates.
+It cannot turn a repository domain into independent file evaluations or evaluate cross-file inference before that domain closes.
+
+## One language addition
+
+The relational plan gains this optional semantic precondition:
+
+```json
+{
+  "relational": {
+    "requireNonemptyInput": "syntax_gate",
+    "inputs": { "syntax_gate": "existing evidence definition" }
+  }
+}
 ```
 
-The existing [stage design](sql-execution-stages.md) and [producer contracts](shared-producer-contracts.md) supply the semantic model.
-C delivers their missing runtime boundary, rather than another execution path beside the current one.
+The example abbreviates the existing evidence document. It introduces no execution configuration flag.
+The field accepts exactly one declared input name.
+The compiler rejects an unknown name, an invalid identifier, or a non-string value.
+Normal compilation and SQL authorization still occur, including for clauses whose runtime gate is empty.
 
-### Shared data and completion
+The runtime evaluates the precondition over the complete declared clause partition.
+A file clause uses that file's domain. A repository clause waits for its complete pinned domain.
+An ingestion page, result packet, producer capacity partition, or partially processed file set cannot establish emptiness.
 
-A producer definition contains its versioned name, implementation, input slots, typed options, schema, multiplicity, ordering, and completion model.
-Its binding contains the input bindings, options, generation, and semantic domain.
-Complete definition comparisons establish equality. Digests only accelerate lookup and identify reports.
-Conflicting definitions under one public name fail compilation with both origins and the differing fields.
+| Input outcome | Runtime action |
+| --- | --- |
+| Complete and empty | Return a successful empty evaluation before SQLite admission |
+| Complete and nonempty | Reuse the existing evidence rows and execute the clause normally |
+| Incomplete or failed | Preserve an explicit failure. Do not report successful emptiness |
+| Field absent from the plan | Preserve existing clause behavior |
 
-The engine defines generic producers beside their implementations and registers them through `producers/`.
-The pack defines reviewed derived producers under `packs/data-layer/candidates/producers/`.
-Rules reference those definitions. Private stages keep rule-qualified identities.
-The engine must not contain data-layer detector names or hardcoded linter algorithms.
+An unguarded `SELECT count(*)` over an empty relation can still produce a row.
+C does not infer a precondition from the syntax declaration or from an empty input.
+The four state consumers opt into the precondition because their findings require a node in the selected domain.
+The admission proof must cover every final detector branch, not only the positive guard case.
 
-Each binding has one row owner, coverage state, and required indexes within its pinned domain.
-A keyed owner computes only missing requested coverage. Successful empty output completes its requested keys.
-A domain owner publishes once after its complete input domain closes.
-Later demand can extend keyed coverage without rebuilding covered keys.
-Failure publishes neither partial rows nor successful completion.
+The gate runs through the current native evidence evaluator, under the current rule budget and cancellation context.
+It uses supplied evidence when available and evaluates missing gate evidence once when necessary.
+It reads the existing prepared candidate frontier. A separate index build or SQL probe cannot implement this gate.
+The nonempty path transfers those rows into normal input import without evaluating the gate again.
+The empty path acquires no relational connection and submits no SQL.
+It performs no fact preparation, native subtree demand, source callback installation, or output query for that clause.
+After complete empty admission, the job extracts no additional body-input columns.
+Previously published workspace evidence and shared candidate-frontier work remain counted.
+C does not redesign their publication or claim additional savings from conditional candidate construction.
+The current file and byte admission limits still apply before the precondition.
 
-Compatible consumers read the same populated owner.
-They do not import its facts into separate clause tables or rebuild its indexes.
-Two private stages with equal names remain separate unless their complete bindings establish shared work.
-Different options, domains, source versions, or effective callback contexts prevent sharing.
+Gate errors remain errors. Once a gate passes, remaining input and SQL failures retain their current attribution.
+A skipped result retains its clause identity, dependency generations, and normal empty-result cache behavior.
+An edit or removal that changes gate eligibility must invalidate that result.
+The precondition is an explicit language semantic, not a silent change to existing empty-input behavior.
 
-### Physical storage and scope
+The preparation callback separates gate restoration from body preparation.
+Gate restoration loads the required source or tape context without constructing syntax facts.
+Body preparation runs only after admission and restores facts only for paths present in the completed gate evidence.
+The repository path applies this rule to retained and evicted documents across the complete domain.
+It reuses the same document-version facts as the file path, without eagerly restoring unrelated files.
+This separation is required because the current workspace callback constructs syntax facts before connection admission.
 
-A job-scoped SQL service owns the backing store and publication writer.
-It serves compatible evaluation plans while each logical workspace retains separate membership and revision state.
-The fixed guard keeps its current observations, API calls, and results. A harness rewrite cannot establish savings.
-Compiled policies and workspaces retain handles to the same runtime service, with explicit logical evaluation leases.
-Job closure releases rows and callbacks. An unbounded process-global row cache is not the storage model.
-Cold service creation and final closure remain inside the captured job.
+## Implementation boundaries
 
-The four current stores cannot become one mutable snapshot merely because their schemas match.
-Document versions remain immutable and file-qualified.
-A membership relation selects the versions visible to each logical evaluation.
-Same-path edits and simultaneous workspaces must retain independent answers.
-Shared content cannot establish shared rule eligibility or result completion.
+| Boundary | Exact change |
+| --- | --- |
+| `scripts/dsl/data_layer_six/ast_relations.py` | Extract whole-file syntax lowering from the quality-specific wrapper. Preserve required argument text and exact descendant roots. |
+| `scripts/dsl/data_layer_six/common.py` | Select the four state frontends before typed input partitioning and attach their explicit precondition. |
+| `scripts/dsl/data_layer_six/state*.py` | Supply or assert each frontend's domain qualification. Detector queries and option definitions remain unchanged. |
+| `packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json` | Regenerate the four frontends and their field-ID references from the pinned source. |
+| `src/engine/code-rule/code-rule-schema.ts` and `code-rule.ts` | Declare the string field and its public type. |
+| `native/src/code_rule_dsl/compile/relational.rs` and `relational.rs` | Resolve the input name to a slot and retain the compiled precondition. |
+| `native/src/code_rule_dsl/relational/batch.rs` and evidence preparation | Evaluate gate admission before connection acquisition. Transfer nonempty evidence without duplicate extraction. |
+| `native/src/code_rule_dsl/workspace/global.rs` and stateless preparation | Split gate/body preparation. Restore eligible repository documents, and preserve budgets, metrics, failures, and invalidation. |
+| Profiling, language reference, and budget launcher | Record complete empty admission and the C progress target without changing the final 100 gate. |
 
-The positional FTS index retains the `ast-index-spike` representation and SQL access paths.
-Version and membership metadata qualify the existing document identities.
-C does not replace this index with a permanently resident Rust index.
-SQLite stores typed producer rows and indexes, with spill under the existing resource policy.
-JSON fields and generic property bags do not replace typed relation columns.
+Only call-site plumbing required for these boundaries belongs in C.
+C does not create a job-wide SQL service, a cross-workspace row store, or a new pack producer declaration language.
+It does not implement a generic scheduler, combine detector clauses, or batch unrelated result queries.
+It does not remove all compiler CTAS probes or redesign schema-affinity inference.
+It does not change the FTS index, source recordings, rule limits, or SQL counter boundary.
+General sharing of derived SQL across clauses remains later architecture work.
 
-The first connection implementation uses one publication writer and the minimum required scoped readers.
-Native operations still receive broad batches. SQL connection count does not determine native partition width.
-Successful publications define reader barriers. Active cursors and BLOB handles close before incompatible maintenance.
+## TDD commits inside the delivery
 
-Authored SQL first resolves against its isolated logical schema and current function allowlist.
-Trusted lowering maps validated relation references to authorized owner bindings.
-The mapping must preserve CTE shadowing and SQLite name resolution. Arbitrary identifier replacement is insufficient.
-Authored SQL cannot access another binding through a physical name, generated alias, or forged CTE accessor label.
-The existing protected-view exception does not provide this isolation.
-Failure of this scope test blocks storage integration before any performance claim.
-
-### Batches, pipelines, and materialization
-
-Typed operations and dependencies enter the plan before SQL rendering.
-Operations of the same family share requests qualified by binding, domain, and consumer.
-The renderer does not construct complete SQL trees and concatenate them through UNION ALL afterward.
-The rejected selector-packing implementation remains rejected.
-
-Initial operation families cover kind and value selection, keyed property access, child-field access, and interval joins.
-Request rows supply typed scalar options and owner references to existing SQL indexes.
-The shared key relation retains `(binding, document_version, pre)` qualification.
-Relations with bag semantics also retain occurrence multiplicity. A uniqueness constraint cannot silently turn them into sets.
-Publication reads typed input cursors in bulk rather than issuing a statement for each file or row.
-Input cursors expose immutable columns. They do not execute rule predicates or contain JSON row vectors.
-
-Simple private transformations stay inside one SQL pipeline while their semantics permit fusion.
-Shared producers and measured access paths receive explicit owners.
-Dependency barriers, aggregates, windows, recursion, and required source predicates remain explicit.
-Materialization occurs once for the complete binding or admitted coverage, not once for each consumer statement.
-Repeated inline materialized CTEs cannot substitute for a shared owner across statements.
-
-Pack extraction must identify concrete repeated derived computations from the trace and real rule definitions.
-The acceptance example uses an actual nonempty derived relation with two independent consumers.
-The repeated `nodes`, `functions`, `ownership`, and descendant-stage queries are discovery candidates, not automatic equivalence proofs.
-The discovery report must explain every selected shared binding and every required separation.
-
-Rule-bound findings share result queries where scopes, callbacks, and failure boundaries permit it.
-Output tags retain rule, clause, file, witness, multiplicity, and existing ordering semantics.
-Result packets cannot repeat producer computation.
-An error in one consumer cannot silently remove another consumer's findings or failure attribution.
-
-### Lifetimes, budgets, and GPU shape
-
-Demand sources retain leases until they cannot request further coverage.
-Conditional consumers request nothing before their gate enables them.
-Skipped branches close their leases without universal preparation.
-Retirement waits for demand-source closure, completed consumers, readers, and admitted continuations.
-
-Compatible retirement actions share SQL maintenance statements at proven boundaries.
-Retention until job completion is not the default solution to excessive DELETEs.
-Spill or admission delay preserves a live owner's completed coverage without rebuilding it.
-Owner rows, indexes, readers, statements, WAL pages, tapes, request buffers, and outputs all enter memory accounting.
-
-Shared physical work retains explicit accounting for each logical rule budget.
-Cache hits and consumer order must not change whether the same logical evaluation exceeds its allowance.
-Source-text and regex callbacks retain the correct snapshot, options, cancellation state, and work counters.
-The plan must define this attribution before it combines consumers in one statement.
-
-Structural work retains broad count, scan, and scatter passes over typed requests.
-Virtual tables read prepared data and indexes. Their callbacks cannot submit SQL, dispatch producers, or wait for device work.
-Real dependencies create later waves. File boundaries, output packets, and SQL insertion pages do not create native waves.
-The [GPU execution contract](gpu-producer-execution-contract.md) remains authoritative.
-
-## Cold compilation and the complete budget
-
-C includes the 68 remaining compiler probes. A warm process cache cannot hide their cold cost.
-SQLite must retain authority over names, expression affinity, collation, and statement validation.
-The deferred-CAST regression from B remains a required test.
-
-Compilation must also avoid repeated lowering and SQL rendering for an identical producer definition.
-Profiles must separate policy compilation, operator lowering, pattern compilation, SQLite preparation, SQL execution, and publication CPU.
-An immutable compiled program can share its complete definition while each consumer retains separate mutable work counters.
-Pattern reuse requires matching syntax, options, implementation revision, and limits. A textual match alone is insufficient.
-The plan audit must identify repeated compiler work before another cache receives credit for a CPU improvement.
-
-The compiler must prove a prepare-only path through SQLite's own resolver for schemas that need inference.
-If the public API cannot expose the required result, the design needs an explicit SQLite integration decision.
-A custom Rust type-inference parser is not an acceptable fallback.
-Production EXPLAIN executions also count. Diagnostic exclusion cannot hide production schema inference.
-Any remaining executed probes and their cleanup enter the same 100-statement budget.
-
-The compiler must emit a complete cold statement schedule before promotion.
-That schedule prices infrastructure, inferred schemas, owner schemas, indexes, catalog publication, and document publication.
-It also prices requests, coverage maintenance, producer statements, statistics, transactions, result queries, and retirement.
-Every statement inside `execute_batch` counts separately.
-
-Component budgets must come from this executable schedule, not guessed replacement counts.
-The current trace proves the 2,250 baseline. It does not prove a particular replacement schedule fits 100.
-The feasibility audit is the first implementation step and cannot claim execution savings by itself.
-If the complete schedule exceeds 100, the design still needs correction. The target stays fixed.
-No setup moves before capture, and no per-connection or per-observation counter resets occur.
-New non-SQL API work also appears in CPU, memory, and operation counters.
-
-## Implementation order and TDD checkpoints
-
-The following checkpoints form one delivery. They are not independent performance milestones.
-
-| Order | Concrete work | Required red test and completion evidence |
+| Order | Required red test | Green change |
 | --- | --- | --- |
-| C1 | Freeze B and export the complete proposed schedule | The unchanged guard fails at 2,250/100. The export prices every replacement statement and identifies unresolved costs. |
-| C2 | Job storage, version membership, and scoped owner access | Two workspaces use the same path with different contents. Answers remain isolated, with one compatible infrastructure lifecycle and no cross-binding access. |
-| C3 | Integrate named derived bindings and row completion | Two actual rules and two result packets read one nonempty derived owner. Coverage counters prove one successful build, including empty completion and later overlapping demand. |
-| C4 | Compile operation-family batches and private pipelines | Permuted consumers preserve results, bound admission, and physical build counts. The plan removes per-clause imports and repeated inline owner builds. |
-| C5 | Complete compilation, result, and lifetime integration | Cold CAST affinity, source callbacks, budgets, rollback, cancellation, retries, edits, and bulk retirement retain their contracts. All costs appear in the schedule. |
-| C6 | Complete performance and repository acceptance | The unchanged guard removes at least 2,150 submissions. Ten-rule and repository jobs also pass the same complete-job 100 limit. |
+| C1 | State generation contains 25 syntax partitions and five reconstruction stages where the expected native domain has none. | Generalize the existing helper and regenerate only the four frontends. |
+| C2 | Missing argument text, field absence, owner selection, ordinals, or descendant expansion changes relation bags. | Preserve the demanded columns and canonical identity mapping. |
+| C3 | An explicitly guarded empty input still acquires SQLite or executes a constant/aggregate query. | Implement pre-admission, complete empty success, and nonempty row transfer. |
+| C4 | Incomplete gates appear empty, gate work executes twice, or repository/page boundaries change admission. | Preserve evidence, scope, cancellation, work counters, and failure outcomes. |
+| C5 | Workspace edits retain a skipped result after eligibility changes, or narrow source gates activate unrelated files. | Complete generation-based invalidation and both execution paths. |
+| C6 | The unchanged complete guard exceeds 989 submissions or row/corpus parity differs. | Reconcile replacement work and complete matched CPU and memory controls. |
 
-The C2 scope test also covers `count(*)`, nested CTEs, collations, NULL values, and bag multiplicity.
-The C3 test covers distinct options and private names that must not share data.
-The C4 test varies files, roots, rules, and result packets independently, with sufficient capacity and unchanged dependencies.
-More rows can require more storage traffic. They cannot create one engine statement or native dispatch for each item.
+Required fixtures include nested functions and classes, decorators, anonymous tokens, excluded leaves, Unicode, empty modules, absent fields, and colliding node offsets across files.
+They also include disabled entry points, `oracleAnalyzer`, `sourceProvided`, custom `returnKindsHex`, and repository-only project-builder inference.
+Gate tests cover empty-to-nonempty edits, nonempty-to-empty edits, removals, cancellation, retries, and repeated result packets.
+Existing quality syntax and deferred-CAST tests must remain green.
 
-The compiler and executor need direct ownership of dependency information.
-SQL-token scans cannot provide the authoritative graph for C.
-The existing candidate scheduler, clause suspension, producer registry, and storage-contract host provide implementation components.
-Each component moves under the shared plan as its replacement passes tests.
-No optional production execution flag preserves the old algorithm.
+The native integration fixtures belong in `test/engine/native/recovery/state-syntax-domain.test.ts` and `input-admission.test.ts`.
+Rust admission tests extend `native/src/code_rule_dsl/relational/batch/tests.rs`.
+Generator assertions extend `test/scripts/test_shared_sql.py`.
+The C target test extends `test/scripts/sql-execution-budget.test.mjs`.
+The budget launcher writes a separate C progress receipt and still enforces the unchanged final limit.
+CI includes the new tests and preserves complete SQL capture artifacts.
 
-| Implementation boundary | Existing starting point | Required change |
-| --- | --- | --- |
-| Bindings and dependencies | `native/src/code_rule_dsl/producers/` | Dependent typed bindings, domain completion, consumer provenance, and shared owner IDs |
-| Candidate plan | `native/src/code_rule_dsl/matcher/anchors/sql/lower/` | Explicit operation descriptors and request batches before rendering |
-| SQL backing and publication | `native/src/code_rule_dsl/matcher/anchors/sql/store.rs` and `store/` | Version membership, shared runtime ownership, bulk publication, and reader barriers |
-| Clause compilation | `native/src/code_rule_dsl/compile/relational.rs` | Resolved owner references, shared derived dependencies, and SQLite-owned schema metadata |
-| Clause execution | `native/src/code_rule_dsl/relational/batch.rs` and `relational.rs` | Shared plan advancement, scoped consumers, budget attribution, and owner lifetime management |
-| Pack definitions | `packs/data-layer/candidates/producers/` | Validated producer declarations and reviewed references from actual rules |
-| Instrumentation and gates | `benchmark/sql-profile/` and `scripts/profiling/` | Complete schedule cost, actual build receipts, owner diagnostics, and full C acceptance |
+Native producer tests retain broad count, scan, and scatter waves.
+Independent files and roots cannot create one dispatch per item.
+This delivery uses the existing producer boundary and GPU-compatible storage shape.
 
-## Evidence and acceptance
+## Existing evidence and completion
 
-The profiler must report each binding's definition, inputs, generation, domain, consumers, requested keys, and completed coverage.
-It must also report physical builds, rows, indexes, bytes, statements, reader leases, and retirement reasons.
-Every submitted statement needs a job, phase, operation, and owner or explicit infrastructure identity.
-Discovery and clash reports must distinguish valid separate bindings from conflicting public definitions.
+The isolated syntax experiment passes all 77 recorded state observations: 64 positive and 13 clean.
+It reports zero false positives, false negatives, engine failures, or stateless/workspace differences.
+A separate output-gated experiment also passes all 77 observations.
+That experiment checks admission semantics by suppressing output for empty gates. It does not prove early-skip execution counts.
 
-Acceptance requires all of the following:
+Five alternating fresh-process pairs compare B's policy with the frontend experiment under the same B addon.
+Median replay CPU is 1,060.459 → 427.484 ms, a 59.7% decrease.
+Median peak RSS is 325,600 → 285,312 KiB.
+These results cover the fixed guard. They neither measure the unimplemented admission path nor establish repository performance.
+The matched controls are independent of the earlier B timing series.
 
-- The unchanged complete guard submits at most 100 engine statements, with complete coverage and at least 2,150 actual removals.
-- The representative ten-rule job and complete repository job each obey the same 100-statement boundary.
-- The complete available positive/clean corpus and workspace transitions retain findings and failure parity.
-- The nonempty sharing tests show zero duplicate successful builds of the same binding coverage.
-- Compatible clause consumers perform zero duplicate fact imports or owner index builds.
-- Matched CPU controls show a repeatable improvement beyond control variation on representative nonempty work, with no guard regression.
-- Matched peak memory and retained ownership do not regress. Low-memory tests preserve coverage or report explicit capacity failure.
-- External bottom-up profiles and ownership measurements explain the remaining CPU and memory costs.
+C completes only after the production generator, schema, and both runtime paths satisfy the fixed scope and all of these checks:
 
-CPU controls use fresh processes, identical inputs, matched builds, allocator, workers, and no tracing or census.
-A second rotated control series must reproduce the CPU improvement.
-Detailed SQL, allocation, and external sampling runs remain separate from those controls.
-The journal retains raw trials, source and binary hashes, rejected experiments, and the full remaining inventory.
+- The unchanged complete guard removes at least 1,261 actual engine submissions and finishes at 989 or fewer.
+- The complete trace includes cold compilation, setup, publication, matching, results, transactions, and cleanup, with zero unknown origins.
+- The full recorded state corpus, selected positive/clean cases across all 60 rules, and workspace transitions retain parity.
+- Direct relation comparisons preserve node, field, owner, ordinal, and descendant bags on the required nonempty fixtures.
+- Five matched fresh-process pairs retain a CPU improvement and no peak-memory regression against B under the same measurement protocol.
+- Broad producer-shape tests, native tests, generator tests, type checks, Clippy, and formatting checks pass.
 
-Small commands retain the 115-second deadline. Existing authorization permits the optimized build and complete repository run to finish.
-The broad run starts only after the bounded correctness, execution-shape, and CPU gates pass.
+The final 100-statement gate remains mandatory and separately reports failure until later work closes the remaining gap.
+The journal records actual C counts, all timing trials, hashes, and the new remaining inventory.
+No smaller implementation checkpoint completes the delivery.
 No Linear tickets follow from this specification without prior user approval.
