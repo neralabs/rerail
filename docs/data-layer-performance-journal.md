@@ -10,6 +10,22 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Repeated compiler stage schemas: red
+
+The next R3 test compiles two documents, each with twelve clauses that repeat the same two-stage pipeline.
+The first stage adds a deferred column. Every clause retains ordinary SQLite validation.
+The target permits one inference of each stage schema per document and no deferred-validation DDL.
+The selected prior addon fails: it executes twelve seed CTAS statements per document instead of one.
+Evidence: `.rerail/profiles/sql-stage-recovery-20261023/stage-red`.
+
+The 194 compiler stage executions in the prior guard contain only 53 distinct SQL strings.
+SQLite rejects CTAS through its virtual-table declaration API, so native affinity inference remains necessary on a cache miss.
+The target caches the schema that SQLite infers, keyed by query, complete schemas of read relations, and deferred column names.
+Every cache hit still prepares the authored query under the existing authorizer.
+The cache belongs to one document compilation and has fixed entry and byte bounds.
+It contains schema metadata only. Runtime rows and materialized producers remain outside this cache.
+
+
 ### Selected compiler recovery checkpoint
 
 The selected implementation removes compiler input/syntax DDL and runtime PRAGMAs from compiler initialization.
