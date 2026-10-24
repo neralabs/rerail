@@ -14,6 +14,10 @@ That result precedes a complete controller replacement or pack-library migration
 Each work item ends with a reviewable commit, correctness evidence, and a journal entry.
 This document creates no Linear issues.
 
+The [ranked execution opportunity plan](sql-execution-opportunities.md) supersedes small implementation slices as delivery milestones.
+Named-owner metadata and dependency work belong inside a chunk that removes at least 1,000 complete-job engine submissions.
+R5-A targets 3,474 net removals; R5-B provisionally targets at least 2,000 more. Their CPU, memory, and parity gates remain mandatory.
+
 ## Existing foundation
 
 The discovery CLI and declaration checker already work, with 25 focused tests and CI coverage.
