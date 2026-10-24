@@ -259,22 +259,17 @@ fn catalog_atomic_followed_values_preserve_unknown_failure_and_memo() {
 }
 
 #[test]
-fn catalog_atomic_refuses_capture_inputs_and_composite_semantics() {
-    for rule in [
-        json!({"pattern":"$X","layout":{"before":{"to":"capture.X","breaks":{"eq":0}}}}),
-        json!({"arguments":{"signature":["x"],"bind":{"X":"x"}}}),
+fn catalog_atomic_refuses_parsed_composition_without_a_contract() {
+    let p = policy(
+        "python",
         json!({"parse":{"grammar":"testChars","kind":"char"}}),
-    ] {
-        let language = if rule.get("parse").is_some() {
-            "python"
-        } else {
-            "typescript"
-        };
-        let p = policy(language, rule, json!({}));
-        let grammar = &grammar_matchers(&p)[0];
-        let error = super::compile(grammar).err().expect("no atomic contract");
-        assert!(error.contains("leaf or operator lacks"), "{error}");
-    }
+        json!({}),
+    );
+    let grammar = &grammar_matchers(&p)[0];
+    let error = super::compile(grammar)
+        .err()
+        .expect("no parsed composition contract");
+    assert!(error.contains("leaf or operator lacks"), "{error}");
 }
 
 #[test]

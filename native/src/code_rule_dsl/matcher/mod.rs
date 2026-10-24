@@ -497,6 +497,9 @@ pub(super) fn leaf_verdict_budget<'tree, D: Doc>(
     )
 }
 
+#[cfg(test)]
+pub(in crate::code_rule_dsl) mod sql_bound_leaf;
+
 /// `leaf_verdict`, with the environment a true verdict leaves: the leaf's bindings (a binding
 /// leaf's, `arguments` or `capture`, unified with `env`'s) and its exports (`calls`' chain).
 #[allow(clippy::type_complexity)]

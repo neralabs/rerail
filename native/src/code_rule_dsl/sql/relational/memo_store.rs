@@ -1,5 +1,6 @@
-//! Integer-only keyed scratch storage. SQL supplies keys, answers, and measured costs.
+//! Typed keyed scratch storage. SQL supplies keys, answers, and measured costs.
 //! No AST access, rule evaluation, budget accumulator, or nested SQL execution.
+use super::capture_cell::Cell;
 use rusqlite::{
     Connection, Error, Result,
     functions::FunctionFlags,
@@ -26,7 +27,7 @@ const COST: usize = TRUTH + 1;
 const VALUES: usize = COST + 1;
 const WIDTH: usize = VALUES + SLOTS;
 
-type SparseRow = Vec<(usize, i64)>;
+type SparseRow = Vec<(usize, Cell)>;
 
 #[derive(Default)]
 struct Store {
@@ -57,7 +58,7 @@ pub(super) fn register(db: &Connection) -> Result<()> {
                 .lock()
                 .unwrap()
                 .entries
-                .retain(|key, _| key[0] != (CLAUSE, clause));
+                .retain(|key, _| key[0] != (CLAUSE, Cell::Integer(clause)));
             count(0, 1);
             Ok(1_i64)
         },
@@ -70,7 +71,7 @@ struct Table {
     base: sqlite3_vtab,
     store: Arc<Mutex<Store>>,
 }
-// SAFETY: SQLite base is first. The shared store owns integers only.
+// SAFETY: SQLite base is first. The shared store owns integers and self-contained capture bytes.
 unsafe impl<'v> VTab<'v> for Table {
     type Aux = Arc<Mutex<Store>>;
     type Cursor = Cursor<'v>;
@@ -84,16 +85,16 @@ unsafe impl<'v> VTab<'v> for Table {
     ) -> Result<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::DirectOnly)?;
         let mut columns = vec!["truth INTEGER".into(), "cost INTEGER".into()];
-        columns.extend((0..SLOTS).map(|s| format!("o{s} INTEGER")));
+        columns.extend((0..SLOTS).map(|s| format!("o{s}")));
         columns.extend(
             ["mode", "clause", "utility", "file", "node"].map(|s| format!("{s} INTEGER HIDDEN")),
         );
-        columns.extend((0..SLOTS).map(|s| format!("k{s} INTEGER HIDDEN")));
+        columns.extend((0..SLOTS).map(|s| format!("k{s} HIDDEN")));
         columns.extend([
             "vtruth INTEGER HIDDEN".into(),
             "vcost INTEGER HIDDEN".into(),
         ]);
-        columns.extend((0..SLOTS).map(|s| format!("v{s} INTEGER HIDDEN")));
+        columns.extend((0..SLOTS).map(|s| format!("v{s} HIDDEN")));
         Ok((
             Cow::Owned(CString::new(format!("CREATE TABLE x({})", columns.join(","))).unwrap()),
             Self {
@@ -172,8 +173,17 @@ unsafe impl VTabCursor for Cursor<'_> {
             if column.starts_with('n') {
                 continue;
             }
-            if let Some(value) = args.get::<Option<i64>>(arg)? {
-                values.push((column.parse::<usize>().unwrap(), value));
+            let column = column.parse::<usize>().unwrap();
+            let value = args.get::<Cell>(arg)?;
+            if value != Cell::Null {
+                if ((MODE..KEYS).contains(&column) || column == TRUTH || column == COST)
+                    && value.integer().is_none()
+                {
+                    return Err(Error::ModuleError(
+                        "memo: identity and control columns require integers".into(),
+                    ));
+                }
+                values.push((column, value));
             }
             arg += 1;
         }
@@ -181,7 +191,7 @@ unsafe impl VTabCursor for Cursor<'_> {
             values
                 .binary_search_by_key(&column, |&(c, _)| c)
                 .ok()
-                .map(|i| values[i].1)
+                .and_then(|i| values[i].1.integer())
         };
         let Some(mode) = get(MODE) else {
             return Ok(());
@@ -191,8 +201,8 @@ unsafe impl VTabCursor for Cursor<'_> {
         }
         let key: Vec<_> = values
             .iter()
-            .copied()
             .filter(|(c, _)| (CLAUSE..TRUTH).contains(c))
+            .cloned()
             .collect();
         let mut store = self.store.lock().unwrap();
         match mode {
@@ -212,12 +222,15 @@ unsafe impl VTabCursor for Cursor<'_> {
                         "memo: only completed answers with positive costs can be published".into(),
                     ));
                 }
-                let mut answer = vec![(0, truth), (1, get(COST).unwrap())];
+                let mut answer = vec![
+                    (0, Cell::Integer(truth)),
+                    (1, Cell::Integer(get(COST).unwrap())),
+                ];
                 answer.extend(
                     values
                         .iter()
                         .filter(|(c, _)| *c >= VALUES)
-                        .map(|&(c, v)| (c - VALUES + 2, v)),
+                        .map(|(c, v)| (c - VALUES + 2, v.clone())),
                 );
                 if let Some(prior) = store.entries.get(&key) {
                     if prior != &answer {
@@ -253,7 +266,7 @@ unsafe impl VTabCursor for Cursor<'_> {
                 .values
                 .binary_search_by_key(&(column as usize), |&(c, _)| c)
                 .ok()
-                .map(|i| self.values[i].1),
+                .map(|i| &self.values[i].1),
         )
     }
     fn rowid(&self) -> Result<i64> {
@@ -264,6 +277,38 @@ unsafe impl VTabCursor for Cursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn list_keys_and_answers_distinguish_empty_absent_and_reset() {
+        use super::super::capture_cell::encode_list;
+        let db = Connection::open_in_memory().unwrap();
+        register(&db).unwrap();
+        let empty = encode_list(2, &[]).unwrap();
+        let nonempty = encode_list(2, &[3, 1]).unwrap();
+        let put = "SELECT o0 FROM relation_memo WHERE mode IS 1 AND clause IS 0 AND utility IS 1 AND file IS 2 AND node IS 3 AND k0 IS ?1 AND vtruth IS 1 AND vcost IS 2 AND v0 IS ?2";
+        let answer: Vec<u8> = db
+            .query_row(put, rusqlite::params![empty, nonempty], |r| r.get(0))
+            .unwrap();
+        assert_eq!(answer, nonempty);
+        let lookup = "SELECT o0 FROM relation_memo WHERE mode IS 0 AND clause IS 0 AND utility IS 1 AND file IS 2 AND node IS 3 AND k0 IS ?1";
+        let answer: Vec<u8> = db.query_row(lookup, [&empty], |r| r.get(0)).unwrap();
+        assert_eq!(answer, nonempty);
+        assert!(matches!(
+            db.query_row::<Vec<u8>, _, _>(lookup, [None::<Vec<u8>>], |r| r.get(0)),
+            Err(rusqlite::Error::QueryReturnedNoRows)
+        ));
+        assert!(matches!(
+            db.query_row::<Vec<u8>, _, _>(lookup, [&nonempty], |r| r.get(0)),
+            Err(rusqlite::Error::QueryReturnedNoRows)
+        ));
+        db.query_row::<i64, _, _>("SELECT relation_memo_reset(0)", [], |r| r.get(0))
+            .unwrap();
+        assert!(matches!(
+            db.query_row::<Vec<u8>, _, _>(lookup, [&empty], |r| r.get(0)),
+            Err(rusqlite::Error::QueryReturnedNoRows)
+        ));
+        assert!(db.query_row::<i64,_,_>("SELECT truth FROM relation_memo WHERE mode IS 0 AND clause IS ?1 AND utility IS 1 AND file IS 2 AND node IS 3",[&empty],|r|r.get(0)).is_err());
+    }
+
     #[test]
     fn scratch_storage_is_typed_guarded_and_resets_on_statement_reuse() {
         let db = Connection::open_in_memory().unwrap();

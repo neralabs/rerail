@@ -250,25 +250,15 @@ fn outcomes_reached_demands_skip_decided_and_withheld_terms() {
 }
 
 #[test]
-fn outcomes_reject_unproved_effects_and_recursive_outcomes() {
-    for (rule, utils, expected) in [
-        (
-            json!({"matches":"r"}),
-            json!({"r":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","matches":"r"}}]}}),
-            "recursive outcomes",
-        ),
-        (
-            json!({"pattern":"$X","layout":{"before":{"to":"capture.X","breaks":{"eq":0}}}}),
-            json!({}),
-            "effect-free",
-        ),
-    ] {
-        let p = policy(rule, utils);
-        let Err(error) = super::super::compile(&grammar_matchers(&p)[0]) else {
-            panic!("accepted {expected}")
-        };
-        assert!(error.contains(expected), "{error}");
-    }
+fn outcomes_reject_unproved_recursive_outcomes() {
+    let p = policy(
+        json!({"matches":"r"}),
+        json!({"r":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","matches":"r"}}]}}),
+    );
+    let Err(error) = super::super::compile(&grammar_matchers(&p)[0]) else {
+        panic!("accepted unproved recursive outcomes")
+    };
+    assert!(error.contains("recursive outcomes"), "{error}");
 }
 
 #[test]

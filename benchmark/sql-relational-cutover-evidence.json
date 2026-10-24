@@ -1,101 +1,115 @@
 {
-  "scope": "Catalog transition checkpoint in the test-only replacement compiler. Production replacement and complete-job execution/VM gates remain unqualified. Frozen B023 preparation is reported separately.",
-  "revision": "a493c64c70da5544b898afb96b4db9e600449188",
-  "workingTree": " M benchmark/relational-candidate-demand.py\n M docs/sql-relational-transition-plan.md\n M docs/sql-set-composition-compiler-spike.md\n M native/src/code_rule_dsl/matcher/mod.rs\n M native/src/code_rule_dsl/sql/relational/answers.rs\n M native/src/code_rule_dsl/sql/relational/budget_leaf.rs\n M native/src/code_rule_dsl/sql/relational/cutover_tests.rs\n M native/src/code_rule_dsl/sql/relational/leaves.rs\n M native/src/code_rule_dsl/sql/relational/lower.rs\n M native/src/code_rule_dsl/sql/relational/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/effects.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/nested.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/tests.rs\n M native/src/code_rule_dsl/sql/relational/tests.rs\n M native/src/code_rule_dsl/sql/relational/witness.rs\n M native/src/code_rule_dsl/sql/relational/witness_tests.rs\n M native/src/code_rule_dsl/sql/terminals/mod.rs\n M native/src/code_rule_dsl/sql/terminals/pattern.rs\n?? native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs\n?? native/src/code_rule_dsl/sql/relational/classify.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/atomic_owner.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/constraint_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/constraint_walk_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/field.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/field_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/fill_cost.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/pattern_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/pattern_tests.rs\n?? native/src/code_rule_dsl/sql/relational/pattern_leaf.rs\n?? native/src/code_rule_dsl/sql/relational/pure_catalog_tests.rs\n",
+  "scope": "Catalog closure checkpoint in the test-only replacement compiler. Production cutover, recursive resource equivalence, full publication and complete-job <=100 executions remain unqualified.",
+  "revision": "894984765eb5b03b6fc2b0e710feb180c1170a34",
+  "workingTree": " M benchmark/relational-candidate-demand.py\n M docs/sql-relational-transition-plan.md\n M docs/sql-set-composition-compiler-spike.md\n M native/src/code_rule_dsl/matcher/mod.rs\n M native/src/code_rule_dsl/matcher/value_probe.rs\n M native/src/code_rule_dsl/sql/relational/budget_leaf.rs\n M native/src/code_rule_dsl/sql/relational/cutover_tests.rs\n M native/src/code_rule_dsl/sql/relational/leaves.rs\n M native/src/code_rule_dsl/sql/relational/memo_store.rs\n M native/src/code_rule_dsl/sql/relational/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/effects.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/field_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/pattern_lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/publication.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/tests.rs\n M native/src/code_rule_dsl/sql/relational/pattern_leaf.rs\n M native/src/code_rule_dsl/sql/relational/row.rs\n M native/src/code_rule_dsl/sql/relational/tests.rs\n M native/src/code_rule_dsl/sql/terminals/fact.rs\n M native/src/code_rule_dsl/sql/terminals/mod.rs\n?? native/src/code_rule_dsl/matcher/sql_bound_leaf.rs\n?? native/src/code_rule_dsl/sql/relational/bound_leaf.rs\n?? native/src/code_rule_dsl/sql/relational/capture_cell.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binds_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binds_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/bound_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/bound_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/capture_predicate_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/capture_predicate_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/field_end.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/field_end_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/list_tests.rs\n?? native/src/code_rule_dsl/sql/relational/recursive_chain.rs\n",
   "sourceHashes": {
     "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
     "native/src/code_rule_dsl/sql/relational/answers.rs": "ccbd186b968e230bb1ca5e868e1e4b142e58bd73290a7def5a8411723dd140a8",
     "native/src/code_rule_dsl/sql/relational/bound.rs": "6e0661e316527ad78e34564b11bd0312522a3c95168c85e286ce1707c0a642f2",
-    "native/src/code_rule_dsl/sql/relational/budget_leaf.rs": "d4465536550d9fbcef9380b481f536110c88d852cc51797b629695515f61c4b9",
+    "native/src/code_rule_dsl/sql/relational/bound_leaf.rs": "5ef176d0ac04b255e48ffae160efc352ca02f7a2bf95aacbd7e3d8083656efbf",
+    "native/src/code_rule_dsl/sql/relational/budget_leaf.rs": "8a51babe28435aaf333df1ba927b80109bd507d0935b8ce6a4b5fa37f73b5e56",
+    "native/src/code_rule_dsl/sql/relational/capture_cell.rs": "cad162f662d35b24694dc826fe21e136b8fe38e2912a52f3f08db2064c7b2f71",
     "native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs": "fdf935d7b39d0c892adc19d39eba04acc548333599ff83cd39fb76830c17dcbe",
     "native/src/code_rule_dsl/sql/relational/classify.rs": "c565229ef17b44b37ef72848471cd0b8ffd726ce5964e9aeabe1868b3213e234",
-    "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "b8a42529088be314715d93e446feb42495e1956b704f5abc5d304c9f54e00658",
+    "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "fc5988981973e5049657b8e91de4cbe0429855b011326dfaa0406adb5c58a66d",
     "native/src/code_rule_dsl/sql/relational/demand.rs": "0d5b9fbf3c75890c9f1620c7340936d01bf314b6de37380e355416350eedb8fe",
     "native/src/code_rule_dsl/sql/relational/emit.rs": "c4e713817a65f14140a36bf547527dcbc549fa6c0d9bb99a0c2e0548bd4312b3",
     "native/src/code_rule_dsl/sql/relational/failure.rs": "e658b85c5432925c195a0b731edac6c86705d3c6c0da76537370be784b2b0c0b",
     "native/src/code_rule_dsl/sql/relational/ir.rs": "8a05029eab9021b06e15b2eb133133ba0b7cdb06a7f199f426ee893b47c77192",
-    "native/src/code_rule_dsl/sql/relational/leaves.rs": "155f05a25a46c3ef7f828f3721af52bd4790de76a1945d8cb7aa82b22fcd7d4a",
+    "native/src/code_rule_dsl/sql/relational/leaves.rs": "1f34f665858fed8fc5800f3917da14a62674d847a708339c23cca282588444c2",
     "native/src/code_rule_dsl/sql/relational/lower.rs": "a95a585df3dc3e7b6c4e794577e4e2df15c688fffdf98f22a2f3d21d90276ae5",
-    "native/src/code_rule_dsl/sql/relational/memo_store.rs": "92f62671b266e47bf74e1d8264b29216d24a5526956a0e71d3176e7711d1530d",
-    "native/src/code_rule_dsl/sql/relational/mod.rs": "a401472576efb50b6ab8bbaa363616330c51ab6bb39d4bbd0dc501a03ff620c2",
+    "native/src/code_rule_dsl/sql/relational/memo_store.rs": "dc481b453075749b56526b45b48150ff6981c324281219c1d3c73eb3fe35b4bd",
+    "native/src/code_rule_dsl/sql/relational/mod.rs": "a1a67a9b8fa49b7bd44298bc3018cc157a7c394e020d6b7b7b677fd4ba48f6fd",
     "native/src/code_rule_dsl/sql/relational/outcomes/atomic_owner.rs": "c13fb619271d3e139b12a1823196583c794c8141446ef857b37879bb1da3e80b",
     "native/src/code_rule_dsl/sql/relational/outcomes/atomic_predicate_tests.rs": "7219e006eb5795ae394dc7ab6fe04dcb863938b5cac871ab6efd92f3c5e9978f",
+    "native/src/code_rule_dsl/sql/relational/outcomes/binds_lower.rs": "ef56350495254524436ef0e1cc14cebc1347828ceb8d58229cf8c3cbf956c822",
+    "native/src/code_rule_dsl/sql/relational/outcomes/binds_tests.rs": "d2877631e64557aa7a7f97df762722c029343aa0bdb0b1af21e7e8670157b4ba",
+    "native/src/code_rule_dsl/sql/relational/outcomes/bound_lower.rs": "3a28f1af6336bd421c45dc34e3ed9e123e0a4be706fd9c03fce15deb428c9fac",
+    "native/src/code_rule_dsl/sql/relational/outcomes/bound_tests.rs": "c594ddb44f758486c3da0bc8a897d4195c31922bdd93b5f668b1511f66c6e3dd",
     "native/src/code_rule_dsl/sql/relational/outcomes/budget_tests.rs": "4ede5a91daf54e017bcce56aa395fe4cc73112c2d8ddef601ec6aff2bddc99f3",
     "native/src/code_rule_dsl/sql/relational/outcomes/candidate.rs": "03553707b4e17df0afaf12e24f82e106b2eeb6ebce91b9a52486c40d5c94814d",
+    "native/src/code_rule_dsl/sql/relational/outcomes/capture_predicate_lower.rs": "bb97943109927c79a27451c62649ee107a40b82d5596938a3de564dcc5edd409",
+    "native/src/code_rule_dsl/sql/relational/outcomes/capture_predicate_tests.rs": "8089cd82d35b737484d378186b75cb6cb36f99cf145127efcd7878fd2f75f79e",
     "native/src/code_rule_dsl/sql/relational/outcomes/capture_walk_tests.rs": "6f6a8a778013373f65b85fc066a88ff0bb9769ac428f2045a1833ba14b0f301c",
-    "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "9a37b48405cd14a4a19f50aa7e088d877376900d04b9282aed15306de4184a8d",
+    "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "8d9a5a2189232488c3a0c7ce71832e5ff36d639ca0d40ba70a645a485ebe34cd",
     "native/src/code_rule_dsl/sql/relational/outcomes/composition_budget_tests.rs": "5109d57ee18432afb223778b1be52f52af32e3dc888d03768565fb6667969097",
-    "native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs": "176eb013dc411db5881e2bd03a73de742b8ca2a83ccf1204b1df7b38f82c5327",
+    "native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs": "ba71701ae5e22501900bb88bdd9a9b7bc78148144aeca8fd579b89dffef5fe2d",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_tests.rs": "0c561bf67c63c62e5cd44fe18f888cce0f5204146a4d597180d6e226c399b369",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_walk_tests.rs": "8d2e010992cc20a54d81d255ac946b0712607fb0057dea31c85375270cf7eda0",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs": "1dfa780f2b688315e81990c6d20691ea04c3c881fa2268078331addc552ec4f8",
-    "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "764ea8342d710afaa53ce013067dc9b03a40303fe45a6c9dcb68712c19ccd1c7",
-    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "58acec72974d2ba639aaed4be3350bf09a59bcee22fd26c7b9e18d920e8a6666",
+    "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "fc7b48d1dfe01ad61e3422397e103b2fd03cb2299bc1cc67b6e71b0e97571ea0",
+    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "9f82b505fddf001748ca4642c82fd1691ff15d71b2ce4a3081028c2d071cf23b",
     "native/src/code_rule_dsl/sql/relational/outcomes/field.rs": "10960a58a39e0d49375073d126691313d34234c1319dad71d4cbf94b0cfe9f8b",
-    "native/src/code_rule_dsl/sql/relational/outcomes/field_tests.rs": "8ae478a3430fc7b7b848081d0ae98a34a02b75de42dccc3c2a0ea0106c202888",
+    "native/src/code_rule_dsl/sql/relational/outcomes/field_end.rs": "784bc3a27855785b2eca0deed460995dc642785ee2dafc0d5f3f02d220d1356f",
+    "native/src/code_rule_dsl/sql/relational/outcomes/field_end_tests.rs": "d8a50f730215c71cc309b035eb1c2dd1386a3176619e1c4fdcd23e37b9f0a930",
+    "native/src/code_rule_dsl/sql/relational/outcomes/field_tests.rs": "0590a47df49e8cd36920f8a7b243f7ee17e60c9c6c5dccb621f730ecc1b2df8c",
     "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "f07a9a5e61dc9228709c4a638bcd7f48ca9f88efe4f3a5e103782a77a9e4cb15",
     "native/src/code_rule_dsl/sql/relational/outcomes/fill_cost.rs": "9988c7537a9b9f8f9f0bc389e1a0af751541b725067f72c3052df6e2d5a56ddf",
-    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "fe89cf9030c8b1295d2e812f6ec6606e9af3865f2da4ff43c322708830400234",
+    "native/src/code_rule_dsl/sql/relational/outcomes/list_tests.rs": "9c1a385da0e0351e127032440b3cf3169495f64bc9629f4865e30fbd67a4bbdf",
+    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "ff5593745dc53ad829a2f503e616e9452b13e76a0118f15b061786c11e257530",
     "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "6caa51cf5c191813ceffd12fec16b47e207d9f3c7daf595e52b2f1a5ca624384",
     "native/src/code_rule_dsl/sql/relational/outcomes/memo_tests.rs": "656b044ea22b7c64df8c83726f1ef3db4ac3efda7f40d515fd24da672f3dacc8",
-    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "61823a9a0a0cb8a31bc865442300fe297b5ee4f9d15de4fe233ddec552999489",
+    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "633a929d31090a176578c037e98907384c7b84fd8fb7f9ed9a520c438b1e94cc",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "d4c2689353c0f73b1df33c612605f784e21c7438f9b33c97efe6ab1f8960897e",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_memo_tests.rs": "9b6469e2a8c5e0f09a348712a74630b063e8c57ef63318cdea5ddf796fe48e60",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs": "102ac57bf18624266acc71b2699b5c33cae5048013b35fe6d2948d084de9c352",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_utility.rs": "4d5ed316d73ac237a2584c9ab622a1eb3d42a69443cfed6331ac02fbd2696599",
     "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "d1c621958d2078a31dec9759c6aec35b7df9cb9134839343fc0aac700153bb30",
-    "native/src/code_rule_dsl/sql/relational/outcomes/pattern_lower.rs": "a0e1bc54e50f137a17070cf997708bd42766dd5190f95ec31f6e53712b5f2e24",
+    "native/src/code_rule_dsl/sql/relational/outcomes/pattern_lower.rs": "80cb48ace41a1bf9a4d28a087acb474d60c3637a2be5dea5e09b0df2c2cc3465",
     "native/src/code_rule_dsl/sql/relational/outcomes/pattern_tests.rs": "af71133e15675c3a9d702229d35b29a79904c1b06f626bd02e73c95fe693055e",
     "native/src/code_rule_dsl/sql/relational/outcomes/predicate.rs": "619e4b241f18b225118eb7ba6c5eba0f2c02a02e64f69d3226c5f5729c44b90f",
     "native/src/code_rule_dsl/sql/relational/outcomes/predicate_run_tests.rs": "ecd39811347caf44e0e09762a8dea821a6c5e3485227ec6e6935d27d75bd43f4",
     "native/src/code_rule_dsl/sql/relational/outcomes/pruning_tests.rs": "c709ad80c7811b3a01133e8cee0d983626096d5fc725751f545c50c5a934e76c",
-    "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "b81871d1eacde994d91a2181aa2edae71b3478638d91c4becc4852c597982f12",
-    "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "fedb4df137b10f0b4037da86fbba10a3055135530c731cfd6e814889fb7f55af",
+    "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "c0a05bbf4aad78af94fa173e6427f31e6de3cf3297d90efbf097f7ea0b623ba6",
+    "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "35a8e46097c15d0025a429cbced78a33590df3636efdbbe4f1bb420dbb933ed2",
     "native/src/code_rule_dsl/sql/relational/outcomes/reached_tests.rs": "f74745bd64929de932b64f5e1ed0ef9c0e05291c2c12787243f47ce40810a41e",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_any_tests.rs": "a7ac8fa45456a7cb3db96b447a0627201d9e1bbd0583abf6fd62c4c7a7b292d7",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_cost.rs": "0206e638a769a4bed989b3e2261561da75dacbc669311b8b506060a39611121b",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_utility_tests.rs": "529c5f5f0ba42b1140d50853e4d58c57fedf251eaed9691f9f585cea17c13bef",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk.rs": "2ad347394fc67b7facb28aab8c56a2fc127521c1263ee988e2ec53eb8e2587e5",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk_tests.rs": "995f2a7ac2f8948e3d64a70527602f9b7fc1e66210a8f1a1817c90fe92928ded",
-    "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "d461a1ffaf9ad980afe0c358e8dab0fc7c81bdf298ccb1c554ba9ee0bf824b36",
+    "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "644705561f2d79f4169d29efccb6328514410ada43736e8f8ff0dfa6bb3054ed",
     "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo_tests.rs": "7a0535434942416c3f98bab36a16d5cfb0f0e38dfd89468a4d749f3ce8b3750c",
-    "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "398a33b95c5e5e028c9c4c4930c5b9cf68249b2ff2978e097cdbb557e1051fdf",
+    "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "31e14924e94220c95b60cfc1f1b0a5fe9c5a0137a04385e72fcc4ed86315861b",
     "native/src/code_rule_dsl/sql/relational/outcomes/traversal_memo_tests.rs": "09641c0fef3064f5a8cecc5e89c20b8bee8a391c58e2835a4e9c55f86a59f478",
     "native/src/code_rule_dsl/sql/relational/outcomes/utility_plan_tests.rs": "90af79df152a8ef182c6861c283b507f717c8283e6d814c49bd8dcbc4111bf58",
-    "native/src/code_rule_dsl/sql/relational/pattern_leaf.rs": "11385256b5066640d077a5f678f963440b635fbd9a0e77aedbefed3b26e73068",
+    "native/src/code_rule_dsl/sql/relational/pattern_leaf.rs": "4b9b68d1cf17569ad6b17f59a5ddb83f9a6486518ebbd3c567b22e8a08be84bd",
     "native/src/code_rule_dsl/sql/relational/physical.rs": "b937aefe75bd55913196f384ecaf01c18e41cac0c8a692bc35d9952080d35398",
     "native/src/code_rule_dsl/sql/relational/pure_catalog_tests.rs": "ea88bcbb4d080fa0ac19e641cd0011a633440cba014f417b6d8a8bc62837ced8",
     "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
     "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
-    "native/src/code_rule_dsl/sql/relational/row.rs": "16542ce6165763307338de09a262a2b5dc4fd251215038411bae8ea7b822b32b",
-    "native/src/code_rule_dsl/sql/relational/tests.rs": "a829898de56f79234402628cfd8f0e4317931b9ba8f42f6f74b2d84650d3f2e7",
+    "native/src/code_rule_dsl/sql/relational/recursive_chain.rs": "fd73d8ac36ea9f64aed4f3e65cf2a41cd2751b3b4d71767d2fcde3b375105cbe",
+    "native/src/code_rule_dsl/sql/relational/row.rs": "f8e5ee9c5dc6a8b31e8999b8218abd64861e7f471f1472cf3e5d7a044b36a530",
+    "native/src/code_rule_dsl/sql/relational/tests.rs": "6c11334ca62a7ba5feb665808b4373c984b3d00438e2f8458c3575df5ba6fae3",
     "native/src/code_rule_dsl/sql/relational/witness.rs": "ded0a5aca73b45ec156c0a6309480c499ae8d65c549fe55900a805b25e719ad0",
     "native/src/code_rule_dsl/sql/relational/witness_tests.rs": "74455e6e283f2f9c17e2fb51a908ba2d4a8ce5f9f626803b039a5fe138344db3",
-    "native/src/code_rule_dsl/matcher/mod.rs": "86743494f43cca14d3ec73373d15cea2e4d016b22301e1cef3af53bd6c2fddd9",
+    "native/src/code_rule_dsl/matcher/mod.rs": "bbb99ef53ced84ce3566c89cc5115bedf7439a49174bbf1538e17f0c5896d426",
     "native/src/code_rule_dsl/matcher/value.rs": "7c323eeeb044b02ae384b7a4ba4989cb14a400c3721b381e96b0eee0643db27e",
-    "native/src/code_rule_dsl/matcher/value_probe.rs": "f37e6879d32bed17faaa77f414894a2a1ee8181ad2b406043e57646cd52ef62e",
-    "native/src/code_rule_dsl/sql/terminals/mod.rs": "c9968c095e26ea43cf7a12930de2a7110717e02c9f4e974d21a9dd44268d7a3d",
+    "native/src/code_rule_dsl/matcher/value_probe.rs": "78ebc89714c2f642fde6a4361944fb3aab64cf8539852a85695023594dd089c6",
+    "native/src/code_rule_dsl/matcher/sql_bound_leaf.rs": "ee2e5adbf6f6654a6508a459a85bfec1891f265e29ff7d87ab057fde974e45c7",
+    "native/src/code_rule_dsl/sql/terminals/fact.rs": "15ac2712df80ea752aac5453dacfb6e3f093d039f9aa3d471639ee476bc89aab",
+    "native/src/code_rule_dsl/sql/terminals/mod.rs": "4de6fb382ccbc7a8bee6b2c26e6da9d694d1bba27d7052d0c669c68eeecea0f9",
     "native/src/code_rule_dsl/sql/terminals/pattern.rs": "20ee337b4623cd962946179f0696920cd04b6599c7ec759fb09d185cc22590fa",
     "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs": "35dcfe22f012b26e6df359407f70df4b5c91bd4ec67a72206b34315372ec5c40",
     "native/src/code_rule_dsl/sql/spikes/whole_call/b023.sql": "cc8df01875dc99d3afc75b2efceb4cbe47732647267d973ec85be2f410784eba",
     "native/src/code_rule_dsl/sql/spikes/whole_call/run.rs": "81e71c024ca779afdd247e1d038a33adc4444fd3a03a2d39050b840d7fe20685",
     "native/src/code_rule_dsl/sql/mod.rs": "abdaa15b5c97a7351091a3b924d886d092d2457cf507b3e04d9d9a3a31efaceb",
     "packs/python/rules/ruff-b023-function-uses-loop-variable.json": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
-    "benchmark/relational-candidate-demand.py": "a1b3bda89d47590cc63c0469a8be26681ba4cbe1638a82608749ccd9c689aa86"
+    "benchmark/relational-candidate-demand.py": "e0eb2c51cc42c46f6a97af0fc5e81d2bd51fde3c84549150a335045d1137ed86"
   },
-  "executableSha256": "3e21dd6afc931d283e5469ecd6ee0c01f1a506aa4b9220a3c91135c8ef62fe8c",
+  "executableSha256": "2205bf292efcc2db27ec1c54e80fde6670f4f67c0c1023349752284d50c2a7a7",
   "querySha256": "b8181c1d92096c724099d7025d0a17e839c14801a0e8296e04d9a5a73ce7b8d2",
   "result": {
     "automaticIndexRows": 1791,
     "baseline": {
-      "diagnosticKernelCpuNs": 7288712708,
+      "diagnosticKernelCpuNs": 6861521041,
       "frameAdvances": 15597627,
       "framePublications": 6944829,
       "matchingStatements": 1
     },
     "captureEqualityRequests": 0,
-    "coldKernelCpuNs": 41507625,
-    "diagnosticCpuNs": 110825625,
+    "coldKernelCpuNs": 36619625,
+    "diagnosticCpuNs": 97448250,
     "diagnosticRelationRows": [
       {
         "relation": "search5",
@@ -1010,7 +1024,7 @@
     "files": 138,
     "framePublications": 0,
     "fullscanSteps": 2792,
-    "generationCpuNs": 1035417,
+    "generationCpuNs": 960000,
     "inputs": [
       {
         "path": "benchmarks/tests/test_exact_graph_publication_benchmark_contract.py",
@@ -1725,8 +1739,8 @@
     ],
     "parity": true,
     "patternRequests": 142,
-    "prepareAndExecuteCpuNs": 40392917,
-    "prepareCpuNs": 3561959,
+    "prepareAndExecuteCpuNs": 35580125,
+    "prepareCpuNs": 3300750,
     "regexRequests": 655,
     "relations": {
       "capture": "N",
@@ -1750,7 +1764,7 @@
       {
         "generated": {
           "baseline": {
-            "coldKernelCpuNs": 7070603583,
+            "coldKernelCpuNs": 6780388291,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -1761,11 +1775,11 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 7056690625,
+            "matchingCpuNs": 6768476125,
             "scheduledStatements": 1
           },
           "direct": {
-            "coldKernelCpuNs": 46959083,
+            "coldKernelCpuNs": 43789749,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -1776,7 +1790,7 @@
               "nodeFilters": 10957,
               "regexNodeRequests": 655
             },
-            "generationCpuNs": 914792,
+            "generationCpuNs": 942958,
             "leafCalls": 0,
             "metrics": {
               "actionable": {
@@ -1786,11 +1800,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.0940884708913211
+                "prepareShare": 0.08855504727589877
               },
               "automaticIndexRows": 1791,
-              "cpuNs": 35105167,
-              "diagnosticCpuNs": 7118042,
+              "cpuNs": 32183083,
+              "diagnosticCpuNs": 7381000,
               "explain": [
                 {
                   "flags": [
@@ -3205,11 +3219,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 7115166,
+              "explainCpuNs": 7378041,
               "fullscanSteps": 2792,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3646042,
-              "prepareWallNs": 3905458,
+              "prepareCpuNs": 3126875,
+              "prepareWallNs": 3142792,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -3227,11 +3241,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 1791,
-                  "cpuNs": 35105167,
+                  "cpuNs": 32183083,
                   "fullscanSteps": 2792,
                   "interruption": null,
-                  "prepareCpuNs": 3646042,
-                  "prepareWallNs": 3905458,
+                  "prepareCpuNs": 3126875,
+                  "prepareWallNs": 3142792,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -3241,11 +3255,11 @@
                   "sqlBytes": 10232,
                   "sqlExecutions": 1,
                   "vmSteps": 246364,
-                  "wallNs": 38165375
+                  "wallNs": 32811167
                 }
               ],
               "vmSteps": 246364,
-              "wallNs": 38165375
+              "wallNs": 32811167
             }
           },
           "explain": {
@@ -5217,18 +5231,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 344798416,
+          "nativeCpuNs": 307693875,
           "parity": true,
-          "parseCpuNs": 857818917,
+          "parseCpuNs": 771432500,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 3141750,
+            "installationCpuNs": 3062708,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4630542,
+                "cpuNs": 4508458,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -5239,11 +5253,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4628708
+                "wallNs": 4617292
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4339125,
+                "cpuNs": 4202583,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -5254,11 +5268,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4338292
+                "wallNs": 4272084
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4226917,
+                "cpuNs": 4596334,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -5269,7 +5283,7 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4225375
+                "wallNs": 4884417
               }
             ]
           },
@@ -5278,7 +5292,7 @@
         },
         "reference": {
           "baseline": {
-            "coldKernelCpuNs": 7125264167,
+            "coldKernelCpuNs": 6522563416,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -5289,7 +5303,7 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 7111650917,
+            "matchingCpuNs": 6509997125,
             "scheduledStatements": 1
           },
           "captureDemand": [
@@ -11551,7 +11565,7 @@
             ]
           ],
           "direct": {
-            "coldKernelCpuNs": 89064917,
+            "coldKernelCpuNs": 67816667,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -11562,7 +11576,7 @@
               "nodeFilters": 52112,
               "regexNodeRequests": 0
             },
-            "generationCpuNs": 604250,
+            "generationCpuNs": 255167,
             "leafCalls": 2308,
             "metrics": {
               "actionable": {
@@ -11572,11 +11586,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.042236788994997825
+                "prepareShare": 0.045436518690731426
               },
               "automaticIndexRows": 37241,
-              "cpuNs": 76303000,
-              "diagnosticCpuNs": 8629958,
+              "cpuNs": 58452417,
+              "diagnosticCpuNs": 6173833,
               "explain": [
                 {
                   "flags": [
@@ -12993,11 +13007,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 8626542,
+              "explainCpuNs": 6170625,
               "fullscanSteps": 42351,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3364917,
-              "prepareWallNs": 3744417,
+              "prepareCpuNs": 2782292,
+              "prepareWallNs": 4804834,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -13015,11 +13029,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 37241,
-                  "cpuNs": 76303000,
+                  "cpuNs": 58452417,
                   "fullscanSteps": 42351,
                   "interruption": null,
-                  "prepareCpuNs": 3364917,
-                  "prepareWallNs": 3744417,
+                  "prepareCpuNs": 2782292,
+                  "prepareWallNs": 4804834,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -13029,11 +13043,11 @@
                   "sqlBytes": 8196,
                   "sqlExecutions": 1,
                   "vmSteps": 2324796,
-                  "wallNs": 344815167
+                  "wallNs": 59722750
                 }
               ],
               "vmSteps": 2324796,
-              "wallNs": 344815167
+              "wallNs": 59722750
             }
           },
           "explain": {
@@ -15007,18 +15021,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 317226125,
+          "nativeCpuNs": 297367333,
           "parity": true,
-          "parseCpuNs": 758080875,
+          "parseCpuNs": 716882125,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 3545041,
+            "installationCpuNs": 2879291,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 37678834,
+                "cpuNs": 30777583,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -15029,11 +15043,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 37678083
+                "wallNs": 32125500
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 41803500,
+                "cpuNs": 31036000,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -15044,11 +15058,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 326059708
+                "wallNs": 31034958
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 44939625,
+                "cpuNs": 32449666,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -15059,7 +15073,7 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 98525667
+                "wallNs": 33158958
               }
             ]
           },
@@ -15070,7 +15084,7 @@
       {
         "generated": {
           "baseline": {
-            "coldKernelCpuNs": 6729183500,
+            "coldKernelCpuNs": 6702596500,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -15081,11 +15095,11 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6715231959,
+            "matchingCpuNs": 6682120666,
             "scheduledStatements": 1
           },
           "direct": {
-            "coldKernelCpuNs": 41433124,
+            "coldKernelCpuNs": 42702417,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -15096,7 +15110,7 @@
               "nodeFilters": 10957,
               "regexNodeRequests": 655
             },
-            "generationCpuNs": 894041,
+            "generationCpuNs": 877792,
             "leafCalls": 0,
             "metrics": {
               "actionable": {
@@ -15106,11 +15120,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.09506971290375772
+                "prepareShare": 0.10182816722969643
               },
               "automaticIndexRows": 1791,
-              "cpuNs": 30870000,
-              "diagnosticCpuNs": 6262208,
+              "cpuNs": 31891125,
+              "diagnosticCpuNs": 6178834,
               "explain": [
                 {
                   "flags": [
@@ -16525,11 +16539,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 6259542,
+              "explainCpuNs": 6175458,
               "fullscanSteps": 2792,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3243125,
-              "prepareWallNs": 3273375,
+              "prepareCpuNs": 3615583,
+              "prepareWallNs": 3655583,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -16547,11 +16561,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 1791,
-                  "cpuNs": 30870000,
+                  "cpuNs": 31891125,
                   "fullscanSteps": 2792,
                   "interruption": null,
-                  "prepareCpuNs": 3243125,
-                  "prepareWallNs": 3273375,
+                  "prepareCpuNs": 3615583,
+                  "prepareWallNs": 3655583,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -16561,11 +16575,11 @@
                   "sqlBytes": 10232,
                   "sqlExecutions": 1,
                   "vmSteps": 246364,
-                  "wallNs": 30869375
+                  "wallNs": 32543542
                 }
               ],
               "vmSteps": 246364,
-              "wallNs": 30869375
+              "wallNs": 32543542
             }
           },
           "explain": {
@@ -18537,18 +18551,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 286021708,
+          "nativeCpuNs": 278986708,
           "parity": true,
-          "parseCpuNs": 732788292,
+          "parseCpuNs": 705492792,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2666167,
+            "installationCpuNs": 2605167,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4218125,
+                "cpuNs": 4164708,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -18559,11 +18573,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4217334
+                "wallNs": 4163375
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4034584,
+                "cpuNs": 3962208,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -18574,11 +18588,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4033750
+                "wallNs": 3960916
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 3934958,
+                "cpuNs": 3968834,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -18589,7 +18603,7 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 3933541
+                "wallNs": 3968292
               }
             ]
           },
@@ -18598,7 +18612,7 @@
         },
         "reference": {
           "baseline": {
-            "coldKernelCpuNs": 6783689167,
+            "coldKernelCpuNs": 6426130041,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -18609,7 +18623,7 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6769686084,
+            "matchingCpuNs": 6413562959,
             "scheduledStatements": 1
           },
           "captureDemand": [
@@ -24871,7 +24885,7 @@
             ]
           ],
           "direct": {
-            "coldKernelCpuNs": 90139167,
+            "coldKernelCpuNs": 72710917,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -24882,7 +24896,7 @@
               "nodeFilters": 52112,
               "regexNodeRequests": 0
             },
-            "generationCpuNs": 620167,
+            "generationCpuNs": 444958,
             "leafCalls": 2308,
             "metrics": {
               "actionable": {
@@ -24892,11 +24906,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.03963390330244732
+                "prepareShare": 0.040248503935147104
               },
               "automaticIndexRows": 37241,
-              "cpuNs": 80210416,
-              "diagnosticCpuNs": 5745292,
+              "cpuNs": 63031000,
+              "diagnosticCpuNs": 6441667,
               "explain": [
                 {
                   "flags": [
@@ -26313,11 +26327,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 5742583,
+              "explainCpuNs": 6438417,
               "fullscanSteps": 42351,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3310250,
-              "prepareWallNs": 3549667,
+              "prepareCpuNs": 2643292,
+              "prepareWallNs": 2697375,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -26335,11 +26349,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 37241,
-                  "cpuNs": 80210416,
+                  "cpuNs": 63031000,
                   "fullscanSteps": 42351,
                   "interruption": null,
-                  "prepareCpuNs": 3310250,
-                  "prepareWallNs": 3549667,
+                  "prepareCpuNs": 2643292,
+                  "prepareWallNs": 2697375,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -26349,11 +26363,11 @@
                   "sqlBytes": 8196,
                   "sqlExecutions": 1,
                   "vmSteps": 2324796,
-                  "wallNs": 229054416
+                  "wallNs": 135658042
                 }
               ],
               "vmSteps": 2324796,
-              "wallNs": 229054416
+              "wallNs": 135658042
             }
           },
           "explain": {
@@ -28327,18 +28341,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 319126375,
+          "nativeCpuNs": 282495083,
           "parity": true,
-          "parseCpuNs": 894242125,
+          "parseCpuNs": 710014750,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2326542,
+            "installationCpuNs": 2225500,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 31520791,
+                "cpuNs": 31598917,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -28349,11 +28363,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 335467834
+                "wallNs": 31598458
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 30778625,
+                "cpuNs": 30574416,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -28364,11 +28378,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 167595417
+                "wallNs": 44453083
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 32770792,
+                "cpuNs": 31168000,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -28379,7 +28393,7 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 206543667
+                "wallNs": 117068833
               }
             ]
           },
@@ -28390,7 +28404,7 @@
       {
         "generated": {
           "baseline": {
-            "coldKernelCpuNs": 6902099833,
+            "coldKernelCpuNs": 6640582917,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -28401,11 +28415,11 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6889133542,
+            "matchingCpuNs": 6628542334,
             "scheduledStatements": 1
           },
           "direct": {
-            "coldKernelCpuNs": 44860084,
+            "coldKernelCpuNs": 41096292,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -28416,7 +28430,7 @@
               "nodeFilters": 10957,
               "regexNodeRequests": 655
             },
-            "generationCpuNs": 1008042,
+            "generationCpuNs": 832958,
             "leafCalls": 0,
             "metrics": {
               "actionable": {
@@ -28426,11 +28440,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.10495286918285995
+                "prepareShare": 0.10280169098248239
               },
               "automaticIndexRows": 1791,
-              "cpuNs": 33184916,
-              "diagnosticCpuNs": 6628708,
+              "cpuNs": 29492291,
+              "diagnosticCpuNs": 7244750,
               "explain": [
                 {
                   "flags": [
@@ -29845,11 +29859,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 6625792,
+              "explainCpuNs": 7241750,
               "fullscanSteps": 2792,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3891250,
-              "prepareWallNs": 3904083,
+              "prepareCpuNs": 3379250,
+              "prepareWallNs": 3510333,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -29867,11 +29881,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 1791,
-                  "cpuNs": 33184916,
+                  "cpuNs": 29492291,
                   "fullscanSteps": 2792,
                   "interruption": null,
-                  "prepareCpuNs": 3891250,
-                  "prepareWallNs": 3904083,
+                  "prepareCpuNs": 3379250,
+                  "prepareWallNs": 3510333,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -29881,11 +29895,11 @@
                   "sqlBytes": 10232,
                   "sqlExecutions": 1,
                   "vmSteps": 246364,
-                  "wallNs": 269712000
+                  "wallNs": 30799417
                 }
               ],
               "vmSteps": 246364,
-              "wallNs": 269712000
+              "wallNs": 30799417
             }
           },
           "explain": {
@@ -31857,18 +31871,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 312539500,
+          "nativeCpuNs": 293921834,
           "parity": true,
-          "parseCpuNs": 732736834,
+          "parseCpuNs": 748600708,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 3534125,
+            "installationCpuNs": 3207125,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 5460084,
+                "cpuNs": 4381750,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -31879,11 +31893,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 14782667
+                "wallNs": 4456000
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 5150750,
+                "cpuNs": 4211458,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -31894,11 +31908,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 5819209
+                "wallNs": 4596541
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4595000,
+                "cpuNs": 4352750,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -31909,7 +31923,7 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4618916
+                "wallNs": 5451333
               }
             ]
           },
@@ -31918,7 +31932,7 @@
         },
         "reference": {
           "baseline": {
-            "coldKernelCpuNs": 6850064958,
+            "coldKernelCpuNs": 6537820334,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -31929,7 +31943,7 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6837587583,
+            "matchingCpuNs": 6522490167,
             "scheduledStatements": 1
           },
           "captureDemand": [
@@ -38191,7 +38205,7 @@
             ]
           ],
           "direct": {
-            "coldKernelCpuNs": 71265917,
+            "coldKernelCpuNs": 73250084,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -38202,7 +38216,7 @@
               "nodeFilters": 52112,
               "regexNodeRequests": 0
             },
-            "generationCpuNs": 500208,
+            "generationCpuNs": 457875,
             "leafCalls": 2308,
             "metrics": {
               "actionable": {
@@ -38212,11 +38226,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.04635149255043087
+                "prepareShare": 0.04046797219959872
               },
               "automaticIndexRows": 37241,
-              "cpuNs": 61795709,
-              "diagnosticCpuNs": 5794209,
+              "cpuNs": 64388916,
+              "diagnosticCpuNs": 5542875,
               "explain": [
                 {
                   "flags": [
@@ -39633,11 +39647,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 5791375,
+              "explainCpuNs": 5539709,
               "fullscanSteps": 42351,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3003542,
-              "prepareWallNs": 3057250,
+              "prepareCpuNs": 2715583,
+              "prepareWallNs": 2715250,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -39655,11 +39669,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 37241,
-                  "cpuNs": 61795709,
+                  "cpuNs": 64388916,
                   "fullscanSteps": 42351,
                   "interruption": null,
-                  "prepareCpuNs": 3003542,
-                  "prepareWallNs": 3057250,
+                  "prepareCpuNs": 2715583,
+                  "prepareWallNs": 2715250,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -39669,11 +39683,11 @@
                   "sqlBytes": 8196,
                   "sqlExecutions": 1,
                   "vmSteps": 2324796,
-                  "wallNs": 201825458
+                  "wallNs": 115747542
                 }
               ],
               "vmSteps": 2324796,
-              "wallNs": 201825458
+              "wallNs": 115747542
             }
           },
           "explain": {
@@ -41647,18 +41661,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 309779916,
+          "nativeCpuNs": 271664375,
           "parity": true,
-          "parseCpuNs": 761280209,
+          "parseCpuNs": 686260333,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2990625,
+            "installationCpuNs": 2383792,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 32301875,
+                "cpuNs": 34930792,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -41669,11 +41683,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 37550208
+                "wallNs": 44867583
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 31365292,
+                "cpuNs": 31698875,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -41684,11 +41698,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 31364291
+                "wallNs": 31697750
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 34056625,
+                "cpuNs": 30935541,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -41699,7 +41713,7 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 178185833
+                "wallNs": 30934583
               }
             ]
           },
@@ -41729,9 +41743,9 @@
         246364,
         246364
       ],
-      "generatedMedianExecutionCpuNs": 4339125,
-      "referenceMedianExecutionCpuNs": 32770792,
-      "cpuRatio": 0.13240830432172648,
+      "generatedMedianExecutionCpuNs": 4211458,
+      "referenceMedianExecutionCpuNs": 31168000,
+      "cpuRatio": 0.13512121406570843,
       "vmPassed": true,
       "cpuPassed": true,
       "shape": {
@@ -41771,19 +41785,19 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 30168083,
+        "diagnosticKernelCpuNs": 30770000,
         "frameAdvances": 503,
         "framePublications": 259,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4706832,
-      "diagnosticCpuNs": 21743499,
+      "coldKernelCpuNs": 4118125,
+      "diagnosticCpuNs": 20535459,
       "family": "outside-assignments",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 952666,
+      "generationCpuNs": 865417,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -41801,8 +41815,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3720459,
-      "prepareCpuNs": 3495542,
+      "prepareAndExecuteCpuNs": 3216000,
+      "prepareCpuNs": 3017917,
       "regexRequests": 5,
       "size": 32,
       "statementMemoryBytes": 196240,
@@ -41815,19 +41829,19 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 31061208,
+        "diagnosticKernelCpuNs": 28314208,
         "frameAdvances": 503,
         "framePublications": 259,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4285293,
-      "diagnosticCpuNs": 22686000,
+      "coldKernelCpuNs": 4421375,
+      "diagnosticCpuNs": 21361291,
       "family": "outside-assignments",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 900709,
+      "generationCpuNs": 900208,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -41845,8 +41859,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3349958,
-      "prepareCpuNs": 3121833,
+      "prepareAndExecuteCpuNs": 3486041,
+      "prepareCpuNs": 3241208,
       "regexRequests": 5,
       "size": 128,
       "statementMemoryBytes": 196240,
@@ -41859,19 +41873,19 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 31593458,
+        "diagnosticKernelCpuNs": 30347875,
         "frameAdvances": 503,
         "framePublications": 259,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4336458,
-      "diagnosticCpuNs": 23580959,
+      "coldKernelCpuNs": 4574750,
+      "diagnosticCpuNs": 21215541,
       "family": "outside-assignments",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 896917,
+      "generationCpuNs": 922500,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -41889,8 +41903,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3405666,
-      "prepareCpuNs": 3018541,
+      "prepareAndExecuteCpuNs": 3618292,
+      "prepareCpuNs": 3235542,
       "regexRequests": 5,
       "size": 512,
       "statementMemoryBytes": 196240,
@@ -41903,19 +41917,19 @@
     {
       "automaticIndexRows": 97,
       "baseline": {
-        "diagnosticKernelCpuNs": 35569125,
+        "diagnosticKernelCpuNs": 33610250,
         "frameAdvances": 12375,
         "framePublications": 6018,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4236084,
-      "diagnosticCpuNs": 21448375,
+      "coldKernelCpuNs": 4414250,
+      "diagnosticCpuNs": 24035625,
       "family": "repeated-assignment-loads",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 163,
-      "generationCpuNs": 889250,
+      "generationCpuNs": 874459,
       "matches": 32,
       "matchingStatements": 1,
       "nodeAdvances": 589,
@@ -42119,8 +42133,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3313000,
-      "prepareCpuNs": 2944083,
+      "prepareAndExecuteCpuNs": 3509000,
+      "prepareCpuNs": 3146541,
       "regexRequests": 5,
       "size": 32,
       "statementMemoryBytes": 196240,
@@ -42133,19 +42147,19 @@
     {
       "automaticIndexRows": 385,
       "baseline": {
-        "diagnosticKernelCpuNs": 49409625,
+        "diagnosticKernelCpuNs": 45764416,
         "frameAdvances": 47641,
         "framePublications": 23178,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4853625,
-      "diagnosticCpuNs": 26403208,
+      "coldKernelCpuNs": 4874125,
+      "diagnosticCpuNs": 23962709,
       "family": "repeated-assignment-loads",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 643,
-      "generationCpuNs": 901208,
+      "generationCpuNs": 865125,
       "matches": 128,
       "matchingStatements": 1,
       "nodeAdvances": 2221,
@@ -42925,8 +42939,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3915750,
-      "prepareCpuNs": 3002750,
+      "prepareAndExecuteCpuNs": 3976459,
+      "prepareCpuNs": 3074125,
       "regexRequests": 5,
       "size": 128,
       "statementMemoryBytes": 196240,
@@ -42939,19 +42953,19 @@
     {
       "automaticIndexRows": 1537,
       "baseline": {
-        "diagnosticKernelCpuNs": 95891250,
+        "diagnosticKernelCpuNs": 93867500,
         "frameAdvances": 188027,
         "framePublications": 91602,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 7358167,
-      "diagnosticCpuNs": 39536584,
+      "coldKernelCpuNs": 6747291,
+      "diagnosticCpuNs": 33768958,
       "family": "repeated-assignment-loads",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 2563,
-      "generationCpuNs": 1156959,
+      "generationCpuNs": 851375,
       "matches": 512,
       "matchingStatements": 1,
       "nodeAdvances": 8749,
@@ -46035,8 +46049,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 6161541,
-      "prepareCpuNs": 3131375,
+      "prepareAndExecuteCpuNs": 5857417,
+      "prepareCpuNs": 2979000,
       "regexRequests": 5,
       "size": 512,
       "statementMemoryBytes": 196240,
@@ -46051,14 +46065,14 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 29888875,
+        "diagnosticKernelCpuNs": 28630000,
         "frameAdvances": 759,
         "framePublications": 451,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4014750,
-      "diagnosticCpuNs": 21117750,
+      "coldKernelCpuNs": 4035332,
+      "diagnosticCpuNs": 18749707,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -46974,7 +46988,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 872916,
+      "generationCpuNs": 879041,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -46992,8 +47006,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3105792,
-      "prepareCpuNs": 2909042,
+      "prepareAndExecuteCpuNs": 3115916,
+      "prepareCpuNs": 2906000,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -47025,14 +47039,14 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 31470958,
+        "diagnosticKernelCpuNs": 28385166,
         "frameAdvances": 1527,
         "framePublications": 1027,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4864626,
-      "diagnosticCpuNs": 22448250,
+      "coldKernelCpuNs": 4140042,
+      "diagnosticCpuNs": 19694750,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -47948,7 +47962,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 996917,
+      "generationCpuNs": 907625,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -47966,8 +47980,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3813125,
-      "prepareCpuNs": 3507375,
+      "prepareAndExecuteCpuNs": 3194250,
+      "prepareCpuNs": 2933500,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -47999,14 +48013,14 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 34650125,
+        "diagnosticKernelCpuNs": 30078583,
         "frameAdvances": 4599,
         "framePublications": 3331,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4911125,
-      "diagnosticCpuNs": 23879209,
+      "coldKernelCpuNs": 5240792,
+      "diagnosticCpuNs": 25461959,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -48922,7 +48936,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 1027917,
+      "generationCpuNs": 919417,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -48940,8 +48954,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3849250,
-      "prepareCpuNs": 3336125,
+      "prepareAndExecuteCpuNs": 4287791,
+      "prepareCpuNs": 3691833,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -48973,14 +48987,14 @@
     {
       "automaticIndexRows": 129,
       "baseline": {
-        "diagnosticKernelCpuNs": 29141084,
+        "diagnosticKernelCpuNs": 31321208,
         "frameAdvances": 690,
         "framePublications": 329,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4238208,
-      "diagnosticCpuNs": 21691791,
+      "coldKernelCpuNs": 4258792,
+      "diagnosticCpuNs": 21194958,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -49896,7 +49910,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 131,
-      "generationCpuNs": 888666,
+      "generationCpuNs": 916083,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 339,
@@ -49914,8 +49928,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3318458,
-      "prepareCpuNs": 3010833,
+      "prepareAndExecuteCpuNs": 3303709,
+      "prepareCpuNs": 2999917,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -49947,14 +49961,14 @@
     {
       "automaticIndexRows": 513,
       "baseline": {
-        "diagnosticKernelCpuNs": 29625708,
+        "diagnosticKernelCpuNs": 29147458,
         "frameAdvances": 1170,
         "framePublications": 521,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4850334,
-      "diagnosticCpuNs": 24467334,
+      "coldKernelCpuNs": 4705542,
+      "diagnosticCpuNs": 23508625,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -50870,7 +50884,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 515,
-      "generationCpuNs": 909042,
+      "generationCpuNs": 874625,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 1203,
@@ -50888,8 +50902,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3901250,
-      "prepareCpuNs": 3247834,
+      "prepareAndExecuteCpuNs": 3796208,
+      "prepareCpuNs": 3136166,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -50921,14 +50935,14 @@
     {
       "automaticIndexRows": 2049,
       "baseline": {
-        "diagnosticKernelCpuNs": 31495292,
+        "diagnosticKernelCpuNs": 30074209,
         "frameAdvances": 3090,
         "framePublications": 1289,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 6127583,
-      "diagnosticCpuNs": 34110875,
+      "coldKernelCpuNs": 6147584,
+      "diagnosticCpuNs": 35190417,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -51844,7 +51858,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 2051,
-      "generationCpuNs": 882708,
+      "generationCpuNs": 918459,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 4659,
@@ -51862,8 +51876,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 5213541,
-      "prepareCpuNs": 3176041,
+      "prepareAndExecuteCpuNs": 5194500,
+      "prepareCpuNs": 3014083,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -51893,491 +51907,24 @@
       "vmSteps": 147304
     }
   ],
-  "catalogKindPruningComparison": {
-    "scope": "Sum of the same 38 individually compiled grammars, each evaluated against all 595 fixtures. This is not a fused full-job result.",
-    "beforeSourceHashes": {
-      "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
-      "native/src/code_rule_dsl/sql/relational/answers.rs": "ccbd186b968e230bb1ca5e868e1e4b142e58bd73290a7def5a8411723dd140a8",
-      "native/src/code_rule_dsl/sql/relational/bound.rs": "6e0661e316527ad78e34564b11bd0312522a3c95168c85e286ce1707c0a642f2",
-      "native/src/code_rule_dsl/sql/relational/budget_leaf.rs": "d4465536550d9fbcef9380b481f536110c88d852cc51797b629695515f61c4b9",
-      "native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs": "fdf935d7b39d0c892adc19d39eba04acc548333599ff83cd39fb76830c17dcbe",
-      "native/src/code_rule_dsl/sql/relational/classify.rs": "c565229ef17b44b37ef72848471cd0b8ffd726ce5964e9aeabe1868b3213e234",
-      "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "b8a42529088be314715d93e446feb42495e1956b704f5abc5d304c9f54e00658",
-      "native/src/code_rule_dsl/sql/relational/demand.rs": "0d5b9fbf3c75890c9f1620c7340936d01bf314b6de37380e355416350eedb8fe",
-      "native/src/code_rule_dsl/sql/relational/emit.rs": "c4e713817a65f14140a36bf547527dcbc549fa6c0d9bb99a0c2e0548bd4312b3",
-      "native/src/code_rule_dsl/sql/relational/failure.rs": "e658b85c5432925c195a0b731edac6c86705d3c6c0da76537370be784b2b0c0b",
-      "native/src/code_rule_dsl/sql/relational/ir.rs": "8a05029eab9021b06e15b2eb133133ba0b7cdb06a7f199f426ee893b47c77192",
-      "native/src/code_rule_dsl/sql/relational/leaves.rs": "155f05a25a46c3ef7f828f3721af52bd4790de76a1945d8cb7aa82b22fcd7d4a",
-      "native/src/code_rule_dsl/sql/relational/lower.rs": "a95a585df3dc3e7b6c4e794577e4e2df15c688fffdf98f22a2f3d21d90276ae5",
-      "native/src/code_rule_dsl/sql/relational/memo_store.rs": "92f62671b266e47bf74e1d8264b29216d24a5526956a0e71d3176e7711d1530d",
-      "native/src/code_rule_dsl/sql/relational/mod.rs": "a401472576efb50b6ab8bbaa363616330c51ab6bb39d4bbd0dc501a03ff620c2",
-      "native/src/code_rule_dsl/sql/relational/outcomes/atomic_owner.rs": "c13fb619271d3e139b12a1823196583c794c8141446ef857b37879bb1da3e80b",
-      "native/src/code_rule_dsl/sql/relational/outcomes/atomic_predicate_tests.rs": "7219e006eb5795ae394dc7ab6fe04dcb863938b5cac871ab6efd92f3c5e9978f",
-      "native/src/code_rule_dsl/sql/relational/outcomes/budget_tests.rs": "4ede5a91daf54e017bcce56aa395fe4cc73112c2d8ddef601ec6aff2bddc99f3",
-      "native/src/code_rule_dsl/sql/relational/outcomes/candidate.rs": "03553707b4e17df0afaf12e24f82e106b2eeb6ebce91b9a52486c40d5c94814d",
-      "native/src/code_rule_dsl/sql/relational/outcomes/capture_walk_tests.rs": "6f6a8a778013373f65b85fc066a88ff0bb9769ac428f2045a1833ba14b0f301c",
-      "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "9a37b48405cd14a4a19f50aa7e088d877376900d04b9282aed15306de4184a8d",
-      "native/src/code_rule_dsl/sql/relational/outcomes/composition_budget_tests.rs": "5109d57ee18432afb223778b1be52f52af32e3dc888d03768565fb6667969097",
-      "native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs": "176eb013dc411db5881e2bd03a73de742b8ca2a83ccf1204b1df7b38f82c5327",
-      "native/src/code_rule_dsl/sql/relational/outcomes/constraint_tests.rs": "f9e7257055621ad9f305c660d83f310cfa504ac5727560b5c9d8d0501e8a444f",
-      "native/src/code_rule_dsl/sql/relational/outcomes/constraint_walk_tests.rs": "8d2e010992cc20a54d81d255ac946b0712607fb0057dea31c85375270cf7eda0",
-      "native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs": "1dfa780f2b688315e81990c6d20691ea04c3c881fa2268078331addc552ec4f8",
-      "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "764ea8342d710afaa53ce013067dc9b03a40303fe45a6c9dcb68712c19ccd1c7",
-      "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "ef7d6aec5e591f451ade354e40edeb9bee23a370ee8825972eb46acc6535d9c5",
-      "native/src/code_rule_dsl/sql/relational/outcomes/field.rs": "10960a58a39e0d49375073d126691313d34234c1319dad71d4cbf94b0cfe9f8b",
-      "native/src/code_rule_dsl/sql/relational/outcomes/field_tests.rs": "8ae478a3430fc7b7b848081d0ae98a34a02b75de42dccc3c2a0ea0106c202888",
-      "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "f07a9a5e61dc9228709c4a638bcd7f48ca9f88efe4f3a5e103782a77a9e4cb15",
-      "native/src/code_rule_dsl/sql/relational/outcomes/fill_cost.rs": "9988c7537a9b9f8f9f0bc389e1a0af751541b725067f72c3052df6e2d5a56ddf",
-      "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "fe89cf9030c8b1295d2e812f6ec6606e9af3865f2da4ff43c322708830400234",
-      "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "6caa51cf5c191813ceffd12fec16b47e207d9f3c7daf595e52b2f1a5ca624384",
-      "native/src/code_rule_dsl/sql/relational/outcomes/memo_tests.rs": "656b044ea22b7c64df8c83726f1ef3db4ac3efda7f40d515fd24da672f3dacc8",
-      "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "67730e4b2689c37bd0c89a4430b3b94c63782b676463a50e8c0668c07f7664a9",
-      "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "d4c2689353c0f73b1df33c612605f784e21c7438f9b33c97efe6ab1f8960897e",
-      "native/src/code_rule_dsl/sql/relational/outcomes/nested_memo_tests.rs": "9b6469e2a8c5e0f09a348712a74630b063e8c57ef63318cdea5ddf796fe48e60",
-      "native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs": "102ac57bf18624266acc71b2699b5c33cae5048013b35fe6d2948d084de9c352",
-      "native/src/code_rule_dsl/sql/relational/outcomes/nested_utility.rs": "4d5ed316d73ac237a2584c9ab622a1eb3d42a69443cfed6331ac02fbd2696599",
-      "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "d1c621958d2078a31dec9759c6aec35b7df9cb9134839343fc0aac700153bb30",
-      "native/src/code_rule_dsl/sql/relational/outcomes/pattern_lower.rs": "c82f4604b58e11fbeed7b31d018e06caf468f6bdf32b4e32fb60f924df0145ed",
-      "native/src/code_rule_dsl/sql/relational/outcomes/pattern_tests.rs": "6b4e0230a00705040ad75795e9577970caea86ff01beaeb83f777d26fddc7e0e",
-      "native/src/code_rule_dsl/sql/relational/outcomes/predicate.rs": "619e4b241f18b225118eb7ba6c5eba0f2c02a02e64f69d3226c5f5729c44b90f",
-      "native/src/code_rule_dsl/sql/relational/outcomes/predicate_run_tests.rs": "ecd39811347caf44e0e09762a8dea821a6c5e3485227ec6e6935d27d75bd43f4",
-      "native/src/code_rule_dsl/sql/relational/outcomes/pruning_tests.rs": "c709ad80c7811b3a01133e8cee0d983626096d5fc725751f545c50c5a934e76c",
-      "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "b81871d1eacde994d91a2181aa2edae71b3478638d91c4becc4852c597982f12",
-      "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "fedb4df137b10f0b4037da86fbba10a3055135530c731cfd6e814889fb7f55af",
-      "native/src/code_rule_dsl/sql/relational/outcomes/reached_tests.rs": "f74745bd64929de932b64f5e1ed0ef9c0e05291c2c12787243f47ce40810a41e",
-      "native/src/code_rule_dsl/sql/relational/outcomes/repeat_any_tests.rs": "a7ac8fa45456a7cb3db96b447a0627201d9e1bbd0583abf6fd62c4c7a7b292d7",
-      "native/src/code_rule_dsl/sql/relational/outcomes/repeat_cost.rs": "0206e638a769a4bed989b3e2261561da75dacbc669311b8b506060a39611121b",
-      "native/src/code_rule_dsl/sql/relational/outcomes/repeat_utility_tests.rs": "529c5f5f0ba42b1140d50853e4d58c57fedf251eaed9691f9f585cea17c13bef",
-      "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk.rs": "2ad347394fc67b7facb28aab8c56a2fc127521c1263ee988e2ec53eb8e2587e5",
-      "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk_tests.rs": "995f2a7ac2f8948e3d64a70527602f9b7fc1e66210a8f1a1817c90fe92928ded",
-      "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "d461a1ffaf9ad980afe0c358e8dab0fc7c81bdf298ccb1c554ba9ee0bf824b36",
-      "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo_tests.rs": "7a0535434942416c3f98bab36a16d5cfb0f0e38dfd89468a4d749f3ce8b3750c",
-      "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "398a33b95c5e5e028c9c4c4930c5b9cf68249b2ff2978e097cdbb557e1051fdf",
-      "native/src/code_rule_dsl/sql/relational/outcomes/traversal_memo_tests.rs": "09641c0fef3064f5a8cecc5e89c20b8bee8a391c58e2835a4e9c55f86a59f478",
-      "native/src/code_rule_dsl/sql/relational/outcomes/utility_plan_tests.rs": "90af79df152a8ef182c6861c283b507f717c8283e6d814c49bd8dcbc4111bf58",
-      "native/src/code_rule_dsl/sql/relational/pattern_leaf.rs": "11385256b5066640d077a5f678f963440b635fbd9a0e77aedbefed3b26e73068",
-      "native/src/code_rule_dsl/sql/relational/physical.rs": "b937aefe75bd55913196f384ecaf01c18e41cac0c8a692bc35d9952080d35398",
-      "native/src/code_rule_dsl/sql/relational/pure_catalog_tests.rs": "ea88bcbb4d080fa0ac19e641cd0011a633440cba014f417b6d8a8bc62837ced8",
-      "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
-      "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
-      "native/src/code_rule_dsl/sql/relational/row.rs": "16542ce6165763307338de09a262a2b5dc4fd251215038411bae8ea7b822b32b",
-      "native/src/code_rule_dsl/sql/relational/tests.rs": "a829898de56f79234402628cfd8f0e4317931b9ba8f42f6f74b2d84650d3f2e7",
-      "native/src/code_rule_dsl/sql/relational/witness.rs": "ded0a5aca73b45ec156c0a6309480c499ae8d65c549fe55900a805b25e719ad0",
-      "native/src/code_rule_dsl/sql/relational/witness_tests.rs": "74455e6e283f2f9c17e2fb51a908ba2d4a8ce5f9f626803b039a5fe138344db3",
-      "native/src/code_rule_dsl/matcher/mod.rs": "86743494f43cca14d3ec73373d15cea2e4d016b22301e1cef3af53bd6c2fddd9",
-      "native/src/code_rule_dsl/matcher/value.rs": "7c323eeeb044b02ae384b7a4ba4989cb14a400c3721b381e96b0eee0643db27e",
-      "native/src/code_rule_dsl/matcher/value_probe.rs": "f37e6879d32bed17faaa77f414894a2a1ee8181ad2b406043e57646cd52ef62e",
-      "native/src/code_rule_dsl/sql/terminals/mod.rs": "c9968c095e26ea43cf7a12930de2a7110717e02c9f4e974d21a9dd44268d7a3d",
-      "native/src/code_rule_dsl/sql/terminals/pattern.rs": "20ee337b4623cd962946179f0696920cd04b6599c7ec759fb09d185cc22590fa",
-      "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs": "35dcfe22f012b26e6df359407f70df4b5c91bd4ec67a72206b34315372ec5c40",
-      "native/src/code_rule_dsl/sql/spikes/whole_call/b023.sql": "cc8df01875dc99d3afc75b2efceb4cbe47732647267d973ec85be2f410784eba",
-      "native/src/code_rule_dsl/sql/spikes/whole_call/run.rs": "81e71c024ca779afdd247e1d038a33adc4444fd3a03a2d39050b840d7fe20685",
-      "native/src/code_rule_dsl/sql/mod.rs": "abdaa15b5c97a7351091a3b924d886d092d2457cf507b3e04d9d9a3a31efaceb",
-      "packs/python/rules/ruff-b023-function-uses-loop-variable.json": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
-      "benchmark/relational-candidate-demand.py": "a1b3bda89d47590cc63c0469a8be26681ba4cbe1638a82608749ccd9c689aa86"
-    },
-    "beforeExecutableSha256": "5a575ad7501ff3505c384d8a3c94c48fa1c87609d15f0e8ae2f6115663ad344a",
-    "beforeVm": 44259715,
-    "afterVm": 44259715,
-    "grammars": [
-      {
-        "policy": "packs/python/rules/bandit-b101-assert-used.json",
-        "clause": "assert-used",
-        "grammar": 0,
-        "beforeVm": 494,
-        "afterVm": 494,
-        "beforeSqlSha256": "a333fc357423da81bf6edde7b427360efc94bde8bb0db446312fbd26cb788374",
-        "afterSqlSha256": "a333fc357423da81bf6edde7b427360efc94bde8bb0db446312fbd26cb788374",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/bandit-b303-md5.json",
-        "clause": "weak-hash",
-        "grammar": 0,
-        "beforeVm": 1742278,
-        "afterVm": 1742278,
-        "beforeSqlSha256": "39998550247cba2a7da8aca5c2b91abb289fab21f07bcc309b17da4b4506cc23",
-        "afterSqlSha256": "39998550247cba2a7da8aca5c2b91abb289fab21f07bcc309b17da4b4506cc23",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b002-unary-prefix-increment-decrement.json",
-        "clause": "unary-prefix-increment",
-        "grammar": 0,
-        "beforeVm": 1190,
-        "afterVm": 1190,
-        "beforeSqlSha256": "4ba8807fd12cee9466dd36d4cd52010087dc66b32091c7ba1da2d093677a3806",
-        "afterSqlSha256": "4ba8807fd12cee9466dd36d4cd52010087dc66b32091c7ba1da2d093677a3806",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b002-unary-prefix-increment-decrement.json",
-        "clause": "unary-prefix-decrement",
-        "grammar": 0,
-        "beforeVm": 1495,
-        "afterVm": 1495,
-        "beforeSqlSha256": "4ba8807fd12cee9466dd36d4cd52010087dc66b32091c7ba1da2d093677a3806",
-        "afterSqlSha256": "4ba8807fd12cee9466dd36d4cd52010087dc66b32091c7ba1da2d093677a3806",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b003-assignment-to-os-environ.json",
-        "clause": "assignment-to-os-environ",
-        "grammar": 0,
-        "beforeVm": 295160,
-        "afterVm": 295160,
-        "beforeSqlSha256": "3667e1676b32e59fd852d463c6abed0dedd44c8d12bf9111f6693257baf9017c",
-        "afterSqlSha256": "3667e1676b32e59fd852d463c6abed0dedd44c8d12bf9111f6693257baf9017c",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b011-assert-false.json",
-        "clause": "assert-false",
-        "grammar": 0,
-        "beforeVm": 4009,
-        "afterVm": 4009,
-        "beforeSqlSha256": "b1c105f3cad3ee7ee2ca31a9d8948f8aa4f6f51d78f99f366bee13466e86d10e",
-        "afterSqlSha256": "b1c105f3cad3ee7ee2ca31a9d8948f8aa4f6f51d78f99f366bee13466e86d10e",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b016-raise-literal.json",
-        "clause": "raise-literal",
-        "grammar": 0,
-        "beforeVm": 189381,
-        "afterVm": 189381,
-        "beforeSqlSha256": "2429d7a9d4aa25609aeea3cee122c3534d275801b44be6d4c20aff72e0ce5d23",
-        "afterSqlSha256": "2429d7a9d4aa25609aeea3cee122c3534d275801b44be6d4c20aff72e0ce5d23",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b021-f-string-docstring.json",
-        "clause": "f-string-docstring",
-        "grammar": 0,
-        "beforeVm": 6496379,
-        "afterVm": 6496379,
-        "beforeSqlSha256": "8c3cecdf14205ca75ebe3a2d659a58b793b253a4229eca59b5db23a558ecacb2",
-        "afterSqlSha256": "8c3cecdf14205ca75ebe3a2d659a58b793b253a4229eca59b5db23a558ecacb2",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b023-function-uses-loop-variable.json",
-        "clause": "function-uses-loop-variable",
-        "grammar": 0,
-        "beforeVm": 96115,
-        "afterVm": 96115,
-        "beforeSqlSha256": "901be08c5be6ca7782a1fe5df76a4efcd7a13cad743ae16dd828f3544ab7a6e7",
-        "afterSqlSha256": "901be08c5be6ca7782a1fe5df76a4efcd7a13cad743ae16dd828f3544ab7a6e7",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b026-star-arg-unpacking-after-keyword-arg.json",
-        "clause": "star-arg-unpacking-after-keyword-arg",
-        "grammar": 0,
-        "beforeVm": 59228,
-        "afterVm": 59228,
-        "beforeSqlSha256": "57dd08c2ce15f9ae19ae0916e195d7dd610ac273f199323efeec0a6c28129a76",
-        "afterSqlSha256": "57dd08c2ce15f9ae19ae0916e195d7dd610ac273f199323efeec0a6c28129a76",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b029-except-with-empty-tuple.json",
-        "clause": "except-with-empty-tuple",
-        "grammar": 0,
-        "beforeVm": 118373,
-        "afterVm": 118373,
-        "beforeSqlSha256": "07d7a34fe72ea3873dd62dcc3d71e0d48f463a9b5f80583f0774a29a82688249",
-        "afterSqlSha256": "07d7a34fe72ea3873dd62dcc3d71e0d48f463a9b5f80583f0774a29a82688249",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-b032-unintentional-type-annotation.json",
-        "clause": "unintentional-type-annotation",
-        "grammar": 0,
-        "beforeVm": 2942315,
-        "afterVm": 2942315,
-        "beforeSqlSha256": "32eafd81601333697fcc077487ba4a56524a86bde04db932f1fa69466d6a85b6",
-        "afterSqlSha256": "32eafd81601333697fcc077487ba4a56524a86bde04db932f1fa69466d6a85b6",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-e722-bare-except.json",
-        "clause": "bare-except",
-        "grammar": 0,
-        "beforeVm": 20590,
-        "afterVm": 20590,
-        "beforeSqlSha256": "cd6e83fb5f70e0151a8b2a68503476ff9bbbb59270ee611da175815489ef1030",
-        "afterSqlSha256": "cd6e83fb5f70e0151a8b2a68503476ff9bbbb59270ee611da175815489ef1030",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-e742-ambiguous-class-name.json",
-        "clause": "ambiguous-class-name",
-        "grammar": 0,
-        "beforeVm": 106610,
-        "afterVm": 106610,
-        "beforeSqlSha256": "2acc30d4344fd9ee7da1b33ad852faf1d7d3337fe3d1b9175cf35d6500ea119c",
-        "afterSqlSha256": "2acc30d4344fd9ee7da1b33ad852faf1d7d3337fe3d1b9175cf35d6500ea119c",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-e743-ambiguous-function-name.json",
-        "clause": "ambiguous-function-name",
-        "grammar": 0,
-        "beforeVm": 106610,
-        "afterVm": 106610,
-        "beforeSqlSha256": "286d6dd5b05449cab3ad0168cb834c21dbe0daae7a3f689b2c0f28501cdc91e1",
-        "afterSqlSha256": "286d6dd5b05449cab3ad0168cb834c21dbe0daae7a3f689b2c0f28501cdc91e1",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f403-undefined-local-with-import-star.json",
-        "clause": "undefined-local-with-import-star",
-        "grammar": 0,
-        "beforeVm": 434156,
-        "afterVm": 434156,
-        "beforeSqlSha256": "02c9a46c2187a2dfa96e9e7b2a9a28d0b996ca9a07de99eeb1e060b88c4b2681",
-        "afterSqlSha256": "02c9a46c2187a2dfa96e9e7b2a9a28d0b996ca9a07de99eeb1e060b88c4b2681",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f406-undefined-local-with-nested-import-star-usage.json",
-        "clause": "undefined-local-with-nested-import-star-usage",
-        "grammar": 0,
-        "beforeVm": 177098,
-        "afterVm": 177098,
-        "beforeSqlSha256": "1ed9d932825657b95f53f8333a622fcee2d2445daebd03f7d03082348bc6b4b5",
-        "afterSqlSha256": "1ed9d932825657b95f53f8333a622fcee2d2445daebd03f7d03082348bc6b4b5",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f407-future-feature-not-defined.json",
-        "clause": "future-feature-not-defined",
-        "grammar": 0,
-        "beforeVm": 4929536,
-        "afterVm": 4929536,
-        "beforeSqlSha256": "f0736677694019b852d348321d1df851c39597dab91387cb86447b4c6e6499cf",
-        "afterSqlSha256": "f0736677694019b852d348321d1df851c39597dab91387cb86447b4c6e6499cf",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f541-f-string-missing-placeholders.json",
-        "clause": "f-string-missing-placeholders",
-        "grammar": 0,
-        "beforeVm": 193432,
-        "afterVm": 193432,
-        "beforeSqlSha256": "236af8f6825253f371452205df6bfb4080cf3357f3ab7922d39e575a7c968a28",
-        "afterSqlSha256": "236af8f6825253f371452205df6bfb4080cf3357f3ab7922d39e575a7c968a28",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f701-break-outside-loop.json",
-        "clause": "break-outside-loop",
-        "grammar": 0,
-        "beforeVm": 427265,
-        "afterVm": 427265,
-        "beforeSqlSha256": "c74efc2359aface1722368a991206eb292210a7339bda971f4f25bb4ff6bb648",
-        "afterSqlSha256": "c74efc2359aface1722368a991206eb292210a7339bda971f4f25bb4ff6bb648",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f702-continue-outside-loop.json",
-        "clause": "continue-outside-loop",
-        "grammar": 0,
-        "beforeVm": 427239,
-        "afterVm": 427239,
-        "beforeSqlSha256": "2fe3ae90ef548888722aa261b0b1e769f0d56ae3a13ef98033f25dc60b9d4ad7",
-        "afterSqlSha256": "2fe3ae90ef548888722aa261b0b1e769f0d56ae3a13ef98033f25dc60b9d4ad7",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f706-return-outside-function.json",
-        "clause": "return-outside-function",
-        "grammar": 0,
-        "beforeVm": 1746387,
-        "afterVm": 1746387,
-        "beforeSqlSha256": "a532b46ae072a8875d53d451e99296826425bb531523b6bf4886bc40319be857",
-        "afterSqlSha256": "a532b46ae072a8875d53d451e99296826425bb531523b6bf4886bc40319be857",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f707-default-except-not-last.json",
-        "clause": "default-except-not-last",
-        "grammar": 0,
-        "beforeVm": 39321,
-        "afterVm": 39321,
-        "beforeSqlSha256": "2639db4551cead6238b3eff3edccc68699734ad9de168faea8ec3d29f3e57b5b",
-        "afterSqlSha256": "2639db4551cead6238b3eff3edccc68699734ad9de168faea8ec3d29f3e57b5b",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f822-undefined-export.json",
-        "clause": "undefined-export",
-        "grammar": 0,
-        "beforeVm": 1412492,
-        "afterVm": 1412492,
-        "beforeSqlSha256": "7c6f8726429e9665566664d257b811ce1898865c05a4e0d5b3850551f2ef31b7",
-        "afterSqlSha256": "7c6f8726429e9665566664d257b811ce1898865c05a4e0d5b3850551f2ef31b7",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f823-undefined-local.json",
-        "clause": "undefined-local",
-        "grammar": 0,
-        "beforeVm": 8210266,
-        "afterVm": 8210266,
-        "beforeSqlSha256": "e2adb0926f80d6bf22b9ad91e393b2ff0dfce857ad0cda85ed4c1598ef86ca6c",
-        "afterSqlSha256": "e2adb0926f80d6bf22b9ad91e393b2ff0dfce857ad0cda85ed4c1598ef86ca6c",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-f901-raise-not-implemented.json",
-        "clause": "raise-not-implemented",
-        "grammar": 0,
-        "beforeVm": 22220,
-        "afterVm": 22220,
-        "beforeSqlSha256": "bf0c63baf6c4b5b5778ed6e3cfb6bb967f1c20c3ec4d92a59f0953c6f2fd97f9",
-        "afterSqlSha256": "bf0c63baf6c4b5b5778ed6e3cfb6bb967f1c20c3ec4d92a59f0953c6f2fd97f9",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-pie800-unnecessary-spread.json",
-        "clause": "unnecessary-spread",
-        "grammar": 0,
-        "beforeVm": 6489,
-        "afterVm": 6489,
-        "beforeSqlSha256": "54e8002c793843669596f9d845a4d524e669a5326eb2c657be5acc3ca5c90ccc",
-        "afterSqlSha256": "54e8002c793843669596f9d845a4d524e669a5326eb2c657be5acc3ca5c90ccc",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-pie807-reimplemented-container-builtin.json",
-        "clause": "reimplemented-container-builtin",
-        "grammar": 0,
-        "beforeVm": 40302,
-        "afterVm": 40302,
-        "beforeSqlSha256": "e6ae5b206a944d3adf0c8c1950f329fe40186f633a6ca85872cd20dc79cf13d7",
-        "afterSqlSha256": "e6ae5b206a944d3adf0c8c1950f329fe40186f633a6ca85872cd20dc79cf13d7",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-ret502-implicit-return-value.json",
-        "clause": "implicit-return-value",
-        "grammar": 0,
-        "beforeVm": 846520,
-        "afterVm": 846520,
-        "beforeSqlSha256": "5647dab0b07d15d23e86c92499e9e9fd396fc682ccc9f62207917b18607a7632",
-        "afterSqlSha256": "5647dab0b07d15d23e86c92499e9e9fd396fc682ccc9f62207917b18607a7632",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-ret505-superfluous-else-return.json",
-        "clause": "superfluous-else-return",
-        "grammar": 0,
-        "beforeVm": 2485885,
-        "afterVm": 2485885,
-        "beforeSqlSha256": "7cb3010bf8c094612d505a7150cdd4f9b4a2abf16b54f62c4178c6b79316727f",
-        "afterSqlSha256": "7cb3010bf8c094612d505a7150cdd4f9b4a2abf16b54f62c4178c6b79316727f",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-ret506-superfluous-else-raise.json",
-        "clause": "superfluous-else-raise",
-        "grammar": 0,
-        "beforeVm": 2494608,
-        "afterVm": 2494608,
-        "beforeSqlSha256": "6fc1dd41cac3ea4b94cd9a53ab2790f3e06da71e965ffb890b5e02beb9a9d58a",
-        "afterSqlSha256": "6fc1dd41cac3ea4b94cd9a53ab2790f3e06da71e965ffb890b5e02beb9a9d58a",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-ret507-superfluous-else-continue.json",
-        "clause": "superfluous-else-continue",
-        "grammar": 0,
-        "beforeVm": 2496306,
-        "afterVm": 2496306,
-        "beforeSqlSha256": "a41a96fec71223211b8784841beac7e344de268633529d873ebd2caa78521c4d",
-        "afterSqlSha256": "a41a96fec71223211b8784841beac7e344de268633529d873ebd2caa78521c4d",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-ret508-superfluous-else-break.json",
-        "clause": "superfluous-else-break",
-        "grammar": 0,
-        "beforeVm": 2496248,
-        "afterVm": 2496248,
-        "beforeSqlSha256": "2c5a2b761846fdaf7619937be5e50805335b3b1137ddda8874829d721e0cdda5",
-        "afterSqlSha256": "2c5a2b761846fdaf7619937be5e50805335b3b1137ddda8874829d721e0cdda5",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-sim107-return-in-try-except-finally.json",
-        "clause": "return-in-try-except-finally",
-        "grammar": 0,
-        "beforeVm": 49356,
-        "afterVm": 49356,
-        "beforeSqlSha256": "36483728128c3350f1b287d0bf733108284b861b3a7bb1d21d32020bb4b41aae",
-        "afterSqlSha256": "36483728128c3350f1b287d0bf733108284b861b3a7bb1d21d32020bb4b41aae",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-sim208-double-negation.json",
-        "clause": "double-negation",
-        "grammar": 0,
-        "beforeVm": 7911,
-        "afterVm": 7911,
-        "beforeSqlSha256": "43d8dc90b3df68cf9ec98749ed4762edbcd1dc85b43d00e85bda2a199f3275ca",
-        "afterSqlSha256": "43d8dc90b3df68cf9ec98749ed4762edbcd1dc85b43d00e85bda2a199f3275ca",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-sim210-if-expr-with-true-false.json",
-        "clause": "if-expr-with-true-false",
-        "grammar": 0,
-        "beforeVm": 30746,
-        "afterVm": 30746,
-        "beforeSqlSha256": "ad6dd11dc7b4c025d66b658224afb5003a544f248076ffad8cb3232dec2f1dbf",
-        "afterSqlSha256": "ad6dd11dc7b4c025d66b658224afb5003a544f248076ffad8cb3232dec2f1dbf",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-sim211-if-expr-with-false-true.json",
-        "clause": "if-expr-with-false-true",
-        "grammar": 0,
-        "beforeVm": 29907,
-        "afterVm": 29907,
-        "beforeSqlSha256": "2a0d92e5c345a28cccfa1743d42ee9433cbbb1c742486d0e32e69c18ec58d9d8",
-        "afterSqlSha256": "2a0d92e5c345a28cccfa1743d42ee9433cbbb1c742486d0e32e69c18ec58d9d8",
-        "exactSameOutput": true
-      },
-      {
-        "policy": "packs/python/rules/ruff-t100-debugger.json",
-        "clause": "debugger-import",
-        "grammar": 0,
-        "beforeVm": 3075798,
-        "afterVm": 3075798,
-        "beforeSqlSha256": "21bc53b55ff4b96baf3e88a4eeb3a0703c23278b3f2158bb8797451dd98b160a",
-        "afterSqlSha256": "21bc53b55ff4b96baf3e88a4eeb3a0703c23278b3f2158bb8797451dd98b160a",
-        "exactSameOutput": true
-      }
-    ]
-  },
   "catalogSummary": {
-    "admitted": 38,
+    "admitted": 70,
     "clauses": 146,
     "executionFailed": 0,
-    "executionPassed": 38,
+    "executionPassed": 70,
     "grammars": 146,
     "noPositiveWitness": 0,
     "policies": 138,
     "policyCompilationErrors": 0,
     "refusalReasons": {
-      "outcome pattern: list captures require typed sequence columns": 34,
-      "outcome relations: leaf or operator lacks a total, effect-free outcome contract": 24,
-      "outcome relations: recursive outcomes need a component contract": 49,
+      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: binding-site composition": 3,
+      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: format-argument composition": 6,
+      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parameterized utility calls": 2,
+      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parsed-tree composition": 9,
+      "outcome relations: recursive outcomes need a component contract": 55,
       "recursive negation or region dependency needs an outcome contract": 1
     },
-    "refused": 108
+    "refused": 76
   },
   "qualificationExitCodes": {
     "candidate": 0,
@@ -54675,261 +54222,45 @@
   },
   "diagnosticCheckpoints": [
     {
-      "name": "phase1",
-      "manifest": {
-        "base": "a493c64c70da5544b898afb96b4db9e600449188",
-        "sources": {
-          "native/src/code_rule_dsl/sql/relational/pattern_leaf.rs": "4534ae133bffa2dbe210cb35557a05edef6d732e9843cdcb5e92e5285baf2153",
-          "native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs": "fdf935d7b39d0c892adc19d39eba04acc548333599ff83cd39fb76830c17dcbe",
-          "native/src/code_rule_dsl/sql/relational/pure_catalog_tests.rs": "ea88bcbb4d080fa0ac19e641cd0011a633440cba014f417b6d8a8bc62837ced8",
-          "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "b8a42529088be314715d93e446feb42495e1956b704f5abc5d304c9f54e00658",
-          "native/src/code_rule_dsl/sql/relational/ir.rs": "8a05029eab9021b06e15b2eb133133ba0b7cdb06a7f199f426ee893b47c77192",
-          "native/src/code_rule_dsl/sql/relational/witness.rs": "e8a31188818ce97cc2c9dbf458560b7a3c16b74cca3adc492104c2a667317159",
-          "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
-          "native/src/code_rule_dsl/sql/relational/budget_leaf.rs": "c25bcba41902ed2485d2e3f52722c75211a9e06199479e14e1e49930188efeca",
-          "native/src/code_rule_dsl/sql/relational/demand.rs": "0d5b9fbf3c75890c9f1620c7340936d01bf314b6de37380e355416350eedb8fe",
-          "native/src/code_rule_dsl/sql/relational/memo_store.rs": "92f62671b266e47bf74e1d8264b29216d24a5526956a0e71d3176e7711d1530d",
-          "native/src/code_rule_dsl/sql/relational/physical.rs": "b937aefe75bd55913196f384ecaf01c18e41cac0c8a692bc35d9952080d35398",
-          "native/src/code_rule_dsl/sql/relational/mod.rs": "85c561d8ce3c618ff420b89b1a73fb88fc6161906eed7062263a72a832d71081",
-          "native/src/code_rule_dsl/sql/relational/bound.rs": "6e0661e316527ad78e34564b11bd0312522a3c95168c85e286ce1707c0a642f2",
-          "native/src/code_rule_dsl/sql/relational/emit.rs": "c4e713817a65f14140a36bf547527dcbc549fa6c0d9bb99a0c2e0548bd4312b3",
-          "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
-          "native/src/code_rule_dsl/sql/relational/row.rs": "16542ce6165763307338de09a262a2b5dc4fd251215038411bae8ea7b822b32b",
-          "native/src/code_rule_dsl/sql/relational/tests.rs": "221fbbcbddfc5f491e9f70774013193b614c689bc581a097c7a038c011234a61",
-          "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
-          "native/src/code_rule_dsl/sql/relational/leaves.rs": "393665342e77cd244a90563733a052b6e620bf0ab00845f3997901be34923563",
-          "native/src/code_rule_dsl/sql/relational/witness_tests.rs": "3061b1d7f745204695b2806b435cb9fd3b2776d34473488af921c5263e55a59a",
-          "native/src/code_rule_dsl/sql/relational/lower.rs": "a95a585df3dc3e7b6c4e794577e4e2df15c688fffdf98f22a2f3d21d90276ae5",
-          "native/src/code_rule_dsl/sql/relational/answers.rs": "7a0f51f1f409b8c8ac9c655bb8a23a1f38980af2f6c4bf598c7869d273f30b62",
-          "native/src/code_rule_dsl/sql/relational/failure.rs": "e658b85c5432925c195a0b731edac6c86705d3c6c0da76537370be784b2b0c0b",
-          "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "caeec483ce58787a69c75684e05ff17c608243f9bb5848d117275b58c09c2f13",
-          "native/src/code_rule_dsl/sql/relational/outcomes/budget_tests.rs": "4ede5a91daf54e017bcce56aa395fe4cc73112c2d8ddef601ec6aff2bddc99f3",
-          "native/src/code_rule_dsl/sql/relational/outcomes/nested_memo_tests.rs": "9b6469e2a8c5e0f09a348712a74630b063e8c57ef63318cdea5ddf796fe48e60",
-          "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "6caa51cf5c191813ceffd12fec16b47e207d9f3c7daf595e52b2f1a5ca624384",
-          "native/src/code_rule_dsl/sql/relational/outcomes/utility_plan_tests.rs": "90af79df152a8ef182c6861c283b507f717c8283e6d814c49bd8dcbc4111bf58",
-          "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "fedb4df137b10f0b4037da86fbba10a3055135530c731cfd6e814889fb7f55af",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_cost.rs": "0206e638a769a4bed989b3e2261561da75dacbc669311b8b506060a39611121b",
-          "native/src/code_rule_dsl/sql/relational/outcomes/composition_budget_tests.rs": "5109d57ee18432afb223778b1be52f52af32e3dc888d03768565fb6667969097",
-          "native/src/code_rule_dsl/sql/relational/outcomes/predicate_run_tests.rs": "ecd39811347caf44e0e09762a8dea821a6c5e3485227ec6e6935d27d75bd43f4",
-          "native/src/code_rule_dsl/sql/relational/outcomes/nested_utility.rs": "4d5ed316d73ac237a2584c9ab622a1eb3d42a69443cfed6331ac02fbd2696599",
-          "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "6ce9551f25a64a005efc34505af4ad6e9690729c20eba0b1a754f3ce58217bfe",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk.rs": "3264b890d8ff7d7a3ffbda72f803a769bca58b40ff03f02fd50b9145999970a2",
-          "native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs": "102ac57bf18624266acc71b2699b5c33cae5048013b35fe6d2948d084de9c352",
-          "native/src/code_rule_dsl/sql/relational/outcomes/capture_walk_tests.rs": "6f6a8a778013373f65b85fc066a88ff0bb9769ac428f2045a1833ba14b0f301c",
-          "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "74c2b449b9c5f58f82a06fa27823d107ae1c4f15602f1c7d4c0313019a35480f",
-          "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "50ae8445ba96b70ed698e8d471beb5133d194e6af7a21aa64ef1ede5b61d4651",
-          "native/src/code_rule_dsl/sql/relational/outcomes/traversal_memo_tests.rs": "09641c0fef3064f5a8cecc5e89c20b8bee8a391c58e2835a4e9c55f86a59f478",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_utility_tests.rs": "529c5f5f0ba42b1140d50853e4d58c57fedf251eaed9691f9f585cea17c13bef",
-          "native/src/code_rule_dsl/sql/relational/outcomes/candidate.rs": "03553707b4e17df0afaf12e24f82e106b2eeb6ebce91b9a52486c40d5c94814d",
-          "native/src/code_rule_dsl/sql/relational/outcomes/reached_tests.rs": "f74745bd64929de932b64f5e1ed0ef9c0e05291c2c12787243f47ce40810a41e",
-          "native/src/code_rule_dsl/sql/relational/outcomes/memo_tests.rs": "656b044ea22b7c64df8c83726f1ef3db4ac3efda7f40d515fd24da672f3dacc8",
-          "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "d1c621958d2078a31dec9759c6aec35b7df9cb9134839343fc0aac700153bb30",
-          "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "37ad70b2a7db85aa5cae82e8dbe13da236c2551cd19246a7223c36665baf8c5e",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_any_tests.rs": "a7ac8fa45456a7cb3db96b447a0627201d9e1bbd0583abf6fd62c4c7a7b292d7",
-          "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo_tests.rs": "7a0535434942416c3f98bab36a16d5cfb0f0e38dfd89468a4d749f3ce8b3750c",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk_tests.rs": "995f2a7ac2f8948e3d64a70527602f9b7fc1e66210a8f1a1817c90fe92928ded",
-          "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "fbfb3456f23ac7cabb97e01c6554fb169d936cf4657100e607fb828c827f255d",
-          "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "3d5640f4fcb35159baa9bff757ed5ecc129c7d419d65dcdb71a996db8725b6d9",
-          "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "b81871d1eacde994d91a2181aa2edae71b3478638d91c4becc4852c597982f12",
-          "native/src/code_rule_dsl/sql/relational/outcomes/atomic_predicate_tests.rs": "7219e006eb5795ae394dc7ab6fe04dcb863938b5cac871ab6efd92f3c5e9978f",
-          "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "b3acadc9c1edc22964d1c8aa15fd7898beb5f60dfebed30e90eb96b10d3123c6",
-          "native/src/code_rule_dsl/sql/relational/outcomes/pruning_tests.rs": "c709ad80c7811b3a01133e8cee0d983626096d5fc725751f545c50c5a934e76c",
-          "native/src/code_rule_dsl/sql/relational/outcomes/predicate.rs": "619e4b241f18b225118eb7ba6c5eba0f2c02a02e64f69d3226c5f5729c44b90f",
-          "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "b1834961975881ae2a10277e9859e608d4b4edcbc0e944cf36d8aec6a9aa026c"
-        },
-        "binary": "3fae9eb666e6085acb8675ef8b9d5db2ec5d87e2db91ae8b1ea81a2dd6b2628d"
-      },
+      "name": "rerail-catalog-lists-phase1",
       "logs": {
         "coverage.log": {
-          "sha256": "3943a11fe33623d48921803dcc3829ae5b36e8f07fe691bd9f785da09deb30c6",
+          "sha256": "24b7111a8af1c9408287f2bcd812bc5f0eea203dbec16248bcecdf42aff24359",
           "results": [
-            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1845 filtered out; finished in 0.73s"
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1906 filtered out; finished in 0.26s"
           ],
-          "failedTests": [
+          "panics": [
             "code_rule_dsl::sql::relational::cutover_tests::relational_cutover_catalog_complete_coverage"
           ]
         },
-        "atoms.log": {
-          "sha256": "15d80c5abff6eabe312df7e24b12dd6b91598863c8363209e92d2c2445f0fa36",
-          "results": [
-            "test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 1841 filtered out; finished in 0.28s"
-          ],
-          "failedTests": [
-            "code_rule_dsl::sql::relational::outcomes::catalog_tests::catalog_atomic_followed_values_preserve_unknown_failure_and_memo",
-            "code_rule_dsl::sql::relational::outcomes::catalog_tests::catalog_atomic_refuses_capture_inputs_and_composite_semantics"
-          ]
-        },
-        "pure.log": {
-          "sha256": "3fe1dc614110364427eea690543c68d989af09384da6f9b7b21e5ec3eae7d469",
-          "results": [
-            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1842 filtered out; finished in 0.26s"
-          ],
-          "failedTests": []
-        },
-        "refusals.log": {
-          "sha256": "b8c0c478d8fc65fd9397ea485025db4ff5f232ce642341d8737d8d4d5e4e6d72",
-          "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1845 filtered out; finished in 0.00s"
-          ],
-          "failedTests": []
-        },
         "parity.log": {
-          "sha256": "44907c0062a30c097e15c5ce5edf504ddb557db73856fbc2ead6fba42e6aab66",
+          "sha256": "bce0c8aa1041fe0968b16db5d6bdf61c4fafe30f5adf107c97100c1d1f7699c9",
           "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1845 filtered out; finished in 10.28s"
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1906 filtered out; finished in 46.16s"
           ],
-          "failedTests": []
-        }
-      },
-      "catalogSummary": {
-        "admitted": 31,
-        "clauses": 146,
-        "executionFailed": 0,
-        "executionPassed": 31,
-        "grammars": 146,
-        "noPositiveWitness": 0,
-        "policies": 138,
-        "policyCompilationErrors": 0,
-        "refusalReasons": {
-          "outcome relations: leaf or operator lacks a total, effect-free outcome contract": 30,
-          "outcome relations: recursive outcomes need a component contract": 10,
-          "recursive negation or region dependency needs an outcome contract": 1,
-          "relational compiler: capture-bearing rules: capture demand: no admitted ordered frontier": 14,
-          "relational compiler: capture-bearing rules: ordered answers: negative value probe requires a bound input capture": 3,
-          "relational compiler: capture-bearing rules: ordered answers: recursive outward capture is not admitted": 9,
-          "relational compiler: capture-bearing rules: ordered answers: unsupported input capture effect": 23,
-          "relational compiler: operator outside the total neighbor-set subset": 19,
-          "relational compiler: pattern captures require witness relations": 6
-        },
-        "refused": 115
-      }
-    },
-    {
-      "name": "phase2",
-      "manifest": {
-        "binarySha256": "b2a4080ee8c880bb50fc3db7caa56cc66f280db684ce8042c22894ea72911830",
-        "sources": {
-          "native/src/code_rule_dsl/sql/relational/pattern_leaf.rs": "beb50e3c4cf58cbefb6ffcf2a9987ace9d036237384ea60cf587d3346e181962",
-          "native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs": "fdf935d7b39d0c892adc19d39eba04acc548333599ff83cd39fb76830c17dcbe",
-          "native/src/code_rule_dsl/sql/relational/pure_catalog_tests.rs": "ea88bcbb4d080fa0ac19e641cd0011a633440cba014f417b6d8a8bc62837ced8",
-          "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "b8a42529088be314715d93e446feb42495e1956b704f5abc5d304c9f54e00658",
-          "native/src/code_rule_dsl/sql/relational/ir.rs": "8a05029eab9021b06e15b2eb133133ba0b7cdb06a7f199f426ee893b47c77192",
-          "native/src/code_rule_dsl/sql/relational/classify.rs": "c565229ef17b44b37ef72848471cd0b8ffd726ce5964e9aeabe1868b3213e234",
-          "native/src/code_rule_dsl/sql/relational/witness.rs": "ded0a5aca73b45ec156c0a6309480c499ae8d65c549fe55900a805b25e719ad0",
-          "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
-          "native/src/code_rule_dsl/sql/relational/budget_leaf.rs": "c25bcba41902ed2485d2e3f52722c75211a9e06199479e14e1e49930188efeca",
-          "native/src/code_rule_dsl/sql/relational/demand.rs": "0d5b9fbf3c75890c9f1620c7340936d01bf314b6de37380e355416350eedb8fe",
-          "native/src/code_rule_dsl/sql/relational/memo_store.rs": "92f62671b266e47bf74e1d8264b29216d24a5526956a0e71d3176e7711d1530d",
-          "native/src/code_rule_dsl/sql/relational/physical.rs": "b937aefe75bd55913196f384ecaf01c18e41cac0c8a692bc35d9952080d35398",
-          "native/src/code_rule_dsl/sql/relational/mod.rs": "47f0ceec0b058e8e8405d1ea2eccdc04b6fb4677abf7a8cb681f702cef57dde7",
-          "native/src/code_rule_dsl/sql/relational/bound.rs": "6e0661e316527ad78e34564b11bd0312522a3c95168c85e286ce1707c0a642f2",
-          "native/src/code_rule_dsl/sql/relational/emit.rs": "c4e713817a65f14140a36bf547527dcbc549fa6c0d9bb99a0c2e0548bd4312b3",
-          "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
-          "native/src/code_rule_dsl/sql/relational/row.rs": "16542ce6165763307338de09a262a2b5dc4fd251215038411bae8ea7b822b32b",
-          "native/src/code_rule_dsl/sql/relational/tests.rs": "a730ab78e3b720d836207f9202c1ddf5fbf6622b461563620febc9ae5148b18c",
-          "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
-          "native/src/code_rule_dsl/sql/relational/leaves.rs": "155f05a25a46c3ef7f828f3721af52bd4790de76a1945d8cb7aa82b22fcd7d4a",
-          "native/src/code_rule_dsl/sql/relational/witness_tests.rs": "3061b1d7f745204695b2806b435cb9fd3b2776d34473488af921c5263e55a59a",
-          "native/src/code_rule_dsl/sql/relational/lower.rs": "a95a585df3dc3e7b6c4e794577e4e2df15c688fffdf98f22a2f3d21d90276ae5",
-          "native/src/code_rule_dsl/sql/relational/answers.rs": "ccbd186b968e230bb1ca5e868e1e4b142e58bd73290a7def5a8411723dd140a8",
-          "native/src/code_rule_dsl/sql/relational/failure.rs": "e658b85c5432925c195a0b731edac6c86705d3c6c0da76537370be784b2b0c0b",
-          "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "caeec483ce58787a69c75684e05ff17c608243f9bb5848d117275b58c09c2f13",
-          "native/src/code_rule_dsl/sql/relational/outcomes/budget_tests.rs": "4ede5a91daf54e017bcce56aa395fe4cc73112c2d8ddef601ec6aff2bddc99f3",
-          "native/src/code_rule_dsl/sql/relational/outcomes/constraint_tests.rs": "ebe944593d9bf755ca8f86d377bd20cb6888024d4477346710cd0ba452fdb3eb",
-          "native/src/code_rule_dsl/sql/relational/outcomes/nested_memo_tests.rs": "9b6469e2a8c5e0f09a348712a74630b063e8c57ef63318cdea5ddf796fe48e60",
-          "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "6caa51cf5c191813ceffd12fec16b47e207d9f3c7daf595e52b2f1a5ca624384",
-          "native/src/code_rule_dsl/sql/relational/outcomes/utility_plan_tests.rs": "90af79df152a8ef182c6861c283b507f717c8283e6d814c49bd8dcbc4111bf58",
-          "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "fedb4df137b10f0b4037da86fbba10a3055135530c731cfd6e814889fb7f55af",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_cost.rs": "0206e638a769a4bed989b3e2261561da75dacbc669311b8b506060a39611121b",
-          "native/src/code_rule_dsl/sql/relational/outcomes/composition_budget_tests.rs": "5109d57ee18432afb223778b1be52f52af32e3dc888d03768565fb6667969097",
-          "native/src/code_rule_dsl/sql/relational/outcomes/predicate_run_tests.rs": "ecd39811347caf44e0e09762a8dea821a6c5e3485227ec6e6935d27d75bd43f4",
-          "native/src/code_rule_dsl/sql/relational/outcomes/nested_utility.rs": "4d5ed316d73ac237a2584c9ab622a1eb3d42a69443cfed6331ac02fbd2696599",
-          "native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs": "176eb013dc411db5881e2bd03a73de742b8ca2a83ccf1204b1df7b38f82c5327",
-          "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "96b4a10e5e7fe517bfb3f232c4b27cc602862d4c71808d3fc119dd96064eefca",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk.rs": "3264b890d8ff7d7a3ffbda72f803a769bca58b40ff03f02fd50b9145999970a2",
-          "native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs": "102ac57bf18624266acc71b2699b5c33cae5048013b35fe6d2948d084de9c352",
-          "native/src/code_rule_dsl/sql/relational/outcomes/capture_walk_tests.rs": "6f6a8a778013373f65b85fc066a88ff0bb9769ac428f2045a1833ba14b0f301c",
-          "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "54a347490218f3c74f63965c5c08b97c3485370bd542ae096d361c99e2d105c0",
-          "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "d4c2689353c0f73b1df33c612605f784e21c7438f9b33c97efe6ab1f8960897e",
-          "native/src/code_rule_dsl/sql/relational/outcomes/traversal_memo_tests.rs": "09641c0fef3064f5a8cecc5e89c20b8bee8a391c58e2835a4e9c55f86a59f478",
-          "native/src/code_rule_dsl/sql/relational/outcomes/pattern_tests.rs": "6b4e0230a00705040ad75795e9577970caea86ff01beaeb83f777d26fddc7e0e",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_utility_tests.rs": "529c5f5f0ba42b1140d50853e4d58c57fedf251eaed9691f9f585cea17c13bef",
-          "native/src/code_rule_dsl/sql/relational/outcomes/candidate.rs": "03553707b4e17df0afaf12e24f82e106b2eeb6ebce91b9a52486c40d5c94814d",
-          "native/src/code_rule_dsl/sql/relational/outcomes/reached_tests.rs": "f74745bd64929de932b64f5e1ed0ef9c0e05291c2c12787243f47ce40810a41e",
-          "native/src/code_rule_dsl/sql/relational/outcomes/memo_tests.rs": "656b044ea22b7c64df8c83726f1ef3db4ac3efda7f40d515fd24da672f3dacc8",
-          "native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs": "1dfa780f2b688315e81990c6d20691ea04c3c881fa2268078331addc552ec4f8",
-          "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "d1c621958d2078a31dec9759c6aec35b7df9cb9134839343fc0aac700153bb30",
-          "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "bdcc9490bf2a1eeb8509ece9079fa743150aca9ac765d0b5e7a3fba83bae7aca",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_any_tests.rs": "a7ac8fa45456a7cb3db96b447a0627201d9e1bbd0583abf6fd62c4c7a7b292d7",
-          "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo_tests.rs": "7a0535434942416c3f98bab36a16d5cfb0f0e38dfd89468a4d749f3ce8b3750c",
-          "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk_tests.rs": "995f2a7ac2f8948e3d64a70527602f9b7fc1e66210a8f1a1817c90fe92928ded",
-          "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "fbfb3456f23ac7cabb97e01c6554fb169d936cf4657100e607fb828c827f255d",
-          "native/src/code_rule_dsl/sql/relational/outcomes/pattern_lower.rs": "6f4d055796291b664b38544657e30f73c8109e951635260a0411e7b9173dc9d7",
-          "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "3d5640f4fcb35159baa9bff757ed5ecc129c7d419d65dcdb71a996db8725b6d9",
-          "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "b81871d1eacde994d91a2181aa2edae71b3478638d91c4becc4852c597982f12",
-          "native/src/code_rule_dsl/sql/relational/outcomes/atomic_predicate_tests.rs": "7219e006eb5795ae394dc7ab6fe04dcb863938b5cac871ab6efd92f3c5e9978f",
-          "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "89712c0314a7a8de0254782d0d3c0d2a12bdbb643d6fa3d48e0beb8c4dc15110",
-          "native/src/code_rule_dsl/sql/relational/outcomes/pruning_tests.rs": "c709ad80c7811b3a01133e8cee0d983626096d5fc725751f545c50c5a934e76c",
-          "native/src/code_rule_dsl/sql/relational/outcomes/predicate.rs": "619e4b241f18b225118eb7ba6c5eba0f2c02a02e64f69d3226c5f5729c44b90f",
-          "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "add63f9e47d3dcd75e734b85a1716df98760ef5927947db0ce3bd94de3815d72"
-        }
-      },
-      "logs": {
-        "coverage.log": {
-          "sha256": "e400910812328e86b7ed98459061f2fb1b13baa26df68029ad20f963f2543524",
-          "results": [
-            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1871 filtered out; finished in 0.48s"
-          ],
-          "failedTests": [
-            "code_rule_dsl::sql::relational::cutover_tests::relational_cutover_catalog_complete_coverage"
+          "panics": [
+            "code_rule_dsl::sql::relational::cutover_tests::relational_cutover_catalog_fixture_parity"
           ]
         },
-        "semantics.log": {
-          "sha256": "c6b39e296fbaf0849164cf3628edd7f07bfd7d138dca6b9890bd16170b43e263",
+        "focused.log": {
+          "sha256": "a550b13e5fff8787ee9a25cd6b16d4d7c4615e264a3e2786690e1ecb482f8a03",
           "results": [
-            "test result: FAILED. 186 passed; 6 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 169.39s"
+            "test result: FAILED. 21 passed; 5 failed; 0 ignored; 0 measured; 1881 filtered out; finished in 0.32s"
           ],
-          "failedTests": [
-            "code_rule_dsl::sql::relational::outcomes::catalog_tests::catalog_atomic_followed_values_preserve_unknown_failure_and_memo",
-            "code_rule_dsl::sql::relational::outcomes::catalog_tests::catalog_atomic_refuses_capture_inputs_and_composite_semantics",
-            "code_rule_dsl::sql::relational::outcomes::constraint_tests::constraint_only_count_exports_remain_explicitly_unsupported",
-            "code_rule_dsl::sql::relational::outcomes::tests::outcomes_reject_unproved_effects_and_recursive_outcomes",
-            "code_rule_dsl::sql::relational::pattern_leaf::tests::pattern_leaf_uses_bound_inputs_during_anonymous_ellipsis_alignment",
-            "code_rule_dsl::sql::relational::witness_tests::complete_answers_reject_unbound_negative_inputs"
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::binds_tests::binds_kind_selection_bounds_leaf_demands_under_irrelevant_growth",
+            "code_rule_dsl::sql::relational::outcomes::binds_tests::binds_refuses_subrules_redefinitions_and_capture_regions",
+            "code_rule_dsl::sql::relational::outcomes::binds_tests::binds_scopes_usage_captures_failures_and_clause_ownership",
+            "code_rule_dsl::sql::relational::outcomes::binds_tests::binds_utility_replay_excludes_scope_and_usage_fill_work",
+            "code_rule_dsl::sql::relational::outcomes::list_tests::list_constraint_target_uses_native_single_capture_lookup"
           ]
-        },
-        "parity.log": {
-          "sha256": "8a756d97ff74742828c646f3b0fcb608f316ae786029b32380fec3ea697847b2",
-          "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1871 filtered out; finished in 14.11s"
-          ],
-          "failedTests": []
         }
       },
-      "catalogSummary": {
-        "admitted": 37,
-        "clauses": 146,
-        "executionFailed": 0,
-        "executionPassed": 37,
-        "grammars": 146,
-        "noPositiveWitness": 0,
-        "policies": 138,
-        "policyCompilationErrors": 0,
-        "refusalReasons": {
-          "outcome pattern: list captures require typed sequence columns": 34,
-          "outcome relations: leaf or operator lacks a total, effect-free outcome contract": 28,
-          "outcome relations: recursive outcomes need a component contract": 46,
-          "recursive negation or region dependency needs an outcome contract": 1
-        },
-        "refused": 109
-      }
-    },
-    {
-      "name": "phase3",
+      "executableSha256": "b4663bec41ef0110eb06a05e0401ff0f5eaac4d54c0a44b430d47ee61f5069db",
       "manifest": {
-        "binarySha256": "5613f1b862795f9ec2e4ab797203dde2b49887717d9cd1eddf544978e4486b92",
-        "sources": {
-          "native/src/code_rule_dsl/sql/relational/pattern_leaf.rs": "11385256b5066640d077a5f678f963440b635fbd9a0e77aedbefed3b26e73068",
+        "binarySha256": "b4663bec41ef0110eb06a05e0401ff0f5eaac4d54c0a44b430d47ee61f5069db",
+        "sourceHashes": {
+          "native/src/code_rule_dsl/sql/relational/pattern_leaf.rs": "f31c0f77e582e7dc67779b49b8c6300aa3b5543755932276b508d2f50e8b2a23",
           "native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs": "fdf935d7b39d0c892adc19d39eba04acc548333599ff83cd39fb76830c17dcbe",
           "native/src/code_rule_dsl/sql/relational/pure_catalog_tests.rs": "ea88bcbb4d080fa0ac19e641cd0011a633440cba014f417b6d8a8bc62837ced8",
           "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "b8a42529088be314715d93e446feb42495e1956b704f5abc5d304c9f54e00658",
@@ -54939,43 +54270,45 @@
           "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
           "native/src/code_rule_dsl/sql/relational/budget_leaf.rs": "d4465536550d9fbcef9380b481f536110c88d852cc51797b629695515f61c4b9",
           "native/src/code_rule_dsl/sql/relational/demand.rs": "0d5b9fbf3c75890c9f1620c7340936d01bf314b6de37380e355416350eedb8fe",
-          "native/src/code_rule_dsl/sql/relational/memo_store.rs": "92f62671b266e47bf74e1d8264b29216d24a5526956a0e71d3176e7711d1530d",
+          "native/src/code_rule_dsl/sql/relational/memo_store.rs": "2421a554b8d87d098dcc297addf965c557779899966822b5dc03b8827997648a",
           "native/src/code_rule_dsl/sql/relational/physical.rs": "b937aefe75bd55913196f384ecaf01c18e41cac0c8a692bc35d9952080d35398",
-          "native/src/code_rule_dsl/sql/relational/mod.rs": "a401472576efb50b6ab8bbaa363616330c51ab6bb39d4bbd0dc501a03ff620c2",
+          "native/src/code_rule_dsl/sql/relational/mod.rs": "328c62f6b62fb2a87204eefd19568580df5a034cbd7642271c36222ea0bc032d",
           "native/src/code_rule_dsl/sql/relational/bound.rs": "6e0661e316527ad78e34564b11bd0312522a3c95168c85e286ce1707c0a642f2",
           "native/src/code_rule_dsl/sql/relational/emit.rs": "c4e713817a65f14140a36bf547527dcbc549fa6c0d9bb99a0c2e0548bd4312b3",
           "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
-          "native/src/code_rule_dsl/sql/relational/row.rs": "16542ce6165763307338de09a262a2b5dc4fd251215038411bae8ea7b822b32b",
-          "native/src/code_rule_dsl/sql/relational/tests.rs": "a829898de56f79234402628cfd8f0e4317931b9ba8f42f6f74b2d84650d3f2e7",
+          "native/src/code_rule_dsl/sql/relational/row.rs": "f8e5ee9c5dc6a8b31e8999b8218abd64861e7f471f1472cf3e5d7a044b36a530",
+          "native/src/code_rule_dsl/sql/relational/tests.rs": "6c11334ca62a7ba5feb665808b4373c984b3d00438e2f8458c3575df5ba6fae3",
           "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
-          "native/src/code_rule_dsl/sql/relational/leaves.rs": "155f05a25a46c3ef7f828f3721af52bd4790de76a1945d8cb7aa82b22fcd7d4a",
+          "native/src/code_rule_dsl/sql/relational/leaves.rs": "ccd78e2fb1be7093c11de058cb3e798f9356314efb96ce32e58266bbe5d45d38",
           "native/src/code_rule_dsl/sql/relational/witness_tests.rs": "74455e6e283f2f9c17e2fb51a908ba2d4a8ce5f9f626803b039a5fe138344db3",
+          "native/src/code_rule_dsl/sql/relational/capture_cell.rs": "fd86ee7b938570c7726a120da6128d4c1b86c236ec71e80c6d6577c11c0d5900",
           "native/src/code_rule_dsl/sql/relational/lower.rs": "a95a585df3dc3e7b6c4e794577e4e2df15c688fffdf98f22a2f3d21d90276ae5",
           "native/src/code_rule_dsl/sql/relational/answers.rs": "ccbd186b968e230bb1ca5e868e1e4b142e58bd73290a7def5a8411723dd140a8",
           "native/src/code_rule_dsl/sql/relational/failure.rs": "e658b85c5432925c195a0b731edac6c86705d3c6c0da76537370be784b2b0c0b",
           "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "f07a9a5e61dc9228709c4a638bcd7f48ca9f88efe4f3a5e103782a77a9e4cb15",
           "native/src/code_rule_dsl/sql/relational/outcomes/budget_tests.rs": "4ede5a91daf54e017bcce56aa395fe4cc73112c2d8ddef601ec6aff2bddc99f3",
-          "native/src/code_rule_dsl/sql/relational/outcomes/constraint_tests.rs": "f9e7257055621ad9f305c660d83f310cfa504ac5727560b5c9d8d0501e8a444f",
+          "native/src/code_rule_dsl/sql/relational/outcomes/constraint_tests.rs": "0c561bf67c63c62e5cd44fe18f888cce0f5204146a4d597180d6e226c399b369",
           "native/src/code_rule_dsl/sql/relational/outcomes/nested_memo_tests.rs": "9b6469e2a8c5e0f09a348712a74630b063e8c57ef63318cdea5ddf796fe48e60",
           "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "6caa51cf5c191813ceffd12fec16b47e207d9f3c7daf595e52b2f1a5ca624384",
           "native/src/code_rule_dsl/sql/relational/outcomes/utility_plan_tests.rs": "90af79df152a8ef182c6861c283b507f717c8283e6d814c49bd8dcbc4111bf58",
-          "native/src/code_rule_dsl/sql/relational/outcomes/constraint_walk_tests.rs": "e904b2cb3f041b6212b36eed8be91acc1c1935707293fb76fdba8aa6f8d81e4e",
-          "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "fedb4df137b10f0b4037da86fbba10a3055135530c731cfd6e814889fb7f55af",
+          "native/src/code_rule_dsl/sql/relational/outcomes/constraint_walk_tests.rs": "8d2e010992cc20a54d81d255ac946b0712607fb0057dea31c85375270cf7eda0",
+          "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "8459e3470c0547eda01a463ffdca6f0e393bb255aeaf3e53f7ff07ccc9932680",
           "native/src/code_rule_dsl/sql/relational/outcomes/repeat_cost.rs": "0206e638a769a4bed989b3e2261561da75dacbc669311b8b506060a39611121b",
           "native/src/code_rule_dsl/sql/relational/outcomes/composition_budget_tests.rs": "5109d57ee18432afb223778b1be52f52af32e3dc888d03768565fb6667969097",
           "native/src/code_rule_dsl/sql/relational/outcomes/predicate_run_tests.rs": "ecd39811347caf44e0e09762a8dea821a6c5e3485227ec6e6935d27d75bd43f4",
           "native/src/code_rule_dsl/sql/relational/outcomes/nested_utility.rs": "4d5ed316d73ac237a2584c9ab622a1eb3d42a69443cfed6331ac02fbd2696599",
-          "native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs": "176eb013dc411db5881e2bd03a73de742b8ca2a83ccf1204b1df7b38f82c5327",
-          "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "b1abbb56604bcc15586706ab9dca681546569d491ebc83b269e2b893dccbe791",
+          "native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs": "ba71701ae5e22501900bb88bdd9a9b7bc78148144aeca8fd579b89dffef5fe2d",
+          "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "764ea8342d710afaa53ce013067dc9b03a40303fe45a6c9dcb68712c19ccd1c7",
           "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk.rs": "2ad347394fc67b7facb28aab8c56a2fc127521c1263ee988e2ec53eb8e2587e5",
           "native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs": "102ac57bf18624266acc71b2699b5c33cae5048013b35fe6d2948d084de9c352",
           "native/src/code_rule_dsl/sql/relational/outcomes/field.rs": "10960a58a39e0d49375073d126691313d34234c1319dad71d4cbf94b0cfe9f8b",
           "native/src/code_rule_dsl/sql/relational/outcomes/capture_walk_tests.rs": "6f6a8a778013373f65b85fc066a88ff0bb9769ac428f2045a1833ba14b0f301c",
+          "native/src/code_rule_dsl/sql/relational/outcomes/list_tests.rs": "dc1f5b015cf9b08da4ad7c17bb2e8d76180ee549f054fbbd75c8f3d9ada247b3",
           "native/src/code_rule_dsl/sql/relational/outcomes/field_tests.rs": "8ae478a3430fc7b7b848081d0ae98a34a02b75de42dccc3c2a0ea0106c202888",
-          "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "67730e4b2689c37bd0c89a4430b3b94c63782b676463a50e8c0668c07f7664a9",
+          "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "bc6bd281d068dcc0fda604f0da2bd4876374f2a314bc54b163cba08fce397f5d",
           "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "d4c2689353c0f73b1df33c612605f784e21c7438f9b33c97efe6ab1f8960897e",
           "native/src/code_rule_dsl/sql/relational/outcomes/traversal_memo_tests.rs": "09641c0fef3064f5a8cecc5e89c20b8bee8a391c58e2835a4e9c55f86a59f478",
-          "native/src/code_rule_dsl/sql/relational/outcomes/pattern_tests.rs": "6b4e0230a00705040ad75795e9577970caea86ff01beaeb83f777d26fddc7e0e",
+          "native/src/code_rule_dsl/sql/relational/outcomes/pattern_tests.rs": "af71133e15675c3a9d702229d35b29a79904c1b06f626bd02e73c95fe693055e",
           "native/src/code_rule_dsl/sql/relational/outcomes/fill_cost.rs": "9988c7537a9b9f8f9f0bc389e1a0af751541b725067f72c3052df6e2d5a56ddf",
           "native/src/code_rule_dsl/sql/relational/outcomes/repeat_utility_tests.rs": "529c5f5f0ba42b1140d50853e4d58c57fedf251eaed9691f9f585cea17c13bef",
           "native/src/code_rule_dsl/sql/relational/outcomes/candidate.rs": "03553707b4e17df0afaf12e24f82e106b2eeb6ebce91b9a52486c40d5c94814d",
@@ -54983,88 +54316,159 @@
           "native/src/code_rule_dsl/sql/relational/outcomes/memo_tests.rs": "656b044ea22b7c64df8c83726f1ef3db4ac3efda7f40d515fd24da672f3dacc8",
           "native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs": "1dfa780f2b688315e81990c6d20691ea04c3c881fa2268078331addc552ec4f8",
           "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "d1c621958d2078a31dec9759c6aec35b7df9cb9134839343fc0aac700153bb30",
-          "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "ef7d6aec5e591f451ade354e40edeb9bee23a370ee8825972eb46acc6535d9c5",
+          "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "bf95590cd91e82b5e18bddb3b47204d047505d00f2fafc48bd447d3975ab0218",
           "native/src/code_rule_dsl/sql/relational/outcomes/repeat_any_tests.rs": "a7ac8fa45456a7cb3db96b447a0627201d9e1bbd0583abf6fd62c4c7a7b292d7",
           "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo_tests.rs": "7a0535434942416c3f98bab36a16d5cfb0f0e38dfd89468a4d749f3ce8b3750c",
           "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk_tests.rs": "995f2a7ac2f8948e3d64a70527602f9b7fc1e66210a8f1a1817c90fe92928ded",
           "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "398a33b95c5e5e028c9c4c4930c5b9cf68249b2ff2978e097cdbb557e1051fdf",
-          "native/src/code_rule_dsl/sql/relational/outcomes/pattern_lower.rs": "c82f4604b58e11fbeed7b31d018e06caf468f6bdf32b4e32fb60f924df0145ed",
+          "native/src/code_rule_dsl/sql/relational/outcomes/binds_lower.rs": "ef56350495254524436ef0e1cc14cebc1347828ceb8d58229cf8c3cbf956c822",
+          "native/src/code_rule_dsl/sql/relational/outcomes/pattern_lower.rs": "bd41258adc5b9bd91b7a54eacc65c817c64e45a8599ae103b353573f8360bff9",
           "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "9a37b48405cd14a4a19f50aa7e088d877376900d04b9282aed15306de4184a8d",
-          "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "b81871d1eacde994d91a2181aa2edae71b3478638d91c4becc4852c597982f12",
+          "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "c0a05bbf4aad78af94fa173e6427f31e6de3cf3297d90efbf097f7ea0b623ba6",
           "native/src/code_rule_dsl/sql/relational/outcomes/atomic_owner.rs": "c13fb619271d3e139b12a1823196583c794c8141446ef857b37879bb1da3e80b",
           "native/src/code_rule_dsl/sql/relational/outcomes/atomic_predicate_tests.rs": "7219e006eb5795ae394dc7ab6fe04dcb863938b5cac871ab6efd92f3c5e9978f",
-          "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "fe89cf9030c8b1295d2e812f6ec6606e9af3865f2da4ff43c322708830400234",
+          "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "132048bf9997670a616c931c14246b1dd8f3f6f7d950a8b8c1f1d7f7a9299d66",
+          "native/src/code_rule_dsl/sql/relational/outcomes/binds_tests.rs": "9311f7b9df81f7d5270b66bbb312003ff8db4c611820c4909e31b1d4ad7e21c0",
           "native/src/code_rule_dsl/sql/relational/outcomes/pruning_tests.rs": "c709ad80c7811b3a01133e8cee0d983626096d5fc725751f545c50c5a934e76c",
           "native/src/code_rule_dsl/sql/relational/outcomes/predicate.rs": "619e4b241f18b225118eb7ba6c5eba0f2c02a02e64f69d3226c5f5729c44b90f",
-          "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "d461a1ffaf9ad980afe0c358e8dab0fc7c81bdf298ccb1c554ba9ee0bf824b36"
-        }
-      },
-      "logs": {
-        "coverage.log": {
-          "sha256": "858117ad458caec562b645d494eccacf21a20ae398fb06fce4a611461216b175",
-          "results": [
-            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1885 filtered out; finished in 0.16s"
-          ],
-          "failedTests": [
-            "code_rule_dsl::sql::relational::cutover_tests::relational_cutover_catalog_complete_coverage"
-          ]
-        },
-        "semantics.log": {
-          "sha256": "277951df032c889e489bbdf70de830e53734808aee9ca63fde0487b7077c6f5a",
-          "results": [
-            "test result: ok. 206 passed; 0 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 152.49s"
-          ],
-          "failedTests": []
-        },
-        "parity.log": {
-          "sha256": "51419efaadab4ea90124b8114fafbe7010340304c524804ec724f8cd7e79ad60",
-          "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1885 filtered out; finished in 6.17s"
-          ],
-          "failedTests": []
+          "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "d461a1ffaf9ad980afe0c358e8dab0fc7c81bdf298ccb1c554ba9ee0bf824b36",
+          "native/src/code_rule_dsl/matcher/mod.rs": "86743494f43cca14d3ec73373d15cea2e4d016b22301e1cef3af53bd6c2fddd9"
         }
       },
       "catalogSummary": {
-        "admitted": 38,
+        "admitted": 67,
         "clauses": 146,
-        "executionFailed": 0,
-        "executionPassed": 38,
+        "executionFailed": 1,
+        "executionPassed": 66,
         "grammars": 146,
         "noPositiveWitness": 0,
         "policies": 138,
         "policyCompilationErrors": 0,
         "refusalReasons": {
-          "outcome pattern: list captures require typed sequence columns": 34,
-          "outcome relations: leaf or operator lacks a total, effect-free outcome contract": 24,
+          "outcome relations: leaf or operator lacks a total, effect-free outcome contract": 29,
           "outcome relations: recursive outcomes need a component contract": 49,
           "recursive negation or region dependency needs an outcome contract": 1
         },
-        "refused": 108
+        "refused": 79
       }
+    },
+    {
+      "name": "rerail-catalog-phase2",
+      "logs": {
+        "parity.log": {
+          "sha256": "43907fc12404633a7a1751c7093f58093b462d8cc8ef7513beaf2f1b595db7e2",
+          "results": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1917 filtered out; finished in 22.76s"
+          ],
+          "panics": []
+        },
+        "focused.log": {
+          "sha256": "23e5618c9d467e5dfb6584539ee2dd8b42487d7b3699cbda3746ec9cbd85739a",
+          "results": [
+            "test result: FAILED. 36 passed; 1 failed; 0 ignored; 0 measured; 1881 filtered out; finished in 1.35s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::bound_tests::arguments_bound_leaf_arity_width_and_irrelevant_growth_keep_one_demand"
+          ]
+        }
+      },
+      "executableSha256": "1a45f3102db605b47873f9b1392966b9bf609f00ba004d92ab320f79d5a8007b",
+      "catalogSummary": {
+        "admitted": 70,
+        "clauses": 146,
+        "executionFailed": 0,
+        "executionPassed": 70,
+        "grammars": 146,
+        "noPositiveWitness": 0,
+        "policies": 138,
+        "policyCompilationErrors": 0,
+        "refusalReasons": {
+          "outcome relations: leaf or operator lacks a total, effect-free outcome contract": 21,
+          "outcome relations: recursive outcomes need a component contract": 54,
+          "recursive negation or region dependency needs an outcome contract": 1
+        },
+        "refused": 76
+      }
+    },
+    {
+      "name": "rerail-catalog-phase3",
+      "logs": {
+        "semantics.log": {
+          "sha256": "d8f63412b75acb02f568dceada8ee015d24b467538d45ad945f62539e6d5cc96",
+          "results": [
+            "test result: FAILED. 248 passed; 5 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 169.09s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::capture_predicate_tests::capture_comparisons_match_native_text_node_index_and_semantic_unknowns",
+            "code_rule_dsl::sql::relational::outcomes::catalog_tests::catalog_atomic_refuses_capture_inputs_and_composite_semantics",
+            "code_rule_dsl::sql::relational::outcomes::field_tests::field_neighbor_contract_refuses_longer_or_stopped_field_walks",
+            "code_rule_dsl::sql::relational::outcomes::list_tests::real_pycrypto_import_demand_ignores_unrelated_ast_growth",
+            "code_rule_dsl::sql::relational::outcomes::tests::outcomes_reject_unproved_effects_and_recursive_outcomes"
+          ]
+        },
+        "parity.log": {
+          "sha256": "9f3f9bdc60b77282ceb86c7ded0f5c55ebabc13f535619826a9ed3dc6a503ef6",
+          "results": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1932 filtered out; finished in 27.87s"
+          ],
+          "panics": []
+        }
+      },
+      "executableSha256": "e5612c63ae80f435dd02097bb97a6089def88edea44354295b57bc04bd50dece",
+      "catalogSummary": {
+        "admitted": 70,
+        "clauses": 146,
+        "executionFailed": 0,
+        "executionPassed": 70,
+        "grammars": 146,
+        "noPositiveWitness": 0,
+        "policies": 138,
+        "policyCompilationErrors": 0,
+        "refusalReasons": {
+          "outcome relations: leaf or operator lacks a total, effect-free outcome contract": 20,
+          "outcome relations: recursive outcomes need a component contract": 55,
+          "recursive negation or region dependency needs an outcome contract": 1
+        },
+        "refused": 76
+      }
+    },
+    {
+      "name": "rerail-catalog-phase4",
+      "logs": {
+        "focused.log": {
+          "sha256": "9e58281e97b12ff0d138a91a28c4c53b28c2d58434921b2899fcb5ad7b7f9004",
+          "results": [
+            "test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 1902 filtered out; finished in 5.21s"
+          ],
+          "panics": []
+        }
+      },
+      "executableSha256": "482ede84ffd6fd488702df98aa93202d02fb783569e7de0467dfd8b60a6554e3"
     }
   ],
   "validation": {
     "candidate.log": [
-      "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 1886 filtered out; finished in 0.70s"
+      "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 1931 filtered out; finished in 0.55s"
     ],
     "semantics.log": [
-      "test result: ok. 209 passed; 0 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 170.91s"
+      "test result: ok. 254 passed; 0 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 109.31s"
     ],
     "fixtures.log": [
-      "test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 1875 filtered out; finished in 6.10s"
+      "test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 1920 filtered out; finished in 3.58s"
     ],
     "corpus.log": [
-      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1888 filtered out; finished in 204.04s"
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1933 filtered out; finished in 73.17s"
     ],
     "adversarial.log": [
-      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1888 filtered out; finished in 0.36s"
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1933 filtered out; finished in 0.17s"
     ]
   },
   "nativeLint": {
     "passed": true,
     "command": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib npm run check:native",
-    "log": "\n> @neralabs/rerail@0.1.0-next.2 check:native\n> cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings\n\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 47s\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 53s\n"
+    "log": "\n> @neralabs/rerail@0.1.0-next.2 check:native\n> cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings\n\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 38.22s\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.70s\n"
   },
-  "buildCommand": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib RUSTC_WRAPPER=/tmp/rerail-rustc-no-local-lto.py cargo test -p rerail-engine --profile loop --features unbounded-work constraint_core_kinds_bound_root_demand_before_target_effects -- --nocapture --test-threads=1",
-  "buildEnvironment": "Existing local jemalloc shim and rustc wrapper disabling local LTO; unchanged from preceding qualified artifacts. These machine-local paths are not portable prerequisites."
+  "buildCommand": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib RUSTC_WRAPPER=/tmp/rerail-rustc-no-local-lto.py cargo test -p rerail-engine --profile loop --features unbounded-work --no-run",
+  "buildEnvironment": "Existing local jemalloc shim and rustc wrapper disabling local LTO; unchanged from preceding qualified artifacts. Machine-local paths are not portable prerequisites.",
+  "experiment": "benchmark/sql-relational-catalog-expansion.json"
 }

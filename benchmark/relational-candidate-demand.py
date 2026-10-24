@@ -45,6 +45,8 @@ def main():
     sources += [root / "native/src/code_rule_dsl/matcher/mod.rs",
                 root / "native/src/code_rule_dsl/matcher/value.rs",
                 root / "native/src/code_rule_dsl/matcher/value_probe.rs",
+                root / "native/src/code_rule_dsl/matcher/sql_bound_leaf.rs",
+                root / "native/src/code_rule_dsl/sql/terminals/fact.rs",
                 root / "native/src/code_rule_dsl/sql/terminals/mod.rs",
                 root / "native/src/code_rule_dsl/sql/terminals/pattern.rs",
                 root / "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs",

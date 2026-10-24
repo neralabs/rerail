@@ -27,7 +27,7 @@ impl Effects {
         let mut result = Self::default();
         match op {
             Op::Pattern(..) => result.typed_exports = true,
-            Op::FieldNeighbor { child, .. } => {
+            Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => {
                 result = child.effects;
                 result.walk_depth += 1;
                 result.typed_exports = true;

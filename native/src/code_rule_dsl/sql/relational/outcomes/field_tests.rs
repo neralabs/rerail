@@ -255,14 +255,12 @@ fn field_neighbor_catalog_b303_matches_native_on_real_fixtures() {
 }
 
 #[test]
-fn field_neighbor_contract_refuses_longer_or_stopped_field_walks() {
+fn field_contract_refuses_rule_stopped_walks() {
     for direction in ["has", "inside"] {
-        for stop in [json!("end"), json!({"kind":"identifier"})] {
-            let p = policy(
-                json!({direction:{"field":"function","stopBy":stop,"kind":"identifier"}}),
-                json!({}),
-            );
-            assert!(super::compile(&grammar_matchers(&p)[0]).is_err());
-        }
+        let p = policy(
+            json!({direction:{"field":"function","stopBy":{"kind":"identifier"},"kind":"identifier"}}),
+            json!({}),
+        );
+        assert!(super::compile(&grammar_matchers(&p)[0]).is_err());
     }
 }

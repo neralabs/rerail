@@ -76,8 +76,18 @@ pub(super) fn check_work(
                             let captures: Vec<_> = names
                                 .iter()
                                 .map(|name| {
-                                    env.get_match(name)
-                                        .map(|n| json!(n.node_id() as u32))
+                                    env.get_labels(name)
+                                        .map(|nodes| {
+                                            json!(
+                                                nodes
+                                                    .iter()
+                                                    .map(|n| n.node_id() as u32)
+                                                    .collect::<Vec<_>>()
+                                            )
+                                        })
+                                        .or_else(|| {
+                                            env.get_match(name).map(|n| json!(n.node_id() as u32))
+                                        })
                                         .or_else(|| {
                                             env.get_transformed(name).map(|n| {
                                                 json!(String::from_utf8_lossy(n).into_owned())
@@ -193,7 +203,7 @@ pub(super) fn check_work(
                         [call["terminal"].as_u64().unwrap() as usize]
                         == trace["clause"]
             })
-            .map(|call| call["text"].clone())
+            .flat_map(|call| call["valueCalls"].as_array().into_iter().flatten().cloned())
             .collect();
         assert_eq!(
             json!(reached),

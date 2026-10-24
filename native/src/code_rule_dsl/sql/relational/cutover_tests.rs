@@ -72,6 +72,17 @@ fn catalog(execute: bool) -> Value {
                     let result = match compiled {
                         Ok(compiled) => {
                             admitted += 1;
+                            if let Ok(directory) =
+                                std::env::var("RERAIL_RELATIONAL_CUTOVER_SQL_DIR")
+                            {
+                                std::fs::create_dir_all(&directory).unwrap();
+                                std::fs::write(
+                                    Path::new(&directory)
+                                        .join(format!("{}.sql", digest(compiled.sql.as_bytes()))),
+                                    &compiled.sql,
+                                )
+                                .unwrap();
+                            }
                             let mut result = json!({"admitted":true,"sqlBytes":compiled.sql.len(),"sqlSha256":digest(compiled.sql.as_bytes()),"compilerLimitations":compiled.relations["limitations"]});
                             if let Some(fixtures) = &fixtures {
                                 let checked =

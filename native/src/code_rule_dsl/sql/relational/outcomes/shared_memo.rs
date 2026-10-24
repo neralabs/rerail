@@ -96,7 +96,7 @@ fn keys(plan: &Plan, slots: &mut Slots, seen: &mut BTreeSet<usize>) {
                 keys(child, slots, seen);
             }
         }
-        Op::FieldNeighbor { child, .. } => keys(child, slots, seen),
+        Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => keys(child, slots, seen),
         Op::Not(child) => keys(child, slots, seen),
         Op::Charge(_, child) => keys(child, slots, seen),
         Op::Search(_, _, child, stop)

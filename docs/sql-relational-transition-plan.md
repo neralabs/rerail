@@ -952,3 +952,49 @@ Set `RERAIL_RELATIONAL_CUTOVER_LEDGER` to a separate output path for each check.
 Run `relational_cutover_catalog_fixture_parity --ignored --nocapture --test-threads=1` for admitted-grammar parity.
 Run `relational_cutover_catalog_complete_coverage --ignored --nocapture --test-threads=1` for replacement coverage.
 The latter must fail until every catalog grammar has an admitted contract.
+
+## Catalog closure checkpoint: lists and typed semantic inputs
+
+The next checkpoint admits 70 of 146 grammars, up from 38.
+Every admitted grammar passes exact native matching on all 595 fixtures and has a positive witness.
+The complete-coverage gate still fails: 55 grammars first need recursive outcomes, 20 need another operator contract, and one needs recursive negation.
+These are first refusals; fixing one can expose another missing contract.
+
+The added contracts cover ordered list captures, capture-independent binding predicates, argument bindings, capture-dependent layout/comparison, and End-field traversal.
+Lists retain absent versus empty values and the exact native sequence, including punctuation.
+Atomic leaves receive explicit typed inputs; SQL owns composition and capture commit/rollback.
+Rule-stopped field walks, parsed-tree composition, parameterized utility calls, and binding-site child programs remain separate contracts.
+
+Catalog execution also exposed two structural query defects.
+Ordered pattern alternatives duplicated predecessor references during preparation; atomic witness steps now reference that predecessor once.
+Capture-free pattern alternatives lost their necessary-kind proof; typed predicates now retain and propagate that proof.
+The latter reduces B413's matching VM count from 417,040,778 to 3,987,126 on the same fixture batch.
+The matching SQL still uses one statement for that grammar, with zero frame publications.
+This is not a fused complete-job result.
+
+A standalone recursive-chain experiment demonstrates shared demanded keys and suffix summaries with linear scaling.
+It deliberately does not admit recursive outcomes: incoming utility depth and native stack-limit behavior remain unresolved.
+The next recursive contract must carry reached truth, cost, captures, and failure precedence through a component, without origin-by-descendant expansion.
+After catalog contracts close, the shared-job, publication, resource, context, and 100-execution gates still precede production replacement.
+
+`benchmark/sql-relational-catalog-expansion.json` records the alternative-scaling samples, B413 SQL before and after pruning, and the same-70-grammar VM comparison.
+The recursive-chain measurements in that artifact are experiments, not admitted catalog coverage.
+List transport currently caps each cell at 1 MiB; the production resource contract must account for that explicit bound.
+
+Memory qualification must measure list payload bytes, not only cells or row counts.
+The legacy `integerCellsStored` counter describes sparse fields, and memo storage currently lacks an aggregate byte bound.
+Add retained/copied byte telemetry and a defined aggregate failure contract before production cutover; silent memo eviction can change native work semantics.
+
+The final named first-refusal ledger is:
+
+| Missing contract | Grammars |
+| --- | ---: |
+| Recursive outcomes | 55 |
+| Parsed-tree composition | 9 |
+| Format-argument composition | 6 |
+| Binding-site composition | 3 |
+| Parameterized utility calls | 2 |
+| Recursive negation or region dependency | 1 |
+
+Qualification passes 254 relational tests and preserves all 285 preceding SQL/VM control profiles.
+Frozen B023 also preserves every existing shape and VM gate.

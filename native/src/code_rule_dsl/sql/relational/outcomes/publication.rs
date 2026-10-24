@@ -79,11 +79,10 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
         let payload = observed
             .iter()
             .map(|&s| {
-                if slots[s].count {
-                    format!("CAST(o.c{s} AS TEXT)")
-                } else {
-                    format!("o.c{s}")
-                }
+                slots[s].kind.payload(
+                    &format!("o.c{s}"),
+                    if plan.fallible() { "o.file" } else { "d.file" },
+                )
             })
             .collect::<Vec<_>>()
             .join(",");
@@ -107,17 +106,11 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
         let published = observed
             .iter()
             .enumerate()
-            .map(|(i, &slot)| {
-                if slots[slot].count {
-                    format!("CAST(m.v{i} AS TEXT)")
-                } else {
-                    format!("m.v{i}")
-                }
-            })
+            .map(|(i, &slot)| slots[slot].kind.payload(&format!("m.v{i}"), "m.file"))
             .collect::<Vec<_>>()
             .join(",");
         payload_cases.push(format!("WHEN {clause} THEN json_array({published})"));
-        clauses.push(json!({"clause":clause,"outcomeDemand":roots.name,"outcomeOutput":output,"outcomePayload":payload,"captures":observed.iter().map(|&s|json!({"name":slots[s].name,"slot":s,"kind":if slots[s].count {"count"} else {"node"}})).collect::<Vec<_>>()}));
+        clauses.push(json!({"clause":clause,"outcomeDemand":roots.name,"outcomeOutput":output,"outcomePayload":payload,"captures":observed.iter().map(|&s|json!({"name":slots[s].name,"slot":s,"kind":slots[s].kind.name()})).collect::<Vec<_>>()}));
     }
     let raw = sql.relation(
         "typed provisional publication",

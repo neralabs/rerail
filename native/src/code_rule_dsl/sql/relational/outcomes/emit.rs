@@ -3,6 +3,8 @@ use super::super::ir::Set;
 mod constraints;
 #[path = "field.rs"]
 mod field;
+#[path = "field_end.rs"]
+mod field_end;
 #[path = "file_memo.rs"]
 mod file_memo;
 #[path = "memo.rs"]
@@ -68,7 +70,7 @@ impl Generation {
                     self.tree(child)?;
                 }
             }
-            Op::FieldNeighbor { child, .. } => self.tree(child)?,
+            Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => self.tree(child)?,
             Op::Not(child) => self.tree(child)?,
             Op::Charge(_, child) => self.tree(child)?,
             Op::Search(_, _, child, stop)
@@ -106,11 +108,34 @@ fn needed(plan: &Plan) -> Slots {
 }
 
 /// Necessary kinds for every nonfalse answer. Unknown never permits a false kind test.
+fn predicate_kinds(predicate: &Set) -> Option<std::collections::BTreeSet<u16>> {
+    match predicate {
+        Set::Kinds(kinds) => Some(kinds.iter().copied().collect()),
+        Set::Empty => Some(Default::default()),
+        Set::Intersect(items) => items
+            .iter()
+            .filter_map(predicate_kinds)
+            .reduce(|a, b| a.intersection(&b).copied().collect()),
+        Set::Union(items) => {
+            let mut kinds = std::collections::BTreeSet::new();
+            for item in items {
+                kinds.extend(predicate_kinds(item)?);
+            }
+            Some(kinds)
+        }
+        _ => None,
+    }
+}
+
 fn kinds(plan: &Plan) -> Option<std::collections::BTreeSet<u16>> {
     // Constraints run only after core success and inspect captured targets.
     // Only the core can prove necessary root kinds, including its effect order.
     if let Op::Constrained(core, _) = &plan.op {
         return kinds(core);
+    }
+    // Arguments reject other root kinds before reading scopes or spending work.
+    if let Op::BoundLeaf { kinds, .. } = &plan.op {
+        return kinds.as_ref().map(|k| k.iter().copied().collect());
     }
     if plan.fallible() {
         // Only a total conjunction prefix can reject a root before its first effect.
@@ -127,9 +152,8 @@ fn kinds(plan: &Plan) -> Option<std::collections::BTreeSet<u16>> {
         };
     }
     match &plan.op {
-        Op::Predicate(Set::Kinds(k)) => Some(k.iter().copied().collect()),
+        Op::Predicate(predicate) => predicate_kinds(predicate),
         Op::Pattern(_, _, kinds) => kinds.as_ref().map(|k| k.iter().copied().collect()),
-        Op::Predicate(Set::Empty) => Some(Default::default()),
         Op::All(items) => items
             .iter()
             .enumerate()
@@ -268,6 +292,7 @@ impl Sql {
             Op::Value(_) => "reached value leaf",
             Op::Bind(_) => "capture equality",
             Op::Pattern(..) => "typed pattern witnesses",
+            Op::BoundLeaf { .. } => "typed atomic captures",
             Op::FieldNeighbor { .. } => "field neighbor",
             Op::Constrained(..) => "ordered capture constraints",
             Op::Not(_) => "negation",
@@ -275,6 +300,27 @@ impl Sql {
             _ => "outcome",
         };
         let body = match &plan.op {
+            Op::BoundLeaf {
+                term,
+                inputs,
+                outputs,
+                ..
+            } => {
+                let arguments = inputs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, slot)| format!(" AND p.i{index} IS {}", value(input, "d", *slot)))
+                    .collect::<String>();
+                let exports = outputs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, slot)| format!(",p.c{index} AS c{slot}"))
+                    .collect::<String>();
+                format!(
+                    "SELECT d.k,p.work,p.truth{exports} FROM {} d CROSS JOIN relation_bound_budget p ON p.term={term} AND p.file=d.file AND p.node=d.node AND p.allowance=d.work{arguments}",
+                    input.name
+                )
+            }
             Op::FieldNeighbor {
                 inside,
                 field,
@@ -349,6 +395,11 @@ impl Sql {
             }
             Op::All(items) => return self.all(plan, items, input),
             Op::Any(items) => return self.any(plan, items, input),
+            Op::FieldEnd {
+                inside,
+                field,
+                child,
+            } => return self.field_end(*inside, *field, child, input),
             Op::Search(axis, end, child, stop) => {
                 if stop.is_some() || child.fallible() {
                     return self.ordered(*axis, *end, child, stop.as_deref(), None, input);
@@ -439,7 +490,9 @@ impl Sql {
                 state.name=self.relation("conjunction scalar barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth{columns}{withheld}{carried} FROM {tested} d"),true,"k,file,node,truth,live bindings,withheld flags");
                 continue;
             }
-            if self.correlated {
+            // An atomic witness step must reference its predecessor once. A
+            // demand/result diamond expands that predecessor during SQLite prepare.
+            if self.correlated || matches!(child.op, Op::Pattern(..)) {
                 let repeats = if self.generation.memo_clause.is_some() {
                     repeat_walk::length(&items[index..])
                 } else {
@@ -546,7 +599,9 @@ impl Sql {
                 state.name=self.relation("alternative scalar barrier",format!("SELECT d.k,d.file,d.node,COALESCE(d.remaining,d.work) AS work,CASE WHEN d.truth<>0 THEN d.truth WHEN d.tested<0 THEN d.tested WHEN d.tested=1 THEN 1 WHEN d.tested=2 AND {strict} THEN 2 ELSE 0 END AS truth,(d.open OR COALESCE(d.tested=2,0)) AS open{columns}{carried} FROM {tested} d"),true,"k,file,node,truth,open,live bindings");
                 continue;
             }
-            if self.correlated {
+            // An atomic witness step must reference its predecessor once. A
+            // demand/result diamond expands that predecessor during SQLite prepare.
+            if self.correlated || matches!(child.op, Op::Pattern(..)) {
                 let repeats = if self.generation.memo_clause.is_some() {
                     repeat_walk::length(&items[index..])
                 } else {
@@ -703,13 +758,7 @@ pub(super) fn compile(
     observed.sort_by_key(|&slot| &slots[slot].name);
     let payload = observed
         .iter()
-        .map(|slot| {
-            if slots[*slot].count {
-                format!("CAST(o.c{slot} AS TEXT)")
-            } else {
-                format!("o.c{slot}")
-            }
-        })
+        .map(|slot| slots[*slot].kind.payload(&format!("o.c{slot}"), "d.file"))
         .collect::<Vec<_>>()
         .join(",");
     let query = format!(
@@ -727,7 +776,7 @@ pub(super) fn compile(
             "scope":"Explicit outcomes with reached node-local value leaves and traversal stops",
             "outcomeOutput":output.name,"outcomeDemand":roots.name,"outcomePayload":payload,
             "outcomes":{"false":0,"true":1,"unknown":2},"nativeComposition":false,
-            "captures":observed.iter().map(|&id|json!({"name":slots[id].name,"slot":id,"kind":if slots[id].count {"count"} else {"node"}})).collect::<Vec<_>>(),
+            "captures":observed.iter().map(|&id|json!({"name":slots[id].name,"slot":id,"kind":slots[id].kind.name()})).collect::<Vec<_>>(),
             "relations":sql.profile,"compositionOperators":[sql.generation.operators.get()],
             "limitations":["Native work and stack/depth budgets remain unproved.","Following values, traversal depth beyond four, recursion, enumeration, and full-file failure publication remain unproved."],
             "flags":["Ordered node-local capture programs admit at most 61 slots and Boolean depth 16; masks keep recursive state at ten columns.","Only total structural search plans may evaluate candidates before ordered reduction.","Counts use reached candidate visits and carry a native work allowance."]

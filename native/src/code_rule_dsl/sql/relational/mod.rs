@@ -3,7 +3,9 @@
 mod analysis;
 mod answers;
 mod bound;
+mod bound_leaf;
 mod budget_leaf;
+mod capture_cell;
 mod classify;
 mod cutover_tests;
 mod demand;
@@ -18,6 +20,7 @@ mod pattern_leaf;
 mod physical;
 mod recursion;
 mod recursion_tests;
+mod recursive_chain;
 mod row;
 pub(super) mod tests;
 pub(super) mod witness;

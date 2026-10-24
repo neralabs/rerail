@@ -8,6 +8,17 @@ struct Probe {
     reached_only: bool,
 }
 thread_local! { static PROBE: RefCell<Option<Probe>> = const { RefCell::new(None) }; }
+/// Associate actual value probes with one SQL atomic invocation. Other semantic
+/// leaves can spend work without evaluating a value predicate.
+pub(in crate::code_rule_dsl) fn position() -> Option<usize> {
+    PROBE.with_borrow(|p| p.as_ref().map(|p| p.calls.len()))
+}
+pub(in crate::code_rule_dsl) fn since(position: Option<usize>) -> Vec<String> {
+    PROBE.with_borrow(|p| match (p.as_ref(), position) {
+        (Some(p), Some(start)) => p.calls[start..].to_vec(),
+        _ => vec![],
+    })
+}
 pub(super) fn record<D: Doc>(node: &Node<'_, D>) -> bool {
     PROBE.with_borrow_mut(|probe| {
         let Some(probe) = probe else { return false };

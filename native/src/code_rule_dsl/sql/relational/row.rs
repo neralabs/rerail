@@ -1,5 +1,6 @@
-//! One-row, integer-only projection for a correlated SQL row-value subquery.
+//! One-row, typed projection for a correlated SQL row-value subquery.
 //! This cursor copies supplied columns. It cannot inspect ASTs, evaluate rules, or run SQL.
+use super::capture_cell::Cell;
 use rusqlite::{
     Connection, Error, Result,
     vtab::{
@@ -41,7 +42,7 @@ unsafe impl<'v> VTab<'v> for Table {
     ) -> Result<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::DirectOnly)?;
         let columns = (0..WIDTH)
-            .map(|i| format!("c{i} INTEGER"))
+            .map(|i| format!("c{i}"))
             .collect::<Vec<_>>()
             .join(",");
         Ok((
@@ -86,7 +87,7 @@ unsafe impl<'v> VTab<'v> for Table {
 #[repr(C)]
 struct Cursor<'v> {
     base: sqlite3_vtab_cursor,
-    values: Vec<Option<i64>>,
+    values: Vec<Cell>,
     done: bool,
     marker: PhantomData<&'v Table>,
 }
@@ -95,7 +96,7 @@ unsafe impl VTabCursor for Cursor<'_> {
     fn filter(&mut self, width: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
         self.values.clear();
         for index in 0..width as usize {
-            self.values.push(args.get::<Option<i64>>(index)?);
+            self.values.push(args.get::<Cell>(index)?);
         }
         self.done = false;
         ROWS.set(ROWS.get() + 1);
@@ -182,13 +183,33 @@ mod tests {
         assert!(db.prepare("SELECT * FROM relation_row").is_err());
         assert!(
             db.query_row::<i64, _, _>(
-                "SELECT c0 FROM relation_row WHERE c0 IS (SELECT 'not an integer')",
+                "SELECT c0 FROM relation_row WHERE c0 IS (SELECT 'unsupported text')",
                 [],
                 |r| r.get(0)
             )
             .is_err()
         );
     }
+    #[test]
+    fn row_copies_present_empty_lists_and_absence_with_one_evaluation() {
+        use super::super::capture_cell::encode_list;
+        let db = Connection::open_in_memory().unwrap();
+        register(&db).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        db.create_scalar_function("tick_list", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
+            count.fetch_add(1, Ordering::Relaxed);
+            ctx.get::<Vec<u8>>(0)
+        })
+        .unwrap();
+        let empty = encode_list(0, &[]).unwrap();
+        let result: (Vec<u8>, Option<i64>) = db.query_row(
+            "SELECT c0,c1 FROM relation_row WHERE (c0,c1) IS (WITH value AS MATERIALIZED (SELECT tick_list(?1) AS list) SELECT list,NULL FROM value)",
+            [&empty], |r| Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(result, (empty, None));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
     #[test]
     fn child_scope_does_not_repeat_a_correlated_prefix() {
         let db = Connection::open_in_memory().unwrap();

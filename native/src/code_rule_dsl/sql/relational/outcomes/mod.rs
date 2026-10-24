@@ -1,7 +1,10 @@
 //! Explicit outcomes with sequencing barriers for reached atomic value leaves.
 //! SQL owns composition. Bindings are typed columns; unknown is never SQL NULL.
 mod atomic_predicate_tests;
+mod binds_tests;
+mod bound_tests;
 mod budget_tests;
+mod capture_predicate_tests;
 mod capture_walk_tests;
 mod catalog_tests;
 mod composition_budget_tests;
@@ -9,7 +12,9 @@ mod constraint_tests;
 mod constraint_walk_tests;
 mod effects;
 mod emit;
+mod field_end_tests;
 mod field_tests;
+mod list_tests;
 mod lower;
 mod memo_tests;
 mod nested_memo_tests;
@@ -49,8 +54,19 @@ enum Op {
     Bind(usize),
     /// Atomic structural pattern, with outputs in terminal capture order.
     Pattern(usize, Vec<usize>, Option<Vec<u16>>),
+    BoundLeaf {
+        term: usize,
+        inputs: Vec<usize>,
+        outputs: Vec<usize>,
+        kinds: Option<Vec<u16>>,
+    },
     Constrained(Box<Plan>, Vec<(usize, Plan)>),
     FieldNeighbor {
+        inside: bool,
+        field: u16,
+        child: Box<Plan>,
+    },
+    FieldEnd {
         inside: bool,
         field: u16,
         child: Box<Plan>,
@@ -90,7 +106,32 @@ struct WalkFilter {
 #[derive(Clone)]
 struct Slot {
     name: String,
-    count: bool,
+    kind: CaptureKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CaptureKind {
+    Node,
+    List,
+    Count,
+}
+
+impl CaptureKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::List => "list",
+            Self::Count => "count",
+        }
+    }
+
+    fn payload(self, column: &str, file: &str) -> String {
+        match self {
+            Self::Node => column.into(),
+            Self::Count => format!("CAST({column} AS TEXT)"),
+            Self::List => format!("json(relation_list_json({column},{file}))"),
+        }
+    }
 }
 
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {

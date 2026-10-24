@@ -38,8 +38,20 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                                         .iter()
                                         .map(|name| {
                                             m.get_env()
-                                                .get_match(name)
-                                                .map(|n| json!(n.node_id() as u32))
+                                                .get_labels(name)
+                                                .map(|nodes| {
+                                                    json!(
+                                                        nodes
+                                                            .iter()
+                                                            .map(|n| n.node_id() as u32)
+                                                            .collect::<Vec<_>>()
+                                                    )
+                                                })
+                                                .or_else(|| {
+                                                    m.get_env()
+                                                        .get_match(name)
+                                                        .map(|n| json!(n.node_id() as u32))
+                                                })
                                                 .or_else(|| {
                                                     m.get_env().get_transformed(name).map(|s| {
                                                         json!(
@@ -88,6 +100,16 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                             {
                                 Some(sql::exec::Captured::Node(id)) => json!(id),
                                 Some(sql::exec::Captured::Count(count)) => json!(count.to_string()),
+                                Some(sql::exec::Captured::List(_)) => {
+                                    let tree = AstGrep::doc(docs[file].0.clone());
+                                    let env = sql::exec::environment(&tree, m);
+                                    json!(
+                                        env.get_multiple_matches(name)
+                                            .iter()
+                                            .map(|n| n.node_id() as u32)
+                                            .collect::<Vec<_>>()
+                                    )
+                                }
                                 None => Value::Null,
                                 _ => panic!("unsupported capture output"),
                             }
@@ -388,7 +410,6 @@ fn relational_positive_parent_recursion_and_shared_utilities() {
 #[test]
 fn relational_unsupported_semantics_fail_closed() {
     let cases = vec![
-        (json!({"pattern":"f($$$ARGS)"}), json!({}), "list captures"),
         (json!({"nthChild":1}), json!({}), "leaf or operator lacks"),
         (
             json!({"matches":"r"}),

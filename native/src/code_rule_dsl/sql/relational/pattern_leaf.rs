@@ -1,10 +1,13 @@
-//! One atomic native pattern match with nullable node inputs and typed node outputs.
+//! One atomic native pattern match with nullable node/list inputs and typed outputs.
 //! SQL owns traversal and composition. This cursor does not publish or read frames.
 use super::super::{
     exec::Batch,
     plan::SlotKind,
     terminals::{Terminal, typed_match},
 };
+use super::capture_cell::{Cell, decode_list, encode_list};
+use crate::code_rule_dsl::matcher::node_at;
+use ast_grep_core::{matcher::Matcher, meta_var::MetaVarEnv};
 use rusqlite::{
     Connection, Error, Result,
     vtab::{
@@ -14,15 +17,21 @@ use rusqlite::{
 };
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     ffi::{CStr, CString, c_int},
     marker::PhantomData,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
 
+type ListKey = (u32, u32, u32, Vec<Cell>);
+#[derive(Default)]
+struct ListCache {
+    values: HashMap<ListKey, Option<Vec<Cell>>>,
+    bytes: usize,
+}
 const WIDTH: usize = 128;
 const TERM: c_int = 1 + WIDTH as c_int;
 const FILE: c_int = TERM + 1;
@@ -51,6 +60,7 @@ struct Table {
     base: sqlite3_vtab,
     batch: Arc<Batch>,
     calls: Arc<AtomicUsize>,
+    lists: Arc<Mutex<ListCache>>,
 }
 
 // SAFETY: SQLite's base is the first field. Each cursor retains the immutable batch.
@@ -85,6 +95,7 @@ unsafe impl<'v> VTab<'v> for Table {
                 base: sqlite3_vtab::default(),
                 batch: batch.ok_or_else(|| invalid("missing batch"))?.0.clone(),
                 calls: batch.ok_or_else(|| invalid("missing counters"))?.1.clone(),
+                lists: Arc::new(Mutex::new(ListCache::default())),
             },
         ))
     }
@@ -149,11 +160,12 @@ unsafe impl<'v> VTab<'v> for Table {
             base: sqlite3_vtab_cursor::default(),
             batch: self.batch.clone(),
             calls: self.calls.clone(),
+            lists: self.lists.clone(),
             term: 0,
             file: 0,
             node: 0,
             inputs: vec![],
-            outputs: [None; WIDTH],
+            outputs: vec![Cell::Null; WIDTH],
             truth: false,
             done: true,
             marker: PhantomData,
@@ -169,8 +181,9 @@ struct Cursor<'v> {
     term: u32,
     file: u32,
     node: u32,
-    inputs: Vec<Option<i64>>,
-    outputs: [Option<i64>; WIDTH],
+    inputs: Vec<Cell>,
+    outputs: Vec<Cell>,
+    lists: Arc<Mutex<ListCache>>,
     truth: bool,
     done: bool,
     marker: PhantomData<&'v Table>,
@@ -182,7 +195,7 @@ unsafe impl VTabCursor for Cursor<'_> {
         self.done = true;
         self.truth = false;
         self.inputs.clear();
-        self.outputs.fill(None);
+        self.outputs.fill(Cell::Null);
         let width = usize::try_from(width).map_err(|_| invalid("negative input width"))?;
         let plan = plan.unwrap_or("");
         if width > WIDTH || plan.len() != width || !plan.bytes().all(|b| b == b'n' || b == b'v') {
@@ -198,11 +211,13 @@ unsafe impl VTabCursor for Cursor<'_> {
         else {
             return Err(invalid("invalid pattern terminal"));
         };
-        if term.vars.iter().any(|(_, kind)| *kind == SlotKind::List) {
-            return Err(invalid("list captures are not supported"));
-        }
-        if term.vars.iter().any(|(_, kind)| *kind != SlotKind::Node) {
-            return Err(invalid("only node captures are supported"));
+        let has_lists = term.vars.iter().any(|(_, kind)| *kind == SlotKind::List);
+        if term
+            .vars
+            .iter()
+            .any(|(_, kind)| !matches!(kind, SlotKind::Node | SlotKind::List))
+        {
+            return Err(invalid("only node and list captures are supported"));
         }
         if term.vars.len() > WIDTH || term.vars.len() != width {
             return Err(invalid("supplied input width differs from terminal width"));
@@ -221,20 +236,27 @@ unsafe impl VTabCursor for Cursor<'_> {
             return Err(invalid("invalid node"));
         }
         let mut argument = 3;
-        for input in plan.bytes() {
+        for (index, input) in plan.bytes().enumerate() {
             let value = if input == b'n' {
-                None
+                Cell::Null
             } else {
-                let value = args.get::<Option<i64>>(argument)?;
+                let value = args.get::<Cell>(argument)?;
                 argument += 1;
                 value
             };
-            if let Some(value) = value {
-                let node =
-                    u32::try_from(value).map_err(|_| invalid("invalid input capture node"))?;
-                if node >= file.facts.len() {
-                    return Err(invalid("input capture node is outside the file"));
+            match (&value, term.vars[index].1) {
+                (Cell::Null, _) => {}
+                (Cell::Integer(value), SlotKind::Node) => {
+                    let node =
+                        u32::try_from(*value).map_err(|_| invalid("invalid input capture node"))?;
+                    if node >= file.facts.len() {
+                        return Err(invalid("input capture node is outside the file"));
+                    }
                 }
+                (Cell::List(bytes), SlotKind::List) => {
+                    decode_list(bytes, self.file, file.facts.len())?;
+                }
+                _ => return Err(invalid("input capture type differs from terminal kind")),
             }
             self.inputs.push(value);
         }
@@ -244,19 +266,52 @@ unsafe impl VTabCursor for Cursor<'_> {
                 .kinds
                 .as_ref()
                 .is_none_or(|kinds| kinds.contains(&file.facts.kind(self.node)))
-            && let Some(outputs) =
-                typed_match(&self.batch, term, self.file, self.node, &self.inputs)
         {
-            if outputs.len() != width {
-                return Err(invalid("pattern returned an invalid output width"));
-            }
-            for output in outputs.iter().flatten() {
-                if u32::try_from(*output).is_err() || *output >= i64::from(file.facts.len()) {
-                    return Err(invalid("pattern returned an invalid node capture"));
+            let outputs = if has_lists {
+                list_match(
+                    &self.batch,
+                    term,
+                    self.term,
+                    self.file,
+                    self.node,
+                    &self.inputs,
+                    &self.lists,
+                )?
+            } else {
+                let inputs: Vec<Option<i64>> = self
+                    .inputs
+                    .iter()
+                    .map(|v| match v {
+                        Cell::Integer(v) => Some(*v),
+                        _ => None,
+                    })
+                    .collect();
+                typed_match(&self.batch, term, self.file, self.node, &inputs).map(|values| {
+                    values
+                        .iter()
+                        .map(|v| v.map_or(Cell::Null, Cell::Integer))
+                        .collect()
+                })
+            };
+            if let Some(outputs) = outputs {
+                if outputs.len() != width {
+                    return Err(invalid("pattern returned an invalid output width"));
                 }
+                for (output, (_, kind)) in outputs.iter().zip(&term.vars) {
+                    match (output, kind) {
+                        (Cell::Null, _) => {}
+                        (Cell::Integer(value), SlotKind::Node)
+                            if u32::try_from(*value).is_ok()
+                                && *value < i64::from(file.facts.len()) => {}
+                        (Cell::List(bytes), SlotKind::List) => {
+                            decode_list(bytes, self.file, file.facts.len())?;
+                        }
+                        _ => return Err(invalid("pattern returned an invalid capture")),
+                    }
+                }
+                self.outputs[..width].clone_from_slice(&outputs);
+                self.truth = true;
             }
-            self.outputs[..width].copy_from_slice(&outputs);
-            self.truth = true;
         }
         self.done = false;
         Ok(())
@@ -280,8 +335,8 @@ unsafe impl VTabCursor for Cursor<'_> {
                 &self
                     .inputs
                     .get((column - INPUT) as usize)
-                    .copied()
-                    .flatten(),
+                    .cloned()
+                    .unwrap_or(Cell::Null),
             ),
             _ => Err(invalid("invalid output column")),
         }
@@ -289,6 +344,96 @@ unsafe impl VTabCursor for Cursor<'_> {
     fn rowid(&self) -> Result<i64> {
         Ok(1)
     }
+}
+
+/// Atomic native pattern matching only. All bindings exist before ellipsis alignment.
+fn list_match(
+    batch: &Batch,
+    term: &super::super::terminals::PatternTerm,
+    terminal: u32,
+    file: u32,
+    node: u32,
+    inputs: &[Cell],
+    cache: &Mutex<ListCache>,
+) -> Result<Option<Vec<Cell>>> {
+    let key = (terminal, file, node, inputs.to_vec());
+    if let Some(result) = cache
+        .lock()
+        .map_err(|_| invalid("poisoned pattern cache"))?
+        .values
+        .get(&key)
+    {
+        return Ok(result.clone());
+    }
+    let entry = &batch.files[file as usize];
+    let mut env = MetaVarEnv::new();
+    let mut compatible = true;
+    for ((name, kind), input) in term.vars.iter().zip(inputs) {
+        match (kind, input) {
+            (_, Cell::Null) => {}
+            (SlotKind::Node, Cell::Integer(id)) => {
+                compatible &= env.insert(name, node_at(&entry.root, *id as u32)).is_some();
+            }
+            (SlotKind::List, Cell::List(bytes)) => {
+                let nodes = decode_list(bytes, file, entry.facts.len())?
+                    .into_iter()
+                    .map(|id| node_at(&entry.root, id))
+                    .collect();
+                compatible &= env.insert_multi(name, nodes).is_some();
+            }
+            _ => return Err(invalid("invalid seeded capture type")),
+        }
+    }
+    let mut env = Cow::Owned(env);
+    let result = if compatible
+        && term
+            .pattern
+            .match_node_with_env(node_at(&entry.root, node), &mut env)
+            .is_some()
+    {
+        let mut outputs = Vec::with_capacity(term.vars.len());
+        for (name, kind) in &term.vars {
+            outputs.push(match kind {
+                SlotKind::Node => env
+                    .get_match(name)
+                    .map_or(Cell::Null, |n| Cell::Integer(n.node_id() as i64)),
+                SlotKind::List => {
+                    if let Some(nodes) = env.get_labels(name) {
+                        let ids: Vec<u32> = nodes.iter().map(|n| n.node_id() as u32).collect();
+                        Cell::List(encode_list(file, &ids)?)
+                    } else {
+                        Cell::Null
+                    }
+                }
+                _ => return Err(invalid("invalid output capture type")),
+            });
+        }
+        Some(outputs)
+    } else {
+        None
+    };
+    // Account for both owned tuples, vector backing storage, hash entry, and blob bytes.
+    let cells_bytes = |cells: &[Cell]| {
+        std::mem::size_of_val(cells)
+            + cells
+                .iter()
+                .map(|c| match c {
+                    Cell::List(b) => b.len(),
+                    _ => 0,
+                })
+                .sum::<usize>()
+    };
+    let bytes = 256usize
+        .saturating_add(cells_bytes(inputs))
+        .saturating_add(result.as_ref().map_or(0, |cells| cells_bytes(cells)));
+    let mut shared = cache
+        .lock()
+        .map_err(|_| invalid("poisoned pattern cache"))?;
+    if shared.values.len() < 65_536 && shared.bytes.saturating_add(bytes) <= 32 * 1024 * 1024 {
+        shared.bytes += bytes;
+        shared.values.insert(key, result.clone());
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -453,7 +598,6 @@ mod tests {
                     (0, u32::MAX, None),
                     (0, call, Some(-1)),
                     (0, call, Some(i64::MAX)),
-                    (1, call, None),
                     (2, call, None),
                 ] {
                     assert!(
@@ -503,6 +647,157 @@ mod tests {
             },
         );
     }
+    #[test]
+    fn pattern_leaf_lists_preserve_native_sequences_and_seed_alignment() {
+        let doc = tape(GrammarDialect::Python, "f(a, b, c)\nf()\nwrong\n");
+        exec::with_terminals(
+            vec![(doc, Default::default())],
+            vec![
+                Terminal::Pattern(term("f($$$A, $X, $$$B)")),
+                Terminal::Pattern(term("f($$$X)")),
+            ],
+            |db, batch, _| {
+                register(db, batch, &Arc::new(AtomicUsize::new(0))).unwrap();
+                let call = nodes(batch, "call", "f(a, b, c)")[0];
+                let empty = nodes(batch, "call", "f()")[0];
+                let tree = &batch.files[0].root;
+                let Terminal::Pattern(pattern) = &batch.program.terminals[0] else {
+                    panic!()
+                };
+                let sql = "SELECT truth,c0,c1,c2 FROM relation_pattern_typed WHERE term=0 AND file=0 AND node=?1 AND i0 IS ?2 AND i1 IS ?3 AND i2 IS ?4";
+                let mut statement = db.prepare(sql).unwrap();
+                let mut changed = false;
+                let mut fresh = None;
+                for bound in [None, Some("a"), Some("b"), Some("c"), Some("wrong")] {
+                    let mut env = MetaVarEnv::new();
+                    let input = bound.map(|text| nodes(batch, "identifier", text)[0]);
+                    if let Some(id) = input {
+                        env.insert("X", node_at(tree, id)).unwrap();
+                    }
+                    let mut env = Cow::Owned(env);
+                    let matched = pattern
+                        .pattern
+                        .match_node_with_env(node_at(tree, call), &mut env)
+                        .is_some();
+                    let expected: Vec<Cell> = if matched {
+                        pattern
+                            .vars
+                            .iter()
+                            .map(|(name, kind)| match kind {
+                                SlotKind::Node => env
+                                    .get_match(name)
+                                    .map_or(Cell::Null, |n| Cell::Integer(n.node_id() as i64)),
+                                SlotKind::List => Cell::List(
+                                    encode_list(
+                                        0,
+                                        &env.get_multiple_matches(name)
+                                            .iter()
+                                            .map(|n| n.node_id() as u32)
+                                            .collect::<Vec<_>>(),
+                                    )
+                                    .unwrap(),
+                                ),
+                                _ => panic!(),
+                            })
+                            .collect()
+                    } else {
+                        vec![Cell::Null; 3]
+                    };
+                    let result: (i64, Vec<Cell>) = statement
+                        .query_row(
+                            params![call, Cell::Null, Cell::Null, input.map(i64::from)],
+                            |r| Ok((r.get(0)?, vec![r.get(1)?, r.get(2)?, r.get(3)?])),
+                        )
+                        .unwrap();
+                    assert_eq!(result, (i64::from(matched), expected.clone()));
+                    if input.is_none() {
+                        fresh = Some(expected.clone());
+                    }
+                    changed |= matched && fresh.as_ref().is_some_and(|f| f != &expected);
+                }
+                assert!(changed, "bound node must change native list alignment");
+                // Seed an actual list before matching, including native separators.
+                let a = nodes(batch, "identifier", "a")[0];
+                for ids in [vec![], vec![a]] {
+                    let mut env = MetaVarEnv::new();
+                    env.insert_multi("A", ids.iter().map(|&id| node_at(tree, id)).collect())
+                        .unwrap();
+                    let mut env = Cow::Owned(env);
+                    let matched = pattern
+                        .pattern
+                        .match_node_with_env(node_at(tree, call), &mut env)
+                        .is_some();
+                    let output: (i64, Cell, Cell, Cell) = statement
+                        .query_row(
+                            params![
+                                call,
+                                Cell::List(encode_list(0, &ids).unwrap()),
+                                Cell::Null,
+                                Cell::Null
+                            ],
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                        )
+                        .unwrap();
+                    assert_eq!(output.0, i64::from(matched));
+                    if matched {
+                        for (slot, name) in [(output.1, "A"), (output.2, "B")] {
+                            let ids: Vec<u32> = env
+                                .get_multiple_matches(name)
+                                .iter()
+                                .map(|n| n.node_id() as u32)
+                                .collect();
+                            assert_eq!(slot, Cell::List(encode_list(0, &ids).unwrap()));
+                        }
+                        assert_eq!(
+                            output.3,
+                            env.get_match("X")
+                                .map_or(Cell::Null, |n| Cell::Integer(n.node_id() as i64))
+                        );
+                    } else {
+                        assert_eq!(
+                            (output.1, output.2, output.3),
+                            (Cell::Null, Cell::Null, Cell::Null)
+                        );
+                    }
+                }
+                let list_sql = "SELECT truth,c0 FROM relation_pattern_typed WHERE term=1 AND file=0 AND node=?1 AND i0 IS ?2";
+                let mut statement = db.prepare(list_sql).unwrap();
+                let row = |statement: &mut rusqlite::Statement<'_>, node, input: Cell| {
+                    statement.query_row(params![node, input], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, Cell>(1)?))
+                    })
+                };
+                let present_empty = Cell::List(encode_list(0, &[]).unwrap());
+                assert_eq!(
+                    row(&mut statement, empty, Cell::Null).unwrap(),
+                    (1, present_empty.clone())
+                );
+                assert_eq!(
+                    row(&mut statement, empty, present_empty.clone()).unwrap(),
+                    (1, present_empty)
+                );
+                let full = row(&mut statement, call, Cell::Null).unwrap();
+                let Cell::List(bytes) = &full.1 else { panic!() };
+                let ids = decode_list(bytes, 0, batch.files[0].facts.len()).unwrap();
+                assert!(
+                    ids.iter().any(|&id| node_at(tree, id).text() == ","),
+                    "native lists retain punctuation"
+                );
+                assert_eq!(row(&mut statement, call, full.1.clone()).unwrap(), full);
+                assert_eq!(row(&mut statement, empty, full.1).unwrap(), (0, Cell::Null));
+                for invalid in [
+                    Cell::Integer(0),
+                    Cell::List(encode_list(1, &[]).unwrap()),
+                    Cell::List(encode_list(0, &[u32::MAX]).unwrap()),
+                ] {
+                    assert!(row(&mut statement, call, invalid).is_err());
+                }
+                assert!(row(&mut statement, call, Cell::List(b"bad".to_vec())).is_err());
+                assert_eq!(row(&mut statement, empty, Cell::Null).unwrap().0, 1);
+            },
+        );
+    }
+
     #[test]
     fn pattern_leaf_accepts_128_slots_and_rejects_129() {
         let source = format!(

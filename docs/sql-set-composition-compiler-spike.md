@@ -5498,3 +5498,120 @@ File traces use groups with inclusive file-index ranges; those groups retain eve
 The qualification artifact records earlier failed checks and final source, binary, corpus, and query pins.
 The pattern experiment preserves the failing baseline and corrected SQL, explained plans, counters, and scaling samples.
 Artifact paths and rerun commands are listed in `docs/sql-relational-transition-plan.md`.
+
+## Catalog closure: typed lists and binding predicates
+
+The starting checkpoint admits 38 of 146 grammars, with exact parity across 595 fixture files.
+Its first refusals include 34 list contracts, 49 recursive outcome contracts, 24 other contracts, and one recursive-negation contract.
+These counts overlap later missing features and do not predict admission gains.
+
+Three GPT-6.1 Sol agents received separate read-only audits before any implementation mandate.
+The root reviewed their proposals and assigned disjoint files for typed transport, atomic list patterns, and capture-independent binding predicates.
+The root owns compiler integration, test builds, catalog checks, performance checks, and publication.
+
+Lists use a canonical SQL blob containing the file key and exact ordered node sequence.
+NULL represents an absent capture; a present empty list has a valid header with zero nodes.
+Atomic patterns receive existing bindings before native matching, so greedy ellipsis alignment retains native behavior.
+SQL still owns composition, capture transactions, reached work, and failure publication.
+The transport cursor and memo table accept typed lists without environment handles or additional SQL executions.
+
+The first recursive audit separates pure structural SCCs from capture, value, and parsed-tree components.
+Boolean set membership alone cannot preserve reached utility costs or depth limits.
+Recursive admission therefore remains closed while the next component contract is designed and tested.
+The first integration run will test typed lists, native binding predicates, and every preceding relational contract.
+
+The first integration admits 67 grammars. Exact fixture parity passes for 66 and fails for B413 during SQL preparation.
+SQLite reports more than 65,535 references to `node` while resolving B413's 40 ordered pattern alternatives.
+Each old Boolean step references its predecessor through both the carried state and the reached pattern demand.
+The proposed correction uses one correlated typed return for each atomic pattern operand, with one predecessor reference.
+A new regression scales flat alternatives through 8, 16, and 32 operands and checks the real B413 policy.
+
+The focused run passes 21 tests and fails five.
+Two new fixtures are invalid: public policy validation rejects list constraints and an unbound region capture.
+Three failures reveal a test-harness assumption: every budgeted atomic call was treated as a value probe.
+The corrected harness records the actual value probes reached within each atomic invocation.
+It still checks exact value-call order, outputs, remaining work, and clause/file failures.
+A compiler warning also identifies an intentionally discarded decoder iterator; the code now discards that result explicitly.
+
+The next integration adds a typed, finite-budget argument leaf using native atomic binding semantics.
+It accepts no arbitrary child matcher and exposes explicit input/output node columns to SQL.
+A separate recursive-chain experiment deduplicates demanded keys and computes reverse truth/cost summaries.
+It remains outside catalog admission until incoming utility depth and native stack limits have a compatible contract.
+
+The second diagnostic run passes all 70 admitted grammars on all 595 fixtures.
+Each admitted grammar has a positive witness; 76 remain refused.
+Later contracts now expose 54 recursive-outcome refusals, 21 other refusals, and one recursive-negation refusal.
+This is grammar-level parity, not complete-job batching or production qualification.
+
+The focused run passes 36 tests and fails one at 32 argument bindings.
+SQLite requests a hidden input column from the bound cursor; that projection was unsupported.
+The cursor must return the actual typed hidden values, as the existing pattern cursor does.
+Argument replay coverage also now requires three invocations and an observed memo hit.
+New TypeScript and PHP tests cover finite work, decoding, and clause/file ownership.
+
+B413 now prepares: its focused sample uses 30,246 SQL bytes and 248,797 VM instructions.
+However, 2,995 pattern probes for nine imports reveal a second shape defect.
+Capture-free alternatives discard their native necessary-kind proof during lowering.
+The correction retains that proof as a typed predicate conjunction and propagates it through alternatives.
+An unrelated-AST growth test must prove constant matching work for the real policy.
+The flat list-alternative sample grows from 7,427 to 28,017 SQL bytes and 3,283 to 11,923 VM instructions across 8 to 32 alternatives.
+
+The standalone recursive chain passes its narrow tests: 1,716 SQL bytes at every depth.
+Depths 32, 128, and 512 use 8,874, 33,258, and 130,794 VM instructions.
+Adding 512 unrelated statements leaves those counts unchanged.
+Duplicate roots share demanded keys and suffix summaries; no origin-by-descendant relation is built.
+Native completed-answer/work comparisons cover costs through 129; larger chains test early work failures only.
+Native stack limits remain unverified, so this experiment does not admit recursive catalog grammars.
+
+The next full semantic run passes 248 tests and fails five.
+Three old refusal fixtures still expect newly supported argument, layout, or End-field contracts to fail.
+Their replacement tests check positive native parity; parsed composition and Rule-stopped fields remain refused.
+A new comparison fixture incorrectly selects Python/PHP structural modes in TypeScript; those cases move to Python.
+The B413 scaling assertion also confuses total node-cursor advances with root visits.
+That counter includes point lookups inside scalar pattern operands, so nine roots produce 153 total advances.
+The corrected gate bounds advances and pattern probes by nine roots times 40 alternatives, and requires growth invariance.
+It also imposes a 30,000-VM limit; the preceding 248,797-VM sample fails this limit.
+
+The necessary-kind correction passes all 70 grammars again.
+B413 drops from 417,040,778 to 3,987,126 VM instructions on the full fixture batch, with identical output hashes.
+Across these same 70 individually executed grammars, the sum drops from 1,055,627,750 to 121,697,536 instructions.
+The preceding 38 grammars retain their combined 44,259,715 VM instructions.
+These are separate matching statements and cannot certify the complete-job execution budget.
+
+The End-field review finds another amplification source: a left join scans every direct sibling after finding the requested first field child.
+The corrected seed uses a limited scalar lookup, then fetches the selected subtree bound by node ID.
+A regression adds 32, 128, and 512 later import aliases while holding the selected subtree fixed.
+Ancestor walks still inspect each ancestor edge; field-subtree walks still inspect each bounded structural node.
+Further posting seeks remain a physical-planning opportunity.
+
+The remaining resolver-site audit identifies ordered child transactions, not an atomic Boolean leaf.
+Binding resolution must return typed site facts, then SQL must charge and execute the reached child program.
+A scope resolver can spend work without reading values; conflating those effects would introduce incorrect utility memoization.
+The exec/eval catalog rules also contain recursive callee utilities, so site lowering alone would not admit them.
+
+After the corrections, all 32 focused list, argument, predicate, field, and cursor tests pass.
+The argument suite now includes Python, TypeScript, and PHP, actual memo hits, and 32-column cursor reuse.
+List cells currently have an explicit 1 MiB transport limit; mapping that bound into the final job resource contract remains required before cutover.
+The final refusal messages identify the missing typed operator instead of grouping every nonrecursive failure under one generic message.
+
+A final independent resource review identifies a limit to this checkpoint's evidence.
+The legacy `integerCellsStored` memo counter counts sparse tuple fields; it does not measure blob bytes.
+Memo entries have no aggregate byte bound, and keys/answers can retain repeated list copies.
+A 128-slot row can hold up to 128 MiB of blob payload before SQLite storage and nested copies.
+The pattern cache's 32 MiB accounted-entry cap does not bound those other allocations.
+Current parity and VM checks do not establish a production memory bound.
+Before cutover, add explicit retained/copied byte telemetry and an aggregate resource-failure contract.
+Do not silently evict memo entries: replay changes can affect finite work and failure behavior.
+
+Final qualification passes all 254 relational tests, ten B023 fixture checks, two candidate checks, one adversarial check, and the frozen corpus check.
+The 231 preceding and 54 focused controls retain their exact SQL hashes and VM counts.
+Frozen B023 retains 246,364 VM instructions, 10,232 SQL bytes, one matching statement, and zero frame publications.
+Median prepared execution is 4.211 ms against 31.168 ms for the reference, across nine executions per query.
+All existing CPU, VM, and shape gates pass without changes; preparation remains a separate one-time cost.
+Formatting, workspace Clippy, and profiling-feature Clippy pass.
+
+The final catalog run passes all 70 admitted grammars on all 595 fixtures, with a positive witness for each grammar.
+The complete-coverage gate still fails with 76 refusals: 55 recursive outcomes, nine parsed-tree compositions, six format-argument compositions, three binding-site compositions, two parameterized utility calls, and one recursive-negation dependency.
+Source and executable hashes, fixture inventory, exact output hashes, per-file work traces, and generated SQL hashes are retained in the coverage and qualification artifacts.
+`benchmark/sql-relational-catalog-expansion.json` retains both B413 queries and the matching comparison for the same 70 grammars.
+The checkpoint remains test-only. Production replacement, complete-job batching, recursive resource equivalence, and aggregate list-memory qualification are not complete.

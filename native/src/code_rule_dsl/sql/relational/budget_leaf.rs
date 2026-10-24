@@ -19,6 +19,13 @@ use std::{
 };
 
 thread_local! { static TRACE: std::cell::RefCell<Option<Vec<serde_json::Value>>> = const { std::cell::RefCell::new(None) }; }
+pub(super) fn record(value: serde_json::Value) {
+    TRACE.with_borrow_mut(|trace| {
+        if let Some(trace) = trace {
+            trace.push(value);
+        }
+    });
+}
 pub(super) fn trace<T>(body: impl FnOnce() -> T) -> (T, Vec<serde_json::Value>) {
     struct Reset(Option<Vec<serde_json::Value>>);
     impl Drop for Reset {
@@ -140,6 +147,7 @@ unsafe impl VTabCursor for Cursor<'_> {
             return Err(Error::ModuleError("budget leaf: invalid node".into()));
         }
         super::leaves::VALUE_REQUESTS.set(super::leaves::VALUE_REQUESTS.get() + 1);
+        let probes = crate::code_rule_dsl::matcher::value_probe::position();
         let (verdict, left) = with_scopes(file, file_data, || {
             term.verdicts
                 .budget_verdict(node_at(&file_data.root, node), work)
@@ -152,9 +160,9 @@ unsafe impl VTabCursor for Cursor<'_> {
         };
         self.work = i64::try_from(left)
             .map_err(|_| Error::ModuleError("budget leaf: allowance overflow".into()))?;
-        TRACE.with_borrow_mut(|trace| {
-            if let Some(trace) = trace { trace.push(serde_json::json!({"terminal":term_id,"file":file,"node":node,"input":work,"truth":self.truth,"remaining":self.work,"text":node_at(&file_data.root,node).text()})); }
-        });
+        record(
+            serde_json::json!({"terminal":term_id,"file":file,"node":node,"input":work,"truth":self.truth,"remaining":self.work,"text":node_at(&file_data.root,node).text(),"valueCalls":crate::code_rule_dsl::matcher::value_probe::since(probes)}),
+        );
         self.done = false;
         Ok(())
     }

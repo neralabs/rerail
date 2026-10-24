@@ -15,7 +15,7 @@ pub(super) use fact::{
     BatchScopes, Binder, FACT_COLUMNS, FactTable, FactTerm, Leaf, Verdicts, take_fact_time,
 };
 #[cfg(test)]
-pub(super) use fact::{Verdict, with_scopes};
+pub(super) use fact::{Verdict, values_of, with_scopes};
 pub(super) use leaves::{
     BindingSites, BindsCandidates, BindsOthers, Exported, FormatPart, FormatSides, Occurrences,
     Parsed,

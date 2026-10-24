@@ -100,6 +100,19 @@ pub(in crate::code_rule_dsl::sql) trait Verdicts:
         env: &MetaVarEnv<'t, TapeDoc>,
     ) -> std::result::Result<Vec<Verdict>, String>;
 
+    #[cfg(test)]
+    fn budget_rows<'t>(
+        &self,
+        _node: Node<'t, TapeDoc>,
+        _env: &MetaVarEnv<'t, TapeDoc>,
+        work: usize,
+    ) -> (std::result::Result<Vec<Verdict>, String>, usize) {
+        (
+            Err("budget rows require an atomic capture contract".into()),
+            work,
+        )
+    }
+
     /// The rows at a node of a parsed literal's tree (`parse`); only the terms a tree's rule may
     /// hold read one.
     fn tree_rows<'t>(

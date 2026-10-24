@@ -1,4 +1,4 @@
-use super::{Axis, Op, Plan, Slot, Slots};
+use super::{Axis, CaptureKind, Op, Plan, Slot, Slots};
 use crate::code_rule_dsl::{
     language::GrammarDialect,
     matcher::{AstMatcher, Semantic, StopBy},
@@ -15,6 +15,15 @@ mod pattern_lower;
 
 #[path = "atomic_owner.rs"]
 mod atomic_owner;
+
+#[path = "binds_lower.rs"]
+mod binds_lower;
+
+#[path = "bound_lower.rs"]
+mod bound_lower;
+
+#[path = "capture_predicate_lower.rs"]
+mod capture_predicate_lower;
 
 pub(super) struct Lower {
     language: GrammarDialect,
@@ -48,10 +57,12 @@ impl Lower {
         serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len(),"utilityBodyLowerings":self.utilities.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
     }
 
-    fn slot(&mut self, name: &str, count: bool) -> Result<usize, String> {
+    fn slot(&mut self, name: &str, kind: CaptureKind) -> Result<usize, String> {
         if let Some(id) = self.slots.iter().position(|slot| slot.name == name) {
-            if self.slots[id].count != count {
-                return Err("outcome relations: capture and count names must be distinct".into());
+            if self.slots[id].kind != kind {
+                return Err(
+                    "outcome relations: node, list, and count names must be distinct".into(),
+                );
             }
             return Ok(id);
         }
@@ -62,7 +73,7 @@ impl Lower {
         let id = self.slots.len();
         self.slots.push(Slot {
             name: name.into(),
-            count,
+            kind,
         });
         Ok(id)
     }
@@ -113,7 +124,10 @@ impl Lower {
         match matcher {
             AstMatcher::Semantic(Semantic::Value(test)) => test.reading.follow,
             AstMatcher::Semantic(
-                Semantic::Resolves(_) | Semantic::Arguments(_) | Semantic::Layout(_),
+                Semantic::Resolves(_)
+                | Semantic::Arguments(_)
+                | Semantic::Layout(_)
+                | Semantic::Binds(_),
             ) => true,
             _ => false,
         }
@@ -142,7 +156,7 @@ impl Lower {
                             "outcome relations: whole captures require Smart matching".into()
                         );
                     }
-                    let slot = self.slot(name, false)?;
+                    let slot = self.slot(name, CaptureKind::Node)?;
                     mentions.insert(slot);
                     writes.insert(slot);
                     node_writes.insert(slot);
@@ -159,12 +173,17 @@ impl Lower {
                 self.atomic(matcher)
             }
             AstMatcher::Semantic(Semantic::Resolves(_)) => self.atomic(matcher),
+            AstMatcher::Semantic(Semantic::Binds(_)) => return self.binds(matcher),
             AstMatcher::Semantic(Semantic::Layout(test)) if test.reads().next().is_none() => {
                 self.atomic(matcher)
+            }
+            AstMatcher::Semantic(Semantic::Layout(_)) | AstMatcher::Compare(_) => {
+                return self.capture_predicate(matcher);
             }
             AstMatcher::Semantic(Semantic::Arguments(test)) if test.bind.is_empty() => {
                 self.atomic(matcher)
             }
+            AstMatcher::Semantic(Semantic::Arguments(_)) => return self.arguments(matcher),
             AstMatcher::TestUnknown(regex) => {
                 let super::super::ir::Set::Regex(term) =
                     self.pure.set(&AstMatcher::Regex(regex.clone()))?
@@ -194,24 +213,48 @@ impl Lower {
                 mentions = child.mentions.clone();
                 Op::Not(Box::new(child))
             }
-            AstMatcher::Field(field) if matches!(field.stop, StopBy::Neighbor) => {
+            AstMatcher::Field(field) if matches!(field.stop, StopBy::Neighbor | StopBy::End) => {
                 let mut child = self.plan(&field.rule)?;
                 if !self.three_valued
-                    && let Some((kinds, _)) =
+                    && let Some((kinds, clauses)) =
                         crate::code_rule_dsl::matcher::walk_candidate_filter(&field.rule)
                 {
-                    child.walk_filter = Some(super::WalkFilter {
-                        kinds,
-                        text: vec![],
-                    });
+                    let mut text = vec![];
+                    if !field.inside && matches!(field.stop, StopBy::End) {
+                        for clause in clauses {
+                            let regex = regex::Regex::new(
+                                &clause
+                                    .iter()
+                                    .map(|s| regex::escape(s))
+                                    .collect::<Vec<_>>()
+                                    .join("|"),
+                            )
+                            .map_err(|e| format!("candidate text filter: {e}"))?;
+                            let super::super::ir::Set::Regex(id) =
+                                self.pure.set(&AstMatcher::Regex(regex))?
+                            else {
+                                unreachable!()
+                            };
+                            text.push(id);
+                        }
+                    }
+                    child.walk_filter = Some(super::WalkFilter { kinds, text });
                 }
                 mentions = child.mentions.clone();
                 writes = child.writes.clone();
                 node_writes = child.node_writes.clone();
-                Op::FieldNeighbor {
-                    inside: field.inside,
-                    field: field.field,
-                    child: Box::new(child),
+                if matches!(field.stop, StopBy::End) {
+                    Op::FieldEnd {
+                        inside: field.inside,
+                        field: field.field,
+                        child: Box::new(child),
+                    }
+                } else {
+                    Op::FieldNeighbor {
+                        inside: field.inside,
+                        field: field.field,
+                        child: Box::new(child),
+                    }
                 }
             }
             AstMatcher::Inside(..)
@@ -262,7 +305,7 @@ impl Lower {
                     binding.offset.checked_add(u32::MAX as i64).ok_or(
                         "outcome relations: count offset can exceed signed integer storage",
                     )?;
-                    let slot = self.slot(&binding.name, true)?;
+                    let slot = self.slot(&binding.name, CaptureKind::Count)?;
                     writes.insert(slot);
                     Some((slot, binding.offset))
                 } else {
@@ -306,10 +349,24 @@ impl Lower {
                 node_writes = child.node_writes.clone();
                 Op::Charge(id, child)
             }
-            _ => return Err(
-                "outcome relations: leaf or operator lacks a total, effect-free outcome contract"
-                    .into(),
-            ),
+            _ => {
+                let missing = match matcher {
+                    AstMatcher::Semantic(Semantic::Binding(_)) => "binding-site composition",
+                    AstMatcher::Semantic(Semantic::Parse(_)) => "parsed-tree composition",
+                    AstMatcher::Semantic(Semantic::Host(_)) => "host-tree composition",
+                    AstMatcher::Semantic(Semantic::FormatArgs(_)) => "format-argument composition",
+                    AstMatcher::Semantic(Semantic::Calls(_)) => "call-graph traversal",
+                    AstMatcher::Semantic(Semantic::Capture(_)) => "semantic capture",
+                    AstMatcher::Semantic(Semantic::Value(_)) => "literal value",
+                    AstMatcher::Call(_) => "parameterized utility calls",
+                    AstMatcher::Field(_) => "Rule-stopped field traversal",
+                    AstMatcher::NthChild(_) => "sibling index",
+                    _ => "unclassified operator",
+                };
+                return Err(format!(
+                    "outcome relations: leaf or operator lacks a total, effect-free outcome contract: {missing}"
+                ));
+            }
         };
         let mut effects = super::effects::Effects::of(&op);
         if matches!(op, Op::Value(_)) {
