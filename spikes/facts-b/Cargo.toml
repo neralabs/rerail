@@ -18,6 +18,11 @@ parking_lot = "0.12"
 libc = "0.2"
 rerail-facts = { path = "../../facts" }
 regex = "=1.13.1"
+# Y1's maintained reference graph (src/ygraph): one interner table, parallel export loading.
+hashbrown = "0.16"
+foldhash = "0.2"
+rayon = "1.12"
+memchr = "2"
 
 [features]
 # Seeded mutants for the gate (src/mutant.rs); off in normal builds.
