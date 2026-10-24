@@ -1,8 +1,10 @@
 # Chunk C: state syntax domains and empty-domain admission
 
-Status: bounded specification, supported by an isolated migration experiment.
+Status: implemented. The complete guard measures 975 engine submissions, with 1,275 actual removals.
+This meets the unchanged 1,261-removal target. The final 100 limit still fails by 875 submissions.
+The [delivery journal](data-layer-performance-journal.md#state-syntax-domain-delivery-r5-c-2026-10-24) records the implementation and final checks.
 This specification supersedes the architecture-wide C proposal in `15930629`.
-The production baseline remains B, commit `24998a39`, with 2,250 complete-guard engine submissions.
+The delivery baseline is B, commit `24998a39`, with 2,250 complete-guard engine submissions.
 The [scope evidence](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) records measurements, the admission model, and artifact hashes.
 
 ## Fixed delivery
@@ -15,8 +17,8 @@ Detector inference and decisions remain in SQL.
 | Consumer | Input relations before → after | SQL stages before → after | Partition |
 | --- | ---: | ---: | --- |
 | `state-signatures-1` | 25 → 1 | 23 → 18 | File |
-| `state-flow-1` | 29 → 5 | 30 → 25 | File |
-| `state-projection-recovery-2` | 28 → 4 | 12 → 7 | File |
+| `state-flow-1` | 29 → 5 | 30 → 25 | File; repository for `scan_project_sources` |
+| `state-projection-recovery-2` | 28 → 4 | 12 → 7 | File; repository for `scan_project_sources` |
 | `state-flow-project-1` | 29 → 5 | 32 → 27 | Repository |
 
 All four replace 25 `syntax_*` input partitions with one `syntax_gate` input.
@@ -31,7 +33,10 @@ The target includes replacement work across the complete unchanged guard.
 C remains one delivery. Generator, language, runtime, and test commits cannot claim separate completion.
 The final fixed limit remains 100. C's target leaves 889 excess submissions for subsequent measured work.
 
-## Measured scope and price
+## Planning measurements and price
+
+This section preserves the experiment and model that fixed C's scope before implementation.
+The final delivery reaches 975, compared with the 989 target.
 
 The isolated frontend migration uses the unchanged B addon and the unchanged guard recording.
 It changes only the four frontends and their required field-identity references.
@@ -64,7 +69,7 @@ They exclude SQLite internal executions.
 The two surviving flow sessions use cold connections in the experiment.
 The trace audit finds no removed empty-session schema creation that supplies either surviving session.
 Pool and schema changes still require complete runtime reconciliation during delivery.
-The 989 total is an acceptance target, not a completed engine measurement.
+At scoping time, 989 was an acceptance target, not a completed engine measurement.
 A result above 989 does not complete C, even if it removes more than 1,000 statements.
 
 ## Frontend transformation
@@ -160,6 +165,9 @@ Gate restoration loads the required source or tape context without constructing 
 Body preparation runs only after admission and restores facts only for paths present in the completed gate evidence.
 The repository path applies this rule to retained and evicted documents across the complete domain.
 It reuses the same document-version facts as the file path, without eagerly restoring unrelated files.
+Storage misses use bounded bulk reads for metadata, source frames, and tape frames.
+The loader preserves hash checks and charges every logical file against the source-byte budget.
+Repeated contents at different paths do not reduce that logical charge.
 This separation is required because the current workspace callback constructs syntax facts before connection admission.
 
 ## Implementation boundaries
@@ -200,7 +208,8 @@ Gate tests cover empty-to-nonempty edits, nonempty-to-empty edits, removals, can
 Existing quality syntax and deferred-CAST tests must remain green.
 
 The native integration fixtures belong in `test/engine/native/recovery/state-syntax-domain.test.ts` and `input-admission.test.ts`.
-Rust admission tests extend `native/src/code_rule_dsl/relational/batch/tests.rs`.
+Rust admission tests reside in `native/src/code_rule_dsl/relational/admission.rs`.
+Bulk source tests extend `native/src/content_store/tests.rs`.
 Generator assertions extend `test/scripts/test_shared_sql.py`.
 The C target test extends `test/scripts/sql-execution-budget.test.mjs`.
 The budget launcher writes a separate C progress receipt and still enforces the unchanged final limit.
@@ -210,7 +219,7 @@ Native producer tests retain broad count, scan, and scatter waves.
 Independent files and roots cannot create one dispatch per item.
 This delivery uses the existing producer boundary and GPU-compatible storage shape.
 
-## Existing evidence and completion
+## Planning evidence and completion criteria
 
 The isolated syntax experiment passes all 77 recorded state observations: 64 positive and 13 clean.
 It reports zero false positives, false negatives, engine failures, or stateless/workspace differences.

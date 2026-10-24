@@ -637,6 +637,7 @@ pub(super) fn evaluate_batched_relations(
                         code_rule,
                         clause,
                         inputs: relational::Inputs {
+                            gate: None,
                             file_local: false,
                             rows: None,
                             facts: Vec::new(),
@@ -684,6 +685,7 @@ pub(super) fn evaluate_batched_relations(
                     code_rule,
                     clause,
                     inputs: relational::Inputs {
+                        gate: None,
                         file_local: false,
                         rows: None,
                         facts: Vec::new(),
@@ -740,7 +742,7 @@ pub(super) fn evaluate_batched_relations(
         .iter()
         .map(|(index, rule, _)| (std::sync::Arc::as_ptr(rule) as usize, *index))
         .collect::<std::collections::HashMap<_, _>>();
-    let evaluations = relational::evaluate_prepared(jobs, |inputs, code_rule, clause| {
+    let evaluations = relational::evaluate_prepared(jobs, |inputs, code_rule, clause, phase| {
         #[cfg(feature = "code-rule-profile")]
         let mut materialization = crate::code_rule_dsl::profile::trace::Span::start(
             "input-preparation",
@@ -759,7 +761,7 @@ pub(super) fn evaluate_batched_relations(
             if let Some(language) = crate::code_rule_dsl::eval::file_language(input) {
                 crate::code_rule_dsl::eval::TapeCacheSlot::seed(language, input, &document.image)?;
             }
-            if plan.syntax.is_some() {
+            if phase == relational::Preparation::Body && plan.syntax.is_some() {
                 let facts = match document.syntax.get() {
                     Some(f) => std::sync::Arc::clone(f),
                     None => {
@@ -776,13 +778,81 @@ pub(super) fn evaluate_batched_relations(
         } else {
             let index = owners[&(std::ptr::from_ref(code_rule) as usize)];
             let producers = &state.relation_plans[&(index, clause.id.clone())];
-            inputs.rows = Some(
-                plan.inputs
-                    .iter()
-                    .zip(producers)
-                    .map(|((_, query), id)| relation_rows(state, *id, query))
-                    .collect(),
-            );
+            if phase == relational::Preparation::Gate {
+                let slot = plan.require_nonempty.expect("guarded preparation");
+                inputs.gate = Some(relation_rows(state, producers[slot], &plan.inputs[slot].1));
+            } else {
+                inputs.rows = Some(
+                    plan.inputs
+                        .iter()
+                        .enumerate()
+                        .zip(producers)
+                        .map(|((slot, (_, query)), id)| {
+                            if inputs.gate.is_some() && plan.require_nonempty == Some(slot) {
+                                evidence::Rows::default()
+                            } else {
+                                relation_rows(state, *id, query)
+                            }
+                        })
+                        .collect(),
+                );
+                if let Some(spec) = &plan.syntax {
+                    let gate_slot = plan
+                        .inputs
+                        .iter()
+                        .position(|(name, _)| name == &spec.gate)
+                        .expect("syntax gate");
+                    let rows = if plan.require_nonempty == Some(gate_slot) {
+                        inputs.gate.as_ref().expect("admitted gate")
+                    } else {
+                        &inputs.rows.as_ref().unwrap()[gate_slot]
+                    };
+                    let paths = rows
+                        .witnesses
+                        .iter()
+                        .map(|w| w.path.clone())
+                        .collect::<BTreeSet<_>>();
+                    let paths = paths.into_iter().collect::<Vec<_>>();
+                    let file_slots = inputs
+                        .snapshot
+                        .files
+                        .iter()
+                        .enumerate()
+                        .map(|(slot, file)| (file.path.clone(), slot))
+                        .collect::<std::collections::HashMap<_, _>>();
+                    let mut remaining = code_rule.capabilities.limits.max_source_bytes;
+                    for paths in paths.chunks(128) {
+                        let documents = super::documents::load_many(state, paths, remaining)?;
+                        for (path, (version, document)) in paths.iter().zip(documents) {
+                            remaining = remaining.saturating_sub(document.source.len());
+                            let slot = *file_slots
+                                .get(path)
+                                .ok_or_else(|| invalid("syntax source snapshot is incomplete"))?;
+                            let input = &mut inputs.snapshot.files[slot];
+                            input.source = std::sync::Arc::clone(&document.source);
+                            if let Some(language) = crate::code_rule_dsl::eval::file_language(input)
+                            {
+                                crate::code_rule_dsl::eval::TapeCacheSlot::seed(
+                                    language,
+                                    input,
+                                    &document.image,
+                                )?;
+                            }
+                            let facts = match document.syntax.get() {
+                                Some(facts) => std::sync::Arc::clone(facts),
+                                None => {
+                                    let facts = relational::syntax::Pool::get(input)?;
+                                    let _ = document.syntax.set(std::sync::Arc::clone(&facts));
+                                    facts
+                                }
+                            };
+                            inputs.facts.push((path.clone(), facts.clone()));
+                            relational::syntax::Pool::seed(input, facts);
+                            state.documents.account_syntax(&version);
+                        }
+                    }
+                }
+            }
         }
         #[cfg(feature="code-rule-profile")]
         materialization.detail(|| {

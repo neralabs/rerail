@@ -8,6 +8,95 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## State syntax domain delivery R5-C: 2026-10-24
+
+**Result: 1,275 engine submissions removed against the unchanged 1,261 target.**
+The complete fixed guard decreases from B's 2,250 submissions to 975, within C's 989 ceiling.
+SQLite internal executions decrease from 181 to 106. Unknown origins remain zero, with complete connection coverage and findings.
+The guard recording matches B byte for byte.
+The mandatory final 100 limit still fails by 875 submissions. The launcher correctly returns failure after complete execution.
+These measurements cover the small guard, including snapshot and workspace paths. They do not establish full-repository recovery.
+
+### Implementation and accounting
+
+The production generator migrates exactly four state frontends to the existing tape-backed syntax relations.
+It removes their 25 AST partitions and five reconstruction stages. Detector decisions remain SQL.
+The other 28 state clauses retain their definitions. Full pinned-source regeneration matches all ten generated policies byte for byte.
+The migration preserves argument text, field identity, owner selection, ordinals, and descendant expansion.
+Two clauses retain repository partitioning for `scan_project_sources`; their default partition remains file.
+
+The new `relational.requireNonemptyInput` field names one declared input.
+Complete empty evidence skips the SQL reader and body preparation. Nonempty evidence transfers into input import without another extraction.
+Incomplete evidence, cancellation, budgets, and invalid SQL remain failures.
+Gate/body preparation uses the existing scheduler and candidate frontier.
+Repository syntax restores only eligible current documents, including evicted documents, through bounded metadata, source, and tape batches.
+The loader preserves hash checks and charges repeated contents separately for each logical file.
+A regression test reads 257 cold sources with three SQL statements. Warm source reads need no SQL.
+
+The frontend experiment priced 761 removals. Empty-session SQL accounts for another 500 removals in the final run.
+Seven avoided reader configurations remove two PRAGMAs each, adding 14 removals beyond the original model.
+All replacement statements, transactions, publication, and cleanup remain counted.
+
+| Complete engine work | B | C | Removal |
+| --- | ---: | ---: | ---: |
+| Connection and compiler setup | 244 | 229 | 15 |
+| File publication | 36 | 36 | 0 |
+| Catalog publication | 12 | 12 | 0 |
+| Candidate preparation | 702 | 308 | 394 |
+| Cleanup | 165 | 24 | 141 |
+| Relational evaluation | 1,091 | 366 | 725 |
+| **Total** | **2,250** | **975** | **1,275** |
+
+### TDD ladder and validation
+
+Red commit `1459c56c` records the missing frontend shape, input precondition, and C progress receipt.
+The original generator exposes 25 inputs where the test requires one. The original engine rejects `requireNonemptyInput`.
+The implementation adds the generic lowering helper, compiler field, admission check, and preparation phases.
+Further tests cover nonempty row transfer, incomplete inputs, cancellation/retry, edits, removals, repeated result pages, and evicted repository documents.
+Direct relation comparisons cover Unicode, optional fields, nested owners, ordinals, and both descendant expansion modes across two files.
+An explicit empty aggregate test preserves unguarded SQL behavior. Profile assertions require zero relational SQL or syntax preparation after empty admission.
+
+The final addon passes 323 native-facing tests across 18 files.
+The full Rust suite passes 1,604 tests, with 23 existing ignored tests and zero failures.
+All 77 recorded state observations pass: 64 positive and 13 clean.
+The selected corpus passes 120 observations across 60 rules: one positive and one clean observation per rule.
+Both corpora report zero false positives, false negatives, execution differences, or engine failures.
+Twelve generator tests and 14 budget regression tests pass.
+TypeScript, boundaries, structure, Windows paths, formatting, and all-target Clippy pass with and without profiling.
+The language reference retains 38 matching grammar productions and 98 compilable examples, with eight fragments and zero failures.
+The budget launcher records a successful C receipt and preserves the failing final 100 gate.
+
+### Matched CPU, memory, and remaining work
+
+Five alternating fresh-process pairs compare the accepted B addon and policy with the final C addon and policy.
+Both builds use the same release optimization settings, allocator archive, shim, worker count, and recording.
+No local build or test runs during these controls. Other host workloads remain outside this experiment's control.
+Tracing, phase profiling, SQL capture, census, and external sampling are off in every control child.
+CPU includes compilation, snapshot/workspace evaluation, and cleanup after module imports.
+Peak RSS covers the whole process, including imports. It is a high-water measurement, not exclusive live allocation.
+
+| Matched fixed-guard metric | B | C |
+| --- | ---: | ---: |
+| Median CPU | 1,586.221 ms | 550.052 ms |
+| CPU trial range | 1,534.903–1,612.057 ms | 527.931–569.859 ms |
+| Median peak RSS | 337,616 KiB | 298,784 KiB |
+| Peak RSS trial range | 328,864–364,464 KiB | 292,400–303,120 KiB |
+
+Median CPU decreases 65.3%. Median peak RSS decreases 11.5%.
+Every control retains parity. This timing series is separate from the earlier frontend prototype and A/B controls.
+A separate broader-state diagnostic captures two external stack samples and one `vmmap` snapshot, with parity intact.
+The samples show regex search, SQL preparation/parsing, hashing, allocation, and copies among the remaining work.
+They also contain scheduling and I/O frames. Their wall-stack percentages are not CPU shares.
+
+The next inventory starts at 975 actual submissions, with 875 remaining above the final limit.
+Candidate preparation contributes 308, relational evaluation contributes 366, and connection/compiler setup contributes 229.
+These counts identify remaining work. They do not price a new implementation chunk or establish full-repository performance.
+The final 100 gate and broader recovery requirements remain open.
+
+The [checked delivery evidence](../fixtures/host/data-layer-port/profiling/state-domain-admission-recovery-20261024.json) records all trials, source and artifact hashes, validation, and accounting.
+Raw builds, captures, controls, external profiles, and parity reports reside under `.rerail/profiles/chunk-c-20261024/`.
+Builds use the standing permission to finish. Runtime checks and experiments remain within 115 seconds.
+
 ## Bounded C scope and frontend experiment: 2026-10-24
 
 The user rejected the architecture-wide C proposal because it specified an outcome without a bounded implementation scope.

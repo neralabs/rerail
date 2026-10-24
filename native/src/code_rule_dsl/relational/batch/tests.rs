@@ -44,6 +44,7 @@ fn jobs<'a>(rule: &'a CompiledCodeRuleDsl, files: Vec<FileInput>) -> Vec<Job<'a>
                 code_rule,
                 clause,
                 inputs: Inputs {
+                    gate: None,
                     file_local: false,
                     rows: None,
                     snapshot,
@@ -137,8 +138,12 @@ fn pending_consumers_do_not_construct_any_inputs_and_failed_preparation_is_local
             .all(|j| j.inputs.rows.is_none() && j.inputs.facts.is_empty())
     );
     let called = Cell::new(0);
-    let (results, stats) =
-        run_prepared(pending, producer::MAX_RESIDENT_BYTES, 1, |inputs, _, _| {
+    let (results, stats) = run_prepared(
+        pending,
+        producer::MAX_RESIDENT_BYTES,
+        1,
+        |inputs, _, _, phase| {
+            assert_eq!(phase, Preparation::Body);
             assert!(inputs.rows.is_none());
             assert_eq!(inputs.snapshot.files.len(), 1);
             let n = called.get();
@@ -147,7 +152,8 @@ fn pending_consumers_do_not_construct_any_inputs_and_failed_preparation_is_local
                 return Err(super::super::invalid("preparation interrupted"));
             }
             Ok(())
-        });
+        },
+    );
     assert_eq!(called.get(), 8);
     assert_eq!(stats.peak_sessions, 1);
     assert_eq!(results[3].failures.len(), 1);

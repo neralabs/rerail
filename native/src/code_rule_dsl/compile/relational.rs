@@ -47,6 +47,7 @@ pub(super) fn compile(
             "locations",
             "partitionBy",
             "syntax",
+            "requireNonemptyInput",
         ],
         path,
     )?;
@@ -154,6 +155,21 @@ pub(super) fn compile(
         tables.insert(name.clone());
         inputs.push((name.clone(), input));
     }
+    let require_nonempty = spec
+        .get("requireNonemptyInput")
+        .map(|value| -> Result<usize> {
+            let name = non_empty_str(Some(value), &format!("{path}/requireNonemptyInput"))?;
+            if !relational::identifier(name) {
+                return Err(invalid(
+                    "requireNonemptyInput must be a relation identifier",
+                ));
+            }
+            inputs
+                .iter()
+                .position(|(input, _)| input == name)
+                .ok_or_else(|| invalid("requireNonemptyInput must name a declared input"))
+        })
+        .transpose()?;
     let syntax = spec
         .get("syntax")
         .map(|value| -> Result<relational::syntax::Spec> {
@@ -515,6 +531,7 @@ pub(super) fn compile(
         input.retain_projected_fields(fields);
     }
     Ok(Plan {
+        require_nonempty,
         syntax: syntax.map(Arc::new),
         per_file,
         references,

@@ -267,6 +267,12 @@ def shared_syntax_relations(clause):
  # across the repository. A file gate cannot represent that row selection.
  if raw is None or plan.get('partitionBy')!='file' or not clause['id'].startswith('quality-contracts'):return False
  batched_reachability(clause)
+ return whole_file_syntax_relations(clause)
+
+def whole_file_syntax_relations(clause):
+ """Lower a generator-proven whole-file domain through existing syntax facts."""
+ import copy
+ plan=clause['relational'];raw=plan['inputs']['raw_nodes']
  original=copy.deepcopy(raw)
  def gate_only(rule):
   if not isinstance(rule,dict):return
@@ -297,7 +303,7 @@ def shared_syntax_relations(clause):
   if isinstance(value,dict):return {k:lower(v) for k,v in value.items()}
   if isinstance(value,list):return [lower(v) for v in value]
   return value
- columns=[c for c in demanded if c!='text']
+ columns=[c for c in demanded if c!='text' or 'text' in raw['evidence']['project']]
  for stage in plan['stages']:
   if 'query' in stage:stage['query']=lower(stage['query'])
   if stage['name']=='arguments':stage['query']=stage['query'].replace('SELECT n.*,','SELECT '+','.join('n.'+c for c in columns)+',',1)

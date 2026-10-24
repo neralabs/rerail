@@ -12,6 +12,7 @@ mod authorizer;
 mod pool;
 mod storage;
 
+mod admission;
 mod anchors;
 mod batch;
 pub(super) mod database;
@@ -62,6 +63,7 @@ pub(super) const REFERENCE_FIELDS: &[&str] = &[
 
 #[derive(Clone)]
 pub(super) struct Plan {
+    pub(super) require_nonempty: Option<usize>,
     pub(super) syntax: Option<Arc<syntax::Spec>>,
     pub(super) per_file: bool,
     pub(super) references: Option<References>,
@@ -423,7 +425,14 @@ pub(super) struct Job<'a> {
     pub inputs: Inputs,
     pub budget: super::budget::Context,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Preparation {
+    Gate,
+    Body,
+}
+
 pub(super) struct Inputs {
+    pub gate: Option<Rows>,
     pub rows: Option<Vec<Rows>>,
     pub facts: syntax::Files,
     pub snapshot: Snapshot,
@@ -446,23 +455,14 @@ impl<'a> Session<'a> {
     fn new(
         code_rule: &'a CompiledCodeRule,
         clause: &'a CompiledClause,
-        inputs: Inputs,
+        mut inputs: Inputs,
         metrics: &mut super::model::Metrics,
         pool: &pool::Pool,
     ) -> Result<Self> {
         let snapshot = &inputs.snapshot;
         let supplied = inputs.facts;
         let limits = &code_rule.capabilities.limits;
-        let files = snapshot
-            .files
-            .iter()
-            .filter(|f| code_rule.scope.matches(&f.path));
-        let (file_count, byte_count) = files.fold((0usize, 0usize), |(n, b), f| {
-            (n + 1, b.saturating_add(f.source.len()))
-        });
-        if file_count > limits.max_files || byte_count > limits.max_source_bytes {
-            return Err(invalid("repository input budget exceeded"));
-        }
+        admission::limits(code_rule, snapshot)?;
         let super::model::ClauseKind::Relational(plan) = &clause.kind else {
             return Err(invalid("expected relational job"));
         };
@@ -474,6 +474,10 @@ impl<'a> Session<'a> {
         db.context(json!({"scope":"relational", "ruleId":code_rule.id, "clauseId":clause.id,
             "path":(snapshot.files.len() == 1).then(|| snapshot.files[0].path.as_str()), "stage":"inputs"}));
         db.execute_batch("BEGIN").map_err(sql_error)?;
+        let gate_slot = plan.require_nonempty.filter(|_| inputs.gate.is_some());
+        if let (Some(rows), Some(slot)) = (&mut inputs.rows, gate_slot) {
+            rows[slot] = inputs.gate.take().expect("admitted gate");
+        }
         let streamed = inputs.rows.is_none();
         let rows = match inputs.rows {
             Some(rows) => rows,
@@ -491,7 +495,11 @@ impl<'a> Session<'a> {
                 };
                 plan.inputs
                     .iter()
-                    .map(|(name, input)| {
+                    .enumerate()
+                    .map(|(slot, (name, input))| {
+                        if gate_slot == Some(slot) {
+                            return Ok(inputs.gate.take().expect("admitted gate"));
+                        }
                         let fields = input
                             .project
                             .iter()
@@ -577,7 +585,7 @@ impl<'a> Session<'a> {
             }
             tables.extend(syntax::load(&db, spec, &syntax_files, Arc::clone(&work))?);
         }
-        for ((name, input), rows) in plan.inputs.iter().zip(rows) {
+        for (slot, ((name, input), rows)) in plan.inputs.iter().zip(rows).enumerate() {
             #[cfg(feature = "code-rule-profile")]
             if std::env::var_os("RERAIL_CODE_RULE_RELATIONAL_PROFILE").is_some() {
                 eprintln!(
@@ -590,7 +598,7 @@ impl<'a> Session<'a> {
                 .iter()
                 .map(|project| project.field.clone())
                 .collect::<Vec<_>>();
-            if streamed {
+            if streamed && gate_slot != Some(slot) {
                 tables.insert(name.clone());
                 continue;
             }
@@ -975,6 +983,7 @@ pub(super) fn evaluate(
         code_rule,
         clause,
         inputs: Inputs {
+            gate: None,
             file_local: false,
             rows: Some(rows),
             facts: Vec::new(),
@@ -994,7 +1003,7 @@ pub(super) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
 /// Restore documents only when the scheduler prepares this consumer.
 pub(super) fn evaluate_prepared(
     jobs: Vec<Job<'_>>,
-    prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause) -> Result<()>,
+    prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause, Preparation) -> Result<()>,
 ) -> Vec<Evaluation> {
     batch::evaluate_prepared(jobs, prepare)
 }
