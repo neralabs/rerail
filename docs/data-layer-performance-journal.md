@@ -8,6 +8,19 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Shared child demand: 2026-10-24
+
+### Different fields in one ready wave: red
+
+The next phase starts from `a63782d7` and its stable 8,669-submission guard.
+The first captured frontier contains 246 child-field fills, compared with two span fills and one covering node-property fill.
+The new test uses two rules, distinct child fields, 130 clauses, and two result packets.
+The baseline preserves all 130 findings and both field bindings but executes two child-fill statements where one is required.
+Evidence: `.rerail/profiles/child-demand-recovery-20261024/child-red`.
+The target carries field-qualified request rows through one SQL fill per ready dependency wave.
+Field options remain separate semantic bindings. The existing SQL owner retains completion by `(fid, parent, field)`, including NULL child results.
+The change adds no algorithm flag or native fact cache. The fixed 100-submission gate remains mandatory.
+
 ## Frontier determinism: 2026-10-24
 
 ### Independent admission and canonical composition: green
