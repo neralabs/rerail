@@ -127,6 +127,7 @@ jobs:
               - 'test/engine/native/shared-producers.test.ts'
               - 'test/engine/native/frontier-determinism.test.ts'
               - 'test/engine/native/recovery/child-demand.test.ts'
+              - 'test/engine/native/recovery/relational-storage.test.ts'
               - 'test/engine/native/recovery/selector-materialization.test.ts'
               - 'scripts/profiling/frontier-audit.mjs'
               - 'package.json'
@@ -244,6 +245,7 @@ jobs:
           path: |
             ${{ runner.temp }}/rerail-sql-budget/provenance.json
             ${{ runner.temp }}/rerail-sql-budget/chunk-a-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-b-budget.json
             ${{ runner.temp }}/rerail-sql-budget/capture/profile.json
             ${{ runner.temp }}/rerail-sql-budget/capture/parity.json
             ${{ runner.temp }}/rerail-sql-budget/capture/summary.txt

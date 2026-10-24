@@ -2,15 +2,17 @@
 
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
 Conditional admission, whole-job publication, and R4–R7 remain open.
-The latest measured job has 7,733 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
+The latest fixed guard has 2,250 engine submissions and 181 SQLite internal executions. The 100-submission gate still fails.
+The historical 7,733 checkpoint remains below; full-repository CPU recovery is unresolved.
 Compiler input/syntax validation uses prepare-only schemas. Compiler stages share bounded SQLite-inferred metadata across documents.
 Runtime producer execution and whole-job lifetimes remain open. Aggregate CPU recovery is unresolved.
 All work uses the current worktree. Named span/child demand and deterministic frontier composition now have tested implementation slices.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
 The [ranked execution opportunities](sql-execution-opportunities.md) now define the delivery size.
-R5-A removes 4,048 submissions against its full 3,474 target. R5-B is repriced to 1,296 additional removals.
-Each implementation delivery must remove its full expected count: 3,474 for R5-A, with CPU, memory, and parity gates intact.
+R5-A removes 4,048 submissions against its full 3,474 target. R5-B removes 1,435 against its full 1,296 target.
+Each implementation delivery must remove its full expected count, with CPU, memory, and parity gates intact.
+The [R5-B journal](data-layer-performance-journal.md#relational-storage-delivery-r5-b-2026-10-24) records the complete accounting and matched controls.
 Small TDD commits support these chunks. They do not complete a phase by themselves.
 
 ## Required outcome

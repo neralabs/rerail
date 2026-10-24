@@ -21,12 +21,14 @@ impl Layout {
         self.members.get(i).map(Vec::as_slice).unwrap_or(&[])
     }
     /// The last-use boundary is logical, even when its construction shares a statement.
-    pub fn release(&self, names: &[&str], indices: &[usize]) -> String {
+    pub fn release(&self, names: &[&str], indices: &[usize], populated: &[bool]) -> String {
         let mut slots = Vec::new();
         let mut sql = String::new();
         for &i in indices {
             if let Some(slot) = self.slot(i) {
-                slots.push(slot.to_string());
+                if populated[i] {
+                    slots.push(slot.to_string());
+                }
             } else {
                 sql.push_str(&format!("DROP TABLE temp.\"{}\";", names[i]));
             }
@@ -249,12 +251,16 @@ mod tests {
             db.execute_batch(sql)?;
         }
         let mut rows = Vec::new();
+        let mut populated = vec![false; p.sql.len()];
         for actions in p.schedule.actions.chunk_by(|a, b| {
             matches!(a, lifetime::Action::Release(_)) && matches!(b, lifetime::Action::Release(_))
         }) {
             match actions[0] {
                 lifetime::Action::Prepare(i) => {
                     db.execute_batch(&p.sql[i])?;
+                    for &member in p.layout.members(i) {
+                        populated[member] = db.changes() != 0;
+                    }
                 }
                 lifetime::Action::Query(q) => {
                     rows.extend(
@@ -274,10 +280,11 @@ mod tests {
                             }
                         })
                         .collect::<Vec<_>>();
-                    db.execute_batch(
-                        &p.layout
-                            .release(&names.iter().map(String::as_str).collect::<Vec<_>>(), &ids),
-                    )?;
+                    db.execute_batch(&p.layout.release(
+                        &names.iter().map(String::as_str).collect::<Vec<_>>(),
+                        &ids,
+                        &populated,
+                    ))?;
                 }
             }
         }
@@ -438,5 +445,21 @@ mod tests {
             "{detail}"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod retirement_tests {
+    #[test]
+    fn empty_batches_need_no_delete_but_nonempty_members_keep_their_last_use_retirement() {
+        let layout = super::Layout {
+            slots: vec![Some(0), Some(1)],
+            ..Default::default()
+        };
+        assert_eq!(layout.release(&["a", "b"], &[0, 1], &[false, false]), "");
+        assert_eq!(
+            layout.release(&["a", "b"], &[0, 1], &[false, true]),
+            "DELETE FROM candidate_keys WHERE producer IN (1);"
+        );
     }
 }

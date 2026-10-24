@@ -8,6 +8,83 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Relational storage delivery R5-B: 2026-10-24
+
+**Result: 1,435 engine submissions removed, exceeding the full 1,296 target.**
+The complete fixed guard falls from the accepted A checkpoint of 3,685 submissions to 2,250.
+SQLite internal executions fall from 994 to 181. Unknown origins remain zero, with complete connection coverage and findings.
+Input recording bytes match A exactly. The unchanged 100-submission gate still fails, by 2,150 submissions.
+This result covers the fixed state-tripwire guard, not the full data-layer repository.
+
+### Selected execution shape and accounting
+
+Readers reuse empty typed SQLite tables, indexes, and views when their complete declarations match.
+Input bindings retain separate row lifetimes. This change does not infer shared data from equal SQL text.
+Actual insert counts track occupancy. Retirement deletes populated backing at its original logical last use.
+Empty candidate slots complete normally and need no DELETE.
+Statistics refresh for populated tables and transitions to empty; fresh empty tables avoid redundant ANALYZE.
+Generic graph construction stops early only when normalized roots and edges contain no vertices.
+Edges still undergo validation when roots are empty.
+
+A pool retains at most four idle readers. Existing resident admission still governs active consumers and broad producer waves.
+Each idle reader retains at most 128 reusable objects, 4 MiB of metadata, and 16 MiB of SQLite plus metadata storage.
+Admission includes idle storage. Failed or unfinished sessions discard their readers.
+Successful reuse clears rows and source/regex callbacks, so snapshots and rule budgets do not leak across consumers.
+
+| Complete engine work | A | B | Net removal |
+| --- | ---: | ---: | ---: |
+| Runtime relational statements, including replacement writes | 2,409 | 1,252 | 1,157 |
+| Reader configuration PRAGMAs | 136 | 8 | 128 |
+| Candidate retirement DELETEs | 324 | 174 | 150 |
+| All other engine work | 816 | 816 | 0 |
+| **Total** | **3,685** | **2,250** | **1,435** |
+
+Runtime relational CREATE statements fall from 1,192 to 489; DROP falls from 628 to 161; ANALYZE falls from 310 to 39.
+Replacement INSERTs rise from 42 to 310, and DELETEs rise from zero to 43. All remain counted.
+The observed 68 runtime reader connections become four, one per observed execution context.
+The planned removal of 68 compiler empty-schema probes is **not implemented**. Those probes remain counted.
+Other measured components exceed the complete net target by 139, without lowering that target.
+
+### TDD ladder and validation
+
+Red commit `92879cd5` requires reusable relational backing and the full 1,296-removal delivery target.
+The accepted A implementation configures 18 reader functions where the test requires three.
+The first implementation removes only 1,040 submissions. It remains an unsuccessful experiment.
+The next implementation reaches 2,250 and preserves the selected data-layer observations, but fails a new generic deferred-CAST test.
+Red commit `283b0fbf` records that failure: a typed comparison loses its expected finding after storage reuse.
+
+The correction makes compiler syntax declarations match runtime affinity.
+SQLite infers public deferred projection affinity once per typed schema and query; physical backing keeps its own declaration.
+No custom SQL type parser is added. Cold inference statements remain visible in execution accounting.
+The compiler-schema test now counts all six cold statements, including the public-affinity probe and cleanup.
+Cold and repeated compilation retain the CAST finding.
+
+The final addon passes 314 native-facing tests across 16 files, 32 relational Rust tests, and 79 candidate SQL tests.
+One existing candidate test remains ignored. The standalone host passes 57 tests; 13 budget regression tests pass.
+The corpus selection retains 60 positive and 60 clean observations across 60 rules, with zero parity differences or failures.
+Clippy passes for native targets with and without profiling, and for the standalone host.
+TypeScript, boundaries, structure, Windows paths, and formatting checks pass.
+These selected checks do not replace the still-open full-repository recovery gate.
+
+### CPU, memory, and the next frontier
+
+Five alternating fresh-process pairs compare the A addon with the selected B addon under matched build and worker settings.
+Tracing and allocation accounting are off. CPU includes compilation, snapshot/workspace evaluation, and cleanup after module imports.
+Median CPU is **1,546.054 → 1,541.322 ms**, a 0.3% decrease: roughly flat.
+Median peak RSS is **335,536 → 332,960 KiB**. Trial ranges overlap; this is a small measured difference.
+The frozen candidate replay retains the exact 161-row bag and its 19,269,664-byte SQLite heap peak.
+That isolated candidate result does not measure complete relational memory.
+
+The engine submission reduction is 38.9%, but it does not deliver a substantial CPU speedup on this guard.
+An external bottom-up sample with tracing off shows allocation/free, copying, regex search, and regex determinization among self frames.
+Only one stack capture completes on this short workload. Its wall observations do not establish CPU shares.
+A separate traced capture spends much of its sampled time writing instrumentation; it is unsuitable for normal-workload CPU attribution.
+The next investigation should measure compilation, lowering, allocation, and regex costs with a broader bounded sample.
+The remaining 2,150 excess submissions also need a new complete inventory before the next delivery receives a target.
+
+The [checked evidence](../fixtures/host/data-layer-port/profiling/relational-storage-recovery-20261024.json) retains all timing trials, exact accounting, artifact hashes, and experiment decisions.
+Raw reports and immutable addons reside under `.rerail/profiles/chunk-b-20261024/`.
+
 ## Candidate ownership delivery R5-A: 2026-10-24
 
 **Result: 4,048 submissions removed, exceeding the full 3,474 target.**

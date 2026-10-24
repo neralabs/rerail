@@ -110,6 +110,7 @@ pub(super) fn rows_for(
     let mut emitted = 0u64;
     let relation_names: Vec<_> = statement.stages.iter().map(|s| s.name.as_str()).collect();
     let mut live = vec![false; statement.stages.len()];
+    let mut populated = vec![false; statement.stages.len()];
     let mut live_count = 0usize;
     let mut owner_created = false;
     #[cfg(feature = "code-rule-profile")]
@@ -159,11 +160,13 @@ pub(super) fn rows_for(
                     let logical = nodes.get(&stage.name);
                     #[cfg(feature = "code-rule-profile")]
                     let previous = logical.map(|node| store.graph.lock().constructed(node.id));
-                    create.execute(params_from_iter(&statement.parameters[..count]))?;
+                    let inserted =
+                        create.execute(params_from_iter(&statement.parameters[..count]))?;
                     if stage.temporary {
                         if statement.ownership.slot(i).is_some() {
                             for &member in statement.ownership.members(i) {
                                 live[member] = true;
+                                populated[member] = inserted != 0;
                                 live_count += 1;
                             }
                         } else {
@@ -261,7 +264,9 @@ pub(super) fn rows_for(
                             i
                         })
                         .collect();
-                    let sql = statement.ownership.release(&relation_names, &indices);
+                    let sql = statement
+                        .ownership
+                        .release(&relation_names, &indices, &populated);
                     store.db.execute_batch(&sql)?;
                     for action in actions {
                         let Action::Release(i) = *action else {

@@ -115,3 +115,8 @@ pub fn run(directory: &std::path::Path, trial: usize) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../../native/src/code_rule_dsl/relational/storage.rs"]
+mod relational_storage;

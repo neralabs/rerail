@@ -16,7 +16,8 @@ This document creates no Linear issues.
 
 The [ranked execution opportunity plan](sql-execution-opportunities.md) supersedes small implementation slices as delivery milestones.
 Named-owner metadata and dependency work belong inside a chunk that removes its full expected count of complete-job engine submissions.
-R5-A removes 4,048 submissions against its full 3,474 target. R5-B is repriced to 1,296 additional removals. Their CPU, memory, and parity gates remain mandatory.
+R5-A removes 4,048 submissions against its full 3,474 target. R5-B removes 1,435 against its full 1,296 target.
+The complete fixed guard now has 2,250 submissions. CPU, memory, parity, and the final 100-submission gate remain mandatory.
 
 ## Existing foundation
 

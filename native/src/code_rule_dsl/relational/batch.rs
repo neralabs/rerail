@@ -111,6 +111,7 @@ fn run_prepared(
     let mut deferred = None;
     let _syntax = super::syntax::Pool::install();
     let mut allowance = producer::Allowance::default();
+    let pool = super::pool::Pool::default();
     let mut stats = Stats::default();
     while deferred.is_some() || !jobs.is_empty() {
         allowance.clear_resident();
@@ -118,6 +119,7 @@ fn run_prepared(
         let mut footprint = producer::layout::Footprint::default();
         let mut sql_bytes = 0usize;
         loop {
+            pool.trim(sql_limit.saturating_sub(sql_bytes));
             let ready = if let Some(ready) = deferred.take() {
                 ready
             } else {
@@ -140,7 +142,13 @@ fn run_prepared(
                     );
                     let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
                     prepare(&mut job.inputs, job.code_rule, job.clause)?;
-                    Session::new(job.code_rule, job.clause, job.inputs, &mut extraction)
+                    Session::new(
+                        job.code_rule,
+                        job.clause,
+                        job.inputs,
+                        &mut extraction,
+                        &pool,
+                    )
                 });
                 results[index].metrics.merge(extraction);
                 let mut session = match session {
@@ -159,6 +167,8 @@ fn run_prepared(
                 let Some(demand) = advance(&mut session, &mut job.budget, &mut results[index])
                 else {
                     observe(&mut results[index], job.clause, &job.budget);
+                    drop(session);
+                    pool.trim(sql_limit.saturating_sub(sql_bytes));
                     continue;
                 };
                 let bytes = match session.db.resident_bytes() {
@@ -182,6 +192,8 @@ fn run_prepared(
                     sql_bytes: bytes,
                 }
             };
+            // Empty backing is retained only within the existing total SQL admission allowance.
+            pool.trim(sql_limit.saturating_sub(sql_bytes.saturating_add(ready.sql_bytes)));
             // Include the one candidate held while the admitted partition drains.
             stats.peak_sessions = stats.peak_sessions.max(cohort.len() + 1);
             stats.peak_sql_bytes = stats
