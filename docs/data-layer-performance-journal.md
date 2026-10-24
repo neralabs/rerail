@@ -10,6 +10,13 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Candidate frontier allocation order: green
+
+The production helper now retains first-seen consumer order and removes duplicate Arc identities.
+Only the separate demand-set key sorts addresses. Equal frontiers still share one batch.
+All 26 standalone SQL tests pass in `frontier-green`, including both former failures and three schema-adapter tests.
+The final addon capture and CPU controls remain necessary before an aggregate improvement claim.
+
 ### Candidate frontier allocation order: red
 
 Two deterministic tests force allocation order to oppose authored consumer order.
