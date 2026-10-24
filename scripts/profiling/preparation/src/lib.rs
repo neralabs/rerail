@@ -9,6 +9,9 @@ mod lifetime;
 mod memory;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/nodes.rs"]
 mod nodes;
+#[cfg(test)]
+#[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/store/publication.rs"]
+mod publication;
 // Replay reads stored segments; production also uses this module's encoder.
 #[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/postings.rs"]
