@@ -501,11 +501,19 @@ pub fn run(run_dir: &Path, opts: Opts) {
             .graphs
             .iter()
             .map(|(n, g)| {
+                // The exports the plan's own outputs read (a graph shared by several plans holds
+                // every plan's leaves; D1 looks at this plan's only).
+                let mut seen = vec![false; g.nodes.len()];
+                let mut stack: Vec<usize> = g.outputs.iter().enumerate().filter(|(i, _)| g.owners.is_empty() || g.owners[*i] == *n).map(|(_, o)| o.1).collect();
                 let mut reads = BTreeSet::new();
-                for op in &g.nodes {
-                    if let Op::Exported(e) = op {
+                while let Some(x) = stack.pop() {
+                    if std::mem::replace(&mut seen[x], true) {
+                        continue;
+                    }
+                    if let Op::Exported(e) = &g.nodes[x] {
                         reads.insert(*e);
                     }
+                    stack.extend(lower::op_inputs(&g.nodes[x]));
                 }
                 Plan { name: n.clone(), graph: g.clone(), reads: reads.into_iter().collect() }
             })
