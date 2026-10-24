@@ -14,17 +14,19 @@ The SQL matcher compiler and its optimization experiments remain on the source b
 
 ## Complete-job execution limit
 
-The fixed acceptance limit is **100 actual SQL executions for one complete cold job**.
+The fixed acceptance limit is **100 engine-submitted SQL statements for one complete cold job**.
 Commit `c109a915` on the source branch defines this limit. The earlier profiler import omitted its enforcement.
 Every worker and connection shares the allowance. File batches, rules, and output packets do not reset it.
 Setup, publication, DDL, transactions, matching, and cleanup count. Each statement inside `execute_batch` counts separately.
-Diagnostic EXPLAIN and enclosing native timing spans do not count.
+SQLite internal statements remain separately counted. Diagnostic EXPLAIN and enclosing native timing spans do not count.
+The user clarified this boundary after a single bulk FTS insert exposed internal document metadata writes.
+Callback origin, native counters, and observed per-origin events must reconcile; unknown origins fail acceptance.
 
 The capture includes started/completed counters and connection-open/close receipts.
 Missing entire sessions, partial captures, incomplete operations, or failed parity prevent acceptance, even when observed counts are small.
 Reports retain `execution-budget.json` and the first excess statement.
 SQL capture and report commands return nonzero on failure after preserving the complete findings and evidence.
-Historical captures without coverage receipts remain useful diagnostics but cannot pass acceptance.
+Historical captures without coverage receipts or execution origins remain useful diagnostics but cannot pass acceptance.
 
 The mandatory CI guard uses unchanged positive and clean observations from the state-tripwire recording:
 

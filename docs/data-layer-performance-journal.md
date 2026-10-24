@@ -159,6 +159,17 @@ The native profiling library Clippy check passes in `final-clippy` (25.935 secon
 The producer-shape retry before this fix passes both tests, confirming the earlier malformed stream is intermittent rather than a deterministic rule mismatch.
 The final addon build includes both the origin annotation and the trace-output repair.
 
+The optimized FTS experiment now has three rotated trials, production storage settings, and the exact production positional declaration.
+It stages 1,024 files with 256 tokens each, then measures only index publication and commit CPU.
+Packet transactions use 39.275 ms median CPU. Packet inserts within one transaction use 23.189 ms.
+One complete bulk insert uses 11.545 ms, 70.6% below packet transactions and 50.2% below packet statements in one transaction.
+The packet forms leave five segments; the complete bulk statement leaves one.
+All variants preserve positional results, deletion, and replacement.
+The earlier development-build medians were 64.771, 50.572, and 26.594 ms; they are separate controls.
+The [optimized evidence](../fixtures/host/data-layer-port/profiling/fts-bulk-publication-20261023.json) retains every trial and the schema/binary identities.
+This result supports whole-frontier `INSERT ... SELECT`, rather than suspending user triggers or changing the FTS layout.
+Whole-job integration remains pending; the isolated result does not predict aggregate linter CPU.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
