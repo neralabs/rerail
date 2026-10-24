@@ -2,13 +2,14 @@
 use std::sync::Arc;
 
 pub(super) fn frontier<T>(plans: &[Arc<T>]) -> (Vec<Arc<T>>, Vec<usize>) {
-    let mut plans = plans.to_vec();
-    plans.sort_unstable_by_key(|plan| Arc::as_ptr(plan) as usize);
-    plans.dedup_by_key(|plan| Arc::as_ptr(plan) as usize);
-    let ids = plans
+    let mut seen = std::collections::HashSet::new();
+    let plans = plans
         .iter()
-        .map(|plan| Arc::as_ptr(plan) as usize)
+        .filter(|plan| seen.insert(Arc::as_ptr(plan) as usize))
+        .cloned()
         .collect();
+    let mut ids: Vec<_> = seen.into_iter().collect();
+    ids.sort_unstable();
     (plans, ids)
 }
 
