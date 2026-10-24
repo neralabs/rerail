@@ -10,6 +10,14 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Candidate frontier allocation order: red
+
+Two deterministic tests force allocation order to oppose authored consumer order.
+They exercise the production frontier helper, which retains the previous address sort unchanged.
+Both tests fail in `.rerail/profiles/sql-recovery-compiler-20261023/frontier-red`.
+A demand set needs an unordered identity for coalescing, but execution must preserve the first occurrence of each consumer.
+Pointer equality remains suitable for shared-plan identity. Pointer ordering must not select a physical lowering order.
+
 ### Compiler schema recovery: adapter verification
 
 The public schema test now passes. Registration executes no relation DDL.
