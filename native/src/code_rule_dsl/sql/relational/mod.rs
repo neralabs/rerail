@@ -21,6 +21,7 @@ mod physical;
 mod recursion;
 mod recursion_tests;
 mod recursive_chain;
+mod recursive_downward;
 mod row;
 pub(super) mod tests;
 pub(super) mod witness;

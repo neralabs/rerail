@@ -52,7 +52,7 @@ impl Effects {
                 result.reads_value = true;
                 result.fallible = true;
             }
-            Op::Chain(..) => {
+            Op::Chain(..) | Op::Downward(..) => {
                 result.fallible = true;
                 result.contains_chain = true;
             }

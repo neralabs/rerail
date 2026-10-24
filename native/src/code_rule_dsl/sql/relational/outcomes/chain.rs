@@ -9,11 +9,12 @@ pub(super) struct Components {
     pub(super) clause: usize,
     pub(super) roots: String,
     definitions: BTreeMap<usize, String>,
+    pub(super) downward: BTreeMap<usize, (String, BTreeMap<u32, String>)>,
 }
 
 impl Components {
     pub(super) fn len(&self) -> usize {
-        self.definitions.len()
+        self.definitions.len() + self.downward.len()
     }
 }
 
@@ -21,6 +22,11 @@ impl Sql {
     /// This is called once at the statement boundary, never in a correlated child.
     pub(super) fn publish_components(&mut self) {
         let components = self.generation.components.borrow();
+        for (id, (definitions, depths)) in &components.downward {
+            self.definitions.push(definitions.clone());
+            self.definitions.extend(depths.values().cloned());
+            self.profile.push(json!({"operator":"shared ordered downward forest","component":id,"clause":components.clause,"key":["file","node"],"recursiveColumns":4,"staticDepthDomains":depths.keys().collect::<Vec<_>>(),"scope":"statement","nativeComposition":false,"demand":"guard kinds plus native-eligible immediate children in candidate-root files","cost":"ordered preorder interval through first base success","limits":"logical depth 256; native stack bytes unqualified"}));
+        }
         for (id, definitions) in &components.definitions {
             self.definitions.push(definitions.clone());
             self.profile.push(json!({

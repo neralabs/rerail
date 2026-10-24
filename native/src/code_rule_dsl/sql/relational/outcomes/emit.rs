@@ -3,6 +3,8 @@ use super::super::ir::Set;
 mod chain;
 #[path = "constraints.rs"]
 mod constraints;
+#[path = "downward.rs"]
+mod downward;
 #[path = "field.rs"]
 mod field;
 #[path = "field_end.rs"]
@@ -311,6 +313,7 @@ impl Sql {
         };
         let body = match &plan.op {
             Op::Chain(id, chain) => return self.chain(*id, chain, input),
+            Op::Downward(id, component) => return self.downward(*id, component, input),
             Op::BoundLeaf {
                 term,
                 inputs,

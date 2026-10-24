@@ -1043,3 +1043,52 @@ The complete-job 100-execution gate remains a separate requirement before produc
 Final qualification passes 263 relational tests and all 285 preceding SQL/VM controls.
 All 76 admitted grammars match native results on all 595 fixtures, with a positive witness for each grammar.
 Frozen B023 retains 246,364 VM instructions and passes its existing CPU and query-shape gates.
+
+## Catalog continuation: ordered downward recursion
+
+The test compiler now admits pure ordered child recursion with a finite guard-kind proof.
+The component accepts a total capture-free base followed by a guard and a neighbor-child call to the same utility.
+SQL builds a shared forest and calculates each invocation's visited preorder interval.
+The first successful base truncates that interval, so failed siblings retain their exact utility costs.
+
+Child eligibility follows native semantics.
+Two-valued matching uses the native kind filter before each child invocation.
+Three-valued matching disables that filter.
+An unbounded base also requires all immediate children, including anonymous tokens.
+Tests cover both filtered and unfiltered entry costs.
+
+Logical-depth failures use a window sweep over entry markers and invocation queries.
+Each invocation receives the first forbidden entry before its successful or exhausted subtree boundary.
+This preserves the precedence between work and depth failures.
+The compiler caps distinct caller-depth domains at 16 per component.
+Native stack-byte equivalence remains unqualified.
+
+The diagnostic catalog admits 78 grammars, up from 76, and passes all 78 on 595 fixtures.
+B110 and B112 are the new admissions.
+Three format policies advance to parsed-tree refusals, and SIM910 advances to a binding-site refusal.
+The remaining first-refusal counts are:
+
+| Missing contract | Grammars |
+| --- | ---: |
+| General recursive outcomes | 43 |
+| Parsed-tree composition | 12 |
+| Format-argument composition | 6 |
+| Binding-site composition | 4 |
+| Parameterized utility calls | 2 |
+| Recursive negation or region dependency | 1 |
+
+The next recursive boundary needs semantic or capture-bearing base outcomes with exact reached work and memo behavior.
+Parsed-tree and binding-site operators also need explicit child transactions before their exposed grammars can pass.
+Parameterized call frames need private capture namespaces and call-site memo identities.
+PIE796 additionally depends on recursive semantic bases, so call-frame support alone cannot close its two clauses.
+The full-coverage, complete-job execution, resource, and production-cutover gates remain closed.
+
+`benchmark/sql-relational-downward-integration.json` records the new SQL, explained plans, depth and width samples, and first-refusal advances.
+The final frozen build passes 272 relational tests and preserves all 285 preceding SQL/VM controls.
+The shallow-forest guard reduces the depth-128 sample from 201,886 to 175,967 VM instructions.
+Exhausted calls remain at 600 instructions as the unused guard domain grows.
+
+Final catalog qualification passes all 78 admitted grammars on all 595 fixtures, with a positive witness for each grammar.
+The preceding 76 retain exact SQL hashes, VM counts, and output hashes.
+B110 and B112 use one matching statement each, with zero frame publications.
+Frozen B023 also retains its exact SQL/VM shape and passes all existing prepared-execution gates.

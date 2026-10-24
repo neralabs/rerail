@@ -11,6 +11,7 @@ mod chain_tests;
 mod composition_budget_tests;
 mod constraint_tests;
 mod constraint_walk_tests;
+mod downward_tests;
 mod effects;
 mod emit;
 mod field_end_tests;
@@ -54,6 +55,7 @@ enum Op {
     Charge(usize, std::rc::Rc<Plan>),
     /// Functional recursive utility; its summary already includes utility entry.
     Chain(usize, std::rc::Rc<super::recursive_chain::Chain>),
+    Downward(usize, std::rc::Rc<super::recursive_downward::Downward>),
     Bind(usize),
     /// Atomic structural pattern, with outputs in terminal capture order.
     Pattern(usize, Vec<usize>, Option<Vec<u16>>),

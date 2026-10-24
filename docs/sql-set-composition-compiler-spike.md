@@ -5707,3 +5707,86 @@ Those remaining costs require further structural work outside the shared-chain c
 The coverage and qualification artifacts retain source and executable hashes, exact output hashes, fixture inventory, and per-file native work traces.
 The code and evidence remain on the personal branch, separate from Tim's branch.
 Production replacement, native stack-byte equivalence, general recursion, aggregate memory qualification, and complete-job batching remain incomplete.
+
+## Catalog continuation: ordered downward components
+
+Three GPT-6.1 Sol subagents received restricted assignments for native recursion semantics, SQL shape, and parameterized calls.
+The implementation assignments covered a recognizer, a SQL builder, and an isolated test file.
+The primary agent owns integration, review, test execution, and qualification.
+
+The next component recognizes a pure base followed by a guarded neighbor-child call to the same utility.
+Its recursive state contains file, node, tree, and depth.
+All eligible child edges form a forest, so each domain node occurs once.
+Window queries calculate preorder positions, subtree ends, and the first successful base.
+Each invocation uses the interval through that first success, or its complete subtree on failure.
+This preserves failed sibling costs without an origin-by-descendant relation.
+
+A correlated depth lookup proved unsuitable during SQL review.
+SQLite creates an equality index but scans and sorts the matching depth bucket for each root.
+The replacement merges query events and depth markers, then uses a forward window minimum.
+Each statically used caller depth adds one linear event sweep, with an explicit limit of 16 distinct depth domains per component.
+The first forbidden entry determines the completed charges before a depth failure.
+Depth wins when work equals those completed charges, because native checks depth before the next entry charge.
+
+The native-semantics review corrected an initial assumption about anonymous children.
+Two-valued matching can derive a finite child-kind filter from the base and guard, even through the recursive utility.
+That filter skips anonymous children before utility entry.
+Three-valued matching disables it, and an unbounded regex base provides no filter.
+The compiler now applies the native filter to forest edges while preserving direct invocation roots.
+Tests cover filtered, unfiltered, and three-valued calls with exact remaining work.
+
+The parameterized-call audit found two PIE796 clauses behind the same missing frame contract.
+They need private callee captures, mapped parameters, ordered output unification, and call-site memo identities.
+They also reach downward recursive utilities, so call-frame lowering alone cannot close those grammars.
+The current implementation therefore concentrates on the shared downward prerequisite.
+
+The first focused run passes eight tests and fails one invalid refusal fixture.
+Policy validation rejects its immediate mutual cycle before SQL compilation.
+The corrected fixture puts the mutual dependency through child walks, so the SQL refusal remains observable.
+Filtered and unfiltered child work, branching order, publication, and logical-depth tests pass.
+Shared-root samples at depths 8, 32, and 128 use 14,446, 51,934, and 201,886 VM instructions.
+SQL remains 9,370 bytes.
+Skipped and exhausted invocations retain constant work as the unused guard domain grows.
+
+Catalog compilation admits B110 and B112, which raises coverage from 76 to 78 grammars.
+F502, F503, and F508 now reach their missing parsed-tree contract.
+SIM910 now reaches its missing binding-site contract.
+These are first-refusal advances, not additional completed grammars.
+Many other pure wrappers already used the total-relations path, so the eligible utility count overstated the possible coverage gain.
+
+The physical review identifies unnecessary depth-event work for shallow forests.
+A constant guard now checks whether any forest node reaches the available logical depth.
+If none does, SQL skips both depth-event streams and their window sort.
+A separate wide-sibling regression checks that repeated roots at the same depth retain linear work.
+
+The shallow-forest guard reduces the depth-128 sample from 201,886 to 175,967 VM instructions.
+The largest disconnected-domain sample drops from 200,628 to 148,579 instructions.
+Shared-root depths 8, 32, and 128 use 12,647, 45,311, and 175,967 instructions, with 9,562 SQL bytes.
+The wide-sibling samples use 36,081, 138,777, and 549,561 instructions for 8, 32, and 128 groups.
+Their SQL remains 9,535 bytes.
+These gates demonstrate linear growth across shared roots and branching width.
+Exhausted invocations remain at 600 instructions, and skipped invocations remain at 703, regardless of unused guard-domain size.
+The corrected refusal test passes.
+
+The final frozen build passes all 272 relational tests.
+All 231 preceding and 54 focused SQL/VM control profiles remain unchanged.
+Formatting, workspace Clippy, and profiling-feature Clippy pass.
+The independent final review finds no additional material defect in the depth guard or window boundaries.
+
+Frozen B023 passes every existing CPU, VM, and query-shape gate without threshold changes.
+It retains 246,364 VM instructions, 10,232 SQL bytes, one matching statement, and zero frame publications.
+Median prepared execution is 4.104 ms against 30.787 ms for the reference, across nine executions per query.
+Preparation remains a separate one-time cost.
+
+Final catalog qualification passes all 78 admitted grammars on all 595 fixtures, with a positive witness for each grammar.
+The preceding 76 retain exact SQL hashes, VM counts, and output hashes.
+B110 has 33 matches and uses 1,042,522 VM instructions across the batch.
+B112 has eight matches and uses 1,032,132 instructions.
+Each grammar uses one matching statement and zero frame publications.
+The shallow-forest optimization improves synthetic recursive workloads but does not change these two catalog VM totals.
+
+The complete-coverage gate still fails with 68 explicit refusals.
+`benchmark/sql-relational-downward-integration.json` retains the SQL, explained plans, before/after samples, grammar comparisons, and four first-refusal advances.
+The coverage and qualification artifacts retain source and executable hashes, fixture inventory, exact outputs, and native per-file work traces.
+The checkpoint remains test-only.
+Production replacement, effectful recursion, native stack-byte equivalence, aggregate memory qualification, and complete-job batching remain incomplete.

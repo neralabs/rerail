@@ -303,8 +303,487 @@
         {
           "grammar": 0,
           "result": {
-            "admitted": false,
-            "reason": "outcome relations: recursive outcomes need a component contract"
+            "admitted": true,
+            "compilerLimitations": [
+              "Work accounting covers the admitted outcome operators. Utility answers use local typed columns or clause/file keyed storage when traversal extends their lifetime. Native depth limits and deadlines remain unproved.",
+              "Native depth/stack budgets, decisions and enumeration remain unproved.",
+              "This publication contract is for workspace local clauses. Stateless query aggregation has a different failure scope."
+            ],
+            "execution": {
+              "captureNames": [],
+              "coverageGap": null,
+              "failureContract": "Native clause/file failures discard provisional matches. SQL failure tags and surviving outputs are compared. No fault injection or finite allowance sweep in this gate.",
+              "firstDifference": null,
+              "framePublications": 0,
+              "matchingStatements": 1,
+              "nativeFailures": 0,
+              "nativeMatches": 33,
+              "nativeOutputSha256": "ba6df55c9a819878b04093795e315b2da43d4eec4b5c5b1de21d8a2474fb074b",
+              "nativeRows": 33,
+              "passed": true,
+              "positiveFiles": [
+                63,
+                119,
+                147,
+                166,
+                219,
+                274,
+                275,
+                345,
+                382,
+                428,
+                486,
+                519,
+                580,
+                581
+              ],
+              "sqlOutputSha256": "ba6df55c9a819878b04093795e315b2da43d4eec4b5c5b1de21d8a2474fb074b",
+              "sqlRows": 33,
+              "sqlSha256": "a6a43517ea4319005764deb553f83b46c8481ae70626b750c5fb40a56309ee11",
+              "vm": 1042522,
+              "nativeFileTraceGroups": [
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775807,
+                  "inclusiveFileRanges": [
+                    [
+                      0,
+                      28
+                    ],
+                    [
+                      31,
+                      62
+                    ],
+                    [
+                      65,
+                      106
+                    ],
+                    [
+                      108,
+                      117
+                    ],
+                    [
+                      120,
+                      131
+                    ],
+                    [
+                      133,
+                      146
+                    ],
+                    [
+                      148,
+                      165
+                    ],
+                    [
+                      169,
+                      179
+                    ],
+                    [
+                      181,
+                      184
+                    ],
+                    [
+                      186,
+                      192
+                    ],
+                    [
+                      194,
+                      197
+                    ],
+                    [
+                      199,
+                      210
+                    ],
+                    [
+                      216,
+                      218
+                    ],
+                    [
+                      224,
+                      262
+                    ],
+                    [
+                      265,
+                      273
+                    ],
+                    [
+                      276,
+                      276
+                    ],
+                    [
+                      279,
+                      285
+                    ],
+                    [
+                      287,
+                      344
+                    ],
+                    [
+                      346,
+                      350
+                    ],
+                    [
+                      355,
+                      365
+                    ],
+                    [
+                      367,
+                      372
+                    ],
+                    [
+                      374,
+                      381
+                    ],
+                    [
+                      383,
+                      383
+                    ],
+                    [
+                      385,
+                      385
+                    ],
+                    [
+                      387,
+                      426
+                    ],
+                    [
+                      429,
+                      430
+                    ],
+                    [
+                      432,
+                      470
+                    ],
+                    [
+                      472,
+                      478
+                    ],
+                    [
+                      480,
+                      485
+                    ],
+                    [
+                      487,
+                      518
+                    ],
+                    [
+                      520,
+                      565
+                    ],
+                    [
+                      567,
+                      579
+                    ],
+                    [
+                      582,
+                      594
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775803,
+                  "inclusiveFileRanges": [
+                    [
+                      29,
+                      29
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775806,
+                  "inclusiveFileRanges": [
+                    [
+                      30,
+                      30
+                    ],
+                    [
+                      132,
+                      132
+                    ],
+                    [
+                      167,
+                      167
+                    ],
+                    [
+                      212,
+                      215
+                    ],
+                    [
+                      220,
+                      223
+                    ],
+                    [
+                      263,
+                      264
+                    ],
+                    [
+                      352,
+                      354
+                    ],
+                    [
+                      366,
+                      366
+                    ],
+                    [
+                      386,
+                      386
+                    ],
+                    [
+                      427,
+                      427
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 6,
+                  "remainingWork": 9223372036854775795,
+                  "inclusiveFileRanges": [
+                    [
+                      63,
+                      63
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775801,
+                  "inclusiveFileRanges": [
+                    [
+                      64,
+                      64
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775804,
+                  "inclusiveFileRanges": [
+                    [
+                      107,
+                      107
+                    ],
+                    [
+                      168,
+                      168
+                    ],
+                    [
+                      198,
+                      198
+                    ],
+                    [
+                      384,
+                      384
+                    ],
+                    [
+                      566,
+                      566
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775805,
+                  "inclusiveFileRanges": [
+                    [
+                      118,
+                      118
+                    ],
+                    [
+                      185,
+                      185
+                    ],
+                    [
+                      277,
+                      278
+                    ],
+                    [
+                      286,
+                      286
+                    ],
+                    [
+                      351,
+                      351
+                    ],
+                    [
+                      373,
+                      373
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 2,
+                  "remainingWork": 9223372036854775801,
+                  "inclusiveFileRanges": [
+                    [
+                      119,
+                      119
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 2,
+                  "remainingWork": 9223372036854775750,
+                  "inclusiveFileRanges": [
+                    [
+                      147,
+                      147
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 1,
+                  "remainingWork": 9223372036854775805,
+                  "inclusiveFileRanges": [
+                    [
+                      166,
+                      166
+                    ],
+                    [
+                      580,
+                      581
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775798,
+                  "inclusiveFileRanges": [
+                    [
+                      180,
+                      180
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775779,
+                  "inclusiveFileRanges": [
+                    [
+                      193,
+                      193
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775802,
+                  "inclusiveFileRanges": [
+                    [
+                      211,
+                      211
+                    ],
+                    [
+                      431,
+                      431
+                    ],
+                    [
+                      479,
+                      479
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 1,
+                  "remainingWork": 9223372036854775791,
+                  "inclusiveFileRanges": [
+                    [
+                      219,
+                      219
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 5,
+                  "remainingWork": 9223372036854775800,
+                  "inclusiveFileRanges": [
+                    [
+                      274,
+                      275
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 5,
+                  "remainingWork": 9223372036854775797,
+                  "inclusiveFileRanges": [
+                    [
+                      345,
+                      345
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 1,
+                  "remainingWork": 9223372036854775806,
+                  "inclusiveFileRanges": [
+                    [
+                      382,
+                      382
+                    ],
+                    [
+                      486,
+                      486
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 1,
+                  "remainingWork": 9223372036854775800,
+                  "inclusiveFileRanges": [
+                    [
+                      428,
+                      428
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775797,
+                  "inclusiveFileRanges": [
+                    [
+                      471,
+                      471
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 1,
+                  "remainingWork": 9223372036854775801,
+                  "inclusiveFileRanges": [
+                    [
+                      519,
+                      519
+                    ]
+                  ]
+                }
+              ],
+              "nativeFileTraceCount": 595,
+              "nativeFileTracesSha256": "b9b1e7f72159975b1ce2de76d8f290510b72e27a630d57b5c7d2900bd6f96c9e"
+            },
+            "sqlBytes": 27700,
+            "sqlSha256": "a6a43517ea4319005764deb553f83b46c8481ae70626b750c5fb40a56309ee11"
           }
         }
       ],
@@ -324,8 +803,413 @@
         {
           "grammar": 0,
           "result": {
-            "admitted": false,
-            "reason": "outcome relations: recursive outcomes need a component contract"
+            "admitted": true,
+            "compilerLimitations": [
+              "Work accounting covers the admitted outcome operators. Utility answers use local typed columns or clause/file keyed storage when traversal extends their lifetime. Native depth limits and deadlines remain unproved.",
+              "Native depth/stack budgets, decisions and enumeration remain unproved.",
+              "This publication contract is for workspace local clauses. Stateless query aggregation has a different failure scope."
+            ],
+            "execution": {
+              "captureNames": [],
+              "coverageGap": null,
+              "failureContract": "Native clause/file failures discard provisional matches. SQL failure tags and surviving outputs are compared. No fault injection or finite allowance sweep in this gate.",
+              "firstDifference": null,
+              "framePublications": 0,
+              "matchingStatements": 1,
+              "nativeFailures": 0,
+              "nativeMatches": 8,
+              "nativeOutputSha256": "fd043d4d344fe0a25c8547a690b643d84435d6e56835c0025b74e0044420f453",
+              "nativeRows": 8,
+              "passed": true,
+              "positiveFiles": [
+                64,
+                118
+              ],
+              "sqlOutputSha256": "fd043d4d344fe0a25c8547a690b643d84435d6e56835c0025b74e0044420f453",
+              "sqlRows": 8,
+              "sqlSha256": "50e4d5a6b45855b5d52cadde181697aa5f0e60e87ab6a7c8188b4ad9ab9a01c8",
+              "vm": 1032132,
+              "nativeFileTraceGroups": [
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775807,
+                  "inclusiveFileRanges": [
+                    [
+                      0,
+                      28
+                    ],
+                    [
+                      31,
+                      62
+                    ],
+                    [
+                      65,
+                      106
+                    ],
+                    [
+                      108,
+                      117
+                    ],
+                    [
+                      120,
+                      131
+                    ],
+                    [
+                      133,
+                      146
+                    ],
+                    [
+                      148,
+                      165
+                    ],
+                    [
+                      169,
+                      179
+                    ],
+                    [
+                      181,
+                      184
+                    ],
+                    [
+                      186,
+                      192
+                    ],
+                    [
+                      194,
+                      197
+                    ],
+                    [
+                      199,
+                      210
+                    ],
+                    [
+                      216,
+                      218
+                    ],
+                    [
+                      224,
+                      262
+                    ],
+                    [
+                      265,
+                      273
+                    ],
+                    [
+                      276,
+                      276
+                    ],
+                    [
+                      279,
+                      285
+                    ],
+                    [
+                      287,
+                      344
+                    ],
+                    [
+                      346,
+                      350
+                    ],
+                    [
+                      355,
+                      365
+                    ],
+                    [
+                      367,
+                      372
+                    ],
+                    [
+                      374,
+                      383
+                    ],
+                    [
+                      385,
+                      385
+                    ],
+                    [
+                      387,
+                      426
+                    ],
+                    [
+                      429,
+                      430
+                    ],
+                    [
+                      432,
+                      470
+                    ],
+                    [
+                      472,
+                      478
+                    ],
+                    [
+                      480,
+                      518
+                    ],
+                    [
+                      520,
+                      565
+                    ],
+                    [
+                      567,
+                      579
+                    ],
+                    [
+                      582,
+                      594
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775803,
+                  "inclusiveFileRanges": [
+                    [
+                      29,
+                      29
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775806,
+                  "inclusiveFileRanges": [
+                    [
+                      30,
+                      30
+                    ],
+                    [
+                      107,
+                      107
+                    ],
+                    [
+                      132,
+                      132
+                    ],
+                    [
+                      166,
+                      167
+                    ],
+                    [
+                      212,
+                      215
+                    ],
+                    [
+                      220,
+                      223
+                    ],
+                    [
+                      263,
+                      264
+                    ],
+                    [
+                      352,
+                      354
+                    ],
+                    [
+                      366,
+                      366
+                    ],
+                    [
+                      386,
+                      386
+                    ],
+                    [
+                      427,
+                      427
+                    ],
+                    [
+                      580,
+                      581
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775801,
+                  "inclusiveFileRanges": [
+                    [
+                      63,
+                      63
+                    ],
+                    [
+                      428,
+                      428
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 6,
+                  "remainingWork": 9223372036854775795,
+                  "inclusiveFileRanges": [
+                    [
+                      64,
+                      64
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 2,
+                  "remainingWork": 9223372036854775803,
+                  "inclusiveFileRanges": [
+                    [
+                      118,
+                      118
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775805,
+                  "inclusiveFileRanges": [
+                    [
+                      119,
+                      119
+                    ],
+                    [
+                      185,
+                      185
+                    ],
+                    [
+                      274,
+                      275
+                    ],
+                    [
+                      277,
+                      278
+                    ],
+                    [
+                      286,
+                      286
+                    ],
+                    [
+                      351,
+                      351
+                    ],
+                    [
+                      373,
+                      373
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775752,
+                  "inclusiveFileRanges": [
+                    [
+                      147,
+                      147
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775804,
+                  "inclusiveFileRanges": [
+                    [
+                      168,
+                      168
+                    ],
+                    [
+                      198,
+                      198
+                    ],
+                    [
+                      384,
+                      384
+                    ],
+                    [
+                      566,
+                      566
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775798,
+                  "inclusiveFileRanges": [
+                    [
+                      180,
+                      180
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775779,
+                  "inclusiveFileRanges": [
+                    [
+                      193,
+                      193
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775802,
+                  "inclusiveFileRanges": [
+                    [
+                      211,
+                      211
+                    ],
+                    [
+                      345,
+                      345
+                    ],
+                    [
+                      431,
+                      431
+                    ],
+                    [
+                      479,
+                      479
+                    ],
+                    [
+                      519,
+                      519
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775792,
+                  "inclusiveFileRanges": [
+                    [
+                      219,
+                      219
+                    ]
+                  ]
+                },
+                {
+                  "failure": 0,
+                  "provisionalMatches": 0,
+                  "remainingWork": 9223372036854775797,
+                  "inclusiveFileRanges": [
+                    [
+                      471,
+                      471
+                    ]
+                  ]
+                }
+              ],
+              "nativeFileTraceCount": 595,
+              "nativeFileTracesSha256": "d61e0ab3d3e723141a55a8d18d44c0d9e3327512abe7a4d1e4b0f2d87e142ee7"
+            },
+            "sqlBytes": 27700,
+            "sqlSha256": "50e4d5a6b45855b5d52cadde181697aa5f0e60e87ab6a7c8188b4ad9ab9a01c8"
           }
         }
       ],
@@ -77439,7 +78323,7 @@
           "grammar": 0,
           "result": {
             "admitted": false,
-            "reason": "outcome relations: recursive outcomes need a component contract"
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parsed-tree composition"
           }
         }
       ],
@@ -77460,7 +78344,7 @@
           "grammar": 0,
           "result": {
             "admitted": false,
-            "reason": "outcome relations: recursive outcomes need a component contract"
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parsed-tree composition"
           }
         }
       ],
@@ -77565,7 +78449,7 @@
           "grammar": 0,
           "result": {
             "admitted": false,
-            "reason": "outcome relations: recursive outcomes need a component contract"
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parsed-tree composition"
           }
         }
       ],
@@ -98727,7 +99611,7 @@
           "grammar": 0,
           "result": {
             "admitted": false,
-            "reason": "outcome relations: recursive outcomes need a component contract"
+            "reason": "outcome relations: leaf or operator lacks a total, effect-free outcome contract: binding-site composition"
           }
         }
       ],
@@ -102378,23 +103262,23 @@
   ],
   "scope": "Checked-in Python policy catalog. Grammar admission and optional all-fixture matching parity; not production replacement certification.",
   "summary": {
-    "admitted": 76,
+    "admitted": 78,
     "clauses": 146,
     "executionFailed": 0,
-    "executionPassed": 76,
+    "executionPassed": 78,
     "grammars": 146,
     "noPositiveWitness": 0,
     "policies": 138,
     "policyCompilationErrors": 0,
     "refusalReasons": {
-      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: binding-site composition": 3,
+      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: binding-site composition": 4,
       "outcome relations: leaf or operator lacks a total, effect-free outcome contract: format-argument composition": 6,
       "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parameterized utility calls": 2,
-      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parsed-tree composition": 9,
-      "outcome relations: recursive outcomes need a component contract": 49,
+      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parsed-tree composition": 12,
+      "outcome relations: recursive outcomes need a component contract": 43,
       "recursive negation or region dependency needs an outcome contract": 1
     },
-    "refused": 70
+    "refused": 68
   },
   "unverified": [
     "Policy scope and file-condition selection, violation enumeration/rendering, fixes and suppression.",
@@ -102421,7 +103305,7 @@
     "native/src/code_rule_dsl/sql/relational/leaves.rs": "1f34f665858fed8fc5800f3917da14a62674d847a708339c23cca282588444c2",
     "native/src/code_rule_dsl/sql/relational/lower.rs": "a95a585df3dc3e7b6c4e794577e4e2df15c688fffdf98f22a2f3d21d90276ae5",
     "native/src/code_rule_dsl/sql/relational/memo_store.rs": "dc481b453075749b56526b45b48150ff6981c324281219c1d3c73eb3fe35b4bd",
-    "native/src/code_rule_dsl/sql/relational/mod.rs": "a1a67a9b8fa49b7bd44298bc3018cc157a7c394e020d6b7b7b677fd4ba48f6fd",
+    "native/src/code_rule_dsl/sql/relational/mod.rs": "2a657c70880b5920ba66c35c3dc2cbb44c35c5f46c5eb921ad02be9b031d0cc7",
     "native/src/code_rule_dsl/sql/relational/outcomes/atomic_owner.rs": "c13fb619271d3e139b12a1823196583c794c8141446ef857b37879bb1da3e80b",
     "native/src/code_rule_dsl/sql/relational/outcomes/atomic_predicate_tests.rs": "7219e006eb5795ae394dc7ab6fe04dcb863938b5cac871ab6efd92f3c5e9978f",
     "native/src/code_rule_dsl/sql/relational/outcomes/binds_lower.rs": "ef56350495254524436ef0e1cc14cebc1347828ceb8d58229cf8c3cbf956c822",
@@ -102434,15 +103318,18 @@
     "native/src/code_rule_dsl/sql/relational/outcomes/capture_predicate_tests.rs": "8089cd82d35b737484d378186b75cb6cb36f99cf145127efcd7878fd2f75f79e",
     "native/src/code_rule_dsl/sql/relational/outcomes/capture_walk_tests.rs": "6f6a8a778013373f65b85fc066a88ff0bb9769ac428f2045a1833ba14b0f301c",
     "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "8d9a5a2189232488c3a0c7ce71832e5ff36d639ca0d40ba70a645a485ebe34cd",
-    "native/src/code_rule_dsl/sql/relational/outcomes/chain.rs": "fd75e882b5367208fe6dafc572692d326c0837f8963cd5e057f3a86c35a0b513",
+    "native/src/code_rule_dsl/sql/relational/outcomes/chain.rs": "9500a3e4be54e756c93a7fd95c1dfed5b7c855a6dc49739d05f0a0ff45c07ee2",
     "native/src/code_rule_dsl/sql/relational/outcomes/chain_tests.rs": "160e3fe771c7a650e02aeb6b198906b808ed4f9420ed96bb487659be027ab5de",
     "native/src/code_rule_dsl/sql/relational/outcomes/composition_budget_tests.rs": "5109d57ee18432afb223778b1be52f52af32e3dc888d03768565fb6667969097",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs": "ba71701ae5e22501900bb88bdd9a9b7bc78148144aeca8fd579b89dffef5fe2d",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_tests.rs": "0c561bf67c63c62e5cd44fe18f888cce0f5204146a4d597180d6e226c399b369",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_walk_tests.rs": "8d2e010992cc20a54d81d255ac946b0712607fb0057dea31c85375270cf7eda0",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs": "1dfa780f2b688315e81990c6d20691ea04c3c881fa2268078331addc552ec4f8",
-    "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "c693b4a555f5a997b011d6fa4d404fb46ad0bb29938afbc3ecfad50c5180b957",
-    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "06c13af9eec77a33efdfab9b6a77c6fac61ae4d2cd460189bf2f5db80ce71d71",
+    "native/src/code_rule_dsl/sql/relational/outcomes/downward.rs": "4cddf2dab46947b71288d3c93aa92df20148477e75be3703553c8e91c45470f7",
+    "native/src/code_rule_dsl/sql/relational/outcomes/downward_shape.rs": "8ada1f7b878f61148c9c9e06438567849675250bd262c255e736dada74204c19",
+    "native/src/code_rule_dsl/sql/relational/outcomes/downward_tests.rs": "87764aa529d348ec67bdbe6a3f0c23f7960ba612b41982c0afaafcbb4d5bd587",
+    "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "aec13423a64e322ddeec2fa44ba32b70203abdde5c2e932ca9b2f8bf27688489",
+    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "2f678497152d3395f3f5b7542d5fd5627d932d9e63e14b1703844c33cee9d6a9",
     "native/src/code_rule_dsl/sql/relational/outcomes/field.rs": "10960a58a39e0d49375073d126691313d34234c1319dad71d4cbf94b0cfe9f8b",
     "native/src/code_rule_dsl/sql/relational/outcomes/field_end.rs": "784bc3a27855785b2eca0deed460995dc642785ee2dafc0d5f3f02d220d1356f",
     "native/src/code_rule_dsl/sql/relational/outcomes/field_end_tests.rs": "d8a50f730215c71cc309b035eb1c2dd1386a3176619e1c4fdcd23e37b9f0a930",
@@ -102450,10 +103337,10 @@
     "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "e6d08c91932d16cdef43b7dfae10a84bb2b9a36d8305858dd57fc9d2e08b6356",
     "native/src/code_rule_dsl/sql/relational/outcomes/fill_cost.rs": "9988c7537a9b9f8f9f0bc389e1a0af751541b725067f72c3052df6e2d5a56ddf",
     "native/src/code_rule_dsl/sql/relational/outcomes/list_tests.rs": "9c1a385da0e0351e127032440b3cf3169495f64bc9629f4865e30fbd67a4bbdf",
-    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "dea285b432912878f2ff599bffc5382a5d9c8d29c53d0341075696734d643d22",
+    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "a0ab837e3cd1e9de9a4799696074f07eb3c5718d89c66dedc1bb5367954cfa22",
     "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "c1aa6a27668f446d34edb31b0e4d6fabe5bc5729e87e6b4dfe7cca91b4dbc2c8",
     "native/src/code_rule_dsl/sql/relational/outcomes/memo_tests.rs": "656b044ea22b7c64df8c83726f1ef3db4ac3efda7f40d515fd24da672f3dacc8",
-    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "f27f1c212acee03207e2d6d29716beb39af0ae44612f418695f23b82b372e288",
+    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "08659d1a104cceac033288134ce75bd80a7edc0370c618c782e30b80114a8bb3",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "d4c2689353c0f73b1df33c612605f784e21c7438f9b33c97efe6ab1f8960897e",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_memo_tests.rs": "9b6469e2a8c5e0f09a348712a74630b063e8c57ef63318cdea5ddf796fe48e60",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs": "102ac57bf18624266acc71b2699b5c33cae5048013b35fe6d2948d084de9c352",
@@ -102482,7 +103369,8 @@
     "native/src/code_rule_dsl/sql/relational/pure_catalog_tests.rs": "ea88bcbb4d080fa0ac19e641cd0011a633440cba014f417b6d8a8bc62837ced8",
     "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
     "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
-    "native/src/code_rule_dsl/sql/relational/recursive_chain.rs": "922207afa1ef998386fcfc5bff43b585f47602a38d118825cea07f11716b3669",
+    "native/src/code_rule_dsl/sql/relational/recursive_chain.rs": "8f6db0b8125db98225ecb0b7f4e044934cca10b40a277f70d12979f419d21bb6",
+    "native/src/code_rule_dsl/sql/relational/recursive_downward.rs": "cc4298bbc310a22f8f7e6657987f81b12cd45acced60f218940a3cd51b0d5c8b",
     "native/src/code_rule_dsl/sql/relational/row.rs": "f8e5ee9c5dc6a8b31e8999b8218abd64861e7f471f1472cf3e5d7a044b36a530",
     "native/src/code_rule_dsl/sql/relational/tests.rs": "6c11334ca62a7ba5feb665808b4373c984b3d00438e2f8458c3575df5ba6fae3",
     "native/src/code_rule_dsl/sql/relational/witness.rs": "ded0a5aca73b45ec156c0a6309480c499ae8d65c549fe55900a805b25e719ad0",
@@ -102501,7 +103389,7 @@
     "packs/python/rules/ruff-b023-function-uses-loop-variable.json": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
     "benchmark/relational-candidate-demand.py": "e0eb2c51cc42c46f6a97af0fc5e81d2bd51fde3c84549150a335045d1137ed86"
   },
-  "executableSha256": "61259b7f3b13b2d22dc957a7451ea58caa9f21796b16534ca7854708a68d10cb",
+  "executableSha256": "27cf3923185579945f32985b81c7b291020723d15f50c02da3125a49c6f6597a",
   "commands": {
     "coverage": "RUST_MIN_STACK=67108864 RERAIL_RELATIONAL_CUTOVER_LEDGER=coverage.json <test-binary> relational_cutover_catalog_complete_coverage --ignored --nocapture --test-threads=1",
     "parity": "RUST_MIN_STACK=67108864 RERAIL_RELATIONAL_CUTOVER_LEDGER=parity.json RERAIL_RELATIONAL_CUTOVER_SQL_DIR=sql <test-binary> relational_cutover_catalog_fixture_parity --ignored --nocapture --test-threads=1"

@@ -1,7 +1,7 @@
 {
-  "scope": "Test-only compiler admission of pure functional recursive chains. Separate grammar executions across 595 files, not a fused complete job or production qualification.",
-  "revision": "0f2b6d1ffb82c56dcc9cf60f4bb2f8c4d4d87ff8",
-  "workingTree": " M docs/sql-relational-transition-plan.md\n M docs/sql-set-composition-compiler-spike.md\n M native/src/code_rule_dsl/sql/relational/outcomes/effects.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/nested_utility.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/publication.rs\n M native/src/code_rule_dsl/sql/relational/recursive_chain.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/chain.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/chain_tests.rs\n",
+  "scope": "Test-only compiler admission of pure ordered downward recursive components. Separate grammar executions across 595 files, not a fused complete job or production qualification.",
+  "revision": "2bfcc2893e6bbe7089ef4ff4d0d9863440397724",
+  "workingTree": " M docs/sql-relational-transition-plan.md\n M docs/sql-set-composition-compiler-spike.md\n M native/src/code_rule_dsl/sql/relational/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/chain.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/effects.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/mod.rs\n M native/src/code_rule_dsl/sql/relational/recursive_chain.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/downward.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/downward_shape.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/downward_tests.rs\n?? native/src/code_rule_dsl/sql/relational/recursive_downward.rs\n",
   "sourceHashes": {
     "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
     "native/src/code_rule_dsl/sql/relational/answers.rs": "ccbd186b968e230bb1ca5e868e1e4b142e58bd73290a7def5a8411723dd140a8",
@@ -19,7 +19,7 @@
     "native/src/code_rule_dsl/sql/relational/leaves.rs": "1f34f665858fed8fc5800f3917da14a62674d847a708339c23cca282588444c2",
     "native/src/code_rule_dsl/sql/relational/lower.rs": "a95a585df3dc3e7b6c4e794577e4e2df15c688fffdf98f22a2f3d21d90276ae5",
     "native/src/code_rule_dsl/sql/relational/memo_store.rs": "dc481b453075749b56526b45b48150ff6981c324281219c1d3c73eb3fe35b4bd",
-    "native/src/code_rule_dsl/sql/relational/mod.rs": "a1a67a9b8fa49b7bd44298bc3018cc157a7c394e020d6b7b7b677fd4ba48f6fd",
+    "native/src/code_rule_dsl/sql/relational/mod.rs": "2a657c70880b5920ba66c35c3dc2cbb44c35c5f46c5eb921ad02be9b031d0cc7",
     "native/src/code_rule_dsl/sql/relational/outcomes/atomic_owner.rs": "c13fb619271d3e139b12a1823196583c794c8141446ef857b37879bb1da3e80b",
     "native/src/code_rule_dsl/sql/relational/outcomes/atomic_predicate_tests.rs": "7219e006eb5795ae394dc7ab6fe04dcb863938b5cac871ab6efd92f3c5e9978f",
     "native/src/code_rule_dsl/sql/relational/outcomes/binds_lower.rs": "ef56350495254524436ef0e1cc14cebc1347828ceb8d58229cf8c3cbf956c822",
@@ -32,15 +32,18 @@
     "native/src/code_rule_dsl/sql/relational/outcomes/capture_predicate_tests.rs": "8089cd82d35b737484d378186b75cb6cb36f99cf145127efcd7878fd2f75f79e",
     "native/src/code_rule_dsl/sql/relational/outcomes/capture_walk_tests.rs": "6f6a8a778013373f65b85fc066a88ff0bb9769ac428f2045a1833ba14b0f301c",
     "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "8d9a5a2189232488c3a0c7ce71832e5ff36d639ca0d40ba70a645a485ebe34cd",
-    "native/src/code_rule_dsl/sql/relational/outcomes/chain.rs": "fd75e882b5367208fe6dafc572692d326c0837f8963cd5e057f3a86c35a0b513",
+    "native/src/code_rule_dsl/sql/relational/outcomes/chain.rs": "9500a3e4be54e756c93a7fd95c1dfed5b7c855a6dc49739d05f0a0ff45c07ee2",
     "native/src/code_rule_dsl/sql/relational/outcomes/chain_tests.rs": "160e3fe771c7a650e02aeb6b198906b808ed4f9420ed96bb487659be027ab5de",
     "native/src/code_rule_dsl/sql/relational/outcomes/composition_budget_tests.rs": "5109d57ee18432afb223778b1be52f52af32e3dc888d03768565fb6667969097",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs": "ba71701ae5e22501900bb88bdd9a9b7bc78148144aeca8fd579b89dffef5fe2d",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_tests.rs": "0c561bf67c63c62e5cd44fe18f888cce0f5204146a4d597180d6e226c399b369",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_walk_tests.rs": "8d2e010992cc20a54d81d255ac946b0712607fb0057dea31c85375270cf7eda0",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs": "1dfa780f2b688315e81990c6d20691ea04c3c881fa2268078331addc552ec4f8",
-    "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "c693b4a555f5a997b011d6fa4d404fb46ad0bb29938afbc3ecfad50c5180b957",
-    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "06c13af9eec77a33efdfab9b6a77c6fac61ae4d2cd460189bf2f5db80ce71d71",
+    "native/src/code_rule_dsl/sql/relational/outcomes/downward.rs": "4cddf2dab46947b71288d3c93aa92df20148477e75be3703553c8e91c45470f7",
+    "native/src/code_rule_dsl/sql/relational/outcomes/downward_shape.rs": "8ada1f7b878f61148c9c9e06438567849675250bd262c255e736dada74204c19",
+    "native/src/code_rule_dsl/sql/relational/outcomes/downward_tests.rs": "87764aa529d348ec67bdbe6a3f0c23f7960ba612b41982c0afaafcbb4d5bd587",
+    "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "aec13423a64e322ddeec2fa44ba32b70203abdde5c2e932ca9b2f8bf27688489",
+    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "2f678497152d3395f3f5b7542d5fd5627d932d9e63e14b1703844c33cee9d6a9",
     "native/src/code_rule_dsl/sql/relational/outcomes/field.rs": "10960a58a39e0d49375073d126691313d34234c1319dad71d4cbf94b0cfe9f8b",
     "native/src/code_rule_dsl/sql/relational/outcomes/field_end.rs": "784bc3a27855785b2eca0deed460995dc642785ee2dafc0d5f3f02d220d1356f",
     "native/src/code_rule_dsl/sql/relational/outcomes/field_end_tests.rs": "d8a50f730215c71cc309b035eb1c2dd1386a3176619e1c4fdcd23e37b9f0a930",
@@ -48,10 +51,10 @@
     "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "e6d08c91932d16cdef43b7dfae10a84bb2b9a36d8305858dd57fc9d2e08b6356",
     "native/src/code_rule_dsl/sql/relational/outcomes/fill_cost.rs": "9988c7537a9b9f8f9f0bc389e1a0af751541b725067f72c3052df6e2d5a56ddf",
     "native/src/code_rule_dsl/sql/relational/outcomes/list_tests.rs": "9c1a385da0e0351e127032440b3cf3169495f64bc9629f4865e30fbd67a4bbdf",
-    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "dea285b432912878f2ff599bffc5382a5d9c8d29c53d0341075696734d643d22",
+    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "a0ab837e3cd1e9de9a4799696074f07eb3c5718d89c66dedc1bb5367954cfa22",
     "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "c1aa6a27668f446d34edb31b0e4d6fabe5bc5729e87e6b4dfe7cca91b4dbc2c8",
     "native/src/code_rule_dsl/sql/relational/outcomes/memo_tests.rs": "656b044ea22b7c64df8c83726f1ef3db4ac3efda7f40d515fd24da672f3dacc8",
-    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "f27f1c212acee03207e2d6d29716beb39af0ae44612f418695f23b82b372e288",
+    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "08659d1a104cceac033288134ce75bd80a7edc0370c618c782e30b80114a8bb3",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "d4c2689353c0f73b1df33c612605f784e21c7438f9b33c97efe6ab1f8960897e",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_memo_tests.rs": "9b6469e2a8c5e0f09a348712a74630b063e8c57ef63318cdea5ddf796fe48e60",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs": "102ac57bf18624266acc71b2699b5c33cae5048013b35fe6d2948d084de9c352",
@@ -80,7 +83,8 @@
     "native/src/code_rule_dsl/sql/relational/pure_catalog_tests.rs": "ea88bcbb4d080fa0ac19e641cd0011a633440cba014f417b6d8a8bc62837ced8",
     "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
     "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
-    "native/src/code_rule_dsl/sql/relational/recursive_chain.rs": "922207afa1ef998386fcfc5bff43b585f47602a38d118825cea07f11716b3669",
+    "native/src/code_rule_dsl/sql/relational/recursive_chain.rs": "8f6db0b8125db98225ecb0b7f4e044934cca10b40a277f70d12979f419d21bb6",
+    "native/src/code_rule_dsl/sql/relational/recursive_downward.rs": "cc4298bbc310a22f8f7e6657987f81b12cd45acced60f218940a3cd51b0d5c8b",
     "native/src/code_rule_dsl/sql/relational/row.rs": "f8e5ee9c5dc6a8b31e8999b8218abd64861e7f471f1472cf3e5d7a044b36a530",
     "native/src/code_rule_dsl/sql/relational/tests.rs": "6c11334ca62a7ba5feb665808b4373c984b3d00438e2f8458c3575df5ba6fae3",
     "native/src/code_rule_dsl/sql/relational/witness.rs": "ded0a5aca73b45ec156c0a6309480c499ae8d65c549fe55900a805b25e719ad0",
@@ -99,19 +103,19 @@
     "packs/python/rules/ruff-b023-function-uses-loop-variable.json": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
     "benchmark/relational-candidate-demand.py": "e0eb2c51cc42c46f6a97af0fc5e81d2bd51fde3c84549150a335045d1137ed86"
   },
-  "executableSha256": "61259b7f3b13b2d22dc957a7451ea58caa9f21796b16534ca7854708a68d10cb",
+  "executableSha256": "27cf3923185579945f32985b81c7b291020723d15f50c02da3125a49c6f6597a",
   "querySha256": "b8181c1d92096c724099d7025d0a17e839c14801a0e8296e04d9a5a73ce7b8d2",
   "result": {
     "automaticIndexRows": 1791,
     "baseline": {
-      "diagnosticKernelCpuNs": 6684128458,
+      "diagnosticKernelCpuNs": 6769979667,
       "frameAdvances": 15597627,
       "framePublications": 6944829,
       "matchingStatements": 1
     },
     "captureEqualityRequests": 0,
-    "coldKernelCpuNs": 38216375,
-    "diagnosticCpuNs": 105590667,
+    "coldKernelCpuNs": 38831958,
+    "diagnosticCpuNs": 97908000,
     "diagnosticRelationRows": [
       {
         "relation": "search5",
@@ -1026,7 +1030,7 @@
     "files": 138,
     "framePublications": 0,
     "fullscanSteps": 2792,
-    "generationCpuNs": 929375,
+    "generationCpuNs": 1195125,
     "inputs": [
       {
         "path": "benchmarks/tests/test_exact_graph_publication_benchmark_contract.py",
@@ -1741,8 +1745,8 @@
     ],
     "parity": true,
     "patternRequests": 142,
-    "prepareAndExecuteCpuNs": 37238083,
-    "prepareCpuNs": 3140791,
+    "prepareAndExecuteCpuNs": 37557375,
+    "prepareCpuNs": 3685083,
     "regexRequests": 655,
     "relations": {
       "capture": "N",
@@ -1766,7 +1770,7 @@
       {
         "generated": {
           "baseline": {
-            "coldKernelCpuNs": 6573504042,
+            "coldKernelCpuNs": 6671451667,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -1777,11 +1781,11 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6561704708,
+            "matchingCpuNs": 6659336333,
             "scheduledStatements": 1
           },
           "direct": {
-            "coldKernelCpuNs": 41630583,
+            "coldKernelCpuNs": 44281792,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -1792,7 +1796,7 @@
               "nodeFilters": 10957,
               "regexNodeRequests": 655
             },
-            "generationCpuNs": 826375,
+            "generationCpuNs": 922167,
             "leafCalls": 0,
             "metrics": {
               "actionable": {
@@ -1802,11 +1806,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.10148820870166143
+                "prepareShare": 0.09426662945796625
               },
               "automaticIndexRows": 1791,
-              "cpuNs": 31204416,
-              "diagnosticCpuNs": 5942750,
+              "cpuNs": 32679917,
+              "diagnosticCpuNs": 7090750,
               "explain": [
                 {
                   "flags": [
@@ -3221,11 +3225,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 5939666,
+              "explainCpuNs": 7087375,
               "fullscanSteps": 2792,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3524584,
-              "prepareWallNs": 3748417,
+              "prepareCpuNs": 3401250,
+              "prepareWallNs": 3729584,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -3243,11 +3247,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 1791,
-                  "cpuNs": 31204416,
+                  "cpuNs": 32679917,
                   "fullscanSteps": 2792,
                   "interruption": null,
-                  "prepareCpuNs": 3524584,
-                  "prepareWallNs": 3748417,
+                  "prepareCpuNs": 3401250,
+                  "prepareWallNs": 3729584,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -3257,11 +3261,11 @@
                   "sqlBytes": 10232,
                   "sqlExecutions": 1,
                   "vmSteps": 246364,
-                  "wallNs": 146701042
+                  "wallNs": 33391625
                 }
               ],
               "vmSteps": 246364,
-              "wallNs": 146701042
+              "wallNs": 33391625
             }
           },
           "explain": {
@@ -5233,18 +5237,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 265256500,
+          "nativeCpuNs": 294828166,
           "parity": true,
-          "parseCpuNs": 767228125,
+          "parseCpuNs": 725203708,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2333500,
+            "installationCpuNs": 2890708,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 3987458,
+                "cpuNs": 4350917,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -5255,11 +5259,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 3986959
+                "wallNs": 4349917
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 3604792,
+                "cpuNs": 4103875,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -5270,11 +5274,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 3603958
+                "wallNs": 4103083
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 3706958,
+                "cpuNs": 4124250,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -5285,7 +5289,7 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 3706084
+                "wallNs": 4123125
               }
             ]
           },
@@ -5294,7 +5298,7 @@
         },
         "reference": {
           "baseline": {
-            "coldKernelCpuNs": 6535621334,
+            "coldKernelCpuNs": 6665616584,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -5305,7 +5309,7 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6524418666,
+            "matchingCpuNs": 6650793958,
             "scheduledStatements": 1
           },
           "captureDemand": [
@@ -11567,7 +11571,7 @@
             ]
           ],
           "direct": {
-            "coldKernelCpuNs": 71868792,
+            "coldKernelCpuNs": 68777041,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -11578,7 +11582,7 @@
               "nodeFilters": 52112,
               "regexNodeRequests": 0
             },
-            "generationCpuNs": 399750,
+            "generationCpuNs": 563666,
             "leafCalls": 2308,
             "metrics": {
               "actionable": {
@@ -11588,11 +11592,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.04413977234291835
+                "prepareShare": 0.039992426054372955
               },
               "automaticIndexRows": 37241,
-              "cpuNs": 63054834,
-              "diagnosticCpuNs": 5379125,
+              "cpuNs": 60206875,
+              "diagnosticCpuNs": 5316417,
               "explain": [
                 {
                   "flags": [
@@ -13009,11 +13013,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 5375542,
+              "explainCpuNs": 5313667,
               "fullscanSteps": 42351,
               "peakFrameRows": 0,
-              "prepareCpuNs": 2911750,
-              "prepareWallNs": 2984917,
+              "prepareCpuNs": 2508125,
+              "prepareWallNs": 2507959,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -13031,11 +13035,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 37241,
-                  "cpuNs": 63054834,
+                  "cpuNs": 60206875,
                   "fullscanSteps": 42351,
                   "interruption": null,
-                  "prepareCpuNs": 2911750,
-                  "prepareWallNs": 2984917,
+                  "prepareCpuNs": 2508125,
+                  "prepareWallNs": 2507959,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -13045,11 +13049,11 @@
                   "sqlBytes": 8196,
                   "sqlExecutions": 1,
                   "vmSteps": 2324796,
-                  "wallNs": 270940416
+                  "wallNs": 175943750
                 }
               ],
               "vmSteps": 2324796,
-              "wallNs": 270940416
+              "wallNs": 175943750
             }
           },
           "explain": {
@@ -15023,18 +15027,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 275383333,
+          "nativeCpuNs": 304401500,
           "parity": true,
-          "parseCpuNs": 723768916,
+          "parseCpuNs": 736489417,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2117709,
+            "installationCpuNs": 2112458,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 33447500,
+                "cpuNs": 29782209,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -15045,11 +15049,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 99536792
+                "wallNs": 29781167
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 32680041,
+                "cpuNs": 29776541,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -15060,11 +15064,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 88988083
+                "wallNs": 29775833
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 30395417,
+                "cpuNs": 30102541,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -15075,7 +15079,7 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 30394041
+                "wallNs": 299206125
               }
             ]
           },
@@ -15086,7 +15090,7 @@
       {
         "generated": {
           "baseline": {
-            "coldKernelCpuNs": 6521780125,
+            "coldKernelCpuNs": 6675081000,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -15097,11 +15101,11 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6510177000,
+            "matchingCpuNs": 6663794375,
             "scheduledStatements": 1
           },
           "direct": {
-            "coldKernelCpuNs": 45437666,
+            "coldKernelCpuNs": 41869000,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -15112,7 +15116,7 @@
               "nodeFilters": 10957,
               "regexNodeRequests": 655
             },
-            "generationCpuNs": 875208,
+            "generationCpuNs": 870875,
             "leafCalls": 0,
             "metrics": {
               "actionable": {
@@ -15122,11 +15126,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.09971961858385875
+                "prepareShare": 0.08964460313688448
               },
               "automaticIndexRows": 1791,
-              "cpuNs": 33713625,
-              "diagnosticCpuNs": 6987416,
+              "cpuNs": 31314709,
+              "diagnosticCpuNs": 6433459,
               "explain": [
                 {
                   "flags": [
@@ -16541,11 +16545,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 6984334,
+              "explainCpuNs": 6430709,
               "fullscanSteps": 2792,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3734292,
-              "prepareWallNs": 25260000,
+              "prepareCpuNs": 3083625,
+              "prepareWallNs": 3180667,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -16563,11 +16567,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 1791,
-                  "cpuNs": 33713625,
+                  "cpuNs": 31314709,
                   "fullscanSteps": 2792,
                   "interruption": null,
-                  "prepareCpuNs": 3734292,
-                  "prepareWallNs": 25260000,
+                  "prepareCpuNs": 3083625,
+                  "prepareWallNs": 3180667,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -16577,11 +16581,11 @@
                   "sqlBytes": 10232,
                   "sqlExecutions": 1,
                   "vmSteps": 246364,
-                  "wallNs": 79235750
+                  "wallNs": 132535708
                 }
               ],
               "vmSteps": 246364,
-              "wallNs": 79235750
+              "wallNs": 132535708
             }
           },
           "explain": {
@@ -18553,18 +18557,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 263317125,
+          "nativeCpuNs": 290567542,
           "parity": true,
-          "parseCpuNs": 720682250,
+          "parseCpuNs": 719229375,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2938875,
+            "installationCpuNs": 2554625,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4773500,
+                "cpuNs": 4130041,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -18575,11 +18579,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4773125
+                "wallNs": 4129292
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4421417,
+                "cpuNs": 3806833,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -18590,11 +18594,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4421000
+                "wallNs": 3805792
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4200000,
+                "cpuNs": 3824208,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -18605,7 +18609,7 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4199708
+                "wallNs": 3823833
               }
             ]
           },
@@ -18614,7 +18618,7 @@
         },
         "reference": {
           "baseline": {
-            "coldKernelCpuNs": 6603339917,
+            "coldKernelCpuNs": 6740416792,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -18625,7 +18629,7 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6591825667,
+            "matchingCpuNs": 6727952625,
             "scheduledStatements": 1
           },
           "captureDemand": [
@@ -24887,7 +24891,7 @@
             ]
           ],
           "direct": {
-            "coldKernelCpuNs": 66890958,
+            "coldKernelCpuNs": 69634917,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -24898,7 +24902,7 @@
               "nodeFilters": 52112,
               "regexNodeRequests": 0
             },
-            "generationCpuNs": 251042,
+            "generationCpuNs": 406167,
             "leafCalls": 2308,
             "metrics": {
               "actionable": {
@@ -24908,11 +24912,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.04288382785742775
+                "prepareShare": 0.04405051800224979
               },
               "automaticIndexRows": 37241,
-              "cpuNs": 58379500,
-              "diagnosticCpuNs": 5527292,
+              "cpuNs": 60761583,
+              "diagnosticCpuNs": 5509291,
               "explain": [
                 {
                   "flags": [
@@ -26329,11 +26333,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 5524209,
+              "explainCpuNs": 5506375,
               "fullscanSteps": 42351,
               "peakFrameRows": 0,
-              "prepareCpuNs": 2615708,
-              "prepareWallNs": 2615250,
+              "prepareCpuNs": 2799917,
+              "prepareWallNs": 3028667,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -26351,11 +26355,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 37241,
-                  "cpuNs": 58379500,
+                  "cpuNs": 60761583,
                   "fullscanSteps": 42351,
                   "interruption": null,
-                  "prepareCpuNs": 2615708,
-                  "prepareWallNs": 2615250,
+                  "prepareCpuNs": 2799917,
+                  "prepareWallNs": 3028667,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -26365,11 +26369,11 @@
                   "sqlBytes": 8196,
                   "sqlExecutions": 1,
                   "vmSteps": 2324796,
-                  "wallNs": 257923625
+                  "wallNs": 117393416
                 }
               ],
               "vmSteps": 2324796,
-              "wallNs": 257923625
+              "wallNs": 117393416
             }
           },
           "explain": {
@@ -28343,18 +28347,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 268187834,
+          "nativeCpuNs": 303037417,
           "parity": true,
-          "parseCpuNs": 736916416,
+          "parseCpuNs": 742553125,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2069334,
+            "installationCpuNs": 2205125,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 30014500,
+                "cpuNs": 30678500,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -28365,11 +28369,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 30013958
+                "wallNs": 30677750
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 29716834,
+                "cpuNs": 30786583,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -28380,11 +28384,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 29716000
+                "wallNs": 30785833
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 29919834,
+                "cpuNs": 31005500,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -28395,7 +28399,7 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 29919083
+                "wallNs": 31004625
               }
             ]
           },
@@ -28406,7 +28410,7 @@
       {
         "generated": {
           "baseline": {
-            "coldKernelCpuNs": 6647974792,
+            "coldKernelCpuNs": 6699411500,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -28417,11 +28421,11 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6636346834,
+            "matchingCpuNs": 6680849458,
             "scheduledStatements": 1
           },
           "direct": {
-            "coldKernelCpuNs": 44798666,
+            "coldKernelCpuNs": 41684791,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -28432,7 +28436,7 @@
               "nodeFilters": 10957,
               "regexNodeRequests": 655
             },
-            "generationCpuNs": 902375,
+            "generationCpuNs": 886333,
             "leafCalls": 0,
             "metrics": {
               "actionable": {
@@ -28442,11 +28446,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.08246042902871241
+                "prepareShare": 0.0998821098313594
               },
               "automaticIndexRows": 1791,
-              "cpuNs": 34031083,
-              "diagnosticCpuNs": 6690417,
+              "cpuNs": 31050167,
+              "diagnosticCpuNs": 6149625,
               "explain": [
                 {
                   "flags": [
@@ -29861,11 +29865,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 6687500,
+              "explainCpuNs": 6146792,
               "fullscanSteps": 2792,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3058416,
-              "prepareWallNs": 3057833,
+              "prepareCpuNs": 3445500,
+              "prepareWallNs": 3742917,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -29883,11 +29887,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 1791,
-                  "cpuNs": 34031083,
+                  "cpuNs": 31050167,
                   "fullscanSteps": 2792,
                   "interruption": null,
-                  "prepareCpuNs": 3058416,
-                  "prepareWallNs": 3057833,
+                  "prepareCpuNs": 3445500,
+                  "prepareWallNs": 3742917,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -29897,11 +29901,11 @@
                   "sqlBytes": 10232,
                   "sqlExecutions": 1,
                   "vmSteps": 246364,
-                  "wallNs": 167275625
+                  "wallNs": 170168834
                 }
               ],
               "vmSteps": 246364,
-              "wallNs": 167275625
+              "wallNs": 170168834
             }
           },
           "explain": {
@@ -31873,18 +31877,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 263654875,
+          "nativeCpuNs": 295797417,
           "parity": true,
-          "parseCpuNs": 727375958,
+          "parseCpuNs": 708320750,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2892292,
+            "installationCpuNs": 2765542,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4495625,
+                "cpuNs": 4373000,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -31895,11 +31899,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4494667
+                "wallNs": 4371833
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4309500,
+                "cpuNs": 4059375,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -31910,11 +31914,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4308250
+                "wallNs": 4058417
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4264000,
+                "cpuNs": 4046583,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -31925,7 +31929,7 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4263250
+                "wallNs": 4046000
               }
             ]
           },
@@ -31934,7 +31938,7 @@
         },
         "reference": {
           "baseline": {
-            "coldKernelCpuNs": 6804780542,
+            "coldKernelCpuNs": 6827461500,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -31945,7 +31949,7 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6792366958,
+            "matchingCpuNs": 6813375958,
             "scheduledStatements": 1
           },
           "captureDemand": [
@@ -38207,7 +38211,7 @@
             ]
           ],
           "direct": {
-            "coldKernelCpuNs": 78741333,
+            "coldKernelCpuNs": 70120126,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -38218,7 +38222,7 @@
               "nodeFilters": 52112,
               "regexNodeRequests": 0
             },
-            "generationCpuNs": 449916,
+            "generationCpuNs": 561917,
             "leafCalls": 2308,
             "metrics": {
               "actionable": {
@@ -38228,11 +38232,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.048588321439711
+                "prepareShare": 0.04249781406208377
               },
               "automaticIndexRows": 37241,
-              "cpuNs": 67814166,
-              "diagnosticCpuNs": 6861584,
+              "cpuNs": 61104917,
+              "diagnosticCpuNs": 5592792,
               "explain": [
                 {
                   "flags": [
@@ -39649,11 +39653,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 6858333,
+              "explainCpuNs": 5590042,
               "fullscanSteps": 42351,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3463250,
-              "prepareWallNs": 3525875,
+              "prepareCpuNs": 2712083,
+              "prepareWallNs": 2711750,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -39671,11 +39675,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 37241,
-                  "cpuNs": 67814166,
+                  "cpuNs": 61104917,
                   "fullscanSteps": 42351,
                   "interruption": null,
-                  "prepareCpuNs": 3463250,
-                  "prepareWallNs": 3525875,
+                  "prepareCpuNs": 2712083,
+                  "prepareWallNs": 2711750,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -39685,11 +39689,11 @@
                   "sqlBytes": 8196,
                   "sqlExecutions": 1,
                   "vmSteps": 2324796,
-                  "wallNs": 210711875
+                  "wallNs": 228612292
                 }
               ],
               "vmSteps": 2324796,
-              "wallNs": 210711875
+              "wallNs": 228612292
             }
           },
           "explain": {
@@ -41663,18 +41667,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 261745750,
+          "nativeCpuNs": 301170375,
           "parity": true,
-          "parseCpuNs": 734569125,
+          "parseCpuNs": 739354791,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2524375,
+            "installationCpuNs": 2930083,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 32833958,
+                "cpuNs": 31543750,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -41685,11 +41689,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 42935334
+                "wallNs": 31542666
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 32293792,
+                "cpuNs": 31665291,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -41700,11 +41704,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 32292125
+                "wallNs": 99723458
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 33263166,
+                "cpuNs": 34688125,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -41715,7 +41719,7 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 133037958
+                "wallNs": 255064833
               }
             ]
           },
@@ -41745,9 +41749,9 @@
         246364,
         246364
       ],
-      "generatedMedianExecutionCpuNs": 4264000,
-      "referenceMedianExecutionCpuNs": 32293792,
-      "cpuRatio": 0.13203776131338185,
+      "generatedMedianExecutionCpuNs": 4103875,
+      "referenceMedianExecutionCpuNs": 30786583,
+      "cpuRatio": 0.13330076286803247,
       "vmPassed": true,
       "cpuPassed": true,
       "shape": {
@@ -41787,19 +41791,19 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 30038458,
+        "diagnosticKernelCpuNs": 30933416,
         "frameAdvances": 503,
         "framePublications": 259,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4211709,
-      "diagnosticCpuNs": 23615209,
+      "coldKernelCpuNs": 4616416,
+      "diagnosticCpuNs": 24061667,
       "family": "outside-assignments",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 922834,
+      "generationCpuNs": 1065333,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -41817,8 +41821,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3247500,
-      "prepareCpuNs": 3062208,
+      "prepareAndExecuteCpuNs": 3497208,
+      "prepareCpuNs": 3304917,
       "regexRequests": 5,
       "size": 32,
       "statementMemoryBytes": 196240,
@@ -41831,19 +41835,19 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 33031792,
+        "diagnosticKernelCpuNs": 32156709,
         "frameAdvances": 503,
         "framePublications": 259,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 5085209,
-      "diagnosticCpuNs": 26106458,
+      "coldKernelCpuNs": 4755208,
+      "diagnosticCpuNs": 23248624,
       "family": "outside-assignments",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 1193750,
+      "generationCpuNs": 890958,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -41861,8 +41865,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3832833,
-      "prepareCpuNs": 3580791,
+      "prepareAndExecuteCpuNs": 3828917,
+      "prepareCpuNs": 3557583,
       "regexRequests": 5,
       "size": 128,
       "statementMemoryBytes": 196240,
@@ -41875,19 +41879,19 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 31307458,
+        "diagnosticKernelCpuNs": 32416125,
         "frameAdvances": 503,
         "framePublications": 259,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4404500,
-      "diagnosticCpuNs": 20339001,
+      "coldKernelCpuNs": 4216500,
+      "diagnosticCpuNs": 20250292,
       "family": "outside-assignments",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 905542,
+      "generationCpuNs": 885292,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -41905,8 +41909,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3464667,
-      "prepareCpuNs": 3107958,
+      "prepareAndExecuteCpuNs": 3299292,
+      "prepareCpuNs": 2940125,
       "regexRequests": 5,
       "size": 512,
       "statementMemoryBytes": 196240,
@@ -41919,19 +41923,19 @@
     {
       "automaticIndexRows": 97,
       "baseline": {
-        "diagnosticKernelCpuNs": 33626583,
+        "diagnosticKernelCpuNs": 33685958,
         "frameAdvances": 12375,
         "framePublications": 6018,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4495208,
-      "diagnosticCpuNs": 21742375,
+      "coldKernelCpuNs": 4461626,
+      "diagnosticCpuNs": 21494001,
       "family": "repeated-assignment-loads",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 163,
-      "generationCpuNs": 885500,
+      "generationCpuNs": 888542,
       "matches": 32,
       "matchingStatements": 1,
       "nodeAdvances": 589,
@@ -42135,8 +42139,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3579125,
-      "prepareCpuNs": 3223875,
+      "prepareAndExecuteCpuNs": 3539125,
+      "prepareCpuNs": 3171833,
       "regexRequests": 5,
       "size": 32,
       "statementMemoryBytes": 196240,
@@ -42149,19 +42153,19 @@
     {
       "automaticIndexRows": 385,
       "baseline": {
-        "diagnosticKernelCpuNs": 47974709,
+        "diagnosticKernelCpuNs": 44414708,
         "frameAdvances": 47641,
         "framePublications": 23178,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4961458,
-      "diagnosticCpuNs": 26791000,
+      "coldKernelCpuNs": 4949876,
+      "diagnosticCpuNs": 24045209,
       "family": "repeated-assignment-loads",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 643,
-      "generationCpuNs": 880042,
+      "generationCpuNs": 878209,
       "matches": 128,
       "matchingStatements": 1,
       "nodeAdvances": 2221,
@@ -42941,8 +42945,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 4047625,
-      "prepareCpuNs": 3158416,
+      "prepareAndExecuteCpuNs": 4040083,
+      "prepareCpuNs": 3159458,
       "regexRequests": 5,
       "size": 128,
       "statementMemoryBytes": 196240,
@@ -42955,19 +42959,19 @@
     {
       "automaticIndexRows": 1537,
       "baseline": {
-        "diagnosticKernelCpuNs": 93024667,
+        "diagnosticKernelCpuNs": 92173958,
         "frameAdvances": 188027,
         "framePublications": 91602,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 6949625,
-      "diagnosticCpuNs": 35337250,
+      "coldKernelCpuNs": 7009833,
+      "diagnosticCpuNs": 34675125,
       "family": "repeated-assignment-loads",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 2563,
-      "generationCpuNs": 857833,
+      "generationCpuNs": 886375,
       "matches": 512,
       "matchingStatements": 1,
       "nodeAdvances": 8749,
@@ -46051,8 +46055,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 6057750,
-      "prepareCpuNs": 3169333,
+      "prepareAndExecuteCpuNs": 6086917,
+      "prepareCpuNs": 3081500,
       "regexRequests": 5,
       "size": 512,
       "statementMemoryBytes": 196240,
@@ -46067,14 +46071,14 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 33803584,
+        "diagnosticKernelCpuNs": 31173125,
         "frameAdvances": 759,
         "framePublications": 451,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4276918,
-      "diagnosticCpuNs": 23607418,
+      "coldKernelCpuNs": 4206459,
+      "diagnosticCpuNs": 23464584,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -46990,7 +46994,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 902334,
+      "generationCpuNs": 853417,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -47008,8 +47012,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3339958,
-      "prepareCpuNs": 3141833,
+      "prepareAndExecuteCpuNs": 3317708,
+      "prepareCpuNs": 3121625,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -47041,14 +47045,14 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 31042000,
+        "diagnosticKernelCpuNs": 31961125,
         "frameAdvances": 1527,
         "framePublications": 1027,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4651291,
-      "diagnosticCpuNs": 22408583,
+      "coldKernelCpuNs": 4264376,
+      "diagnosticCpuNs": 20418500,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -47964,7 +47968,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 957791,
+      "generationCpuNs": 921042,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -47982,8 +47986,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3654000,
-      "prepareCpuNs": 3390125,
+      "prepareAndExecuteCpuNs": 3302834,
+      "prepareCpuNs": 3048250,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -48015,14 +48019,14 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 33593667,
+        "diagnosticKernelCpuNs": 31704417,
         "frameAdvances": 4599,
         "framePublications": 3331,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4870917,
-      "diagnosticCpuNs": 23646459,
+      "coldKernelCpuNs": 5351208,
+      "diagnosticCpuNs": 23746708,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -48938,7 +48942,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 957125,
+      "generationCpuNs": 977792,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -48956,8 +48960,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3878208,
-      "prepareCpuNs": 3357458,
+      "prepareAndExecuteCpuNs": 4333000,
+      "prepareCpuNs": 3760250,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -48989,14 +48993,14 @@
     {
       "automaticIndexRows": 129,
       "baseline": {
-        "diagnosticKernelCpuNs": 33006125,
+        "diagnosticKernelCpuNs": 28755625,
         "frameAdvances": 690,
         "framePublications": 329,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4944709,
-      "diagnosticCpuNs": 24312459,
+      "coldKernelCpuNs": 4195000,
+      "diagnosticCpuNs": 20676125,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -49912,7 +49916,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 131,
-      "generationCpuNs": 1020459,
+      "generationCpuNs": 856042,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 339,
@@ -49930,8 +49934,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3882000,
-      "prepareCpuNs": 3525750,
+      "prepareAndExecuteCpuNs": 3308292,
+      "prepareCpuNs": 3009917,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -49963,14 +49967,14 @@
     {
       "automaticIndexRows": 513,
       "baseline": {
-        "diagnosticKernelCpuNs": 33090375,
+        "diagnosticKernelCpuNs": 28208834,
         "frameAdvances": 1170,
         "framePublications": 521,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 5122459,
-      "diagnosticCpuNs": 26835334,
+      "coldKernelCpuNs": 4625749,
+      "diagnosticCpuNs": 22992249,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -50886,7 +50890,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 515,
-      "generationCpuNs": 981875,
+      "generationCpuNs": 877666,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 1203,
@@ -50904,8 +50908,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 4106042,
-      "prepareCpuNs": 3374917,
+      "prepareAndExecuteCpuNs": 3714542,
+      "prepareCpuNs": 3085250,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -50937,14 +50941,14 @@
     {
       "automaticIndexRows": 2049,
       "baseline": {
-        "diagnosticKernelCpuNs": 34642292,
+        "diagnosticKernelCpuNs": 28721542,
         "frameAdvances": 3090,
         "framePublications": 1289,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 7101750,
-      "diagnosticCpuNs": 36653416,
+      "coldKernelCpuNs": 5564375,
+      "diagnosticCpuNs": 34464291,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -51860,7 +51864,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 2051,
-      "generationCpuNs": 964333,
+      "generationCpuNs": 822625,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 4659,
@@ -51878,8 +51882,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 6092333,
-      "prepareCpuNs": 4005458,
+      "prepareAndExecuteCpuNs": 4711209,
+      "prepareCpuNs": 2792375,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -51910,23 +51914,23 @@
     }
   ],
   "catalogSummary": {
-    "admitted": 76,
+    "admitted": 78,
     "clauses": 146,
     "executionFailed": 0,
-    "executionPassed": 76,
+    "executionPassed": 78,
     "grammars": 146,
     "noPositiveWitness": 0,
     "policies": 138,
     "policyCompilationErrors": 0,
     "refusalReasons": {
-      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: binding-site composition": 3,
+      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: binding-site composition": 4,
       "outcome relations: leaf or operator lacks a total, effect-free outcome contract: format-argument composition": 6,
       "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parameterized utility calls": 2,
-      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parsed-tree composition": 9,
-      "outcome relations: recursive outcomes need a component contract": 49,
+      "outcome relations: leaf or operator lacks a total, effect-free outcome contract: parsed-tree composition": 12,
+      "outcome relations: recursive outcomes need a component contract": 43,
       "recursive negation or region dependency needs an outcome contract": 1
     },
-    "refused": 70
+    "refused": 68
   },
   "qualificationExitCodes": {
     "candidate": 0,
@@ -54224,91 +54228,58 @@
   },
   "diagnosticCheckpoints": [
     {
-      "name": "rerail-chain-phase1",
+      "name": "rerail-downward-phase1",
       "logs": {
         "admission.log": {
-          "sha256": "9c11ebe7933c7daaa0cd6ecd40cc21f4dbf7dcb2795a3a2cc2d589ec264d7b2e",
+          "sha256": "89bbf610050ed162cf24c4bae40fcdef15fe1da3ab0b559f5a5223151671e9ac",
           "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1940 filtered out; finished in 0.20s"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1951 filtered out; finished in 0.62s"
           ],
           "panics": []
         },
         "parity.log": {
-          "sha256": "cc2832f6a63716a5cd38ad9914b0fb0d944fad622f04f24f0b9429701ac09d26",
+          "sha256": "f1e488a0c3249f69138cdad595f02184e844e9cba4e10879be8058684ce59f5d",
           "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1940 filtered out; finished in 40.07s"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1951 filtered out; finished in 48.74s"
           ],
           "panics": []
         },
         "focused.log": {
-          "sha256": "01a9d0c6ad365bb4601300b4095b27e45eee432e7cc91699a810f6dba948a1fe",
+          "sha256": "ddcfc98e877aed31a8681eb935400d25780e8cc88007afd6a64cf70645f0702a",
           "results": [
-            "test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 1936 filtered out; finished in 0.74s"
+            "test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 1943 filtered out; finished in 57.96s"
           ],
           "panics": [
-            "code_rule_dsl::sql::relational::outcomes::chain_tests::sibling_chains_cross_only_explicitly_guarded_anonymous_punctuation"
+            "code_rule_dsl::sql::relational::outcomes::downward_tests::downward_rejects_impure_bases_and_general_cycles"
           ]
         }
       },
-      "executableSha256": "66985a6c3dc4004d8f4105e3f227617831125577f6e78bf2934c1500b4c3dc36"
-    },
-    {
-      "name": "rerail-chain-phase2",
-      "logs": {
-        "focused.log": {
-          "sha256": "c6e460ac3b64eb593a9a14606ee6988f0aba10bf4a47fa533d467cde1cfc2e18",
-          "results": [
-            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1937 filtered out; finished in 0.93s"
-          ],
-          "panics": []
-        },
-        "depth.log": {
-          "sha256": "c668602c7b9d31104b8bdd8d3a2cdfbe1f5cd3ca5efcbc66ac00bdb190d1b94c",
-          "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1942 filtered out; finished in 0.02s"
-          ],
-          "panics": []
-        }
-      },
-      "executableSha256": "14d327a5c11125225511548ce4deb52c873a00211805adde3a06b5b6d416c275"
-    },
-    {
-      "name": "rerail-chain-phase3",
-      "logs": {
-        "focused.log": {
-          "sha256": "e3c7307e8303b4444c20fd4ae5efc9ee179e814400abd048ad4fe4aae1c7bc8b",
-          "results": [
-            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1937 filtered out; finished in 1.13s"
-          ],
-          "panics": []
-        }
-      },
-      "executableSha256": "653ee1816e588e8098e6540ce9a38929ed9d2a72401ec9fa7ef46b5c67b98ce5"
+      "executableSha256": "a14935a02b0af620cd1afac32584c10a7ec290b9bd2c5546aaaee22d55981572"
     }
   ],
   "validation": {
     "candidate.log": [
-      "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 1940 filtered out; finished in 0.77s"
+      "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 1949 filtered out; finished in 0.76s"
     ],
     "semantics.log": [
-      "test result: ok. 263 passed; 0 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 179.49s"
+      "test result: ok. 272 passed; 0 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 267.58s"
     ],
     "fixtures.log": [
-      "test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 1929 filtered out; finished in 4.10s"
+      "test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 1938 filtered out; finished in 4.71s"
     ],
     "corpus.log": [
-      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1942 filtered out; finished in 119.77s"
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1951 filtered out; finished in 157.56s"
     ],
     "adversarial.log": [
-      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1942 filtered out; finished in 0.25s"
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1951 filtered out; finished in 0.17s"
     ]
   },
   "nativeLint": {
     "passed": true,
     "command": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib npm run check:native",
-    "log": "\n> @neralabs/rerail@0.1.0-next.2 check:native\n> cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings\n\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 54s\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 07s\n"
+    "log": "\n> @neralabs/rerail@0.1.0-next.2 check:native\n> cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings\n\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 02s\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 08s\n"
   },
   "buildCommand": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib RUSTC_WRAPPER=/tmp/rerail-rustc-no-local-lto.py cargo test -p rerail-engine --profile loop --features unbounded-work --no-run",
   "buildEnvironment": "Existing local jemalloc shim and rustc wrapper disabling local LTO; machine-local paths are not portable prerequisites.",
-  "experiment": "benchmark/sql-relational-chain-integration.json"
+  "experiment": "benchmark/sql-relational-downward-integration.json"
 }

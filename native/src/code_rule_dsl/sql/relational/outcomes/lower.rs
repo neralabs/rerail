@@ -34,6 +34,7 @@ pub(super) struct Lower {
     active: HashSet<(usize, usize)>,
     utilities: HashMap<(usize, usize), (usize, Rc<Plan>)>,
     chains: HashMap<(usize, usize), (usize, Rc<super::super::recursive_chain::Chain>)>,
+    downward: HashMap<(usize, usize), (usize, Rc<super::super::recursive_downward::Downward>)>,
     operators: usize,
     utility_calls: usize,
     three_valued: bool,
@@ -49,6 +50,7 @@ impl Lower {
             active: HashSet::new(),
             utilities: HashMap::new(),
             chains: HashMap::new(),
+            downward: HashMap::new(),
             operators: 0,
             utility_calls: 0,
             three_valued,
@@ -56,7 +58,7 @@ impl Lower {
     }
 
     pub fn profile(&self, terminal_base: usize) -> serde_json::Value {
-        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len()+self.chains.len(),"utilityBodyLowerings":self.utilities.len()+self.chains.len(),"recursiveComponents":self.chains.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
+        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len()+self.chains.len()+self.downward.len(),"utilityBodyLowerings":self.utilities.len()+self.chains.len()+self.downward.len(),"recursiveComponents":self.chains.len()+self.downward.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
     }
 
     fn slot(&mut self, name: &str, kind: CaptureKind) -> Result<usize, String> {
@@ -342,6 +344,26 @@ impl Lower {
                     let chain = Rc::new(chain);
                     self.chains.insert(key, (id, Rc::clone(&chain)));
                     Op::Chain(id, chain)
+                } else if let Some((id, downward)) = self.downward.get(&key) {
+                    Op::Downward(*id, Rc::clone(downward))
+                } else if let Some(mut downward) =
+                    super::super::recursive_downward::try_lower(util, &mut self.pure)?
+                {
+                    if downward.guard_kinds().is_none() {
+                        return Err(
+                            "outcome relations: downward recursion requires finite guard kinds"
+                                .into(),
+                        );
+                    }
+                    if !self.three_valued {
+                        downward.child_kinds =
+                            crate::code_rule_dsl::matcher::walk_candidate_filter(matcher)
+                                .map(|(kinds, _)| kinds);
+                    }
+                    let id = self.downward.len();
+                    let downward = Rc::new(downward);
+                    self.downward.insert(key, (id, Rc::clone(&downward)));
+                    Op::Downward(id, downward)
                 } else {
                     let (id, child) = if let Some((id, child)) = self.utilities.get(&key) {
                         (*id, Rc::clone(child))

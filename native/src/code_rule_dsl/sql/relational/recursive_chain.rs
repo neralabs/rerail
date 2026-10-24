@@ -207,7 +207,7 @@ fn self_call(matcher: &AstMatcher, identity: (usize, usize)) -> Result<(), Strin
         _ => Err("chain: final term must invoke the same utility identity".into()),
     }
 }
-fn pure(matcher: &AstMatcher) -> Result<(), String> {
+pub(super) fn pure(matcher: &AstMatcher) -> Result<(), String> {
     match matcher {
         AstMatcher::Kind(kind) if kind.potential_kinds().is_some() => Ok(()),
         AstMatcher::Pattern(pattern) if pattern_vars(pattern).is_empty() => Ok(()),
