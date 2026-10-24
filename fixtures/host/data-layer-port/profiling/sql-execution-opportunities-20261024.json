@@ -201,27 +201,48 @@
     },
     {
       "id": "R5-C",
-      "name": "One shared evaluation plan and complete cold SQL budget",
+      "name": "State syntax domains and complete-empty admission",
       "baseline": "after measured R5-B: 2250 complete-job engine submissions",
-      "netRemovalTarget": 2150,
-      "wholeJobAfterTarget": 100,
-      "estimateStatus": "hard acceptance target; executable replacement schedule and CPU benefit remain unproven",
-      "baselineByPhase": {
-        "connectionSetup": 244,
-        "filePublication": 36,
-        "catalogPublication": 12,
-        "candidatePreparation": 702,
-        "cleanup": 165,
-        "relationalEvaluation": 1091
-      },
-      "requirements": [
-        "share computed rows and completion across compatible consumers, not only empty backing",
-        "compile typed dependencies and bounded operation-family batches before SQL rendering",
-        "eliminate duplicate clause imports and per-consumer owner index creation",
-        "preserve cold SQLite schema inference and affinity without uncounted work",
-        "price all setup, publication, derivation, result, lifetime and cleanup SQL in one complete job",
-        "prove complete parity, lower CPU, bounded memory, and at least 2150 actual removals"
+      "netRemovalTarget": 1261,
+      "wholeJobAfterTarget": 989,
+      "estimateStatus": "bounded scope: frontend migration measures 761 removals; complete-empty admission models another 500; production delivery pending",
+      "clauses": [
+        "state-signatures-1",
+        "state-flow-1",
+        "state-projection-recovery-2",
+        "state-flow-project-1"
       ],
+      "replacementBudget": {
+        "frontendExperimentActual": 1489,
+        "emptySessionRetirement": 500,
+        "gateAdditionalSql": 0,
+        "wholeJobMaximum": 989
+      },
+      "scope": {
+        "rules": [
+          "data-layer-serverplan-state-tripwires"
+        ],
+        "clauses": [
+          "state-signatures-1",
+          "state-flow-1",
+          "state-projection-recovery-2",
+          "state-flow-project-1"
+        ],
+        "generatorChange": "Replace 25 syntax projections and five reconstruction stages in each selected frontend with the existing native syntax domain.",
+        "languageChange": "relational.requireNonemptyInput: one declared input name. Complete empty evidence skips SQL admission.",
+        "integration": "Gate/body preparation in stateless and workspace paths, including eligible evicted repository documents.",
+        "outOfScope": [
+          "job-wide SQL service",
+          "cross-workspace row ownership",
+          "new producer-library language",
+          "new graph scheduler",
+          "cross-clause derived SQL sharing",
+          "detector clause merging",
+          "compiler affinity redesign",
+          "conditional candidate-frontier construction",
+          "FTS index redesign"
+        ]
+      },
       "specification": "docs/sql-execution-chunk-c.md",
       "evidencePlan": "sql-execution-chunk-c-20261024.json"
     }
@@ -229,10 +250,10 @@
   "remainingAfterBothTargets": {
     "engineSubmissions": 2250,
     "overFixedLimit": 2150,
-    "status": "measured after A and B; C now owns all remaining 2150 excess submissions, with no unassigned remainder"
+    "status": "measured after A and B; bounded C targets 1261 removals to 989, leaving 889 above the unchanged final limit"
   },
   "deliveryRules": [
-    "each implementation delivery must remove its chunk's full expected number of actual engine submissions against the preceding checkpoint; R5-C requires at least 2150 and at most 100 total",
+    "each implementation delivery must remove its chunk's full expected number of actual engine submissions against the preceding checkpoint; bounded R5-C requires at least 1261 and at most 989 total; final limit remains 100",
     "TDD commits may be smaller, but do not stop the delivery phase at a micro-optimization",
     "net targets include replacement inserts, deletes, setup, transactions, publication and cleanup",
     "validate complete parity, CPU and memory; a count reduction does not permit a CPU or memory regression",
@@ -387,5 +408,10 @@
         "sql": "ANALYZE temp.\"functions\""
       }
     ]
+  },
+  "remainingAfterCTarget": {
+    "engineSubmissions": 989,
+    "overFixedLimit": 889,
+    "status": "projected only; rank subsequent work after actual C delivery, without assigning invented savings"
   }
 }

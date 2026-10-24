@@ -1,15 +1,39 @@
 {
-  "format": "rerail.sql-chunk-c-plan/v1",
+  "format": "rerail.sql-chunk-c-plan/v2",
   "date": "2026-10-24",
-  "status": "specification; replacement schedule and performance unproven",
+  "status": "bounded specification with measured frontend experiment and modeled early-admission savings; production implementation pending",
+  "supersedesProposalCommit": "15930629",
   "baselineCommit": "24998a394f57ca9cda11e32b9ccda43e296b2b65",
-  "workload": "Unchanged complete fixed state-tripwire guard: both original observations through stateless and workspace paths, including cold compilation and cleanup.",
   "baselineEngineSubmissions": 2250,
-  "baselineSqliteInternalExecutions": 181,
-  "baselineUnknownOrigins": 0,
-  "engineSubmissionLimit": 100,
-  "requiredNetRemoval": 2150,
-  "scope": "Complete the remaining SQL execution recovery. This is one delivery, not independent phase savings.",
+  "finalEngineSubmissionLimit": 100,
+  "requiredNetRemoval": 1261,
+  "wholeJobAfterTarget": 989,
+  "projectedRemainingOverFinalLimit": 889,
+  "scope": {
+    "rules": [
+      "data-layer-serverplan-state-tripwires"
+    ],
+    "clauses": [
+      "state-signatures-1",
+      "state-flow-1",
+      "state-projection-recovery-2",
+      "state-flow-project-1"
+    ],
+    "generatorChange": "Replace 25 syntax projections and five reconstruction stages in each selected frontend with the existing native syntax domain.",
+    "languageChange": "relational.requireNonemptyInput: one declared input name. Complete empty evidence skips SQL admission.",
+    "integration": "Gate/body preparation in stateless and workspace paths, including eligible evicted repository documents.",
+    "outOfScope": [
+      "job-wide SQL service",
+      "cross-workspace row ownership",
+      "new producer-library language",
+      "new graph scheduler",
+      "cross-clause derived SQL sharing",
+      "detector clause merging",
+      "compiler affinity redesign",
+      "conditional candidate-frontier construction",
+      "FTS index redesign"
+    ]
+  },
   "baselineByPhase": {
     "connectionSetup": 244,
     "filePublication": 36,
@@ -18,182 +42,768 @@
     "cleanup": 165,
     "relationalEvaluation": 1091
   },
-  "baselineWitnesses": {
-    "connectionSetup": [
+  "frontendExperiment": {
+    "engineSubmissions": 1489,
+    "sqliteInternalExecutions": 115,
+    "unknownOrigins": 0,
+    "netRemoval": 761,
+    "engineByPhase": {
+      "connectionSetup": 243,
+      "filePublication": 36,
+      "catalogPublication": 12,
+      "candidatePreparation": 308,
+      "cleanup": 60,
+      "relationalEvaluation": 830
+    },
+    "migrationReceipts": [
       {
-        "globalQueryId": 52,
-        "engineExecutions": 4,
-        "sql": "PRAGMA foreign_keys=ON;"
+        "clause": "state-signatures-1",
+        "scope": "file",
+        "inputsBefore": 25,
+        "inputsAfter": 1,
+        "stagesBefore": 23,
+        "stagesAfter": 18,
+        "syntax": {
+          "columns": [
+            "__path",
+            "__start",
+            "__end",
+            "id",
+            "parent",
+            "edge_parent",
+            "ordinal",
+            "text",
+            "kind",
+            "line",
+            "parent_start",
+            "parent_end",
+            "parent_kind",
+            "ancestor_start",
+            "ancestor_end",
+            "ancestor_kind",
+            "object_start",
+            "object_end",
+            "object_kind",
+            "object_source",
+            "attribute_source",
+            "name_source",
+            "left_start",
+            "left_end",
+            "left_kind",
+            "right_start",
+            "right_end",
+            "right_kind",
+            "type_start",
+            "type_end",
+            "type_kind",
+            "body_start",
+            "body_end",
+            "body_kind",
+            "parameters_start",
+            "parameters_end",
+            "parameters_kind",
+            "condition_start",
+            "condition_end",
+            "condition_kind",
+            "name_id",
+            "left_id",
+            "right_id",
+            "type_id",
+            "object_id",
+            "attribute_id",
+            "body_id",
+            "parameters_id",
+            "condition_id"
+          ],
+          "name": "nodes",
+          "gate": "syntax_gate",
+          "fields": [
+            "name",
+            "left",
+            "right",
+            "type",
+            "object",
+            "attribute",
+            "body",
+            "parameters",
+            "condition"
+          ],
+          "excludeKinds": [
+            "comment",
+            "string_start",
+            "string_content",
+            "string_end",
+            "escape_sequence",
+            "line_continuation"
+          ],
+          "edges": "edges",
+          "ownership": "ownership",
+          "owners": {
+            "fn": {
+              "kind": "function_definition"
+            },
+            "cls": {
+              "kind": "class_definition"
+            },
+            "top_fn": {
+              "kind": "function_definition",
+              "outermost": true
+            }
+          }
+        },
+        "columnDemand": []
       },
       {
-        "globalQueryId": 53,
-        "engineExecutions": 4,
-        "sql": " PRAGMA journal_mode=WAL;"
+        "clause": "state-flow-1",
+        "scope": {
+          "$option": "entryPoint",
+          "cases": {
+            "scan_project_sources": "repository"
+          },
+          "default": "file"
+        },
+        "inputsBefore": 29,
+        "inputsAfter": 5,
+        "stagesBefore": 30,
+        "stagesAfter": 25,
+        "syntax": {
+          "columns": [
+            "__path",
+            "__start",
+            "__end",
+            "id",
+            "parent",
+            "edge_parent",
+            "ordinal",
+            "text",
+            "kind",
+            "line",
+            "parent_start",
+            "parent_end",
+            "parent_kind",
+            "ancestor_start",
+            "ancestor_end",
+            "ancestor_kind",
+            "function_start",
+            "function_end",
+            "function_kind",
+            "arguments_start",
+            "arguments_end",
+            "arguments_kind",
+            "object_start",
+            "object_end",
+            "object_kind",
+            "object_source",
+            "attribute_source",
+            "name_start",
+            "name_end",
+            "name_kind",
+            "name_source",
+            "value_start",
+            "value_end",
+            "value_kind",
+            "left_start",
+            "left_end",
+            "left_kind",
+            "right_start",
+            "right_end",
+            "right_kind",
+            "type_start",
+            "type_end",
+            "type_kind",
+            "parameters_start",
+            "parameters_end",
+            "parameters_kind",
+            "return_type_start",
+            "return_type_end",
+            "return_type_kind",
+            "name_id",
+            "left_id",
+            "right_id",
+            "value_id",
+            "type_id",
+            "function_id",
+            "arguments_id",
+            "object_id",
+            "attribute_id",
+            "parameters_id",
+            "return_type_id"
+          ],
+          "name": "nodes",
+          "gate": "syntax_gate",
+          "fields": [
+            "name",
+            "left",
+            "right",
+            "value",
+            "type",
+            "function",
+            "arguments",
+            "object",
+            "attribute",
+            "parameters",
+            "return_type"
+          ],
+          "excludeKinds": [
+            "comment",
+            "string_start",
+            "string_content",
+            "string_end",
+            "escape_sequence",
+            "line_continuation"
+          ],
+          "edges": "edges",
+          "ownership": "ownership",
+          "owners": {
+            "fn": {
+              "kind": "function_definition"
+            },
+            "cls": {
+              "kind": "class_definition"
+            },
+            "top_fn": {
+              "kind": "function_definition",
+              "outermost": true
+            }
+          }
+        },
+        "columnDemand": []
       },
       {
-        "globalQueryId": 54,
-        "engineExecutions": 4,
-        "sql": "\n        PRAGMA synchronous=NORMAL;"
+        "clause": "state-projection-recovery-2",
+        "scope": {
+          "$option": "entryPoint",
+          "cases": {
+            "scan_project_sources": "repository"
+          },
+          "default": "file"
+        },
+        "inputsBefore": 28,
+        "inputsAfter": 4,
+        "stagesBefore": 12,
+        "stagesAfter": 7,
+        "syntax": {
+          "columns": [
+            "__path",
+            "__start",
+            "__end",
+            "id",
+            "parent",
+            "edge_parent",
+            "ordinal",
+            "text",
+            "kind",
+            "line",
+            "parent_start",
+            "parent_end",
+            "parent_kind",
+            "ancestor_start",
+            "ancestor_end",
+            "ancestor_kind",
+            "function_start",
+            "function_end",
+            "function_kind",
+            "object_start",
+            "object_end",
+            "object_kind",
+            "object_source",
+            "attribute_source",
+            "name_source",
+            "left_start",
+            "left_end",
+            "left_kind",
+            "right_start",
+            "right_end",
+            "right_kind",
+            "body_start",
+            "body_end",
+            "body_kind",
+            "condition_start",
+            "condition_end",
+            "condition_kind",
+            "name_id",
+            "left_id",
+            "right_id",
+            "function_id",
+            "object_id",
+            "attribute_id",
+            "body_id",
+            "condition_id"
+          ],
+          "name": "nodes",
+          "gate": "syntax_gate",
+          "fields": [
+            "name",
+            "left",
+            "right",
+            "function",
+            "object",
+            "attribute",
+            "body",
+            "condition"
+          ],
+          "excludeKinds": [
+            "comment",
+            "string_start",
+            "string_content",
+            "string_end",
+            "escape_sequence",
+            "line_continuation"
+          ],
+          "edges": "edges",
+          "ownership": "ownership",
+          "owners": {
+            "fn": {
+              "kind": "function_definition"
+            },
+            "cls": {
+              "kind": "class_definition"
+            },
+            "top_fn": {
+              "kind": "function_definition",
+              "outermost": true
+            }
+          }
+        },
+        "columnDemand": []
       },
       {
-        "globalQueryId": 55,
-        "engineExecutions": 4,
-        "sql": " PRAGMA temp_store=FILE;"
+        "clause": "state-flow-project-1",
+        "scope": "repository",
+        "inputsBefore": 29,
+        "inputsAfter": 5,
+        "stagesBefore": 32,
+        "stagesAfter": 27,
+        "syntax": {
+          "columns": [
+            "__path",
+            "__start",
+            "__end",
+            "id",
+            "parent",
+            "edge_parent",
+            "ordinal",
+            "text",
+            "kind",
+            "line",
+            "parent_start",
+            "parent_end",
+            "parent_kind",
+            "ancestor_start",
+            "ancestor_end",
+            "ancestor_kind",
+            "function_start",
+            "function_end",
+            "function_kind",
+            "arguments_start",
+            "arguments_end",
+            "arguments_kind",
+            "object_start",
+            "object_end",
+            "object_kind",
+            "object_source",
+            "attribute_source",
+            "name_start",
+            "name_end",
+            "name_kind",
+            "name_source",
+            "value_start",
+            "value_end",
+            "value_kind",
+            "left_start",
+            "left_end",
+            "left_kind",
+            "right_start",
+            "right_end",
+            "right_kind",
+            "type_start",
+            "type_end",
+            "type_kind",
+            "parameters_start",
+            "parameters_end",
+            "parameters_kind",
+            "return_type_start",
+            "return_type_end",
+            "return_type_kind",
+            "name_id",
+            "left_id",
+            "right_id",
+            "value_id",
+            "type_id",
+            "function_id",
+            "arguments_id",
+            "object_id",
+            "attribute_id",
+            "parameters_id",
+            "return_type_id"
+          ],
+          "name": "nodes",
+          "gate": "syntax_gate",
+          "fields": [
+            "name",
+            "left",
+            "right",
+            "value",
+            "type",
+            "function",
+            "arguments",
+            "object",
+            "attribute",
+            "parameters",
+            "return_type"
+          ],
+          "excludeKinds": [
+            "comment",
+            "string_start",
+            "string_content",
+            "string_end",
+            "escape_sequence",
+            "line_continuation"
+          ],
+          "edges": "edges",
+          "ownership": "ownership",
+          "owners": {
+            "fn": {
+              "kind": "function_definition"
+            },
+            "cls": {
+              "kind": "class_definition"
+            },
+            "top_fn": {
+              "kind": "function_definition",
+              "outermost": true
+            }
+          }
+        },
+        "columnDemand": []
       }
     ],
-    "filePublication": [
-      {
-        "globalQueryId": 63,
-        "engineExecutions": 4,
-        "sql": "BEGIN DEFERRED"
-      },
-      {
-        "globalQueryId": 104,
-        "engineExecutions": 4,
-        "sql": "INSERT INTO file(nodes,path,lang,src,rec,spans,checkpoints,parb,sizb,flags,digest)\n            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"
-      },
-      {
-        "globalQueryId": 105,
-        "engineExecutions": 4,
-        "sql": "INSERT INTO ftsk(rowid,k) VALUES(?1,?2)"
-      },
-      {
-        "globalQueryId": 108,
-        "engineExecutions": 4,
-        "sql": "INSERT INTO fk VALUES(?1,?2,?3)"
-      }
-    ],
-    "catalogPublication": [
-      {
-        "globalQueryId": 101,
-        "engineExecutions": 4,
-        "sql": "INSERT INTO lang VALUES(?1,?2)"
-      },
-      {
-        "globalQueryId": 102,
-        "engineExecutions": 4,
-        "sql": "INSERT INTO kind VALUES (?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?),(?,?,?,?) "
-      },
-      {
-        "globalQueryId": 103,
-        "engineExecutions": 4,
-        "sql": "INSERT INTO field VALUES (?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?) "
-      }
-    ],
-    "candidatePreparation": [
-      {
-        "globalQueryId": 63,
-        "engineExecutions": 8,
-        "sql": "BEGIN DEFERRED"
-      },
-      {
-        "globalQueryId": 114,
-        "engineExecutions": 8,
-        "sql": "DELETE FROM request_file"
-      },
-      {
-        "globalQueryId": 115,
-        "engineExecutions": 8,
-        "sql": "INSERT INTO request_file VALUES (?)"
-      },
-      {
-        "globalQueryId": 94,
-        "engineExecutions": 8,
-        "sql": "COMMIT"
-      }
-    ],
-    "cleanup": [
-      {
-        "globalQueryId": 291,
-        "engineExecutions": 12,
-        "sql": "DROP TABLE \"events\""
-      },
-      {
-        "globalQueryId": 353,
-        "engineExecutions": 9,
-        "sql": "DROP TABLE \"__reach_descendants_roots\";"
-      },
-      {
-        "globalQueryId": 354,
-        "engineExecutions": 9,
-        "sql": "DROP TABLE \"__reach_descendants_edges\";"
-      },
-      {
-        "globalQueryId": 355,
-        "engineExecutions": 9,
-        "sql": "DROP TABLE \"__reach_descendants_keys\""
-      }
-    ],
-    "relationalEvaluation": [
-      {
-        "globalQueryId": 288,
-        "engineExecutions": 68,
-        "sql": "BEGIN"
-      },
-      {
-        "globalQueryId": 94,
-        "engineExecutions": 68,
-        "sql": "COMMIT"
-      },
-      {
-        "globalQueryId": 290,
-        "engineExecutions": 51,
-        "sql": "SELECT __path AS path,__start AS start_byte,__end AS end_byte,coalesce(line,'') AS line,coalesce(scope,'') AS scope,coalesce(terminal,'') AS terminal FROM (SELECT *,row_number() OVER(PARTITION BY __path,line,scope,terminal ORDER BY __start,__end) AS chosen FROM events) WHERE chosen=1"
-      },
-      {
-        "globalQueryId": 329,
-        "engineExecutions": 11,
-        "sql": "INSERT INTO \"nodes\" SELECT *,kind||':'||__start||':'||__end AS id,\n parent_kind||':'||parent_start||':'||parent_end AS parent,\n ancestor_kind||':'||ancestor_start||':'||ancestor_end AS edge_parent,\n row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1 AS ordinal\n FROM (SELECT * FROM syntax_rows_0 UNION ALL SELECT * FROM syntax_rows_1)"
-      }
-    ]
+    "stateCorpus": {
+      "replayedCalls": 77,
+      "positiveCalls": 64,
+      "cleanCalls": 13,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0
+    },
+    "outputGateSemanticControl": {
+      "replayedCalls": 77,
+      "positiveCalls": 64,
+      "cleanCalls": 13,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0
+    },
+    "limitations": "The frontend experiment is not the production generator. The output-gated control still executes SQL and proves no early-skip count reduction."
   },
-  "sourceArtifacts": [
+  "earlyAdmissionModel": {
+    "completeEmptySessions": 9,
+    "nonemptySessions": 2,
+    "removedEngineSubmissions": 500,
+    "sessions": [
+      {
+        "session": "profile-43372-38",
+        "clause": "state-flow-project-1",
+        "path": "l9900_auto_api/graph_read_core.py",
+        "engineStatements": 69,
+        "gateInsertedRows": 0,
+        "gateEmpty": true
+      },
+      {
+        "session": "profile-43372-78",
+        "clause": "state-flow-project-1",
+        "path": "impl/common/example.py",
+        "engineStatements": 69,
+        "gateInsertedRows": 0,
+        "gateEmpty": true
+      },
+      {
+        "session": "profile-43372-72",
+        "clause": "state-signatures-1",
+        "path": "impl/common/example.py",
+        "engineStatements": 47,
+        "gateInsertedRows": 0,
+        "gateEmpty": true
+      },
+      {
+        "session": "profile-43372-35",
+        "clause": "state-projection-recovery-2",
+        "path": "l9900_auto_api/graph_read_core.py",
+        "engineStatements": 31,
+        "gateInsertedRows": 0,
+        "gateEmpty": true
+      },
+      {
+        "session": "profile-43372-74",
+        "clause": "state-projection-recovery-2",
+        "path": "impl/common/example.py",
+        "engineStatements": 31,
+        "gateInsertedRows": 0,
+        "gateEmpty": true
+      },
+      {
+        "session": "profile-43372-33",
+        "clause": "state-signatures-1",
+        "path": "l9900_auto_api/graph_read_core.py",
+        "engineStatements": 47,
+        "gateInsertedRows": 0,
+        "gateEmpty": true
+      },
+      {
+        "session": "profile-43372-34",
+        "clause": "state-flow-1",
+        "path": "l9900_auto_api/graph_read_core.py",
+        "engineStatements": 68,
+        "gateInsertedRows": 0,
+        "gateEmpty": true
+      },
+      {
+        "session": "profile-43372-73",
+        "clause": "state-flow-1",
+        "path": "impl/common/example.py",
+        "engineStatements": 92,
+        "gateInsertedRows": 1,
+        "gateEmpty": false
+      },
+      {
+        "session": "profile-43372-36",
+        "clause": "state-flow-project-1",
+        "path": "l9900_auto_api/graph_read_core.py",
+        "engineStatements": 69,
+        "gateInsertedRows": 0,
+        "gateEmpty": true
+      },
+      {
+        "session": "profile-43372-77",
+        "clause": "state-flow-1",
+        "path": "impl/common/example.py",
+        "engineStatements": 92,
+        "gateInsertedRows": 1,
+        "gateEmpty": false
+      },
+      {
+        "session": "profile-43372-75",
+        "clause": "state-flow-project-1",
+        "path": "impl/common/example.py",
+        "engineStatements": 69,
+        "gateInsertedRows": 0,
+        "gateEmpty": true
+      }
+    ],
+    "coldSchemaRestorations": [
+      {
+        "session": "profile-43372-73",
+        "clause": "state-flow-1",
+        "possibleColdRestorations": 0,
+        "objects": []
+      },
+      {
+        "session": "profile-43372-77",
+        "clause": "state-flow-1",
+        "possibleColdRestorations": 0,
+        "objects": []
+      }
+    ],
+    "addedSql": 0,
+    "projectedTotal": 989,
+    "status": "modeled from complete captured sessions, not measured with an implemented early gate; production count must meet the full target"
+  },
+  "cpuControls": {
+    "scope": "Unchanged guard, both observations and both paths. Same B addon; only selected policy frontends differ.",
+    "order": "Five alternating fresh-process pairs; imports precede the measured CPU interval.",
+    "workers": 4,
+    "trace": "off",
+    "instrumentation": "No SQL profile, census or external sampler in timed children. The outer controller records only process observations.",
+    "results": {
+      "before": [
+        {
+          "passed": true,
+          "userMs": 953.723,
+          "systemMs": 45.339,
+          "cpuMs": 999.062,
+          "wallMs": 916.0675840000001,
+          "maxRSSKiB": 314576
+        },
+        {
+          "passed": true,
+          "userMs": 987.909,
+          "systemMs": 43.635,
+          "cpuMs": 1031.544,
+          "wallMs": 934.005458,
+          "maxRSSKiB": 328944
+        },
+        {
+          "passed": true,
+          "userMs": 1091.771,
+          "systemMs": 56.213,
+          "cpuMs": 1147.984,
+          "wallMs": 1072.6701249999999,
+          "maxRSSKiB": 333680
+        },
+        {
+          "passed": true,
+          "userMs": 1071.661,
+          "systemMs": 47.046,
+          "cpuMs": 1118.707,
+          "wallMs": 1023.9639999999999,
+          "maxRSSKiB": 325600
+        },
+        {
+          "passed": true,
+          "userMs": 1021.957,
+          "systemMs": 38.502,
+          "cpuMs": 1060.459,
+          "wallMs": 971.0532499999999,
+          "maxRSSKiB": 320704
+        }
+      ],
+      "after": [
+        {
+          "passed": true,
+          "userMs": 377.668,
+          "systemMs": 23.703,
+          "cpuMs": 401.371,
+          "wallMs": 369.292875,
+          "maxRSSKiB": 276752
+        },
+        {
+          "passed": true,
+          "userMs": 383.249,
+          "systemMs": 26.193,
+          "cpuMs": 409.442,
+          "wallMs": 363.623083,
+          "maxRSSKiB": 286512
+        },
+        {
+          "passed": true,
+          "userMs": 417.216,
+          "systemMs": 26.628,
+          "cpuMs": 443.844,
+          "wallMs": 391.308083,
+          "maxRSSKiB": 286912
+        },
+        {
+          "passed": true,
+          "userMs": 414.343,
+          "systemMs": 28.549,
+          "cpuMs": 442.892,
+          "wallMs": 392.865042,
+          "maxRSSKiB": 285312
+        },
+        {
+          "passed": true,
+          "userMs": 400.65,
+          "systemMs": 26.834,
+          "cpuMs": 427.484,
+          "wallMs": 370.82174999999995,
+          "maxRSSKiB": 282496
+        }
+      ],
+      "medians": {
+        "before": {
+          "cpuMs": 1060.459,
+          "maxRSSKiB": 325600
+        },
+        "after": {
+          "cpuMs": 427.484,
+          "maxRSSKiB": 285312
+        }
+      }
+    },
+    "cpuMedianChangePercent": -59.68877627517897,
+    "peakRssMedianChangePercent": -12.37346437346437,
+    "limitations": "Fixed small guard, frontend-only prototype. Not a completed-C or repository benchmark. Do not compare these trials directly with B historical timing trials."
+  },
+  "acceptance": {
+    "completeGuardMaximum": 989,
+    "netRemovalMinimum": 1261,
+    "gateAdditionalSqlMaximum": 0,
+    "unknownOriginsMaximum": 0,
+    "requiredProducerRows": "Node/field/owner/ordinal/descendant bags, normalized by stable source-node identity.",
+    "parity": "All 77 recorded state cases, selected positive/clean cases across all 60 rules, and workspace transitions.",
+    "cpuAndMemory": "Matched fresh-process controls retain a CPU improvement and no peak-memory regression.",
+    "final100Gate": "Unchanged and independently failing until remaining work completes.",
+    "delivery": "One bounded delivery. Smaller TDD commits do not complete C."
+  },
+  "artifacts": [
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-acceptance/capture/sql/profile.json",
+      "sha256": "0caa0e7d8d954fd6753e23e41bd9c0ae5b706475f90af42a371e885589056bb7"
+    },
     {
       "path": ".rerail/profiles/chunk-b-20261024/final-acceptance/capture/sql/execution-inventory.json",
       "sha256": "b816b332d02dbc5d552b3576de5851c43df0094dec4ee7a5078beb81a75f0a2b"
     },
     {
-      "path": ".rerail/profiles/chunk-b-20261024/final-acceptance/capture/sql/execution-budget.json",
-      "sha256": "17eeea6a17b73679133f42d57db05c1abbc660c7fb8c1a7d9d0c9e9f675cd78d"
+      "path": ".rerail/profiles/chunk-c-scope-20261024/native-front-guard-1/sql/profile.json",
+      "sha256": "967f3b034dae34d4665aa48c25a039264fcd5d51fc665ed898a35fc6a688fa2e"
     },
     {
-      "path": ".rerail/profiles/chunk-b-20261024/final-acceptance/capture/sql/profile.json",
-      "sha256": "0caa0e7d8d954fd6753e23e41bd9c0ae5b706475f90af42a371e885589056bb7"
+      "path": ".rerail/profiles/chunk-c-scope-20261024/native-front-guard-1/sql/execution-budget.json",
+      "sha256": "54a64015918dac5ca5476c7f8586192f625e30c1ff520697258511b2f9c62d62"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/native-front-guard-1/sql/execution-inventory.json",
+      "sha256": "cb68e4a430c95fca7558bef98ccb4129d025052316144e7314df7e28dab97647"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/native-front-parity-1.json",
+      "sha256": "a9b1a5302e8ab6ba819d7ddea1f81689fa35f39e240be449abe74b02b800b9ae"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/state-recording.json",
+      "sha256": "7f591c4f49a5ee3c02965e069f9424070dd5fc41212392d11e58a63751a39e73"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/state-corpus-parity.json",
+      "sha256": "1dd51e5d15337e8d184ef4fe32cfa633e2a3aef4345b9800e9b83ed3a4b51671"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/output-gate-corpus-parity.json",
+      "sha256": "28251880b5ea6e2a7b794b900bd1bb8b6bdc6de67c3be27474e161dcb4846e37"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/empty-gate-audit.json",
+      "sha256": "a3d69c8e31e480911d7b3cba278aaf75aef3c6b9d0049f391aef2cfc7250f522"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/cold-restoration-audit.json",
+      "sha256": "8cafef0b3fc1d7edf40d83a8db1e0da4b6948345b20591064be4484d2c756c0b"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/native-front-receipts.json",
+      "sha256": "d03854132e3dae6dcbecf3711bdc42e238ee0f7351ff45cdba3572f6ab5889e6"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/policies/data-layer-serverplan-state-tripwires.json",
+      "sha256": "817878dcb668e0687dcee0f9628d25e0ad89a0b564308e81002cae03f709ab78"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/output-gate-policies/data-layer-serverplan-state-tripwires.json",
+      "sha256": "c9f3471fbc72ef9df8eefac765030cc33b7fe17eeda884c6977a45f3e35a64c6"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/native-front.py",
+      "sha256": "c1a92bed2382ef2c43e6688a7c6b63f4a5acf0a0e592a88c6d9bd03771549b9f"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/controls.py",
+      "sha256": "e54136d977a885869ae768714c108756a9098959e26676051e8c6115dc67c18d"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/control.mjs",
+      "sha256": "0e1d6ec833cf517c75e1cc5d97f285bc0fffe53a88492c77420a05c195330ef1"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-scope-20261024/controls.json",
+      "sha256": "2f7728dba0aec186b670a3d5210522b4567526d21902cce611f1293e546a550f"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-addon/engine.node",
+      "sha256": "67183d22e1d3baf644a24c1bce2e03142a88335b5a5ebe031307bbcc6576464a"
     }
   ],
-  "replacementBudget": {
-    "totalMaximum": 100,
-    "componentCaps": null,
-    "status": "Must come from the executable cold plan audit. No invented component savings or assumed warm caches.",
-    "mustInclude": [
-      "compiler schema inference",
-      "writer and reader configuration",
-      "persistent and scratch schema and indexes",
-      "catalog and document publication",
-      "request and completion maintenance",
-      "candidate and derived producer execution",
-      "result queries and pagination",
-      "statistics and transactions",
-      "retirement and cleanup"
-    ]
-  },
-  "structuralRequirements": {
-    "duplicateSuccessfulBuildsForSameBindingCoverage": 0,
-    "duplicateCompatibleClauseFactImports": 0,
-    "consumerRebuildsOfLiveOwnerIndexes": 0,
-    "runtimeSqlSubmissionsFromVirtualTableCallbacks": 0,
-    "nodeOrRuleTasksInController": 0,
-    "customNativeRuleInterpreter": false
-  },
-  "acceptance": {
-    "completeFixedGuardMaximum": 100,
-    "completeTenRuleJobMaximum": 100,
-    "completeRepositoryJobMaximum": 100,
-    "counterResets": false,
-    "internalSqliteExecutions": "Report separately and reconcile. Do not count them as removed engine submissions.",
-    "cpu": "Repeatable reduction beyond control variation on a representative nonempty workload, with no matched small-guard regression.",
-    "memory": "No matched peak RSS or retained-memory regression. Include SQL owner, WAL, reader, tape, request and output storage.",
-    "implementationDelivery": "At least 2150 actual removals on the frozen guard, complete parity and architecture tests. Smaller TDD commits do not complete C."
-  },
   "specification": "docs/sql-execution-chunk-c.md"
 }
