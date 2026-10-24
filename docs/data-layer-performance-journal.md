@@ -153,6 +153,12 @@ The new writer test requires one preformatted record per write and fails before 
 `trace-output-red` records that behavioral failure (5.536 seconds).
 The same production trace source compiles directly in the small SQL host; this avoids another engine test build for the unit ladder.
 
+The trace writer green test reduces one record from 38 formatting writes to one preformatted write.
+All 21 standalone SQL-host tests pass in `trace-output-green` (3.229 seconds).
+The native profiling library Clippy check passes in `final-clippy` (25.935 seconds).
+The producer-shape retry before this fix passes both tests, confirming the earlier malformed stream is intermittent rather than a deterministic rule mismatch.
+The final addon build includes both the origin annotation and the trace-output repair.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
