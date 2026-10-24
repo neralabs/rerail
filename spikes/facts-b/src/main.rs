@@ -14,6 +14,7 @@ mod replay;
 mod rules;
 mod store;
 mod y2;
+mod ygraph;
 
 use std::path::PathBuf;
 
@@ -110,6 +111,8 @@ fn main() {
                 arg(&args, "--scratch-every").map_or(1, |x| x.parse().unwrap()),
             ),
         },
+        // `ygraph parity|replay …`: Y1's maintained reference graph (src/ygraph).
+        "ygraph" => ygraph::main(args.clone()),
         _ => {
             eprintln!("usage: facts-b extract --run-dir DIR [--corpus DIR] [--threads N] | dump FILE");
             std::process::exit(2);
