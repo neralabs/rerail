@@ -115,6 +115,7 @@ jobs:
               - 'test/scripts/test_native_sql_plan.py'
               - 'scripts/profiling/producer-shape.mjs'
               - 'scripts/profiling/sql-budget.mjs'
+              - 'fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json'
               - 'scripts/profiling/sql-report.mjs'
               - 'benchmark/sql-profile/**'
               - 'test/scripts/sql-execution-budget.test.mjs'
@@ -242,6 +243,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             ${{ runner.temp }}/rerail-sql-budget/provenance.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-a-budget.json
             ${{ runner.temp }}/rerail-sql-budget/capture/profile.json
             ${{ runner.temp }}/rerail-sql-budget/capture/parity.json
             ${{ runner.temp }}/rerail-sql-budget/capture/summary.txt

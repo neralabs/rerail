@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { executionBudget, requireExecutionBudget, sqlCategory } from "../../benchmark/sql-profile/execution-budget.mjs";
+import { executionReduction } from "../../benchmark/sql-profile/execution-reduction.mjs";
 import { buildReport } from "../../benchmark/sql-profile/report.mjs";
 
 const hash = "a".repeat(64);
@@ -154,6 +155,7 @@ test("the CI launcher independently rejects a missing or bypassed execution gate
   const launcher = resolve("scripts/profiling/sql-budget.mjs");
   const fixture = "fixtures/host/data-layer-port/batch-06-recording.json";
   const original = JSON.parse(readFileSync(fixture));
+  const ledger = readFileSync("fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json");
   original.events = original.events.filter(e => [
     "test_rejects_lazy_result_private_step_ref_access",
     "test_collector_uses_generated_return_kinds_without_recomputing_project_map",
@@ -163,6 +165,8 @@ test("the CI launcher independently rejects a missing or bypassed execution gate
     try {
       const source = join(sandbox, dirname(fixture)); mkdirSync(source, { recursive: true });
       writeFileSync(join(source, "batch-06-recording.json"), JSON.stringify(original));
+      mkdirSync(join(source, "profiling"));
+      writeFileSync(join(source, "profiling", "sql-execution-opportunities-20261024.json"), ledger);
       const tools = join(sandbox, "scripts", "profiling"); mkdirSync(tools, { recursive: true });
       // Simulate a broken controller that reports success without enforcing the budget.
       const report = count === null ? null : job([count]);
@@ -227,4 +231,24 @@ test("CI keeps the 100-submission gate mandatory when its workload or regression
   for (const file of ["test/scripts/sql-execution-budget.test.mjs", "test/engine/native/candidate-admission.test.ts", "test/engine/native/candidate-publication.test.ts", "test/engine/native/compiler-schema.test.ts"]) {
     assert.ok(filter.includes(file), `${file} must trigger the profiling addon and mandatory native gates`);
   }
+});
+
+
+test("chunk A requires its full 3474 reduction and does not relax the final 100 limit", () => {
+  const target={baseline:7733,removal:3474};
+  const ledger=JSON.parse(readFileSync("fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json"));
+  assert.equal(ledger.engineSubmissions,target.baseline);
+  const chunk=ledger.orderedDeliveryChunks.find(c=>c.id==="R5-A");
+  assert.equal(chunk.netRemovalTarget,target.removal);
+  assert.equal(chunk.wholeJobAfterTarget,4259);
+  assert.equal(executionReduction(job([4259]),target).accepted,true);
+  assert.equal(executionReduction(job([4260]),target).accepted,false);
+  assert.equal(executionReduction(job([6733]),target).accepted,false,"1000 saved does not complete chunk A");
+  const result=executionReduction(job([3685]),target);
+  assert.equal(result.removed,4048);
+  assert.equal(result.finalLimit,100);
+  assert.equal(result.finalLimitAccepted,false);
+  const incomplete=job([3685]);incomplete.captureCoverage.complete=false;
+  assert.equal(executionReduction(incomplete,target).accepted,false);
+  assert.throws(()=>executionReduction(job([3685]),{baseline:7733,removal:0}),/explicit/);
 });

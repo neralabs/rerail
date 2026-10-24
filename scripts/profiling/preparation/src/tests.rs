@@ -103,3 +103,49 @@ fn cache_budget_replay_preserves_bags_and_requested_file_scope() {
         }
     }
 }
+
+#[test]
+fn shared_owner_capture_replay_preserves_nonshared_schemas_and_duplicate_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("input.sqlite")).unwrap();
+    db.execute_batch(include_str!(
+        "../../../../native/src/code_rule_dsl/matcher/anchors/sql/schema.sql"
+    ))
+    .unwrap();
+    drop(db);
+    let source = dir.path().join("candidate.json");
+    let graph = dir.path().join("graph.json");
+    std::fs::write(
+        &graph,
+        serde_json::to_vec(&[
+            "hits(fid,pre) AS MATERIALIZED (SELECT 1,2)",
+            "bounds(fid,pre,hi) AS MATERIALIZED (SELECT fid,pre,pre+1 FROM hits)",
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(&source,serde_json::to_vec(&serde_json::json!({
+        "database":"input.sqlite","files":[],"fileScope":false,"parameters":[],
+        "stages":[
+            {"name":"hits","sql":"CREATE TEMP TABLE \"hits\" AS SELECT 1 AS fid,2 AS pre","temporary":true,"index":"fid,pre"},
+            {"name":"bounds","sql":"CREATE TEMP TABLE \"bounds\" AS SELECT fid,pre,pre+1 AS hi FROM hits","temporary":true,"index":"fid,pre"}
+        ],
+        "queries":["SELECT 0,fid,pre FROM hits UNION ALL SELECT 0,fid,pre FROM hits","SELECT 1,fid,hi FROM bounds"]
+    })).unwrap()).unwrap();
+    let captured = dir.path().join("owned/candidate.json");
+    candidate_owner::rewrite(&source, &graph, &captured).unwrap();
+    let output = dir.path().join("result.json");
+    residency::run_cache(&captured, 1024, 512, &output).unwrap();
+    let rows: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output.with_extension("rows.json")).unwrap())
+            .unwrap();
+    assert_eq!(rows, serde_json::json!([[0, 1, 2], [0, 1, 2], [1, 1, 3]]));
+    assert!(
+        candidate_owner::rewrite(&source, &graph, &captured).is_err(),
+        "frozen evidence cannot be overwritten"
+    );
+    assert!(
+        candidate_owner::rewrite(&captured, &graph, &dir.path().join("again/result.json")).is_err(),
+        "shared programs already have a complete captured schedule"
+    );
+}

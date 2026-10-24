@@ -78,7 +78,7 @@
       },
       "netRemovalTarget": 3474,
       "wholeJobAfterTarget": 4259,
-      "estimateStatus": "planning budget; current counts measured, replacement caps not implemented",
+      "estimateStatus": "implemented; 4048 net removals measured on the complete fixed guard",
       "subOpportunities": [
         {
           "name": "maintain one candidate key index per execution context",
@@ -107,15 +107,32 @@
         "operators compiled before SQL rendering; do not concatenate separately rendered SELECT trees",
         "empty results complete their producer; failure and source-generation invalidation remain atomic"
       ],
-      "confidence": "index and existing-boundary retirement arithmetic is tight; the 250-statement population cap requires operator planning proof"
+      "confidence": "index and existing-boundary retirement arithmetic is tight; the 250-statement population cap requires operator planning proof",
+      "measuredResult": {
+        "engineSubmissions": 3685,
+        "sqliteInternalExecutions": 994,
+        "unknownOrigins": 0,
+        "netRemoval": 4048,
+        "fullTargetMet": true,
+        "replacementActual": {
+          "storeCreate": 4,
+          "storeIndexCreate": 4,
+          "populationStatements": 380,
+          "retirementStatements": 324,
+          "finalStoreDrop": 4
+        },
+        "replacementTotal": 716,
+        "note": "380 fills exceed the original 250 planning cap; 324 retirements beat the 1028 model. Full net delivery target and total replacement budget are met.",
+        "evidence": "candidate-ownership-recovery-20261024.json"
+      }
     },
     {
       "id": "R5-B",
       "name": "Shared relational backing and complete session lifetimes",
-      "baseline": "after R5-A; reprice from its new trace before implementation",
-      "addressableAtModelBoundary": 3362,
-      "netRemovalTarget": 2000,
-      "wholeJobAfterTarget": 2259,
+      "baseline": "after measured R5-A: 3685 complete-job engine submissions",
+      "addressableAtModelBoundary": 2658,
+      "netRemovalTarget": 1296,
+      "wholeJobAfterTarget": 2389,
       "estimateStatus": "provisional acceptance target; schema and binding audit required",
       "subOpportunities": [
         {
@@ -132,9 +149,9 @@
         },
         {
           "name": "coalesce candidate retirement after producer batching",
-          "currentAfterR5A": 1028,
+          "currentAfterR5A": 324,
           "afterBudget": 200,
-          "netRemovalTarget": 828
+          "netRemovalTarget": 124
         },
         {
           "name": "bounded clause-reader connection pool",
@@ -155,8 +172,8 @@
     }
   ],
   "remainingAfterBothTargets": {
-    "engineSubmissions": 2259,
-    "overFixedLimit": 2159,
+    "engineSubmissions": 2389,
+    "overFixedLimit": 2289,
     "status": "not assigned fictitious savings; reprofile and rank the remaining executions after the two delivery chunks"
   },
   "deliveryRules": [
@@ -168,8 +185,8 @@
     "rerank after each accepted chunk and subtract overlap already removed"
   ],
   "overlapNotes": [
-    "R5-A credits candidate DROP replacement only down to 1028 DELETE statements plus four final store drops",
-    "R5-B credits only a further 1028-to-200 retirement reduction, not the original 1588 drops again",
+    "R5-A credits candidate DROP replacement down to 324 DELETE statements plus four final store drops",
+    "R5-B credits only a further 324-to-200 retirement reduction; 704 projected B retirement savings were already achieved in R5-A",
     "R5-B relational lifecycle excludes the configuration PRAGMAs and 68 empty schema CTAS counted separately",
     "no source-input, vocabulary, or universal-fact caching benefit is added without a measured net execution reduction",
     "994 SQLite internal executions remain separately reported; not part of engine-submission savings"

@@ -12,6 +12,7 @@ mod render;
 use render::Definitions;
 mod children;
 pub(super) mod lifetime;
+pub(super) mod ownership;
 mod waves;
 #[cfg(feature = "code-rule-profile")]
 pub(super) mod working_set;
@@ -42,8 +43,39 @@ pub(super) struct Statement {
     pub stages: Vec<Stage>,
     pub schedule: lifetime::Schedule,
     pub parameters: Vec<Value>,
+    pub ownership: ownership::Layout,
 }
 impl Statement {
+    pub fn preparations(&self, covered: bool) -> usize {
+        self.schedule.actions.iter().filter(|a|matches!(a,lifetime::Action::Prepare(i) if !(covered&&self.stages[*i].covering))).count()
+    }
+
+    fn own(&mut self) {
+        let compiled = ownership::compile(
+            &self
+                .stages
+                .iter()
+                .map(|s| lifetime::Input {
+                    name: &s.name,
+                    sql: &s.sql,
+                    temporary: s.temporary,
+                })
+                .collect::<Vec<_>>(),
+            &self.stages.iter().map(|s| s.index).collect::<Vec<_>>(),
+            &self.queries,
+            &self.graph,
+        );
+        for (i, (stage, sql)) in self.stages.iter_mut().zip(compiled.sql).enumerate() {
+            stage.sql = sql;
+            if compiled.layout.slot(i).is_some() {
+                stage.index = None;
+            }
+        }
+        self.queries = compiled.queries;
+        self.schedule = compiled.schedule;
+        self.ownership = compiled.layout;
+    }
+    #[cfg(test)]
     fn reschedule(&mut self) {
         self.schedule = lifetime::Schedule::new(
             &self
@@ -741,7 +773,7 @@ fn batch_scope(
             )
         })
         .collect();
-    let mut statement = finish_decoded(layout.ctes, queries, layout.parameters, indexed, decoding);
+    let mut statement = prepare_decoded(layout.ctes, queries, layout.parameters, indexed, decoding);
     statement.admissions = admissions;
     if !values.is_empty() {
         let stages = [
@@ -775,7 +807,6 @@ fn batch_scope(
         })
         .collect::<Vec<_>>();
         statement.stages.splice(0..0, stages);
-        statement.reschedule();
     }
     #[cfg(feature = "code-rule-profile")]
     {
@@ -787,6 +818,7 @@ fn batch_scope(
     statement.language = lang;
     statement.files = fids.unwrap_or_default().to_vec();
     statement.file_scope = fids.is_some();
+    statement.own();
     statement
 }
 
@@ -811,7 +843,20 @@ pub(super) fn finish(
     finish_decoded(ctes, vec![query], parameters, indexed, HashMap::new())
 }
 
+#[cfg(test)]
 fn finish_decoded(
+    ctes: Vec<String>,
+    queries: Vec<String>,
+    parameters: Vec<Value>,
+    indexed: BTreeSet<String>,
+    decoding: HashMap<String, decode::Demand>,
+) -> Statement {
+    let mut statement = prepare_decoded(ctes, queries, parameters, indexed, decoding);
+    statement.reschedule();
+    statement
+}
+
+fn prepare_decoded(
     ctes: Vec<String>,
     queries: Vec<String>,
     parameters: Vec<Value>,
@@ -1010,17 +1055,10 @@ fn finish_decoded(
     // follows all its lower-wave selectors and precedes readers in its own wave.
     stages.sort_by_cached_key(|stage| stage_levels.get(&stage.name).copied().unwrap_or((0, 1)));
     let queries: Vec<_> = queries.iter().map(|query| inline.render(query)).collect();
-    let schedule = lifetime::Schedule::new(
-        &stages
-            .iter()
-            .map(|s| lifetime::Input {
-                name: &s.name,
-                sql: &s.sql,
-                temporary: s.temporary,
-            })
-            .collect::<Vec<_>>(),
-        &queries,
-    );
+    let schedule = lifetime::Schedule {
+        actions: Vec::new(),
+        peak_relations: 0,
+    };
     Statement {
         admissions: Vec::new(),
         #[cfg(feature = "code-rule-profile")]
@@ -1036,6 +1074,7 @@ fn finish_decoded(
         stages,
         schedule,
         parameters,
+        ownership: ownership::Layout::default(),
     }
 }
 

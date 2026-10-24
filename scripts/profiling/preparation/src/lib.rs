@@ -51,7 +51,11 @@ mod authorizer;
 #[cfg(test)]
 mod shared_storage;
 
-#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/ownership.rs"]
+mod ownership;
+
+#[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/waves.rs"]
 mod waves;
 
@@ -64,6 +68,7 @@ mod graph;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/children.rs"]
 mod children;
 
+pub mod candidate_owner;
 pub mod composition;
 pub mod fts;
 pub mod owner_projection;

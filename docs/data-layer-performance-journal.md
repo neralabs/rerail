@@ -8,9 +8,107 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
-## Execution reduction delivery chunks: 2026-10-24
+## Candidate ownership delivery R5-A: 2026-10-24
 
-The user requires larger work units. Each implementation delivery must remove at least 1,000 complete-job engine submissions.
+**Result: 4,048 submissions removed, exceeding the full 3,474 target.**
+The complete fixed guard falls from 7,733 to 3,685 engine submissions.
+It retains 994 SQLite internal executions, zero unknown origins, complete connection coverage, and full findings.
+The workload bytes match the frozen `188fb8f4` baseline exactly.
+The final 100-submission gate still fails. Its allowance and enforcement remain unchanged.
+
+The owner stores typed `(producer, fid, pre)` rows under one nonunique composite index per execution domain.
+Independent dependency frontiers share a bounded SQL population statement and one WITH scope.
+The compiler preserves upstream materialization fences and logical rule admission.
+Batch membership records completion even when a producer emits no rows.
+Each logical producer retains its own last-use boundary; adjacent releases share one DELETE.
+Other schemas retain separate tables. Retained read/write barriers still come from the existing specialized scheduler.
+No engine algorithm switch or native rule evaluator is added.
+
+The original candidate lifecycle costs 4,764 submissions. Its replacement costs 716:
+
+| Operation | Measured submissions |
+| --- | ---: |
+| Store creation | 4 |
+| Index creation | 4 |
+| Population | 380 |
+| Row retirement | 324 |
+| Final store drops | 4 |
+| **Total** | **716** |
+
+Population exceeds its original 250 planning cap by 130 statements.
+Retirement beats its 1,028-statement model by 704. The full net target is exceeded by 574.
+All other 2,969 engine submissions remain in the complete accounting.
+This delivery therefore meets its full target through a different measured fill and retirement balance.
+The check does not substitute a 1,000-removal floor for the expected 3,474 removals.
+The launcher records `chunk-a-budget.json`, while the independent 100-submission gate still exits nonzero.
+
+### TDD and root causes
+
+Red commit `321f6ec9` requires two independent selectors to share one indexed owner.
+The frozen baseline fails with two creates, two indexes, and two drops instead of one each.
+The selected implementation passes that test and preserves all 130 findings across two packets.
+SQL tests cover duplicate rows, NULLs, integer affinity, empty completion, individual retirement, and repeated execution domains.
+An index-plan test retains both interval bounds after the producer prefix.
+A native execution test verifies cleanup after a later query error, then successful retries.
+
+A further red replay test exposes invalid alias placement for a different temporary schema: WITH precedes CREATE.
+The fix puts that WITH inside the table's SELECT body. The replay then preserves the different schema and duplicate rows.
+The final SQL unit run covers 78 passing tests and one existing ignored test.
+The selected addon also passes 312 native-facing tests, 54 standalone SQL tests, and 12 budget regression tests.
+The original corpus selection retains 60 positive and 60 clean observations across 60 rules, with zero differences or failures.
+Native Clippy passes for all targets with and without profiling. Standalone Clippy and the static checks pass.
+
+The first ownership implementation reduces submissions but increases median CPU by 4.3%.
+It builds two schedules before the final schedule and scans alias SQL that it discards.
+Removing that work resolves the regression. Owner-name metadata is also built once rather than at every retirement boundary.
+The checked evidence retains every timing trial:
+
+| Experiment | Pairs | Before CPU median, ms | After CPU median, ms | Decision |
+| --- | ---: | ---: | ---: | --- |
+| Initial ownership implementation | 5 | 1,681.999 | 1,754.292 | Reject this version |
+| Single final schedule and no discarded alias rendering | 3 | 1,678.267 | 1,610.250 | Provisional validation |
+| Complete validation before owner-name metadata hoist | 5 | 1,701.422 | 1,657.521 | Retain measurements |
+| Delivery build | 5 | 1,695.593 | 1,653.416 | Select |
+
+The first pair in the initial series overlaps a short diagnostic memory replay. It is excluded from final acceptance.
+The delivery series runs after our builds, tests, and diagnostic captures finish, with no overlapping work from this agent.
+It alternates fresh processes against the frozen baseline addon, with identical inputs, build settings, allocator shim, and four workers.
+CPU covers the full replay interval after the driver imports its modules. Tracing and allocation accounting are disabled.
+The delivery CPU median falls 2.49%; ranges overlap: 1,613.386–1,716.013 ms before and 1,569.702–1,683.505 ms after.
+The shared host and modest change do not support a repository-wide speedup claim.
+Reported peak RSS medians are 378,784 and 335,520 KiB, with variable, overlapping ranges.
+The preceding five-pair series has nearly flat RSS medians. Do not assign the delivery series' RSS decrease entirely to this change.
+
+### Memory, replay, and remaining work
+
+The new `candidate_owner` binary applies the production ownership compiler to a frozen logical plan.
+It preserves the original consumer ordinals and rejects existing outputs or already shared programs.
+The replay uses the production SQLite adapters. It does not evaluate rules in Rust.
+The exact 161-row candidate multiset matches, including multiplicity.
+With identical 1,024/512 KiB main/temp cache budgets, SQLite stepping heap falls from 19,793,328 to 19,269,664 bytes.
+Compilation peak falls from 3,397,936 to 3,040,608 bytes.
+Stage/result VM steps fall from 73,349 to 62,073. Sorts change from 1,815 to 1,812.
+Peak live logical bindings increase from 93 to 110 because independent producers now complete together.
+Each binding still retires after its last consumer. The measured heap peak remains lower despite that scheduling change.
+Diagnostic replay timings are separate from the untraced CPU controls.
+
+Format-v3 captures include owner setup, slots, batch members, the logical graph, source generations, and the executable schedule.
+The cache-budget replay follows that schedule instead of reconstructing dependencies from the shared table's writes.
+SQL batch duration belongs to the batch. Use the captured membership when analyzing its logical producers.
+Two external sample captures still show regex construction, allocation/memory movement, and SQLite preparation.
+These are wall-time stack observations, not CPU-time shares.
+
+R5-B is repriced to 1,296 additional removals from the measured 3,685 baseline.
+Its retirement component is now 324 to 200, rather than 1,028 to 200. It cannot claim savings already delivered here.
+The updated plan leaves 2,389 submissions after that target, still above the final 100 limit.
+This chunk does not run the full repository or the complete 3,210-observation corpus.
+
+Evidence: [checked measurements and all timing trials](../fixtures/host/data-layer-port/profiling/candidate-ownership-recovery-20261024.json).
+Raw captures and commands remain in `.rerail/profiles/chunk-a-20261024/`.
+
+## Original execution reduction planning: 2026-10-24
+
+Each implementation delivery must remove its full expected number of complete-job engine submissions.
 Small TDD commits remain useful, but they do not end a performance phase.
 The [ranked opportunity plan](sql-execution-opportunities.md) replaces micro-optimization milestones with two coherent delivery chunks.
 

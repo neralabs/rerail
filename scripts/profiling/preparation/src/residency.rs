@@ -158,8 +158,43 @@ fn measure(
             temporary: s["temporary"] == true,
         })
         .collect();
+    let relation_names: Vec<_> = inputs.iter().map(|s| s.name).collect();
     let started = thread_cpu_ns().unwrap();
-    let schedule = Schedule::new(&inputs, &queries);
+    let schedule = if let Some(actions) = data.get("schedule") {
+        Schedule {
+            actions: serde_json::from_value(actions.clone())
+                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+            peak_relations: data["peakLiveRelations"].as_u64().unwrap_or(0) as usize,
+        }
+    } else {
+        Schedule::new(&inputs, &queries)
+    };
+    let ownership = crate::ownership::Layout {
+        setup: data
+            .get("setup")
+            .and_then(Json::as_array)
+            .map(|v| v.iter().map(|s| s.as_str().unwrap().into()).collect())
+            .unwrap_or_default(),
+        slots: stages
+            .iter()
+            .map(|s| s["slot"].as_u64().map(|n| n as usize))
+            .collect(),
+        members: stages
+            .iter()
+            .map(|s| {
+                s.get("members")
+                    .and_then(Json::as_array)
+                    .map(|v| v.iter().map(|n| n.as_u64().unwrap() as usize).collect())
+                    .unwrap_or_default()
+            })
+            .collect(),
+    };
+    if !ownership.setup.is_empty() && layout != "scheduled" {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    for sql in &ownership.setup {
+        store.db.execute_batch(sql)?;
+    }
     let schedule_cpu_ms = (thread_cpu_ns().unwrap() - started) as f64 / 1e6;
     let eager: Vec<_> = (0..stages.len())
         .map(Action::Prepare)
@@ -204,7 +239,11 @@ fn measure(
                 drop(q);
                 store.readers.clear();
                 if inputs[i].temporary {
-                    live += 1;
+                    live += if ownership.slot(i).is_some() {
+                        ownership.members(i).len()
+                    } else {
+                        1
+                    };
                     peak = peak.max(live);
                 }
                 if let Some(columns) = stages[i]["index"].as_str() {
@@ -232,15 +271,17 @@ fn measure(
                 boundary = true;
             }
             Action::Release(_) => {
-                let sql = group
+                let ids = group
                     .iter()
                     .map(|a| {
-                        let Action::Release(i) = *a else {
+                        if let Action::Release(i) = a {
+                            *i
+                        } else {
                             unreachable!()
-                        };
-                        format!("DROP TABLE temp.\"{}\";", inputs[i].name)
+                        }
                     })
-                    .collect::<String>();
+                    .collect::<Vec<_>>();
+                let sql = ownership.release(&relation_names, &ids);
                 store.db.execute_batch(&sql)?;
                 live -= group.len();
                 release_ns += thread_cpu_ns().unwrap() - started;
@@ -256,6 +297,9 @@ fn measure(
     }
     assert_eq!(live, 0);
     store.readers.clear();
+    if !ownership.setup.is_empty() {
+        store.db.execute_batch("DROP TABLE candidate_keys")?;
+    }
     store.db.execute_batch("COMMIT")?;
     snapshots
         .push(json!({"label":"finished","operation":operation,"sample":observe(&store.db,0)?}));

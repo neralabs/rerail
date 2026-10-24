@@ -49,7 +49,7 @@ it.skipIf(!required)("shares one indexed SQL owner across independent selector p
       }
     }
     expect([creates, indexes, releases], "one index belongs to the execution domain, not to each selector").toEqual([1, 1, 1]);
-    const owners = candidates[0].stages.filter((s: {slot?: number}) => s.slot !== undefined);
+    const owners = candidates[0].stages.filter((s: {slot?: number}) => typeof s.slot === "number");
     expect(owners).toHaveLength(2);
     expect(new Set(owners.map((s: {slot: number}) => s.slot)).size).toBe(2);
     expect(candidates[0].setup).toHaveLength(2);

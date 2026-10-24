@@ -1,6 +1,9 @@
 //! Render generated SQL from indexed dependencies, without rescanning every prior definition.
-use std::collections::{BTreeSet, HashMap};
 use std::sync::LazyLock;
+use std::{
+    borrow::Cow,
+    collections::{BTreeSet, HashMap},
+};
 
 fn tokens(sql: &str) -> impl Iterator<Item = &str> {
     static IDENTIFIER: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -82,6 +85,59 @@ impl Definitions {
                     .collect::<Vec<_>>()
                     .join(",")
             )
+        }
+    }
+
+    pub fn render_cuts(
+        &self,
+        body: &str,
+        physical: &BTreeSet<String>,
+        members: &BTreeSet<&str>,
+        aliases: &HashMap<String, String>,
+        extra: &[String],
+    ) -> String {
+        let mut pending: Vec<_> = tokens(body)
+            .chain(extra.iter().flat_map(|sql| tokens(sql)))
+            .filter_map(|t| self.names.get(t).copied())
+            .collect();
+        let mut seen = BTreeSet::new();
+        while let Some(index) = pending.pop() {
+            if seen.insert(index) {
+                let name = self.entries[index]
+                    .sql
+                    .split_once('(')
+                    .expect("generated columns")
+                    .0;
+                if !physical.contains(name) || members.contains(name) {
+                    pending.extend(&self.entries[index].dependencies);
+                }
+            }
+        }
+        let mut definitions = seen
+            .into_iter()
+            .filter_map(|index| {
+                let entry = &self.entries[index];
+                let name = entry.sql.split_once('(').expect("generated columns").0;
+                if physical.contains(name) && !members.contains(name) {
+                    aliases.get(name).map(|sql| Cow::Borrowed(sql.as_str()))
+                } else if members.contains(name) {
+                    // The physical owner is this root's materialization boundary. Keeping
+                    // another ephemeral copy inside CTAS adds storage without a consumer.
+                    Some(Cow::Owned(entry.sql.replacen(
+                        " AS MATERIALIZED ",
+                        " AS NOT MATERIALIZED ",
+                        1,
+                    )))
+                } else {
+                    Some(Cow::Borrowed(entry.sql.as_str()))
+                }
+            })
+            .collect::<Vec<_>>();
+        definitions.extend(extra.iter().map(|sql| Cow::Borrowed(sql.as_str())));
+        if definitions.is_empty() {
+            body.to_owned()
+        } else {
+            format!("WITH RECURSIVE {} {body}", definitions.join(","))
         }
     }
 

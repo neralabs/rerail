@@ -108,13 +108,19 @@ pub(super) fn rows_for(
     let before = store.readers.0.lock().counters;
     #[cfg(feature = "code-rule-profile")]
     let mut emitted = 0u64;
+    let relation_names: Vec<_> = statement.stages.iter().map(|s| s.name.as_str()).collect();
     let mut live = vec![false; statement.stages.len()];
     let mut live_count = 0usize;
+    let mut owner_created = false;
     #[cfg(feature = "code-rule-profile")]
     let mut next_sample = 128;
     let result = (|| {
         if statement.file_scope {
             request(store, files)?;
+        }
+        for sql in &statement.ownership.setup {
+            store.db.execute_batch(sql)?;
+            owner_created = true;
         }
         #[cfg(feature = "code-rule-profile")]
         working_set(store, "start", 0, live_count)?;
@@ -155,8 +161,15 @@ pub(super) fn rows_for(
                     let previous = logical.map(|node| store.graph.lock().constructed(node.id));
                     create.execute(params_from_iter(&statement.parameters[..count]))?;
                     if stage.temporary {
-                        live[i] = true;
-                        live_count += 1;
+                        if statement.ownership.slot(i).is_some() {
+                            for &member in statement.ownership.members(i) {
+                                live[member] = true;
+                                live_count += 1;
+                            }
+                        } else {
+                            live[i] = true;
+                            live_count += 1;
+                        }
                     }
                     #[cfg(feature = "code-rule-profile")]
                     {
@@ -239,15 +252,16 @@ pub(super) fn rows_for(
                     }
                     #[cfg(feature = "code-rule-profile")]
                     let mut release = Span::start("anchor-release", "batch");
-                    let sql = actions
+                    let indices: Vec<_> = actions
                         .iter()
                         .map(|action| {
                             let Action::Release(i) = *action else {
                                 unreachable!()
                             };
-                            format!("DROP TABLE temp.\"{}\";", statement.stages[i].name)
+                            i
                         })
-                        .collect::<String>();
+                        .collect();
+                    let sql = statement.ownership.release(&relation_names, &indices);
                     store.db.execute_batch(&sql)?;
                     for action in actions {
                         let Action::Release(i) = *action else {
@@ -293,7 +307,7 @@ pub(super) fn rows_for(
     })();
     store.readers.clear();
     for (i, stage) in statement.stages.iter().enumerate().rev() {
-        if !live[i] {
+        if !live[i] || statement.ownership.slot(i).is_some() {
             continue;
         }
         #[cfg(feature = "code-rule-profile")]
@@ -306,8 +320,18 @@ pub(super) fn rows_for(
             cleanup?;
         }
     }
+    if owner_created {
+        let cleanup = store.db.execute_batch(&format!(
+            "DROP TABLE {}temp.\"{}\"",
+            if result.is_ok() { "" } else { "IF EXISTS " },
+            super::lower::ownership::STORE
+        ));
+        if result.is_ok() {
+            cleanup?;
+        }
+    }
     #[cfg(feature = "code-rule-profile")]
-    batch.detail(|| serde_json::json!({"files":files,"reader":store.readers.0.lock().counters.since(before),"readerColumns":["rec","parentOverflow","sizeOverflow","flags","spans","checkpoints","source"],"emittedRows":emitted,"peakLiveRelations":statement.schedule.peak_relations,"materializations":statement.stages.iter().filter(|s|!(covered&&s.covering)).count(),"failed":result.is_err()}));
+    batch.detail(|| serde_json::json!({"files":files,"reader":store.readers.0.lock().counters.since(before),"readerColumns":["rec","parentOverflow","sizeOverflow","flags","spans","checkpoints","source"],"emittedRows":emitted,"peakLiveRelations":statement.schedule.peak_relations,"materializations":statement.preparations(covered),"failed":result.is_err()}));
     if let Some(transaction) = transaction {
         if result.is_ok() {
             transaction.commit()?;

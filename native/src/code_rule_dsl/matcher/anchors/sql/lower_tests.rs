@@ -350,3 +350,44 @@ fn empty_union_still_deduplicates_a_projected_input() {
     super::super::execute::rows(&store, &statement, |q, f, p| rows.push((q, f, p))).unwrap();
     assert_eq!(rows, [(0, 1, 1)]);
 }
+
+#[test]
+fn shared_candidate_owner_cleans_up_after_a_query_error_and_retries_with_fresh_completion() {
+    let store = super::super::store::Store::temporary().unwrap();
+    for fail in [true, false, false] {
+        let mut statement = finish_decoded(
+            vec![
+                "a(fid,pre) AS MATERIALIZED (VALUES(1,2))".into(),
+                "b(fid,pre) AS MATERIALIZED (SELECT 1,3 WHERE 0)".into(),
+            ],
+            vec![
+                "SELECT 0,fid,pre FROM a".into(),
+                if fail {
+                    "SELECT 1,fid,missing FROM b".into()
+                } else {
+                    "SELECT 1,fid,pre FROM b".into()
+                },
+            ],
+            vec![],
+            BTreeSet::from(["a".into(), "b".into()]),
+            HashMap::new(),
+        );
+        statement.own();
+        let mut rows = Vec::new();
+        let result =
+            super::super::execute::rows(&store, &statement, |q, f, p| rows.push((q, f, p)));
+        assert_eq!(result.is_err(), fail);
+        assert_eq!(rows, [(0, 1, 2)]);
+        assert_eq!(
+            store
+                .db
+                .query_row(
+                    "SELECT count(*) FROM temp.sqlite_schema WHERE name LIKE 'candidate_keys%'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+    }
+}
