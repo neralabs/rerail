@@ -271,6 +271,8 @@ test("execution inventory retains event attribution when identical SQL crosses p
       relationalEvaluation: 1, cleanup: 0, unknown: 1,
     });
     assert.equal(report.executionInventory.entries.length, 5);
+    assert.ok(report.executionInventory.entries.every(e => !("sql" in e)), "inventory refers to the shared query catalogue without duplicating SQL");
+    assert.ok(report.queries.every(q => !("bytecode" in q) && !("plan" in q)), "plans have one physical representation in the query catalogue");
     const candidate = report.executionInventory.entries.find(e => e.phase === "candidatePreparation");
     assert.deepEqual(candidate.fileDomain, ["a.py", "b.py"]);
     assert.equal(candidate.producer, "anchors");
