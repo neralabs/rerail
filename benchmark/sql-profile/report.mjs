@@ -135,6 +135,8 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
     // Union plan hazards across all observed plans.
     const allFlags = [flags(query), ...query.plans.map(plan => flags({ ...query, ...plan }))].flat();
     query.flags = [...new Map(allFlags.map(flag => [flag.code, flag])).values()];
+    // Plans already live in the deduplicated plans catalogue. Do not serialize them twice.
+    delete query.plan; delete query.bytecode; delete query.planSql;
   }
   queries.sort((a, b) => b.selfCpuNs - a.selfCpuNs || a.id - b.id);
   const summary = Object.fromEntries(fields.map(key => [key, queries.reduce((n, q) => n + (key === "cpuNs" || key === "wallNs" ? (q.kind === "sql" ? q[key] : 0) : q[key]), 0)]));
@@ -160,7 +162,7 @@ export function writeReport(report, outputDirectory) {
   writeFileSync(join(outputDirectory, "summary.md"), summaryMarkdown(report));
   if (report.executionInventory) writeFileSync(join(outputDirectory, "execution-inventory.json"), JSON.stringify(report.executionInventory, null, 2) + "\n");
   writeFileSync(join(outputDirectory, "execution-budget.json"), JSON.stringify(report.executionBudget, null, 2) + "\n");
-  writeFileSync(join(outputDirectory, "profile.json"), JSON.stringify(report, null, 2) + "\n");
+  writeFileSync(join(outputDirectory, "profile.json"), JSON.stringify(report) + "\n");
   const lines = [summaryMarkdown(report), "", "# Complete query catalogue", "", `Output parity: ${report.workload?.results?.parity ?? "unavailable"}.`, "", report.accounting, "",
     `Events: ${report.eventCount}. Sessions: ${report.sessions}. Accounted CPU: ${ms(report.summary.selfCpuNs)} ms.`, "",
     "| Query | Kind | Self CPU ms | Runs | Rows | VM steps | Flags |", "|---|---|---:|---:|---:|---:|---|"];

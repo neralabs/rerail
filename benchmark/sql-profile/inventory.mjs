@@ -26,7 +26,7 @@ export class ExecutionInventory {
     const context = event.context ?? {};
     const identity = {
       phase: phase(query.sql, context), session, thread: event.thread ?? null,
-      query: query.id, sql: query.sql, producer: context.producer ?? null,
+      query: query.id, producer: context.producer ?? null,
       binding: context.binding ?? null, generation: context.generation ?? null,
       fileDomain: context.fileDomain ?? context.path ?? null,
       consumer: context.ruleId === undefined ? null : [context.ruleId, context.clauseId ?? null],
