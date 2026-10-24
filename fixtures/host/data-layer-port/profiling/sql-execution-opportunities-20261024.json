@@ -198,15 +198,41 @@
         "note": "Full net target exceeded. Replacement INSERTs and DELETEs count; the planned 68 compiler-probe removals remain unimplemented.",
         "evidence": "relational-storage-recovery-20261024.json"
       }
+    },
+    {
+      "id": "R5-C",
+      "name": "One shared evaluation plan and complete cold SQL budget",
+      "baseline": "after measured R5-B: 2250 complete-job engine submissions",
+      "netRemovalTarget": 2150,
+      "wholeJobAfterTarget": 100,
+      "estimateStatus": "hard acceptance target; executable replacement schedule and CPU benefit remain unproven",
+      "baselineByPhase": {
+        "connectionSetup": 244,
+        "filePublication": 36,
+        "catalogPublication": 12,
+        "candidatePreparation": 702,
+        "cleanup": 165,
+        "relationalEvaluation": 1091
+      },
+      "requirements": [
+        "share computed rows and completion across compatible consumers, not only empty backing",
+        "compile typed dependencies and bounded operation-family batches before SQL rendering",
+        "eliminate duplicate clause imports and per-consumer owner index creation",
+        "preserve cold SQLite schema inference and affinity without uncounted work",
+        "price all setup, publication, derivation, result, lifetime and cleanup SQL in one complete job",
+        "prove complete parity, lower CPU, bounded memory, and at least 2150 actual removals"
+      ],
+      "specification": "docs/sql-execution-chunk-c.md",
+      "evidencePlan": "sql-execution-chunk-c-20261024.json"
     }
   ],
   "remainingAfterBothTargets": {
     "engineSubmissions": 2250,
     "overFixedLimit": 2150,
-    "status": "measured after accepted A and B; reprofile before assigning the next full delivery target"
+    "status": "measured after A and B; C now owns all remaining 2150 excess submissions, with no unassigned remainder"
   },
   "deliveryRules": [
-    "each implementation delivery must remove its chunk's full expected number of actual engine submissions against the preceding accepted checkpoint; R5-A requires at least 3474",
+    "each implementation delivery must remove its chunk's full expected number of actual engine submissions against the preceding checkpoint; R5-C requires at least 2150 and at most 100 total",
     "TDD commits may be smaller, but do not stop the delivery phase at a micro-optimization",
     "net targets include replacement inserts, deletes, setup, transactions, publication and cleanup",
     "validate complete parity, CPU and memory; a count reduction does not permit a CPU or memory regression",

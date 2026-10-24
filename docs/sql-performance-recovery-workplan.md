@@ -14,6 +14,8 @@ R5-A removes 4,048 submissions against its full 3,474 target. R5-B removes 1,435
 Each implementation delivery must remove its full expected count, with CPU, memory, and parity gates intact.
 The [R5-B journal](data-layer-performance-journal.md#relational-storage-delivery-r5-b-2026-10-24) records the complete accounting and matched controls.
 Small TDD commits support these chunks. They do not complete a phase by themselves.
+The [C specification](sql-execution-chunk-c.md) now groups the remaining architecture work into one complete delivery.
+C requires 2,150 actual removals and at most 100 complete-job submissions. Smaller checkpoints do not complete C.
 
 ## Required outcome
 

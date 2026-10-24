@@ -8,6 +8,23 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Complete shared execution specification R5-C: 2026-10-24
+
+Status: design only. No additional implementation or performance improvement follows from this entry.
+A and B remove 5,483 submissions but leave 2,250. Their original combined budget also leaves approximately that remainder.
+The [C specification](sql-execution-chunk-c.md) assigns the entire remaining 2,150-execution gap to one delivery.
+Its unchanged complete guard must finish at 100 or fewer engine submissions.
+
+C requires shared populated owners and completion across compatible consumers, rather than only empty schema and connection reuse.
+It includes typed operation batches, private pipelines, version membership, scoped readers, and complete producer lifetimes.
+Cold compilation, publication, result emission, and cleanup remain inside the same budget.
+The first implementation step must price the complete executable schedule. Replacement counts and CPU improvement remain unproven.
+
+The [frozen C ledger](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) records all six remaining phases and their source hashes.
+Its counts sum to 2,250, with 181 separately reported SQLite internal executions.
+Acceptance also requires complete parity, genuine nonempty shared execution, repeatable CPU improvement, and no memory regression.
+Smaller TDD commits support C but cannot complete the delivery by themselves.
+
 ## Relational storage delivery R5-B: 2026-10-24
 
 **Result: 1,435 engine submissions removed, exceeding the full 1,296 target.**

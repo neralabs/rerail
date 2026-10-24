@@ -18,6 +18,8 @@ The [ranked execution opportunity plan](sql-execution-opportunities.md) supersed
 Named-owner metadata and dependency work belong inside a chunk that removes its full expected count of complete-job engine submissions.
 R5-A removes 4,048 submissions against its full 3,474 target. R5-B removes 1,435 against its full 1,296 target.
 The complete fixed guard now has 2,250 submissions. CPU, memory, parity, and the final 100-submission gate remain mandatory.
+The [C specification](sql-execution-chunk-c.md) now groups the remaining architecture work into one complete delivery.
+C requires 2,150 actual removals and at most 100 complete-job submissions. Smaller checkpoints do not complete C.
 
 ## Existing foundation
 

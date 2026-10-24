@@ -28,6 +28,7 @@ The standalone `candidate_owner` command recompiles frozen plans through the pro
 The `cache_budget` command replays the captured schedule, including shared-owner setup and retirement.
 
 R5-B below is repriced from 3,685 submissions. It cannot claim the retirement savings already achieved here.
+The [C specification](sql-execution-chunk-c.md) now owns the complete remaining gap after A and B.
 
 ## Measured inventory
 
@@ -49,7 +50,8 @@ The SQL report assigns global query IDs. Inventory rows resolve through the repo
 
 ## Ranked opportunities
 
-The R5-A rows preserve the original planning targets. Its measured result is above. R5-B remains a planning target.
+The A and B rows preserve their original component budgets. Both measured deliveries appear in this document.
+C has a fixed complete-job target. Its replacement schedule remains unproven.
 Current execution counts are measured. Replacement budgets must pass a compiled-plan audit and complete runtime accounting.
 
 | Rank | Opportunity | Before | Replacement budget | Net removal target | Delivery chunk |
@@ -146,6 +148,23 @@ The implementation sites are [relational sessions and stages](../native/src/code
 and [schema metadata](../native/src/code_rule_dsl/relational/schema.rs).
 The existing [shared-storage contract test](../scripts/profiling/preparation/src/shared_storage.rs) supplies an initial connection constraint.
 
+## R5-C: complete shared execution and the cold budget
+
+**Target: remove at least 2,150 further submissions from 2,250, reaching at most 100.**
+
+C owns the entire remaining gap. It cannot finish with an unassigned remainder.
+The [specification](sql-execution-chunk-c.md) defines shared populated owners, typed operation batches, complete lifetimes, and scoped consumers.
+It also includes cold compilation, publication, result emission, and cleanup.
+The [C ledger](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) reconciles the complete B trace by phase.
+
+The remaining phase counts are 244 setup, 36 file publication, 12 catalog publication, 702 candidate preparation, 1,091 relational evaluation, and 165 cleanup.
+They sum to 2,250. Component savings cannot overlap or omit replacement work.
+The first implementation step must produce an executable replacement schedule within 100, including every infrastructure statement.
+No invented component caps or warm-cache assumptions establish feasibility.
+
+Completion requires at least 2,150 actual removals, complete parity, genuine populated-owner sharing, lower CPU, and bounded memory.
+TDD checkpoints support one delivery. Schema reuse or a smaller numerical reduction does not complete it.
+
 ## Accounting and delivery gates
 
 R5-A receives credit for replacing 1,588 candidate drops with 324 deletes and four final drops.
@@ -162,7 +181,7 @@ Count replacement INSERTs, DELETEs, schema changes, transactions, publication, a
 Retain the fixed 100 limit without resets, reclassification, or truncated findings.
 
 The accepted R5-A and R5-B results leave 2,250 submissions, still 2,150 above the final limit.
-That remainder needs another measured inventory. No invented saving is assigned to it now.
+The C specification assigns that entire measured gap to one delivery. Its complete replacement schedule still needs proof.
 CPU-only improvements, cheaper private CTEs, and speculative cache hits do not contribute to the submission targets.
 SQLite internal executions remain separately reported and do not inflate the projected engine savings.
 This plan creates no Linear issues and adds no optional production execution path.
