@@ -8,6 +8,27 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Execution reduction delivery chunks: 2026-10-24
+
+The user requires larger work units. Each implementation delivery must remove at least 1,000 complete-job engine submissions.
+Small TDD commits remain useful, but they do not end a performance phase.
+The [ranked opportunity plan](sql-execution-opportunities.md) replaces micro-optimization milestones with two coherent delivery chunks.
+
+The current 7,733 submissions include 1,588 candidate table creates, 1,588 candidate index creates, and 1,588 candidate drops.
+The existing candidate schedules contain 1,028 adjacent retirement groups across four execution contexts.
+R5-A targets 3,474 net removals through stable indexed stores, typed operation batching, and bulk retirement at those existing boundaries.
+Its complete-job target is at most 4,259 submissions. Replacement publication and maintenance count against that budget.
+
+R5-B provisionally targets at least 2,000 additional removals through shared relational backing and complete session lifetimes.
+Its measured inputs include 2,130 relational lifecycle executions, 136 clause-configuration PRAGMAs, and 68 empty syntax-schema CTAS executions.
+Its retirement target starts from R5-A's replacement deletes, so the same drop removals are not counted twice.
+Schema and binding compatibility must be audited before producer data reuse receives credit.
+These are planning targets. No corresponding runtime saving has been achieved in this planning turn.
+
+The [checked ledger](../fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json) reconciles every engine submission and records assumptions and source hashes.
+CPU, memory, complete parity, and the fixed 100-submission requirement remain mandatory.
+After those targets, at most 2,259 submissions remain. Their next reductions require a fresh inventory rather than fabricated estimates.
+
 ## Selector SQL owners: 2026-10-24
 
 ### Physical owner projection: green

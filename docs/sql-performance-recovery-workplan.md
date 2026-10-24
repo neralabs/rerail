@@ -8,6 +8,11 @@ Runtime producer execution and whole-job lifetimes remain open. Aggregate CPU re
 All work uses the current worktree. Named span/child demand and deterministic frontier composition now have tested implementation slices.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
+The [ranked execution opportunities](sql-execution-opportunities.md) now define the delivery size.
+R5-A targets 3,474 net removals. R5-B provisionally targets at least 2,000 additional removals.
+Each implementation delivery must remove at least 1,000 complete-job engine submissions, with CPU, memory, and parity gates intact.
+Small TDD commits support these chunks. They do not complete a phase by themselves.
+
 ## Required outcome
 
 One complete cold job submits at most **100 SQL statements from the engine**, across all workers and connections.
