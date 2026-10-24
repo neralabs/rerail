@@ -2,8 +2,9 @@
 
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
 Conditional admission, whole-job publication, and R4–R7 remain open.
-The latest measured job has 9,695 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
-Compiler input/syntax validation no longer executes DDL. Compiler stage schemas and shared runtime producers remain open.
+The latest measured job has 9,095 engine submissions and 994 SQLite internal executions. The 100-submission gate still fails.
+Compiler input/syntax validation uses prepare-only schemas. Compiler stages share bounded SQLite-inferred metadata across documents.
+Runtime producers and whole-job lifetimes remain open. The latest small CPU comparison regresses by 4.68%; CPU recovery is unresolved.
 All work uses the current worktree. WP1 remains pending.
 The [aggregate journal](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23) preserves the failing starting point.
 
@@ -185,6 +186,18 @@ Allocation-dependent lowering remains a measured R4 risk. Named producer discove
 The [journal](data-layer-performance-journal.md#selected-compiler-recovery-checkpoint) records the accepted changes and rejected controls.
 The [checked evidence](../fixtures/host/data-layer-port/profiling/sql-recovery-compiler-20261023.json) preserves all matched CPU trials and correctness results.
 
+The next TDD slice shares SQLite-inferred stage schemas across document compilations.
+The cache key contains exact SQL, complete ordered schemas of read relations, and deferred column names.
+Every clause still receives SQL, authorizer, and deferred-expression validation. Cache hits never bypass those checks.
+The process owns immutable metadata only, with fixed entry and charged-payload bounds. No runtime rows or database handles are retained.
+Deferred-expression validation uses a prepare-only backing schema instead of executed CREATE/DROP statements.
+
+The final small capture records 9,095 engine submissions, including 68 compiler stage CREATEs and 372 connection-setup submissions.
+All 136 connections remain. Runtime candidate preparation, cleanup, and relational evaluation still submit 8,675 statements.
+The 100-submission gate fails with complete findings and coverage. This remains a partial R3 checkpoint.
+Matched median CPU increases from 2,479.402 ms to 2,595.351 ms. The count reduction is not a speedup claim.
+The [stage-schema evidence](../fixtures/host/data-layer-port/profiling/sql-stage-schema-recovery-20261023.json) records both control groups and the unresolved CPU requirement.
+
 ## R4: establish shared producers and remove repeated construction
 
 This step implements WP1 and the first useful execution slice from WP2.
@@ -292,7 +305,7 @@ Whole-job publication still requires a source-admission boundary across the 288 
 It cannot be implemented by repeating these batches independently for each request.
 
 R2 remains open for conditional cross-file activation through dependency phases.
-R3 remains open for whole-job publication and compiler schema lifetimes.
+R3 remains open for whole-job publication and session lifetimes. Compiler stage metadata now shares across documents within fixed retention bounds.
 R4 must then establish named physical owners and shared missing coverage, including empty results.
 R5 must coalesce compatible consumers while preserving the 100-submission guard.
 R6 and R7 retain their failure, memory, and matched aggregate CPU requirements.

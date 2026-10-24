@@ -10,6 +10,50 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Compiler schema reuse across documents: green
+
+The process-owned schema cache passes the stronger test from `a2631fb0`.
+Two documents with twelve repeated pipelines each execute three inference statements in total: two CTAS statements and one deferred-column ALTER.
+Deferred-expression validation executes no CREATE or DROP.
+Eight concurrent schema-inference requests perform one inference while compatible metadata remains resident.
+
+SQLite supplies the schema, including expression affinity. Every clause retains SQL, authorizer, and deferred-expression validation.
+The key contains exact SQL, complete ordered schemas of read relations, and deferred column names.
+Immutable shared column descriptors avoid repeated deep copies. No connection, prepared statement, runtime row, or source generation enters the cache.
+Retention has fixed limits of 128 entries and 4 MiB of charged payload. Allocator overhead is additional.
+Eviction permits safe re-inference. Runtime materialization remains unchanged.
+
+The final guard records **9,095 engine submissions**, **994 SQLite internal executions**, and **10,089 total executions** across 136 connections.
+Complete findings and execution coverage pass. The fixed 100-submission gate correctly fails after execution finishes.
+Compiler stage CREATEs fall from 194 to 68. Connection-setup submissions fall from 498 to 372.
+Candidate preparation still submits 4,578 statements, cleanup submits 2,316, and relational evaluation submits 1,781.
+Allocation-dependent physical ordering remains. The complete count difference cannot be attributed solely to compiler schema reuse.
+
+Three alternating fresh-process CPU pairs compare `ac3aea34` with the final shared-metadata implementation.
+Median CPU rises from **2,479.402 ms to 2,595.351 ms**, a **4.68% regression**.
+The respective ranges are 2,374.845–2,576.086 ms and 2,565.284–2,627.324 ms.
+Reported median peak RSS falls from 393,040 KiB to 357,152 KiB, or about 384 MiB to 349 MiB.
+The host is shared. These measurements do not establish a reliable memory gain or explain the CPU regression.
+Both binaries use the same workload, build settings, allocator shim, and four workers. Detailed tracing stays disabled.
+
+The intermediate process cache used owned column vectors and recorded 9,113 submissions.
+Its separate CPU comparison also regressed: 2,316.678 ms to 2,369.203 ms, or 2.27%.
+That result motivated shared descriptors and prepare-only binding without recopying metadata.
+The final comparison still provides no CPU improvement. Keep the schema reuse for its execution shape, with CPU acceptance unresolved.
+Do not compare the two control groups as a causal measure of descriptor sharing.
+
+The final addon passes **306 focused native tests** across eleven files and **120 original observations across all 60 rules**.
+The corpus selection includes 60 positive and 60 clean observations, with zero false positives, false negatives, failures, or path differences.
+All 28 standalone SQL tests pass, including schema affinity, downstream CTAS, cache bounds, and concurrent inference checks.
+Native and standalone Clippy, `npm run check`, Rust formatting, and profiling-tool tests pass.
+The first native Clippy attempt reaches the command deadline after package-cache lock contention. The offline retry passes.
+This scope does not replace the full 3,210-observation corpus or whole-repository acceptance.
+
+R3 remains open for whole-job publication and session lifetimes. R4 must share physical runtime producers and coalesce admitted source-span demand.
+Those runtime statements dominate the remaining count. Compiler metadata sharing alone cannot meet the allowance or establish CPU recovery.
+Checked evidence: [stage schema recovery](../fixtures/host/data-layer-port/profiling/sql-stage-schema-recovery-20261023.json).
+Raw captures, commands, and all timing trials remain in `.rerail/profiles/sql-stage-recovery-20261023/`.
+
 ### Compiler schema reuse across documents: red
 
 The complete cold job compiles more than one document. Its execution allowance never resets at a document boundary.
