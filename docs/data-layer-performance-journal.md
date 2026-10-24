@@ -8,6 +8,19 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Shared producer foundation: 2026-10-24
+
+### Real compiler export: red
+
+The next phase starts from `e847fd7b` in the same worktree.
+The retained state capture contains 22 separate span-fill statements in one candidate frontier.
+Retained decoded rows do not prevent repeated demand preparation around those rows.
+WP1 establishes trusted contracts and complete typed binding identity before changing physical sharing.
+Its first public test compiles two actual rule consumers and requires a source-pinned producer manifest accepted by the existing declaration checker.
+The selected addon preserves both findings but exports no producer manifest, so the test fails.
+Evidence: `.rerail/profiles/shared-producers-20261024/export-red`.
+This step does not claim a runtime count or CPU improvement.
+
 ## Recovery TDD: 2026-10-23
 
 ### Compiler schema reuse across documents: green
