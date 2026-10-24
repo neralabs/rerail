@@ -219,7 +219,7 @@ jobs:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:producer-shape
 
-      - name: Enforce 100 SQL executions for the complete cold job
+      - name: Enforce 100 engine SQL submissions for the complete cold job
         if: matrix.task == 'test'
         env:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node

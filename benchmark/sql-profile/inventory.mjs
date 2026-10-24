@@ -25,7 +25,7 @@ export class ExecutionInventory {
     if (event.kind !== "sql") return;
     const context = event.context ?? {};
     const identity = {
-      phase: phase(query.sql, context), session, thread: event.thread ?? null,
+      phase: phase(query.sql, context), origin: event.origin ?? "unknown", session, thread: event.thread ?? null,
       query: query.id, producer: context.producer ?? null,
       binding: context.binding ?? null, generation: context.generation ?? null,
       fileDomain: context.fileDomain ?? context.path ?? null,

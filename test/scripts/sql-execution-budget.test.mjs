@@ -20,6 +20,7 @@ const job = (counts = [25, 25, 25, 25]) => ({
   queries: [{ kind: "sql", sql: "SELECT 1", runs: counts.reduce((sum, n) => sum + n, 0), originRuns: { engine: counts.reduce((sum, n) => sum + n, 0), sqliteInternal: 0, unknown: 0 } }],
   executionCoverage: counts.map((n, i) => ({ session: `worker-${i}`, pid: 42, source: "code-rule-dsl",
     fromSessionStart: true, started: n, completed: n, running: 0, observed: n,
+    observedOrigins: { engine: n, sqliteInternal: 0, unknown: 0 },
     origins: { engine: { started: n, completed: n, running: 0 }, sqliteInternal: { started: 0, completed: 0, running: 0 }, unknown: { started: 0, completed: 0, running: 0 } } })),
   workload: { executor: "relational", nativeSha256: hash, results: { parity: true, exitCode: 0, timedOut: false, conformance: parity() } },
 });
@@ -42,6 +43,7 @@ test("setup, DDL, transactions, helper SQL and cleanup count; enclosing operator
     { kind: "sql", sql: "DELETE FROM f", runs: 57 },
     { kind: "operator", sql: "native publication", runs: 50000 },
   ];
+  report.queries.filter(q => q.kind === "sql").forEach(q => { q.originRuns = { engine: q.runs, sqliteInternal: 0, unknown: 0 }; });
   assert.deepEqual(requireExecutionBudget(report).categories, { setup: 41, transaction: 2, matchingAndCleanup: 57 });
   assert.equal(sqlCategory("-- comment\n/* another */ CREATE INDEX keys ON f(k)"), "setup");
 });
@@ -73,11 +75,12 @@ function rawJob(directory, counts) {
   const lifecycle = [];
   counts.forEach((count, i) => {
     const session = `profile-42-${i}`;
-    const coverage = { source: "code-rule-dsl", fromSessionStart: true, started: count, completed: count, running: 0 };
+    const coverage = { source: "code-rule-dsl", fromSessionStart: true, started: count, completed: count, running: 0,
+      origins: { engine: { started: count, completed: count, running: 0 }, sqliteInternal: { started: 0, completed: 0, running: 0 }, unknown: { started: 0, completed: 0, running: 0 } } };
     writeFileSync(join(raw, `${session}.json`), JSON.stringify({ version: 1, pid: 42, events: count,
       executionCoverage: coverage, queries: [{ id: 0, kind: "sql", sql: "SELECT 1", plan: [], bytecode: [] }] }));
     writeFileSync(join(raw, `${session}.jsonl`), Array.from({ length: count }, (_, n) => JSON.stringify({
-      kind: "sql", query: 0, startNs: n * counts.length + i, wallNs: 1, cpuNs: 1, selfCpuNs: 1, selfWallNs: 1,
+      kind: "sql", origin: "engine", query: 0, startNs: n * counts.length + i, wallNs: 1, cpuNs: 1, selfCpuNs: 1, selfWallNs: 1,
       rows: 1, changes: 0, context: {}, thread: `worker-${i}`,
     })).join("\n") + "\n");
     for (const event of ["opened", "closed"]) lifecycle.push({ version: 1, pid: 42, session, event });
@@ -184,6 +187,7 @@ test("100 engine submissions remain bounded while every SQLite internal executio
   const session = report.executionCoverage[0];
   session.started = session.completed = session.observed = 600;
   session.origins.sqliteInternal = { started: 500, completed: 500, running: 0 };
+  session.observedOrigins.sqliteInternal = 500;
   report.queries.push({ kind: "sql", sql: "REPLACE INTO ftsk_docsize VALUES(?,?,?)", runs: 500,
     originRuns: { engine: 0, sqliteInternal: 500, unknown: 0 } });
   const budget = requireExecutionBudget(report);
@@ -192,7 +196,7 @@ test("100 engine submissions remain bounded while every SQLite internal executio
   assert.equal(budget.totalObserved, 600);
   report.queries[0].runs++; report.queries[0].originRuns.engine++;
   session.started++; session.completed++; session.observed++;
-  session.origins.engine.started++; session.origins.engine.completed++;
+  session.origins.engine.started++; session.origins.engine.completed++; session.observedOrigins.engine++;
   assert.throws(() => requireExecutionBudget(report), /101\/100; budget-exceeded/);
 });
 

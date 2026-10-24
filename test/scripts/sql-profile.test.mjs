@@ -256,7 +256,7 @@ test("execution inventory retains event attribution when identical SQL crosses p
     { context: { component: "ast-index", stage: "candidate-preparation", producer: "anchors", binding: "python", fileDomain: ["a.py", "b.py"] }, thread: "worker-2" },
     { context: { scope: "relational", ruleId: "R1", clauseId: "C1", stage: "result" }, thread: "worker-1" },
     { context: {}, thread: "worker-3" },
-  ].map((event, i) => ({ ...event, kind: "sql", query: 0, startNs: i, cpuNs: 10, selfCpuNs: 10, wallNs: 10, selfWallNs: 10, rows: 0, changes: 0 }));
+  ].map((event, i) => ({ ...event, kind: "sql", origin: "engine", query: 0, startNs: i, cpuNs: 10, selfCpuNs: 10, wallNs: 10, selfWallNs: 10, rows: 0, changes: 0 }));
   events.push({ ...events[0], kind: "operator", query: 1, selfCpuNs: 1000, completed: true });
   writeFileSync(join(raw, "profile-9-0.json"), JSON.stringify({ version: 1, pid: 9, events: events.length, queries: [
     { id: 0, kind: "sql", sql: "SELECT 1", plan: [], bytecode: [] }, { id: 1, kind: "operator", sql: "enclosing operator" },

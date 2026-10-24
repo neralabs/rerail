@@ -37,7 +37,7 @@ const reportPath = join(capture, "sql", "profile.json");
 if (!existsSync(reportPath)) throw new Error("Missing complete SQL execution report; acceptance fails closed.");
 const report = JSON.parse(readFileSync(reportPath));
 const budget = executionBudget(report);
-console.log(`SQL execution budget: ${budget.status}; ${budget.observed}/${budget.limit} actual executions for the complete cold job.`);
+console.log(`SQL execution budget: ${budget.status}; ${budget.observed}/${budget.limit} engine submissions for the complete cold job; ${budget.sqliteInternal} SQLite internal executions; ${budget.totalObserved} total.`);
 if (budget.firstOverBudget) console.log(`Execution 101: ${budget.firstOverBudget.sql}`);
 requireExecutionBudget(report);
 process.exitCode = child.status ?? 1;

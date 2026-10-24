@@ -359,13 +359,41 @@ fn positional_fts_bulk_publication_exposes_per_document_helper_executions() {
             })
             .count();
         assert_eq!(helpers, files as usize);
-        assert!(events.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).filter(|event| {
-            state.queries[event["query"].as_u64().unwrap() as usize]["sql"].as_str().unwrap().starts_with("REPLACE INTO")
-        }).all(|event| event["origin"] == "sqliteInternal"));
+        assert!(
+            events
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .filter(|event| {
+                    state.queries[event["query"].as_u64().unwrap() as usize]["sql"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("REPLACE INTO")
+                })
+                .all(|event| event["origin"] == "sqliteInternal")
+        );
         assert!(publication > helpers);
         println!(
             "FTS_BULK_BUDGET {}",
             json!({"files":files,"hostInsertStatements":1,"sqliteExecutions":publication,"documentHelpers":helpers})
         );
     }
+}
+
+#[test]
+fn authored_comments_and_interleaved_open_cursors_remain_engine_submissions() {
+    let directory = tempfile::tempdir().unwrap();
+    let connection = Connection::open_in_memory().unwrap();
+    // SAFETY: this profiler drops before its connection.
+    let profiler = unsafe { Profiler::new(&connection, directory.path()) }.unwrap();
+    let mut first = connection
+        .prepare("-- an authored SQL comment\nSELECT 1 UNION ALL SELECT 2")
+        .unwrap();
+    let mut rows = first.query([]).unwrap();
+    assert!(rows.next().unwrap().is_some());
+    connection.query_row("SELECT 3", [], |_| Ok(())).unwrap();
+    while rows.next().unwrap().is_some() {}
+    profiler.checkpoint(&connection).unwrap();
+    let state = profiler.state.borrow();
+    assert_eq!(state.origin_started, [2, 0, 0]);
+    assert_eq!(state.origin_completed, [2, 0, 0]);
 }

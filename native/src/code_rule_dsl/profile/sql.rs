@@ -101,7 +101,10 @@ impl Drop for IndexBuild {
     }
 }
 
+const ORIGINS: [&str; 3] = ["engine", "sqliteInternal", "unknown"];
+
 struct Running {
+    origin: usize,
     started: Started,
     start_ns: u64,
     counters: [i64; 4],
@@ -124,6 +127,8 @@ struct State {
     events: usize,
     sql_started: usize,
     sql_completed: usize,
+    origin_started: [usize; 3],
+    origin_completed: [usize; 3],
     enabled: bool,
     writer: Option<BufWriter<File>>,
 }
@@ -306,12 +311,13 @@ impl Profiler {
         if let Some(error) = &state.error {
             return Err(io_error(std::io::Error::other(error.clone())));
         }
+        let origins: serde_json::Map<String, Value> = ORIGINS.iter().enumerate().map(|(i, name)| ((*name).to_owned(), json!({"started":state.origin_started[i], "completed":state.origin_completed[i], "running":state.origin_started[i].saturating_sub(state.origin_completed[i])}))).collect();
         let data = json!({"version":1,"pid":std::process::id(),"events":state.events,
             "clock":"process monotonic nanoseconds","originUnixUs":ORIGIN.1,"cpuClock":if cfg!(unix) {"thread CPU"} else {"unavailable"},
             "writtenAtUnixMs":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis(),
             "queries":state.queries,"error":state.error,
             "executionCoverage":{"source":"code-rule-dsl","fromSessionStart":true,
-                "started":state.sql_started,"completed":state.sql_completed,"running":state.running.len()}});
+                "started":state.sql_started,"completed":state.sql_completed,"running":state.running.len(), "origins":origins}});
         let file = File::create(self.stem.with_extension("json")).map_err(io_error)?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer(&mut writer, &data)
@@ -425,7 +431,7 @@ unsafe extern "C" fn trace(
     code: c_uint,
     context: *mut c_void,
     statement: *mut c_void,
-    _: *mut c_void,
+    trace_sql: *mut c_void,
 ) -> c_int {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: installed with the stable Profiler address; SQLite supplies a live statement.
@@ -447,9 +453,26 @@ unsafe extern "C" fn trace(
                 if sql.is_null() {
                     return;
                 }
-                let sql = unsafe { CStr::from_ptr(sql) }.to_string_lossy();
+                let canonical = unsafe { CStr::from_ptr(sql) }.to_bytes();
+                // SQLite prefixes nested VDBE execution with an extra "-- ". Compare
+                // against canonical SQL so authored comments remain engine submissions.
+                // An open result cursor alone never marks another host query as internal.
+                let origin = if trace_sql.is_null() {
+                    2
+                } else {
+                    let observed = unsafe { CStr::from_ptr(trace_sql.cast()) }.to_bytes();
+                    if observed == canonical {
+                        0
+                    } else if observed.strip_prefix(b"-- ") == Some(canonical) {
+                        1
+                    } else {
+                        2
+                    }
+                };
+                let sql = String::from_utf8_lossy(canonical);
                 let query = state.query(&sql, "sql");
                 state.sql_started += 1;
+                state.origin_started[origin] += 1;
                 let context = state.context.clone();
                 let counters = STATUSES.map(|status| unsafe {
                     i64::from(ffi::sqlite3_stmt_status(pointer, status, 0))
@@ -458,6 +481,7 @@ unsafe extern "C" fn trace(
                 state.running.insert(
                     key,
                     Running {
+                        origin,
                         started: Started::now(),
                         start_ns: now(),
                         counters,
@@ -480,6 +504,7 @@ unsafe extern "C" fn trace(
                     return;
                 };
                 state.sql_completed += 1;
+                state.origin_completed[running.origin] += 1;
                 ACTIVE.set(ACTIVE.get().saturating_sub(1));
                 let elapsed = running.started.elapsed();
                 state.sql_time.add(elapsed);
@@ -499,7 +524,7 @@ unsafe extern "C" fn trace(
                     .collect();
                 let changes = unsafe { ffi::sqlite3_total_changes64(profiler.database) }
                     .saturating_sub(running.changes);
-                state.write(json!({"kind":"sql","query":running.query,"startNs":running.start_ns,
+                state.write(json!({"kind":"sql","origin":ORIGINS[running.origin],"query":running.query,"startNs":running.start_ns,
                     "wallNs":elapsed.wall,"cpuNs":elapsed.cpu,"selfWallNs":elapsed.wall,"selfCpuNs":elapsed.cpu,
                     "rows":running.rows,"changes":changes,"counters":counters,"frame":frame,
                     "context":running.context,"thread":format!("{:?}",std::thread::current().id())}));

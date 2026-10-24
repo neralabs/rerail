@@ -67,7 +67,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         const key = `${query.kind}:${query.sql}`;
         let combined = byText.get(key);
         if (!combined) {
-          combined = { ...query, id: queries.length, ...Object.fromEntries(fields.map(f => [f, 0])), maxExpansion: 0, incomplete: 0, contexts: new Set(), contextDetails: [], plans: [] };
+          combined = { ...query, id: queries.length, ...Object.fromEntries(fields.map(f => [f, 0])), maxExpansion: 0, incomplete: 0, contexts: new Set(), contextDetails: [], plans: [], originRuns: { engine: 0, sqliteInternal: 0, unknown: 0 } };
           queries.push(combined); byText.set(key, combined);
         }
         if (query.kind === "sql") {
@@ -78,7 +78,8 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         }
         return [query.id, combined];
       }));
-      let localEvents = 0, localSql = 0;
+      let localEvents = 0, localSql = 0, localEngine = 0;
+      const observedOrigins = { engine: 0, sqliteInternal: 0, unknown: 0 };
       for await (const line of createInterface({ input: createReadStream(join(rawDirectory, name.replace(/\.json$/, ".jsonl"))), crlfDelay: Infinity })) {
         if (!line) continue;
         const event = JSON.parse(line);
@@ -89,7 +90,10 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         inventory.add(event, query, name);
         if (event.kind === "sql") {
           localSql++;
-          if (localSql <= JOB_SQL_EXECUTION_LIMIT + 1) firstExecutions.push({
+          const origin = ["engine", "sqliteInternal"].includes(event.origin) ? event.origin : "unknown";
+          query.originRuns[origin]++; observedOrigins[origin]++;
+          if (origin === "engine") localEngine++;
+          if (origin === "engine" && localEngine <= JOB_SQL_EXECUTION_LIMIT + 1) firstExecutions.push({
             startNs: event.startNs, session: name, query: query.id, sql: query.sql,
             context: event.context ?? {}, thread: event.thread,
           });
@@ -126,7 +130,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         writeSync(trace, (first ? "" : ",") + JSON.stringify(traceEvent)); first = false;
       }
       if (localEvents !== catalogue.events) throw new Error(`Incomplete trace ${name}: ${localEvents}/${catalogue.events} events`);
-      executionCoverage.push({ session: name, pid: catalogue.pid, ...catalogue.executionCoverage, observed: localSql });
+      executionCoverage.push({ session: name, pid: catalogue.pid, ...catalogue.executionCoverage, observed: localSql, observedOrigins });
     }
     writeSync(trace, "]}");
   } finally { closeSync(trace); }
