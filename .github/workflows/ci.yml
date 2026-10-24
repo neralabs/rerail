@@ -124,6 +124,8 @@ jobs:
               - 'test/engine/native/candidate-publication.test.ts'
               - 'test/engine/native/compiler-schema.test.ts'
               - 'test/engine/native/shared-producers.test.ts'
+              - 'test/engine/native/frontier-determinism.test.ts'
+              - 'scripts/profiling/frontier-audit.mjs'
               - 'package.json'
               - '.github/workflows/ci.yml'
               - '.gitattributes'

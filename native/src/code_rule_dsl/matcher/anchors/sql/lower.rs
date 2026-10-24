@@ -20,7 +20,14 @@ struct Set {
     name: String,
     exact: bool,
 }
+#[derive(serde::Serialize)]
+pub(super) struct Admission {
+    pub consumer: usize,
+    pub generated: usize,
+    pub broadened: bool,
+}
 pub(super) struct Statement {
+    pub admissions: Vec<Admission>,
     #[cfg(feature = "code-rule-profile")]
     pub original: Option<Box<Statement>>,
     #[cfg(feature = "code-rule-profile")]
@@ -599,6 +606,7 @@ fn batch_scope(
         .push(format!("cf(fid) AS MATERIALIZED ({files})"));
     lower.ctes.push("all_nodes(fid,pre) AS NOT MATERIALIZED (SELECT f.fid,p.value FROM cf JOIN file f ON f.fid=cf.fid CROSS JOIN generate_series(0,f.nodes-1,1) p)".into());
     let mut arms = Vec::new();
+    let mut admissions = Vec::new();
     for (qid, plan) in plans.iter().enumerate() {
         lower.consumer = qid;
         let checkpoint = lower.ctes.len();
@@ -607,8 +615,20 @@ fn batch_scope(
         let decoding = lower.decoding.clone();
         lower.limit = checkpoint + 256;
         let selected = match lower.plan(plan, lower.all()) {
-            Ok(selected) => selected,
+            Ok(selected) => {
+                admissions.push(Admission {
+                    consumer: qid,
+                    generated: lower.ctes.len() - checkpoint,
+                    broadened: false,
+                });
+                selected
+            }
             Err(()) => {
+                admissions.push(Admission {
+                    consumer: qid,
+                    generated: lower.ctes.len() - checkpoint,
+                    broadened: true,
+                });
                 #[cfg(feature = "code-rule-profile")]
                 crate::code_rule_dsl::profile::record_anchor_plan_broadening();
                 lower.ctes.truncate(checkpoint);
@@ -671,6 +691,7 @@ fn batch_scope(
             .or_insert(demand);
     }
     let mut statement = finish_decoded(ctes, queries, lower.parameters, indexed, decoding);
+    statement.admissions = admissions;
     let values: BTreeSet<_> = lower
         .predicates
         .iter()
@@ -956,6 +977,7 @@ fn finish_decoded(
         &queries,
     );
     Statement {
+        admissions: Vec::new(),
         #[cfg(feature = "code-rule-profile")]
         original: None,
         #[cfg(feature = "code-rule-profile")]

@@ -33,6 +33,7 @@ pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::AnchorPlan;
 pub(super) use anchors::sql::{
     Corpus, CorpusSlot, FileAnchorIndex, anchor_plans, anchor_plans_for_file,
+    candidate_frontier_audit,
 };
 pub(super) use arguments::{Arguments, Passed, SlotKind};
 pub(super) use arguments_sql::SQL_CALL_KINDS;

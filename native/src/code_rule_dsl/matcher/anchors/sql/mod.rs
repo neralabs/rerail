@@ -1,5 +1,7 @@
 //! File-backed positional FTS, following ast-index-spike. SQL selects candidates;
 //! the existing matcher validates them and constructs captures.
+mod audit;
+pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
 mod candidates;
 #[cfg(feature = "code-rule-profile")]
 mod capture;
