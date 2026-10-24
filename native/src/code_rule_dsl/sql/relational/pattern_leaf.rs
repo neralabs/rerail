@@ -227,6 +227,37 @@ unsafe impl VTabCursor for Cursor<'_> {
                 "terminal reads must contain every variable in column order",
             ));
         }
+        let mut argument = 3;
+        for input in plan.bytes() {
+            let value = if input == b'n' {
+                Cell::Null
+            } else {
+                let value = args.get::<Cell>(argument)?;
+                argument += 1;
+                value
+            };
+            self.inputs.push(value);
+        }
+        if let Some(sub) = self.batch.subfile(self.file as usize) {
+            if self.node >= sub.facts.len() {
+                return Err(invalid("invalid parsed node"));
+            }
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            let at = |id| sub.root.adopt(sub.root.root().get_doc().node(id));
+            if let Some(outputs) = super::pattern_capture::match_at(
+                term,
+                self.file,
+                self.node,
+                &sub.facts,
+                at,
+                &self.inputs,
+            )? {
+                self.outputs[..width].clone_from_slice(&outputs);
+                self.truth = true;
+            }
+            self.done = false;
+            return Ok(());
+        }
         let file = self
             .batch
             .files
@@ -235,16 +266,26 @@ unsafe impl VTabCursor for Cursor<'_> {
         if self.node >= file.facts.len() {
             return Err(invalid("invalid node"));
         }
-        let mut argument = 3;
-        for (index, input) in plan.bytes().enumerate() {
-            let value = if input == b'n' {
-                Cell::Null
-            } else {
-                let value = args.get::<Cell>(argument)?;
-                argument += 1;
-                value
-            };
-            match (&value, term.vars[index].1) {
+        if self.inputs.iter().any(|cell| matches!(cell, Cell::Span(_))) {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            if file.dialect == term.dialect
+                && let Some(outputs) = super::pattern_capture::match_at(
+                    term,
+                    self.file,
+                    self.node,
+                    &file.facts,
+                    |id| node_at(&file.root, id),
+                    &self.inputs,
+                )?
+            {
+                self.outputs[..width].clone_from_slice(&outputs);
+                self.truth = true;
+            }
+            self.done = false;
+            return Ok(());
+        }
+        for (index, value) in self.inputs.iter().enumerate() {
+            match (value, term.vars[index].1) {
                 (Cell::Null, _) => {}
                 (Cell::Integer(value), SlotKind::Node) => {
                     let node =
@@ -258,7 +299,6 @@ unsafe impl VTabCursor for Cursor<'_> {
                 }
                 _ => return Err(invalid("input capture type differs from terminal kind")),
             }
-            self.inputs.push(value);
         }
         self.calls.fetch_add(1, Ordering::Relaxed);
         if file.dialect == term.dialect

@@ -49,11 +49,15 @@ pub(in crate::code_rule_dsl::sql) fn register(
     batch: &Arc<Batch>,
 ) -> Result<Arc<AtomicUsize>> {
     super::row::register(db)?;
+    super::file_guard::register(db, batch)?;
+    super::sibling_state::register(db)?;
     super::capture_cell::register(db)?;
     super::bound_leaf::register(db, batch)?;
     super::memo_store::register(db)?;
     super::budget_leaf::register(db, batch)?;
     super::parse_facts::register(db, batch)?;
+    super::parse_export::register(db, batch)?;
+    super::call_unify::register(db, batch)?;
     super::format_facts::register(db, batch)?;
     super::outcomes::register_binding_facts(db, batch)?;
     let calls = Arc::new(AtomicUsize::new(0));
@@ -70,8 +74,23 @@ pub(in crate::code_rule_dsl::sql) fn register(
         move |ctx| {
             let file = ctx.get::<u32>(0)? as usize;
             EQUALITY_REQUESTS.set(EQUALITY_REQUESTS.get() + 1);
-            let left = ctx.get::<u32>(1)?;
-            let right = ctx.get::<u32>(2)?;
+            let left_cell = ctx.get::<super::capture_cell::Cell>(1)?;
+            let right_cell = ctx.get::<super::capture_cell::Cell>(2)?;
+            for cell in [&left_cell, &right_cell] {
+                if let super::capture_cell::Cell::Span(bytes) = cell
+                    && super::span_capture::decode(bytes)?.file != file as u32
+                {
+                    return Err(Error::ModuleError(
+                        "capture equality: span belongs to another document".into(),
+                    ));
+                }
+            }
+            let Some(left) = left_cell.single_node()? else {
+                return Ok(true);
+            };
+            let Some(right) = right_cell.single_node()? else {
+                return Ok(true);
+            };
             if let Some(file) = equality.0.files.get(file) {
                 if left >= file.facts.len() || right >= file.facts.len() {
                     return Err(Error::ModuleError("capture equality: invalid node".into()));

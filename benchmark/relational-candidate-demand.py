@@ -42,13 +42,18 @@ def main():
                            and a["target"]["name"] == "rerail_engine"))
     binary = binary.resolve()
     sources = sorted((root / "native/src/code_rule_dsl/sql/relational").rglob("*.rs"))
-    sources += [root / "native/src/code_rule_dsl/matcher/mod.rs",
+    sources += [root / "native/src/code_rule_dsl/language.rs",
+                root / "native/src/code_rule_dsl/module_path.rs",
+                root / "native/src/code_rule_dsl/sql/exec.rs",
+                root / "native/src/code_rule_dsl/matcher/mod.rs",
                 root / "native/src/code_rule_dsl/matcher/value.rs",
                 root / "native/src/code_rule_dsl/matcher/util.rs",
                 root / "native/src/code_rule_dsl/matcher/value_probe.rs",
                 root / "native/src/code_rule_dsl/matcher/sql_bound_leaf.rs",
                 root / "native/src/code_rule_dsl/matcher/sql_binding_facts.rs",
+                root / "native/src/code_rule_dsl/matcher/sql_binds_region_facts.rs",
                 root / "native/src/code_rule_dsl/matcher/sql_parse_facts.rs",
+                root / "native/src/code_rule_dsl/matcher/sql_sibling_facts.rs",
                 root / "native/src/code_rule_dsl/matcher/sql_format_facts.rs",
                 root / "native/src/code_rule_dsl/sql/terminals/fact.rs",
                 root / "native/src/code_rule_dsl/sql/terminals/mod.rs",

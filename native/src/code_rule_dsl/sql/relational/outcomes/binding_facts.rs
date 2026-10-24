@@ -1,5 +1,6 @@
 //! Atomic binding resolver transport. Column three is an ordered occurrence JSON array.
 use crate::code_rule_dsl::matcher::node_at;
+use crate::code_rule_dsl::sql::relational::capture_cell::Cell;
 use crate::code_rule_dsl::sql::{
     exec::Batch,
     plan::SlotKind,
@@ -154,7 +155,7 @@ struct Cursor<'v> {
     outputs: Vec<Value>,
     /// Actual hidden-column values, including the input allowance before work is spent.
     keys: [i64; 4],
-    inputs: Vec<Option<i64>>,
+    inputs: Vec<Cell>,
     done: bool,
     marker: PhantomData<&'v Table>,
 }
@@ -207,15 +208,15 @@ unsafe impl VTabCursor for Cursor<'_> {
         let mut argument = 4;
         for ((name, _), code) in term.reads.iter().zip(plan.bytes()) {
             let input = if code == b'n' {
-                None
+                Cell::Null
             } else {
-                let value = args.get::<Option<i64>>(argument)?;
+                let value = args.get::<Cell>(argument)?;
                 argument += 1;
                 value
             };
+            let node = input.single_node()?;
             self.inputs.push(input);
-            if let Some(input) = input {
-                let input = u32::try_from(input).map_err(|_| invalid("input node"))?;
+            if let Some(input) = node {
                 if input >= file.facts.len() {
                     return Err(invalid("input node outside file"));
                 }
@@ -259,6 +260,19 @@ unsafe impl VTabCursor for Cursor<'_> {
                         for (index, (output, value)) in
                             self.outputs.iter_mut().zip(row.values).enumerate()
                         {
+                            // The optional region column is a read-only input, including
+                            // a parsed span's node shadow. Resolution never rewrites it.
+                            if index == 4 {
+                                *output = match &self.inputs[index] {
+                                    Cell::Null => Value::Null,
+                                    Cell::Integer(value) => Value::Integer(*value),
+                                    Cell::Span(bytes) => Value::Blob(bytes.clone()),
+                                    Cell::List(_) => {
+                                        return Err(invalid("region must be a single capture"));
+                                    }
+                                };
+                                continue;
+                            }
                             *output = match value {
                                 Value::Null => Value::Null,
                                 Value::Integer(value)
@@ -305,11 +319,9 @@ unsafe impl VTabCursor for Cursor<'_> {
             2..=6 => ctx.set_result(&self.outputs[(column - 2) as usize]),
             TERM..=ALLOWANCE => ctx.set_result(&self.keys[(column - TERM) as usize]),
             column if (INPUT..INPUT + WIDTH as c_int).contains(&column) => ctx.set_result(
-                &self
-                    .inputs
+                self.inputs
                     .get((column - INPUT) as usize)
-                    .copied()
-                    .flatten(),
+                    .unwrap_or(&Cell::Null),
             ),
             _ => Err(invalid("invalid column")),
         }

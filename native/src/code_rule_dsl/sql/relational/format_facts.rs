@@ -1,10 +1,9 @@
 //! Atomic format analysis returns ordered candidate facts, never candidate matcher verdicts.
 use super::super::{
     exec::Batch,
-    plan::SlotKind,
     terminals::{Terminal, Verdict, Verdicts, with_scopes},
 };
-use super::capture_cell::{Cell, decode_list};
+use super::capture_cell::Cell;
 use crate::code_rule_dsl::matcher::{FormatArgs, Prepared, missing_fields, node_at};
 use ast_grep_core::{AstGrep, meta_var::MetaVarEnv};
 use rusqlite::{
@@ -145,28 +144,16 @@ unsafe impl VTabCursor for Cursor<'_> {
         if node >= data.facts.len() || term.reads.len() != 2 {
             return Err(invalid("node or input width"));
         }
-        let mut env = MetaVarEnv::new();
-        for (index, (name, kind)) in term.reads.iter().enumerate() {
-            match (kind, args.get::<Cell>(4 + index)?) {
-                (_, Cell::Null) => {}
-                (SlotKind::Node, Cell::Integer(id)) => {
-                    let id = u32::try_from(id).map_err(|_| invalid("input node"))?;
-                    if id >= data.facts.len() {
-                        return Err(invalid("input node outside file"));
-                    }
-                    env.insert(name, node_at(&data.root, id))
-                        .ok_or_else(|| invalid("conflicting input"))?;
-                }
-                (SlotKind::List, Cell::List(bytes)) => {
-                    let ids = decode_list(&bytes, file as u32, data.facts.len())?;
-                    env.insert_multi(
-                        name,
-                        ids.into_iter().map(|id| node_at(&data.root, id)).collect(),
-                    );
-                }
-                _ => return Err(invalid("typed input mismatch")),
-            }
-        }
+        let inputs = (0..term.reads.len())
+            .map(|index| args.get::<Cell>(4 + index))
+            .collect::<Result<Vec<_>>>()?;
+        let env = super::capture_env::environment(
+            file as u32,
+            &data.facts,
+            |id| node_at(&data.root, id),
+            &term.reads,
+            &inputs,
+        )?;
         let (prepared, left) = with_scopes(file, data, || {
             crate::code_rule_dsl::matcher::with_sql_clause_owner(
                 term.verdicts.format_owner(),

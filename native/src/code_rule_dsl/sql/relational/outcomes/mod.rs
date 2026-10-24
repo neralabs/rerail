@@ -5,6 +5,7 @@ mod binding_facts;
 mod binding_occurrence_tests;
 mod binding_tests;
 pub(super) use binding_facts::register as register_binding_facts;
+mod binding_region_tests;
 mod binds_tests;
 mod bound_tests;
 mod budget_tests;
@@ -25,16 +26,21 @@ mod format_tests;
 mod list_tests;
 mod lower;
 mod memo_tests;
+mod mixed_recursive_tests;
 mod nested_memo_tests;
 mod nested_shape_tests;
 mod nested_tests;
+mod nth_tests;
+mod parse_export_tests;
 mod parse_tests;
 mod pattern_tests;
 mod predicate_run_tests;
 mod pruning_tests;
 mod publication_tests;
+mod pure_recursive_tests;
 mod reached_tests;
 mod recursive_search_tests;
+mod recursive_shape_tests;
 mod repeat_any_tests;
 mod repeat_utility_tests;
 mod repeat_walk_tests;
@@ -59,6 +65,10 @@ enum Axis {
 }
 
 enum Op {
+    MixedRecursive {
+        program: std::rc::Rc<lower::mixed_recursive_lower::Program>,
+        entry: usize,
+    },
     FormatArgs {
         term: usize,
         inputs: Vec<usize>,
@@ -67,6 +77,14 @@ enum Op {
     },
     Predicate(Set),
     Unknown(usize),
+    NthChild {
+        step: i32,
+        offset: i32,
+        reverse: bool,
+        of_rule: Option<Box<Plan>>,
+        term: usize,
+        memoize: bool,
+    },
     Value(usize),
     Charge(usize, std::rc::Rc<Plan>),
     /// Parsed documents spend utility entry work but native never memoizes them.
@@ -74,11 +92,18 @@ enum Op {
     /// Functional recursive utility; its summary already includes utility entry.
     Chain(usize, std::rc::Rc<super::recursive_chain::Chain>),
     Downward(usize, std::rc::Rc<super::recursive_downward::Downward>),
+    PureRecursive(std::rc::Rc<lower::pure_recursive_lower::Program>),
     RecursiveSearch {
         id: usize,
         component: std::rc::Rc<lower::recursive_search_lower::RecursiveSearch>,
     },
     Bind(usize),
+    CaptureBind(usize),
+    Host {
+        parse: usize,
+        child: Box<Plan>,
+        mapping: Vec<(usize, usize)>,
+    },
     /// Atomic structural pattern, with outputs in terminal capture order.
     Pattern(usize, Vec<usize>, Option<Vec<u16>>),
     BoundLeaf {
@@ -96,6 +121,8 @@ enum Op {
     Parse {
         term: usize,
         child: Box<Plan>,
+        exports: Vec<(usize, usize)>,
+        hosted: bool,
     },
     CallFrame {
         body: std::rc::Rc<Plan>,
@@ -166,8 +193,11 @@ impl CaptureKind {
         }
     }
 
-    fn payload(self, column: &str, file: &str) -> String {
+    fn payload(self, column: &str, file: &str, spans: bool) -> String {
         match self {
+            Self::Node if spans => format!(
+                "CASE WHEN typeof({column})='blob' THEN json(relation_span_json({column},{file})) ELSE {column} END"
+            ),
             Self::Node => column.into(),
             Self::Count => format!("CAST({column} AS TEXT)"),
             Self::List => format!("json(relation_list_json({column},{file}))"),
@@ -181,11 +211,20 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     }
     let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
     let plan = lower.plan(&grammar.matcher)?;
+    let file_guard = grammar
+        .file
+        .as_ref()
+        .map(|condition| super::file_guard::push(&mut lower.pure.program.terminals, condition));
     let mut profile = lower.profile(0);
-    let memo_layout = lower.memo_layout();
-    let (sql, mut relations) = if plan.fallible() {
+    let memo_layout = lower.memo_layout(plan.effects.needs_peak);
+    let (sql, mut relations) = if plan.fallible() || grammar.file.is_some() {
         let (sql, mut relations) = emit::compile_jobs(
-            &[(&plan, &lower.slots, grammar.applies, &root_filter(grammar))],
+            &[(
+                &plan,
+                &lower.slots,
+                grammar.applies,
+                &root_filter(grammar, file_guard),
+            )],
             i64::MAX,
             &[memo_layout],
         )?;
@@ -217,8 +256,8 @@ impl Plan {
     }
 }
 
-fn root_filter(grammar: &GrammarMatcher) -> String {
-    grammar.anchors.root_kinds().map_or("1".into(), |kinds| {
+fn root_filter(grammar: &GrammarMatcher, file_guard: Option<usize>) -> String {
+    let kinds = grammar.anchors.root_kinds().map_or("1".into(), |kinds| {
         format!(
             "n.kind IN ({})",
             kinds
@@ -227,7 +266,11 @@ fn root_filter(grammar: &GrammarMatcher) -> String {
                 .collect::<Vec<_>>()
                 .join(",")
         )
-    })
+    });
+    file_guard.map_or_else(
+        || kinds.clone(),
+        |term| format!("({kinds}) AND n.file IN (SELECT file FROM relation_file_guard({term}))"),
+    )
 }
 
 /// Bounded workspace publication kernel. Terminal IDs share one batch namespace.
@@ -246,11 +289,15 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         let terminal_base = terminals.len();
         lower.pure.program.terminals = terminals;
         let plan = lower.plan(&grammar.matcher)?;
+        let file_guard = grammar
+            .file
+            .as_ref()
+            .map(|condition| super::file_guard::push(&mut lower.pure.program.terminals, condition));
         let profile = lower.profile(terminal_base);
         lowering.push(profile);
-        memo_layouts.push(lower.memo_layout());
+        memo_layouts.push(lower.memo_layout(plan.effects.needs_peak));
         terminals = lower.pure.program.terminals;
-        let roots = root_filter(grammar);
+        let roots = root_filter(grammar, file_guard);
         terminal_owners.resize(terminals.len(), clause);
         plans.push((plan, lower.slots, grammar.applies, roots));
     }

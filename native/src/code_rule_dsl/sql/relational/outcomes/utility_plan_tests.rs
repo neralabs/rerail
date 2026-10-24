@@ -194,12 +194,12 @@ fn utility_plan_bounds_and_cycles() {
     let mut cases = vec![
         (
             json!({"matches":"v"}),
-            json!({"v":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","matches":"v"}}]}}),
+            json!({"v":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","has":{"stopBy":"neighbor","matches":"v"}}}]}}),
             "recursive outcomes",
         ),
         (
             json!({"matches":"v"}),
-            json!({"v":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","matches":"w"}}]},"w":{"inside":{"stopBy":"neighbor","matches":"v"}}}),
+            json!({"v":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","matches":"w"}}]},"w":{"has":{"stopBy":"neighbor","matches":"v"}}}),
             "recursive outcomes",
         ),
         (

@@ -7,6 +7,9 @@ use super::{
 use crate::code_rule_dsl::sql::relational::{ir::Set, recursive_downward::Downward};
 use serde_json::json;
 
+#[path = "memo_recursive.rs"]
+mod memo_recursive;
+
 impl Sql {
     pub(super) fn recursive_search(
         &mut self,
@@ -14,6 +17,9 @@ impl Sql {
         component: &RecursiveSearch,
         input: &Demand,
     ) -> Result<Output, String> {
+        if component.memo {
+            return self.memo_recursive(id, component, input);
+        }
         let prefix = {
             let mut shared = self.generation.components.borrow_mut();
             let prefix = format!("semantic{}_{}", shared.clause, id);
@@ -73,11 +79,18 @@ impl Sql {
         // Native may_bind includes both node captures and count exports.
         let strict = !component.base.writes.is_empty();
         let continues = if strict { "w.own=0" } else { "w.own IN (0,2)" };
+        let peak_note = if self.generation.peak_tracking {
+            format!(
+                " AND CASE WHEN {alias}.phase=0 AND {alias}.level<256 THEN relation_peak_note({alias}.level+1) ELSE 1 END=1"
+            )
+        } else {
+            String::new()
+        };
         let sql = format!(
             r#"SELECT s.k,s.file,s.node,s.tree,s.rank,s.finish,s.origin,s.incoming,s.incoming AS level,0 AS phase,0 AS own,0 AS uncertain,s.work{columns} FROM {seed} s
 UNION ALL
 SELECT {alias}.k,{alias}.file,{alias}.node,{alias}.tree,{alias}.rank,{alias}.finish,{alias}.origin,{alias}.incoming,{alias}.level,1,CASE WHEN {alias}.level>=256 THEN -1 WHEN {alias}.work=0 THEN -2 ELSE r.c0 END,{alias}.uncertain,COALESCE(r.c1,{alias}.work){returned}
-FROM {walk} {alias} JOIN {input} d ON d.k={alias}.k {bridge} WHERE {alias}.phase=0
+FROM {walk} {alias} JOIN {input} d ON d.k={alias}.k {bridge} WHERE {alias}.phase=0{peak_note}
 UNION ALL
 SELECT w.k,w.file,n.node,w.tree,n.rank,w.finish,w.origin,w.incoming,w.incoming+n.depth-w.origin,0,0,w.uncertain OR w.own=2,w.work{empty}
 FROM {walk} w JOIN {prefix}_ranked n ON n.file=w.file AND n.tree=w.tree AND n.rank=w.rank+1
@@ -109,12 +122,13 @@ mod tests {
         test_support::grammar_matchers,
     };
     use ast_grep_core::Node;
-    fn oracle(node: Node<'_, TapeDoc>, depth: u32, work: &mut i64) -> i64 {
+    fn oracle(node: Node<'_, TapeDoc>, depth: u32, work: &mut i64, peak: &mut u32) -> i64 {
         // Both the recursive utility and its acyclic capture helper enter here.
         for level in [depth, depth + 1] {
             if level >= 256 {
                 return -1;
             }
+            *peak = (*peak).max(level + 1);
             if *work == 0 {
                 return -2;
             }
@@ -125,7 +139,7 @@ mod tests {
         }
         if node.kind() == "array" {
             for child in node.children() {
-                let answer = oracle(child, depth + 1, work);
+                let answer = oracle(child, depth + 1, work, peak);
                 if answer != 0 {
                     return answer;
                 }
@@ -156,18 +170,21 @@ mod tests {
                     let root = (0..file.facts.len())
                         .find(|&id| node_at(&file.root, id).kind() == "array")
                         .unwrap();
-                    for incoming in [0, 1, 253, 254, 255, 256] {
-                        for allowance in 0..=20 {
-                            let mut sql = Sql {
-                                definitions: vec![],
-                                profile: vec![],
-                                correlated: false,
-                                generation: Generation {
-                                    utility_depth: incoming,
-                                    ..Generation::default()
-                                },
-                            };
-                            let demand = Demand {
+                    for tracked in [false, true] {
+                        for incoming in [0, 1, 253, 254, 255, 256] {
+                            for allowance in 0..=20 {
+                                let mut sql = Sql {
+                                    definitions: vec![],
+                                    profile: vec![],
+                                    correlated: false,
+                                    generation: Generation {
+                                        utility_depth: incoming,
+                                        peak_tracking: tracked,
+                                        memo_clause: tracked.then_some(0),
+                                        ..Generation::default()
+                                    },
+                                };
+                                let demand = Demand {
                                 name: sql.relation(
                                     "test semantic invocation",
                                     format!(
@@ -178,25 +195,57 @@ mod tests {
                                 ),
                                 slots: Slots::new(),
                             };
-                            sql.generation.components.borrow_mut().roots = demand.name.clone();
-                            let output = sql.emit(&plan, &demand).unwrap();
-                            sql.publish_components();
-                            let query = format!(
-                                "WITH RECURSIVE {} SELECT truth,work FROM {}",
-                                sql.definitions.join(",\n"),
-                                output.name
-                            );
-                            let actual: (i64, i64) = db
-                                .query_row(&query, [], |r| Ok((r.get(0)?, r.get(1)?)))
+                                sql.generation.components.borrow_mut().roots = demand.name.clone();
+                                let output = sql.emit(&plan, &demand).unwrap();
+                                sql.publish_components();
+                                let query = format!(
+                                    "WITH RECURSIVE {} SELECT truth,work FROM {}",
+                                    sql.definitions.join(",\n"),
+                                    output.name
+                                );
+                                db.query_row::<i64, _, _>(
+                                    "SELECT relation_memo_reset(0)",
+                                    [],
+                                    |r| r.get(0),
+                                )
                                 .unwrap();
-                            let mut remaining = allowance;
-                            let expected =
-                                oracle(node_at(&file.root, root), incoming, &mut remaining);
-                            assert_eq!(
-                                actual,
-                                (expected, remaining),
-                                "{source} depth={incoming} work={allowance}"
-                            );
+                                let token = db
+                                    .query_row::<i64, _, _>(
+                                        "SELECT relation_peak_open(0)",
+                                        [],
+                                        |r| r.get(0),
+                                    )
+                                    .unwrap();
+                                let actual: (i64, i64) = db
+                                    .query_row(&query, [], |r| Ok((r.get(0)?, r.get(1)?)))
+                                    .unwrap();
+                                let actual_peak = db
+                                    .query_row::<u32, _, _>(
+                                        "SELECT relation_peak_close(?1)",
+                                        [token],
+                                        |r| r.get(0),
+                                    )
+                                    .unwrap();
+                                let mut remaining = allowance;
+                                let mut peak = 0;
+                                let expected = oracle(
+                                    node_at(&file.root, root),
+                                    incoming,
+                                    &mut remaining,
+                                    &mut peak,
+                                );
+                                if tracked {
+                                    assert_eq!(
+                                        actual_peak, peak,
+                                        "{source} depth={incoming} work={allowance}"
+                                    );
+                                }
+                                assert_eq!(
+                                    actual,
+                                    (expected, remaining),
+                                    "{source} depth={incoming} work={allowance}"
+                                );
+                            }
                         }
                     }
                 },

@@ -9,9 +9,20 @@ impl Sql {
         child: &Plan,
         target: Option<usize>,
     ) -> Result<String, String> {
-        let node = target.map_or("d.node".into(), |slot| format!("d.c{slot}"));
-        let reached = target.map_or("d.truth=1".into(), |slot| {
-            format!("d.truth=1 AND d.c{slot} IS NOT NULL")
+        let node = target.map_or("d.node".into(), |slot| {
+            if self
+                .generation
+                .memo_layout
+                .as_ref()
+                .is_some_and(|layout| layout.span_capable(slot))
+            {
+                format!("relation_capture_node(d.c{slot})")
+            } else {
+                format!("d.c{slot}")
+            }
+        });
+        let reached = target.map_or("d.truth=1".into(), |_| {
+            format!("d.truth=1 AND {node} IS NOT NULL")
         });
         if self.correlated {
             let (query, profile) = ordered::nested::program(
@@ -43,7 +54,7 @@ impl Sql {
             return Ok(result);
         }
         let mut slots = needed(child);
-        if child.uses_memo() {
+        if child.uses_memo() || self.generation.peak_tracking {
             slots.extend(&state.slots);
         }
         let columns = fields(&slots, |slot| value(state, "d", slot));
@@ -81,7 +92,7 @@ impl Sql {
         input: &Demand,
     ) -> Result<Output, String> {
         let mut slots = needed(plan);
-        if plan.uses_memo() {
+        if plan.uses_memo() || self.generation.peak_tracking {
             slots.extend(&input.slots);
         }
         let columns = fields(&slots, |slot| value(input, "d", slot));

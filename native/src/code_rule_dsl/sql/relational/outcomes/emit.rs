@@ -1,5 +1,12 @@
 #[path = "format_emit.rs"]
 mod format_emit;
+#[cfg(test)]
+#[path = "memo_recursive_depth_tests.rs"]
+mod memo_recursive_depth_tests;
+#[path = "mixed_recursive_emit.rs"]
+mod mixed_recursive_emit;
+#[path = "peak_memo.rs"]
+mod peak_memo;
 use super::super::ir::Set;
 #[path = "binding_emit.rs"]
 mod binding_emit;
@@ -25,10 +32,20 @@ pub(super) mod memo;
 mod ordered;
 #[path = "parse_emit.rs"]
 mod parse_emit;
+#[path = "parse_host_emit.rs"]
+mod parse_host_emit;
 #[path = "predicate.rs"]
 mod predicate;
+#[path = "predicate_fusion_tests.rs"]
+mod predicate_fusion_tests;
+#[path = "predicate_runs.rs"]
+mod predicate_runs;
 #[path = "publication.rs"]
 mod publication;
+#[path = "pure_recursive_depth_tests.rs"]
+mod pure_recursive_depth_tests;
+#[path = "pure_recursive_emit.rs"]
+mod pure_recursive_emit;
 #[path = "recursive_search_emit.rs"]
 mod recursive_search_emit;
 #[path = "repeat_cost.rs"]
@@ -38,6 +55,11 @@ mod repeat_walk;
 use super::{Axis, Op, Plan, Slot, Slots};
 pub(super) use publication::compile_jobs;
 use serde_json::{Value, json};
+
+#[path = "nth_batch_tests.rs"]
+mod nth_batch_tests;
+#[path = "nth_emit.rs"]
+mod nth_emit;
 
 pub(super) struct Demand {
     name: String,
@@ -57,12 +79,19 @@ pub(super) struct Sql {
 /// after the emitter selects a miss body, a replay, or a fused scalar expression.
 #[derive(Clone, Default)]
 pub(super) struct Generation {
+    peak_tracking: bool,
+    #[cfg(test)]
+    disable_predicate_runs: bool,
+    memo_bypass: bool,
+    parse_hosts: std::collections::BTreeMap<usize, parse_host_emit::Context>,
     memo_layout: Option<std::rc::Rc<super::utility_memo::Layout>>,
     following: Slots,
     /// Active correlated-return payload, separate from source-level walk depth.
     return_cells: usize,
     return_peak: std::rc::Rc<std::cell::Cell<usize>>,
     operators: std::rc::Rc<std::cell::Cell<usize>>,
+    operator_kinds:
+        std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<&'static str, usize>>>,
     memo_clause: Option<usize>,
     utility_depth: u32,
     dynamic_depth: Option<String>,
@@ -82,10 +111,17 @@ impl Generation {
         }
     }
     fn operator(&self) -> Result<(), String> {
+        self.operator_as("composition")
+    }
+    fn operator_as(&self, kind: &'static str) -> Result<(), String> {
         let count = self.operators.get();
         if count == 256 {
-            return Err("outcome relations: emitted composition operator count exceeds 256".into());
+            return Err(format!(
+                "outcome relations: emitted composition operator count exceeds 256; emitted categories {:?}; next {kind}",
+                self.operator_kinds.borrow()
+            ));
         }
+        *self.operator_kinds.borrow_mut().entry(kind).or_default() += 1;
         self.operators.set(count + 1);
         Ok(())
     }
@@ -93,8 +129,17 @@ impl Generation {
     /// Fused scalar/ordered programs consume their entire emitted tree. Utility
     /// replays must never use this path: their miss body is charged separately.
     fn tree(&self, plan: &Plan) -> Result<(), String> {
-        self.operator()?;
+        self.operator_as("fused expression")?;
         match &plan.op {
+            Op::MixedRecursive { program, .. } => {
+                for region in &program.regions {
+                    self.tree(region)?;
+                }
+            }
+            Op::NthChild {
+                of_rule: Some(child),
+                ..
+            } => self.tree(child)?,
             Op::FormatArgs {
                 unused, missing, ..
             } => {
@@ -129,7 +174,9 @@ impl Generation {
             }
             Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => self.tree(child)?,
             Op::CallFrame { body: child, .. } => self.tree(child)?,
-            Op::Parse { child, .. } | Op::Not(child) => self.tree(child)?,
+            Op::Parse { child, .. } | Op::Host { child, .. } | Op::Not(child) => {
+                self.tree(child)?
+            }
             Op::Charge(_, child) | Op::TransientCharge(child) => self.tree(child)?,
             Op::Search(_, _, child, stop)
             | Op::Count {
@@ -251,6 +298,13 @@ impl Sql {
             return Ok(Some((test, true)));
         }
         Ok(Some(match &plan.op {
+            Op::NthChild {
+                step,
+                offset,
+                reverse,
+                of_rule: None,
+                ..
+            } => (nth_emit::plain(*step, *offset, *reverse, "n"), true),
             Op::Predicate(set) => (
                 format!(
                     "CASE WHEN {} THEN 1 ELSE 0 END",
@@ -263,9 +317,14 @@ impl Sql {
                 format!("CASE WHEN node_regex({term},d.file,d.node) THEN 2 ELSE 1 END"),
                 false,
             ),
-            Op::Bind(slot) => (
+            Op::Bind(slot) | Op::CaptureBind(slot) => (
                 format!(
-                    "CASE WHEN n.named AND (CASE WHEN {} IS NULL THEN 1 ELSE relation_capture_equal(d.file,{},d.node) END) THEN 1 ELSE 0 END",
+                    "CASE WHEN {} AND (CASE WHEN {} IS NULL THEN 1 ELSE relation_capture_equal(d.file,{},d.node) END) THEN 1 ELSE 0 END",
+                    if matches!(plan.op, Op::Bind(_)) {
+                        "n.named"
+                    } else {
+                        "1"
+                    },
                     value(input, "d", *slot),
                     value(input, "d", *slot)
                 ),
@@ -321,7 +380,7 @@ impl Sql {
 
     fn input(&mut self, plan: &Plan, source: &Demand, filter: &str) -> Demand {
         let mut slots = needed(plan);
-        if plan.uses_memo() {
+        if plan.uses_memo() || self.generation.peak_tracking {
             slots.extend(&source.slots);
         }
         let columns = fields(&slots, |slot| value(source, "d", slot));
@@ -339,25 +398,73 @@ impl Sql {
         }
     }
 
+    fn capture_bound(&self, input: &Demand, alias: &str, slot: usize, node: &str) -> String {
+        if self
+            .generation
+            .memo_layout
+            .as_ref()
+            .is_some_and(|layout| layout.span_capable(slot))
+        {
+            format!(
+                "relation_capture_bind({alias}.file,{},{})",
+                value(input, alias, slot),
+                node
+            )
+        } else {
+            node.into()
+        }
+    }
+
     fn emit(&mut self, plan: &Plan, input: &Demand) -> Result<Output, String> {
-        if self.generation.memo_clause.is_none() && memo::region(plan)? {
+        if !self.generation.peak_tracking
+            && self.generation.memo_clause.is_none()
+            && memo::region(plan)?
+        {
             return memo::shared(self, plan, input);
         }
-        self.generation.operator()?;
         let operator = match &plan.op {
             Op::Predicate(_) => "total predicate",
             Op::Unknown(_) => "unknown leaf",
+            Op::NthChild { .. } => "sibling index",
             Op::Value(_) => "reached value leaf",
-            Op::Bind(_) => "capture equality",
+            Op::Bind(_) | Op::CaptureBind(_) => "capture equality",
             Op::Pattern(..) => "typed pattern witnesses",
             Op::BoundLeaf { .. } => "typed atomic captures",
             Op::FieldNeighbor { .. } => "field neighbor",
             Op::Constrained(..) => "ordered capture constraints",
             Op::Not(_) => "negation",
             Op::Count { .. } => "count outcome",
+            Op::Charge(..) | Op::TransientCharge(..) => "utility call",
+            Op::PureRecursive(..) => "pure recursive invocation",
+            Op::MixedRecursive { .. } => "mixed recursive invocation",
+            Op::RecursiveSearch { .. } => "semantic recursive invocation",
             _ => "outcome",
         };
+        self.generation.operator_as(operator)?;
         let body = match &plan.op {
+            Op::MixedRecursive { program, entry } => {
+                return self.mixed_recursive(program, *entry, input);
+            }
+            Op::NthChild {
+                step,
+                offset,
+                reverse,
+                of_rule: Some(rule),
+                term,
+                memoize,
+            } => return self.nth_child(*step, *offset, *reverse, rule, *term, *memoize, input),
+            Op::NthChild {
+                step,
+                offset,
+                reverse,
+                of_rule: None,
+                ..
+            } => format!(
+                "SELECT d.k,d.work,CASE WHEN {} THEN 1 ELSE 0 END AS truth FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node",
+                nth_emit::plain(*step, *offset, *reverse, "n"),
+                input.name
+            ),
+
             Op::FormatArgs {
                 term,
                 inputs,
@@ -388,8 +495,19 @@ impl Sql {
                     input,
                 );
             }
-            Op::Parse { term, child } => return self.parsed(*term, child, input),
+            Op::Parse {
+                term,
+                child,
+                exports,
+                hosted,
+            } => return self.parsed(*term, child, exports, *hosted, input),
+            Op::Host {
+                parse,
+                child,
+                mapping,
+            } => return self.hosted(*parse, child, mapping, input),
             Op::CallFrame { body, mapping } => return self.call_frame(body, mapping, input),
+            Op::PureRecursive(program) => return self.pure_recursive(program, input),
             Op::Chain(id, chain) => return self.chain(*id, chain, input),
             Op::Downward(id, component) => return self.downward(*id, component, input),
             Op::RecursiveSearch { id, component } => {
@@ -453,10 +571,16 @@ impl Sql {
                 "SELECT d.k,d.work,CASE WHEN node_regex({term},d.file,d.node) THEN 2 ELSE 1 END AS truth FROM {} d",
                 input.name
             ),
-            Op::Bind(slot) => format!(
-                "SELECT d.k,d.work,CASE WHEN n.named AND (CASE WHEN {} IS NULL THEN 1 ELSE relation_capture_equal(d.file,{},d.node) END) THEN 1 ELSE 0 END AS truth,d.node AS c{slot} FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node",
+            Op::Bind(slot) | Op::CaptureBind(slot) => format!(
+                "SELECT d.k,d.work,CASE WHEN {} AND (CASE WHEN {} IS NULL THEN 1 ELSE relation_capture_equal(d.file,{},d.node) END) THEN 1 ELSE 0 END AS truth,{} AS c{slot} FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node",
+                if matches!(plan.op, Op::Bind(_)) {
+                    "n.named"
+                } else {
+                    "1"
+                },
                 value(input, "d", *slot),
                 value(input, "d", *slot),
+                self.capture_bound(input, "d", *slot, "d.node"),
                 input.name
             ),
             Op::Not(child) => {
@@ -468,6 +592,13 @@ impl Sql {
                 )
             }
             Op::Charge(_, child) | Op::TransientCharge(child) => {
+                if self.generation.peak_tracking {
+                    let utility = match &plan.op {
+                        Op::Charge(id, _) if !self.generation.memo_bypass => Some(*id),
+                        _ => None,
+                    };
+                    return self.peak_utility(utility, child, input);
+                }
                 if let Op::Charge(utility, _) = &plan.op
                     && self.generation.memo_clause.is_some()
                     && child.reads_value()
@@ -546,7 +677,7 @@ impl Sql {
 
     fn all(&mut self, plan: &Plan, items: &[Plan], input: &Demand) -> Result<Output, String> {
         let mut slots = needed(plan);
-        if plan.uses_memo() {
+        if plan.uses_memo() || self.generation.peak_tracking {
             slots.extend(&input.slots);
         }
         let columns = fields(&slots, |slot| value(input, "d", slot));
@@ -590,10 +721,21 @@ impl Sql {
                     blocked.join(" OR ")
                 }
             );
-            if let Some(tested) = self.scalar_step(&state, child, &filter)? {
+            let tested = if let Some((count, tested)) =
+                self.predicate_run(&state, &items[index..], &filter, true)?
+            {
+                skip_until = index + count;
+                Some(tested)
+            } else {
+                self.scalar_step(&state, child, &filter)?
+            };
+            if let Some(tested) = tested {
                 let columns = fields(&state.slots, |slot| {
                     if child.writes.contains(&slot) {
-                        format!("CASE WHEN d.tested=1 THEN d.node ELSE d.c{slot} END")
+                        format!(
+                            "CASE WHEN d.tested=1 THEN {} ELSE d.c{slot} END",
+                            self.capture_bound(&state, "d", slot, "d.node")
+                        )
                     } else {
                         format!("d.c{slot}")
                     }
@@ -607,11 +749,12 @@ impl Sql {
             // An atomic witness step must reference its predecessor once. A
             // demand/result diamond expands that predecessor during SQLite prepare.
             if self.correlated || matches!(child.op, Op::Pattern(..)) {
-                let repeats = if self.generation.memo_clause.is_some() {
-                    repeat_walk::length(&items[index..])
-                } else {
-                    1
-                };
+                let repeats =
+                    if self.generation.memo_clause.is_some() && !self.generation.peak_tracking {
+                        repeat_walk::length(&items[index..])
+                    } else {
+                        1
+                    };
                 let tested = if repeats > 1 {
                     skip_until = index + repeats;
                     self.repeat_step(&state, child, &filter, repeats, repeat_walk::Boolean::All)?
@@ -675,7 +818,7 @@ impl Sql {
 
     fn any(&mut self, plan: &Plan, items: &[Plan], input: &Demand) -> Result<Output, String> {
         let mut slots = needed(plan);
-        if plan.uses_memo() {
+        if plan.uses_memo() || self.generation.peak_tracking {
             slots.extend(&input.slots);
         }
         let columns = fields(&slots, |slot| value(input, "d", slot));
@@ -701,10 +844,21 @@ impl Sql {
                 memo.wrote(&items[index - 1]);
             }
             let carried = memo.carry("d");
-            if let Some(tested) = self.scalar_step(&state, child, "d.truth=0")? {
+            let tested = if let Some((count, tested)) =
+                self.predicate_run(&state, &items[index..], "d.truth=0", false)?
+            {
+                skip_until = index + count;
+                Some(tested)
+            } else {
+                self.scalar_step(&state, child, "d.truth=0")?
+            };
+            if let Some(tested) = tested {
                 let columns = fields(&state.slots, |slot| {
                     if child.writes.contains(&slot) {
-                        format!("CASE WHEN d.tested=1 THEN d.node ELSE d.c{slot} END")
+                        format!(
+                            "CASE WHEN d.tested=1 THEN {} ELSE d.c{slot} END",
+                            self.capture_bound(&state, "d", slot, "d.node")
+                        )
                     } else {
                         format!("d.c{slot}")
                     }
@@ -716,11 +870,12 @@ impl Sql {
             // An atomic witness step must reference its predecessor once. A
             // demand/result diamond expands that predecessor during SQLite prepare.
             if self.correlated || matches!(child.op, Op::Pattern(..)) {
-                let repeats = if self.generation.memo_clause.is_some() {
-                    repeat_walk::length(&items[index..])
-                } else {
-                    1
-                };
+                let repeats =
+                    if self.generation.memo_clause.is_some() && !self.generation.peak_tracking {
+                        repeat_walk::length(&items[index..])
+                    } else {
+                        1
+                    };
                 let tested = if repeats > 1 {
                     skip_until = index + repeats;
                     self.repeat_step(
@@ -771,7 +926,7 @@ impl Sql {
 
     fn candidates(&mut self, axis: Axis, end: bool, plan: &Plan, input: &Demand) -> Demand {
         let mut slots = needed(plan);
-        if plan.uses_memo() {
+        if plan.uses_memo() || self.generation.peak_tracking {
             slots.extend(&input.slots);
         }
         let columns = fields(&slots, |slot| value(input, "d", slot));
@@ -872,7 +1027,11 @@ pub(super) fn compile(
     observed.sort_by_key(|&slot| &slots[slot].name);
     let payload = observed
         .iter()
-        .map(|slot| slots[*slot].kind.payload(&format!("o.c{slot}"), "d.file"))
+        .map(|slot| {
+            slots[*slot]
+                .kind
+                .payload(&format!("o.c{slot}"), "d.file", false)
+        })
         .collect::<Vec<_>>()
         .join(",");
     let query = format!(

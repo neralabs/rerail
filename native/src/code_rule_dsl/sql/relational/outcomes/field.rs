@@ -65,7 +65,7 @@ impl Sql {
         }
 
         let mut slots = needed(child);
-        if child.uses_memo() {
+        if child.uses_memo() || self.generation.peak_tracking {
             slots.extend(&input.slots);
         }
         let columns = fields(&slots, |slot| value(input, "d", slot));

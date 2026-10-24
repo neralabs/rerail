@@ -44,7 +44,7 @@ impl Sql {
         input: &Demand,
     ) -> Result<Output, String> {
         let mut slots = needed(plan);
-        if plan.uses_memo() {
+        if plan.uses_memo() || self.generation.peak_tracking {
             slots.extend(&input.slots);
         }
         let columns = fields(&slots, |slot| value(input, "d", slot));

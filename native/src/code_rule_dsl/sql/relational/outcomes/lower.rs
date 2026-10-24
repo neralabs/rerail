@@ -13,8 +13,14 @@ mod binding_lower;
 mod call_lower;
 #[path = "constraint_lower.rs"]
 mod constraint_lower;
+#[path = "mixed_recursive_lower.rs"]
+pub(super) mod mixed_recursive_lower;
+#[path = "parse_host_lower.rs"]
+mod parse_host_lower;
 #[path = "parse_lower.rs"]
 mod parse_lower;
+#[path = "pure_recursive_lower.rs"]
+pub(super) mod pure_recursive_lower;
 #[path = "recursive_search_lower.rs"]
 pub(super) mod recursive_search_lower;
 
@@ -24,6 +30,8 @@ mod pattern_lower;
 #[path = "atomic_owner.rs"]
 mod atomic_owner;
 
+#[path = "binding_region.rs"]
+mod binding_region;
 #[path = "binds_lower.rs"]
 mod binds_lower;
 
@@ -36,7 +44,14 @@ mod capture_predicate_lower;
 #[path = "format_lower.rs"]
 mod format_lower;
 
+type CallContext = (usize, usize, bool, bool);
+type ScopedUtility = (usize, usize, String, bool, bool);
+type SharedPlan<T> = (usize, Rc<T>);
+
 type UtilityOrigin = ((usize, usize), Option<std::collections::BTreeSet<String>>);
+
+#[path = "nth_lower.rs"]
+mod nth_lower;
 
 pub(super) struct Lower {
     language: GrammarDialect,
@@ -50,16 +65,22 @@ pub(super) struct Lower {
     logical_names: Vec<Option<String>>,
     metadata_origins: Vec<Option<usize>>,
     utility_origins: HashMap<usize, UtilityOrigin>,
-    call_bodies: HashMap<(usize, usize), (usize, Rc<Plan>)>,
+    call_bodies: HashMap<CallContext, SharedPlan<Plan>>,
     call_sites: HashMap<usize, usize>,
+    mixed_components: HashMap<ScopedUtility, SharedPlan<mixed_recursive_lower::Program>>,
+    mixed_functions: usize,
     chains: HashMap<(usize, usize), (usize, Rc<super::super::recursive_chain::Chain>)>,
     downward: HashMap<(usize, usize), (usize, Rc<super::super::recursive_downward::Downward>)>,
-    recursive_searches:
-        HashMap<(usize, usize, String), (usize, Rc<recursive_search_lower::RecursiveSearch>)>,
+    recursive_searches: HashMap<ScopedUtility, SharedPlan<recursive_search_lower::RecursiveSearch>>,
     operators: usize,
     utility_calls: usize,
     three_valued: bool,
     parsed_depth: usize,
+    hosted_depth: usize,
+    parse_hosts: Vec<parse_host_lower::Scope>,
+    span_slots: Slots,
+    span_links: Vec<(usize, usize)>,
+    nths: HashMap<usize, usize>,
 }
 
 impl Lower {
@@ -77,6 +98,8 @@ impl Lower {
             utility_origins: HashMap::new(),
             call_bodies: HashMap::new(),
             call_sites: HashMap::new(),
+            mixed_components: HashMap::new(),
+            mixed_functions: 0,
             chains: HashMap::new(),
             downward: HashMap::new(),
             recursive_searches: HashMap::new(),
@@ -84,15 +107,35 @@ impl Lower {
             utility_calls: 0,
             three_valued,
             parsed_depth: 0,
+            hosted_depth: 0,
+            parse_hosts: vec![],
+            span_slots: Slots::new(),
+            span_links: Vec::new(),
+            nths: HashMap::new(),
         }
     }
 
     pub fn profile(&self, terminal_base: usize) -> serde_json::Value {
-        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"utilityBodyLowerings":self.utilities.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"recursiveComponents":self.chains.len()+self.downward.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
+        serde_json::json!({"loweredOperators":self.operators,"utilityCallSites":self.utility_calls,"distinctUtilityBodies":self.utilities.len()+self.mixed_components.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"utilityBodyLowerings":self.utilities.len()+self.mixed_components.len()+self.call_bodies.len()+self.chains.len()+self.downward.len(),"recursiveComponents":self.chains.len()+self.downward.len(),"atomicTerminals":self.pure.program.terminals.len()-terminal_base})
     }
 
-    pub(super) fn memo_layout(&self) -> Option<Rc<super::utility_memo::Layout>> {
-        if self.call_bodies.is_empty() {
+    pub(super) fn memo_layout(&self, force: bool) -> Option<Rc<super::utility_memo::Layout>> {
+        // A nested body can be lowered before its caller receives parsed exports.
+        // Close frame aliases only after all call sites have established their links.
+        let mut span_slots = self.span_slots.clone();
+        loop {
+            let mut changed = false;
+            for &(inner, outer) in &self.span_links {
+                if span_slots.contains(&inner) || span_slots.contains(&outer) {
+                    changed |= span_slots.insert(inner);
+                    changed |= span_slots.insert(outer);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        if !force && self.call_bodies.is_empty() && self.span_slots.is_empty() {
             return None;
         }
         let mut identities = std::collections::BTreeMap::new();
@@ -119,6 +162,7 @@ impl Lower {
             &self.slots,
             &self.logical_names,
             &self.metadata_origins,
+            &span_slots,
             contracts,
         )))
     }
@@ -220,6 +264,7 @@ impl Lower {
             AstMatcher::Semantic(Semantic::Parse(test)) => return self.parsed(test),
             AstMatcher::Semantic(Semantic::FormatArgs(test)) => return self.format_args(test),
             AstMatcher::Constrained(constrained) => return self.constrained(constrained),
+            AstMatcher::NthChild(nth) => return self.nth_child(nth),
             AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
                 Op::Predicate(self.pure.set(matcher)?)
             }
@@ -246,6 +291,14 @@ impl Lower {
                     op
                 }
             }
+            AstMatcher::Semantic(Semantic::Capture(name)) => {
+                let slot = self.slot(name, CaptureKind::Node)?;
+                mentions.insert(slot);
+                writes.insert(slot);
+                node_writes.insert(slot);
+                Op::CaptureBind(slot)
+            }
+            AstMatcher::Semantic(Semantic::Host(test)) => return self.hosted(test),
             AstMatcher::Semantic(Semantic::Value(test))
                 if !test.reading.literal || self.parsed_depth > 0 =>
             {
@@ -410,12 +463,25 @@ impl Lower {
                 let scoped_key = (
                     key.0,
                     key.1,
-                    format!("{}@parsed={}", self.namespace, self.parsed_depth > 0),
+                    format!(
+                        "{}@parsed={}@hosted={}",
+                        self.namespace,
+                        self.parsed_depth > 0,
+                        self.hosted_depth > 0
+                    ),
                 );
-                if let Some((id, chain)) = self.chains.get(&key) {
+                let parsed_pure = if self.parsed_depth > 0 {
+                    pure_recursive_lower::try_lower(util, &mut self.pure, self.three_valued)?
+                } else {
+                    None
+                };
+                if let Some(program) = parsed_pure {
+                    Op::PureRecursive(Rc::new(program))
+                } else if let Some((id, chain)) = self.chains.get(&key) {
                     Op::Chain(*id, Rc::clone(chain))
                 } else if let Some(chain) =
                     super::super::recursive_chain::try_lower(util, &mut self.pure)?
+                        .filter(|chain| chain.guard_kinds().is_some())
                 {
                     if chain.guard_kinds().is_none() {
                         return Err("outcome relations: recursive outcomes require a finite continuation kind filter for shared chain summaries".into());
@@ -428,6 +494,7 @@ impl Lower {
                     Op::Downward(*id, Rc::clone(downward))
                 } else if let Some(mut downward) =
                     super::super::recursive_downward::try_lower(util, &mut self.pure)?
+                        .filter(|component| component.guard_kinds().is_some())
                 {
                     if downward.guard_kinds().is_none() {
                         return Err(
@@ -444,6 +511,15 @@ impl Lower {
                     let downward = Rc::new(downward);
                     self.downward.insert(key, (id, Rc::clone(&downward)));
                     Op::Downward(id, downward)
+                } else if let Some(program) =
+                    pure_recursive_lower::try_lower(util, &mut self.pure, self.three_valued)?
+                {
+                    Op::PureRecursive(Rc::new(program))
+                } else if let Some(op) = self.mixed_recursive(util)? {
+                    if let Op::MixedRecursive { program, .. } = &op {
+                        mentions = program.mentions.clone();
+                    }
+                    op
                 } else if let Some(op) = self.recursive_search(util)? {
                     if let Op::RecursiveSearch { component, .. } = &op {
                         mentions = component.base.mentions.clone();
@@ -473,13 +549,10 @@ impl Lower {
                         self.utility_origins.insert(id, (key, scope));
                         (id, child)
                     };
-                    if child.reads_value() && child.effects.contains_chain {
-                        return Err("outcome relations: memoized recursive outcomes need peak-depth answers".into());
-                    }
                     mentions = child.mentions.clone();
                     writes = child.writes.clone();
                     node_writes = child.node_writes.clone();
-                    if self.parsed_depth > 0 {
+                    if self.parsed_depth > 0 || self.hosted_depth > 0 {
                         Op::TransientCharge(child)
                     } else {
                         Op::Charge(id, child)
@@ -506,6 +579,9 @@ impl Lower {
             }
         };
         let mut effects = super::effects::Effects::of(&op);
+        if let Op::Bind(slot) = &op {
+            effects.typed_exports |= self.span_slots.contains(slot);
+        }
         if matches!(op, Op::Value(_)) {
             // Resolution and layout may spend work without reading values. Native utility
             // memoization depends on this distinction, including PHP's flow-sensitive names.

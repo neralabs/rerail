@@ -59,11 +59,11 @@ pub(super) struct OwnedBoundLeaf {
     pub owner: usize,
 }
 
-impl Verdicts for OwnedBoundLeaf {
-    fn budget_rows<'t>(
+impl OwnedBoundLeaf {
+    fn evaluate<'t, D: ast_grep_core::Doc>(
         &self,
-        node: Node<'t, TapeDoc>,
-        env: &MetaVarEnv<'t, TapeDoc>,
+        node: Node<'t, D>,
+        env: &MetaVarEnv<'t, D>,
         work: usize,
     ) -> (std::result::Result<Vec<Verdict>, String>, usize) {
         // Keep the runtime boundary closed even if a future lowerer is mistaken.
@@ -116,7 +116,27 @@ impl Verdicts for OwnedBoundLeaf {
             (rows, left)
         })
     }
-
+}
+impl Verdicts for OwnedBoundLeaf {
+    fn budget_rows<'t>(
+        &self,
+        node: Node<'t, TapeDoc>,
+        env: &MetaVarEnv<'t, TapeDoc>,
+        work: usize,
+    ) -> (std::result::Result<Vec<Verdict>, String>, usize) {
+        self.evaluate(node, env, work)
+    }
+    fn tree_budget_rows<'t>(
+        &self,
+        node: Node<'t, crate::code_rule_dsl::literal::SubDoc>,
+        env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>,
+        work: usize,
+    ) -> (std::result::Result<Vec<Verdict>, String>, usize) {
+        self.evaluate(node, env, work)
+    }
+    fn supports_tree_rows(&self) -> bool {
+        true
+    }
     fn rows<'t>(
         &self,
         _: Node<'t, TapeDoc>,
@@ -230,7 +250,7 @@ unsafe impl<'v> VTab<'v> for Table {
             batch: self.batch.clone(),
             truth: 0,
             work: 0,
-            outputs: vec![None; WIDTH],
+            outputs: vec![super::capture_cell::Cell::Null; WIDTH],
             keys: [0; 4],
             inputs: vec![],
             done: true,
@@ -245,10 +265,10 @@ struct Cursor<'v> {
     batch: Arc<Batch>,
     truth: i64,
     work: i64,
-    outputs: Vec<Option<i64>>,
+    outputs: Vec<super::capture_cell::Cell>,
     /// Actual hidden-column values, including the input allowance before work is spent.
     keys: [i64; 4],
-    inputs: Vec<Option<i64>>,
+    inputs: Vec<super::capture_cell::Cell>,
     done: bool,
     marker: PhantomData<&'v Table>,
 }
@@ -257,7 +277,7 @@ struct Cursor<'v> {
 unsafe impl VTabCursor for Cursor<'_> {
     fn filter(&mut self, width: c_int, plan: Option<&str>, args: &Filters<'_>) -> Result<()> {
         self.done = true;
-        self.outputs.fill(None);
+        self.outputs.fill(super::capture_cell::Cell::Null);
         self.inputs.clear();
         let width = usize::try_from(width).map_err(|_| invalid("negative width"))?;
         let plan = plan.unwrap_or("");
@@ -289,40 +309,72 @@ unsafe impl VTabCursor for Cursor<'_> {
                 "input columns must be nodes and match terminal width",
             ));
         }
-        let file = self
-            .batch
-            .files
-            .get(file_id)
-            .ok_or_else(|| invalid("file"))?;
-        if node_id >= file.facts.len() {
-            return Err(invalid("node"));
-        }
-        let mut env = MetaVarEnv::new();
         let mut argument = 4;
-        for ((name, _), code) in term.reads.iter().zip(plan.bytes()) {
+        for code in plan.bytes() {
             let input = if code == b'n' {
-                None
+                super::capture_cell::Cell::Null
             } else {
-                let value = args.get::<Option<i64>>(argument)?;
+                let value = args.get::<super::capture_cell::Cell>(argument)?;
                 argument += 1;
                 value
             };
             self.inputs.push(input);
-            if let Some(input) = input {
-                let input = u32::try_from(input).map_err(|_| invalid("input node"))?;
-                if input >= file.facts.len() {
-                    return Err(invalid("input node outside file"));
-                }
-                env.insert(name, node_at(&file.root, input))
-                    .ok_or_else(|| invalid("conflicting input names"))?;
-            }
         }
         super::leaves::VALUE_REQUESTS.set(super::leaves::VALUE_REQUESTS.get() + 1);
         let probe_start = crate::code_rule_dsl::matcher::value_probe::position();
-        let (rows, left) = with_scopes(file_id, file, || {
-            term.verdicts
-                .budget_rows(node_at(&file.root, node_id), &env, work)
-        });
+        let (node_count, trace_host, text, (rows, left)) =
+            if let Some(file) = self.batch.files.get(file_id) {
+                if node_id >= file.facts.len() {
+                    return Err(invalid("node"));
+                }
+                let env = super::capture_env::environment(
+                    file_id as u32,
+                    &file.facts,
+                    |id| node_at(&file.root, id),
+                    &term.reads,
+                    &self.inputs,
+                )?;
+                let at = node_at(&file.root, node_id);
+                let text = at.text().into_owned();
+                (
+                    file.facts.len(),
+                    file_id,
+                    text,
+                    with_scopes(file_id, file, || term.verdicts.budget_rows(at, &env, work)),
+                )
+            } else if let Some(sub) = self.batch.subfile(file_id) {
+                if node_id >= sub.facts.len() {
+                    return Err(invalid("parsed node"));
+                }
+                let at = |id| sub.root.adopt(sub.root.root().get_doc().node(id));
+                let env = super::capture_env::environment(
+                    file_id as u32,
+                    &sub.facts,
+                    at,
+                    &term.reads,
+                    &self.inputs,
+                )?;
+                let text = at(node_id).text().into_owned();
+                let host = self
+                    .batch
+                    .files
+                    .get(sub.host)
+                    .ok_or_else(|| invalid("parsed host"))?;
+                let _tables = sub
+                    .table
+                    .clone()
+                    .map(crate::code_rule_dsl::matcher::SubTables::enter);
+                (
+                    sub.facts.len(),
+                    sub.host,
+                    text,
+                    with_scopes(sub.host, host, || {
+                        term.verdicts.tree_budget_rows(at(node_id), &env, work)
+                    }),
+                )
+            } else {
+                return Err(invalid("file"));
+            };
         CALLS.with_borrow_mut(|calls| {
             if let Some(calls) = calls {
                 calls.push((term_id, file_id, node_id, work, left));
@@ -353,14 +405,26 @@ unsafe impl VTabCursor for Cursor<'_> {
                                 "output width differs from typed binding contract",
                             ));
                         }
-                        for (output, value) in self.outputs.iter_mut().zip(row.values) {
+                        for (index, (output, value)) in
+                            self.outputs.iter_mut().zip(row.values).enumerate()
+                        {
                             *output = match value {
-                                Value::Null => None,
+                                Value::Null => super::capture_cell::Cell::Null,
                                 Value::Integer(value)
                                     if u32::try_from(value).is_ok()
-                                        && value < i64::from(file.facts.len()) =>
+                                        && value < i64::from(node_count) =>
                                 {
-                                    Some(value)
+                                    if let Some(super::capture_cell::Cell::Span(bytes)) =
+                                        self.inputs.get(index)
+                                    {
+                                        let mut span = super::span_capture::decode(bytes)?;
+                                        span.node = Some(value as u32);
+                                        super::capture_cell::Cell::Span(
+                                            super::span_capture::encode(&span)?,
+                                        )
+                                    } else {
+                                        super::capture_cell::Cell::Integer(value)
+                                    }
                                 }
                                 _ => return Err(invalid("output is not a node in the file")),
                             };
@@ -373,9 +437,9 @@ unsafe impl VTabCursor for Cursor<'_> {
             }
         };
         super::budget_leaf::record(serde_json::json!({
-            "terminal":term_id,"file":file_id,"node":node_id,"input":work,
+            "terminal":term_id,"file":trace_host,"parsedFile":(trace_host!=file_id).then_some(file_id),"node":node_id,"input":work,
             "truth":self.truth,"remaining":self.work,
-            "text":node_at(&file.root,node_id).text(),
+            "text":text,
             "valueCalls":crate::code_rule_dsl::matcher::value_probe::since(probe_start)
         }));
         self.done = false;
@@ -394,13 +458,9 @@ unsafe impl VTabCursor for Cursor<'_> {
             1 => ctx.set_result(&self.work),
             2..=129 => ctx.set_result(&self.outputs[(column - 2) as usize]),
             TERM..=ALLOWANCE => ctx.set_result(&self.keys[(column - TERM) as usize]),
-            column if (INPUT..INPUT + WIDTH as c_int).contains(&column) => ctx.set_result(
-                &self
-                    .inputs
-                    .get((column - INPUT) as usize)
-                    .copied()
-                    .flatten(),
-            ),
+            column if (INPUT..INPUT + WIDTH as c_int).contains(&column) => {
+                ctx.set_result(&self.inputs.get((column - INPUT) as usize).cloned())
+            }
             _ => Err(invalid("invalid column")),
         }
     }

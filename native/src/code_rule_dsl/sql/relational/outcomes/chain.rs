@@ -110,8 +110,16 @@ impl Sql {
         let measured = self.relation("recursive invocation summary", format!(
             "SELECT d.k,d.work,CASE WHEN d.base THEN 1 ELSE COALESCE(r.c0,0) END AS truth,1+COALESCE(r.c1,0) AS cost FROM {local} d {lookup}"
         ), true, "k,work,truth,cost");
+        let peak_note = if self.generation.peak_tracking {
+            format!(
+                " WHERE CASE WHEN {levels}>0 THEN relation_peak_note(({})+MIN(cost,{levels},work+1)) ELSE 1 END=1",
+                self.generation.depth_expression()
+            )
+        } else {
+            String::new()
+        };
         let name = self.relation("recursive invocation charge and logical depth", format!(
-            "SELECT k,MAX(0,work-MIN(cost,{levels})) AS work,CASE WHEN cost>{levels} AND work>={levels} THEN -1 WHEN work<cost THEN -2 ELSE truth END AS truth FROM {measured}"
+            "SELECT k,MAX(0,work-MIN(cost,{levels})) AS work,CASE WHEN cost>{levels} AND work>={levels} THEN -1 WHEN work<cost THEN -2 ELSE truth END AS truth FROM {measured}{peak_note}"
         ), true, "k,work,truth");
         self.profile.last_mut().unwrap()["incomingUtilityDepth"] =
             json!(self.generation.utility_depth);

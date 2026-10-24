@@ -73,6 +73,9 @@ fn captures(env: &MetaVarEnv<'_, TapeDoc>, names: &[String]) -> Result<Value, St
             }
             _ => return Err("native environment exposed an unsupported capture kind".into()),
         };
+        if matcher::is_span_variable(&name) {
+            continue;
+        }
         if !names.contains(&name) {
             return Err(format!(
                 "native capture {name:?} is absent from compiler output schema"
@@ -90,6 +93,11 @@ fn captures(env: &MetaVarEnv<'_, TapeDoc>, names: &[String]) -> Result<Value, St
             )
         } else if let Some(node) = env.get_match(name) {
             json!(node.node_id() as u32)
+        } else if let (Some(text), Some(span)) = (
+            matcher::exported_text(env, name),
+            matcher::exported_span(env, name),
+        ) {
+            json!({"text":text,"span":[span.start,span.end]})
         } else if let Some(bytes) = env.get_transformed(name) {
             json!(
                 String::from_utf8(bytes.to_vec())
@@ -138,8 +146,10 @@ pub(super) fn check(
     if fixtures.is_empty() {
         return Err("empty fixture batch".into());
     }
-    if grammar.file.is_some() || grammar.transform.is_some() {
-        return Err("catalog runner needs file-condition selection or transform publication before this grammar can pass".into());
+    if grammar.transform.is_some() {
+        return Err(
+            "catalog runner needs transform publication before this grammar can pass".into(),
+        );
     }
     let names = schema(&compiled, grammar)?;
     let docs: Vec<_> = fixtures
@@ -158,7 +168,12 @@ pub(super) fn check(
                 .path(&fixture.path);
         let mut provisional = vec![];
         let mut work = i64::MAX as usize;
-        let outcome = if grammar.applies {
+        let outcome = if grammar.applies
+            && grammar
+                .file
+                .as_ref()
+                .is_none_or(|condition| condition.holds(&fixture.path, None))
+        {
             matcher::with_file_memo(&tree, || {
                 matcher::run_clause(
                     &tree,
@@ -297,4 +312,28 @@ pub(super) fn check(
         report["passed"] = json!(false);
     }
     Ok(report)
+}
+
+#[test]
+fn catalog_capture_oracle_keeps_exported_ranges_and_ignores_reserved_metadata() {
+    let doc = tape(
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+        "abc",
+    );
+    let tree = AstGrep::doc(doc);
+    let mut env = MetaVarEnv::new();
+    matcher::export_text(&mut env, "C", "decoded", 1..3);
+    assert_eq!(
+        captures(&env, &["C".into()]).unwrap(),
+        json!({"C":{"text":"decoded","span":[1,3]}})
+    );
+    env.insert("C", tree.root());
+    assert_eq!(captures(&env, &["C".into()]).unwrap(), json!({"C":0}));
+    assert_eq!(matcher::exported_span(&env, "C"), Some(1..3));
+    env.insert("UNDECLARED", tree.root());
+    assert!(
+        captures(&env, &["C".into()])
+            .unwrap_err()
+            .contains("UNDECLARED")
+    );
 }

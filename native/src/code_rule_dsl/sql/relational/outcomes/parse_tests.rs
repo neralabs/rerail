@@ -8,7 +8,11 @@ use crate::code_rule_dsl::{
 use ast_grep_core::AstGrep;
 use serde_json::{Value, json};
 
-fn policy(language: &str, rule: Value, utils: Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
+pub(super) fn policy(
+    language: &str,
+    rule: Value,
+    utils: Value,
+) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     CodeRuleDslRuntime::compile(
         json!({"format":"rerail.policy/v1","id":"catalog-atoms","revision":1,"mode":"steer",
         "clauses":[{"id":"c0","forbid":{"ast":{"language":language,"rule":rule,"utils":utils}},

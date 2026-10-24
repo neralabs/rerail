@@ -408,9 +408,13 @@ fn relational_positive_parent_recursion_and_shared_utilities() {
 }
 
 #[test]
-fn relational_unsupported_semantics_fail_closed() {
+fn total_representation_unsupported_semantics_fail_closed() {
     let cases = vec![
-        (json!({"nthChild":1}), json!({}), "leaf or operator lacks"),
+        (
+            json!({"nthChild":1}),
+            json!({}),
+            "outside the total neighbor-set subset",
+        ),
         (
             json!({"matches":"r"}),
             json!({"r":{"any":[{"kind":"identifier"},{"inside":{"stopBy":"neighbor","not":{"matches":"r"}}}]}}),
@@ -424,7 +428,7 @@ fn relational_unsupported_semantics_fail_closed() {
     ];
     for (rule, utils, error) in cases {
         let p = policy(rule, utils);
-        let Err(actual) = super::compile(&grammar_matchers(&p)[0]) else {
+        let Err(actual) = super::compile_total(&grammar_matchers(&p)[0]) else {
             panic!("accepted {error}");
         };
         assert!(actual.contains(error), "{actual}");
@@ -432,12 +436,12 @@ fn relational_unsupported_semantics_fail_closed() {
 }
 
 #[test]
-fn relational_expansion_limits_fail_before_execution() {
+fn total_representation_expansion_limits_fail_before_execution() {
     let all: Vec<_> = (0..8)
         .map(|i| json!({"any":[{"regex":format!("a{i}")},{"regex":format!("b{i}")}]}))
         .collect();
     let p = policy(json!({"all":all}), json!({}));
-    let Err(error) = super::compile(&grammar_matchers(&p)[0]) else {
+    let Err(error) = super::compile_total(&grammar_matchers(&p)[0]) else {
         panic!("unbounded join-arm expansion");
     };
     assert!(error.contains("128"), "{error}");
@@ -446,7 +450,7 @@ fn relational_expansion_limits_fail_before_execution() {
         rule = json!({"inside":{"stopBy":"neighbor","all":[rule]}});
     }
     let p = policy(rule, json!({}));
-    let Err(error) = super::compile(&grammar_matchers(&p)[0]) else {
+    let Err(error) = super::compile_total(&grammar_matchers(&p)[0]) else {
         panic!("unbounded join width");
     };
     assert!(error.contains("32"), "{error}");

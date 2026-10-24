@@ -139,6 +139,7 @@ impl Lower {
             effects.uses_memo |= child.uses_memo();
             effects.file_memo |= child.uses_memo() || child.effects.file_memo;
             effects.contains_chain |= child.effects.contains_chain;
+            effects.needs_peak |= child.effects.needs_peak;
             effects.walk_depth = effects.walk_depth.max(child.effects.walk_depth + 1);
         }
         let core = Plan {

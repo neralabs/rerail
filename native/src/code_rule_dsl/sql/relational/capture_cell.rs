@@ -16,8 +16,29 @@ pub(super) enum Cell {
     Null,
     Integer(i64),
     List(Vec<u8>),
+    Span(Vec<u8>),
 }
 impl Cell {
+    pub(super) fn single_node(&self) -> Result<Option<u32>> {
+        match self {
+            Self::Null => Ok(None),
+            Self::Integer(node) => u32::try_from(*node)
+                .map(Some)
+                .map_err(|_| invalid("invalid node")),
+            Self::Span(bytes) => Ok(super::span_capture::decode(bytes)?.node),
+            Self::List(_) => Err(invalid("list is not a single capture")),
+        }
+    }
+    pub(super) fn memo_key(&self) -> Result<Self> {
+        if let Self::Span(bytes) = self {
+            let mut span = super::span_capture::decode(bytes)?;
+            if span.node.is_some() {
+                span.text = None;
+            }
+            return Ok(Self::Span(super::span_capture::encode(&span)?));
+        }
+        Ok(self.clone())
+    }
     pub(super) fn integer(&self) -> Option<i64> {
         if let Self::Integer(v) = self {
             Some(*v)
@@ -81,6 +102,11 @@ impl FromSql for Cell {
         match value {
             ValueRef::Null => Ok(Self::Null),
             ValueRef::Integer(v) => Ok(Self::Integer(v)),
+            ValueRef::Blob(bytes) if super::span_capture::is_span(bytes) => {
+                let _ = super::span_capture::decode(bytes)
+                    .map_err(|e| FromSqlError::Other(Box::new(e)))?;
+                Ok(Self::Span(bytes.to_vec()))
+            }
             ValueRef::Blob(bytes) => {
                 let _ = parts(bytes).map_err(|e| FromSqlError::Other(Box::new(e)))?;
                 Ok(Self::List(bytes.to_vec()))
@@ -94,7 +120,7 @@ impl ToSql for Cell {
         Ok(ToSqlOutput::Borrowed(match self {
             Self::Null => ValueRef::Null,
             Self::Integer(v) => ValueRef::Integer(*v),
-            Self::List(v) => ValueRef::Blob(v),
+            Self::List(v) | Self::Span(v) => ValueRef::Blob(v),
         }))
     }
 }

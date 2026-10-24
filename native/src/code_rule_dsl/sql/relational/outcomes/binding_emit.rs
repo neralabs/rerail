@@ -16,7 +16,7 @@ impl Sql {
             unreachable!()
         };
         let opaque_slots = &outputs[..4];
-        if plan.uses_memo() {
+        if plan.uses_memo() || self.generation.peak_tracking {
             slots.extend(&input.slots);
         }
         for slot in opaque_slots {

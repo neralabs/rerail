@@ -158,7 +158,7 @@ impl Local {
         plan: &Plan,
         guard: &str,
     ) -> Result<Option<String>, String> {
-        if sql.generation.memo_clause.is_some() {
+        if sql.generation.memo_clause.is_some() || sql.generation.peak_tracking {
             return Ok(None);
         }
         let Op::Charge(utility, body) = &plan.op else {

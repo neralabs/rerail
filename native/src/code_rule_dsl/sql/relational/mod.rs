@@ -5,26 +5,36 @@ mod answers;
 mod bound;
 mod bound_leaf;
 mod budget_leaf;
+mod call_unify;
 mod capture_cell;
+mod capture_env;
 mod classify;
+mod continuation_store;
 mod cutover_tests;
 mod demand;
 mod emit;
 mod failure;
+mod file_condition_tests;
+mod file_guard;
 mod format_facts;
 mod ir;
 pub(super) mod leaves;
 mod lower;
 mod memo_store;
 mod outcomes;
+mod parse_export;
 mod parse_facts;
+mod pattern_capture;
 mod pattern_leaf;
+mod peak_tracker;
 mod physical;
 mod recursion;
 mod recursion_tests;
 mod recursive_chain;
 mod recursive_downward;
 mod row;
+mod sibling_state;
+mod span_capture;
 pub(super) mod tests;
 pub(super) mod witness;
 pub(super) mod witness_tests;
@@ -39,6 +49,9 @@ pub(super) struct Compiled {
 }
 
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
+    if grammar.file.is_some() {
+        return outcomes::compile(grammar);
+    }
     match classify::classify(grammar)? {
         classify::Representation::OrderedOutcomes => return outcomes::compile(grammar),
         classify::Representation::CapturedRelations => {
@@ -54,6 +67,18 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
         }
         classify::Representation::TotalRelations => {}
     }
+    match compile_total(grammar) {
+        Ok(compiled) => Ok(compiled),
+        Err(reason) => {
+            let mut compiled = outcomes::compile(grammar)
+                .map_err(|error| format!("{error}; total representation: {reason}"))?;
+            compiled.relations["totalInapplicable"] = serde_json::json!(reason);
+            Ok(compiled)
+        }
+    }
+}
+
+fn compile_total(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     analysis::admit(grammar)?;
     let mut program = lower::compile(grammar)?;
     // Check the original dependency graph before specializing any consumer.

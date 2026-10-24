@@ -163,12 +163,14 @@ fn chains_keep_distinct_components_empty_guards_and_memo_refusal_explicit() {
     let mut utils = parent_utils();
     utils["memo"] = json!({"all":[{"value":{"constant":true}},{"matches":"u"}]});
     let rule = json!({"kind":"number","all":[{"matches":"memo"},{"matches":"memo"}]});
-    let p = policy_utils(&[rule], utils);
-    let grammars = crate::code_rule_dsl::test_support::grammar_matchers(&p);
-    let error = super::compile(&grammars[0])
-        .err()
-        .expect("memo ancestor needs a peak-depth contract");
-    assert!(error.contains("peak-depth answers"), "{error}");
+    for work in [0, 1, 2, 4, 8, 32, 128, 1024] {
+        check(
+            std::slice::from_ref(&rule),
+            utils.clone(),
+            &["((1))(); ((2));"],
+            work,
+        );
+    }
 }
 
 #[test]

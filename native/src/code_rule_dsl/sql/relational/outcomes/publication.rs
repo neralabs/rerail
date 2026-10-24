@@ -34,13 +34,31 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
     let mut recursive_components = 0;
     for (clause, &(plan, slots, applies, root_filter)) in plans.iter().enumerate() {
         sql.generation = super::Generation::default();
+        sql.generation.peak_tracking = plan.effects.needs_peak;
         sql.generation.memo_layout = memo_layouts.get(clause).cloned().flatten();
         sql.generation.components.borrow_mut().clause = clause;
-        sql.generation.memo_clause = super::file_memo::needed(plan).then_some(clause);
-        let reset = if sql.generation.memo_clause.is_some() {
+        sql.generation.memo_clause = (plan.effects.needs_peak
+            || super::file_memo::needed(plan)
+            || (plan.uses_memo()
+                && sql
+                    .generation
+                    .memo_layout
+                    .as_ref()
+                    .is_some_and(|layout| layout.has_spans())))
+        .then_some(clause);
+        let reset = if sql.generation.memo_clause.is_some() || plan.effects.sibling_cache {
+            let reset_expression = if plan.effects.sibling_cache {
+                if sql.generation.memo_clause.is_some() {
+                    format!("relation_memo_reset({clause})*relation_sibling_reset({clause})")
+                } else {
+                    format!("relation_sibling_reset({clause})")
+                }
+            } else {
+                format!("relation_memo_reset({clause})")
+            };
             let init = sql.relation(
                 "clause utility storage initialization",
-                format!("SELECT relation_memo_reset({clause}) AS ready"),
+                format!("SELECT {reset_expression} AS ready"),
                 true,
                 "ready",
             );
@@ -91,6 +109,10 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
                 slots[s].kind.payload(
                     &format!("o.c{s}"),
                     if plan.fallible() { "o.file" } else { "d.file" },
+                    sql.generation
+                        .memo_layout
+                        .as_ref()
+                        .is_some_and(|layout| layout.span_capable(s)),
                 )
             })
             .collect::<Vec<_>>()
@@ -115,7 +137,16 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
         let published = observed
             .iter()
             .enumerate()
-            .map(|(i, &slot)| slots[slot].kind.payload(&format!("m.v{i}"), "m.file"))
+            .map(|(i, &slot)| {
+                slots[slot].kind.payload(
+                    &format!("m.v{i}"),
+                    "m.file",
+                    sql.generation
+                        .memo_layout
+                        .as_ref()
+                        .is_some_and(|layout| layout.span_capable(slot)),
+                )
+            })
             .collect::<Vec<_>>()
             .join(",");
         payload_cases.push(format!("WHEN {clause} THEN json_array({published})"));

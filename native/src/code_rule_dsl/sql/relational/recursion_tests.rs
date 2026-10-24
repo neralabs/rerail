@@ -182,7 +182,7 @@ fn relational_components_compose_with_ordered_capture_answers() {
 }
 
 #[test]
-fn relational_components_reject_unproved_recursion_before_sql() {
+fn total_components_reject_unproved_recursion_before_sql() {
     let cases = [
         (
             json!({"inside":{"stopBy":"neighbor","not":{"matches":"b"}}}),
@@ -207,7 +207,7 @@ fn relational_components_reject_unproved_recursion_before_sql() {
     ];
     for (a, b, expected) in cases {
         let p = policy(json!({"matches":"a"}), json!({"a":a,"b":b}));
-        let Err(error) = super::compile(&grammar_matchers(&p)[0]) else {
+        let Err(error) = super::compile_total(&grammar_matchers(&p)[0]) else {
             panic!("accepted {expected}")
         };
         assert!(error.contains(expected), "{error}");
@@ -279,5 +279,22 @@ fn relational_components_scaling() {
             "scope":"Total, capture-free structural components; not the complete job or native resource-limit semantics",
             "samples":samples
         })).unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn ordered_component_proof_handles_total_representation_refusals() {
+    for body in [
+        json!({"any":[{"kind":"identifier"},{"inside":{"stopBy":"neighbor","not":{"matches":"a"}}}]}),
+        json!({"any":[{"kind":"identifier"},{"all":[{"inside":{"stopBy":"neighbor","matches":"a"}},{"inside":{"stopBy":"neighbor","matches":"a"}}]}]}),
+    ] {
+        let p = policy(json!({"matches":"a"}), json!({"a":body}));
+        let report = measure(
+            &grammar_matchers(&p)[0],
+            &[("a.py".into(), "a=(b,c)\nprint(a)\n".into())],
+        );
+        assert!(report["relations"]["totalInapplicable"].is_string());
+        assert_eq!(report["matchingStatements"], 1);
+        assert_eq!(report["framePublications"], 0);
     }
 }

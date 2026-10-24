@@ -104,6 +104,11 @@ pub(in crate::code_rule_dsl::sql) trait Verdicts:
     }
 
     #[cfg(test)]
+    fn file_condition(&self) -> Option<&crate::code_rule_dsl::language::FileCondition> {
+        None
+    }
+
+    #[cfg(test)]
     fn parsed_test(&self) -> Option<&crate::code_rule_dsl::matcher::ParseTest> {
         None
     }
@@ -147,6 +152,23 @@ pub(in crate::code_rule_dsl::sql) trait Verdicts:
             Err("budget rows require an atomic capture contract".into()),
             work,
         )
+    }
+
+    #[cfg(test)]
+    fn tree_budget_rows<'t>(
+        &self,
+        _node: Node<'t, SubDoc>,
+        _env: &MetaVarEnv<'t, SubDoc>,
+        work: usize,
+    ) -> (std::result::Result<Vec<Verdict>, String>, usize) {
+        (
+            Err("atomic capture has no parsed-tree contract".into()),
+            work,
+        )
+    }
+    #[cfg(test)]
+    fn supports_tree_rows(&self) -> bool {
+        false
     }
 
     /// The rows at a node of a parsed literal's tree (`parse`); only the terms a tree's rule may

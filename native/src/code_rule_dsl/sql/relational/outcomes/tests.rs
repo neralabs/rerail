@@ -253,7 +253,7 @@ fn outcomes_reached_demands_skip_decided_and_withheld_terms() {
 fn outcomes_reject_unproved_recursive_outcomes() {
     let p = policy(
         json!({"matches":"r"}),
-        json!({"r":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","matches":"r"}}]}}),
+        json!({"r":{"any":[{"testUnknown":"u"},{"inside":{"stopBy":"neighbor","has":{"stopBy":"neighbor","matches":"r"}}}]}}),
     );
     let Err(error) = super::super::compile(&grammar_matchers(&p)[0]) else {
         panic!("accepted unproved recursive outcomes")

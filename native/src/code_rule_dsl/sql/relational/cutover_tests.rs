@@ -117,7 +117,9 @@ fn catalog(execute: bool) -> Value {
                             json!({"admitted":false,"reason":error})
                         }
                     };
-                    grammars.push(json!({"grammar":index,"result":result}));
+                    grammars.push(
+                        json!({"grammar":index,"threeValued":grammar.three_valued,"result":result}),
+                    );
                 }
             }
             rows.push(json!({"policy":relative,"policySha256":sha,"clause":clause.id,"ast":!grammars.is_empty(),"grammars":grammars,"publication":{"enumerates":clause.violation.each.is_some(),"suppresses":clause.violation.suppress.is_some(),"hasFix":clause.violation.fix.is_some()},"decision":clause.decision}));
@@ -130,7 +132,7 @@ fn catalog(execute: bool) -> Value {
         "summary":{"policies":policies.len(),"clauses":rows.len(),"grammars":total,"admitted":admitted,"refused":refused,"policyCompilationErrors":policy_errors,"refusalReasons":refusals,"executionPassed":parity_passed,"executionFailed":parity_failed,"noPositiveWitness":no_positive_witness},
         "fixtures":fixtures.as_ref().map(|fixtures| execution::inventory(fixtures)),
         "incompleteCoverage":refused>0 || policy_errors>0 || !execute || parity_failed>0 || no_positive_witness>0,
-        "unverified":["Policy scope and file-condition selection, violation enumeration/rendering, fixes and suppression.","Cross-file scope/module/call context and incremental invalidation.","Finite utility work allowances, deadlines and stack/depth-limit equivalence.","Complete-job batching across all grammars and the 100-execution budget.","A matching fixture is not proof that every semantic branch has positive and negative coverage."]
+        "unverified":["Policy scope, violation enumeration/rendering, fixes and suppression.","Cross-file scope/module/call context and incremental invalidation.","Finite utility work allowances, deadlines and stack/depth-limit equivalence.","Complete-job batching across all grammars and the 100-execution budget.","A matching fixture is not proof that every semantic branch has positive and negative coverage."]
     })
 }
 

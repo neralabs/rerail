@@ -1,7 +1,11 @@
 //! A cache-fill delta belongs to one reached miss, never to a batch of inputs.
 use super::bridge;
 
-pub(super) fn bracket(query: &str, width: usize, guard: &str) -> Result<String, String> {
+pub(in crate::code_rule_dsl::sql::relational::outcomes) fn bracket(
+    query: &str,
+    width: usize,
+    guard: &str,
+) -> Result<String, String> {
     // relation_row has 130 columns: retain that bound when adding the fill delta.
     if width == 0 || width >= 130 {
         return Err("cache-fill return exceeds 130 typed columns".into());

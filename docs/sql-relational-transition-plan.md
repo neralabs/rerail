@@ -1,6 +1,6 @@
 # Transition to direct relational SQL
 
-Status: Milestone 1 complete; Milestone 2 structural components, explicit outcomes, and reached value/stop kernels implemented; remaining gates pending, 2026-10-22.
+Status: Test compiler qualified for 135 of 146 catalog grammars; production and complete-job gates remain closed, 2026-10-24.
 Baseline: `a0051ae8`, including the complete B023 reference query.
 This document changes no production behavior.
 
@@ -1133,3 +1133,31 @@ The full-coverage, complete-job 100-execution, resource, and production-cutover 
 Final qualification passes 308 relational tests and all 285 preceding SQL/VM controls. All 101 admitted grammars pass the complete fixture batch. The preceding 78 retain identical SQL, VM counts, and outputs. Frozen B023 retains 246,364 VM instructions and 10,232 SQL bytes. Its prepared median CPU time is 4.085 ms against the 32.029 ms reference. All existing performance and shape gates pass.
 
 `benchmark/sql-relational-broad-catalog-integration.json` contains the batch evidence and new grammar SQL. The coverage ledger records 45 remaining refusals. These results qualify this larger test-compiler batch; they do not open the production-cutover gates.
+
+## Broad recursion and capture batch, 2026-10-24
+
+The qualified test compiler admits 135 of 146 grammars, up from 101. All 135 pass native parity across 596 files with positive witnesses. The frozen suite passes 385 relational tests, both native lint configurations, and all 285 prior SQL/VM controls.
+
+This batch implements the recursive return boundary described above. Completed utility answers carry their replay cost and peak depth. Recursive alternatives retain their original order. Numeric continuations hold control fields; capture inputs stay in the enclosing demand. Index seeks resume after the completed child's subtree endpoint.
+
+It also adds pure structural recursion, mixed finite semantic regions, parsed span exports, host hooks, captured binding regions, file conditions, and named sibling classification. Span capability follows parameter aliases transitively. Sibling cache lookups and fills complete before the next demand starts. Adjacent pure predicates share one emitted expression where their effect contract permits it.
+
+The remaining contracts now form two larger implementation tracks:
+
+| Track | Current first refusals | Required change |
+| --- | ---: | --- |
+| Recursive execution contexts | 6 | Explicit recursive parameter inputs and cross-document capture returns. File identity and export maps must cross the continuation boundary. |
+| Shared finite functions | 5 | Emit reusable utility bodies with typed arguments and separate native memo identities. Keep the 256-operator resource bound. |
+
+The finite-function track must start from actual emitted duplication. SIM905 repeats pure bodies in separate keyword and positional branches. SIM101 repeats equivalent helper structures with different capture slots and native utility identities. SIM113 can reach a fallback helper after the first branch fails before that helper executes. Neither unconditional hoisting nor a source-plan cache removes these copies safely.
+
+The next shared-function contract therefore needs lazy calls with typed inputs, a return continuation, and original memo identity. Its gate must compare full outputs, finite work, reached probes, unknown propagation, and VM counts against the current compiler. Preparation time stays outside execution timing. Captures and parser exports must not become serialized frame copies.
+
+The six recursion refusals remain explicit. Do not substitute native child matching, relax progress checks, or raise resource limits to admit them. Complete-job batching and production replacement remain separate gates.
+
+
+Final evidence is in [the recursive catalog integration report](../benchmark/sql-relational-recursive-catalog-integration.json). The source and executable hashes are in [the qualification record](../benchmark/sql-relational-cutover-evidence.json). The coverage ledger retains all 11 refusals, so the full-coverage gate still fails as intended.
+
+Of the preceding 101 grammars, 96 retain exact SQL, VM counts, and outputs on the same expanded fixture inventory. Five change physical shape while retaining exact outputs. B507 rises from 22,062,220 to 25,073,720 VM instructions. ASYNC221 rises from 41,775,854 to 50,072,645. Exact depth and memo bookkeeping contributes to these costs. Do not describe this coverage batch as a catalog-wide performance improvement.
+
+Frozen B023 retains 246,364 VM instructions, 10,232 SQL bytes, one matching statement, and zero frame publications. Prepared median CPU is 4.479 ms against 32.460 ms for the reference. Preparation remains a separate one-off cost. These results keep the existing performance and shape gates open for this workload; they do not qualify the complete-job execution budget.

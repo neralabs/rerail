@@ -49,7 +49,26 @@ impl Sql {
         let local = self.relation("downward invocation predicates", format!(
             "SELECT d.k,d.file,d.node,d.work,CASE WHEN d.work>0 AND {levels}>0 THEN ({base}) ELSE 0 END AS base,CASE WHEN d.work>0 AND {levels}>0 THEN ({guard}) ELSE 0 END AS active FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node",input.name
         ), true, "k,file,node,work,base,active");
-        let lookup_query = if dynamic {
+        let lookup_query = if self.generation.peak_tracking {
+            let (join, breach) = if dynamic {
+                (
+                    String::new(),
+                    format!(
+                        "(SELECT MIN(n.rank)-s.rank FROM {prefix}_ranked n WHERE n.file=s.file AND n.tree=s.tree AND n.rank BETWEEN s.rank AND s.finish AND n.depth>=s.depth+({levels}))"
+                    ),
+                )
+            } else {
+                (
+                    format!(
+                        " LEFT JOIN {prefix}_depth{levels} b ON b.file=s.file AND b.node=s.node"
+                    ),
+                    "b.charged".into(),
+                )
+            };
+            format!(
+                "WITH reached AS MATERIALIZED (SELECT s.*,({breach}) AS breach FROM {prefix}_summary s{join} WHERE d.work>0 AND {levels}>0 AND NOT d.base AND d.active AND s.file=d.file AND s.node=d.node) SELECT s.truth,s.cost,s.breach,(SELECT MAX(n.depth)-s.depth+1 FROM {prefix}_ranked n WHERE n.file=s.file AND n.tree=s.tree AND n.rank>=s.rank AND n.rank<s.rank+MIN(s.cost,d.work+1,COALESCE(s.breach,s.cost))) FROM reached s"
+            )
+        } else if dynamic {
             // Runtime depth comes from a reached semantic wrapper. Search only its
             // shared interval; no per-origin depth-state table is materialized.
             format!(
@@ -60,12 +79,28 @@ impl Sql {
                 "SELECT s.truth,s.cost,b.charged FROM {prefix}_summary s LEFT JOIN {prefix}_depth{levels} b ON b.file=s.file AND b.node=s.node WHERE d.work>0 AND {levels}>0 AND NOT d.base AND d.active AND s.file=d.file AND s.node=d.node"
             )
         };
-        let lookup = bridge(&lookup_query, 3);
+        let lookup = bridge(
+            &lookup_query,
+            if self.generation.peak_tracking { 4 } else { 3 },
+        );
+        let peak_column = if self.generation.peak_tracking {
+            ",COALESCE(r.c3,1) AS peak"
+        } else {
+            ""
+        };
         let measured = self.relation("downward invocation shared range",format!(
-            "SELECT d.k,d.work,CASE WHEN d.base THEN 1 ELSE COALESCE(r.c0,0) END AS truth,COALESCE(r.c1,1) AS cost,CASE WHEN {levels}=0 THEN 0 ELSE r.c2 END AS breach FROM {local} d {lookup}"
+            "SELECT d.k,d.work,CASE WHEN d.base THEN 1 ELSE COALESCE(r.c0,0) END AS truth,COALESCE(r.c1,1) AS cost,CASE WHEN {levels}=0 THEN 0 ELSE r.c2 END AS breach{peak_column} FROM {local} d {lookup}"
         ),true,"k,work,truth,cost,charges before depth breach");
+        let peak_note = if self.generation.peak_tracking {
+            format!(
+                " WHERE CASE WHEN {levels}>0 THEN relation_peak_note(({})+peak) ELSE 1 END=1",
+                self.generation.depth_expression()
+            )
+        } else {
+            String::new()
+        };
         let name = self.relation("downward ordered charge and depth",format!(
-            "SELECT k,MAX(0,work-COALESCE(breach,cost)) AS work,CASE WHEN breach IS NOT NULL AND work>=breach THEN -1 WHEN work<COALESCE(breach,cost) THEN -2 ELSE truth END AS truth FROM {measured}"
+            "SELECT k,MAX(0,work-COALESCE(breach,cost)) AS work,CASE WHEN breach IS NOT NULL AND work>=breach THEN -1 WHEN work<COALESCE(breach,cost) THEN -2 ELSE truth END AS truth FROM {measured}{peak_note}"
         ),true,"k,work,truth");
         self.profile.last_mut().unwrap()["incomingUtilityDepth"] =
             json!(self.generation.utility_depth);

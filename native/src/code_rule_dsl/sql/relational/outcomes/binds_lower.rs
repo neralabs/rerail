@@ -1,5 +1,5 @@
-//! Only capture-independent, node-local binding filters are atomic predicates.
-use super::super::{Plan, Slots, effects::Effects};
+//! Child-free binding filters are atomic predicates with explicit optional node-region inputs.
+use super::super::{CaptureKind, Op, Plan, Slots, effects::Effects};
 use super::Lower;
 use crate::code_rule_dsl::matcher::{AstMatcher, Semantic};
 
@@ -13,15 +13,52 @@ impl Lower {
                 "outcome binds: binding sub-rules and redefinitions require SQL operators".into(),
             );
         }
-        if test
+        if let Some(name) = test
             .filter
             .bindings
             .as_ref()
-            .is_some_and(|count| count.within.is_some())
+            .and_then(|count| count.within.as_ref())
         {
-            return Err(
-                "outcome binds: captured binding regions require typed input columns".into(),
-            );
+            // Policy validation permits single captures only. Parsed spans
+            // share that typed column, with an optional AST node shadow.
+            let slot = self.slot(name, CaptureKind::Node)?;
+            let inputs = vec![slot];
+            let bindings = vec![(
+                name.clone(),
+                crate::code_rule_dsl::sql::plan::SlotKind::Node,
+            )];
+            let term = self.pure.program.terminals.len();
+            self.pure
+                .program
+                .terminals
+                .push(crate::code_rule_dsl::sql::terminals::Terminal::Fact(
+                    crate::code_rule_dsl::sql::terminals::FactTerm {
+                        reads: bindings.clone(),
+                        verdicts: Box::new(super::binding_region::RegionFacts {
+                            test: (**test).clone(),
+                            bindings,
+                            owner: self.scope_owner,
+                        }),
+                    },
+                ));
+            return Ok(Plan {
+                op: Op::BoundLeaf {
+                    term,
+                    inputs,
+                    outputs: vec![],
+                    kinds: Some(test.name_kinds.iter().copied().collect()),
+                },
+                effects: Effects {
+                    reads_value: true,
+                    fallible: true,
+                    cache_fills: true,
+                    ..Effects::default()
+                },
+                mentions: Slots::from([slot]),
+                writes: Slots::new(),
+                node_writes: Slots::new(),
+                walk_filter: None,
+            });
         }
         // Binds::at always reads both the scope table and its usage table. Their
         // clause-owned fill charges must not be replayed as utility answer work.

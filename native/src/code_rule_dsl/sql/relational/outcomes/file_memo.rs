@@ -5,7 +5,7 @@ use super::{Demand, Op, Output, Plan, Sql, fields, value};
 use serde_json::json;
 
 #[path = "fill_cost.rs"]
-mod fill_cost;
+pub(super) mod fill_cost;
 
 pub(super) fn needed(plan: &Plan) -> bool {
     plan.effects.file_memo
@@ -18,6 +18,13 @@ impl Sql {
         body: &Plan,
         input: &Demand,
     ) -> Result<Output, String> {
+        if self.generation.peak_tracking {
+            return self.peak_utility(
+                (!self.generation.memo_bypass).then_some(utility),
+                body,
+                input,
+            );
+        }
         let clause = self.generation.memo_clause.expect("clause answer scope");
         let memo_layout = self.generation.memo_layout.clone();
         let layout = memo_layout.as_ref();
@@ -41,12 +48,23 @@ impl Sql {
         key_slots.extend(&self.generation.following);
         let keys = key_slots
             .iter()
-            .map(|&s| format!(" AND m.k{} IS {}", memo_column(s), value(input, "d", s)))
+            .map(|&s| {
+                let raw = value(input, "d", s);
+                let key = layout.map_or_else(
+                    || raw.clone(),
+                    |layout| layout.normalize_key(s, raw.clone()),
+                );
+                format!(" AND m.k{} IS {}", memo_column(s), key)
+            })
             .collect::<String>();
         let hit_exports = body
             .writes
             .iter()
-            .map(|s| format!(",m.o{} AS hit{s}", memo_column(*s)))
+            .map(|s| {
+                let stored=format!("m.o{}",memo_column(*s));
+                let replay=if layout.is_some_and(|layout|layout.span_capable(*s)){format!("CASE WHEN m.truth IS NOT NULL THEN relation_capture_replay(d.file,{},{stored}) END",value(input,"d",*s))}else{stored};
+                format!(",{replay} AS hit{s}")
+            })
             .collect::<String>();
         let lookup = self.relation("clause utility keyed lookup", format!("SELECT d.*,m.truth AS hit,m.cost AS cost{hit_exports} FROM {} d LEFT JOIN relation_memo m ON m.mode IS 0 AND {identity}{keys}", input.name), true, "demand,prior truth,cost,exports");
         let (mut query, profile) = program(

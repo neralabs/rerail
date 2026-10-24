@@ -17,7 +17,8 @@ use std::{
 };
 
 const SLOTS: usize = 128;
-const OUTPUTS: usize = 2 + SLOTS;
+const PEAK: usize = 2 + SLOTS;
+const OUTPUTS: usize = PEAK + 1;
 const MODE: usize = OUTPUTS;
 const CLAUSE: usize = MODE + 1;
 const NODE: usize = MODE + 4;
@@ -25,7 +26,8 @@ const KEYS: usize = MODE + 5;
 const TRUTH: usize = KEYS + SLOTS;
 const COST: usize = TRUTH + 1;
 const VALUES: usize = COST + 1;
-const WIDTH: usize = VALUES + SLOTS;
+const VPEAK: usize = VALUES + SLOTS;
+const WIDTH: usize = VPEAK + 1;
 
 type SparseRow = Vec<(usize, Cell)>;
 
@@ -46,6 +48,8 @@ fn count(index: usize, amount: usize) {
 }
 
 pub(super) fn register(db: &Connection) -> Result<()> {
+    let peaks = super::peak_tracker::register(db)?;
+    let continuations = super::continuation_store::register(db)?;
     let store = Arc::new(Mutex::new(Store::default()));
     let reset = store.clone();
     db.create_scalar_function(
@@ -59,6 +63,8 @@ pub(super) fn register(db: &Connection) -> Result<()> {
                 .unwrap()
                 .entries
                 .retain(|key, _| key[0] != (CLAUSE, Cell::Integer(clause)));
+            peaks.lock().unwrap().reset();
+            continuations.lock().unwrap().reset();
             count(0, 1);
             Ok(1_i64)
         },
@@ -86,6 +92,7 @@ unsafe impl<'v> VTab<'v> for Table {
         db.config(VTabConfig::DirectOnly)?;
         let mut columns = vec!["truth INTEGER".into(), "cost INTEGER".into()];
         columns.extend((0..SLOTS).map(|s| format!("o{s}")));
+        columns.push("peak INTEGER".into());
         columns.extend(
             ["mode", "clause", "utility", "file", "node"].map(|s| format!("{s} INTEGER HIDDEN")),
         );
@@ -95,6 +102,7 @@ unsafe impl<'v> VTab<'v> for Table {
             "vcost INTEGER HIDDEN".into(),
         ]);
         columns.extend((0..SLOTS).map(|s| format!("v{s} HIDDEN")));
+        columns.push("vpeak INTEGER HIDDEN".into());
         Ok((
             Cow::Owned(CString::new(format!("CREATE TABLE x({})", columns.join(","))).unwrap()),
             Self {
@@ -150,6 +158,7 @@ unsafe impl<'v> VTab<'v> for Table {
             base: sqlite3_vtab_cursor::default(),
             store: self.store.clone(),
             values: vec![],
+            inputs: vec![],
             done: true,
             marker: PhantomData,
         })
@@ -160,6 +169,7 @@ struct Cursor<'v> {
     base: sqlite3_vtab_cursor,
     store: Arc<Mutex<Store>>,
     values: SparseRow,
+    inputs: SparseRow,
     done: bool,
     marker: PhantomData<&'v Table>,
 }
@@ -167,6 +177,7 @@ struct Cursor<'v> {
 unsafe impl VTabCursor for Cursor<'_> {
     fn filter(&mut self, _: c_int, columns: Option<&str>, args: &Filters<'_>) -> Result<()> {
         self.done = true;
+        self.inputs.clear();
         let mut values = vec![];
         let mut arg = 0;
         for column in columns.unwrap().split(',') {
@@ -176,7 +187,10 @@ unsafe impl VTabCursor for Cursor<'_> {
             let column = column.parse::<usize>().unwrap();
             let value = args.get::<Cell>(arg)?;
             if value != Cell::Null {
-                if ((MODE..KEYS).contains(&column) || column == TRUTH || column == COST)
+                if ((MODE..KEYS).contains(&column)
+                    || column == TRUTH
+                    || column == COST
+                    || column == VPEAK)
                     && value.integer().is_none()
                 {
                     return Err(Error::ModuleError(
@@ -187,6 +201,9 @@ unsafe impl VTabCursor for Cursor<'_> {
             }
             arg += 1;
         }
+        // SQLite may retain residual checks beyond its omit-argument budget.
+        // Hidden projections echo this cursor's exact request, never stored keys.
+        self.inputs.clone_from(&values);
         let get = |column: usize| {
             values
                 .binary_search_by_key(&column, |&(c, _)| c)
@@ -202,8 +219,17 @@ unsafe impl VTabCursor for Cursor<'_> {
         let key: Vec<_> = values
             .iter()
             .filter(|(c, _)| (CLAUSE..TRUTH).contains(c))
-            .cloned()
-            .collect();
+            .map(|(column, value)| {
+                Ok((
+                    *column,
+                    if (KEYS..TRUTH).contains(column) {
+                        value.memo_key()?
+                    } else {
+                        value.clone()
+                    },
+                ))
+            })
+            .collect::<Result<_>>()?;
         let mut store = self.store.lock().unwrap();
         match mode {
             0 => {
@@ -222,6 +248,12 @@ unsafe impl VTabCursor for Cursor<'_> {
                         "memo: only completed answers with positive costs can be published".into(),
                     ));
                 }
+                let peak = get(VPEAK);
+                if peak.is_some_and(|peak| !(1..=256).contains(&peak)) {
+                    return Err(Error::ModuleError(
+                        "memo: completed peak must be 1..256".into(),
+                    ));
+                }
                 let mut answer = vec![
                     (0, Cell::Integer(truth)),
                     (1, Cell::Integer(get(COST).unwrap())),
@@ -229,11 +261,20 @@ unsafe impl VTabCursor for Cursor<'_> {
                 answer.extend(
                     values
                         .iter()
-                        .filter(|(c, _)| *c >= VALUES)
+                        .filter(|(c, _)| (VALUES..VPEAK).contains(c))
                         .map(|(c, v)| (c - VALUES + 2, v.clone())),
                 );
+                if let Some(peak) = peak {
+                    answer.push((PEAK, Cell::Integer(peak)));
+                }
                 if let Some(prior) = store.entries.get(&key) {
-                    if prior != &answer {
+                    if peak.is_some() {
+                        // Native completed answers replace earlier entries. This matters
+                        // when a depth-rejected hit recomputes a shallower answer.
+                        let growth = answer.len().saturating_sub(prior.len());
+                        count(4, 2 * growth);
+                        store.entries.insert(key.clone(), answer.clone());
+                    } else if prior != &answer {
                         return Err(Error::ModuleError("memo: conflicting publication".into()));
                     }
                 } else {
@@ -256,17 +297,19 @@ unsafe impl VTabCursor for Cursor<'_> {
         self.done
     }
     fn column(&self, ctx: &mut Context, column: c_int) -> Result<()> {
-        if column < 0 || column as usize >= OUTPUTS {
-            return Err(Error::ModuleError(
-                "memo: hidden input cannot be projected".into(),
-            ));
+        if column < 0 || column as usize >= WIDTH {
+            return Err(Error::ModuleError("memo: invalid column".into()));
         }
+        let values = if (column as usize) < OUTPUTS {
+            &self.values
+        } else {
+            &self.inputs
+        };
         ctx.set_result(
-            &self
-                .values
+            &values
                 .binary_search_by_key(&(column as usize), |&(c, _)| c)
                 .ok()
-                .map(|i| &self.values[i].1),
+                .map(|i| &values[i].1),
         )
     }
     fn rowid(&self) -> Result<i64> {
@@ -334,5 +377,172 @@ mod tests {
         assert_eq!(counts(), before);
         assert!(db.query_row::<i64,_,_>(&format!("SELECT truth FROM relation_memo m WHERE m.mode IS 1 AND {identity} AND m.vtruth IS -2 AND m.vcost IS 1"),[],|r|r.get(0)).is_err());
         assert!(db.prepare("SELECT * FROM relation_memo").is_err());
+    }
+}
+
+#[cfg(test)]
+mod peak_tests {
+    use super::*;
+    const ID: &str = "m.clause IS 0 AND m.utility IS 4 AND m.file IS 0 AND m.node IS 7";
+    #[test]
+    fn relative_peak_fit_rejects_a_deep_hit_without_losing_the_answer() {
+        let db = Connection::open_in_memory().unwrap();
+        register(&db).unwrap();
+        let put = format!(
+            "SELECT peak FROM relation_memo m WHERE m.mode IS 1 AND {ID} AND m.vtruth IS 2 AND m.vcost IS 7 AND m.vpeak IS 3"
+        );
+        assert_eq!(
+            db.query_row::<i64, _, _>(&put, [], |r| r.get(0)).unwrap(),
+            3
+        );
+        for (incoming, expected) in [(253, Some(2)), (254, None), (0, Some(2))] {
+            let query = format!(
+                "SELECT m.truth FROM (SELECT ?1 AS incoming) d LEFT JOIN relation_memo m ON m.mode IS 0 AND {ID} AND m.peak<=256-d.incoming"
+            );
+            assert_eq!(
+                db.query_row::<Option<i64>, _, _>(&query, [incoming], |r| r.get(0))
+                    .unwrap(),
+                expected
+            );
+        }
+        // Native publication replaces a prior completed entry after recomputation.
+        let put = format!(
+            "SELECT truth,cost,peak FROM relation_memo m WHERE m.mode IS 1 AND {ID} AND m.vtruth IS 0 AND m.vcost IS 2 AND m.vpeak IS 1"
+        );
+        assert_eq!(
+            db.query_row::<(i64, i64, i64), _, _>(&put, [], |r| Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?
+            )))
+            .unwrap(),
+            (0, 2, 1)
+        );
+    }
+    #[test]
+    fn failed_answers_and_invalid_peaks_do_not_publish_and_reset_closes_state() {
+        let db = Connection::open_in_memory().unwrap();
+        register(&db).unwrap();
+        for (truth, peak) in [(-1, 1), (-2, 1), (1, 0), (1, 257)] {
+            let query = format!(
+                "SELECT truth FROM relation_memo m WHERE m.mode IS 1 AND {ID} AND m.vtruth IS ?1 AND m.vcost IS 1 AND m.vpeak IS ?2"
+            );
+            assert!(
+                db.query_row::<i64, _, _>(&query, rusqlite::params![truth, peak], |r| r.get(0))
+                    .is_err()
+            );
+        }
+        assert!(matches!(
+            db.query_row::<i64, _, _>(
+                &format!("SELECT truth FROM relation_memo m WHERE m.mode IS 0 AND {ID}"),
+                [],
+                |r| r.get(0)
+            ),
+            Err(Error::QueryReturnedNoRows)
+        ));
+        let token: i64 = db
+            .query_row("SELECT relation_peak_open(0)", [], |r| r.get(0))
+            .unwrap();
+        db.query_row::<i64, _, _>(
+            "SELECT handle FROM relation_continuation WHERE mode IS 1 AND v0 IS 7",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+        db.query_row::<i64, _, _>("SELECT relation_memo_reset(0)", [], |r| r.get(0))
+            .unwrap();
+        assert!(
+            db.query_row::<i64, _, _>("SELECT relation_peak_close(?1)", [token], |r| r.get(0))
+                .is_err()
+        );
+        assert_eq!(
+            db.query_row::<i64, _, _>("SELECT relation_continuation_rows()", [], |r| r.get(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[cfg(test)]
+mod residual_tests {
+    use super::*;
+    #[test]
+    fn wide_publications_echo_all_bound_hidden_inputs_for_sqlite_residual_checks() {
+        let db = Connection::open_in_memory().unwrap();
+        register(&db).unwrap();
+        for (keys, exports) in [(6, 3), (12, 12), (32, 32)] {
+            let identity = keys * 10 + exports;
+            let inputs = (0..keys)
+                .map(|i| format!(" AND m.k{i} IS {}", i + 1))
+                .collect::<String>();
+            let outputs = (0..exports)
+                .map(|i| format!(" AND m.v{i} IS {}", i + 70))
+                .collect::<String>();
+            let sql = format!(
+                "SELECT m.truth,m.peak,m.o{},m.k{},m.v{} FROM relation_memo m WHERE m.mode IS 1 AND m.clause IS 0 AND m.utility IS {identity} AND m.file IS 0 AND m.node IS 1{inputs} AND m.vtruth IS 1 AND m.vcost IS 3 AND m.vpeak IS 2{outputs}",
+                exports - 1,
+                keys - 1,
+                exports - 1
+            );
+            let answer: (i64, i64, i64, i64, i64) = db
+                .query_row(&sql, [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })
+                .unwrap();
+            assert_eq!(
+                answer,
+                (
+                    1,
+                    2,
+                    (exports + 69) as i64,
+                    keys as i64,
+                    (exports + 69) as i64
+                ),
+                "{} hidden inputs",
+                8 + keys + exports
+            );
+        }
+    }
+    #[test]
+    fn span_requests_echo_raw_bytes_while_memo_keys_ignore_only_shadow_text() {
+        use super::super::span_capture::{self, Span};
+        let db = Connection::open_in_memory().unwrap();
+        register(&db).unwrap();
+        let original = span_capture::encode(&Span {
+            file: 0,
+            node: Some(7),
+            text: Some("original".into()),
+            range: 4..9,
+        })
+        .unwrap();
+        let changed = span_capture::encode(&Span {
+            file: 0,
+            node: Some(7),
+            text: Some("shadow changed".into()),
+            range: 4..9,
+        })
+        .unwrap();
+        let keys = (0..6)
+            .map(|i| format!(" AND m.k{i} IS ?1"))
+            .collect::<String>();
+        let outputs = (0..3)
+            .map(|i| format!(" AND m.v{i} IS ?1"))
+            .collect::<String>();
+        let sql = format!(
+            "SELECT m.o2,m.v2 FROM relation_memo m WHERE m.mode IS 1 AND m.clause IS 0 AND m.utility IS 90 AND m.file IS 0 AND m.node IS 1{keys} AND m.vtruth IS 1 AND m.vcost IS 2 AND m.vpeak IS 1{outputs}"
+        );
+        let (stored, echo): (Vec<u8>, Vec<u8>) = db
+            .query_row(&sql, [&original], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(stored, original);
+        assert_eq!(echo, original);
+        let lookup = format!(
+            "SELECT m.o2,m.k5 FROM relation_memo m WHERE m.mode IS 0 AND m.clause IS 0 AND m.utility IS 90 AND m.file IS 0 AND m.node IS 1{keys}"
+        );
+        let (stored, echo): (Vec<u8>, Vec<u8>) = db
+            .query_row(&lookup, [&changed], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(stored, original);
+        assert_eq!(echo, changed);
     }
 }

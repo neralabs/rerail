@@ -94,7 +94,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     };
     let slots = if fresh {
         sql.generation.following.clone()
-    } else if plan.uses_memo() {
+    } else if plan.uses_memo() || sql.generation.peak_tracking {
         input.slots.clone()
     } else {
         needed(plan).intersection(&input.slots).copied().collect()

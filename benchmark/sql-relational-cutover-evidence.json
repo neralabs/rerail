@@ -1,125 +1,162 @@
 {
-  "scope": "Test-only compiler admission across binding targets and occurrences, parsed documents, private parameter frames, format arguments, semantic recursive bases, and deeper typed child returns. Separate grammar executions across 595 files; not a fused complete job or production qualification.",
-  "revision": "19d54b09264767d76806039be3e17d9a17add42d",
-  "workingTree": " M benchmark/relational-candidate-demand.py\n M docs/sql-relational-transition-plan.md\n M docs/sql-set-composition-compiler-spike.md\n M native/src/code_rule_dsl/matcher/mod.rs\n M native/src/code_rule_dsl/matcher/util.rs\n M native/src/code_rule_dsl/sql/relational/budget_leaf.rs\n M native/src/code_rule_dsl/sql/relational/leaves.rs\n M native/src/code_rule_dsl/sql/relational/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/atomic_owner.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/chain.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/downward.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/downward_shape.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/downward_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/effects.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/nested.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/publication.rs\n M native/src/code_rule_dsl/sql/terminals/fact.rs\n?? native/src/code_rule_dsl/matcher/sql_binding_facts.rs\n?? native/src/code_rule_dsl/matcher/sql_format_facts.rs\n?? native/src/code_rule_dsl/matcher/sql_parse_facts.rs\n?? native/src/code_rule_dsl/sql/relational/format_facts.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binding_emit.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binding_facts.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binding_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binding_occurrence.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binding_occurrence_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binding_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/call_emit.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/call_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/call_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/format_emit.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/format_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/format_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/nested_shape_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/parse_emit.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/parse_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/parse_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_emit.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/utility_memo.rs\n?? native/src/code_rule_dsl/sql/relational/parse_facts.rs\n",
+  "scope": "Test compiler: structural and mixed recursion, completed recursive memo answers and depth peaks, parsed capture exports and host hooks, binding regions, file conditions, sibling classification, and predicate fusion. Each grammar executes separately over 596 files; not a fused complete-job or production qualification.",
+  "revision": "5164397caea073c899f1da0e3f878f665a9abed6",
+  "workingTree": " M benchmark/relational-candidate-demand.py\n M docs/sql-relational-transition-plan.md\n M docs/sql-set-composition-compiler-spike.md\n M native/src/code_rule_dsl/matcher/mod.rs\n M native/src/code_rule_dsl/sql/relational/bound_leaf.rs\n M native/src/code_rule_dsl/sql/relational/capture_cell.rs\n M native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs\n M native/src/code_rule_dsl/sql/relational/cutover_tests.rs\n M native/src/code_rule_dsl/sql/relational/format_facts.rs\n M native/src/code_rule_dsl/sql/relational/leaves.rs\n M native/src/code_rule_dsl/sql/relational/memo_store.rs\n M native/src/code_rule_dsl/sql/relational/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/binding_emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/binding_facts.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/binding_lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/binds_lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/binds_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/call_emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/call_lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/chain.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/chain_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/downward.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/downward_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/effects.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/field.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/fill_cost.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/format_emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/nested.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/parse_emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/parse_lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/parse_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/publication.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/tests.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/utility_memo.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/utility_plan_tests.rs\n M native/src/code_rule_dsl/sql/relational/pattern_leaf.rs\n M native/src/code_rule_dsl/sql/relational/recursion_tests.rs\n M native/src/code_rule_dsl/sql/relational/tests.rs\n M native/src/code_rule_dsl/sql/terminals/fact.rs\n?? native/src/code_rule_dsl/matcher/sql_binds_region_facts.rs\n?? native/src/code_rule_dsl/matcher/sql_sibling_facts.rs\n?? native/src/code_rule_dsl/sql/relational/call_unify.rs\n?? native/src/code_rule_dsl/sql/relational/capture_env.rs\n?? native/src/code_rule_dsl/sql/relational/continuation_store.rs\n?? native/src/code_rule_dsl/sql/relational/file_condition_tests.rs\n?? native/src/code_rule_dsl/sql/relational/file_guard.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binding_region.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/binding_region_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/memo_recursive.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/memo_recursive_depth_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/mixed_recursive_emit.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/mixed_recursive_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/mixed_recursive_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/nth_batch_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/nth_emit.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/nth_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/nth_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/parse_export_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/parse_host_emit.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/parse_host_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/peak_memo.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/predicate_fusion_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/predicate_runs.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/pure_recursive_depth_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/pure_recursive_emit.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/pure_recursive_lower.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/pure_recursive_tests.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/recursive_shape_tests.rs\n?? native/src/code_rule_dsl/sql/relational/parse_export.rs\n?? native/src/code_rule_dsl/sql/relational/pattern_capture.rs\n?? native/src/code_rule_dsl/sql/relational/peak_tracker.rs\n?? native/src/code_rule_dsl/sql/relational/sibling_state.rs\n?? native/src/code_rule_dsl/sql/relational/span_capture.rs\n?? packs/python/upstream/ruff/fixtures/rerail/sql_compiler/\n",
   "sourceHashes": {
     "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
     "native/src/code_rule_dsl/sql/relational/answers.rs": "ccbd186b968e230bb1ca5e868e1e4b142e58bd73290a7def5a8411723dd140a8",
     "native/src/code_rule_dsl/sql/relational/bound.rs": "6e0661e316527ad78e34564b11bd0312522a3c95168c85e286ce1707c0a642f2",
-    "native/src/code_rule_dsl/sql/relational/bound_leaf.rs": "5ef176d0ac04b255e48ffae160efc352ca02f7a2bf95aacbd7e3d8083656efbf",
+    "native/src/code_rule_dsl/sql/relational/bound_leaf.rs": "162456dcb1a04d7bab081ddd3385658f4251f4180985e718015e5d847f747c0c",
     "native/src/code_rule_dsl/sql/relational/budget_leaf.rs": "58302bdf36de02d253be5afe21822398ee7e1f3836f771aa7afd4b12be8ee29e",
-    "native/src/code_rule_dsl/sql/relational/capture_cell.rs": "cad162f662d35b24694dc826fe21e136b8fe38e2912a52f3f08db2064c7b2f71",
-    "native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs": "fdf935d7b39d0c892adc19d39eba04acc548333599ff83cd39fb76830c17dcbe",
+    "native/src/code_rule_dsl/sql/relational/call_unify.rs": "e589c2f1557d483b0ee10b7484bc75cc2f55b76b01e9d5a979fec25b38a138e1",
+    "native/src/code_rule_dsl/sql/relational/capture_cell.rs": "b9936dd89bda4e627cc0b577b6897dd71c7fe528e15097c6f7dae2b59441720d",
+    "native/src/code_rule_dsl/sql/relational/capture_env.rs": "8052983e27c0dd4e196024a6b7d2ac80b26d44acb0ba87bf6f72a91a77ccc37d",
+    "native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs": "4b006fbd3c03f5b8a9cb58d9c9231d7990a76e78ea1a47e15fb04a36af9d81ed",
     "native/src/code_rule_dsl/sql/relational/classify.rs": "c565229ef17b44b37ef72848471cd0b8ffd726ce5964e9aeabe1868b3213e234",
-    "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "fc5988981973e5049657b8e91de4cbe0429855b011326dfaa0406adb5c58a66d",
+    "native/src/code_rule_dsl/sql/relational/continuation_store.rs": "9abee19e5ae51a285df2f7666668a1868644ee81fca53580fce999d2908e8663",
+    "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "36db149c66a0c464006d656b7a412d36f27ad136cd1407768c0e24c784599b4c",
     "native/src/code_rule_dsl/sql/relational/demand.rs": "0d5b9fbf3c75890c9f1620c7340936d01bf314b6de37380e355416350eedb8fe",
     "native/src/code_rule_dsl/sql/relational/emit.rs": "c4e713817a65f14140a36bf547527dcbc549fa6c0d9bb99a0c2e0548bd4312b3",
     "native/src/code_rule_dsl/sql/relational/failure.rs": "e658b85c5432925c195a0b731edac6c86705d3c6c0da76537370be784b2b0c0b",
-    "native/src/code_rule_dsl/sql/relational/format_facts.rs": "8e8b088518cd4400ec423c6b49912052e387419ee8dfab945a573c153197fafb",
+    "native/src/code_rule_dsl/sql/relational/file_condition_tests.rs": "2cf64a01a674485e9d15eefc1251226f484deed415643f6d499dba5a3246cdf1",
+    "native/src/code_rule_dsl/sql/relational/file_guard.rs": "401e53929201917bd53ebbcddd8452337789032bdead4a2e5748006163ea8b69",
+    "native/src/code_rule_dsl/sql/relational/format_facts.rs": "75eda82fd3db34c3fe8c47fda170d1c2c2fc9b399bea931f36ae09852481dc12",
     "native/src/code_rule_dsl/sql/relational/ir.rs": "8a05029eab9021b06e15b2eb133133ba0b7cdb06a7f199f426ee893b47c77192",
-    "native/src/code_rule_dsl/sql/relational/leaves.rs": "b8eccbca631c5ce5b280d2a410698056e58a144e2b23feb5b950d3e76e18875e",
+    "native/src/code_rule_dsl/sql/relational/leaves.rs": "043af25c42c65edf2fd902a226918f70b3bf57b02a075894c7513f719d1c96c4",
     "native/src/code_rule_dsl/sql/relational/lower.rs": "a95a585df3dc3e7b6c4e794577e4e2df15c688fffdf98f22a2f3d21d90276ae5",
-    "native/src/code_rule_dsl/sql/relational/memo_store.rs": "dc481b453075749b56526b45b48150ff6981c324281219c1d3c73eb3fe35b4bd",
-    "native/src/code_rule_dsl/sql/relational/mod.rs": "48e7b32bfe7bd0a223c0506e5c2a6f722690eec4c7eaab65edda0c476b133234",
+    "native/src/code_rule_dsl/sql/relational/memo_store.rs": "8c5f807250181dee51721bab05fcb63c0c12929a174cdf24e5377df2b76a21a6",
+    "native/src/code_rule_dsl/sql/relational/mod.rs": "4288685310b8762991c7339473061eeb1a4c2e7bc733950db9faf505a591fa96",
     "native/src/code_rule_dsl/sql/relational/outcomes/atomic_owner.rs": "0cbfef3bff737e36f324d8000d8c506b0657086f076da916bb9d124ccd9bd9be",
     "native/src/code_rule_dsl/sql/relational/outcomes/atomic_predicate_tests.rs": "7219e006eb5795ae394dc7ab6fe04dcb863938b5cac871ab6efd92f3c5e9978f",
-    "native/src/code_rule_dsl/sql/relational/outcomes/binding_emit.rs": "01694b12b28035efce2c6157492d9e5e0a5db9d25c5e68bde3abc2e894802c73",
-    "native/src/code_rule_dsl/sql/relational/outcomes/binding_facts.rs": "79997283d0be3c0dd084395938da879e4e81973d151cc2221e489274c7af6709",
-    "native/src/code_rule_dsl/sql/relational/outcomes/binding_lower.rs": "1adce605551fb063f822bcc8a767914ab27480c4f22dc40db6d92d20f28364e3",
+    "native/src/code_rule_dsl/sql/relational/outcomes/binding_emit.rs": "a10a06a55c048fd220cc392bc3c3888152153018687e1e07776215fb1e14d251",
+    "native/src/code_rule_dsl/sql/relational/outcomes/binding_facts.rs": "70b3e2677db8bd76c2091706887c92a8b4ff0a9f85fe419f3a6a0ecf2918e408",
+    "native/src/code_rule_dsl/sql/relational/outcomes/binding_lower.rs": "a9221a26b6519b369e82bd9b7f7d65895ac825459469190b1a48426f788c6d53",
     "native/src/code_rule_dsl/sql/relational/outcomes/binding_occurrence.rs": "dca0899b6f0e7d84bb8f4350d7c6da04ffa866d09d7ab5dde492f7cb1c9df408",
     "native/src/code_rule_dsl/sql/relational/outcomes/binding_occurrence_tests.rs": "943984f0a34eb258e747df358c05442e15086ea0a1df126a6dcc8a2b49240e39",
+    "native/src/code_rule_dsl/sql/relational/outcomes/binding_region.rs": "9860b3a9070c9a4024422f8ec1dfac96eebac279e07b6867404e05110c41874a",
+    "native/src/code_rule_dsl/sql/relational/outcomes/binding_region_tests.rs": "01b74fb0c9b55b55d8565fb8349297a49200768287521b323f70e0740155a764",
     "native/src/code_rule_dsl/sql/relational/outcomes/binding_tests.rs": "3f6fea2bc793f25ec43dba3660d73406c930d30fc5b83c252c76b3e7b17d29dc",
-    "native/src/code_rule_dsl/sql/relational/outcomes/binds_lower.rs": "ef56350495254524436ef0e1cc14cebc1347828ceb8d58229cf8c3cbf956c822",
-    "native/src/code_rule_dsl/sql/relational/outcomes/binds_tests.rs": "d2877631e64557aa7a7f97df762722c029343aa0bdb0b1af21e7e8670157b4ba",
+    "native/src/code_rule_dsl/sql/relational/outcomes/binds_lower.rs": "d8bb70a76a3f3bd4ad0dc0f52d090d6777ec1893b76c5b3b77f17db114d05a5c",
+    "native/src/code_rule_dsl/sql/relational/outcomes/binds_tests.rs": "cdff3b6be4e65c6b74e22eaf54cbcfc0473e0b55452d083785603609449ab7da",
     "native/src/code_rule_dsl/sql/relational/outcomes/bound_lower.rs": "3a28f1af6336bd421c45dc34e3ed9e123e0a4be706fd9c03fce15deb428c9fac",
     "native/src/code_rule_dsl/sql/relational/outcomes/bound_tests.rs": "c594ddb44f758486c3da0bc8a897d4195c31922bdd93b5f668b1511f66c6e3dd",
     "native/src/code_rule_dsl/sql/relational/outcomes/budget_tests.rs": "4ede5a91daf54e017bcce56aa395fe4cc73112c2d8ddef601ec6aff2bddc99f3",
-    "native/src/code_rule_dsl/sql/relational/outcomes/call_emit.rs": "0200c1b37c0d98195b7e25438816df2cca5bfa291b2d40dc27b7bc93924d11f9",
-    "native/src/code_rule_dsl/sql/relational/outcomes/call_lower.rs": "0e032bd23cadf02c01ada0c8fc92fdcf488978bd0b5eea815c375f8fb6f881ef",
+    "native/src/code_rule_dsl/sql/relational/outcomes/call_emit.rs": "1e12b1414ca5276983c8439d8bc0e5004923d2ad38a7a2f73725845f1ecba650",
+    "native/src/code_rule_dsl/sql/relational/outcomes/call_lower.rs": "e721700c82ee8d3d7cce844e22b83e0ae4e5b47a5f00a0e9ff796edbb02eb3a8",
     "native/src/code_rule_dsl/sql/relational/outcomes/call_tests.rs": "f004dbba1f9a06afe7139096048e44eb6857a2abe902d0be7c72b14f329e02a1",
     "native/src/code_rule_dsl/sql/relational/outcomes/candidate.rs": "03553707b4e17df0afaf12e24f82e106b2eeb6ebce91b9a52486c40d5c94814d",
     "native/src/code_rule_dsl/sql/relational/outcomes/capture_predicate_lower.rs": "bb97943109927c79a27451c62649ee107a40b82d5596938a3de564dcc5edd409",
     "native/src/code_rule_dsl/sql/relational/outcomes/capture_predicate_tests.rs": "8089cd82d35b737484d378186b75cb6cb36f99cf145127efcd7878fd2f75f79e",
     "native/src/code_rule_dsl/sql/relational/outcomes/capture_walk_tests.rs": "6f6a8a778013373f65b85fc066a88ff0bb9769ac428f2045a1833ba14b0f301c",
-    "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "5d58c211da1edc0e7e2274abcc0436285ac93d2c63ae83b0885d9dd7e31f4b77",
-    "native/src/code_rule_dsl/sql/relational/outcomes/chain.rs": "01b38d5fb776a77bc4a9879654d7c70a98ac41a600cbe004052795d0ff0f88fc",
-    "native/src/code_rule_dsl/sql/relational/outcomes/chain_tests.rs": "160e3fe771c7a650e02aeb6b198906b808ed4f9420ed96bb487659be027ab5de",
+    "native/src/code_rule_dsl/sql/relational/outcomes/catalog_tests.rs": "cb5548d8ccfb43bb28f8f50380c76ab1f1aec50db9ef27b6472e650afdfeabb4",
+    "native/src/code_rule_dsl/sql/relational/outcomes/chain.rs": "b50b23b9f15d39ce58777193262f77cb48b1b93d8b83591c2975d53fe92246e3",
+    "native/src/code_rule_dsl/sql/relational/outcomes/chain_tests.rs": "f2d4d5c620c592faf12ed92f2380c6ed5066fc41e58e96775c2062001dbccb33",
     "native/src/code_rule_dsl/sql/relational/outcomes/composition_budget_tests.rs": "5109d57ee18432afb223778b1be52f52af32e3dc888d03768565fb6667969097",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_lower.rs": "dd5a34fa3f517a52ce8129298f3ee180bd0fab3670ea11e1b2b011eb214aeac4",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_tests.rs": "0c561bf67c63c62e5cd44fe18f888cce0f5204146a4d597180d6e226c399b369",
     "native/src/code_rule_dsl/sql/relational/outcomes/constraint_walk_tests.rs": "8d2e010992cc20a54d81d255ac946b0712607fb0057dea31c85375270cf7eda0",
-    "native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs": "1dfa780f2b688315e81990c6d20691ea04c3c881fa2268078331addc552ec4f8",
-    "native/src/code_rule_dsl/sql/relational/outcomes/downward.rs": "c3eed34692eb5866b27123039162ca2f21013d0d72539097866f5f944d147cc2",
+    "native/src/code_rule_dsl/sql/relational/outcomes/constraints.rs": "a94bccb8496682a928c0cc81966c5cbfe6059368f4d5d49a3ee3d5261a1585e2",
+    "native/src/code_rule_dsl/sql/relational/outcomes/downward.rs": "7a5185308de0a3285171b38ecaf91f2596d94903b7dee77517dfd85c28d9a873",
     "native/src/code_rule_dsl/sql/relational/outcomes/downward_shape.rs": "0425857243266d673de468da1630fee1ae974afe2a415f6f71d2effc67b14225",
-    "native/src/code_rule_dsl/sql/relational/outcomes/downward_tests.rs": "7184962aabc78b6a3f0292be58045b1f5f641de5ffc0cf4395daf8a86e10bc6d",
-    "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "3d51614a060be1da10a4352bdacf9f8be7803f660414c3b0505278d55fbd1198",
-    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "a101c736acdb0d47c2de79c32ba1dcbb292edb6cc77667cc368be97b995ff253",
-    "native/src/code_rule_dsl/sql/relational/outcomes/field.rs": "10960a58a39e0d49375073d126691313d34234c1319dad71d4cbf94b0cfe9f8b",
+    "native/src/code_rule_dsl/sql/relational/outcomes/downward_tests.rs": "3c238a05d3a822176b0d912809cfa7f06e9cb925993c74b870144865a5a47d8e",
+    "native/src/code_rule_dsl/sql/relational/outcomes/effects.rs": "3a937050710e0ae48c5d0a13048b748421bfc037a6195cd61f729ff84010ee46",
+    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "3988c2555f0700a50ade8bf07cfe31c2f5582ddee064a24257bcfee45ae8d10e",
+    "native/src/code_rule_dsl/sql/relational/outcomes/field.rs": "eea7f9b380286cdf3affba6e3e4597da5d56b4946bfc468403c88edc5ad38cfc",
     "native/src/code_rule_dsl/sql/relational/outcomes/field_end.rs": "784bc3a27855785b2eca0deed460995dc642785ee2dafc0d5f3f02d220d1356f",
     "native/src/code_rule_dsl/sql/relational/outcomes/field_end_tests.rs": "d8a50f730215c71cc309b035eb1c2dd1386a3176619e1c4fdcd23e37b9f0a930",
     "native/src/code_rule_dsl/sql/relational/outcomes/field_tests.rs": "0590a47df49e8cd36920f8a7b243f7ee17e60c9c6c5dccb621f730ecc1b2df8c",
-    "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "d50d939c15630f15e23763ae38cbc738c65aaa0e899950668f974d746fda190d",
-    "native/src/code_rule_dsl/sql/relational/outcomes/fill_cost.rs": "9988c7537a9b9f8f9f0bc389e1a0af751541b725067f72c3052df6e2d5a56ddf",
-    "native/src/code_rule_dsl/sql/relational/outcomes/format_emit.rs": "84b830b79b3db66d61d02ec3be58a6be641fb7fb6b2b4a84805aceae5c492fd0",
+    "native/src/code_rule_dsl/sql/relational/outcomes/file_memo.rs": "15c5a393a0b052f45c217ebad4d89359e0fa1a8e1efcf99b3c14368f878d11d9",
+    "native/src/code_rule_dsl/sql/relational/outcomes/fill_cost.rs": "304ee64ec7437b1c5a591b0913b9edbe7116f28384c9732ac1355fbbaaccf41e",
+    "native/src/code_rule_dsl/sql/relational/outcomes/format_emit.rs": "6d4107cd6fc8ded7237530a01aea51c01aa6ea57a9668b24c9a60e1ef77d9166",
     "native/src/code_rule_dsl/sql/relational/outcomes/format_lower.rs": "83cd4c9881a00bd466e61b71a780c63ac2063f1d374c19e1bc6754fde5803031",
     "native/src/code_rule_dsl/sql/relational/outcomes/format_tests.rs": "82d310f3975e52e6dbe4e5b1abb6feee4f08dcd67c3b64243c494c53898457da",
     "native/src/code_rule_dsl/sql/relational/outcomes/list_tests.rs": "9c1a385da0e0351e127032440b3cf3169495f64bc9629f4865e30fbd67a4bbdf",
-    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "22f8b6c4c6ba521f4fbf708aa122eb20c987d0efec215037d17e7721f8c87671",
-    "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "c1aa6a27668f446d34edb31b0e4d6fabe5bc5729e87e6b4dfe7cca91b4dbc2c8",
+    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "3129ece6a7ccce42bf946b4a19cb662e7fc6d173e5b64a952d014d229b9f536a",
+    "native/src/code_rule_dsl/sql/relational/outcomes/memo.rs": "5f31115b06e1cc52a9212b055086f878343cbda1f93cf985fdb57fd4b9c2c626",
+    "native/src/code_rule_dsl/sql/relational/outcomes/memo_recursive.rs": "ef613813242baecaf3c285094532fea361bad5aabbef8ece3c87b44706ccbdfd",
+    "native/src/code_rule_dsl/sql/relational/outcomes/memo_recursive_depth_tests.rs": "b4bd26144a92b6b15f1a81d7a80765fa4fefe4b593a5a5c5422b6fbd0883ec05",
     "native/src/code_rule_dsl/sql/relational/outcomes/memo_tests.rs": "656b044ea22b7c64df8c83726f1ef3db4ac3efda7f40d515fd24da672f3dacc8",
-    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "d6ca6acea59f9e992f35fb06eb54011e8fa292c306568cba08d28d8486f55f45",
-    "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "436c6357df3794871c56b48434a26549f3ee68c962b3b1a9cf63c699292cd004",
+    "native/src/code_rule_dsl/sql/relational/outcomes/mixed_recursive_emit.rs": "fdc6d09782cb7a24d00593d1fb21f49d511faebcbe5339b091e284ecefef5427",
+    "native/src/code_rule_dsl/sql/relational/outcomes/mixed_recursive_lower.rs": "ae3cfa56203d82e0205cca9052676da6f1bfe8bb92067d4928b067bad2d416c4",
+    "native/src/code_rule_dsl/sql/relational/outcomes/mixed_recursive_tests.rs": "65b3cd7d6e782a925ba02003832a63cbab11c324342aa8351cf680982e6248d2",
+    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "4674292e21b96134b2a5726549fa4eac8e5f723f9b71e85006390849663e0c5e",
+    "native/src/code_rule_dsl/sql/relational/outcomes/nested.rs": "d51c0ca14ece5572257f994311caee40aa08d59d6b132f42fc8ea5b33a2f578e",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_memo_tests.rs": "9b6469e2a8c5e0f09a348712a74630b063e8c57ef63318cdea5ddf796fe48e60",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_shape_tests.rs": "f6bde65d6b715002e1c4f280e5f8e85b5ca325d2bbef70042cda120d20e49834",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_tests.rs": "495509fcc2835f5bf88d0afaad9ac110613e12f9e264d4c212fa18ae218a63e0",
     "native/src/code_rule_dsl/sql/relational/outcomes/nested_utility.rs": "ef119bfd7f5d6346007786b5ac5017e86c57fadf202950fa77d453ea2b0ac680",
-    "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "d1c621958d2078a31dec9759c6aec35b7df9cb9134839343fc0aac700153bb30",
-    "native/src/code_rule_dsl/sql/relational/outcomes/parse_emit.rs": "a365b44b337af02ffabafa3cde790e805b442e569481f242d8f95cfe75027720",
-    "native/src/code_rule_dsl/sql/relational/outcomes/parse_lower.rs": "fb2cbda05a73f2a005918fff88277bae2fb0d2afd15acb9f406bf75a9701065a",
-    "native/src/code_rule_dsl/sql/relational/outcomes/parse_tests.rs": "4e6c46b69292a93e1360a1a79a1826dff73d628cb8f89b7d1cdf92c180b7609d",
+    "native/src/code_rule_dsl/sql/relational/outcomes/nth_batch_tests.rs": "7a6a64b0abcf3f2350873fa6df5b2b9c1ca3fe421202638c9ac20e93b93da75b",
+    "native/src/code_rule_dsl/sql/relational/outcomes/nth_emit.rs": "7e1d3b42252ed2f6bad8bb7b2e552f1de5c5bf521dd9e94cc8f37fe0fba971e9",
+    "native/src/code_rule_dsl/sql/relational/outcomes/nth_lower.rs": "cbc9a6301962eb01bda8b63098eeaa69b097509166b00f7751b8d38eb95a0cbf",
+    "native/src/code_rule_dsl/sql/relational/outcomes/nth_tests.rs": "61e49af8f75616a6d0eaed389b147099ec32a7321fd6d761f3f34f42cbbe1c22",
+    "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "5d11f53ffaad0d5712eb252ddbab514941c49219dd07ce343da738e4e0691aee",
+    "native/src/code_rule_dsl/sql/relational/outcomes/parse_emit.rs": "06535af17e2f6344afb2626b5bd79cac3ec4ed8c6599bc3656f204ae2b59fefb",
+    "native/src/code_rule_dsl/sql/relational/outcomes/parse_export_tests.rs": "67d277a716bf666b4a8cea9866e41b475baf8d91540e3a1829c00149373d4e39",
+    "native/src/code_rule_dsl/sql/relational/outcomes/parse_host_emit.rs": "937a0b42b83d24d04776f8fe203e0ddbef951c2198816c3f89076f2fcd495690",
+    "native/src/code_rule_dsl/sql/relational/outcomes/parse_host_lower.rs": "f94c6c21585af636bbab22ac5531678a7b4fe92f2f4a24abe5fca46fb78c0418",
+    "native/src/code_rule_dsl/sql/relational/outcomes/parse_lower.rs": "4291c256c388205d8a2afa2a7d5cd4d98bbbafed12230b2cd1a832c604a4d4f6",
+    "native/src/code_rule_dsl/sql/relational/outcomes/parse_tests.rs": "149883f6652241a0855a9b2cccd72ba4bb7533822ae47c6b753a23de4125d625",
     "native/src/code_rule_dsl/sql/relational/outcomes/pattern_lower.rs": "80cb48ace41a1bf9a4d28a087acb474d60c3637a2be5dea5e09b0df2c2cc3465",
     "native/src/code_rule_dsl/sql/relational/outcomes/pattern_tests.rs": "af71133e15675c3a9d702229d35b29a79904c1b06f626bd02e73c95fe693055e",
+    "native/src/code_rule_dsl/sql/relational/outcomes/peak_memo.rs": "c10b3aa34ae6cad39ce5a54e14397e70a22b2c9cfc00df940fa887dfcdd6e7b0",
     "native/src/code_rule_dsl/sql/relational/outcomes/predicate.rs": "619e4b241f18b225118eb7ba6c5eba0f2c02a02e64f69d3226c5f5729c44b90f",
+    "native/src/code_rule_dsl/sql/relational/outcomes/predicate_fusion_tests.rs": "afb6d00812e5e10d131693ba361780bd7e74e8297407ec5406ec0a20216d94d4",
     "native/src/code_rule_dsl/sql/relational/outcomes/predicate_run_tests.rs": "ecd39811347caf44e0e09762a8dea821a6c5e3485227ec6e6935d27d75bd43f4",
+    "native/src/code_rule_dsl/sql/relational/outcomes/predicate_runs.rs": "352f1cba4bda2f9eb7e53b222a6648ad53a16d8c01f7557bd7e18f2f838c7159",
     "native/src/code_rule_dsl/sql/relational/outcomes/pruning_tests.rs": "c709ad80c7811b3a01133e8cee0d983626096d5fc725751f545c50c5a934e76c",
-    "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "178c9da1774142c6a661cc16e9384aa64c82519a9a6763ce3ec75fdf8f7bb5fc",
-    "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "35a8e46097c15d0025a429cbced78a33590df3636efdbbe4f1bb420dbb933ed2",
+    "native/src/code_rule_dsl/sql/relational/outcomes/publication.rs": "22b4295985e1dc393468f2d136f95e80ae17d4c70348a8062dd1a103313eeda0",
+    "native/src/code_rule_dsl/sql/relational/outcomes/publication_tests.rs": "c1689797a00ee18fe79a206c33c7d3959a45ef3708d2d2c13f30675f08c1ee42",
+    "native/src/code_rule_dsl/sql/relational/outcomes/pure_recursive_depth_tests.rs": "7e3f8e6a9c3fe7c6fd6706be591eee119c6a2cd8ca7926693a6be9728b2e1be1",
+    "native/src/code_rule_dsl/sql/relational/outcomes/pure_recursive_emit.rs": "41612ebefb25573e3d415acc502b843eeaa3fdbc3ad0c39c12059fc197fedb80",
+    "native/src/code_rule_dsl/sql/relational/outcomes/pure_recursive_lower.rs": "bdecd1c0dd92cb4c26921a67d49be5de1e8f27f60f5e44694a48de680e84b588",
+    "native/src/code_rule_dsl/sql/relational/outcomes/pure_recursive_tests.rs": "10032510d4654e5b8807368f5d32ac274036ac2d29f0bc423c3a3d729ae8983b",
     "native/src/code_rule_dsl/sql/relational/outcomes/reached_tests.rs": "f74745bd64929de932b64f5e1ed0ef9c0e05291c2c12787243f47ce40810a41e",
-    "native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_emit.rs": "3b08549c1efb9dc6179a45fca0922eb91ae6960d37cad08f0b9f697564840fc6",
-    "native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_lower.rs": "3178f152ec6e454ffefb8b42602eed807ecaa88c19eabe42d854ac4933a7a4ae",
-    "native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_tests.rs": "574c5011e8e5bbd327952a151459cdd1e3cb8dce6db6d5c2a7dfc7bee4714265",
+    "native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_emit.rs": "fb40805725198cfea2669af3b3292a324c0bb7b400e7b8b425708e29596af31e",
+    "native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_lower.rs": "57d2071b797cb51c23d58de6bb4cfcc7030fc5c0cc02a95c1a967b8a685af7b8",
+    "native/src/code_rule_dsl/sql/relational/outcomes/recursive_search_tests.rs": "339c9bb4924bf76b30872168ee7de35b8cbb91fc9aa41f237ffb7a00d94104e5",
+    "native/src/code_rule_dsl/sql/relational/outcomes/recursive_shape_tests.rs": "9c5904dbda65bfa2d08d4b7a8af18e9c8f65c1092c5a95f021ea26c030756833",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_any_tests.rs": "a7ac8fa45456a7cb3db96b447a0627201d9e1bbd0583abf6fd62c4c7a7b292d7",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_cost.rs": "0206e638a769a4bed989b3e2261561da75dacbc669311b8b506060a39611121b",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_utility_tests.rs": "529c5f5f0ba42b1140d50853e4d58c57fedf251eaed9691f9f585cea17c13bef",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk.rs": "2ad347394fc67b7facb28aab8c56a2fc127521c1263ee988e2ec53eb8e2587e5",
     "native/src/code_rule_dsl/sql/relational/outcomes/repeat_walk_tests.rs": "995f2a7ac2f8948e3d64a70527602f9b7fc1e66210a8f1a1817c90fe92928ded",
-    "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "644705561f2d79f4169d29efccb6328514410ada43736e8f8ff0dfa6bb3054ed",
+    "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo.rs": "686bf745c71535a118e6a1b1f393be6f466646b9c700c505ff58373f602fc9bd",
     "native/src/code_rule_dsl/sql/relational/outcomes/shared_memo_tests.rs": "7a0535434942416c3f98bab36a16d5cfb0f0e38dfd89468a4d749f3ce8b3750c",
-    "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "31e14924e94220c95b60cfc1f1b0a5fe9c5a0137a04385e72fcc4ed86315861b",
+    "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "2b313504492e3c180100ee2acef03b3fc922fc741ed1ad1a95142027d482b686",
     "native/src/code_rule_dsl/sql/relational/outcomes/traversal_memo_tests.rs": "09641c0fef3064f5a8cecc5e89c20b8bee8a391c58e2835a4e9c55f86a59f478",
-    "native/src/code_rule_dsl/sql/relational/outcomes/utility_memo.rs": "5aa7331d3adda3e2bbcaa8745a8c3adf11f72276501cd63c05adfa843c854184",
-    "native/src/code_rule_dsl/sql/relational/outcomes/utility_plan_tests.rs": "90af79df152a8ef182c6861c283b507f717c8283e6d814c49bd8dcbc4111bf58",
+    "native/src/code_rule_dsl/sql/relational/outcomes/utility_memo.rs": "4d47ad0dd8f3e3f042688bbc5b7900e480c3706078b17407c6319387c3a53caa",
+    "native/src/code_rule_dsl/sql/relational/outcomes/utility_plan_tests.rs": "7e0bb6ba8c120750b369fa30b2ef9c7b419f1ed90f94113aa534c3ec6c613b54",
+    "native/src/code_rule_dsl/sql/relational/parse_export.rs": "b08bf2d6a7174faeb0fc10614d6d6cab9682752c74c534fea331efd558d66b3c",
     "native/src/code_rule_dsl/sql/relational/parse_facts.rs": "dbee6e49a3ef916341da0b44e95dc3b90f846f44175c3bd7506a6279b78d3c92",
-    "native/src/code_rule_dsl/sql/relational/pattern_leaf.rs": "4b9b68d1cf17569ad6b17f59a5ddb83f9a6486518ebbd3c567b22e8a08be84bd",
+    "native/src/code_rule_dsl/sql/relational/pattern_capture.rs": "c9494451a631e5f32fb997c99fc53e5a7ea2951042ed3168f3c011265462623f",
+    "native/src/code_rule_dsl/sql/relational/pattern_leaf.rs": "8fa1db9f826d2292302126a8a78a9ea405c1253fe5d765a8871c8a6022898b83",
+    "native/src/code_rule_dsl/sql/relational/peak_tracker.rs": "443ee68d6bd6b760e366bce5be087fb3ba20b350012b57c4a9ec926f7f5f8160",
     "native/src/code_rule_dsl/sql/relational/physical.rs": "b937aefe75bd55913196f384ecaf01c18e41cac0c8a692bc35d9952080d35398",
     "native/src/code_rule_dsl/sql/relational/pure_catalog_tests.rs": "ea88bcbb4d080fa0ac19e641cd0011a633440cba014f417b6d8a8bc62837ced8",
     "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
-    "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
+    "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "4742cd77f5fedd6bac54f4fd47bf0d962cc1e9cd8900995f514add3be414d715",
     "native/src/code_rule_dsl/sql/relational/recursive_chain.rs": "8f6db0b8125db98225ecb0b7f4e044934cca10b40a277f70d12979f419d21bb6",
     "native/src/code_rule_dsl/sql/relational/recursive_downward.rs": "cc4298bbc310a22f8f7e6657987f81b12cd45acced60f218940a3cd51b0d5c8b",
     "native/src/code_rule_dsl/sql/relational/row.rs": "f8e5ee9c5dc6a8b31e8999b8218abd64861e7f471f1472cf3e5d7a044b36a530",
-    "native/src/code_rule_dsl/sql/relational/tests.rs": "6c11334ca62a7ba5feb665808b4373c984b3d00438e2f8458c3575df5ba6fae3",
+    "native/src/code_rule_dsl/sql/relational/sibling_state.rs": "1f08a0c0e5abb0e88f82942fa46d4cca8c837ca4475b76a80079bdfca084b57f",
+    "native/src/code_rule_dsl/sql/relational/span_capture.rs": "a86f8f349da11ae8365edb0332f85c0a6162e89d1a7f3bce1232064723649e01",
+    "native/src/code_rule_dsl/sql/relational/tests.rs": "92ef02d591ff0b60d51325004c3b8b1fb705ad2ae8e869364c1f500e85496017",
     "native/src/code_rule_dsl/sql/relational/witness.rs": "ded0a5aca73b45ec156c0a6309480c499ae8d65c549fe55900a805b25e719ad0",
     "native/src/code_rule_dsl/sql/relational/witness_tests.rs": "74455e6e283f2f9c17e2fb51a908ba2d4a8ce5f9f626803b039a5fe138344db3",
-    "native/src/code_rule_dsl/matcher/mod.rs": "63a503859d0bac2131e4b820e75f20ce746618364af35b53467914c2614165fb",
+    "native/src/code_rule_dsl/language.rs": "7f88ec864791273338056cf65a050d8be3d86ba07ba3a044f62377f12a09d3d4",
+    "native/src/code_rule_dsl/module_path.rs": "37841e4c70b39217ca882240cde74599fc618ebd614c47422c15578449831e9d",
+    "native/src/code_rule_dsl/sql/exec.rs": "2ed6874df38d2d098dd2bc8c417a6966d7a7e3f66e4acac69943ad14f333b259",
+    "native/src/code_rule_dsl/matcher/mod.rs": "c9acb8c1009c627e2bb5265a61826818555e34fcc69f83694aefbd106fd99686",
     "native/src/code_rule_dsl/matcher/value.rs": "7c323eeeb044b02ae384b7a4ba4989cb14a400c3721b381e96b0eee0643db27e",
     "native/src/code_rule_dsl/matcher/util.rs": "be4900d272eac1a6bdcc4ca88645b2f5b2491580f8f5a1c4b90844dd51953a35",
     "native/src/code_rule_dsl/matcher/value_probe.rs": "78ebc89714c2f642fde6a4361944fb3aab64cf8539852a85695023594dd089c6",
     "native/src/code_rule_dsl/matcher/sql_bound_leaf.rs": "ee2e5adbf6f6654a6508a459a85bfec1891f265e29ff7d87ab057fde974e45c7",
     "native/src/code_rule_dsl/matcher/sql_binding_facts.rs": "50fdf6e806701f9a358d22c3fa63282265036c6caf124022927e16ec2c0bcb7d",
+    "native/src/code_rule_dsl/matcher/sql_binds_region_facts.rs": "8840ecbb1faef9168bff431a7c9fcc162055e92d8c035203735dc9ab72e0d753",
     "native/src/code_rule_dsl/matcher/sql_parse_facts.rs": "9ef0fedadcf36ad2c191c78cab8d1ac2ecce7556d48ec19f27373a22503d039f",
+    "native/src/code_rule_dsl/matcher/sql_sibling_facts.rs": "63ee00ecde91907c303ce00b7409b9312172eec5eff4f3525662ff901422b162",
     "native/src/code_rule_dsl/matcher/sql_format_facts.rs": "203404dc4f04a412c9f37a3f1cae48fed5a785a59d4acf1569de17f9d3d99856",
-    "native/src/code_rule_dsl/sql/terminals/fact.rs": "90c031303b4df5866d6edeb112d78afad599c8ee4f7c23751615e7de25bba337",
+    "native/src/code_rule_dsl/sql/terminals/fact.rs": "6ffffe3a42a1b1c89abd2a31225687747ec12b3959df4d1c36bc004ca94079ae",
     "native/src/code_rule_dsl/sql/terminals/mod.rs": "4de6fb382ccbc7a8bee6b2c26e6da9d694d1bba27d7052d0c669c68eeecea0f9",
     "native/src/code_rule_dsl/sql/terminals/pattern.rs": "20ee337b4623cd962946179f0696920cd04b6599c7ec759fb09d185cc22590fa",
     "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs": "35dcfe22f012b26e6df359407f70df4b5c91bd4ec67a72206b34315372ec5c40",
@@ -127,21 +164,21 @@
     "native/src/code_rule_dsl/sql/spikes/whole_call/run.rs": "81e71c024ca779afdd247e1d038a33adc4444fd3a03a2d39050b840d7fe20685",
     "native/src/code_rule_dsl/sql/mod.rs": "abdaa15b5c97a7351091a3b924d886d092d2457cf507b3e04d9d9a3a31efaceb",
     "packs/python/rules/ruff-b023-function-uses-loop-variable.json": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
-    "benchmark/relational-candidate-demand.py": "5c737425ba0f4d87a197ccaf4252db0e8a3b1f092c921f7fc67accd6a1950b87"
+    "benchmark/relational-candidate-demand.py": "d1721df54d40a461a9b81a96382df668bf7a0849e5f320e4a34dca470b264009"
   },
-  "executableSha256": "d84baad29db448f5009aa71953f13ca5d011738007ad22c9aefdd2200a0b3f6d",
+  "executableSha256": "3c6cdb23c37eb43a67af773e2c01e635a915abdd3c757f9eb2dface48bb149aa",
   "querySha256": "b8181c1d92096c724099d7025d0a17e839c14801a0e8296e04d9a5a73ce7b8d2",
   "result": {
     "automaticIndexRows": 1791,
     "baseline": {
-      "diagnosticKernelCpuNs": 6624104084,
+      "diagnosticKernelCpuNs": 6381046917,
       "frameAdvances": 15597627,
       "framePublications": 6944829,
       "matchingStatements": 1
     },
     "captureEqualityRequests": 0,
-    "coldKernelCpuNs": 34377083,
-    "diagnosticCpuNs": 85573583,
+    "coldKernelCpuNs": 39611333,
+    "diagnosticCpuNs": 104726083,
     "diagnosticRelationRows": [
       {
         "relation": "search5",
@@ -1056,7 +1093,7 @@
     "files": 138,
     "framePublications": 0,
     "fullscanSteps": 2792,
-    "generationCpuNs": 918000,
+    "generationCpuNs": 938583,
     "inputs": [
       {
         "path": "benchmarks/tests/test_exact_graph_publication_benchmark_contract.py",
@@ -1771,8 +1808,8 @@
     ],
     "parity": true,
     "patternRequests": 142,
-    "prepareAndExecuteCpuNs": 33382792,
-    "prepareCpuNs": 4051459,
+    "prepareAndExecuteCpuNs": 38582708,
+    "prepareCpuNs": 3345041,
     "regexRequests": 655,
     "relations": {
       "capture": "N",
@@ -1796,7 +1833,7 @@
       {
         "generated": {
           "baseline": {
-            "coldKernelCpuNs": 6655186709,
+            "coldKernelCpuNs": 6360322000,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -1807,11 +1844,11 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6641080792,
+            "matchingCpuNs": 6346638125,
             "scheduledStatements": 1
           },
           "direct": {
-            "coldKernelCpuNs": 38520667,
+            "coldKernelCpuNs": 43093708,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -1822,7 +1859,7 @@
               "nodeFilters": 10957,
               "regexNodeRequests": 655
             },
-            "generationCpuNs": 830083,
+            "generationCpuNs": 917417,
             "leafCalls": 0,
             "metrics": {
               "actionable": {
@@ -1832,11 +1869,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.08470929714935678
+                "prepareShare": 0.08317221105278673
               },
               "automaticIndexRows": 1791,
-              "cpuNs": 28970666,
-              "diagnosticCpuNs": 5884125,
+              "cpuNs": 32421209,
+              "diagnosticCpuNs": 6629125,
               "explain": [
                 {
                   "flags": [
@@ -3251,11 +3288,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 5879458,
+              "explainCpuNs": 6625917,
               "fullscanSteps": 2792,
               "peakFrameRows": 0,
-              "prepareCpuNs": 2681208,
-              "prepareWallNs": 2681000,
+              "prepareCpuNs": 2941167,
+              "prepareWallNs": 2940708,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -3273,11 +3310,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 1791,
-                  "cpuNs": 28970666,
+                  "cpuNs": 32421209,
                   "fullscanSteps": 2792,
                   "interruption": null,
-                  "prepareCpuNs": 2681208,
-                  "prepareWallNs": 2681000,
+                  "prepareCpuNs": 2941167,
+                  "prepareWallNs": 2940708,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -3287,11 +3324,11 @@
                   "sqlBytes": 10232,
                   "sqlExecutions": 1,
                   "vmSteps": 246364,
-                  "wallNs": 28970208
+                  "wallNs": 33305500
                 }
               ],
               "vmSteps": 246364,
-              "wallNs": 28970208
+              "wallNs": 33305500
             }
           },
           "explain": {
@@ -5263,18 +5300,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 316650416,
+          "nativeCpuNs": 298618083,
           "parity": true,
-          "parseCpuNs": 729658042,
+          "parseCpuNs": 762201375,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2471666,
+            "installationCpuNs": 2911959,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4084791,
+                "cpuNs": 4539708,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -5285,11 +5322,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4084333
+                "wallNs": 4538792
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 3876333,
+                "cpuNs": 4345291,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -5300,11 +5337,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 3875333
+                "wallNs": 4344542
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 3747542,
+                "cpuNs": 4681417,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -5315,7 +5352,7 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 3746333
+                "wallNs": 7631458
               }
             ]
           },
@@ -5324,7 +5361,7 @@
         },
         "reference": {
           "baseline": {
-            "coldKernelCpuNs": 6583711000,
+            "coldKernelCpuNs": 6266871625,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -5335,7 +5372,7 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6570494250,
+            "matchingCpuNs": 6254867292,
             "scheduledStatements": 1
           },
           "captureDemand": [
@@ -11597,7 +11634,7 @@
             ]
           ],
           "direct": {
-            "coldKernelCpuNs": 71868292,
+            "coldKernelCpuNs": 76874625,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -11608,7 +11645,7 @@
               "nodeFilters": 52112,
               "regexNodeRequests": 0
             },
-            "generationCpuNs": 379250,
+            "generationCpuNs": 501625,
             "leafCalls": 2308,
             "metrics": {
               "actionable": {
@@ -11618,11 +11655,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.042022333069611416
+                "prepareShare": 0.04357514858089549
               },
               "automaticIndexRows": 37241,
-              "cpuNs": 63118834,
-              "diagnosticCpuNs": 5420917,
+              "cpuNs": 67434208,
+              "diagnosticCpuNs": 5708875,
               "explain": [
                 {
                   "flags": [
@@ -13039,11 +13076,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 5417708,
+              "explainCpuNs": 5705708,
               "fullscanSteps": 42351,
               "peakFrameRows": 0,
-              "prepareCpuNs": 2768750,
-              "prepareWallNs": 49961125,
+              "prepareCpuNs": 3072333,
+              "prepareWallNs": 3147042,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -13061,11 +13098,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 37241,
-                  "cpuNs": 63118834,
+                  "cpuNs": 67434208,
                   "fullscanSteps": 42351,
                   "interruption": null,
-                  "prepareCpuNs": 2768750,
-                  "prepareWallNs": 49961125,
+                  "prepareCpuNs": 3072333,
+                  "prepareWallNs": 3147042,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -13075,11 +13112,11 @@
                   "sqlBytes": 8196,
                   "sqlExecutions": 1,
                   "vmSteps": 2324796,
-                  "wallNs": 149025375
+                  "wallNs": 82170791
                 }
               ],
               "vmSteps": 2324796,
-              "wallNs": 149025375
+              "wallNs": 82170791
             }
           },
           "explain": {
@@ -15053,18 +15090,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 302697000,
+          "nativeCpuNs": 285232458,
           "parity": true,
-          "parseCpuNs": 719566417,
+          "parseCpuNs": 748288958,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2257958,
+            "installationCpuNs": 2182250,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 32605584,
+                "cpuNs": 33250083,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -15075,11 +15112,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 179989792
+                "wallNs": 34755375
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 29706375,
+                "cpuNs": 33438458,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -15090,11 +15127,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 29705542
+                "wallNs": 34389125
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 29433917,
+                "cpuNs": 32300125,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -15105,7 +15142,7 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 29432750
+                "wallNs": 34408792
               }
             ]
           },
@@ -15116,7 +15153,7 @@
       {
         "generated": {
           "baseline": {
-            "coldKernelCpuNs": 6496183875,
+            "coldKernelCpuNs": 6181999583,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -15127,11 +15164,11 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6483946292,
+            "matchingCpuNs": 6169576959,
             "scheduledStatements": 1
           },
           "direct": {
-            "coldKernelCpuNs": 41253667,
+            "coldKernelCpuNs": 42440584,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -15142,7 +15179,7 @@
               "nodeFilters": 10957,
               "regexNodeRequests": 655
             },
-            "generationCpuNs": 872375,
+            "generationCpuNs": 911542,
             "leafCalls": 0,
             "metrics": {
               "actionable": {
@@ -15152,11 +15189,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.09616597975802613
+                "prepareShare": 0.09455641230666081
               },
               "automaticIndexRows": 1791,
-              "cpuNs": 30619750,
-              "diagnosticCpuNs": 6349917,
+              "cpuNs": 31660042,
+              "diagnosticCpuNs": 6396125,
               "explain": [
                 {
                   "flags": [
@@ -16571,11 +16608,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 6346875,
+              "explainCpuNs": 6393125,
               "fullscanSteps": 2792,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3257875,
-              "prepareWallNs": 3614292,
+              "prepareCpuNs": 3306291,
+              "prepareWallNs": 3305458,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -16593,11 +16630,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 1791,
-                  "cpuNs": 30619750,
+                  "cpuNs": 31660042,
                   "fullscanSteps": 2792,
                   "interruption": null,
-                  "prepareCpuNs": 3257875,
-                  "prepareWallNs": 3614292,
+                  "prepareCpuNs": 3306291,
+                  "prepareWallNs": 3305458,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -16607,11 +16644,11 @@
                   "sqlBytes": 10232,
                   "sqlExecutions": 1,
                   "vmSteps": 246364,
-                  "wallNs": 102622584
+                  "wallNs": 31658834
                 }
               ],
               "vmSteps": 246364,
-              "wallNs": 102622584
+              "wallNs": 31658834
             }
           },
           "explain": {
@@ -18583,18 +18620,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 287678042,
+          "nativeCpuNs": 317382375,
           "parity": true,
-          "parseCpuNs": 713411250,
+          "parseCpuNs": 767699459,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2604458,
+            "installationCpuNs": 3125250,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4169459,
+                "cpuNs": 4500208,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -18605,11 +18642,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4168584
+                "wallNs": 4499292
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4015042,
+                "cpuNs": 4525416,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -18620,11 +18657,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4013500
+                "wallNs": 4524167
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 3915333,
+                "cpuNs": 4387791,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -18635,7 +18672,7 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 3914416
+                "wallNs": 4387042
               }
             ]
           },
@@ -18644,7 +18681,7 @@
         },
         "reference": {
           "baseline": {
-            "coldKernelCpuNs": 6481781834,
+            "coldKernelCpuNs": 6275933709,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -18655,7 +18692,7 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6463602333,
+            "matchingCpuNs": 6262257250,
             "scheduledStatements": 1
           },
           "captureDemand": [
@@ -24917,7 +24954,7 @@
             ]
           ],
           "direct": {
-            "coldKernelCpuNs": 70924124,
+            "coldKernelCpuNs": 76659875,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -24928,7 +24965,7 @@
               "nodeFilters": 52112,
               "regexNodeRequests": 0
             },
-            "generationCpuNs": 246208,
+            "generationCpuNs": 256084,
             "leafCalls": 2308,
             "metrics": {
               "actionable": {
@@ -24938,11 +24975,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.039029550014275834
+                "prepareShare": 0.03863493621188715
               },
               "automaticIndexRows": 37241,
-              "cpuNs": 62686625,
-              "diagnosticCpuNs": 5305292,
+              "cpuNs": 66305708,
+              "diagnosticCpuNs": 7272084,
               "explain": [
                 {
                   "flags": [
@@ -26359,11 +26396,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 5302167,
+              "explainCpuNs": 7268792,
               "fullscanSteps": 42351,
               "peakFrameRows": 0,
-              "prepareCpuNs": 2546000,
-              "prepareWallNs": 2545875,
+              "prepareCpuNs": 2664666,
+              "prepareWallNs": 2680375,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -26381,11 +26418,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 37241,
-                  "cpuNs": 62686625,
+                  "cpuNs": 66305708,
                   "fullscanSteps": 42351,
                   "interruption": null,
-                  "prepareCpuNs": 2546000,
-                  "prepareWallNs": 2545875,
+                  "prepareCpuNs": 2664666,
+                  "prepareWallNs": 2680375,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -26395,11 +26432,11 @@
                   "sqlBytes": 8196,
                   "sqlExecutions": 1,
                   "vmSteps": 2324796,
-                  "wallNs": 283949209
+                  "wallNs": 68611000
                 }
               ],
               "vmSteps": 2324796,
-              "wallNs": 283949209
+              "wallNs": 68611000
             }
           },
           "explain": {
@@ -28373,18 +28410,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 291144375,
+          "nativeCpuNs": 303370166,
           "parity": true,
-          "parseCpuNs": 736170166,
+          "parseCpuNs": 753078250,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2279500,
+            "installationCpuNs": 2206875,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 31844250,
+                "cpuNs": 34142791,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -28395,11 +28432,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 31859500
+                "wallNs": 36824375
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 32029125,
+                "cpuNs": 33266459,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -28410,11 +28447,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 32028709
+                "wallNs": 35439167
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 30436667,
+                "cpuNs": 32459583,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -28425,7 +28462,7 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 152094625
+                "wallNs": 34653334
               }
             ]
           },
@@ -28436,7 +28473,7 @@
       {
         "generated": {
           "baseline": {
-            "coldKernelCpuNs": 6529494875,
+            "coldKernelCpuNs": 6236051959,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -28447,11 +28484,11 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6517557958,
+            "matchingCpuNs": 6224198583,
             "scheduledStatements": 1
           },
           "direct": {
-            "coldKernelCpuNs": 44975250,
+            "coldKernelCpuNs": 44264625,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -28462,7 +28499,7 @@
               "nodeFilters": 10957,
               "regexNodeRequests": 655
             },
-            "generationCpuNs": 876042,
+            "generationCpuNs": 964875,
             "leafCalls": 0,
             "metrics": {
               "actionable": {
@@ -28472,11 +28509,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.09703376159465359
+                "prepareShare": 0.11339266409815625
               },
               "automaticIndexRows": 1791,
-              "cpuNs": 33909167,
-              "diagnosticCpuNs": 6401792,
+              "cpuNs": 32473250,
+              "diagnosticCpuNs": 6494166,
               "explain": [
                 {
                   "flags": [
@@ -29891,11 +29928,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 6399250,
+              "explainCpuNs": 6491125,
               "fullscanSteps": 2792,
               "peakFrameRows": 0,
-              "prepareCpuNs": 3643917,
-              "prepareWallNs": 235196291,
+              "prepareCpuNs": 4153167,
+              "prepareWallNs": 8012167,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -29913,11 +29950,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 1791,
-                  "cpuNs": 33909167,
+                  "cpuNs": 32473250,
                   "fullscanSteps": 2792,
                   "interruption": null,
-                  "prepareCpuNs": 3643917,
-                  "prepareWallNs": 235196291,
+                  "prepareCpuNs": 4153167,
+                  "prepareWallNs": 8012167,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -29927,11 +29964,11 @@
                   "sqlBytes": 10232,
                   "sqlExecutions": 1,
                   "vmSteps": 246364,
-                  "wallNs": 33908500
+                  "wallNs": 36372541
                 }
               ],
               "vmSteps": 246364,
-              "wallNs": 33908500
+              "wallNs": 36372541
             }
           },
           "explain": {
@@ -31903,18 +31940,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 303101875,
+          "nativeCpuNs": 307627417,
           "parity": true,
-          "parseCpuNs": 734440334,
+          "parseCpuNs": 736523000,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 2643125,
+            "installationCpuNs": 3672583,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4586583,
+                "cpuNs": 4478792,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -31925,11 +31962,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4586209
+                "wallNs": 4477542
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4311833,
+                "cpuNs": 4243625,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -31940,11 +31977,11 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4311167
+                "wallNs": 4242917
               },
               {
                 "automaticIndexRows": 1791,
-                "cpuNs": 4358542,
+                "cpuNs": 4170875,
                 "fullscanSteps": 2792,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -31955,7 +31992,7 @@
                 "sqlBytes": 10232,
                 "sqlExecutions": 1,
                 "vmSteps": 246364,
-                "wallNs": 4358084
+                "wallNs": 4169500
               }
             ]
           },
@@ -31964,7 +32001,7 @@
         },
         "reference": {
           "baseline": {
-            "coldKernelCpuNs": 6563542042,
+            "coldKernelCpuNs": 6261785167,
             "counters": {
               "frameAdvances": 15597627,
               "frameColumns": 78832227,
@@ -31975,7 +32012,7 @@
               "nodeFilters": 3937684,
               "regexNodeRequests": 381
             },
-            "matchingCpuNs": 6552437709,
+            "matchingCpuNs": 6248547625,
             "scheduledStatements": 1
           },
           "captureDemand": [
@@ -38237,7 +38274,7 @@
             ]
           ],
           "direct": {
-            "coldKernelCpuNs": 70684917,
+            "coldKernelCpuNs": 72922333,
             "counters": {
               "frameAdvances": 0,
               "frameColumns": 0,
@@ -38248,7 +38285,7 @@
               "nodeFilters": 52112,
               "regexNodeRequests": 0
             },
-            "generationCpuNs": 653000,
+            "generationCpuNs": 322792,
             "leafCalls": 2308,
             "metrics": {
               "actionable": {
@@ -38258,11 +38295,11 @@
                 "largestPublications": [],
                 "prepareDominates": false,
                 "prepareExperiment": "Compare smaller dependency-expansion budgets and a few statement phases. Reuse installed prepared programs across calls.",
-                "prepareShare": 0.04510895405119152
+                "prepareShare": 0.04378862234458266
               },
               "automaticIndexRows": 37241,
-              "cpuNs": 60799583,
-              "diagnosticCpuNs": 6207459,
+              "cpuNs": 64080625,
+              "diagnosticCpuNs": 5410667,
               "explain": [
                 {
                   "flags": [
@@ -39679,11 +39716,11 @@
                   ]
                 }
               ],
-              "explainCpuNs": 6204417,
+              "explainCpuNs": 5407125,
               "fullscanSteps": 42351,
               "peakFrameRows": 0,
-              "prepareCpuNs": 2872166,
-              "prepareWallNs": 3001750,
+              "prepareCpuNs": 2934500,
+              "prepareWallNs": 3354375,
               "profile": {
                 "interpretation": "stage times include producer SQL, native leaf calls, publication, and release; copyCpuNs measures only final typed publication, not aggregate row boxing",
                 "publicationsByRows": [],
@@ -39701,11 +39738,11 @@
               "statements": [
                 {
                   "automaticIndexRows": 37241,
-                  "cpuNs": 60799583,
+                  "cpuNs": 64080625,
                   "fullscanSteps": 42351,
                   "interruption": null,
-                  "prepareCpuNs": 2872166,
-                  "prepareWallNs": 3001750,
+                  "prepareCpuNs": 2934500,
+                  "prepareWallNs": 3354375,
                   "reprepares": 0,
                   "scans": {
                     "available": false,
@@ -39715,11 +39752,11 @@
                   "sqlBytes": 8196,
                   "sqlExecutions": 1,
                   "vmSteps": 2324796,
-                  "wallNs": 116676666
+                  "wallNs": 131074542
                 }
               ],
               "vmSteps": 2324796,
-              "wallNs": 116676666
+              "wallNs": 131074542
             }
           },
           "explain": {
@@ -41693,18 +41730,18 @@
             }
           ],
           "matches": 2,
-          "nativeCpuNs": 282467083,
+          "nativeCpuNs": 315418583,
           "parity": true,
-          "parseCpuNs": 723306292,
+          "parseCpuNs": 765617125,
           "policySha256": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
           "prepared": {
             "executionCount": 3,
-            "installationCpuNs": 3349208,
+            "installationCpuNs": 2300167,
             "preparationCount": 1,
             "samples": [
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 33680625,
+                "cpuNs": 32060583,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -41715,11 +41752,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 57717709
+                "wallNs": 32059750
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 33420958,
+                "cpuNs": 32012958,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -41730,11 +41767,11 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 33420000
+                "wallNs": 32011833
               },
               {
                 "automaticIndexRows": 37241,
-                "cpuNs": 33548916,
+                "cpuNs": 31877208,
                 "fullscanSteps": 42351,
                 "interruption": null,
                 "prepareCpuNs": 0,
@@ -41745,7 +41782,7 @@
                 "sqlBytes": 8196,
                 "sqlExecutions": 1,
                 "vmSteps": 2324796,
-                "wallNs": 87808166
+                "wallNs": 31875875
               }
             ]
           },
@@ -41755,7 +41792,7 @@
       }
     ],
     "sql": "WITH RECURSIVE\nneeded11(file,node) AS MATERIALIZED (SELECT file,id FROM node WHERE kind IN (197) UNION SELECT p.file,p.id FROM needed11 k CROSS JOIN node n ON n.file=k.file AND n.id=k.node CROSS JOIN node p ON p.file=n.file AND p.id=n.parent WHERE p.kind IN (226)),\nbounds5(file,node,last) AS MATERIALIZED (SELECT k.file,k.node,n.\"last\" FROM r5 k CROSS JOIN node n ON n.file=k.file AND n.id=k.node),\nregions5(file,node,last) AS MATERIALIZED (SELECT b.file,b.node,b.last FROM bounds5 b WHERE NOT EXISTS (SELECT 1 FROM bounds5 outer_region WHERE outer_region.file=b.file AND outer_region.node<b.node AND outer_region.last>=b.node)),\nsearch5(file,node) AS MATERIALIZED (SELECT DISTINCT n.file,n.id FROM node a CROSS JOIN node n ON n.file=a.file AND n.id>a.id AND n.id<=a.\"last\" WHERE a.kind IN (137,138,221,222,223,224) AND n.kind IN (145,197) AND ((n.kind IN (197) AND NOT (EXISTS (SELECT 1 FROM r11 k WHERE k.file=n.file AND k.node=n.id))) OR n.kind IN (145))),\nwalk5(file,origin,node,distance) AS (SELECT n.file,k.node,n.parent,1 FROM search5 k CROSS JOIN node n ON n.file=k.file AND n.id=k.node WHERE n.parent IS NOT NULL UNION ALL SELECT w.file,w.origin,n.parent,w.distance+1 FROM walk5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL AND NOT (((n.kind IN (197) AND NOT (EXISTS (SELECT 1 FROM r11 k WHERE k.file=n.file AND k.node=n.id))) OR n.kind IN (145)))),\npairs5(file,origin,node,distance) AS MATERIALIZED (SELECT w.* FROM walk5 w CROSS JOIN node f ON f.file=w.file AND f.id=w.node WHERE f.kind IN (137,138,221,222,223,224)),\nr5(file,node) AS MATERIALIZED (SELECT DISTINCT file,node FROM pairs5),\n-- demanded binding candidates\nr7(file,node) AS MATERIALIZED (\nSELECT a0n0.file,a0n0.id FROM r12 AS seed0 CROSS JOIN node AS a0n0 ON a0n0.file=seed0.file AND a0n0.id=seed0.node WHERE a0n0.kind IN (1)\n),\n-- utility[7] for consumer kinds\nr11(file,node) AS MATERIALIZED (\nSELECT seed.file,seed.id FROM needed11 k CROSS JOIN node seed ON seed.file=k.file AND seed.id=k.node LEFT JOIN node bound0 ON bound0.file=seed.file AND bound0.id=seed.parent LEFT JOIN node bound1 ON bound1.file=seed.file AND bound1.id=seed.next LEFT JOIN node bound2 ON bound2.file=seed.file AND bound2.id=seed.prev LEFT JOIN node bound3 ON bound3.file=bound0.file AND bound3.id=bound0.prev WHERE 1 AND ((COALESCE(bound0.kind IN (207),0) AND COALESCE(bound1.kind IN (158,224),0)) OR (CASE WHEN bound0.id IS NOT NULL THEN (bound0.kind IN (215) AND EXISTS (SELECT 1 FROM (SELECT 1) AS unit0 CROSS JOIN node AS a0n1 ON a0n1.file=bound0.file AND a0n1.parent=bound0.id CROSS JOIN node AS a0n2 ON a0n2.file=a0n1.file AND a0n2.id=a0n1.next WHERE a0n1.kind IN (1) AND node_regex(2,a0n1.file,a0n1.id) AND node_regex(3,a0n2.file,a0n2.id))) ELSE 0 END AND CASE WHEN bound2.id IS NOT NULL THEN node_regex(3,bound2.file,bound2.id) ELSE 0 END) OR CASE WHEN bound0.id IS NOT NULL THEN ((bound0.kind IN (158) AND CASE WHEN bound3.id IS NOT NULL THEN (bound3.kind IN (1) AND node_regex(0,bound3.file,bound3.id)) ELSE 0 END) OR (bound0.kind IN (158) AND CASE WHEN bound3.id IS NOT NULL THEN (relation_pattern(1,bound3.file,bound3.id) AND bound3.kind IN (204)) ELSE 0 END) OR bound0.kind IN (125)) ELSE 0 END)\nUNION\nSELECT a1n0.file,a1n0.id FROM r11 AS seed1 CROSS JOIN node AS a1n1 ON a1n1.file=seed1.file AND a1n1.id=seed1.node CROSS JOIN node AS a1n0 ON a1n0.file=a1n1.file AND a1n0.parent=a1n1.id WHERE a1n1.kind IN (226) AND EXISTS (SELECT 1 FROM needed11 k WHERE k.file=a1n0.file AND k.node=a1n0.id)\n),\n-- utility[9] within r5\nr12(file,node) AS MATERIALIZED (\nSELECT seed.file,seed.id FROM regions5 d CROSS JOIN node parent ON parent.file=d.file AND parent.id>=d.node AND parent.id<=d.last CROSS JOIN node seed ON seed.file=parent.file AND seed.parent=parent.id LEFT JOIN node bound1 ON bound1.file=seed.file AND bound1.id=seed.prev WHERE parent.kind IN (137,199,200,228) AND ((NOT (COALESCE(bound1.\"end\">bound1.start,0)) AND parent.kind IN (199,200)) OR (parent.kind IN (137,228) AND CASE WHEN bound1.id IS NOT NULL THEN node_regex(5,bound1.file,bound1.id) ELSE 0 END))\nUNION\nSELECT a2n0.file,a2n0.id FROM r12 AS seed2 CROSS JOIN node AS a2n1 ON a2n1.file=seed2.file AND a2n1.id=seed2.node CROSS JOIN node AS a2n0 ON a2n0.file=a2n1.file AND a2n0.parent=a2n1.id WHERE a2n1.kind IN (180,181,184,201,216,218,226)\n),\n-- utility[8] for bound candidates\nr13(file,node) AS MATERIALIZED (\nSELECT seed.file,seed.id FROM regions5 d CROSS JOIN node parent ON parent.file=d.file AND parent.id>=d.node AND parent.id<=d.last CROSS JOIN node seed ON seed.file=parent.file AND seed.parent=parent.id LEFT JOIN node bound1 ON bound1.file=seed.file AND bound1.id=seed.prev LEFT JOIN node bound2 ON bound2.file=parent.file AND bound2.id=parent.parent WHERE parent.kind IN (123,186) AND ((NOT (COALESCE(bound1.\"end\">bound1.start,0)) AND parent.kind IN (123)) OR (seed.kind IN (273) AND (parent.kind IN (186) AND COALESCE(bound2.kind IN (144),0))))\nUNION\nSELECT file,node FROM r12\nUNION\nSELECT a3n0.file,a3n0.id FROM r13 AS seed3 CROSS JOIN node AS a3n1 ON a3n1.file=seed3.file AND a3n1.id=seed3.node CROSS JOIN node AS a3n0 ON a3n0.file=a3n1.file AND a3n0.parent=a3n1.id WHERE a3n1.kind IN (184,216,218,226,273)\n),\nbinding_seeds(file,node,atom) AS MATERIALIZED (SELECT t.file,t.node,relation_leaf_atom(n.file,n.id,n.atom) FROM r7 t CROSS JOIN node n ON n.file=t.file AND n.id=t.node WHERE 1 AND n.named),\nbinding_choices(file,node,atom,witness) AS MATERIALIZED (SELECT k.file,k.node,t.atom,MIN(t.node) FROM r5 k CROSS JOIN node a ON a.file=k.file AND a.id=k.node CROSS JOIN binding_seeds t ON t.file=k.file AND t.node>a.id AND t.node<=a.\"last\" WHERE NOT EXISTS (SELECT 1 FROM node s WHERE s.file=t.file AND s.id>a.id AND s.id<t.node AND s.\"last\">=t.node AND s.kind IN (145,197)) GROUP BY k.file,k.node,t.atom),\nused_values(file,origin,atom) AS MATERIALIZED (SELECT DISTINCT p.file,p.origin,n.atom FROM (SELECT DISTINCT file,origin FROM pairs5) p CROSS JOIN node o ON o.file=p.file AND o.id=p.origin CROSS JOIN node n ON n.file=o.file AND n.id>=o.id AND n.id<=o.\"last\" WHERE n.kind IN (1) AND n.named),\norigin_choices AS (SELECT p.file,p.origin,b.atom,b.witness,p.node AS ancestor,p.distance,ROW_NUMBER() OVER (PARTITION BY p.file,p.origin,b.atom ORDER BY p.distance) AS choice FROM used_values u CROSS JOIN pairs5 p ON p.file=u.file AND p.origin=u.origin CROSS JOIN binding_choices b ON b.file=p.file AND b.node=p.node AND b.atom=u.atom),\ncapture_demand AS MATERIALIZED (SELECT file,origin AS node,atom,witness,ancestor,distance FROM origin_choices WHERE choice=1),\nanswer1(file,node,atom) AS MATERIALIZED (SELECT p.file,p.id,relation_leaf_atom(p.file,p.id,p.atom) FROM r13 k CROSS JOIN node p ON p.file=k.file AND p.id=k.node WHERE p.kind IN (1) AND p.named),\nanswer2_walk(file,origin,node,state) AS MATERIALIZED (SELECT DISTINCT w.file,w.node,n2.id,1 FROM capture_demand w CROSS JOIN node n0 ON n0.file=w.file AND n0.id=w.node CROSS JOIN node n1 ON n1.file=n0.file AND n1.parent=n0.id CROSS JOIN node n2 ON n2.file=n1.file AND n2.parent=n1.id WHERE (n1.kind IN (146,147)) UNION SELECT w.file,w.origin,n1.id,1 FROM answer2_walk w CROSS JOIN node n0 ON n0.file=w.file AND n0.id=w.node CROSS JOIN node n1 ON n1.file=n0.file AND n1.parent=n0.id LEFT JOIN node bound0 ON bound0.file=n1.file AND bound0.id=n1.prev WHERE w.state=1 AND (n0.kind IN (184,185) AND n1.kind IN (1) OR n0.kind IN (182,183,208) AND NOT (COALESCE(bound0.\"end\">bound0.start,0)))),\nanswer2(file,origin,atom) AS MATERIALIZED (SELECT w.file,w.origin,relation_leaf_atom(n0.file,n0.id,n0.atom) AS atom FROM answer2_walk w CROSS JOIN node n0 ON n0.file=w.file AND n0.id=w.node WHERE w.state=1 AND (n0.kind IN (1)) AND n0.named),\nanswer0(file,node,atom,witness) AS MATERIALIZED (SELECT a.file,a.node,a.atom,a.witness FROM capture_demand a CROSS JOIN node n ON n.file=a.file AND n.id=a.node WHERE 1 AND NOT EXISTS (SELECT 1 FROM answer1 p WHERE p.file=a.file AND p.atom=a.atom AND p.node>a.node AND p.node<=n.\"last\") AND NOT EXISTS (SELECT 1 FROM answer2 p WHERE p.file=a.file AND p.origin=a.node AND p.atom=a.atom)),\nanswer3(file,node,atom,witness) AS MATERIALIZED (SELECT a.file,n.id,a.atom,a.witness FROM answer0 a CROSS JOIN node b ON b.file=a.file AND b.id=a.node CROSS JOIN node n ON n.file=b.file AND n.parent=b.id LEFT JOIN node bound0 ON bound0.file=n.file AND bound0.id=n.prev WHERE ((b.kind IN (145) AND n.kind IN (161)) OR (b.kind IN (197) AND CASE WHEN bound0.id IS NOT NULL THEN node_regex(6,bound0.file,bound0.id) ELSE 0 END))),\nanswer4(file,node,atom,witness) AS MATERIALIZED (SELECT file,node,atom,witness FROM (SELECT a.file,n.id AS node,a.atom,a.witness,ROW_NUMBER() OVER (PARTITION BY a.file,n.id,a.atom ORDER BY a.node DESC) AS choice FROM answer3 a CROSS JOIN node b ON b.file=a.file AND b.id=a.node CROSS JOIN node v ON v.file=a.file AND v.id=a.atom CROSS JOIN node n ON n.file=b.file AND n.id>=b.id AND n.id<=b.\"last\" AND n.thash=v.thash LEFT JOIN node bound0 ON bound0.file=n.file AND bound0.id=n.parent LEFT JOIN node bound1 ON bound1.file=n.file AND bound1.id=n.prev LEFT JOIN node bound2 ON bound2.file=n.file AND bound2.id=n.next LEFT JOIN node bound3 ON bound3.file=bound0.file AND bound3.id=bound0.parent LEFT JOIN node bound4 ON bound4.file=bound3.file AND bound4.id=bound3.parent WHERE n.kind IN (1) AND NOT (((COALESCE(bound0.kind IN (204),0) AND CASE WHEN bound1.id IS NOT NULL THEN node_regex(7,bound1.file,bound1.id) ELSE 0 END) OR (COALESCE(bound0.kind IN (215),0) AND CASE WHEN bound2.id IS NOT NULL THEN node_regex(3,bound2.file,bound2.id) ELSE 0 END) OR (NOT (COALESCE(bound1.\"end\">bound1.start,0)) AND COALESCE(bound0.kind IN (182,183,208),0)) OR EXISTS (SELECT 1 FROM r13 k WHERE k.file=n.file AND k.node=n.id) OR CASE WHEN bound0.id IS NOT NULL THEN ((bound0.kind IN (184) AND COALESCE(bound3.kind IN (146,147,208),0)) OR (bound0.kind IN (273) AND CASE WHEN bound3.id IS NOT NULL THEN (bound3.kind IN (186) AND COALESCE(bound4.kind IN (140),0)) ELSE 0 END) OR (bound0.kind IN (186) AND COALESCE(bound3.kind IN (164),0)) OR bound0.kind IN (117,126,145,146,147,150,151,154,155,163,172,173,185)) ELSE 0 END)) AND n.named AND relation_leaf_atom(n.file,n.id,n.atom)=a.atom) WHERE choice=1)\nSELECT 0,file,node,json_array(witness) FROM answer4 ORDER BY file,node",
-    "statementMemoryBytes": 196368,
+    "statementMemoryBytes": 196320,
     "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
     "typedReturnCells": 0,
     "typedReturnRows": 0,
@@ -41775,9 +41812,9 @@
         246364,
         246364
       ],
-      "generatedMedianExecutionCpuNs": 4084791,
-      "referenceMedianExecutionCpuNs": 32029125,
-      "cpuRatio": 0.12753364320754937,
+      "generatedMedianExecutionCpuNs": 4478792,
+      "referenceMedianExecutionCpuNs": 32459583,
+      "cpuRatio": 0.13798057726126672,
       "vmPassed": true,
       "cpuPassed": true,
       "shape": {
@@ -41817,19 +41854,19 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 28519250,
+        "diagnosticKernelCpuNs": 30084917,
         "frameAdvances": 503,
         "framePublications": 259,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 5343208,
-      "diagnosticCpuNs": 24508417,
+      "coldKernelCpuNs": 4096625,
+      "diagnosticCpuNs": 19970209,
       "family": "outside-assignments",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 1223125,
+      "generationCpuNs": 893625,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -41847,8 +41884,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 4081250,
-      "prepareCpuNs": 3844958,
+      "prepareAndExecuteCpuNs": 3162250,
+      "prepareCpuNs": 2961750,
       "regexRequests": 5,
       "size": 32,
       "statementMemoryBytes": 196240,
@@ -41861,19 +41898,19 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 32236334,
+        "diagnosticKernelCpuNs": 28751208,
         "frameAdvances": 503,
         "framePublications": 259,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 5476793,
-      "diagnosticCpuNs": 25755250,
+      "coldKernelCpuNs": 4507041,
+      "diagnosticCpuNs": 21070417,
       "family": "outside-assignments",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 1319584,
+      "generationCpuNs": 909958,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -41891,8 +41928,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 4108542,
-      "prepareCpuNs": 3821500,
+      "prepareAndExecuteCpuNs": 3555333,
+      "prepareCpuNs": 3312375,
       "regexRequests": 5,
       "size": 128,
       "statementMemoryBytes": 196240,
@@ -41905,19 +41942,19 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 27617167,
+        "diagnosticKernelCpuNs": 35155542,
         "frameAdvances": 503,
         "framePublications": 259,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 3932834,
-      "diagnosticCpuNs": 20317500,
+      "coldKernelCpuNs": 5810917,
+      "diagnosticCpuNs": 25770833,
       "family": "outside-assignments",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 836750,
+      "generationCpuNs": 1039167,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -41935,8 +41972,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3063958,
-      "prepareCpuNs": 2716291,
+      "prepareAndExecuteCpuNs": 4720542,
+      "prepareCpuNs": 4293917,
       "regexRequests": 5,
       "size": 512,
       "statementMemoryBytes": 196240,
@@ -41949,19 +41986,19 @@
     {
       "automaticIndexRows": 97,
       "baseline": {
-        "diagnosticKernelCpuNs": 32608917,
+        "diagnosticKernelCpuNs": 38421750,
         "frameAdvances": 12375,
         "framePublications": 6018,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4251834,
-      "diagnosticCpuNs": 20964501,
+      "coldKernelCpuNs": 4529542,
+      "diagnosticCpuNs": 21492833,
       "family": "repeated-assignment-loads",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 163,
-      "generationCpuNs": 849417,
+      "generationCpuNs": 905625,
       "matches": 32,
       "matchingStatements": 1,
       "nodeAdvances": 589,
@@ -42165,8 +42202,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3367083,
-      "prepareCpuNs": 3007083,
+      "prepareAndExecuteCpuNs": 3580667,
+      "prepareCpuNs": 3193959,
       "regexRequests": 5,
       "size": 32,
       "statementMemoryBytes": 196240,
@@ -42179,19 +42216,19 @@
     {
       "automaticIndexRows": 385,
       "baseline": {
-        "diagnosticKernelCpuNs": 42932250,
+        "diagnosticKernelCpuNs": 43059125,
         "frameAdvances": 47641,
         "framePublications": 23178,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 6907916,
-      "diagnosticCpuNs": 28408792,
+      "coldKernelCpuNs": 4880875,
+      "diagnosticCpuNs": 24290750,
       "family": "repeated-assignment-loads",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 643,
-      "generationCpuNs": 830125,
+      "generationCpuNs": 890500,
       "matches": 128,
       "matchingStatements": 1,
       "nodeAdvances": 2221,
@@ -42971,8 +43008,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 6007042,
-      "prepareCpuNs": 4792667,
+      "prepareAndExecuteCpuNs": 3949750,
+      "prepareCpuNs": 3036375,
       "regexRequests": 5,
       "size": 128,
       "statementMemoryBytes": 196240,
@@ -42985,19 +43022,19 @@
     {
       "automaticIndexRows": 1537,
       "baseline": {
-        "diagnosticKernelCpuNs": 92396291,
+        "diagnosticKernelCpuNs": 88956916,
         "frameAdvances": 188027,
         "framePublications": 91602,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 6722499,
-      "diagnosticCpuNs": 34190208,
+      "coldKernelCpuNs": 7728042,
+      "diagnosticCpuNs": 38510792,
       "family": "repeated-assignment-loads",
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 2563,
-      "generationCpuNs": 836041,
+      "generationCpuNs": 964042,
       "matches": 512,
       "matchingStatements": 1,
       "nodeAdvances": 8749,
@@ -46081,8 +46118,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 5846292,
-      "prepareCpuNs": 2954667,
+      "prepareAndExecuteCpuNs": 6716375,
+      "prepareCpuNs": 3567583,
       "regexRequests": 5,
       "size": 512,
       "statementMemoryBytes": 196240,
@@ -46097,14 +46134,14 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 30450125,
+        "diagnosticKernelCpuNs": 30329334,
         "frameAdvances": 759,
         "framePublications": 451,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4655249,
-      "diagnosticCpuNs": 25048374,
+      "coldKernelCpuNs": 4851250,
+      "diagnosticCpuNs": 21446958,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -47020,7 +47057,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 879208,
+      "generationCpuNs": 1040375,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -47038,8 +47075,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3738667,
-      "prepareCpuNs": 3509584,
+      "prepareAndExecuteCpuNs": 3761541,
+      "prepareCpuNs": 3523916,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -47071,14 +47108,14 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 29955084,
+        "diagnosticKernelCpuNs": 30953959,
         "frameAdvances": 1527,
         "framePublications": 1027,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4325375,
-      "diagnosticCpuNs": 23212792,
+      "coldKernelCpuNs": 4641749,
+      "diagnosticCpuNs": 24745916,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -47994,7 +48031,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 894333,
+      "generationCpuNs": 904666,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -48012,8 +48049,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3382625,
-      "prepareCpuNs": 3126250,
+      "prepareAndExecuteCpuNs": 3692167,
+      "prepareCpuNs": 3298083,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -48045,14 +48082,14 @@
     {
       "automaticIndexRows": 1,
       "baseline": {
-        "diagnosticKernelCpuNs": 30478958,
+        "diagnosticKernelCpuNs": 30827458,
         "frameAdvances": 4599,
         "framePublications": 3331,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4291291,
-      "diagnosticCpuNs": 20086750,
+      "coldKernelCpuNs": 4474709,
+      "diagnosticCpuNs": 22081667,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -48968,7 +49005,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 3,
-      "generationCpuNs": 846458,
+      "generationCpuNs": 901542,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 51,
@@ -48986,8 +49023,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3408250,
-      "prepareCpuNs": 2932208,
+      "prepareAndExecuteCpuNs": 3528125,
+      "prepareCpuNs": 3048708,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -49019,14 +49056,14 @@
     {
       "automaticIndexRows": 129,
       "baseline": {
-        "diagnosticKernelCpuNs": 27766000,
+        "diagnosticKernelCpuNs": 28887125,
         "frameAdvances": 690,
         "framePublications": 329,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4061833,
-      "diagnosticCpuNs": 19997834,
+      "coldKernelCpuNs": 4250541,
+      "diagnosticCpuNs": 21167333,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -49942,7 +49979,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 131,
-      "generationCpuNs": 855500,
+      "generationCpuNs": 879000,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 339,
@@ -49960,8 +49997,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3172791,
-      "prepareCpuNs": 2881041,
+      "prepareAndExecuteCpuNs": 3330334,
+      "prepareCpuNs": 3015875,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -49993,14 +50030,14 @@
     {
       "automaticIndexRows": 513,
       "baseline": {
-        "diagnosticKernelCpuNs": 27565667,
+        "diagnosticKernelCpuNs": 28502792,
         "frameAdvances": 1170,
         "framePublications": 521,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 4463584,
-      "diagnosticCpuNs": 22443167,
+      "coldKernelCpuNs": 4479209,
+      "diagnosticCpuNs": 23214959,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -50916,7 +50953,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 515,
-      "generationCpuNs": 842917,
+      "generationCpuNs": 846625,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 1203,
@@ -50934,8 +50971,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 3589458,
-      "prepareCpuNs": 2959625,
+      "prepareAndExecuteCpuNs": 3593250,
+      "prepareCpuNs": 2961000,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -50967,14 +51004,14 @@
     {
       "automaticIndexRows": 2049,
       "baseline": {
-        "diagnosticKernelCpuNs": 28373500,
+        "diagnosticKernelCpuNs": 29284333,
         "frameAdvances": 3090,
         "framePublications": 1289,
         "matchingStatements": 1
       },
       "captureEqualityRequests": 0,
-      "coldKernelCpuNs": 5635792,
-      "diagnosticCpuNs": 31355459,
+      "coldKernelCpuNs": 5764875,
+      "diagnosticCpuNs": 33182750,
       "diagnosticRelationRows": [
         {
           "relation": "search5",
@@ -51890,7 +51927,7 @@
       "files": 1,
       "framePublications": 0,
       "fullscanSteps": 2051,
-      "generationCpuNs": 819042,
+      "generationCpuNs": 849000,
       "matches": 1,
       "matchingStatements": 1,
       "nodeAdvances": 4659,
@@ -51908,8 +51945,8 @@
       ],
       "parity": true,
       "patternRequests": 0,
-      "prepareAndExecuteCpuNs": 4785625,
-      "prepareCpuNs": 2825792,
+      "prepareAndExecuteCpuNs": 4875625,
+      "prepareCpuNs": 2900375,
       "regexRequests": 5,
       "relations": {
         "capture": "N",
@@ -51940,22 +51977,23 @@
     }
   ],
   "catalogSummary": {
-    "admitted": 101,
+    "admitted": 135,
     "clauses": 146,
     "executionFailed": 0,
-    "executionPassed": 101,
+    "executionPassed": 135,
     "grammars": 146,
     "noPositiveWitness": 0,
     "policies": 138,
     "policyCompilationErrors": 0,
     "refusalReasons": {
-      "outcome relations: recursive outcomes need a component contract": 36,
-      "outcome relations: recursive parameter calls require a component contract": 2,
-      "parse outcomes: host hooks and exported spans need a typed contract": 4,
-      "recursive negation or region dependency needs an outcome contract": 1,
-      "recursive search: cyclic base dependency": 2
+      "outcome relations: distinct lowered operator count exceeds 256": 1,
+      "outcome relations: emitted composition operator count exceeds 256; emitted categories {\"capture equality\": 1, \"composition\": 4, \"field neighbor\": 1, \"fused expression\": 126, \"fused total predicate run\": 5, \"negation\": 4, \"outcome\": 92, \"semantic recursive invocation\": 2, \"total predicate\": 5, \"typed atomic captures\": 7, \"utility call\": 9}; next outcome": 1,
+      "outcome relations: emitted composition operator count exceeds 256; emitted categories {\"capture equality\": 1, \"field neighbor\": 32, \"fused expression\": 75, \"fused total predicate run\": 12, \"negation\": 10, \"outcome\": 87, \"semantic recursive invocation\": 17, \"total predicate\": 6, \"typed atomic captures\": 2, \"utility call\": 14}; next field neighbor": 1,
+      "outcome relations: emitted composition operator count exceeds 256; emitted categories {\"composition\": 5, \"count outcome\": 1, \"field neighbor\": 8, \"fused expression\": 68, \"fused total predicate run\": 3, \"negation\": 7, \"outcome\": 79, \"pure recursive instruction\": 58, \"pure recursive invocation\": 2, \"semantic recursive invocation\": 7, \"total predicate\": 11, \"utility call\": 7}; next fused expression": 1,
+      "outcome relations: emitted composition operator count exceeds 256; emitted categories {\"fused expression\": 84, \"fused total predicate run\": 4, \"negation\": 4, \"outcome\": 72, \"pure recursive instruction\": 74, \"pure recursive invocation\": 2, \"semantic recursive invocation\": 6, \"total predicate\": 8, \"utility call\": 2}; next outcome": 1,
+      "outcome relations: recursive outcomes need a component contract": 6
     },
-    "refused": 45
+    "refused": 11
   },
   "qualificationExitCodes": {
     "candidate": 0,
@@ -54253,336 +54291,563 @@
   },
   "diagnosticCheckpoints": [
     {
-      "name": "rerail-broad-phase1",
+      "name": "rerail-recursive-phase1",
       "logs": {
-        "binding.log": {
-          "sha256": "4a1fe06602fe406110f437fdf93d417e67cd54395ece72602f8671eb2806fbed",
+        "owned-2.log": {
+          "sha256": "e000cbec809e561ddae48e65e032e7025eed28707f4d3b5611c7db41963ce473",
           "results": [
-            "test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 1946 filtered out; finished in 0.62s"
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2014 filtered out; finished in 0.00s"
           ],
           "panics": [],
           "pythonErrors": []
         },
-        "parse.log": {
-          "sha256": "ebdda7c5edb00321fcf89390196b6c46e2e4ea1a7836aefb5f8ce2498700d4f6",
+        "owned-3.log": {
+          "sha256": "4eb1fc87a51fdb66f29771aaa6dececee09aac953f61099b82b91b81cd7b539e",
           "results": [
-            "test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 1971 filtered out; finished in 0.04s"
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2014 filtered out; finished in 0.00s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "owned-1.log": {
+          "sha256": "7a2b3b6e7fe39902e1c328278dc59f70e8c00e72dbd3d02612f3bc1be2b76f57",
+          "results": [
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2014 filtered out; finished in 0.00s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "owned-0.log": {
+          "sha256": "af32929ca99ba998e2363df95448051a4b1959bab5d1bb43a8d9403799956f95",
+          "results": [
+            "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 2013 filtered out; finished in 0.01s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "pure.log": {
+          "sha256": "fd943f2c59735c41654934446a0ef048696a7965f30e45d5a4f9056e8348233b",
+          "results": [
+            "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2011 filtered out; finished in 0.42s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "pure-depth.log": {
+          "sha256": "b12852af8fff68bbf3ec5f83da1f3ffccc9507482baf01aefc5f3a6d8c7a336a",
+          "results": [
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2015 filtered out; finished in 0.00s"
           ],
           "panics": [
-            "code_rule_dsl::sql::relational::outcomes::parse_tests::format_parse_error_values_and_reached_cache_preserve_work",
-            "code_rule_dsl::sql::relational::outcomes::parse_tests::parse_child_walk_value_and_failure_budget_parity",
-            "code_rule_dsl::sql::relational::outcomes::parse_tests::parsed_documents_keep_language_specific_error_values"
+            "code_rule_dsl::sql::relational::outcomes::emit::pure_recursive_depth_tests::pure_machine_and_shared_fast_components_report_exact_entered_peaks"
           ],
           "pythonErrors": []
         },
-        "format.log": {
-          "sha256": "938cbbfecada3df02bad906458814b872376b777f89a56ae35e270bab05d149d",
+        "admission.log": {
+          "sha256": "3f4aec742f80d8b80137ceaea93091b86ba9a3a5724756e17a43dfeb88c2d6ae",
           "results": [
-            "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1973 filtered out; finished in 0.17s"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2015 filtered out; finished in 0.36s"
           ],
           "panics": [],
           "pythonErrors": []
         },
-        "calls.log": {
-          "sha256": "c4865fa7da3b86b53d65ca0880848a07b8764127059efc366323ae4568498538",
+        "parity.log": {
+          "sha256": "d713c0e4b90be62a04bdd4d10fb4c5ca09f90166f2b83b4c4d06c89bb85d9efb",
           "results": [
-            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1972 filtered out; finished in 1.50s"
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2015 filtered out; finished in 39.60s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::cutover_tests::relational_cutover_catalog_fixture_parity"
+          ],
+          "pythonErrors": []
+        },
+        "focused.log": {
+          "sha256": "654db90001eab00c68356f41740519d299c3b6f842716a1ec7d585ec0d399925",
+          "results": [
+            "test result: FAILED. 332 passed; 4 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 123.99s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::downward_tests::recursive_components_admit_memoized_bases_and_strict_progress_cycles",
+            "code_rule_dsl::sql::relational::outcomes::emit::pure_recursive_depth_tests::pure_machine_and_shared_fast_components_report_exact_entered_peaks",
+            "code_rule_dsl::sql::relational::outcomes::recursive_search_tests::memoized_recursive_capture_search_rolls_back_bases_and_exports_first_success",
+            "code_rule_dsl::sql::relational::outcomes::recursive_search_tests::memoized_recursive_value_search_publishes_completed_siblings_and_replays_roots"
+          ],
+          "pythonErrors": []
+        }
+      },
+      "executableSha256": "4df2c305cfe2064956afeeb6148f85a32d1881cdd9d143144ef36d144f7ce876"
+    },
+    {
+      "name": "rerail-recursive-phase2",
+      "logs": {
+        "parse-owned.log": {
+          "sha256": "c10fee3db4747846c2292924c1b98ba32ddc14dca56c344a6d98110d8130229c",
+          "results": [
+            "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 2011 filtered out; finished in 2.29s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "memo-depth.log": {
+          "sha256": "d9fe2ee994aa447b70e991e031b8f0d6e8c8e6ccefe6eb8aa8856a73a72be9a3",
+          "results": [
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2026 filtered out; finished in 0.01s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::memo_recursive_depth_tests::recursive_memo_replays_only_depth_fitting_completed_answers"
+          ],
+          "pythonErrors": []
+        },
+        "pure-depth.log": {
+          "sha256": "2d6c34b06a5d4c68fcdc827f9d0aed2fcb0945eee8df263c3bd75b13d5547cd9",
+          "results": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2026 filtered out; finished in 0.39s"
           ],
           "panics": [],
           "pythonErrors": []
         },
         "admission.log": {
-          "sha256": "bb1cea2b11d0d37ad04a7632988c75541a9e8a45bb48e24d3d07b1cfa1888ad4",
+          "sha256": "17c9ef9b4abb462a60ca45556541cf2821c214ed6e9d21c6f9eb793a832d6f48",
           "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1975 filtered out; finished in 0.30s"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2026 filtered out; finished in 0.86s"
           ],
           "panics": [],
           "pythonErrors": []
         },
-        "parse-refusal.log": {
-          "sha256": "924a31118a8d5948d1f5e548d8d675364fcb6c490ffca2b947952cb7e05e3c91",
+        "recursive-shape.log": {
+          "sha256": "b1adb0ded1b64998ab2ffc5779059abd4b61c2a4680f3e3cc8af59c48807f3b3",
           "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1975 filtered out; finished in 0.00s"
+            "test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 2021 filtered out; finished in 1.27s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::recursive_shape_tests::recursive_child_prefix_skips_calls_without_losing_guard_order"
+          ],
+          "pythonErrors": []
+        },
+        "parity.log": {
+          "sha256": "ab8c6956b08f3a10ea4d828572ced2d8a0b249074080e9caae1e85e568cb8bb2",
+          "results": [
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2026 filtered out; finished in 50.23s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::cutover_tests::relational_cutover_catalog_fixture_parity"
+          ],
+          "pythonErrors": []
+        },
+        "focused.log": {
+          "sha256": "5cfd4fb9b70f8d66c7fa06fb6eb2ee7cffbb36b1308abd666c54faccfe3327d5",
+          "results": [
+            "test result: FAILED. 343 passed; 4 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 176.37s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::memo_recursive_depth_tests::recursive_memo_replays_only_depth_fitting_completed_answers",
+            "code_rule_dsl::sql::relational::outcomes::recursive_shape_tests::recursive_child_prefix_skips_calls_without_losing_guard_order",
+            "code_rule_dsl::sql::relational::outcomes::tests::outcomes_reject_unproved_recursive_outcomes",
+            "code_rule_dsl::sql::relational::outcomes::utility_plan_tests::utility_plan_bounds_and_cycles"
+          ],
+          "pythonErrors": []
+        }
+      },
+      "executableSha256": "ade5d8979fed80a71327a361026c3ba0ebd2bdc325cfce937e9ad475c20b596a"
+    },
+    {
+      "name": "rerail-recursive-phase3",
+      "logs": {
+        "owned-1.log": {
+          "sha256": "4c012d5f2f507f6436254165c2eba61cb81dc8e805299a132a188180bab377dc",
+          "results": [
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2037 filtered out; finished in 0.00s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "owned-0.log": {
+          "sha256": "676d8ba1005253a3d78224679cdc418f81598d64087110707637750e74998d6b",
+          "results": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2038 filtered out; finished in 0.01s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "pure-before-fusion.log": {
+          "sha256": "c2aa584d4e22fe4561d3f6594da3a63f0a38ec92db3805bdaba6a2011d1b1dac",
+          "results": [
+            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2033 filtered out; finished in 0.47s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "file-condition-owned.log": {
+          "sha256": "bfc6c8f4f27d7f0db07d7ba03d2230de30818fb79f621229bc729e9b7d2f2426",
+          "results": [
+            "test result: FAILED. 6 passed; 3 failed; 0 ignored; 0 measured; 2030 filtered out; finished in 0.03s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::file_condition_tests::declaration_file_selection_uses_native_case_and_suffix_rules",
+            "code_rule_dsl::sql::relational::file_condition_tests::excluded_python_files_do_not_consume_work_or_value_probes",
+            "code_rule_dsl::sql::relational::file_condition_tests::python_file_metadata_conditions_cover_every_key_and_missing_module"
+          ],
+          "pythonErrors": []
+        },
+        "admission.log": {
+          "sha256": "f627363ad67520164a85f74f8da63e1a5401655c59b5ecceeb428c417066066c",
+          "results": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2038 filtered out; finished in 0.49s"
           ],
           "panics": [],
           "pythonErrors": []
         },
         "parity.log": {
-          "sha256": "cb11b8bcd407cca6e8164116bcf73593bf01388f575c97dc6e5b1e7c2dd0f69d",
+          "sha256": "5e2f5924886caf2e2af2f9f4bf61e5f421d92b0b7a9fb3b2046ef0f2c365880e",
           "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1975 filtered out; finished in 36.36s"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2038 filtered out; finished in 49.81s"
           ],
           "panics": [],
           "pythonErrors": []
         },
-        "binding-occurrence.log": {
-          "sha256": "c301b38be7055a6ac226301d7beb4c55df29d166ccf609d564eb021916107046",
+        "focused.log": {
+          "sha256": "856212e3cde5a09f19c7e47bf15f1501a5238510290e4dc054a9686840865167",
           "results": [
-            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1972 filtered out; finished in 0.84s"
+            "test result: FAILED. 349 passed; 10 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 139.69s"
           ],
-          "panics": [],
-          "pythonErrors": []
-        },
-        "recursive.log": {
-          "sha256": "a9845a24c07a09845fda19bb44719ed2d577369ea4a6061605af64b9de6a6f88",
-          "results": [
-            "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1971 filtered out; finished in 4.52s"
+          "panics": [
+            "code_rule_dsl::sql::relational::file_condition_tests::declaration_file_selection_uses_native_case_and_suffix_rules",
+            "code_rule_dsl::sql::relational::file_condition_tests::excluded_python_files_do_not_consume_work_or_value_probes",
+            "code_rule_dsl::sql::relational::file_condition_tests::python_file_metadata_conditions_cover_every_key_and_missing_module",
+            "code_rule_dsl::sql::relational::outcomes::binding_region_tests::binding_region_count_and_list_channels_do_not_become_node_regions",
+            "code_rule_dsl::sql::relational::outcomes::binds_tests::binds_refuses_subrules_redefinitions_and_capture_regions",
+            "code_rule_dsl::sql::relational::outcomes::tests::outcomes_reject_unproved_recursive_outcomes",
+            "code_rule_dsl::sql::relational::outcomes::utility_plan_tests::utility_plan_bounds_and_cycles",
+            "code_rule_dsl::sql::relational::recursion_tests::relational_components_reject_unproved_recursion_before_sql",
+            "code_rule_dsl::sql::relational::tests::relational_expansion_limits_fail_before_execution",
+            "code_rule_dsl::sql::relational::tests::relational_unsupported_semantics_fail_closed"
           ],
-          "panics": [],
           "pythonErrors": []
         }
       },
-      "executableSha256": "d64961bd65bcc47596ad4497b6fea2331429d10ebba31e283eb2ccea23499546"
+      "executableSha256": "1644e7cfb81949683d292aaad14a921753359cfeada3c503bbe9d481fcb97e79"
     },
     {
-      "name": "rerail-broad-phase2",
+      "name": "rerail-recursive-phase4",
       "logs": {
-        "nested-shape.log": {
-          "sha256": "d5a6fcbe085da7e25d99910de2389134c8a1f595510242e64462d2addc4d49d7",
+        "mixed-lldb-sql.log": {
+          "sha256": "d23a490b5a50fd9319a110050323889b89614b18fb9f60ec616dbda9d247c156",
           "results": [
-            "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 1981 filtered out; finished in 5.46s"
+            "test result: \u001b[31mFAILED\u001b(B\u001b[m. 0 passed; 1 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.08s"
           ],
           "panics": [
-            "code_rule_dsl::sql::relational::outcomes::nested_shape_tests::deeper_correlated_sql_prepares_with_bounded_text_and_linear_root_work"
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths"
           ],
           "pythonErrors": []
         },
-        "parse.log": {
-          "sha256": "26f699b567e59a9c30d247f9f1a5287d01ccd791f174634fa0663332712d2217",
+        "mixed-lldb-sql2.log": {
+          "sha256": "a40c6048e645d17f325ae581158dad3939aeaa26125e17bf73ea27a1f8062e29",
           "results": [
-            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1978 filtered out; finished in 0.17s"
+            "test result: \u001b[31mFAILED\u001b(B\u001b[m. 0 passed; 1 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.08s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths"
+          ],
+          "pythonErrors": []
+        },
+        "mixed-lldb-sql3.log": {
+          "sha256": "66ff8342a7733f5f78ae77dce27f3e36fee6902958a05b6c6ead7e52f21afbee",
+          "results": [
+            "test result: \u001b[31mFAILED\u001b(B\u001b[m. 0 passed; 1 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.09s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths"
+          ],
+          "pythonErrors": []
+        },
+        "mixed-lldb-sql4.log": {
+          "sha256": "60d758b7672ddc3888a09bb4e6df0b0f0f1f9c7c239f7b7cbfab0a62b7b6ca00",
+          "results": [
+            "test result: \u001b[31mFAILED\u001b(B\u001b[m. 0 passed; 1 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.08s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths"
+          ],
+          "pythonErrors": []
+        },
+        "file-owned.log": {
+          "sha256": "a22462b8d218814aeb807787c9c36f1e71a6af5b1a2d47fcab2a6bc3efcd37c9",
+          "results": [
+            "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 2049 filtered out; finished in 0.03s"
           ],
           "panics": [],
           "pythonErrors": []
         },
-        "format.log": {
-          "sha256": "7ff7880fafcbb643dd57c9d7112294bfa698d642263a395f144f8e8b8eee0931",
+        "mixed-lldb-sql5.log": {
+          "sha256": "1deb360d04367789cfa57bfcf6cfb45fc6eb64fb887ee673effe045246b0eaa3",
           "results": [
-            "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1981 filtered out; finished in 0.18s"
+            "test result: \u001b[31mFAILED\u001b(B\u001b[m. 0 passed; 1 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.08s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths"
+          ],
+          "pythonErrors": []
+        },
+        "pure-fusion.log": {
+          "sha256": "f3ab71174d3862b5c7da79f7483edb0d12cbfcb6f63a6c41506e21bc2b62518d",
+          "results": [
+            "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 2051 filtered out; finished in 0.49s"
           ],
           "panics": [],
           "pythonErrors": []
         },
-        "calls.log": {
-          "sha256": "01d6c589a01ff1f55f4c04913510cc7d2ea581661faf6e74aa79913b366b5aef",
+        "mixed.log": {
+          "sha256": "a3f5c9a9cf1bc8d0fd54703b3d148c995c280e963904992a064607da0d5e9883",
           "results": [
-            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1978 filtered out; finished in 2.37s"
+            "test result: FAILED. 1 passed; 6 failed; 0 ignored; 0 measured; 2051 filtered out; finished in 0.04s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_declines_unproved_or_capture_writing_components_without_lowering_side_effects",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_mutual_scc_and_readonly_capture_regions_share_native_memo_answers",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_nested_wide_siblings_keep_control_size_fixed_and_live_continuations_linear",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_universal_all_any_not_and_search_preserve_unknown_and_reached_work",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_walk_directions_and_total_rule_stops_have_native_order"
+          ],
+          "pythonErrors": []
+        },
+        "capture-oracle-owned.log": {
+          "sha256": "e506980f1f5bb26e01ef4a5581fb92f24ae9675c152dc7858307af3183a9d392",
+          "results": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.00s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "mixed-lldb-c.log": {
+          "sha256": "72fed8b06513da464344666efdd53396ad17053fec76f9ead83d3161ec46cc76",
+          "results": [],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "binding-region.log": {
+          "sha256": "6ee092382dce23832ae18dd81cf328aee605390d7ee135343ea167fef84a7761",
+          "results": [
+            "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 2055 filtered out; finished in 0.47s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::binding_region_tests::binding_region_count_and_list_channels_do_not_become_node_regions"
+          ],
+          "pythonErrors": []
+        },
+        "predicate-fusion.log": {
+          "sha256": "a4a97b2699eead475fabf863e221d0d4169526aae379e33ce56bae9e9b959bbb",
+          "results": [
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2056 filtered out; finished in 0.38s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "mixed-lldb.log": {
+          "sha256": "9a07af679e5d34475159dfb27706c27383dffbdf366c2b644af9a63c276774ec",
+          "results": [
+            "test result: \u001b[31mFAILED\u001b(B\u001b[m. 0 passed; 1 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.01s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths"
+          ],
+          "pythonErrors": []
+        },
+        "sibling-state-owned.log": {
+          "sha256": "3006d52d2eb92084cc4dcf584b628b2f766b85203daf9edc17816f90684fcb17",
+          "results": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.00s"
           ],
           "panics": [],
           "pythonErrors": []
         },
         "admission.log": {
-          "sha256": "3fe11fce0e89ea337e73fddad918d17dc2c7a896b65a1aafc23a815242f5a486",
+          "sha256": "14cbb78eb663486b58b01b3e512678aa415cc5b4461f2dccb44164860b5c687b",
           "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1983 filtered out; finished in 0.33s"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.58s"
           ],
           "panics": [],
           "pythonErrors": []
         },
         "parity.log": {
-          "sha256": "1fea29160f8acad6e064009a61fc3426697cba967d2a333cf93d9633925fa8e6",
+          "sha256": "79a45619be3b997ebb884d794a2f23cde100bf3b0bcd23dab50844e476ade16f",
           "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1983 filtered out; finished in 56.50s"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 37.37s"
           ],
           "panics": [],
           "pythonErrors": []
         },
-        "binding-occurrence.log": {
-          "sha256": "59b8aa5020e047fffc58b95d3e239b1f85c1a5de23b335b23ca61374d3106300",
+        "focused.log": {
+          "sha256": "535419ebb8e03a7a4a8cc70dd07d255015f2aa1e4f99fa8314f805facc97b71c",
           "results": [
-            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1980 filtered out; finished in 0.77s"
+            "test result: FAILED. 366 passed; 12 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 133.86s"
           ],
-          "panics": [],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::binding_region_tests::binding_region_count_and_list_channels_do_not_become_node_regions",
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_declines_unproved_or_capture_writing_components_without_lowering_side_effects",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_mutual_scc_and_readonly_capture_regions_share_native_memo_answers",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_nested_wide_siblings_keep_control_size_fixed_and_live_continuations_linear",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_universal_all_any_not_and_search_preserve_unknown_and_reached_work",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_walk_directions_and_total_rule_stops_have_native_order",
+            "code_rule_dsl::sql::relational::outcomes::nth_tests::named_sibling_an_b_positions_cover_reverse_roots_and_anonymous_nodes",
+            "code_rule_dsl::sql::relational::outcomes::nth_tests::pure_of_rule_classification_spends_once_per_named_parent_and_caches_empty_lists",
+            "code_rule_dsl::sql::relational::outcomes::nth_tests::sibling_classification_identity_is_shared_across_direct_framed_and_scheduled_calls",
+            "code_rule_dsl::sql::relational::outcomes::parse_export_tests::parsed_readonly_recursive_regions_keep_annotation_scopes_and_memo_bypass",
+            "code_rule_dsl::sql::relational::tests::total_representation_unsupported_semantics_fail_closed"
+          ],
           "pythonErrors": []
         },
-        "recursive.log": {
-          "sha256": "df5c4f9c0cabe0dc6b01eb2fc6b16fa3b917cc934899cc506251fc6da0c9ea90",
+        "nth-owned.log": {
+          "sha256": "fe631dd2c123ad7565735bb18b34a5b9eceec40986e8f160d651ee2717cd25bc",
           "results": [
-            "test result: ok. 56 passed; 0 failed; 1 ignored; 0 measured; 1927 filtered out; finished in 6.19s"
+            "test result: FAILED. 3 passed; 3 failed; 0 ignored; 0 measured; 2052 filtered out; finished in 0.57s"
           ],
-          "panics": [],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::nth_tests::named_sibling_an_b_positions_cover_reverse_roots_and_anonymous_nodes",
+            "code_rule_dsl::sql::relational::outcomes::nth_tests::pure_of_rule_classification_spends_once_per_named_parent_and_caches_empty_lists",
+            "code_rule_dsl::sql::relational::outcomes::nth_tests::sibling_classification_identity_is_shared_across_direct_framed_and_scheduled_calls"
+          ],
           "pythonErrors": []
         }
       },
-      "executableSha256": "d151b05adef776d1753e3b211630aeae01959ac2e119eadd5dd79334e9564cf9"
+      "executableSha256": "a96e498910951121d87e6bb889e6a4059160f9af6781340957fca682e047766b"
     },
     {
-      "name": "rerail-broad-phase3",
+      "name": "rerail-recursive-phase5",
       "logs": {
-        "nested-shape.log": {
-          "sha256": "feea2d6723e7f82550230f69e80e6b1ac9531bbd1344463312868fa3f9d39b5d",
+        "mixed.log": {
+          "sha256": "79fd5e55dde9f091d108f97ae2d6249444f88c752bc6121bde33c84a19ebb185",
           "results": [
-            "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1983 filtered out; finished in 7.12s"
+            "test result: FAILED. 2 passed; 5 failed; 0 ignored; 0 measured; 2057 filtered out; finished in 0.08s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_mutual_scc_and_readonly_capture_regions_share_native_memo_answers",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_nested_wide_siblings_keep_control_size_fixed_and_live_continuations_linear",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_universal_all_any_not_and_search_preserve_unknown_and_reached_work",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_walk_directions_and_total_rule_stops_have_native_order"
+          ],
+          "pythonErrors": []
+        },
+        "recursive-shape-owned.log": {
+          "sha256": "2f4b63d598abe2d4fbb0964574052869435944c46bd93750d6ae4ec1afa2dab0",
+          "results": [
+            "test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 2054 filtered out; finished in 1.36s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::recursive_shape_tests::recursive_parent_field_checks_origin_role_before_entering_parent"
+          ],
+          "pythonErrors": []
+        },
+        "admission.log": {
+          "sha256": "59351a385dcbd16c3bd914e4557fe0bf654150bcfa78fb32f5b284825dc88e63",
+          "results": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2063 filtered out; finished in 0.50s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "parity.log": {
+          "sha256": "2f774000c86baa1c04375f3f0517b6d596830a57f5b6228979265b945f6e15d9",
+          "results": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2063 filtered out; finished in 48.57s"
+          ],
+          "panics": [],
+          "pythonErrors": []
+        },
+        "focused.log": {
+          "sha256": "09f49e657d86394d6538c12b90a4f5c385ab3b0824af59dfdcc5bc605ef9d133",
+          "results": [
+            "test result: FAILED. 376 passed; 8 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 143.78s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::emit::mixed_recursive_emit::tests::mixed_completed_memo_peaks_match_entry_oracle_at_static_and_dynamic_depths",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_mutual_scc_and_readonly_capture_regions_share_native_memo_answers",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_nested_wide_siblings_keep_control_size_fixed_and_live_continuations_linear",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_universal_all_any_not_and_search_preserve_unknown_and_reached_work",
+            "code_rule_dsl::sql::relational::outcomes::mixed_recursive_tests::mixed_walk_directions_and_total_rule_stops_have_native_order",
+            "code_rule_dsl::sql::relational::outcomes::nth_tests::sibling_classification_identity_is_shared_across_direct_framed_and_scheduled_calls",
+            "code_rule_dsl::sql::relational::outcomes::parse_export_tests::parsed_readonly_recursive_regions_keep_annotation_scopes_and_memo_bypass",
+            "code_rule_dsl::sql::relational::outcomes::recursive_shape_tests::recursive_parent_field_checks_origin_role_before_entering_parent"
+          ],
+          "pythonErrors": []
+        },
+        "nth-owned.log": {
+          "sha256": "a60cdb7806c7fbef7bcc48a1fcb42dc4cb9b80c573af170678d231d6f16856f1",
+          "results": [
+            "test result: FAILED. 20 passed; 1 failed; 0 ignored; 0 measured; 2043 filtered out; finished in 1.66s"
+          ],
+          "panics": [
+            "code_rule_dsl::sql::relational::outcomes::nth_tests::sibling_classification_identity_is_shared_across_direct_framed_and_scheduled_calls"
+          ],
+          "pythonErrors": []
+        }
+      },
+      "executableSha256": "72fb25e37f7e2c41d3309ab074f4ddee3d46b90300f54f11c86dd0c4fe57aa4e"
+    },
+    {
+      "name": "rerail-recursive-phase6",
+      "logs": {
+        "nth.log": {
+          "sha256": "066fb1efeafde7a6d10a43a78e604841dfe45131c91bf3173665658d19561315",
+          "results": [
+            "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 2044 filtered out; finished in 1.50s"
           ],
           "panics": [],
           "pythonErrors": []
         },
         "parse.log": {
-          "sha256": "4e25a2e8bad7e3912575089b12c6c1cbb3913879260255f1506f79caea971aef",
+          "sha256": "a2da68a28ed98b6812e48712abfce7699112a1eda870468b33c8217d514fd3a7",
           "results": [
-            "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1979 filtered out; finished in 0.31s"
+            "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 2052 filtered out; finished in 2.01s"
           ],
           "panics": [],
           "pythonErrors": []
         },
-        "format.log": {
-          "sha256": "95ec6006244add4a7b9b317afcfd49f25584d0f61773fe9a0259271949a4d81c",
+        "recursion.log": {
+          "sha256": "977822e9629320b3bc414d4817111a1af0ff9ed706db1c845de481682cfa6221",
           "results": [
-            "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1983 filtered out; finished in 0.40s"
+            "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2055 filtered out; finished in 1.60s"
           ],
           "panics": [],
           "pythonErrors": []
         },
-        "calls.log": {
-          "sha256": "276fff7d729527cb5bce29734fd9540b06936b423c2a4e6592a16917cbe152ac",
+        "mixed.log": {
+          "sha256": "7af3d2b865bc298815b2e2acd12b70e4f30d0d11cc2624f30be48f0747ae1bc4",
           "results": [
-            "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1979 filtered out; finished in 3.45s"
-          ],
-          "panics": [],
-          "pythonErrors": []
-        },
-        "recursive.log": {
-          "sha256": "a80d53b4c717211d68d6275c2f02294a4084a58edaa019de70bfbd7c5ef9fca1",
-          "results": [
-            "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1979 filtered out; finished in 4.70s"
+            "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 2056 filtered out; finished in 1.19s"
           ],
           "panics": [],
           "pythonErrors": []
         }
       },
-      "executableSha256": "b2c1bffb73d20943fb75e44cc2cce9a648cd2b423eb0ed376adb5aca51ad2d8f"
-    },
-    {
-      "name": "rerail-broad-phase4",
-      "logs": {
-        "calls.log": {
-          "sha256": "4183728a393a1dd466a006852e099b75558cea1212336a11c625daa309cf144e",
-          "results": [
-            "test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 1980 filtered out; finished in 3.22s"
-          ],
-          "panics": [
-            "code_rule_dsl::sql::relational::outcomes::call_tests::parameter_frames_keep_count_text_and_node_memo_inputs_distinct"
-          ],
-          "pythonErrors": []
-        },
-        "typed-memo.log": {
-          "sha256": "2aa7fcd7d05aedcc36cb0ced357e99b838bee3124c1c394fec714e541c13aef5",
-          "results": [
-            "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1988 filtered out; finished in 0.00s"
-          ],
-          "panics": [],
-          "pythonErrors": []
-        }
-      },
-      "executableSha256": "d0184d9d8f3918b17e7f0d18a2440013df8ed05671c7316b126f30079811b1f8"
-    },
-    {
-      "name": "rerail-broad-first-qualification",
-      "logs": {
-        "coverage.log": {
-          "sha256": "19d26de49ff6ec453ae31bd963815efc3a4302d4f22cef4fa6f23d87e6f578e6",
-          "results": [
-            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1985 filtered out; finished in 0.73s"
-          ],
-          "panics": [
-            "code_rule_dsl::sql::relational::cutover_tests::relational_cutover_catalog_complete_coverage"
-          ],
-          "pythonErrors": []
-        },
-        "qualification.log": {
-          "sha256": "d27c78ece49e4fa1d561d31e6189e56e4204800c911598823102f2ed932904a0",
-          "results": [],
-          "panics": [],
-          "pythonErrors": [
-            "    raise CalledProcessError(retcode, process.args,",
-            "subprocess.CalledProcessError: Command '['/private/tmp/rerail-broad-qualified/engine', 'sql::relational::', '--nocapture', '--test-threads=1']' returned non-zero exit status 101."
-          ]
-        },
-        "parity.log": {
-          "sha256": "94d5fc07f88fc71794d9b93e314fc0bc6b0ff03afec34bc903b4a2b75288ee75",
-          "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1985 filtered out; finished in 77.09s"
-          ],
-          "panics": [],
-          "pythonErrors": []
-        },
-        "semantics.log": {
-          "sha256": "c650e92f8062d6606401911b7b88562fd830d701e20b492b6f4ba0fc76fccf1c",
-          "results": [
-            "test result: FAILED. 305 passed; 1 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 262.48s"
-          ],
-          "panics": [
-            "code_rule_dsl::sql::relational::outcomes::downward_tests::downward_rejects_impure_bases_and_general_cycles"
-          ],
-          "pythonErrors": []
-        }
-      },
-      "executableSha256": "c2b0f15818000e9cd98b5330e8908ed2b8a30a79335be521cf1b943409fc1d9e"
-    },
-    {
-      "name": "rerail-broad-second-qualification",
-      "logs": {
-        "coverage.log": {
-          "sha256": "d83807e4d0eb332fdbfa78c0f5cb96e489ae514fb3bb9586af7ab66369070ee3",
-          "results": [
-            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1986 filtered out; finished in 0.35s"
-          ],
-          "panics": [
-            "code_rule_dsl::sql::relational::cutover_tests::relational_cutover_catalog_complete_coverage"
-          ],
-          "pythonErrors": []
-        },
-        "qualification.log": {
-          "sha256": "86d3322763c13e30e5fcd904e8ba98d883ac88e735316e8890793ffa144147c8",
-          "results": [],
-          "panics": [],
-          "pythonErrors": [
-            "AssertionError: Artifact changed during the run: /Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native/src/code_rule_dsl/sql/relational/outcomes/call_tests.rs"
-          ]
-        },
-        "parity.log": {
-          "sha256": "a552c73b9c245f38491adb28faa244d23076694bf275aa879642c4d38e0b2ea1",
-          "results": [
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1986 filtered out; finished in 42.89s"
-          ],
-          "panics": [],
-          "pythonErrors": []
-        },
-        "semantics.log": {
-          "sha256": "c50193891afbb6e3ab4740ec2afa77caff25cf56ad2a4497e89801dee2d7de76",
-          "results": [
-            "test result: ok. 307 passed; 0 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 284.44s"
-          ],
-          "panics": [],
-          "pythonErrors": []
-        }
-      },
-      "executableSha256": "b9eb2b6eb8975f09c233a89de261c565bc9e64031343a1c8f3cbc44afedfc662"
+      "executableSha256": "3c6cdb23c37eb43a67af773e2c01e635a915abdd3c757f9eb2dface48bb149aa"
     }
   ],
   "validation": {
     "candidate.log": [
-      "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 1985 filtered out; finished in 0.60s"
+      "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 2062 filtered out; finished in 0.46s"
     ],
     "semantics.log": [
-      "test result: ok. 308 passed; 0 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 163.23s"
+      "test result: ok. 385 passed; 0 failed; 3 ignored; 0 measured; 1677 filtered out; finished in 145.90s"
     ],
     "fixtures.log": [
-      "test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 1974 filtered out; finished in 4.21s"
+      "test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 2051 filtered out; finished in 3.34s"
     ],
     "corpus.log": [
-      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1987 filtered out; finished in 117.50s"
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2064 filtered out; finished in 68.39s"
     ],
     "adversarial.log": [
-      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1987 filtered out; finished in 0.17s"
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2064 filtered out; finished in 0.16s"
     ]
   },
   "nativeLint": {
     "passed": true,
     "command": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib npm run check:native",
-    "log": "\n> @neralabs/rerail@0.1.0-next.2 check:native\n> cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings\n\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 34.10s\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 39.34s\n"
+    "log": "\n> @neralabs/rerail@0.1.0-next.2 check:native\n> cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings\n\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 06s\n   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 00s\n"
   },
   "buildCommand": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib RUSTC_WRAPPER=/tmp/rerail-rustc-no-local-lto.py cargo test -p rerail-engine --profile loop --features unbounded-work --no-run",
   "buildEnvironment": "Existing local jemalloc shim and rustc wrapper disabling local LTO; machine-local paths are not portable prerequisites.",
-  "experiment": "benchmark/sql-relational-broad-catalog-integration.json"
+  "experiment": "benchmark/sql-relational-recursive-catalog-integration.json"
 }

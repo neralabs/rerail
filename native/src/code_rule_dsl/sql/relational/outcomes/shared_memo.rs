@@ -291,7 +291,17 @@ impl Shared<'_> {
                             format!(
                                 "CASE WHEN d.tested=1 THEN {} ELSE d.c{s} END",
                                 if scalar_result {
-                                    "d.node".into()
+                                    if self
+                                        .sql
+                                        .generation
+                                        .memo_layout
+                                        .as_ref()
+                                        .is_some_and(|layout| layout.span_capable(*s))
+                                    {
+                                        format!("relation_capture_bind(d.file,d.c{s},d.node)")
+                                    } else {
+                                        "d.node".into()
+                                    }
                                 } else {
                                     format!("d.e{s}")
                                 }

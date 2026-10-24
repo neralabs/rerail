@@ -12,12 +12,14 @@ pub(super) struct Layout {
     pub contracts: BTreeMap<usize, Contract>,
     columns: Vec<usize>,
     names: Vec<Option<String>>,
+    span_slots: super::Slots,
 }
 impl Layout {
     pub(super) fn new(
         slots: &[super::Slot],
         names: &[Option<String>],
         metadata_origins: &[Option<usize>],
+        span_slots: &super::Slots,
         contracts: BTreeMap<usize, Contract>,
     ) -> Self {
         let mut logical = BTreeMap::new();
@@ -54,10 +56,24 @@ impl Layout {
             contracts,
             columns,
             names: names.to_vec(),
+            span_slots: span_slots.clone(),
         }
     }
     pub(super) fn column(&self, physical: usize) -> usize {
         self.columns[physical]
+    }
+    pub(super) fn has_spans(&self) -> bool {
+        !self.span_slots.is_empty()
+    }
+    pub(super) fn span_capable(&self, slot: usize) -> bool {
+        self.span_slots.contains(&slot)
+    }
+    pub(super) fn normalize_key(&self, slot: usize, expression: String) -> String {
+        if self.span_slots.contains(&slot) {
+            format!("relation_capture_key({expression})")
+        } else {
+            expression
+        }
     }
     pub(super) fn capture(&self, physical: usize, scope: Option<&BTreeSet<String>>) -> bool {
         self.names[physical]

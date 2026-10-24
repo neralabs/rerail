@@ -160,7 +160,7 @@ fn downward_retains_outer_unknown_capture_and_publication_transactions() {
 }
 
 #[test]
-fn downward_rejects_memoized_bases_and_general_cycles() {
+fn recursive_components_admit_memoized_bases_and_strict_progress_cycles() {
     for utilities in [
         json!({"u":{"any":[{"value":{"eq":1}},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"u"}}]}}),
         json!({"u":{"any":[{"regex":"^1$"},{"has":{"stopBy":"neighbor","matches":"v"}}]},"v":{"has":{"stopBy":"neighbor","matches":"u"}}}),
@@ -170,10 +170,16 @@ fn downward_rejects_memoized_bases_and_general_cycles() {
             utilities,
         );
         let grammars = crate::code_rule_dsl::test_support::grammar_matchers(&p);
-        assert!(
-            super::compile(&grammars[0]).is_err(),
-            "unsupported component admitted"
-        );
+        super::compile(&grammars[0]).unwrap();
+        for work in [0, 1, 2, 4, 16, 64, 1024] {
+            super::publication_tests::check_work(
+                &p,
+                &[json!({"kind":"parenthesized_expression","matches":"u"})],
+                &["(1); ((2)); (((1)));"],
+                None,
+                work,
+            );
+        }
     }
 }
 

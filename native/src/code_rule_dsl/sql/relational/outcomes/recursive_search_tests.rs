@@ -191,3 +191,70 @@ fn recursive_semantic_sql_and_vm_scale_with_reached_input() {
         std::fs::write(path, serde_json::to_vec_pretty(&reports).unwrap()).unwrap();
     }
 }
+
+#[test]
+fn memoized_recursive_value_search_publishes_completed_siblings_and_replays_roots() {
+    let utils = utilities(
+        &[json!({"kind":"integer","value":{"eq":1}})],
+        json!({"kind":"list"}),
+    );
+    for body in [
+        json!({"matches":"u"}),
+        json!({"all":[{"matches":"wrapper"},{"matches":"wrapper"}]}),
+        json!({"not":{"matches":"wrapper"}}),
+    ] {
+        let rules = [json!({"kind":"list","all":[body]})];
+        for work in [0, 1, 2, 3, 4, 8, 16, 32, 64, 128, 1024, 10000] {
+            check(
+                "python",
+                &rules,
+                utils.clone(),
+                &["a=[[2,3],[4,[1]],5]\nb=[[2],[3]]\nc=[1,[[4]]]\n"],
+                work,
+            );
+        }
+    }
+}
+
+#[test]
+fn memoized_recursive_capture_search_rolls_back_bases_and_exports_first_success() {
+    let utils = utilities(
+        &[json!({"kind":"integer","all":[{"pattern":"$X"},{"value":{"eq":1}}]})],
+        json!({"kind":"list"}),
+    );
+    let rules = [json!({"kind":"list","any":[{"matches":"u"},{"matches":"wrapper"}]})];
+    for work in [0, 1, 2, 3, 4, 8, 16, 32, 64, 128, 1024, 10000] {
+        check(
+            "python",
+            &rules,
+            utils.clone(),
+            &["a=[[2,3],[4,1],1]\nb=[[2],[3]]\n"],
+            work,
+        );
+    }
+}
+
+#[test]
+fn memoized_recursive_nested_siblings_seek_past_completed_subtrees() {
+    let utils = utilities(
+        &[json!({"kind":"integer","value":{"eq":1}})],
+        json!({"kind":"list"}),
+    );
+    let rules = [json!({"kind":"list","regex":"^\\[\\[","matches":"u"})];
+    let mut reports = Vec::new();
+    for width in [8, 32, 128] {
+        let source = format!("a=[{},[1]]\n", vec!["[2,3]"; width].join(","));
+        let report = check("python", &rules, utils.clone(), &[&source], i64::MAX);
+        reports.push(json!({"width":width,"sqlBytes":report["sql"].as_str().unwrap().len(),"vm":report["metrics"]["execution"]["vmSteps"],"metrics":report["metrics"],"output":report["output"],"sql":report["sql"]}));
+    }
+    assert_eq!(reports[0]["sqlBytes"], reports[2]["sqlBytes"]);
+    for pair in reports.windows(2) {
+        assert!(
+            pair[1]["vm"].as_u64().unwrap() < pair[0]["vm"].as_u64().unwrap() * 5,
+            "nested sibling work amplified: {reports:?}"
+        );
+    }
+    if let Ok(path) = std::env::var("RERAIL_MEMO_RECURSIVE_EVIDENCE") {
+        std::fs::write(path, serde_json::to_vec_pretty(&reports).unwrap()).unwrap();
+    }
+}

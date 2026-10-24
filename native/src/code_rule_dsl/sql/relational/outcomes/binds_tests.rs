@@ -105,13 +105,12 @@ fn binds_kind_selection_bounds_leaf_demands_under_irrelevant_growth() {
 }
 
 #[test]
-fn binds_refuses_subrules_redefinitions_and_capture_regions() {
+fn binds_refuses_subrules_and_redefinitions() {
     for binds in [
         json!({"site":{"kind":"assignment"}}),
         json!({"value":{"kind":"integer"}}),
         json!({"annotation":{"kind":"identifier"}}),
         json!({"redefines":{"form":"assignment"}}),
-        json!({"bindings":{"within":"REGION","max":1}}),
     ] {
         let p = policy(
             &[json!({"kind":"identifier","pattern":"$REGION","binds":binds})],

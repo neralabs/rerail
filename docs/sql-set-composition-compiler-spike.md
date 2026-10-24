@@ -5830,3 +5830,80 @@ Frozen B023 retains 246,364 VM instructions and 10,232 SQL bytes. Its nine prepa
 The full-coverage gate still fails as intended with 45 explicit refusals. Production replacement, complete-job execution limits, actual native stack-byte parity, and aggregate storage-byte limits remain unqualified. E721 still uses 102,275,790 VM instructions; ASYNC221 uses 41,753,849 and ASYNC230 uses 38,910,778. These measurements expose remaining outer-program overhead rather than evidence of native-speed parity.
 
 `benchmark/sql-relational-broad-catalog-integration.json` records the new grammar SQL, scaling samples, resource contracts, unchanged controls, and remaining refusals. The coverage ledger and qualification evidence contain the frozen executable and source hashes. The transition plan now specifies the next failing test and return-phase contract for memoized recursion.
+
+### Remaining catalog contracts: broad recursive batch (2026-10-24)
+
+The user requested sustained work across the remaining 45 refusals. This batch covers structural recursion, memoized semantic recursion, and parsed capture transport together. Three GPT-6.1 Sol agents have bounded implementation assignments. The parent reviews their changes and runs the integrated validation.
+
+Structural recursion uses a finite SQL control table and numeric continuation records. The compiler proves monotone structural progress for each recursive component. It refuses cycles that can repeat without moving. Utility-free predicates remain fused SQL expressions.
+
+Memoized semantic recursion needs entry and return events. Completed child answers must become visible before later siblings run. Its scheduler stores seven numeric control fields per suspended caller. Original captures remain in the correlated outer demand. Successful exports cross return boundaries. Indexed immediate-child seeks avoid an origin-by-descendant relation.
+
+Peak tracking records utility entry before the work charge. A cached answer fits only when its stored peak fits the current depth. A deeper invocation recomputes instead of returning an immediate depth failure. Failed calls unwind their control records and do not publish memo answers.
+
+Parsed capture cells preserve decoded text, source coordinates, and an optional original node. Host hooks evaluate SQL at the original host node. Atomic callbacks provide facts and typed transport; they do not evaluate child rules.
+
+These changes are not yet qualified. The baseline remains 101 admitted grammars, 308 passing relational tests, and 45 explicit refusals. The next checkpoint must check finite work, depth boundaries, unknown, capture rollback, native probes, statement count, VM growth, and continuation cleanup. Preparation remains outside the execution timing interval.
+
+The first executable checkpoint admits 127 of 146 grammars at compile time, an increase of 26. This is not a parity claim. The semantic suite reports 332 passes and four failures. Three failures share one SQL preparation defect: an outer correlated alias cannot use `alias.*` in the scheduler seed. The seed now names each column explicitly.
+
+The fourth failure detects an incorrect peak update on a pure recursive return row. SQLite can evaluate a `WHERE` expression before the code-table join. The peak update now checks the actual call instruction inside its guard. The independent oracle and expected peak remain unchanged.
+
+Review also required native-equivalent memo replay for parsed capture shadows. Native replay can retain a node and reserved range without transformed text. The typed cell now represents that state. Additional tests cover preserved hidden text and range-only replay. Non-span plans must retain their previous SQL projections and VM counts.
+
+Work continues beyond this checkpoint. The next extensions preserve recursive-first branch order, filter children before utility entry, and supply captured inputs to binding facts. A separate mixed-control compiler will compose finite semantic SQL regions inside general structural recursion. Its initial contract excludes capture writes inside recursive components.
+
+The second executable checkpoint admits 132 grammars. All 231 preceding controls and 54 focused controls retain exact SQL hashes and VM counts. The semantic suite reports 343 passes and four failures. Two tests still expect newly supported recursion to fail compilation. One fixture regex excludes the nested array it intended to visit. One depth oracle starts its second series cold while the native literal cache remains warm. Each correction preserves the tested engine contract.
+
+Recursive base alternatives now have separate SQL phases. This preserves whether the particular unknown arm can bind captures. Combining their write sets had made that distinction unavailable. The same scheduler now handles first or last recursive arms and all four neighbor axes. Non-child continuations use a visited flag, because node zero is a valid ancestor.
+
+Review found a physical access problem in sibling traversal. With `parent = P AND id > previousChild`, the lower bound can lie inside the previous child's subtree. The node cursor then starts again at P's first child. The new seek uses the completed child's subtree endpoint and P's upper bound. Nested-sibling scaling tests measure this case explicitly.
+
+The two newly admitted enum grammars exposed a missing file-condition contract. The planned atomic file guard evaluates metadata once per file and filters roots before work or probes. The catalog oracle must apply the same native file condition. This extends engine behavior; it does not exclude difficult fixtures from validation.
+
+The third executable checkpoint passes native parity for all 133 admitted grammars. The existing stub enum fixture contains only values that the rule must skip, so successful stub publication still lacked a witness. A separate fixture under `fixtures/rerail/sql_compiler` adds duplicate and distinct enum values, unknown placeholders, and automatic values. The next catalog run uses all 596 fixtures. Baseline comparisons must rerun the prior frozen executable on this same expanded inventory.
+
+The wider memo publication in ASYNC221 exposed SQLite residual checks beyond the first 16 virtual-table arguments. The cursor now retains and returns its original bound inputs for those checks. Tests cover 17, 32, and 72 inputs, including typed spans. No key constraints are removed.
+
+Compiler resource refusals now report emitted operator categories. This shows where physical sharing is still missing without increasing the 256-operator bound. Pure recursive control is being reduced by fusing adjacent total predicate regions. Semantic regions that contain effects remain ordered.
+
+The fourth executable checkpoint admits 134 grammars and passes native parity for all 134 across 596 fixtures. The separate contract suite still has 12 failures. Several are invalid test fixtures. Mixed recursion has a real preparation failure: an unparenthesized `OR` escapes a virtual-table join constraint. The planner then loses its required mode constraint. SQLite reports the outer tuple width instead of the underlying constraint failure. Numeric cell expressions now have explicit parentheses.
+
+Predicate fusion has controlled before-and-after evidence. One tracked conjunction shrinks from 9,766 to 7,784 SQL bytes and from 680,924 to 564,656 VM instructions. A disjunction shrinks from 8,838 to 7,822 bytes and from 631,365 to 569,519 instructions. These results use the same plan and a private test-only deoptimization control. They do not imply catalog-wide speed parity.
+
+The ordered recursive scheduler now represents each original alternative explicitly. Multiple recursive tails and field selectors retain their source order. A suspended caller records its resume phase as an eighth numeric cell. Failed alternatives restore the original capture inputs. A successful base also retains caller captures that another base could have written. This removes the single-tail restriction without expanding a recursive component into repeated SQL bodies.
+
+Review found that sibling classification also needs a transaction boundary per reached demand. Materializing all lookups before all fills makes every row observe an empty cache. The lookup, affordable classification, and completed publication now execute inside one correlated typed row. A batched native oracle varies each row's allowance and checks empty completed results and failed prefixes.
+
+The fifth checkpoint admits 135 grammars. All 135 pass native parity with positive witnesses across the expanded fixture inventory. All 285 prior SQL/VM controls remain exact. The contract suite reports 376 passes and eight failures, all in mixed scheduling or fixtures that select it.
+
+The mixed scheduler exposes a separate materialization error. Its return dispatcher refers to one correlated side-effecting CTE from five `UNION ALL` arms. The frozen executable pops the same continuation more than once. Marking that CTE `MATERIALIZED` does not ensure one instantiation across those correlated arms. A debugger probe that replaces pop with peek lets the schedule proceed, confirming the repeated-pop diagnosis. The replacement dispatch uses one `SELECT` with guarded expressions and one pop, close, and publication sequence.
+
+A separate review found incomplete span propagation through nested parameter calls. An outer parsed span can acquire its type after a nested body has been lowered. The final layout now closes span capability over the actual parameter alias edges. This preserves the existing SQL for components that cannot receive spans. A nested A-to-B call regression checks node-bound access and memo probes for two parsed ranges on the same host node.
+
+The single-select dispatcher passes a live debugger check before recompilation. Rewriting every SQL prepare in the frozen depth test makes all 16 static, dynamic, cached, depth-limited, and zero-work cases pass. Each case leaves no numeric continuation rows or open peak records. The next compiled checkpoint must confirm the same result without debugger rewriting.
+
+
+### Broad recursive batch: final qualification
+
+The final frozen executable passes all 385 relational tests. All 135 admitted catalog grammars pass native parity across 596 files. Each has a positive witness. This admits 34 additional grammars in one batch and leaves 11 explicit refusals. The full-coverage gate still fails as intended.
+
+Both native lint configurations pass. All 231 preceding controls and 54 focused controls retain exact SQL hashes and VM counts. Frozen B023 retains 246,364 VM instructions and 10,232 SQL bytes. It executes one matching statement and publishes no capture frames. Prepared median CPU is 4.479 ms against the reference's 32.460 ms. Preparation is reported separately.
+
+The mixed scheduler now passes the compiled depth, cache, work, unknown, mutual-recursion, and cleanup tests. Its width samples use 15,607 SQL bytes at sizes 8, 16, and 32. VM instructions are 234,929, 461,097, and 913,433. The separate oracle checks empty continuation storage and a balanced peak stack after each invocation.
+
+Baseline catalog comparison uses the prior frozen executable on the same 596-file inventory. All 101 previous grammars retain exact native and SQL outputs. Of those, 96 also retain exact SQL and VM counts. Five change:
+
+| Grammar | Previous VM | Current VM | Previous SQL bytes | Current SQL bytes |
+| --- | ---: | ---: | ---: | ---: |
+| try-except-pass | 1,042,522 | 1,053,807 | 27,700 | 27,116 |
+| try-except-continue | 1,032,132 | 1,043,753 | 27,700 | 27,116 |
+| B507 | 22,062,220 | 25,073,720 | 82,983 | 69,691 |
+| ASYNC221 run-process | 41,775,854 | 50,072,645 | 85,567 | 103,533 |
+| unnecessary-return-none | 17,915,511 | 11,334,102 | 69,986 | 64,279 |
+
+These regressions stay visible in the evidence. Exact peak tracking and native memo publication add work to some existing plans. Predicate fusion reduces SQL and VM work in its controlled samples, but does not establish a catalog-wide improvement. Several clauses still execute tens of millions of VM instructions.
+
+The remaining refusals are six recursive-context contracts and five resource limits. Shared finite functions need lazy typed calls with distinct native memo identities. Recursive parameter frames and cross-document capture returns need explicit contracts. The compiler's source and emitted operator limits remain 256; active typed returns remain limited to 128 cells.
+
+`benchmark/sql-relational-recursive-catalog-integration.json` records new grammar SQL, controlled profiles, unchanged cases, and cost regressions. The coverage and qualification records pin the source, executable, fixture inventory, and failed checkpoints. The transition plan describes the next two implementation tracks. Production replacement, native stack-byte equivalence, aggregate storage-byte bounds, deadlines, and the complete-job 100-execution gate remain unqualified.

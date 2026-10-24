@@ -13,6 +13,8 @@ pub(super) struct Effects {
     /// Exports may refer to descendants, so a root-binding bitmask is insufficient.
     pub typed_exports: bool,
     pub contains_chain: bool,
+    pub needs_peak: bool,
+    pub sibling_cache: bool,
 }
 impl Effects {
     fn merge(&mut self, child: Self) {
@@ -24,10 +26,33 @@ impl Effects {
         self.cache_fills |= child.cache_fills;
         self.typed_exports |= child.typed_exports;
         self.contains_chain |= child.contains_chain;
+        self.needs_peak |= child.needs_peak;
+        self.sibling_cache |= child.sibling_cache;
     }
     pub fn of(op: &Op) -> Self {
         let mut result = Self::default();
         match op {
+            Op::MixedRecursive { program, .. } => {
+                for region in &program.regions {
+                    result.merge(region.effects);
+                }
+                result.fallible = true;
+                result.uses_memo = true;
+                result.file_memo = true;
+                result.needs_peak = true;
+                result.contains_chain = true;
+                result.typed_exports = true;
+            }
+            Op::NthChild {
+                of_rule: Some(child),
+                memoize,
+                ..
+            } => {
+                result = child.effects;
+                result.fallible = true;
+                result.cache_fills |= *memoize;
+                result.sibling_cache |= *memoize;
+            }
             Op::FormatArgs {
                 unused, missing, ..
             } => {
@@ -47,6 +72,7 @@ impl Effects {
                 result.file_memo = true;
                 result.fallible = true;
                 result.typed_exports = true;
+                result.needs_peak |= result.contains_chain;
             }
             Op::Parse { child, .. } => {
                 result = child.effects;
@@ -56,7 +82,12 @@ impl Effects {
                 result.file_memo |= child.uses_memo();
                 result.typed_exports = true;
             }
-            Op::Pattern(..) => result.typed_exports = true,
+            Op::Host { child, .. } => {
+                result = child.effects;
+                result.typed_exports = true;
+                result.file_memo |= child.uses_memo();
+            }
+            Op::Pattern(..) | Op::CaptureBind(_) => result.typed_exports = true,
             Op::FieldNeighbor { child, .. } | Op::FieldEnd { child, .. } => {
                 result = child.effects;
                 result.walk_depth += 1;
@@ -82,9 +113,17 @@ impl Effects {
             }
             Op::RecursiveSearch { component, .. } => {
                 result = component.base.effects;
+                result.needs_peak |= component.memo;
+                result.uses_memo |= component.memo;
+                result.file_memo |= component.memo;
                 result.fallible = true;
                 result.contains_chain = true;
                 result.typed_exports = true;
+            }
+            Op::PureRecursive(_) => {
+                result.fallible = true;
+                result.contains_chain = true;
+                result.needs_peak = true;
             }
             Op::Chain(..) | Op::Downward(..) => {
                 result.fallible = true;
@@ -99,6 +138,7 @@ impl Effects {
                 result = child.effects;
                 result.fallible = true;
                 result.uses_memo = child.reads_value();
+                result.needs_peak |= result.uses_memo && result.contains_chain;
                 // Only the keyed memo path measures per-invocation cache-fill deltas.
                 result.file_memo |= result.uses_memo && result.cache_fills;
             }

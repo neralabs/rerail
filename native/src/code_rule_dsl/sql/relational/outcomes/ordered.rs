@@ -37,6 +37,13 @@ pub(super) fn candidate_filter(rule: &Plan, alias: &str) -> String {
 pub(super) fn boolean(plan: &Plan, alias: &str) -> Result<Option<String>, String> {
     Ok(Some(match &plan.op {
         Op::Predicate(set) => super::predicate::condition(set, alias)?,
+        Op::NthChild {
+            step,
+            offset,
+            reverse,
+            of_rule: None,
+            ..
+        } => super::nth_emit::plain(*step, *offset, *reverse, alias),
         Op::Not(child) => {
             let Some(test) = boolean(child, alias)? else {
                 return Ok(None);
@@ -114,7 +121,16 @@ impl Sql {
         bounds: Option<Bounds>,
         input: &Demand,
     ) -> Result<Output, String> {
+        let span_inputs = |plan: &Plan| {
+            self.generation.memo_layout.as_ref().is_some_and(|layout| {
+                plan.mentions
+                    .union(&plan.writes)
+                    .any(|slot| layout.span_capable(*slot))
+            })
+        };
         if rule.fallible()
+            || span_inputs(rule)
+            || stop.is_some_and(span_inputs)
             || stop.is_some_and(Plan::fallible)
             || bounds.is_some()
             || nested::contains_walk(rule)

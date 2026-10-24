@@ -90,7 +90,9 @@ pub(super) fn check_work(
                                         })
                                         .or_else(|| {
                                             env.get_transformed(name).map(|n| {
-                                                json!(String::from_utf8_lossy(n).into_owned())
+                                                if let (Some(text),Some(span))=(matcher::exported_text(&env,name),matcher::exported_span(&env,name)) {
+                                                    json!({"text":text,"span":[span.start,span.end]})
+                                                } else {json!(String::from_utf8_lossy(n).into_owned())}
                                             })
                                         })
                                         .unwrap_or(Value::Null)
