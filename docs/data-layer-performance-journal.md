@@ -148,6 +148,11 @@ Unknown or missing origins fail acceptance. Older captures cannot prove the newl
 The fixed 100 limit covers every engine submission across all connections and workers.
 A complete capture with 100 submissions plus 500 internal executions passes; submission 101 fails.
 
+The profiling-stream failure has a concrete cause: one trace record reaches the output writer as 38 formatting fragments.
+The new writer test requires one preformatted record per write and fails before the implementation changes.
+`trace-output-red` records that behavioral failure (5.536 seconds).
+The same production trace source compiles directly in the small SQL host; this avoids another engine test build for the unit ladder.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
