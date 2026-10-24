@@ -10,6 +10,21 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Compiler schema recovery: red
+
+The next R3 test compiles twelve independent relational clauses through the public API.
+Each clause declares an input, syntax nodes, edges, and ownership.
+The required shape has no executed input or syntax DDL. SQLite still validates every authored query.
+The prior addon executes 48 CREATE TABLE statements and fails the new assertion.
+Evidence: `.rerail/profiles/sql-recovery-compiler-20261023/schema-red` (5.593 seconds).
+The mandatory producer-shape command includes this test.
+
+The target uses eponymous-only SQLite modules with the existing column declarations.
+Registration establishes opaque schema boundaries without executing CREATE statements or expanding SQL views.
+Stage CTAS validation remains unchanged in this slice. It preserves SQLite affinity inference and deferred-column validation.
+Runtime materialization and the fixed 100-statement allowance remain unchanged.
+
+
 The first guard test exposes a real acceptance bypass.
 A successful profiling child without an execution report makes the CI launcher return zero.
 The new test runs the actual launcher against a temporary controller that omits or bypasses enforcement.
