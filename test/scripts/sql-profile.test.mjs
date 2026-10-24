@@ -245,3 +245,39 @@ test("overlapping cursor lifetimes cannot become CPU priorities", () => {
   assert.match(summary.nextStep, /API boundary timers/);
   assert.deepEqual(summary.actions, []);
 });
+
+
+test("execution inventory retains event attribution when identical SQL crosses producers and workers", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-inventory-"));
+  const raw = join(directory, "raw"); mkdirSync(raw);
+  const events = [
+    { context: { scope: "compile", producer: "validation", path: "/rules/0/clauses/0" }, thread: "main" },
+    { context: { component: "ast-index", stage: "ast-index-put", path: "a.py", generation: "v1" }, thread: "worker-1" },
+    { context: { component: "ast-index", stage: "candidate-preparation", producer: "anchors", binding: "python", fileDomain: ["a.py", "b.py"] }, thread: "worker-2" },
+    { context: { scope: "relational", ruleId: "R1", clauseId: "C1", stage: "result" }, thread: "worker-1" },
+    { context: {}, thread: "worker-3" },
+  ].map((event, i) => ({ ...event, kind: "sql", query: 0, startNs: i, cpuNs: 10, selfCpuNs: 10, wallNs: 10, selfWallNs: 10, rows: 0, changes: 0 }));
+  events.push({ ...events[0], kind: "operator", query: 1, selfCpuNs: 1000, completed: true });
+  writeFileSync(join(raw, "profile-9-0.json"), JSON.stringify({ version: 1, pid: 9, events: events.length, queries: [
+    { id: 0, kind: "sql", sql: "SELECT 1", plan: [], bytecode: [] }, { id: 1, kind: "operator", sql: "enclosing operator" },
+  ] }));
+  writeFileSync(join(raw, "profile-9-0.jsonl"), events.map(JSON.stringify).join("\n") + "\n");
+  try {
+    const report = await buildReport(raw, directory);
+    assert.equal(report.executionInventory.total, 5);
+    assert.equal(report.executionInventory.selfCpuNs, 50);
+    assert.deepEqual(report.executionInventory.phases, {
+      connectionSetup: 1, catalogPublication: 0, filePublication: 1, candidatePreparation: 1,
+      relationalEvaluation: 1, cleanup: 0, unknown: 1,
+    });
+    assert.equal(report.executionInventory.entries.length, 5);
+    const candidate = report.executionInventory.entries.find(e => e.phase === "candidatePreparation");
+    assert.deepEqual(candidate.fileDomain, ["a.py", "b.py"]);
+    assert.equal(candidate.producer, "anchors");
+    assert.equal(candidate.binding, "python");
+    assert.equal(candidate.generation, null);
+    assert.equal(report.executionInventory.entries.find(e => e.phase === "filePublication").generation, "v1");
+    assert.equal(report.executionInventory.entries.reduce((n, e) => n + e.executions, 0), report.executionBudget.observed);
+    assert.deepEqual(JSON.parse(readFileSync(join(directory, "execution-inventory.json"))), report.executionInventory);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
