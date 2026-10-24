@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { parse } from "yaml";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
@@ -206,5 +207,24 @@ test("a small capture without reconciled origin evidence cannot satisfy the engi
     r => { r.executionCoverage[0].origins.engine.completed = 0; }]) {
     const report = job([1]); mutate(report);
     assert.throws(() => requireExecutionBudget(report), /invalid-capture/);
+  }
+});
+
+
+test("CI keeps the 100-submission gate mandatory when its workload or regression tests change", () => {
+  const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
+  const steps = Object.values(workflow.jobs).flatMap(job => job.steps ?? []);
+  const gate = steps.find(step => step.run?.includes("npm run test:sql-execution-budget"));
+  assert.ok(gate, "CI must execute the real complete-job budget workload");
+  assert.equal(gate["continue-on-error"] ?? false, false);
+  assert.equal(gate.if, "matrix.task == 'test'");
+  assert.ok(gate.env.RERAIL_ENGINE_PATH);
+  assert.ok(steps.some(step => step.run?.includes("cargo build") && step.run.includes("--features code-rule-profile")));
+  const scripts = JSON.parse(readFileSync("package.json")).scripts;
+  assert.equal(scripts["test:sql-execution-budget"], "node scripts/profiling/sql-budget.mjs");
+  assert.ok(scripts["test:profiling"].includes("test/scripts/sql-execution-budget.test.mjs"));
+  const filter = parse(workflow.jobs.changes.steps.find(step => step.with?.filters).with.filters).rust;
+  for (const file of ["test/scripts/sql-execution-budget.test.mjs", "test/engine/native/candidate-admission.test.ts", "test/engine/native/candidate-publication.test.ts"]) {
+    assert.ok(filter.includes(file), `${file} must trigger the profiling addon and mandatory native gates`);
   }
 });

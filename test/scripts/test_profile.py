@@ -48,8 +48,12 @@ DefaultMallocZone_0x123              2G       1G       512M       1G   1234     
         self.assertIn("Source replay: calls=4 native=3 host guards=1 positive=2 clean=2", text)
         self.assertIn("FP=0 FN=0 failures=0 execution differences=0 missing coverage=0", text)
         report.update(exitCode=1, targetExitCode=0,
-                      sqlExecutionBudget={"status": "budget-exceeded", "observed": 101, "limit": 100})
-        self.assertIn("101/100 actual statements for the complete job; target exit: 0", summary(report))
+                      sqlExecutionBudget={"status": "budget-exceeded", "observed": 101, "limit": 100, "sqliteInternal": 500, "totalObserved": 601})
+        self.assertIn("101/100 engine submissions for the complete job", summary(report))
+        self.assertIn("500 SQLite internal executions; 601 total", summary(report))
+        self.assertIn("target exit: 0", summary(report))
+        report["sqlExecutionBudget"] = {"status": "budget-exceeded", "observed": 101, "limit": 100}
+        self.assertIn("Legacy SQL total: 101; origin split unavailable", summary(report))
 
     def test_summary_accepts_incremental_replay(self):
         native, _ = aggregate("")
