@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { executionBudget, requireExecutionBudget, sqlCategory } from "../../benchmark/sql-profile/execution-budget.mjs";
 import { buildReport } from "../../benchmark/sql-profile/report.mjs";
@@ -143,4 +143,31 @@ test("the CI workload refuses an existing output directory without rewriting its
     assert.match(child.stderr, /EEXIST/);
     assert.equal(readFileSync(input, "utf8"), "preserved");
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("the CI launcher independently rejects a missing or bypassed execution gate", () => {
+  const launcher = resolve("scripts/profiling/sql-budget.mjs");
+  const original = JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-06-recording.json"));
+  for (const count of [null, 100, 101]) {
+    const sandbox = mkdtempSync(join(tmpdir(), "rerail-budget-bypass-"));
+    try {
+      const source = join(sandbox, "fixtures", "host", "data-layer-port"); mkdirSync(source, { recursive: true });
+      writeFileSync(join(source, "batch-06-recording.json"), JSON.stringify(original));
+      const tools = join(sandbox, "scripts", "profiling"); mkdirSync(tools, { recursive: true });
+      // Simulate a broken controller that reports success without enforcing the budget.
+      const report = count === null ? null : job([count]);
+      writeFileSync(join(tools, "run.py"), [
+        "import json, pathlib, sys",
+        "output = pathlib.Path(sys.argv[sys.argv.index('--output') + 1]) / 'sql'",
+        "output.mkdir(parents=True)",
+        `report = json.loads(${JSON.stringify(JSON.stringify(report))})`,
+        "if report is not None:",
+        "    (output / 'profile.json').write_text(json.dumps(report))",
+        "    (output / 'execution-budget.json').write_text(json.dumps({'status':'passed','accepted':True,'limit':100,'observed':0,'problems':[]}))",
+      ].join("\n"));
+      const child = spawnSync(process.execPath, [launcher, join(sandbox, "output")], { cwd: sandbox, encoding: "utf8", timeout: 15000 });
+      assert.equal(child.status, count === 100 ? 0 : 1, `count=${count}\n${child.stdout}\n${child.stderr}`);
+      if (count === 101) assert.match(child.stderr, /101\/100; budget-exceeded/);
+    } finally { rmSync(sandbox, { recursive: true, force: true }); }
+  }
 });

@@ -8,6 +8,17 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Recovery TDD: 2026-10-23
+
+The first guard test exposes a real acceptance bypass.
+A successful profiling child without an execution report makes the CI launcher return zero.
+The new test runs the actual launcher against a temporary controller that omits or bypasses enforcement.
+It also covers a forged passing summary with 101 actual executions in the full report.
+
+The red invocation is `.rerail/profiles/sql-recovery-tdd-20261023/guard-red`.
+It fails because the launcher returns zero for the missing-report case, where failure is required.
+This is a behavioral failure, before the launcher implementation changes.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
