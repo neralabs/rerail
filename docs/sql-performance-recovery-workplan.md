@@ -277,6 +277,18 @@ Extend the same mechanism to properties and child fields only after the first sl
 
 ## R5: bound SQL execution and materialization together
 
+The selector-family prototype does not satisfy this phase.
+It reduces 7,733 engine submissions to 4,109, but regresses CPU even after its heap peak is bounded.
+The engine retains only the proven private-owner projection cleanup and relevant-identifier filtering from that investigation.
+The measured guard remains at 7,733 submissions. No aggregate recovery follows from that cleanup.
+
+The next implementation must lower ready typed operators directly into SQL.
+It must avoid rendering each selector tree first and then processing those trees again to construct a batch.
+The first operator should have two real consumers, a shared immutable input, and request-qualified scalar options.
+Keep producer identities separate from transport tags. Preserve typed parameters, bag multiplicity, NULLs, and source-predicate fences.
+Use existing dependency waves with explicit producer edges. A generic graph scheduler remains unnecessary for this slice.
+Measure compiler CPU and SQLite preparation CPU separately before promoting broader batching.
+
 Lower compatible ready consumers into broad SQL operator families over binding-qualified inputs.
 Group result emission without losing rule, clause, file, or witness identity.
 Do not implement a new native rule interpreter.

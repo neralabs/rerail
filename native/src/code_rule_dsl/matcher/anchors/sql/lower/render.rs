@@ -9,6 +9,16 @@ fn tokens(sql: &str) -> impl Iterator<Item = &str> {
     IDENTIFIER.find_iter(sql).map(|token| token.as_str())
 }
 
+/// A private set's CTAS is already its physical boundary. Keep upstream shared CTEs
+/// materialized, but stream this final projection directly into its owner.
+pub(super) fn owned(mut sql: String, name: &str) -> String {
+    let marker = format!("{name}(fid,pre) AS MATERIALIZED ");
+    if let Some(start) = sql.find(&marker) {
+        sql.insert_str(start + marker.len() - "MATERIALIZED ".len(), "NOT ");
+    }
+    sql
+}
+
 struct Entry {
     sql: String,
     dependencies: Vec<usize>,
@@ -92,6 +102,80 @@ impl Definitions {
 mod tests {
     use super::*;
 
+    #[test]
+    fn physical_owner_removes_a_private_ephemeral_copy_and_preserves_bags_and_nulls() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        let before = "WITH s(fid,pre) AS MATERIALIZED (SELECT 1,7 UNION ALL SELECT 1,7 UNION ALL SELECT 1,NULL) SELECT CAST(fid AS INTEGER) AS fid,CAST(pre AS INTEGER) AS pre FROM s";
+        let after = owned(before.into(), "s");
+        assert_eq!(owned(after.clone(), "s"), after);
+        let ops = |name: &str, body: &str| {
+            db.prepare(&format!("EXPLAIN CREATE TEMP TABLE {name} AS {body}"))
+                .unwrap()
+                .query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        let before_ops = ops("before", before);
+        let after_ops = ops("after", &after);
+        assert_eq!(
+            before_ops
+                .iter()
+                .filter(|s| s.as_str() == "OpenEphemeral")
+                .count(),
+            after_ops
+                .iter()
+                .filter(|s| s.as_str() == "OpenEphemeral")
+                .count()
+                + 1
+        );
+        db.execute_batch(&format!(
+            "CREATE TEMP TABLE before AS {before};CREATE TEMP TABLE after AS {after}"
+        ))
+        .unwrap();
+        let rows = |name: &str| {
+            db.prepare(&format!("SELECT fid,pre FROM {name} ORDER BY fid,pre"))
+                .unwrap()
+                .query_map([], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(rows("before"), rows("after"));
+        assert_eq!(rows("after"), vec![(1, None), (1, Some(7)), (1, Some(7))]);
+    }
+    #[test]
+    fn physical_projection_keeps_the_shared_source_materialized_once() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        db.create_scalar_function(
+            c"produce",
+            0,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            move |_| {
+                observed.fetch_add(1, Ordering::Relaxed);
+                Ok(7)
+            },
+        )
+        .unwrap();
+        let sql=owned("WITH seed(fid,pre) AS MATERIALIZED (SELECT 1,produce()),output(fid,pre) AS MATERIALIZED (SELECT * FROM seed UNION ALL SELECT * FROM seed) SELECT * FROM output".into(),"output");
+        assert!(sql.contains("seed(fid,pre) AS MATERIALIZED"));
+        db.execute_batch(&format!("CREATE TEMP TABLE output AS {sql}"))
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM output", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+    }
     #[test]
     fn dependencies_preserve_order_and_ignore_unrelated_definitions() {
         let definitions = Definitions::new([

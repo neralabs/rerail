@@ -146,6 +146,18 @@ The [child-demand evidence](../fixtures/host/data-layer-port/profiling/shared-ch
 Scoped node demand, empty relations, selector ownership, and broader acceptance remain open.
 The universal node-property fill already executes once in the measured frontiers.
 
+The next measured slice removes a private ephemeral copy inside each physical `(fid, pre)` owner construction.
+The CTAS table supplies the boundary. Upstream shared CTEs and source-span fences retain their materialization.
+Bytecode, bag multiplicity, NULL results, and source reuse have regression tests.
+Five matched pairs record median CPU of 1.651 seconds before and 1.639 seconds after, with overlapping ranges.
+The measured SQLite heap peak and 7,733-submission guard remain unchanged. This is a limited improvement.
+
+Generic selector-family packing is rejected after both memory and CPU experiments.
+The bounded prototype reaches 4,109 submissions, but median CPU increases beyond the observed control variation.
+Its code is removed from the engine. Rejected SQL captures and source remain evidence, without an execution switch.
+Further batching must use typed operator requests before rendering complete SQL trees.
+The [journal](data-layer-performance-journal.md#selector-sql-owners-2026-10-24) records the tested shapes and all timing series.
+
 Node-property and child-field producers adopt the same contract and binding mechanism.
 Different child fields remain different bindings under one public contract.
 An absent child still completes its requested key.

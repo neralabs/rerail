@@ -1,0 +1,2215 @@
+{
+  "format": "rerail.selector-materialization-recovery/v1",
+  "date": "2026-10-24",
+  "baselineCommit": "66f6a522",
+  "rejectedFamilyRedCommit": "c896b721",
+  "ownedProjectionRedCommit": "97aad726",
+  "status": "private owner projection selected; generic selector families and scalar-fusion packing rejected; complete-job recovery remains open",
+  "selected": {
+    "implementation": [
+      "physical fid/pre owners stream their private final projection instead of creating a second ephemeral copy",
+      "upstream shared CTE materialization and source-predicate fences retained",
+      "dependency analysis filters to actual physical tables and retained resources before sorting tokens",
+      "same typed SQL stores, indexes, operator budgets and candidate admission"
+    ],
+    "matchedCpu": {
+      "prior": {
+        "medianCpuMs": 1650.576,
+        "rangeCpuMs": [
+          1543.508,
+          1699.889
+        ],
+        "medianMaxRssKiB": 337696,
+        "trials": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-prior-0/cpu.json",
+            "sha256": "2b1bbd9af2c901713bb5c5d99508d4592c51e5ec6ab97b399e5ebf79247a766c",
+            "passed": true,
+            "userMs": 1438.599,
+            "systemMs": 104.909,
+            "cpuMs": 1543.508,
+            "wallMs": 1886.617625,
+            "maxRSSRaw": 330832,
+            "memory": {
+              "rss": 284353760,
+              "heapTotal": 109346816,
+              "heapUsed": 41251232,
+              "external": 7399752,
+              "arrayBuffers": 2241491
+            },
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-prior-1/cpu.json",
+            "sha256": "acdf252d15975b77dfaf003cb993d0e60af6d84b7cdca05cc0d4425d22f362aa",
+            "passed": true,
+            "userMs": 1534.676,
+            "systemMs": 91.329,
+            "cpuMs": 1626.005,
+            "wallMs": 1622.9011249999999,
+            "maxRSSRaw": 376192,
+            "memory": {
+              "rss": 332260816,
+              "heapTotal": 107757568,
+              "heapUsed": 40589432,
+              "external": 53179479,
+              "arrayBuffers": 45553459
+            },
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-prior-2/cpu.json",
+            "sha256": "cce9a3a807c6e01d167f9a03ae792c98ee3741c2229cb0ef4c505dff68e0af1f",
+            "passed": true,
+            "userMs": 1592.989,
+            "systemMs": 81.928,
+            "cpuMs": 1674.917,
+            "wallMs": 1618.7980829999997,
+            "maxRSSRaw": 336560,
+            "memory": {
+              "rss": 290579680,
+              "heapTotal": 105021440,
+              "heapUsed": 34196976,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            },
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-prior-3/cpu.json",
+            "sha256": "1d72e9bcd5b5f16d684db59360c7bf53bfe11e2c5a19917aa5cd9a67d0f4b85c",
+            "passed": true,
+            "userMs": 1623.8,
+            "systemMs": 76.089,
+            "cpuMs": 1699.889,
+            "wallMs": 1838.6340419999997,
+            "maxRSSRaw": 337696,
+            "memory": {
+              "rss": 290776624,
+              "heapTotal": 108281856,
+              "heapUsed": 40295392,
+              "external": 9867511,
+              "arrayBuffers": 2241491
+            },
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-prior-4/cpu.json",
+            "sha256": "de87f427136ad9f6abb72946dad388b58441e3a0870eff73d6bfe16544e96c16",
+            "passed": true,
+            "userMs": 1576.464,
+            "systemMs": 74.112,
+            "cpuMs": 1650.576,
+            "wallMs": 1779.4804169999998,
+            "maxRSSRaw": 340128,
+            "memory": {
+              "rss": 294626408,
+              "heapTotal": 112476160,
+              "heapUsed": 40574704,
+              "external": 9867511,
+              "arrayBuffers": 2241491
+            },
+            "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+          }
+        ]
+      },
+      "owned": {
+        "medianCpuMs": 1638.666,
+        "rangeCpuMs": [
+          1562.985,
+          1675.427
+        ],
+        "medianMaxRssKiB": 332320,
+        "trials": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-owned-0/cpu.json",
+            "sha256": "4ef240bc3bdace4f859b2e5136960eed39064c5fdbf6f72726128bf111dc1a79",
+            "passed": true,
+            "userMs": 1456.678,
+            "systemMs": 106.307,
+            "cpuMs": 1562.985,
+            "wallMs": 1998.440292,
+            "maxRSSRaw": 319600,
+            "memory": {
+              "rss": 272344264,
+              "heapTotal": 108036096,
+              "heapUsed": 41383928,
+              "external": 7399752,
+              "arrayBuffers": 2241491
+            },
+            "nativeSha256": "5262cd7cb34b2c24433166337bd5e363a2443648626cadca537462f75ade6f74"
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-owned-1/cpu.json",
+            "sha256": "b7e7cb01a55a7bb92bcc30e84d59cac97c8a908766aa91d4514d9291f2f0dea8",
+            "passed": true,
+            "userMs": 1484.811,
+            "systemMs": 106.596,
+            "cpuMs": 1591.407,
+            "wallMs": 2139.7030409999998,
+            "maxRSSRaw": 332976,
+            "memory": {
+              "rss": 287368320,
+              "heapTotal": 105021440,
+              "heapUsed": 34274584,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            },
+            "nativeSha256": "5262cd7cb34b2c24433166337bd5e363a2443648626cadca537462f75ade6f74"
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-owned-2/cpu.json",
+            "sha256": "2f7004eee469bfabca2bade29b20b656e01b170f90b9b9ebb83f2a66608605d8",
+            "passed": true,
+            "userMs": 1578.951,
+            "systemMs": 80.094,
+            "cpuMs": 1659.045,
+            "wallMs": 1743.5532500000002,
+            "maxRSSRaw": 331168,
+            "memory": {
+              "rss": 285713560,
+              "heapTotal": 105283584,
+              "heapUsed": 34257816,
+              "external": 4931993,
+              "arrayBuffers": 2241491
+            },
+            "nativeSha256": "5262cd7cb34b2c24433166337bd5e363a2443648626cadca537462f75ade6f74"
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-owned-3/cpu.json",
+            "sha256": "27d91ac1ca1b3b20c1ffb30b104ca7f862684d5e7e9d89c2a1ab1a2dd448ad16",
+            "passed": true,
+            "userMs": 1569.838,
+            "systemMs": 68.828,
+            "cpuMs": 1638.666,
+            "wallMs": 1965.2571659999999,
+            "maxRSSRaw": 341568,
+            "memory": {
+              "rss": 295904816,
+              "heapTotal": 110919680,
+              "heapUsed": 41219440,
+              "external": 7399752,
+              "arrayBuffers": 2241491
+            },
+            "nativeSha256": "5262cd7cb34b2c24433166337bd5e363a2443648626cadca537462f75ade6f74"
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned-owned-4/cpu.json",
+            "sha256": "b4674d61a006e317c69ad9d42062b85fd9b61473993405d521ca656fd3d45488",
+            "passed": true,
+            "userMs": 1596.539,
+            "systemMs": 78.888,
+            "cpuMs": 1675.427,
+            "wallMs": 1701.744,
+            "maxRSSRaw": 332320,
+            "memory": {
+              "rss": 285468232,
+              "heapTotal": 107773952,
+              "heapUsed": 40509624,
+              "external": 7399752,
+              "arrayBuffers": 2241491
+            },
+            "nativeSha256": "5262cd7cb34b2c24433166337bd5e363a2443648626cadca537462f75ade6f74"
+          }
+        ]
+      },
+      "cpuChangePercent": -0.7215662895861841
+    },
+    "beforeGuard": {
+      "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance",
+      "sha256": "6cdb467c78913a3f2113350d84316962c1e9e5422aeac25ddef22a479d2b67d9",
+      "limit": 100,
+      "observed": 7733,
+      "totalObserved": 8727,
+      "sqliteInternal": 994,
+      "unknownOrigins": 0,
+      "accepted": false,
+      "status": "budget-exceeded",
+      "problems": [],
+      "phases": {
+        "connectionSetup": {
+          "engine": 372,
+          "sqliteInternal": 32
+        },
+        "filePublication": {
+          "engine": 36,
+          "sqliteInternal": 32
+        },
+        "catalogPublication": {
+          "engine": 12
+        },
+        "candidatePreparation": {
+          "engine": 3316
+        },
+        "cleanup": {
+          "engine": 2216
+        },
+        "relationalEvaluation": {
+          "engine": 1781,
+          "sqliteInternal": 930
+        }
+      }
+    },
+    "afterGuard": {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance",
+      "sha256": "d40bd5fa1e59a225e397bbdafb4de3fefdb1b6467d2dfd8e2f8001ddb1df842c",
+      "limit": 100,
+      "observed": 7733,
+      "totalObserved": 8727,
+      "sqliteInternal": 994,
+      "unknownOrigins": 0,
+      "accepted": false,
+      "status": "budget-exceeded",
+      "problems": [],
+      "phases": {
+        "connectionSetup": {
+          "engine": 372,
+          "sqliteInternal": 32
+        },
+        "filePublication": {
+          "engine": 36,
+          "sqliteInternal": 32
+        },
+        "catalogPublication": {
+          "engine": 12
+        },
+        "candidatePreparation": {
+          "engine": 3316
+        },
+        "cleanup": {
+          "engine": 2216
+        },
+        "relationalEvaluation": {
+          "engine": 1781,
+          "sqliteInternal": 930
+        }
+      }
+    },
+    "repeatGuard": {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-repeat",
+      "sha256": "46b2514b40f92f7bda77c630d88bb7de0fe7f87b707b6ebedd30ce0fbd9e563e",
+      "limit": 100,
+      "observed": 7733,
+      "totalObserved": 8727,
+      "sqliteInternal": 994,
+      "unknownOrigins": 0,
+      "accepted": false,
+      "status": "budget-exceeded",
+      "problems": [],
+      "phases": {
+        "connectionSetup": {
+          "engine": 372,
+          "sqliteInternal": 32
+        },
+        "filePublication": {
+          "engine": 36,
+          "sqliteInternal": 32
+        },
+        "catalogPublication": {
+          "engine": 12
+        },
+        "candidatePreparation": {
+          "engine": 3316
+        },
+        "cleanup": {
+          "engine": 2216
+        },
+        "relationalEvaluation": {
+          "engine": 1781,
+          "sqliteInternal": 930
+        }
+      }
+    },
+    "beforeFrontiers": [
+      {
+        "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-0.json",
+        "sha256": "72aaa7024073f0e34c2b2a4aaeb67379abd0c88165af6592e99f6bc33eafa449",
+        "stages": 415,
+        "temporaryTables": 393,
+        "peakLiveRelations": 93,
+        "stageSqlSha256": "0896cd6368c8a8a2bba4af67a25aeaeb2d87b75bab39afedbc081a3e09c3a7d2",
+        "resultPackets": 1,
+        "parametersSha256": "a56eaf986347a109949468e993107de2b605191e29194b2bf7fcb262660e6e4d"
+      },
+      {
+        "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-1.json",
+        "sha256": "b978c2a0eb35489f6dfe8f5acc0fb84940591d9d2a0dacbf7b6b7ba657270550",
+        "stages": 415,
+        "temporaryTables": 393,
+        "peakLiveRelations": 93,
+        "stageSqlSha256": "0896cd6368c8a8a2bba4af67a25aeaeb2d87b75bab39afedbc081a3e09c3a7d2",
+        "resultPackets": 1,
+        "parametersSha256": "a56eaf986347a109949468e993107de2b605191e29194b2bf7fcb262660e6e4d"
+      },
+      {
+        "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-2.json",
+        "sha256": "53709fcb23a2f03cc300e3b09126c35c18f39a49646fb6878719fee779e3bba2",
+        "stages": 423,
+        "temporaryTables": 401,
+        "peakLiveRelations": 91,
+        "stageSqlSha256": "e4586e28c1f6344cf5201b8983c550f931b42c277dea5bde43df0b43e0110f34",
+        "resultPackets": 1,
+        "parametersSha256": "b0aec3d3d622bde8372b7e990bae587055d73f724b9df1999d9e9c4b62fdef2e"
+      },
+      {
+        "path": ".rerail/profiles/child-demand-recovery-20261024/child-acceptance/capture/sql/raw/candidate-53014-3.json",
+        "sha256": "42912e6dcbd161c3c91b3b41d9e1caf4e49f62473a8cdf7c79a1dcc7280ca0d1",
+        "stages": 423,
+        "temporaryTables": 401,
+        "peakLiveRelations": 91,
+        "stageSqlSha256": "e4586e28c1f6344cf5201b8983c550f931b42c277dea5bde43df0b43e0110f34",
+        "resultPackets": 1,
+        "parametersSha256": "b0aec3d3d622bde8372b7e990bae587055d73f724b9df1999d9e9c4b62fdef2e"
+      }
+    ],
+    "afterFrontiers": [
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/raw/candidate-9213-0.json",
+        "sha256": "289a2f46720365dd6828b2c290d4f23fb4982822e6295fe05851e7dacad8e489",
+        "stages": 415,
+        "temporaryTables": 393,
+        "peakLiveRelations": 93,
+        "stageSqlSha256": "4302c2acc882dfb154eaf2fcca3be2f1d4b1dd8efa1c7268fa9339f8721cba01",
+        "resultPackets": 1,
+        "parametersSha256": "a56eaf986347a109949468e993107de2b605191e29194b2bf7fcb262660e6e4d"
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/raw/candidate-9213-1.json",
+        "sha256": "e0b50d98a95064efff94bfcf2a0a67da8ce027146fb310216eca6f1fbe0bc816",
+        "stages": 415,
+        "temporaryTables": 393,
+        "peakLiveRelations": 93,
+        "stageSqlSha256": "4302c2acc882dfb154eaf2fcca3be2f1d4b1dd8efa1c7268fa9339f8721cba01",
+        "resultPackets": 1,
+        "parametersSha256": "a56eaf986347a109949468e993107de2b605191e29194b2bf7fcb262660e6e4d"
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/raw/candidate-9213-2.json",
+        "sha256": "8216500d800d801d2c894186008221f9c1e8395a6c456f6b5ed205b2998719c5",
+        "stages": 423,
+        "temporaryTables": 401,
+        "peakLiveRelations": 91,
+        "stageSqlSha256": "a3ccd38d2e9e93cf315325510f49ca1e20ecf8a166352539ef9b35d909ee5730",
+        "resultPackets": 1,
+        "parametersSha256": "b0aec3d3d622bde8372b7e990bae587055d73f724b9df1999d9e9c4b62fdef2e"
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/raw/candidate-9213-3.json",
+        "sha256": "896be48da7bc7695624946ec600027353c92433f09cfce92375c5b09dcfcb473",
+        "stages": 423,
+        "temporaryTables": 401,
+        "peakLiveRelations": 91,
+        "stageSqlSha256": "a3ccd38d2e9e93cf315325510f49ca1e20ecf8a166352539ef9b35d909ee5730",
+        "resultPackets": 1,
+        "parametersSha256": "b0aec3d3d622bde8372b7e990bae587055d73f724b9df1999d9e9c4b62fdef2e"
+      }
+    ],
+    "memoryBefore": {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/memory-prior.json",
+      "sha256": "dd55cef28da9e1f2de3404c3f4bc048ef9ba6aa2e378b7f18e4ea56ce6a1d1a0",
+      "stepHeapPeakBytes": 19793328,
+      "compileHeapPeakBytes": 3397936,
+      "rows": 161,
+      "stages": 415,
+      "peakLiveRelations": 93,
+      "cacheBudgetKiB": {
+        "main": 1024,
+        "temp": 512
+      },
+      "statementCounters": {
+        "fullscanSteps": 320,
+        "scope": "stage and result statements; index and release batches excluded",
+        "sorts": 1815,
+        "vmSteps": 75068
+      },
+      "sqlCpuMs": 83.814691,
+      "sqliteCompileCpuMs": 49.576489,
+      "finalCacheCounters": {
+        "cacheBytes": 615040,
+        "cacheHits": 12142,
+        "cacheMisses": 180,
+        "cacheSpills": 207,
+        "cacheWrites": 322
+      }
+    },
+    "memoryAfter": {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/memory-owned.json",
+      "sha256": "5a1e7c807d963a1e193d42a90d7e4d3f80909cb244fed546ed20b73b2d57e59f",
+      "stepHeapPeakBytes": 19793328,
+      "compileHeapPeakBytes": 3397936,
+      "rows": 161,
+      "stages": 415,
+      "peakLiveRelations": 93,
+      "cacheBudgetKiB": {
+        "main": 1024,
+        "temp": 512
+      },
+      "statementCounters": {
+        "fullscanSteps": 270,
+        "scope": "stage and result statements; index and release batches excluded",
+        "sorts": 1815,
+        "vmSteps": 73349
+      },
+      "sqlCpuMs": 77.873089,
+      "sqliteCompileCpuMs": 47.671414,
+      "finalCacheCounters": {
+        "cacheBytes": 615040,
+        "cacheHits": 12142,
+        "cacheMisses": 180,
+        "cacheSpills": 207,
+        "cacheWrites": 322
+      }
+    },
+    "exactPacketReplay": {
+      "method": "apply production owner_projection helper to frozen baseline SQL; preserve its result-packet consumer IDs for exact bag and VM comparison",
+      "before": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/memory-prior.json",
+        "sha256": "dd55cef28da9e1f2de3404c3f4bc048ef9ba6aa2e378b7f18e4ea56ce6a1d1a0",
+        "stepHeapPeakBytes": 19793328,
+        "compileHeapPeakBytes": 3397936,
+        "rows": 161,
+        "stages": 415,
+        "peakLiveRelations": 93,
+        "cacheBudgetKiB": {
+          "main": 1024,
+          "temp": 512
+        },
+        "statementCounters": {
+          "fullscanSteps": 320,
+          "scope": "stage and result statements; index and release batches excluded",
+          "sorts": 1815,
+          "vmSteps": 75068
+        },
+        "sqlCpuMs": 83.814691,
+        "sqliteCompileCpuMs": 49.576489,
+        "finalCacheCounters": {
+          "cacheBytes": 615040,
+          "cacheHits": 12142,
+          "cacheMisses": 180,
+          "cacheSpills": 207,
+          "cacheWrites": 322
+        }
+      },
+      "after": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/owner-cli/memory.json",
+        "sha256": "afe41cec226a029cef92628a8e179a2b29508ec0635083f9532856f67c84c2b7",
+        "stepHeapPeakBytes": 19793328,
+        "compileHeapPeakBytes": 3397936,
+        "rows": 161,
+        "stages": 415,
+        "peakLiveRelations": 93,
+        "cacheBudgetKiB": {
+          "main": 1024,
+          "temp": 512
+        },
+        "statementCounters": {
+          "fullscanSteps": 270,
+          "scope": "stage and result statements; index and release batches excluded",
+          "sorts": 1815,
+          "vmSteps": 73183
+        },
+        "sqlCpuMs": 82.248672,
+        "sqliteCompileCpuMs": 50.10316,
+        "finalCacheCounters": {
+          "cacheBytes": 615040,
+          "cacheHits": 12142,
+          "cacheMisses": 180,
+          "cacheSpills": 207,
+          "cacheWrites": 322
+        }
+      },
+      "exactCandidateMultiset": true,
+      "rows": 161,
+      "nativePacketQualification": "Native caller consumer IDs can differ across processes. Actual physical stage SQL matches the copied baseline rewrite; compare native final diagnostics and same-object permutation audits, not raw consumer ordinals."
+    },
+    "diagnosticPairedSqliteControls": {
+      "prior": {
+        "medianSqlCpuMs": 83.15462,
+        "trials": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-prior-0.json",
+            "sha256": "06cada3ca94e2e28bf36ca6c72dc74b1c968894899a1d9ceed1d409cda3b9ccb",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 320,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 75068
+            },
+            "sqlCpuMs": 83.15462,
+            "sqliteCompileCpuMs": 51.317202,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-prior-1.json",
+            "sha256": "7381da098829ab484d8b434b6243427936da256c49e72aa75d423044a8786451",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 320,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 75068
+            },
+            "sqlCpuMs": 82.478661,
+            "sqliteCompileCpuMs": 50.653209,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-prior-2.json",
+            "sha256": "82d5f96abd6ffbc992aec3f945d98ca81296cdde438a6d6f65ed16ca47756459",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 320,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 75068
+            },
+            "sqlCpuMs": 87.239419,
+            "sqliteCompileCpuMs": 53.112072,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-prior-3.json",
+            "sha256": "2a4327d7509192e36b10ee9ff81b03f1b1e498efdd92dab2e9c04bbe91d7f8ce",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 320,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 75068
+            },
+            "sqlCpuMs": 89.182748,
+            "sqliteCompileCpuMs": 54.521115,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-prior-4.json",
+            "sha256": "6dc85ca55dea4522c0a9bfb761099d731f682ccab03ea207fdf0a2abdc938054",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 320,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 75068
+            },
+            "sqlCpuMs": 81.170424,
+            "sqliteCompileCpuMs": 49.124626,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          }
+        ]
+      },
+      "owned": {
+        "medianSqlCpuMs": 81.758206,
+        "trials": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-owned-0.json",
+            "sha256": "4ee61f48b867c0a6a1633987378bb23cee59af919e57786c519c5ecb95b056dc",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 270,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 73183
+            },
+            "sqlCpuMs": 81.305459,
+            "sqliteCompileCpuMs": 49.53053,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-owned-1.json",
+            "sha256": "e73471629bbdaa673093112d6fef6a6f20a6819abf4923f6711bfda06aa7ff46",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 270,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 73183
+            },
+            "sqlCpuMs": 80.204373,
+            "sqliteCompileCpuMs": 49.994499,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-owned-2.json",
+            "sha256": "03ec1872be62f7b42592e428b20a246ba98cc2f5270270ef94fddc57aa34ed86",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 270,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 73183
+            },
+            "sqlCpuMs": 89.647213,
+            "sqliteCompileCpuMs": 54.434164,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-owned-3.json",
+            "sha256": "3f9ab22127ef8ad0851df8b69375feff64ac090ea4a8183b0814b4475ab9f8d9",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 270,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 73183
+            },
+            "sqlCpuMs": 81.758206,
+            "sqliteCompileCpuMs": 50.187329,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/owned-control-owned-4.json",
+            "sha256": "a15395b27db6fdc630bcba6e943a74fa492cb92e389488a6508831fc561425c9",
+            "stepHeapPeakBytes": 19793328,
+            "compileHeapPeakBytes": 3397936,
+            "rows": 161,
+            "stages": 415,
+            "peakLiveRelations": 93,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 270,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1815,
+              "vmSteps": 73183
+            },
+            "sqlCpuMs": 82.212534,
+            "sqliteCompileCpuMs": 51.248627,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 12142,
+              "cacheMisses": 180,
+              "cacheSpills": 207,
+              "cacheWrites": 322
+            }
+          }
+        ]
+      }
+    },
+    "correctness": {
+      "nativeTests": 312,
+      "nativeFiles": 15,
+      "standaloneSqlTests": 50,
+      "fixedBudgetTests": 11,
+      "sourceCorpus": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/owned-source-parity/parity.json",
+        "sha256": "3aa98535c5456972fd6a6411f5be34ee508cd89014eedbcaba101ebfb1bc4a4f",
+        "nativeSha256": "5262cd7cb34b2c24433166337bd5e363a2443648626cadca537462f75ade6f74",
+        "replayedCalls": 120,
+        "positiveCalls": 60,
+        "cleanCalls": 60,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "missingCoverage": []
+      },
+      "guardParity": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/parity.json",
+        "sha256": "729d1c289415da807fbf513406dd1a39043a5e9e4e0acc75984f3a815ec841a8",
+        "nativeSha256": "5262cd7cb34b2c24433166337bd5e363a2443648626cadca537462f75ade6f74",
+        "replayedCalls": 2,
+        "positiveCalls": 1,
+        "cleanCalls": 1,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "missingCoverage": []
+      },
+      "manifestValid": true,
+      "unitBytecode": "one fewer OpenEphemeral for a physical owner; bag duplicates and NULLs preserved; a shared source still constructs once",
+      "notRun": "full 3210-observation corpus or full repository acceptance"
+    },
+    "validation": [
+      "native all-target Clippy with and without profiling",
+      "standalone all-target Clippy",
+      "npm run check",
+      "Rust formatting and patch checks",
+      "owner_projection CLI valid replay and overwrite refusal"
+    ]
+  },
+  "rejected": {
+    "nestedMemberScopes": {
+      "guard": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/acceptance",
+        "sha256": "e7f0dad84369661f5a02da827138d39066be5a8cc070a6f8f630e9892450dfd8",
+        "limit": 100,
+        "observed": 3341,
+        "totalObserved": 4335,
+        "sqliteInternal": 994,
+        "unknownOrigins": 0,
+        "accepted": false,
+        "status": "budget-exceeded",
+        "problems": [],
+        "phases": {
+          "connectionSetup": {
+            "engine": 372,
+            "sqliteInternal": 32
+          },
+          "filePublication": {
+            "engine": 36,
+            "sqliteInternal": 32
+          },
+          "catalogPublication": {
+            "engine": 12
+          },
+          "candidatePreparation": {
+            "engine": 388
+          },
+          "cleanup": {
+            "engine": 752
+          },
+          "relationalEvaluation": {
+            "engine": 1781,
+            "sqliteInternal": 930
+          }
+        }
+      },
+      "memory": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/memory-selected.json",
+        "sha256": "c5880201df8ae04413748b0a5f151643302821ae983d3bb18dd7b698293c2330",
+        "stepHeapPeakBytes": 53478480,
+        "compileHeapPeakBytes": 6921712,
+        "rows": 161,
+        "stages": 53,
+        "peakLiveRelations": 19,
+        "cacheBudgetKiB": {
+          "main": 1024,
+          "temp": 512
+        },
+        "statementCounters": {
+          "fullscanSteps": 180,
+          "scope": "stage and result statements; index and release batches excluded",
+          "sorts": 1815,
+          "vmSteps": 64548
+        },
+        "sqlCpuMs": 74.593287,
+        "sqliteCompileCpuMs": 56.526617,
+        "finalCacheCounters": {
+          "cacheBytes": 271232,
+          "cacheHits": 2179,
+          "cacheMisses": 18,
+          "cacheSpills": 0,
+          "cacheWrites": 6
+        }
+      },
+      "reason": "independent WITH trees multiply ephemeral storage"
+    },
+    "unboundedSharedScope": {
+      "guard": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/shared-acceptance",
+        "sha256": "989e7a234778be93f6b64ac5b726ffcc6c6e2b6c4e653848f76d169c21b2e211",
+        "limit": 100,
+        "observed": 3341,
+        "totalObserved": 4335,
+        "sqliteInternal": 994,
+        "unknownOrigins": 0,
+        "accepted": false,
+        "status": "budget-exceeded",
+        "problems": [],
+        "phases": {
+          "connectionSetup": {
+            "engine": 372,
+            "sqliteInternal": 32
+          },
+          "filePublication": {
+            "engine": 36,
+            "sqliteInternal": 32
+          },
+          "catalogPublication": {
+            "engine": 12
+          },
+          "candidatePreparation": {
+            "engine": 388
+          },
+          "cleanup": {
+            "engine": 752
+          },
+          "relationalEvaluation": {
+            "engine": 1781,
+            "sqliteInternal": 930
+          }
+        }
+      },
+      "memory": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/memory-shared.json",
+        "sha256": "e9eb5a36efdabf2a1d3912cc28bfa157f1df2a9337dcbec31b21c58e08f36698",
+        "stepHeapPeakBytes": 37930224,
+        "compileHeapPeakBytes": 25677232,
+        "rows": 161,
+        "stages": 53,
+        "peakLiveRelations": 19,
+        "cacheBudgetKiB": {
+          "main": 1024,
+          "temp": 512
+        },
+        "statementCounters": {
+          "fullscanSteps": 180,
+          "scope": "stage and result statements; index and release batches excluded",
+          "sorts": 1786,
+          "vmSteps": 60138
+        },
+        "sqlCpuMs": 145.395289,
+        "sqliteCompileCpuMs": 125.85104,
+        "finalCacheCounters": {
+          "cacheBytes": 271232,
+          "cacheHits": 1858,
+          "cacheMisses": 18,
+          "cacheSpills": 0,
+          "cacheWrites": 6
+        }
+      },
+      "reason": "shared compute alone does not bound SQLite preparation expansion"
+    },
+    "boundedSharedScope": {
+      "guard": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/bounded-acceptance",
+        "sha256": "dfd2e4411eaa181a2ac02d23dc98bea5a9d6cd671fb653e65ddcafa997cb6a99",
+        "limit": 100,
+        "observed": 4109,
+        "totalObserved": 5103,
+        "sqliteInternal": 994,
+        "unknownOrigins": 0,
+        "accepted": false,
+        "status": "budget-exceeded",
+        "problems": [],
+        "phases": {
+          "connectionSetup": {
+            "engine": 372,
+            "sqliteInternal": 32
+          },
+          "filePublication": {
+            "engine": 36,
+            "sqliteInternal": 32
+          },
+          "catalogPublication": {
+            "engine": 12
+          },
+          "candidatePreparation": {
+            "engine": 900
+          },
+          "cleanup": {
+            "engine": 1008
+          },
+          "relationalEvaluation": {
+            "engine": 1781,
+            "sqliteInternal": 930
+          }
+        }
+      },
+      "memory": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/memory-bounded.json",
+        "sha256": "611fe3459e877b0fb1a90938d1a0887ccc3697b6644d535421553454022d26ab",
+        "stepHeapPeakBytes": 19587344,
+        "compileHeapPeakBytes": 5965648,
+        "rows": 161,
+        "stages": 117,
+        "peakLiveRelations": 38,
+        "cacheBudgetKiB": {
+          "main": 1024,
+          "temp": 512
+        },
+        "statementCounters": {
+          "fullscanSteps": 180,
+          "scope": "stage and result statements; index and release batches excluded",
+          "sorts": 1812,
+          "vmSteps": 64419
+        },
+        "sqlCpuMs": 98.041702,
+        "sqliteCompileCpuMs": 83.574913,
+        "finalCacheCounters": {
+          "cacheBytes": 436608,
+          "cacheHits": 3586,
+          "cacheMisses": 18,
+          "cacheSpills": 0,
+          "cacheWrites": 6
+        }
+      },
+      "matchedCpu": {
+        "prior": {
+          "medianCpuMs": 1679.669,
+          "rangeCpuMs": [
+            1623.306,
+            1730.817
+          ],
+          "medianMaxRssKiB": 341504,
+          "trials": [
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-prior-0/cpu.json",
+              "sha256": "9d92709157c3264eb2a5c6379b640233da5deff65a5bcbbd7d2c620de42085c8",
+              "passed": true,
+              "userMs": 1587.884,
+              "systemMs": 94.031,
+              "cpuMs": 1681.915,
+              "wallMs": 2878.9995830000003,
+              "maxRSSRaw": 341504,
+              "memory": {
+                "rss": 294626576,
+                "heapTotal": 108183552,
+                "heapUsed": 42484576,
+                "external": 9867511,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-prior-1/cpu.json",
+              "sha256": "26f0823af0e6780f120e183943043bd4dacf2f5657fc43c4a770e82c8163fb9b",
+              "passed": true,
+              "userMs": 1597.572,
+              "systemMs": 82.097,
+              "cpuMs": 1679.669,
+              "wallMs": 2645.1395,
+              "maxRSSRaw": 389888,
+              "memory": {
+                "rss": 344761976,
+                "heapTotal": 110706688,
+                "heapUsed": 41556072,
+                "external": 53179479,
+                "arrayBuffers": 45553459
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-prior-2/cpu.json",
+              "sha256": "c44bab9df6f43093fb6488e2f44212352daf18b3bcd60120782b2411940ead57",
+              "passed": true,
+              "userMs": 1536.38,
+              "systemMs": 86.926,
+              "cpuMs": 1623.306,
+              "wallMs": 3131.7652089999992,
+              "maxRSSRaw": 339696,
+              "memory": {
+                "rss": 292676880,
+                "heapTotal": 105807872,
+                "heapUsed": 34152560,
+                "external": 4931993,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-prior-3/cpu.json",
+              "sha256": "e341b6364808f04cf307b7bc9cf82dc500700aaf4ded97da65ae700a6286e55e",
+              "passed": true,
+              "userMs": 1579.665,
+              "systemMs": 75.761,
+              "cpuMs": 1655.426,
+              "wallMs": 2306.359209,
+              "maxRSSRaw": 367744,
+              "memory": {
+                "rss": 322725424,
+                "heapTotal": 107036672,
+                "heapUsed": 41448192,
+                "external": 53179479,
+                "arrayBuffers": 45553459
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-prior-4/cpu.json",
+              "sha256": "4c8544ccf93a846a51d06f83a35f6085c4d5e3642ae409af9060631185098bd5",
+              "passed": true,
+              "userMs": 1653.603,
+              "systemMs": 77.214,
+              "cpuMs": 1730.817,
+              "wallMs": 2434.185208,
+              "maxRSSRaw": 332384,
+              "memory": {
+                "rss": 285009288,
+                "heapTotal": 105807872,
+                "heapUsed": 34195440,
+                "external": 4931993,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            }
+          ]
+        },
+        "bounded": {
+          "medianCpuMs": 1855.333,
+          "rangeCpuMs": [
+            1747.237,
+            1881.793
+          ],
+          "medianMaxRssKiB": 334752,
+          "trials": [
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-bounded-0/cpu.json",
+              "sha256": "b9a0a3acdf2d6c755af35305217100391c496ab391b17167c772a448ac7d43b4",
+              "passed": true,
+              "userMs": 1770.454,
+              "systemMs": 84.879,
+              "cpuMs": 1855.333,
+              "wallMs": 3033.5558330000003,
+              "maxRSSRaw": 334752,
+              "memory": {
+                "rss": 288663208,
+                "heapTotal": 112377856,
+                "heapUsed": 42218008,
+                "external": 9867511,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "f76cce94439b6ccb90bfdc7bbe175d8b8afbc3d812d91c0db09017b40930f7c2"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-bounded-1/cpu.json",
+              "sha256": "8af8b4dacc2138d617e2ced5b1739bd0c4efeb576e0015a44c227ded2efb2ffd",
+              "passed": true,
+              "userMs": 1671.752,
+              "systemMs": 75.485,
+              "cpuMs": 1747.237,
+              "wallMs": 2970.296458,
+              "maxRSSRaw": 337600,
+              "memory": {
+                "rss": 290530744,
+                "heapTotal": 108036096,
+                "heapUsed": 40510048,
+                "external": 7399752,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "f76cce94439b6ccb90bfdc7bbe175d8b8afbc3d812d91c0db09017b40930f7c2"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-bounded-2/cpu.json",
+              "sha256": "68fd27c88ef946ab405de3317c48d0f988b6e592af2d021c9f86cc86643bb178",
+              "passed": true,
+              "userMs": 1769.641,
+              "systemMs": 96.516,
+              "cpuMs": 1866.157,
+              "wallMs": 3344.153542,
+              "maxRSSRaw": 333584,
+              "memory": {
+                "rss": 285975656,
+                "heapTotal": 105529344,
+                "heapUsed": 34305744,
+                "external": 4931993,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "f76cce94439b6ccb90bfdc7bbe175d8b8afbc3d812d91c0db09017b40930f7c2"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-bounded-3/cpu.json",
+              "sha256": "9b01535f5415eaf78d751d8c34ca24d20fee6ef9b4653d99e423c8db9c84e31c",
+              "passed": true,
+              "userMs": 1721.133,
+              "systemMs": 66.178,
+              "cpuMs": 1787.311,
+              "wallMs": 2603.626917,
+              "maxRSSRaw": 348576,
+              "memory": {
+                "rss": 302736896,
+                "heapTotal": 107495424,
+                "heapUsed": 40672368,
+                "external": 9867511,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "f76cce94439b6ccb90bfdc7bbe175d8b8afbc3d812d91c0db09017b40930f7c2"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-bounded-4/cpu.json",
+              "sha256": "5757e08b0ce017e54b1eaf67c214d91af7426834ca59fea34a391dbdb75e248c",
+              "passed": true,
+              "userMs": 1804.853,
+              "systemMs": 76.94,
+              "cpuMs": 1881.793,
+              "wallMs": 3283.7665000000006,
+              "maxRSSRaw": 333456,
+              "memory": {
+                "rss": 285877424,
+                "heapTotal": 105021440,
+                "heapUsed": 34284944,
+                "external": 4931993,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "f76cce94439b6ccb90bfdc7bbe175d8b8afbc3d812d91c0db09017b40930f7c2"
+            }
+          ]
+        },
+        "cpuChangePercent": 10.458251000643571
+      },
+      "reason": "untraced CPU regresses despite fewer submissions and bounded heap"
+    },
+    "reusedMetadataAndPipelinedFamilyRoots": {
+      "guard": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/pipeline-acceptance",
+        "sha256": "79d06c6367fac8f4ef891b3886e36925479e0e2387ad3c42632b7a03458d48c7",
+        "limit": 100,
+        "observed": 4109,
+        "totalObserved": 5103,
+        "sqliteInternal": 994,
+        "unknownOrigins": 0,
+        "accepted": false,
+        "status": "budget-exceeded",
+        "problems": [],
+        "phases": {
+          "connectionSetup": {
+            "engine": 372,
+            "sqliteInternal": 32
+          },
+          "filePublication": {
+            "engine": 36,
+            "sqliteInternal": 32
+          },
+          "catalogPublication": {
+            "engine": 12
+          },
+          "candidatePreparation": {
+            "engine": 900
+          },
+          "cleanup": {
+            "engine": 1008
+          },
+          "relationalEvaluation": {
+            "engine": 1781,
+            "sqliteInternal": 930
+          }
+        }
+      },
+      "memory": {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/memory-pipeline.json",
+        "sha256": "cb8b15e686f59a85fa0781a32ab5bbedeb62513403d182d56e9d0094aa99e215",
+        "stepHeapPeakBytes": 19587344,
+        "compileHeapPeakBytes": 5924480,
+        "rows": 161,
+        "stages": 117,
+        "peakLiveRelations": 38,
+        "cacheBudgetKiB": {
+          "main": 1024,
+          "temp": 512
+        },
+        "statementCounters": {
+          "fullscanSteps": 135,
+          "scope": "stage and result statements; index and release batches excluded",
+          "sorts": 1812,
+          "vmSteps": 62740
+        },
+        "sqlCpuMs": 104.913287,
+        "sqliteCompileCpuMs": 88.178001,
+        "finalCacheCounters": {
+          "cacheBytes": 436608,
+          "cacheHits": 3586,
+          "cacheMisses": 18,
+          "cacheSpills": 0,
+          "cacheWrites": 6
+        }
+      },
+      "matchedCpu": {
+        "prior": {
+          "medianCpuMs": 1682.382,
+          "rangeCpuMs": [
+            1632.732,
+            1728.094
+          ],
+          "medianMaxRssKiB": 338192,
+          "trials": [
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-prior-0/cpu.json",
+              "sha256": "318e8e13dbaef8095d524e1e9a34247a4431317fe7a6352492c0b1fe167d8619",
+              "passed": true,
+              "userMs": 1547.486,
+              "systemMs": 86.951,
+              "cpuMs": 1634.437,
+              "wallMs": 1828.208292,
+              "maxRSSRaw": 324992,
+              "memory": {
+                "rss": 278439376,
+                "heapTotal": 110854144,
+                "heapUsed": 67294056,
+                "external": 7399752,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-prior-1/cpu.json",
+              "sha256": "5719f569cc94b752a65b402c60cee61091838aa0a67227d576015a81b75ffd55",
+              "passed": true,
+              "userMs": 1626.541,
+              "systemMs": 84.268,
+              "cpuMs": 1710.809,
+              "wallMs": 2251.680625,
+              "maxRSSRaw": 343328,
+              "memory": {
+                "rss": 297919808,
+                "heapTotal": 107921408,
+                "heapUsed": 42224056,
+                "external": 9867511,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-prior-2/cpu.json",
+              "sha256": "09731f12e156a8be7f058bbfccf80640a6465ae005f308ba36b078a9ec8cf984",
+              "passed": true,
+              "userMs": 1562.277,
+              "systemMs": 70.455,
+              "cpuMs": 1632.732,
+              "wallMs": 1739.4496669999999,
+              "maxRSSRaw": 332368,
+              "memory": {
+                "rss": 285468184,
+                "heapTotal": 109543424,
+                "heapUsed": 67348120,
+                "external": 7399752,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-prior-3/cpu.json",
+              "sha256": "2508332d492e04fccee2831403599ae122022fcac98eeaa140a8b5cdf05c6082",
+              "passed": true,
+              "userMs": 1608.065,
+              "systemMs": 74.317,
+              "cpuMs": 1682.382,
+              "wallMs": 1732.45975,
+              "maxRSSRaw": 338432,
+              "memory": {
+                "rss": 290972896,
+                "heapTotal": 108036096,
+                "heapUsed": 40606232,
+                "external": 7399752,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-prior-4/cpu.json",
+              "sha256": "b0260bac8004caea288a503df1ca0f0192e46a47ac9afc30701adb3ca2e19c0c",
+              "passed": true,
+              "userMs": 1636.175,
+              "systemMs": 91.919,
+              "cpuMs": 1728.094,
+              "wallMs": 1951.8105,
+              "maxRSSRaw": 338192,
+              "memory": {
+                "rss": 292317464,
+                "heapTotal": 107118592,
+                "heapUsed": 34246816,
+                "external": 4931993,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3"
+            }
+          ]
+        },
+        "pipeline": {
+          "medianCpuMs": 1789.405,
+          "rangeCpuMs": [
+            1755.296,
+            1835.991
+          ],
+          "medianMaxRssKiB": 344592,
+          "trials": [
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-pipeline-0/cpu.json",
+              "sha256": "ca9de05a90cb74af6114c7a0b62e4b59fe959c0ba2ac8bbcfbce2ca5d6e5bf2e",
+              "passed": true,
+              "userMs": 1707.918,
+              "systemMs": 81.487,
+              "cpuMs": 1789.405,
+              "wallMs": 2068.443958,
+              "maxRSSRaw": 341056,
+              "memory": {
+                "rss": 294495528,
+                "heapTotal": 106725376,
+                "heapUsed": 40447168,
+                "external": 7399752,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "cfc5ecc59ef0f43c0d9e5eafcfc19ec6e645fd6ebdd70b490fee648efc92d2a8"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-pipeline-1/cpu.json",
+              "sha256": "104aefc305bf2524577bff0f12f951162eaae1404814cc4a8295473606353c97",
+              "passed": true,
+              "userMs": 1700.505,
+              "systemMs": 67.302,
+              "cpuMs": 1767.807,
+              "wallMs": 2721.4021669999997,
+              "maxRSSRaw": 340960,
+              "memory": {
+                "rss": 294889152,
+                "heapTotal": 106725376,
+                "heapUsed": 41102688,
+                "external": 7399752,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "cfc5ecc59ef0f43c0d9e5eafcfc19ec6e645fd6ebdd70b490fee648efc92d2a8"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-pipeline-2/cpu.json",
+              "sha256": "a5166681d496bfba22478a80d8bd41a96a4a4de6c0366de3cade2c0c19e52de1",
+              "passed": true,
+              "userMs": 1744.866,
+              "systemMs": 65.991,
+              "cpuMs": 1810.857,
+              "wallMs": 1826.3502910000002,
+              "maxRSSRaw": 344592,
+              "memory": {
+                "rss": 298477200,
+                "heapTotal": 106987520,
+                "heapUsed": 40281856,
+                "external": 7399752,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "cfc5ecc59ef0f43c0d9e5eafcfc19ec6e645fd6ebdd70b490fee648efc92d2a8"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-pipeline-3/cpu.json",
+              "sha256": "46af4213f7f32da787e20a189a5bf8bf641caa1b47e82e7213641d06b02f4b29",
+              "passed": true,
+              "userMs": 1774.894,
+              "systemMs": 61.097,
+              "cpuMs": 1835.991,
+              "wallMs": 1729.7279169999997,
+              "maxRSSRaw": 385712,
+              "memory": {
+                "rss": 340436552,
+                "heapTotal": 105283584,
+                "heapUsed": 34217984,
+                "external": 48313657,
+                "arrayBuffers": 2241491
+              },
+              "nativeSha256": "cfc5ecc59ef0f43c0d9e5eafcfc19ec6e645fd6ebdd70b490fee648efc92d2a8"
+            },
+            {
+              "path": ".rerail/profiles/selector-family-recovery-20261024/cpu-final-pipeline-4/cpu.json",
+              "sha256": "e734bceabf7670f057b28d9c95512f701d5a778fd6033461253286a86b02373e",
+              "passed": true,
+              "userMs": 1683.548,
+              "systemMs": 71.748,
+              "cpuMs": 1755.296,
+              "wallMs": 1802.9829169999998,
+              "maxRSSRaw": 379424,
+              "memory": {
+                "rss": 334603752,
+                "heapTotal": 109330432,
+                "heapUsed": 40626256,
+                "external": 53249175,
+                "arrayBuffers": 45623155
+              },
+              "nativeSha256": "cfc5ecc59ef0f43c0d9e5eafcfc19ec6e645fd6ebdd70b490fee648efc92d2a8"
+            }
+          ]
+        },
+        "cpuChangePercent": 6.361397114329548
+      },
+      "reason": "untraced CPU still regresses"
+    },
+    "preparationBudgetsAndScalarFusion": [
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/repack-128",
+        "status": "diagnostic only; no runtime promotion",
+        "temporaryTables": 95,
+        "measurements": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-128/memory.json",
+            "sha256": "15a9bfa3f09d74a98ad99cb7df29d10db0017817e1112f3d22ffae27393663cf",
+            "stepHeapPeakBytes": 19587968,
+            "compileHeapPeakBytes": 5697328,
+            "rows": 161,
+            "stages": 117,
+            "peakLiveRelations": 38,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1812,
+              "vmSteps": 62518
+            },
+            "sqlCpuMs": 84.2575,
+            "sqliteCompileCpuMs": 71.839254,
+            "finalCacheCounters": {
+              "cacheBytes": 436608,
+              "cacheHits": 3590,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          }
+        ]
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/repack-64",
+        "status": "diagnostic only; no runtime promotion",
+        "temporaryTables": 132,
+        "measurements": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-64/memory-0.json",
+            "sha256": "040df784f348d6f4884a7087588ec723ec910092ad859700c28cd1383fcbf791",
+            "stepHeapPeakBytes": 19641664,
+            "compileHeapPeakBytes": 3385056,
+            "rows": 161,
+            "stages": 154,
+            "peakLiveRelations": 43,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1812,
+              "vmSteps": 63915
+            },
+            "sqlCpuMs": 82.430287,
+            "sqliteCompileCpuMs": 66.427405,
+            "finalCacheCounters": {
+              "cacheBytes": 480128,
+              "cacheHits": 4554,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-64/memory-1.json",
+            "sha256": "6355ad8efb9ff07e799b52702fd2d08b2fe9fb1cfac185d5aa160fa996f668a6",
+            "stepHeapPeakBytes": 19641664,
+            "compileHeapPeakBytes": 3385056,
+            "rows": 161,
+            "stages": 154,
+            "peakLiveRelations": 43,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1812,
+              "vmSteps": 63915
+            },
+            "sqlCpuMs": 91.774583,
+            "sqliteCompileCpuMs": 72.363125,
+            "finalCacheCounters": {
+              "cacheBytes": 480128,
+              "cacheHits": 4554,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-64/memory-2.json",
+            "sha256": "ee648287ff3859b8d4d3483223d7e044f6f415241ed374d002764c4721795427",
+            "stepHeapPeakBytes": 19641664,
+            "compileHeapPeakBytes": 3385056,
+            "rows": 161,
+            "stages": 154,
+            "peakLiveRelations": 43,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1812,
+              "vmSteps": 63915
+            },
+            "sqlCpuMs": 84.80941,
+            "sqliteCompileCpuMs": 68.059078,
+            "finalCacheCounters": {
+              "cacheBytes": 480128,
+              "cacheHits": 4554,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          }
+        ]
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/repack-32",
+        "status": "diagnostic only; no runtime promotion",
+        "temporaryTables": 195,
+        "measurements": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-32/memory-0.json",
+            "sha256": "cb1a32dabdad918e92c69e1ab6caa5e38e77d2b85b840062fb079c64989922f1",
+            "stepHeapPeakBytes": 19754432,
+            "compileHeapPeakBytes": 3489920,
+            "rows": 161,
+            "stages": 217,
+            "peakLiveRelations": 53,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 66389
+            },
+            "sqlCpuMs": 87.993949,
+            "sqliteCompileCpuMs": 65.342621,
+            "finalCacheCounters": {
+              "cacheBytes": 571520,
+              "cacheHits": 6626,
+              "cacheMisses": 18,
+              "cacheSpills": 2,
+              "cacheWrites": 119
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-32/memory-1.json",
+            "sha256": "172434154b7a7ddba9e8391b23bd112f0f7077d8c36097719d43c238d14f121a",
+            "stepHeapPeakBytes": 19754432,
+            "compileHeapPeakBytes": 3489920,
+            "rows": 161,
+            "stages": 217,
+            "peakLiveRelations": 53,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 66389
+            },
+            "sqlCpuMs": 88.313275,
+            "sqliteCompileCpuMs": 64.865,
+            "finalCacheCounters": {
+              "cacheBytes": 571520,
+              "cacheHits": 6626,
+              "cacheMisses": 18,
+              "cacheSpills": 2,
+              "cacheWrites": 119
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-32/memory-2.json",
+            "sha256": "5737592b691082aa8ab4f29ac410fc12fdafe2a888e8a867fe291b7d405fc80c",
+            "stepHeapPeakBytes": 19754432,
+            "compileHeapPeakBytes": 3489920,
+            "rows": 161,
+            "stages": 217,
+            "peakLiveRelations": 53,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 66389
+            },
+            "sqlCpuMs": 88.942888,
+            "sqliteCompileCpuMs": 66.693706,
+            "finalCacheCounters": {
+              "cacheBytes": 571520,
+              "cacheHits": 6626,
+              "cacheMisses": 18,
+              "cacheSpills": 2,
+              "cacheWrites": 119
+            }
+          }
+        ]
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/repack-16",
+        "status": "diagnostic only; no runtime promotion",
+        "temporaryTables": 308,
+        "measurements": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-16/memory-0.json",
+            "sha256": "99655afd7de106dcc27f334e58280055019453c42d42dbf0391613312ebf19fd",
+            "stepHeapPeakBytes": 19809936,
+            "compileHeapPeakBytes": 3476112,
+            "rows": 161,
+            "stages": 330,
+            "peakLiveRelations": 65,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 70216
+            },
+            "sqlCpuMs": 81.275751,
+            "sqliteCompileCpuMs": 54.649292,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 9990,
+              "cacheMisses": 41,
+              "cacheSpills": 50,
+              "cacheWrites": 174
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-16/memory-1.json",
+            "sha256": "47d1f040ca005f33b02dc3f7e97be020681549323420071571bce5a3da3ecc9e",
+            "stepHeapPeakBytes": 19809936,
+            "compileHeapPeakBytes": 3476112,
+            "rows": 161,
+            "stages": 330,
+            "peakLiveRelations": 65,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 70216
+            },
+            "sqlCpuMs": 81.924335,
+            "sqliteCompileCpuMs": 54.650623,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 9990,
+              "cacheMisses": 41,
+              "cacheSpills": 50,
+              "cacheWrites": 174
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-16/memory-2.json",
+            "sha256": "7104051d8b1eba9ce533f57548e011ba60110fa316d6130578d6784b81a51fb6",
+            "stepHeapPeakBytes": 19809936,
+            "compileHeapPeakBytes": 3476112,
+            "rows": 161,
+            "stages": 330,
+            "peakLiveRelations": 65,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 130,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 70216
+            },
+            "sqlCpuMs": 76.79828,
+            "sqliteCompileCpuMs": 51.644875,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 9990,
+              "cacheMisses": 41,
+              "cacheSpills": 50,
+              "cacheWrites": 174
+            }
+          }
+        ]
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-green",
+        "status": "diagnostic only; no runtime promotion",
+        "temporaryTables": 94,
+        "measurements": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-green/memory.json",
+            "sha256": "85e2e962b29b6394321b7641807ac5dfe74636c2c99911aeb0b65a64753cdbed",
+            "stepHeapPeakBytes": 19577104,
+            "compileHeapPeakBytes": 3320496,
+            "rows": 161,
+            "stages": 116,
+            "peakLiveRelations": 37,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 172,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1812,
+              "vmSteps": 63067
+            },
+            "sqlCpuMs": 91.668328,
+            "sqliteCompileCpuMs": 76.443709,
+            "finalCacheCounters": {
+              "cacheBytes": 427904,
+              "cacheHits": 3515,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          }
+        ]
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-64",
+        "status": "diagnostic only; no runtime promotion",
+        "temporaryTables": 131,
+        "measurements": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-64/memory-0.json",
+            "sha256": "ac2d2b709eee327babf4b4edc8910b0fc9c08247241e1ff4a9aa4c51ac823dfd",
+            "stepHeapPeakBytes": 19630800,
+            "compileHeapPeakBytes": 3374192,
+            "rows": 161,
+            "stages": 153,
+            "peakLiveRelations": 42,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 170,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1812,
+              "vmSteps": 64446
+            },
+            "sqlCpuMs": 87.623037,
+            "sqliteCompileCpuMs": 69.671506,
+            "finalCacheCounters": {
+              "cacheBytes": 471424,
+              "cacheHits": 4481,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-64/memory-1.json",
+            "sha256": "4e8f478207f1805a7d0ecef7bab92b373142799fb3d762495aab08345cf720cc",
+            "stepHeapPeakBytes": 19630800,
+            "compileHeapPeakBytes": 3374192,
+            "rows": 161,
+            "stages": 153,
+            "peakLiveRelations": 42,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 170,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1812,
+              "vmSteps": 64446
+            },
+            "sqlCpuMs": 86.835672,
+            "sqliteCompileCpuMs": 68.54134,
+            "finalCacheCounters": {
+              "cacheBytes": 471424,
+              "cacheHits": 4481,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-64/memory-2.json",
+            "sha256": "2729882bd6cc4bac6f7da0e7751a31b9d06a036186f0a53bcdf73984a0d319ae",
+            "stepHeapPeakBytes": 19630800,
+            "compileHeapPeakBytes": 3374192,
+            "rows": 161,
+            "stages": 153,
+            "peakLiveRelations": 42,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 170,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1812,
+              "vmSteps": 64446
+            },
+            "sqlCpuMs": 92.223129,
+            "sqliteCompileCpuMs": 73.381379,
+            "finalCacheCounters": {
+              "cacheBytes": 471424,
+              "cacheHits": 4481,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          }
+        ]
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-32",
+        "status": "diagnostic only; no runtime promotion",
+        "temporaryTables": 193,
+        "measurements": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-32/memory-0.json",
+            "sha256": "e3ce6117852395989627c4a651228a7b7fe0195b9518f4ad463a63b1e10b99f1",
+            "stepHeapPeakBytes": 19732704,
+            "compileHeapPeakBytes": 3468192,
+            "rows": 161,
+            "stages": 215,
+            "peakLiveRelations": 51,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 167,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 66953
+            },
+            "sqlCpuMs": 88.909126,
+            "sqliteCompileCpuMs": 66.774954,
+            "finalCacheCounters": {
+              "cacheBytes": 554112,
+              "cacheHits": 6486,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-32/memory-1.json",
+            "sha256": "49e58750e6a39b4a2f9e7cf6e13d40a8511edab6783c2a815cc57cb3735e0591",
+            "stepHeapPeakBytes": 19732704,
+            "compileHeapPeakBytes": 3468192,
+            "rows": 161,
+            "stages": 215,
+            "peakLiveRelations": 51,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 167,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 66953
+            },
+            "sqlCpuMs": 79.699541,
+            "sqliteCompileCpuMs": 60.514412,
+            "finalCacheCounters": {
+              "cacheBytes": 554112,
+              "cacheHits": 6486,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-32/memory-2.json",
+            "sha256": "977b7aad6e15a8fc978b40347e450adb3aa105b0514e4552f262bb34ced04505",
+            "stepHeapPeakBytes": 19732704,
+            "compileHeapPeakBytes": 3468192,
+            "rows": 161,
+            "stages": 215,
+            "peakLiveRelations": 51,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 167,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 66953
+            },
+            "sqlCpuMs": 82.03375,
+            "sqliteCompileCpuMs": 61.396407,
+            "finalCacheCounters": {
+              "cacheBytes": 554112,
+              "cacheHits": 6486,
+              "cacheMisses": 18,
+              "cacheSpills": 0,
+              "cacheWrites": 6
+            }
+          }
+        ]
+      },
+      {
+        "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-16",
+        "status": "diagnostic only; no runtime promotion",
+        "temporaryTables": 304,
+        "measurements": [
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-16/memory-0.json",
+            "sha256": "4765eee9d2231bb267a9c06d7b5780ad8aed5a7ae8a0acd1d8a8744af5d7635d",
+            "stepHeapPeakBytes": 19807440,
+            "compileHeapPeakBytes": 3473616,
+            "rows": 161,
+            "stages": 326,
+            "peakLiveRelations": 62,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 164,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 70588
+            },
+            "sqlCpuMs": 83.228479,
+            "sqliteCompileCpuMs": 55.96711,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 9722,
+              "cacheMisses": 28,
+              "cacheSpills": 30,
+              "cacheWrites": 157
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-16/memory-1.json",
+            "sha256": "28c0598004d296879390b5b33f1447d6f0ccad5e84fca32076192f1c010d4059",
+            "stepHeapPeakBytes": 19807440,
+            "compileHeapPeakBytes": 3473616,
+            "rows": 161,
+            "stages": 326,
+            "peakLiveRelations": 62,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 164,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 70588
+            },
+            "sqlCpuMs": 81.817622,
+            "sqliteCompileCpuMs": 54.939582,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 9722,
+              "cacheMisses": 28,
+              "cacheSpills": 30,
+              "cacheWrites": 157
+            }
+          },
+          {
+            "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused-16/memory-2.json",
+            "sha256": "4f5d471c6e3b266943627dd6f1be1f6b34e87544735763c84698de6c3c502d99",
+            "stepHeapPeakBytes": 19807440,
+            "compileHeapPeakBytes": 3473616,
+            "rows": 161,
+            "stages": 326,
+            "peakLiveRelations": 62,
+            "cacheBudgetKiB": {
+              "main": 1024,
+              "temp": 512
+            },
+            "statementCounters": {
+              "fullscanSteps": 164,
+              "scope": "stage and result statements; index and release batches excluded",
+              "sorts": 1813,
+              "vmSteps": 70588
+            },
+            "sqlCpuMs": 73.095755,
+            "sqliteCompileCpuMs": 49.594209,
+            "finalCacheCounters": {
+              "cacheBytes": 615040,
+              "cacheHits": 9722,
+              "cacheMisses": 28,
+              "cacheSpills": 30,
+              "cacheWrites": 157
+            }
+          }
+        ]
+      }
+    ],
+    "invalidTrial": {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/repack-fused",
+      "reason": "older executable used after a failed module build; excluded from performance conclusions"
+    },
+    "sourceArtifact": "fixtures/host/data-layer-port/profiling/rejected-selector-family-spike-20261024.patch",
+    "sourceArtifactSha256": "fc04ad3895932a7729c338fecef1c3e322ada6001a753db24d4e58f209d52b4b",
+    "sourceArtifactScope": "last abandoned lab snapshot; historical SQL captures identify each earlier variant exactly"
+  },
+  "externalProfile": {
+    "method": "three one-second macOS sample captures per binary; five complete replay iterations, tracing enabled; stack observations are not CPU shares",
+    "paths": [
+      ".rerail/profiles/selector-family-recovery-20261024/sample-prior",
+      ".rerail/profiles/selector-family-recovery-20261024/sample-bounded"
+    ],
+    "observation": "both extra compiler dependency/render processing and SQLite SELECT preparation appear in the regressing variant",
+    "traceQualification": "different trace event counts and external sampling make instrumented elapsed times unsuitable as a promotion speed ratio"
+  },
+  "method": {
+    "workers": 4,
+    "build": "opt1 engine, deps3, no LTO, 256 codegen units; code-rule-profile feature in both binaries",
+    "allocator": "same system allocator shim /tmp/librerail_jemalloc_check_shim.dylib",
+    "cpuScope": "process.cpuUsage around complete replay including policy compilation, snapshot and workspace evaluation, parity and cleanup",
+    "timing": "five alternating fresh-process pairs per comparison; own builds, tests and diagnostic captures finish before each series; tracing and SQL capture disabled",
+    "memory": "SQLite diagnostic allocation peaks and cache counters separate from Node process maxRSS; maxRSS in KiB",
+    "machine": "shared host, including unrelated worktree builds; ranges overlap in selected controls",
+    "recordingSha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4",
+    "priorAddonSha256": "bb6aceab7ed33524a37dc836e98719d7fd8660096926073fa2767f0bfa27e6e3",
+    "selectedAddonSha256": "5262cd7cb34b2c24433166337bd5e363a2443648626cadca537462f75ade6f74",
+    "commands": {
+      "cpu": ".rerail/profiles/selector-family-recovery-20261024/cpu-owned.py",
+      "verification": ".rerail/profiles/selector-family-recovery-20261024/verify-owned-final.py",
+      "guard": [
+        "node",
+        "scripts/profiling/sql-budget.mjs",
+        ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance"
+      ],
+      "repeat": [
+        "node",
+        "scripts/profiling/sql-budget.mjs",
+        "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/selector-family-recovery-20261024/owned-repeat"
+      ],
+      "external": ".rerail/profiles/selector-family-recovery-20261024/sample-controls.py",
+      "standaloneUnit": [
+        "/opt/homebrew/opt/rust/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--manifest-path",
+        "scripts/profiling/preparation/Cargo.toml",
+        "--lib"
+      ],
+      "static": [
+        "npm",
+        "run",
+        "check"
+      ]
+    }
+  },
+  "remaining": [
+    "100-submission gate still fails at 7733",
+    "candidate preparation 3316 and cleanup 2216 engine statements",
+    "repeated selector construction requires typed producer/operator descriptors before rendering SQL, rather than packing rendered SELECT trees",
+    "whole-job publication, clause backing and connection lifetimes remain open",
+    "no full repository speed or memory recovery established"
+  ],
+  "evidenceDirectory": ".rerail/profiles/selector-family-recovery-20261024"
+}

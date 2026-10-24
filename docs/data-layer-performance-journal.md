@@ -10,6 +10,59 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Selector SQL owners: 2026-10-24
 
+### Physical owner projection: green
+
+The test from `97aad726` now passes. Different selectors retain their existing owners and all 130 findings across two result packets.
+The final `(fid, pre)` CTE streams into its CTAS owner instead of constructing another ephemeral copy first.
+The explicit integer casts, nonunique indexes, duplicate rows, NULL behavior, and upstream materialization boundaries remain unchanged.
+Source-span fences still precede expensive source predicates.
+Dependency analysis also filters identifiers to actual physical tables and retained resources before it sorts them.
+The existing scheduler and its read/write ordering remain authoritative.
+
+Bytecode tests prove one fewer `OpenEphemeral` operation for a physical owner.
+Another test proves that two reads still construct a shared source once.
+The selected addon passes **312 native-facing tests**, **50 standalone SQL tests**, and **120 original observations across 60 rules**.
+The observations include 60 positive and 60 clean cases, with no diagnostic differences or engine failures.
+All eleven fixed-budget regression tests and the producer-manifest check pass.
+Native Clippy passes with and without profiling. Standalone Clippy, static checks, formatting, and patch checks pass.
+An initial native run also discovers an archived test under the local experiment directory.
+Renaming archived sources as snapshots removes that unintended test. The complete selected group then passes.
+
+Five alternating fresh-process pairs compare the frozen `66f6a522` addon with the selected implementation.
+Median process CPU changes from **1,650.576 to 1,638.666 ms**, a **0.72% decrease**.
+The before range is 1,543.508–1,699.889 ms. The after range is 1,562.985–1,675.427 ms.
+The ranges overlap. This result establishes no substantial speedup.
+Median reported peak RSS changes from 337,696 to 332,320 KiB, also with overlapping ranges.
+The timing series uses identical build settings, allocator shim, frozen inputs, and four workers, with tracing disabled.
+Own builds, tests, and diagnostic captures finish before timing. The host also runs unrelated worktree builds.
+
+The complete small guard repeats at **7,733 engine submissions**, **994 SQLite internal executions**, and **8,727 total executions**.
+The fixed 100-submission gate correctly still fails. Findings are complete and connection coverage reconciles.
+Candidate preparation remains at 3,316 submissions and cleanup at 2,216.
+The two frontier shapes retain 393 and 401 physical tables, with 93 and 91 peak live tables.
+Removing a private ephemeral copy changes VM work rather than engine submission counts.
+
+The new `owner_projection` replay command applies the production rewrite to a copied SQL capture.
+It preserves the original consumer ordinals for an exact intermediate comparison and refuses to overwrite an existing output.
+The exact **161-row multiset** matches, including multiplicity.
+Stage/result VM steps decrease from **75,068 to 73,183**. Sorts remain at 1,815.
+The SQLite stepping heap peak remains **19,793,328 bytes**. This small workload establishes no memory recovery.
+Five paired diagnostic replays record median SQL API CPU of 83.155 ms before and 81.758 ms after.
+Those replays enable allocation accounting. They remain separate from the complete-replay CPU measurements above.
+Native consumer ordinals can differ across processes, so native acceptance compares final diagnostics and same-object permutation audits.
+
+**Decision:** retain the owner-projection rewrite and relevant-identifier filtering. Remove generic family packing and scalar-fusion packing from the engine.
+The rejected paths reduce submissions but regress CPU. Their raw captures, all timing trials, and source snapshot remain available.
+The checked [recovery evidence](../fixtures/host/data-layer-port/profiling/selector-materialization-recovery-20261024.json) records both decisions.
+The [rejected source artifact](../fixtures/host/data-layer-port/profiling/rejected-selector-family-spike-20261024.patch) preserves the abandoned design for review.
+Neither artifact selects an alternate production algorithm.
+Raw evidence remains in `.rerail/profiles/selector-family-recovery-20261024/`.
+
+The next design step must batch typed producer operations before SQL rendering.
+Packing complete rendered selector trees repeats compiler processing and increases SQLite preparation expansion.
+Named owners, closed domains, and explicit dependencies must guide compatible operator batches.
+This result does not complete WP3, the 100-submission requirement, the full corpus, or repository acceptance.
+
 ### Family packing is rejected; the next TDD rung isolates duplicate ownership
 
 The target from `c896b721` passes parity but fails the performance acceptance criteria.
@@ -36,7 +89,7 @@ The frozen baseline fails on its own `AS MATERIALIZED` declaration.
 Evidence: `.rerail/profiles/selector-family-recovery-20261024/owned-red`.
 The unchanged 100-submission gate remains mandatory.
 
-### Target shape and two-rule regression: red
+### Rejected target shape and two-rule regression: red
 
 This phase starts from `66f6a522` and its frozen child-demand addon.
 The complete small job submits 7,733 engine statements. The first frontier constructs 393 indexed `(fid, pre)` tables.
