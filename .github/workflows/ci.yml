@@ -122,6 +122,7 @@ jobs:
               - 'test/engine/native/relational-completed.test.ts'
               - 'test/engine/native/candidate-admission.test.ts'
               - 'test/engine/native/candidate-publication.test.ts'
+              - 'test/engine/native/compiler-schema.test.ts'
               - 'package.json'
               - '.github/workflows/ci.yml'
               - '.gitattributes'

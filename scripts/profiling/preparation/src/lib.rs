@@ -15,6 +15,9 @@ mod nodes;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/store/publication.rs"]
 mod publication;
 #[cfg(test)]
+#[path = "../../../../native/src/code_rule_dsl/relational/schema.rs"]
+mod schema;
+#[cfg(test)]
 #[path = "../../../../native/src/code_rule_dsl/profile/trace.rs"]
 #[allow(dead_code)]
 mod trace;

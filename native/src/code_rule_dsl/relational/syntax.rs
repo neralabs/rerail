@@ -694,15 +694,19 @@ pub(in crate::code_rule_dsl) fn schema(db: &Connection, spec: &Spec) -> Result<V
         ));
     }
     let fields = selected.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
-    db.execute_batch(&format!(
-        "CREATE TABLE {} ({})",
-        super::quote(&spec.name),
-        fields
-            .iter()
-            .map(|n| super::quote(n))
-            .collect::<Vec<_>>()
-            .join(",")
-    ))
+    super::schema::register(
+        db,
+        &spec.name,
+        format!(
+            "CREATE TABLE {} ({})",
+            super::quote(&spec.name),
+            fields
+                .iter()
+                .map(|n| super::quote(n))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    )
     .map_err(sql_error)?;
     for (name, fields) in [
         (spec.edges.as_ref(), vec!["__path", "src", "dst", "ordinal"]),
@@ -715,15 +719,19 @@ pub(in crate::code_rule_dsl) fn schema(db: &Connection, spec: &Spec) -> Result<V
         ),
     ] {
         if let Some(name) = name {
-            db.execute_batch(&format!(
-                "CREATE TABLE {} ({})",
-                super::quote(name),
-                fields
-                    .iter()
-                    .map(|n| super::quote(n))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ))
+            super::schema::register(
+                db,
+                name,
+                format!(
+                    "CREATE TABLE {} ({})",
+                    super::quote(name),
+                    fields
+                        .iter()
+                        .map(|n| super::quote(n))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            )
             .map_err(sql_error)?;
             names.push(name.clone());
         }

@@ -3,10 +3,32 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { loadNativeBinding } from "../../../src/engine/index.js";
 
 const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../src/engine/index.ts", import.meta.url).href;
 const capabilities = new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url).href;
+
+it("retains finite schemas, case-insensitive name collisions, and the SQL authorizer", () => {
+  const native = loadNativeBinding(), caps = readFileSync(new URL(capabilities), "utf8");
+  const input = { evidence: { as: "file", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } };
+  const compile = (query: string, inputs: Record<string, typeof input> = { eligible: input }) => native.CodeRuleDslRuntime.compile(JSON.stringify({
+    format: "rerail.policy/v1", id: "schema-validation", revision: 1, mode: "log", clauses: [{ id: "rows",
+      relational: { inputs, query, key: ["path"] }, violation: { code: "ROW", message: "Row", anchor: "witness.span" } }],
+  }), "json", caps);
+  const query = "SELECT __path AS path,__start AS start_byte,__end AS end_byte FROM eligible";
+  expect(() => compile(query)).not.toThrow();
+  for (const sql of [
+    query.replace("__end", "missing"),
+    query.replace("eligible", "absent"),
+    "SELECT name AS path,0 AS start_byte,0 AS end_byte FROM sqlite_master",
+    "SELECT random() AS path,0 AS start_byte,0 AS end_byte FROM eligible",
+    "DELETE FROM eligible RETURNING __path AS path,__start AS start_byte,__end AS end_byte",
+    query + " WHERE __path=?",
+  ]) expect(() => compile(sql), sql).toThrow();
+  expect(() => compile(query, { eligible: input, ELIGIBLE: input })).toThrow();
+  expect(() => compile(query, { eligible: input, sqlite_hidden: input })).toThrow();
+});
 
 it.skipIf(!required)("validates independent input and syntax schemas without executing relation DDL", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-compiler-schema-"));

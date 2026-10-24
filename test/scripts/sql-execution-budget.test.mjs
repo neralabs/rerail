@@ -224,7 +224,7 @@ test("CI keeps the 100-submission gate mandatory when its workload or regression
   assert.equal(scripts["test:sql-execution-budget"], "node scripts/profiling/sql-budget.mjs");
   assert.ok(scripts["test:profiling"].includes("test/scripts/sql-execution-budget.test.mjs"));
   const filter = parse(workflow.jobs.changes.steps.find(step => step.with?.filters).with.filters).rust;
-  for (const file of ["test/scripts/sql-execution-budget.test.mjs", "test/engine/native/candidate-admission.test.ts", "test/engine/native/candidate-publication.test.ts"]) {
+  for (const file of ["test/scripts/sql-execution-budget.test.mjs", "test/engine/native/candidate-admission.test.ts", "test/engine/native/candidate-publication.test.ts", "test/engine/native/compiler-schema.test.ts"]) {
     assert.ok(filter.includes(file), `${file} must trigger the profiling addon and mandatory native gates`);
   }
 });

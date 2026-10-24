@@ -111,6 +111,12 @@ pub(super) fn compile(
                 "{path}/inputs/{name} is not a relation identifier"
             )));
         }
+        if tables
+            .iter()
+            .any(|table: &String| table.eq_ignore_ascii_case(name))
+        {
+            return Err(invalid("input relations must have distinct names"));
+        }
         let input = compile_relation(
             value,
             &format!("{path}/inputs/{name}"),
@@ -137,7 +143,8 @@ pub(super) fn compile(
                 "{path}/inputs/{name}: projected fields must be distinct relation identifiers"
             )));
         }
-        relational::create_input(&db, name, &fields)?;
+        relational::schema::register(&db, name, relational::input_schema(name, &fields))
+            .map_err(|error| invalid(format!("relational query: {error}")))?;
         tables.insert(name.clone());
         inputs.push((name.clone(), input));
     }
@@ -219,7 +226,7 @@ pub(super) fn compile(
         let spec = object(value,&at)?;
         reject_unknown(spec,&["language","siblingLinks","constructorFields"],&at)?;
         if spec.get("language").and_then(Value::as_str) != Some("python") { return Err(invalid(format!("{at}/language must be python"))); }
-        if tables.contains("reference_edges") { return Err(invalid("reference_edges is reserved for the native graph")); }
+        if tables.iter().any(|name|name.eq_ignore_ascii_case("reference_edges")) { return Err(invalid("reference_edges is reserved for the native graph")); }
         let mut calls = spec.clone(); calls.remove("language");
         calls.insert("graph".to_owned(),Value::String("references".to_owned()));
         calls.insert("at".to_owned(),Value::String("definition".to_owned()));
@@ -227,7 +234,7 @@ pub(super) fn compile(
         calls.insert("not".to_owned(),serde_json::json!({"kind":"function_definition"}));
         let query = super::compile_query(&serde_json::json!({"ast":{"language":"python","rule":{"kind":"function_definition","calls":calls}}}),&at,capabilities,defines,required_ast)?;
         let key = query.calls().first().ok_or_else(||invalid("native graph term was not compiled"))?.through.links;
-        relational::create_input(&db,"reference_edges",&relational::REFERENCE_FIELDS.iter().map(|field|(*field).to_owned()).collect::<Vec<_>>())?;
+        relational::schema::register(&db,"reference_edges",relational::input_schema("reference_edges",&relational::REFERENCE_FIELDS.iter().map(|field|(*field).to_owned()).collect::<Vec<_>>())).map_err(|error|invalid(format!("relational query: {error}")))?;
         tables.insert("reference_edges".to_owned());
         Ok(relational::References { query,key })
     }).transpose()?;

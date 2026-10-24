@@ -19,6 +19,7 @@ mod inputs;
 mod insert;
 mod producer;
 mod reachability;
+pub(super) mod schema;
 mod source;
 pub(super) mod syntax;
 mod table;
@@ -325,8 +326,19 @@ pub(super) fn inspect_fields(
 }
 
 pub(super) fn create_input(db: &Connection, name: &str, fields: &[String]) -> Result<()> {
-    db.execute(&format!("CREATE TABLE {} (__path TEXT NOT NULL, __start INTEGER NOT NULL, __end INTEGER NOT NULL{})",quote(name),fields.iter().map(|field|format!(",{}",quote(field))).collect::<String>()),[]).map_err(sql_error)?;
+    db.execute(&input_schema(name, fields), [])
+        .map_err(sql_error)?;
     Ok(())
+}
+pub(super) fn input_schema(name: &str, fields: &[String]) -> String {
+    format!(
+        "CREATE TABLE {} (__path TEXT NOT NULL, __start INTEGER NOT NULL, __end INTEGER NOT NULL{})",
+        quote(name),
+        fields
+            .iter()
+            .map(|field| format!(",{}", quote(field)))
+            .collect::<String>()
+    )
 }
 pub(super) fn create_stage(
     db: &Connection,
