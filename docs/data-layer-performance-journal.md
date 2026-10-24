@@ -10,6 +10,16 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Shared producer foundation: 2026-10-24
 
+### Shared span dependency waves: red
+
+The next test uses two rules with 65 clauses each, so candidate emission requires two result packets.
+Both rules request source spans through independent kind selectors.
+The catalog checkpoint preserves all 130 findings but executes two span-fill statements where one is required.
+Evidence: `.rerail/profiles/shared-producers-20261024/span-wave-red`.
+The target groups live span demand by its registered owner and necessary dependency wave.
+Selectors retain their existing physical tables. The broad fill reads those tables without embedding their definitions again.
+Dependent span predicates retain later waves, and consumers retain the demanded-key fence before source predicates.
+
 ### Structural catalog and real exports: green
 
 The public export test from `9db86048` now passes.
