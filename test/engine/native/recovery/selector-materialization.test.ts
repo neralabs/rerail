@@ -8,7 +8,7 @@ const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../../src/engine/index.ts", import.meta.url).href;
 const capabilities = new URL("../../../../native/src/code_rule_dsl/capabilities.json", import.meta.url).href;
 
-it.skipIf(!required)("constructs one indexed SQL owner for independent selectors across rules and packets", () => {
+it.skipIf(!required)("pipelines each selector into its physical owner without a second ephemeral copy", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-selector-family-"));
   try {
     const program = `
@@ -43,13 +43,15 @@ it.skipIf(!required)("constructs one indexed SQL owner for independent selectors
       expect(events.filter(e => e.kind === "sql")).toHaveLength(catalogue.executionCoverage.completed);
       for (const event of events.filter(e => e.kind === "sql")) {
         const sql = queries.get(event.query) ?? "";
-        creates += Number(sql.startsWith("CREATE TEMP TABLE"));
+        creates += Number(sql.startsWith('CREATE TEMP TABLE "'));
         indexes += Number(sql.startsWith("CREATE INDEX temp."));
         releases += Number(sql.startsWith("DROP TABLE temp."));
       }
     }
-    expect([creates, indexes, releases], "independent selectors share construction, index and retirement").toEqual([1, 1, 1]);
-    expect(candidates[0].selectorOwners).toHaveLength(1);
-    expect(candidates[0].selectorOwners[0].members).toHaveLength(2);
+    expect([creates, indexes, releases], "distinct selectors retain their physical owners").toEqual([2, 2, 2]);
+    const owners = candidates[0].stages.filter((s: {temporary: boolean; index: string}) => s.temporary && s.index === "fid,pre");
+    expect(owners).toHaveLength(2);
+    for (const owner of owners)
+      expect(owner.sql, "the CTAS owner is the materialization boundary").toContain(`${owner.name}(fid,pre) AS NOT MATERIALIZED`);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 45_000);

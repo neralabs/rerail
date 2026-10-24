@@ -126,7 +126,7 @@ jobs:
               - 'test/engine/native/shared-producers.test.ts'
               - 'test/engine/native/frontier-determinism.test.ts'
               - 'test/engine/native/recovery/child-demand.test.ts'
-              - 'test/engine/native/recovery/selector-families.test.ts'
+              - 'test/engine/native/recovery/selector-materialization.test.ts'
               - 'scripts/profiling/frontier-audit.mjs'
               - 'package.json'
               - '.github/workflows/ci.yml'

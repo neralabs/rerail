@@ -10,6 +10,32 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Selector SQL owners: 2026-10-24
 
+### Family packing is rejected; the next TDD rung isolates duplicate ownership
+
+The target from `c896b721` passes parity but fails the performance acceptance criteria.
+Generic family packing reduces engine submissions from 7,733 to 4,109 after applying a preparation bound.
+Its first bounded implementation increases matched median CPU from 1,679.669 to 1,855.333 ms.
+Metadata reuse and root pipelining reduce that regression, but a fresh series still records 1,789.405 versus 1,682.382 ms.
+All five selected trials in that second series use more CPU than all five controls.
+These runtime changes are rejected. Their code is removed instead of remaining behind a switch.
+
+Earlier nested member scopes reach a 53,478,480-byte SQLite heap peak, compared with 19,793,328 bytes before.
+One shared scope still reaches 37,930,224 bytes. A 128-unit preparation bound returns the peak below the baseline.
+Standalone replays compare 128, 64, 32, and 16 preparation units, with and without compatible scalar SELECT fusion.
+They preserve the exact 161-row candidate multiset. Neither family counts nor row parity establish CPU recovery.
+Bottom-up samples and phase CPU identify additional lowering work and SQLite SELECT preparation as the costs.
+The raw experiment directory retains every valid trial and the abandoned source snapshot.
+The first `repack-fused` result uses an older executable after a failed build; it is invalid and excluded.
+
+The next red test targets a narrower defect proven in the same capture.
+A private `(fid, pre)` selector is materialized inside its CTE and then copied into its physical CTAS owner.
+The physical table already supplies the required boundary.
+The test retains both distinct selector owners, all 130 findings, and both result packets.
+It requires the owner's final projection to be a pipeline, while shared intermediate CTEs retain their boundaries.
+The frozen baseline fails on its own `AS MATERIALIZED` declaration.
+Evidence: `.rerail/profiles/selector-family-recovery-20261024/owned-red`.
+The unchanged 100-submission gate remains mandatory.
+
 ### Target shape and two-rule regression: red
 
 This phase starts from `66f6a522` and its frozen child-demand addon.
