@@ -59,3 +59,84 @@ pub(in crate::code_rule_dsl) fn plans<'a>(
     }
     out
 }
+
+/// Discover file demand without running selectors. Conditional scheduling remains the caller's job.
+pub(in crate::code_rule_dsl) fn for_file(
+    rule: &CompiledCodeRule,
+    file: &crate::code_rule_dsl::model::FileInput,
+    doc: &crate::code_rule_dsl::tape::TapeDoc,
+) -> Vec<Arc<AnchorPlan>> {
+    use crate::code_rule_dsl::{
+        eval::grammar_matcher, matcher::FileGates, soundness::SyntaxErrors,
+    };
+    let limits = &rule.capabilities.limits;
+    if !rule.scope.matches(&file.path)
+        || limits.max_files == 0
+        || file.source.len() > limits.max_source_bytes
+    {
+        return Vec::new();
+    }
+    let root = ast_grep_core::AstGrep::doc(doc.clone());
+    let gates = FileGates::new(file, root.root());
+    let errors = SyntaxErrors::of_doc(doc);
+    let mut searched = rustc_hash::FxHashMap::default();
+    let mut leaves = Vec::new();
+    fn query<'a>(q: &'a Query, leaves: &mut Vec<&'a Query>) {
+        match q {
+            Query::Ast { .. } => leaves.push(q),
+            Query::SelectWhen { select, exists } => {
+                query(exists, leaves);
+                query(select, leaves);
+            }
+            Query::Regex { .. } => {}
+        }
+    }
+    fn relation<'a>(
+        input: &'a crate::code_rule_dsl::model::FactQuery,
+        file: &crate::code_rule_dsl::model::FileInput,
+        leaves: &mut Vec<&'a Query>,
+    ) {
+        if input
+            .ast
+            .domain
+            .as_ref()
+            .is_none_or(|domain| domain.matches(&file.path))
+        {
+            query(&input.ast.query, leaves);
+        }
+    }
+    // Gather borrowed leaves first, then share text searches and file facts across their matchers.
+    for clause in &rule.clauses {
+        match &clause.kind {
+            ClauseKind::Forbid(q) => query(q, &mut leaves),
+            ClauseKind::RequireEach { subject, evidence } => {
+                relation(subject, file, &mut leaves);
+                relation(evidence, file, &mut leaves);
+            }
+            ClauseKind::Budget { query: input, .. } => relation(input, file, &mut leaves),
+            ClauseKind::Relational(plan) => {
+                for (_, input) in &plan.inputs {
+                    relation(input, file, &mut leaves);
+                }
+                if let Some(reference) = &plan.references {
+                    query(&reference.query, &mut leaves);
+                }
+            }
+            ClauseKind::Llm => {}
+        }
+    }
+    let mut seen = HashSet::new();
+    leaves
+        .into_iter()
+        .filter_map(|q| {
+            let Query::Ast { matchers, .. } = q else {
+                unreachable!()
+            };
+            let grammar = grammar_matcher(matchers, file)?;
+            (grammar.admits_source(&file.source, &errors, &mut searched)
+                && gates.admit(grammar)
+                && seen.insert(Arc::as_ptr(&grammar.anchors) as usize))
+            .then(|| Arc::clone(&grammar.anchors))
+        })
+        .collect()
+}

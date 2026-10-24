@@ -601,6 +601,20 @@ impl<'a> Leaf<'a> {
                     }
                     partial = Some(message);
                 }
+                // Admission must also bypass matching; an omitted SQL plan is not a request
+                // to fall back to a full root walk for a known-empty file.
+                if !grammar.admits_source(
+                    &file.source,
+                    &errors,
+                    &mut rustc_hash::FxHashMap::default(),
+                ) || !FileGates::new(file, target.root()).admit(grammar)
+                {
+                    return Ok(FileStep::Read {
+                        witnesses,
+                        partial,
+                        decided: false,
+                    });
+                }
                 let mut util_work = self.limits.max_visited_nodes;
                 let _scopes =
                     FileScopeSlot::install(Vec::new(), file.module.clone(), errors.hide_bindings())

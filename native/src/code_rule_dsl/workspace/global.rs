@@ -510,6 +510,7 @@ pub(super) fn evaluate_batched_relations(
                 .flat_map(|partitions| partitions.keys().cloned())
         })
         .collect::<BTreeSet<_>>();
+    let mut demands = BTreeMap::new();
     for path in paths {
         let input = state
             .files
@@ -552,16 +553,20 @@ pub(super) fn evaluate_batched_relations(
             continue;
         }
         let (doc, _) = crate::code_rule_dsl::eval::file_tape(language, &input)?;
+        let plans = catalog
+            .iter()
+            .flat_map(|(_, rule, _)| {
+                crate::code_rule_dsl::matcher::anchor_plans_for_file(rule, &input, &doc)
+            })
+            .collect();
+        demands.insert(path.clone(), plans);
         if let Err(error) = state.anchor_corpus.put(&path, &doc, &|| {
             closed.load(std::sync::atomic::Ordering::Acquire)
         }) {
             eprintln!("SQL AST preparation unavailable for {path}: {error}");
         }
     }
-    let plans = crate::code_rule_dsl::matcher::anchor_plans(
-        state.code_rules.iter().map(std::sync::Arc::as_ref),
-    );
-    if let Err(error) = state.anchor_corpus.prepare(&plans) {
+    if let Err(error) = state.anchor_corpus.prepare_files(&demands) {
         eprintln!("SQL AST corpus batch unavailable; retaining authoritative candidates: {error}");
     }
     #[cfg(feature = "code-rule-profile")]

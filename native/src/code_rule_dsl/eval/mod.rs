@@ -480,6 +480,7 @@ fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
         return;
     }
     let corpus = CorpusSlot::current();
+    let mut demands = BTreeMap::new();
     for file in snapshot
         .files
         .iter()
@@ -495,6 +496,10 @@ fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
         }
         match file_tape(lang, file) {
             Ok((doc, _)) => {
+                demands.insert(
+                    file.path.clone(),
+                    crate::code_rule_dsl::matcher::anchor_plans_for_file(code_rule, file, &doc),
+                );
                 if let Err(error) = corpus.put(
                     &file.path,
                     &doc,
@@ -506,7 +511,7 @@ fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
             Err(error) => eprintln!("SQL AST batch source unavailable: {error}"),
         }
     }
-    if let Err(error) = corpus.prepare(&plans) {
+    if let Err(error) = corpus.prepare_files(&demands) {
         eprintln!("SQL AST corpus batch unavailable; retaining authoritative candidates: {error}");
     }
 }

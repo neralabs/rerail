@@ -14,7 +14,9 @@ mod lower;
 mod nodes;
 mod plans;
 mod postings;
-pub(in crate::code_rule_dsl) use plans::plans as anchor_plans;
+pub(in crate::code_rule_dsl) use plans::{
+    for_file as anchor_plans_for_file, plans as anchor_plans,
+};
 mod reader;
 #[cfg(all(test, feature = "code-rule-profile"))]
 mod replay;

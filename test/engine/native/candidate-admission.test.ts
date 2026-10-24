@@ -43,6 +43,8 @@ function run(exclusion: string, files = 1, execution = "workspace") {
   expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
   const result = JSON.parse(child.stdout.trim().split("\n").at(-1)!);
   expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(files * (exclusion === "relational" ? 2 : 1));
+  const profiles = child.stderr.split("\n").filter(l => l.startsWith("RERAIL_CODE_RULE_PROFILE ")).map(l => JSON.parse(l.slice(25)));
+  expect(profiles.reduce((n, p) => n + p.anchorCacheMisses, 0), "excluded plans must not become fallback root scans").toBe(0);
   const trace = child.stderr.split("\n").filter(l => l.startsWith("RERAIL_TRACE ")).map(l => JSON.parse(l.slice(13)));
   expect(trace.length, "requires the profiling addon; missing counters cannot pass").toBeGreaterThan(0);
   return trace;
