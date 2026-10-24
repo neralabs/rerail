@@ -279,6 +279,12 @@ pub struct CompiledCodeRuleDsl {
 
 #[napi]
 impl CompiledCodeRuleDsl {
+    /// Audit the normal candidate compiler over fixed permutations. This executes no candidate SQL.
+    #[napi]
+    pub fn candidate_frontier_audit(&self) -> String {
+        matcher::candidate_frontier_audit(&self.inner).to_string()
+    }
+
     #[napi]
     pub fn canonical_json(&self) -> String {
         self.inner.canonical.clone()

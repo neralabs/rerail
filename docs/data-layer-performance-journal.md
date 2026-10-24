@@ -8,6 +8,24 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Frontier determinism: 2026-10-24
+
+### Same-object plan permutations: red
+
+The next phase starts from `e237b5a0`.
+The new candidate-frontier audit calls the normal compiler on four explicit permutations of the same compiled plan objects.
+It submits no candidate SQL and selects no alternate execution algorithm.
+The state-tripwire policy contains 139 plans in this audit.
+Forward order produces 1,609 stages and 54 broadened plans. Reverse order produces 1,532 stages and 64 broadened plans.
+The test also finds changed per-plan generated counts, parameter layouts, and physical producer definitions.
+This proves that earlier producer-cache warmth changes admission under the existing 256-node allowance.
+Evidence: `.rerail/profiles/frontier-recovery-20261024/state-baseline-audit.json` and `permutation-red`.
+
+The selected target bounds each plan independently before composing shared producers.
+Complete typed definitions establish sharing. Canonical topological numbering establishes placement, independent of caller order and heap addresses.
+The 256-node lowering allowance and the complete-job 100-submission gate remain fixed.
+The audit tool runs with `node --import tsx scripts/profiling/frontier-audit.mjs POLICY.json OUTPUT.json`.
+
 ## Shared producer foundation: 2026-10-24
 
 ### Shared span dependency waves: green
