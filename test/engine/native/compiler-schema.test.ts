@@ -70,3 +70,41 @@ it.skipIf(!required)("validates independent input and syntax schemas without exe
     expect(submitted, "prepare-only compilation needs no runtime connection PRAGMAs").toEqual([]);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 40_000);
+
+it.skipIf(!required)("infers repeated stage schemas once per compilation and validates deferred expressions without DDL", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-stage-schema-"));
+  try {
+    const program = `
+      import { readFileSync } from 'node:fs';
+      import { loadNativeBinding } from ${JSON.stringify(engine)};
+      const native=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
+      const clause=i=>({id:'c'+i,relational:{inputs:{input:{evidence:{as:'file',query:{ast:{language:'python',rule:{kind:'module'}}},project:{path:'file.path'}}}},
+        stages:[{name:'seed',query:'SELECT __path,__start,__end,CAST(__start AS REAL) AS amount FROM input',deferred:{later:'__start+1'}},
+          {name:'copied',query:'SELECT __path,__start,__end,amount,later FROM seed'}],
+        query:'SELECT __path AS path,__start AS start_byte,__end AS end_byte FROM copied',key:['path']},
+        violation:{code:'ROW',message:'Row',anchor:'witness.span'}});
+      for(let document=0;document<2;document++)native.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id:'stages'+document,revision:1,mode:'log',clauses:Array.from({length:12},(_,i)=>clause(i))}),'json',caps);
+      console.log('compiled');
+    `;
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+      encoding: "utf8", timeout: 30_000, env: { ...process.env, RERAIL_SQL_PROFILE_DIR: directory },
+    });
+    expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout.trim()).toBe("compiled");
+    const statements: string[] = [];
+    const catalogues = readdirSync(directory).filter(f => /^profile-.*\.json$/.test(f));
+    expect(catalogues.length).toBeGreaterThan(0);
+    for (const file of catalogues) {
+      const catalogue = JSON.parse(readFileSync(join(directory, file), "utf8"));
+      const queries = new Map<number, string>(catalogue.queries.map((q: { id: number; sql: string }) => [q.id, q.sql]));
+      const events = readFileSync(join(directory, file.replace(/\.json$/, ".jsonl")), "utf8").trim().split("\n").filter(Boolean).map(l => JSON.parse(l));
+      expect(events.filter(e => e.kind === "sql")).toHaveLength(catalogue.executionCoverage.completed);
+      for (const event of events) if (event.kind === "sql") statements.push(queries.get(event.query)!);
+    }
+    expect(statements.filter(sql => /^CREATE TEMP TABLE "seed" AS/.test(sql))).toHaveLength(2);
+    expect(statements.filter(sql => /^CREATE TEMP TABLE "copied" AS/.test(sql))).toHaveLength(2);
+    expect(statements.filter(sql => /^ALTER TABLE/.test(sql))).toHaveLength(2);
+    expect(statements.filter(sql => /(?:CREATE TEMP TABLE|DROP TABLE) "__stage_/.test(sql))).toEqual([]);
+    expect(statements).toHaveLength(6);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}, 40_000);
