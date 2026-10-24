@@ -1,0 +1,223 @@
+{
+ "id": "required-contracts",
+ "alias": "rc",
+ "violation": {
+  "code": "missing_contract",
+  "message": "Missing target contract",
+  "anchor": "witness.span"
+ },
+ "scope": {
+  "include": [
+   "impl/common/l2065_plan_core/**/*.py",
+   "impl/common/l2066_plan_optimizer/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py",
+   "impl/common/l7300_sql_versioned_transactions/**/*.py",
+   "impl/common/l9700_sql_graph_query/**/*.py",
+   "l2070_batching/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/tmp/**",
+   "**/__pycache__/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ]
+ },
+ "options": {
+  "requiredShape": {
+   "type": "boolean",
+   "default": true
+  }
+ },
+ "inputs": {},
+ "stages": [
+  {
+   "name": "frozen_decorated",
+   "query": "SELECT DISTINCT d.__path,d.decorated FROM py_decorations d JOIN py_callees f ON f.__path=d.__path AND f.call=d.call\n JOIN py_keyword_arguments a ON a.__path=d.__path AND a.call=d.call JOIN py_keyword_arguments b ON b.__path=d.__path AND b.call=d.call\n WHERE (f.kind='identifier' AND f.name='dataclass' OR f.kind='attribute' AND f.attribute='dataclass')\n AND a.name='frozen' AND a.value='True' AND b.name='slots' AND b.value='True'"
+  },
+  {
+   "name": "classes",
+   "query": "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY __path,name ORDER BY __start DESC) AS selected FROM (\n SELECT c.__path,c.__start,c.__end,CASE WHEN z.decorated IS NULL THEN NULL ELSE c.__start END AS frozen,c.name FROM py_definitions c\n LEFT JOIN frozen_decorated z ON z.__path=c.__path AND z.decorated=c.decorated WHERE c.kind='class_definition' AND c.outer IS NULL)) WHERE selected=1",
+   "indexes": [
+    [
+     "__path",
+     "name"
+    ],
+    [
+     "__path",
+     "__start"
+    ]
+   ]
+  },
+  {
+   "name": "symbols",
+   "query": "SELECT __path,name FROM classes UNION SELECT __path,name FROM py_definitions WHERE kind='function_definition' AND container_kind='module'\n UNION SELECT __path,name FROM py_assignments WHERE parent_kind='expression_statement' AND container_kind='module' AND name IS NOT NULL",
+   "indexes": [
+    [
+     "__path",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "members",
+   "query": "SELECT a.__path,a.__start,a.__end,a.name,c.__start AS owner,a.type FROM py_assignments a JOIN py_definitions c ON c.__path=a.__path AND c.body=a.container\n WHERE a.kind='assignment' AND a.name IS NOT NULL AND a.parent_kind='expression_statement' AND a.container_kind='block' AND c.kind='class_definition' AND c.outer IS NULL",
+   "indexes": [
+    [
+     "__path",
+     "owner",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "method_defs",
+   "query": "SELECT f.__path,f.__start,f.__end,f.name,c.__start AS owner FROM py_definitions f JOIN py_definitions c ON c.__path=f.__path AND c.body=f.container\n WHERE f.kind='function_definition' AND f.container_kind='block' AND c.kind='class_definition' AND c.outer IS NULL"
+  },
+  {
+   "name": "methods",
+   "query": "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY __path,owner,name ORDER BY __start DESC) AS selected FROM method_defs) WHERE selected=1",
+   "indexes": [
+    [
+     "__path",
+     "owner",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "annotations",
+   "query": "SELECT t.__path,t.__start,t.__end,m.name AS field,t.name,m.owner FROM py_annotation_tokens t JOIN members m ON m.__path=t.__path AND m.__start=t.annotated\n WHERE t.annotated_kind='assignment'",
+   "indexes": [
+    [
+     "__path",
+     "owner",
+     "field",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "returns",
+   "query": "SELECT t.__path,t.__start,t.__end,m.owner AS class,m.name AS method,t.name,m.__start AS owner FROM py_annotation_tokens t\n JOIN method_defs m ON m.__path=t.__path AND m.__start=t.returns",
+   "indexes": [
+    [
+     "__path",
+     "owner",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "parameters",
+   "query": "SELECT t.__path,t.__start,t.__end,m.owner AS class,m.name AS method,t.name,m.__start AS owner FROM py_annotation_tokens t\n JOIN py_typed_parameters p ON p.__path=t.__path AND p.__start=t.annotated JOIN method_defs m ON m.__path=p.__path AND m.__start=p.function\n WHERE t.annotated_kind IN ('typed_parameter','typed_default_parameter') AND p.splat IS NULL",
+   "indexes": [
+    [
+     "__path",
+     "owner",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "bases",
+   "query": "SELECT t.__path,t.__start,t.__end,t.name,t.class AS owner FROM py_base_tokens t JOIN py_definitions c ON c.__path=t.__path AND c.__start=t.class\n WHERE t.keyword IS NULL AND c.kind='class_definition' AND c.outer IS NULL",
+   "indexes": [
+    [
+     "__path",
+     "owner",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "union_names",
+   "query": "SELECT t.__path,t.__start,t.__end,a.name AS alias,t.name FROM py_assigned_tokens t JOIN py_assignments a ON a.__path=t.__path AND a.__start=t.assignment\n WHERE a.container_kind='module' AND a.name IS NOT NULL",
+   "indexes": [
+    [
+     "__path",
+     "alias",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "required_symbols",
+   "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS name FROM json_each('[[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\"],[\"l2070_batching/execution_receipt.py\",\"PhysicalResultSet\"],[\"l2070_batching/physical_program.py\",\"ClosedApplicationRegion\"],[\"l2070_batching/physical_program.py\",\"ExternalIoRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportProgram\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRequest\"],[\"l2070_batching/physical_program.py\",\"SqlStatementRegion\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationKind\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationRequirement\"],[\"l2070_batching/planning_contract.py\",\"OrderedEffect\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundary\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundaryKind\"],[\"l2070_batching/planning_contract.py\",\"RecursiveQueryRequirement\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\"],[\"l2070_batching/planning_contract.py\",\"SessionContextScope\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\"],[\"l2070_batching/runtime_application.py\",\"ApplyLifecycleEffectApplication\"],[\"l2070_batching/runtime_application.py\",\"BuildTerminalPayloadApplication\"],[\"l2070_batching/runtime_application.py\",\"DecodeAffectedCountApplication\"],[\"l2070_batching/runtime_application.py\",\"DecodeScalarApplication\"],[\"l2070_batching/runtime_application.py\",\"HydrateManyApplication\"],[\"l2070_batching/runtime_application.py\",\"HydrateOneApplication\"],[\"l2070_batching/runtime_application.py\",\"PopulateCacheApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\"]]')",
+   "indexes": [
+    [
+     "path",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "required_fields",
+   "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS class,json_extract(value,'$[2]') AS name FROM json_each('[[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"application_results\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"driver_round_trips\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"result_set_count\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"results\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"sql_group_count\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"sql_statement_count\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"transaction_control_count\"],[\"l2070_batching/physical_program.py\",\"ClosedApplicationRegion\",\"applications\"],[\"l2070_batching/physical_program.py\",\"ExternalIoRegion\",\"operation\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportProgram\",\"requests\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRequest\",\"regions\"],[\"l2070_batching/physical_program.py\",\"SqlStatementRegion\",\"result_bindings\"],[\"l2070_batching/physical_program.py\",\"SqlStatementRegion\",\"statements\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationRequirement\",\"kind\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationRequirement\",\"rollback_scope_ref\"],[\"l2070_batching/planning_contract.py\",\"OrderedEffect\",\"after_refs\"],[\"l2070_batching/planning_contract.py\",\"OrderedEffect\",\"effect_ref\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundary\",\"kind\"],[\"l2070_batching/planning_contract.py\",\"RecursiveQueryRequirement\",\"required\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\",\"cardinality\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\",\"kind\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\",\"relation\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\",\"permission_context_ref\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\",\"scope\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\",\"validated_session_ref\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"failure_isolation\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"ordered_effects\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"python_boundary\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"recursive_query\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"result_transport\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"session_context\"]]')",
+   "indexes": [
+    [
+     "path",
+     "class"
+    ]
+   ]
+  },
+  {
+   "name": "required_immutable",
+   "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS class FROM json_each('[[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\"],[\"l2070_batching/execution_receipt.py\",\"PhysicalResultSet\"],[\"l2070_batching/physical_program.py\",\"ClosedApplicationRegion\"],[\"l2070_batching/physical_program.py\",\"ExternalIoRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportProgram\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRequest\"],[\"l2070_batching/physical_program.py\",\"SqlStatementRegion\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationRequirement\"],[\"l2070_batching/planning_contract.py\",\"OrderedEffect\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundary\"],[\"l2070_batching/planning_contract.py\",\"RecursiveQueryRequirement\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\"],[\"l2070_batching/runtime_application.py\",\"ApplyLifecycleEffectApplication\"],[\"l2070_batching/runtime_application.py\",\"BuildTerminalPayloadApplication\"],[\"l2070_batching/runtime_application.py\",\"DecodeAffectedCountApplication\"],[\"l2070_batching/runtime_application.py\",\"DecodeScalarApplication\"],[\"l2070_batching/runtime_application.py\",\"HydrateManyApplication\"],[\"l2070_batching/runtime_application.py\",\"HydrateOneApplication\"],[\"l2070_batching/runtime_application.py\",\"PopulateCacheApplication\"]]')",
+   "indexes": [
+    [
+     "path",
+     "class"
+    ]
+   ]
+  },
+  {
+   "name": "required_enums",
+   "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS class,json_extract(value,'$[2]') AS name FROM json_each('[[\"l2070_batching/planning_contract.py\",\"FailureIsolationKind\",\"SAVEPOINT\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationKind\",\"STATEMENT\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationKind\",\"TRANSACTION\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundaryKind\",\"CLOSED_APPLICATION\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundaryKind\",\"EXTERNAL_IO\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundaryKind\",\"NONE\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"AFFECTED_COUNT\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"GENERATED_IDENTIFIER\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"LOGICAL_ROW\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"NONE\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"RAW_RELATION\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"TERMINAL_SCALAR\"],[\"l2070_batching/planning_contract.py\",\"SessionContextScope\",\"NONE\"],[\"l2070_batching/planning_contract.py\",\"SessionContextScope\",\"STATEMENT\"],[\"l2070_batching/planning_contract.py\",\"SessionContextScope\",\"TRANSACTION\"]]')",
+   "indexes": [
+    [
+     "path",
+     "class"
+    ]
+   ]
+  },
+  {
+   "name": "required_unions",
+   "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS alias,json_extract(value,'$[2]') AS name FROM json_each('[[\"l2070_batching/physical_program.py\",\"PhysicalTransportRegion\",\"ClosedApplicationRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRegion\",\"ExternalIoRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRegion\",\"SqlStatementRegion\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"ApplyLifecycleEffectApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"BuildTerminalPayloadApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"DecodeAffectedCountApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"DecodeScalarApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"HydrateManyApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"HydrateOneApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"PopulateCacheApplication\"]]')",
+   "indexes": [
+    [
+     "path",
+     "alias"
+    ]
+   ]
+  }
+ ],
+ "locations": [
+  "l2070_batching/execution_receipt.py",
+  "l2070_batching/physical_executor.py",
+  "l2070_batching/physical_placement.py",
+  "l2070_batching/physical_program.py",
+  "l2070_batching/planning_contract.py",
+  "l2070_batching/runtime_application.py",
+  "l2070_batching/step.py"
+ ],
+ "query": {
+  "$option": "requiredShape",
+  "cases": {
+   "true": "SELECT path,0 AS start_byte,0 AS end_byte,symbol,issue,requirement FROM (\n SELECT r.path,r.name AS symbol,'SPTA001' AS issue,'symbol' AS requirement FROM required_symbols r\n WHERE NOT EXISTS(SELECT 1 FROM symbols s WHERE s.__path=r.path AND s.name=r.name)\n UNION ALL SELECT DISTINCT r.path,r.class,'SPTA013','fields' FROM required_fields r JOIN classes c ON c.__path=r.path AND c.name=r.class\n WHERE NOT EXISTS(SELECT 1 FROM members f WHERE f.__path=r.path AND f.owner=c.__start AND f.name=r.name AND f.type IS NOT NULL)\n UNION ALL SELECT r.path,r.class,'SPTA013','immutable' FROM required_immutable r JOIN classes c ON c.__path=r.path AND c.name=r.class WHERE c.frozen IS NULL\n UNION ALL SELECT DISTINCT r.path,r.class,'SPTA013','enum' FROM required_enums r JOIN classes c ON c.__path=r.path AND c.name=r.class\n WHERE NOT EXISTS(SELECT 1 FROM bases b WHERE b.__path=r.path AND b.owner=c.__start AND b.name='StrEnum')\n OR NOT EXISTS(SELECT 1 FROM members f WHERE f.__path=r.path AND f.owner=c.__start AND f.name=r.name AND f.type IS NULL)\n UNION ALL SELECT DISTINCT r.path,r.alias,'SPTA013','union' FROM required_unions r JOIN symbols s ON s.__path=r.path AND s.name=r.alias\n WHERE NOT EXISTS(SELECT 1 FROM union_names n WHERE n.__path=r.path AND n.alias=r.alias AND n.name=r.name)\n UNION ALL SELECT 'l2070_batching/step.py','ServerPlanStep.planning_contract','SPTA002','planning-method' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN methods m ON m.__path=c.__path AND m.owner=c.__start JOIN returns r ON r.__path=m.__path AND r.owner=m.__start\n WHERE c.__path='l2070_batching/step.py' AND c.name='ServerPlanStep' AND m.name='planning_contract' AND r.name='StepPlanningContract')\n UNION ALL SELECT 'l2070_batching/physical_placement.py','ApplicationPlacementUnit.application','SPTA003','application-field' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN annotations a ON a.__path=c.__path AND a.owner=c.__start AND a.field='application'\n WHERE c.__path='l2070_batching/physical_placement.py' AND c.name='ApplicationPlacementUnit' AND a.name='RuntimeApplication')\n UNION ALL SELECT 'l2070_batching/physical_executor.py','BackendExecutor.execute_program','SPTA011','executor-method' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN methods m ON m.__path=c.__path AND m.owner=c.__start\n JOIN returns r ON r.__path=m.__path AND r.owner=m.__start JOIN parameters p ON p.__path=m.__path AND p.owner=m.__start\n WHERE c.__path='l2070_batching/physical_executor.py' AND c.name='BackendExecutor' AND m.name='execute_program' AND r.name='BackendExecutionReceipt' AND p.name='PhysicalTransportProgram')\n )",
+   "false": "SELECT path,0 AS start_byte,0 AS end_byte,symbol,issue,requirement FROM (\n SELECT r.path,r.name AS symbol,'SPTA001' AS issue,'symbol' AS requirement FROM required_symbols r\n WHERE NOT EXISTS(SELECT 1 FROM symbols s WHERE s.__path=r.path AND s.name=r.name)\n UNION ALL SELECT DISTINCT r.path,r.class,'SPTA013','fields' FROM required_fields r JOIN classes c ON c.__path=r.path AND c.name=r.class\n WHERE NOT EXISTS(SELECT 1 FROM members f WHERE f.__path=r.path AND f.owner=c.__start AND f.name=r.name AND f.type IS NOT NULL)\n UNION ALL SELECT r.path,r.class,'SPTA013','immutable' FROM required_immutable r JOIN classes c ON c.__path=r.path AND c.name=r.class WHERE c.frozen IS NULL\n UNION ALL SELECT DISTINCT r.path,r.class,'SPTA013','enum' FROM required_enums r JOIN classes c ON c.__path=r.path AND c.name=r.class\n WHERE NOT EXISTS(SELECT 1 FROM bases b WHERE b.__path=r.path AND b.owner=c.__start AND b.name='StrEnum')\n OR NOT EXISTS(SELECT 1 FROM members f WHERE f.__path=r.path AND f.owner=c.__start AND f.name=r.name AND f.type IS NULL)\n UNION ALL SELECT DISTINCT r.path,r.alias,'SPTA013','union' FROM required_unions r JOIN symbols s ON s.__path=r.path AND s.name=r.alias\n WHERE NOT EXISTS(SELECT 1 FROM union_names n WHERE n.__path=r.path AND n.alias=r.alias AND n.name=r.name)\n UNION ALL SELECT 'l2070_batching/step.py','ServerPlanStep.planning_contract','SPTA002','planning-method' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN methods m ON m.__path=c.__path AND m.owner=c.__start JOIN returns r ON r.__path=m.__path AND r.owner=m.__start\n WHERE c.__path='l2070_batching/step.py' AND c.name='ServerPlanStep' AND m.name='planning_contract' AND r.name='StepPlanningContract')\n UNION ALL SELECT 'l2070_batching/physical_placement.py','ApplicationPlacementUnit.application','SPTA003','application-field' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN annotations a ON a.__path=c.__path AND a.owner=c.__start AND a.field='application'\n WHERE c.__path='l2070_batching/physical_placement.py' AND c.name='ApplicationPlacementUnit' AND a.name='RuntimeApplication')\n UNION ALL SELECT 'l2070_batching/physical_executor.py','BackendExecutor.execute_program','SPTA011','executor-method' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN methods m ON m.__path=c.__path AND m.owner=c.__start\n JOIN returns r ON r.__path=m.__path AND r.owner=m.__start JOIN parameters p ON p.__path=m.__path AND p.owner=m.__start\n WHERE c.__path='l2070_batching/physical_executor.py' AND c.name='BackendExecutor' AND m.name='execute_program' AND r.name='BackendExecutionReceipt' AND p.name='PhysicalTransportProgram')\n ) WHERE 0"
+  }
+ },
+ "key": [
+  "symbol",
+  "issue",
+  "requirement"
+ ],
+ "code": "issue",
+ "findings": {
+  "detail": "issue || ':' || requirement || ':' || symbol"
+ }
+}

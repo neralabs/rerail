@@ -501,6 +501,10 @@ pub fn run(run_dir: &Path, opts: Opts) {
         }
         // Parity runs: the findings rows of the one worktree.
         let parity_rows: Option<BTreeMap<String, Vec<String>>> = opts.parity.as_ref().map(|_| built.outputs.iter().map(|(n, o)| (n.clone(), lower::full(o, 1).unwrap_or_default().into_iter().flat_map(|(r, c)| std::iter::repeat_n(show(&r), c as usize)).collect())).collect());
+        let mut y2 = super::y2dump::Dump::from_env(&built.outputs);
+        if let (Some(d), Some(_)) = (y2.as_mut(), opts.parity.as_ref()) {
+            d.touch(&built.outputs, 1);
+        }
 
         // ---- replay
         let mut lat: BTreeMap<String, Vec<f64>> = BTreeMap::new();
@@ -515,6 +519,11 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 break;
             }
             let w = ev.worktree;
+            if let Some(d) = y2.as_mut() {
+                if members.contains_key(&w) {
+                    d.touch(&built.outputs, w);
+                }
+            }
             let tl = Instant::now();
             let mut ups: Vec<((W, (Sym, Cid)), i32)> = Vec::new();
             if ev.group == "new_worktree" || ev.group == "commit_init" {
@@ -563,6 +572,9 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 edits_done += 1;
             }
             per_event.push(json!([ev.seq, ev.group, ev.kind, w, ev.changes.len(), ms_]));
+            if let Some(d) = y2.as_mut() {
+                d.event(&built.outputs, ev.seq, w, &ev.group, &ev.kind, &ev.changes);
+            }
             events_done += 1;
             if opts.oracle {
                 let before = differences.len();
@@ -590,6 +602,9 @@ pub fn run(run_dir: &Path, opts: Opts) {
             }
         }
         let rss_end = rss();
+        if let Some(d) = y2.as_mut() {
+            d.flush();
+        }
         rss_samples.push(json!({"at": "end", "rss_mb": mb(rss_end.0), "footprint_mb": mb(rss_end.1)}));
         let mut lat_summary = serde_json::Map::new();
         for (k, v) in &lat {

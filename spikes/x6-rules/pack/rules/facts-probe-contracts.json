@@ -1,0 +1,47 @@
+{
+ "id": "facts-probe-contracts",
+ "alias": "probe",
+ "violation": {
+  "code": "x6_probe",
+  "message": "facts probe",
+  "anchor": "witness.span"
+ },
+ "scope": {
+  "include": [
+   "impl/common/l2065_plan_core/**/*.py",
+   "impl/common/l2066_plan_optimizer/**/*.py",
+   "impl/common/l2070_server_plan/**/*.py",
+   "impl/common/l7300_sql_versioned_transactions/**/*.py",
+   "impl/common/l9700_sql_graph_query/**/*.py",
+   "l2070_batching/**/*.py",
+   "l9900_auto_api/**/*.py"
+  ],
+  "exclude": [
+   "**/.git/**",
+   "**/.venv/**",
+   "**/venv/**",
+   "**/tmp/**",
+   "**/__pycache__/**",
+   "**/tests/**",
+   "**/test_*.py"
+  ]
+ },
+ "inputs": {},
+ "stages": [
+  {
+   "name": "keys",
+   "query": "SELECT __path,__start,__end,'py_definitions' AS fact FROM py_definitions UNION ALL SELECT __path,__start,__end,'py_decorations' AS fact FROM py_decorations UNION ALL SELECT __path,__start,__end,'py_callees' AS fact FROM py_callees UNION ALL SELECT __path,__start,__end,'py_keyword_arguments' AS fact FROM py_keyword_arguments UNION ALL SELECT __path,__start,__end,'py_assignments' AS fact FROM py_assignments UNION ALL SELECT __path,__start,__end,'py_typed_parameters' AS fact FROM py_typed_parameters UNION ALL SELECT __path,__start,__end,'py_annotation_tokens' AS fact FROM py_annotation_tokens UNION ALL SELECT __path,__start,__end,'py_base_tokens' AS fact FROM py_base_tokens UNION ALL SELECT __path,__start,__end,'py_assigned_tokens' AS fact FROM py_assigned_tokens"
+  },
+  {
+   "name": "per_fact",
+   "query": "SELECT fact,count(*) AS n,min(__path) AS path FROM keys GROUP BY fact"
+  }
+ ],
+ "query": "SELECT path,0 AS start_byte,0 AS end_byte,fact,n FROM per_fact",
+ "key": [
+  "fact"
+ ],
+ "findings": {
+  "detail": "fact || ':' || n"
+ }
+}

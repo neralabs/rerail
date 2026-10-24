@@ -1,0 +1,27 @@
+{
+ "id": "facts-probe",
+ "alias": "probe",
+ "violation": {
+  "code": "x6_probe",
+  "message": "facts probe",
+  "anchor": "witness.span"
+ },
+ "inputs": {},
+ "stages": [
+  {
+   "name": "keys",
+   "query": "SELECT __path,__start,__end,'py_functions' AS fact FROM py_functions UNION ALL SELECT __path,__start,__end,'py_classes' AS fact FROM py_classes UNION ALL SELECT __path,__start,__end,'py_decorators' AS fact FROM py_decorators UNION ALL SELECT __path,__start,__end,'py_parameters' AS fact FROM py_parameters UNION ALL SELECT __path,__start,__end,'py_parameter_annotations' AS fact FROM py_parameter_annotations UNION ALL SELECT __path,__start,__end,'py_return_annotations' AS fact FROM py_return_annotations UNION ALL SELECT __path,__start,__end,'py_imports' AS fact FROM py_imports UNION ALL SELECT __path,__start,__end,'py_bases' AS fact FROM py_bases UNION ALL SELECT __path,__start,__end,'py_all' AS fact FROM py_all UNION ALL SELECT __path,__start,__end,'py_all_names' AS fact FROM py_all_names UNION ALL SELECT __path,__start,__end,'py_modules' AS fact FROM py_modules"
+  },
+  {
+   "name": "per_fact",
+   "query": "SELECT fact,count(*) AS n,min(__path) AS path FROM keys GROUP BY fact"
+  }
+ ],
+ "query": "SELECT path,0 AS start_byte,0 AS end_byte,fact,n FROM per_fact",
+ "key": [
+  "fact"
+ ],
+ "findings": {
+  "detail": "fact || ':' || n"
+ }
+}

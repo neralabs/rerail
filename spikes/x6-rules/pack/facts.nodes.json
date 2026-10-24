@@ -1,0 +1,1595 @@
+{
+ "define": {
+  "options": {
+   "oracleAnalyzer": {
+    "type": "boolean",
+    "default": false
+   },
+   "entryPoint": {
+    "type": "string",
+    "default": "all"
+   },
+   "sourceProvided": {
+    "type": "boolean",
+    "default": true
+   }
+  },
+  "language": "python",
+  "utils": {
+   "state-flow-source": {
+    "all": [
+     {
+      "kind": "module"
+     },
+     {
+      "any": [
+       {
+        "filePath": {
+         "regex": "(?:^|/)(?:impl/common/l2070_server_plan/|impl/common/l2070_server_plan/backend_profiles\\.py$)"
+        }
+       },
+       {
+        "has": {
+         "any": [
+          {
+           "any": [
+            {
+             "all": [
+              {
+               "kind": "function_definition"
+              },
+              {
+               "has": {
+                "any": [
+                 {
+                  "all": [
+                   {
+                    "kind": "identifier"
+                   },
+                   {
+                    "regex": "^(?:compile|lower|post_op|pre_op|preprocess)$"
+                   }
+                  ]
+                 },
+                 {
+                  "all": [
+                   {
+                    "kind": "identifier"
+                   },
+                   {
+                    "regex": "_lazy$"
+                   }
+                  ]
+                 },
+                 {
+                  "any": [
+                   {
+                    "all": [
+                     {
+                      "kind": "identifier"
+                     },
+                     {
+                      "regex": "^(?:pending_pipeline_effects)$"
+                     }
+                    ]
+                   },
+                   {
+                    "all": [
+                     {
+                      "kind": "identifier"
+                     },
+                     {
+                      "regex": "^apply_.*_effect$"
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ],
+                "stopBy": "neighbor",
+                "field": "name"
+               }
+              }
+             ]
+            },
+            {
+             "all": [
+              {
+               "kind": "function_definition"
+              },
+              {
+               "inside": {
+                "all": [
+                 {
+                  "kind": "decorated_definition"
+                 },
+                 {
+                  "has": {
+                   "all": [
+                    {
+                     "kind": "decorator"
+                    },
+                    {
+                     "has": {
+                      "any": [
+                       {
+                        "all": [
+                         {
+                          "kind": "identifier"
+                         },
+                         {
+                          "regex": "^(?:pure_lazy)$"
+                         }
+                        ]
+                       },
+                       {
+                        "all": [
+                         {
+                          "kind": "attribute"
+                         },
+                         {
+                          "has": {
+                           "all": [
+                            {
+                             "kind": "identifier"
+                            },
+                            {
+                             "regex": "^(?:pure_lazy)$"
+                            }
+                           ],
+                           "stopBy": "neighbor",
+                           "field": "attribute"
+                          }
+                         }
+                        ]
+                       }
+                      ],
+                      "stopBy": "neighbor"
+                     }
+                    }
+                   ],
+                   "stopBy": "neighbor"
+                  }
+                 }
+                ],
+                "stopBy": "neighbor"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "all": [
+            {
+             "kind": "function_definition"
+            },
+            {
+             "any": [
+              {
+               "has": {
+                "all": [
+                 {
+                  "kind": "identifier"
+                 },
+                 {
+                  "regex": "^(?:preprocess)$"
+                 }
+                ],
+                "stopBy": "neighbor",
+                "field": "name"
+               }
+              },
+              {
+               "has": {
+                "regex": "sql_builder$",
+                "stopBy": "neighbor",
+                "field": "name"
+               }
+              },
+              {
+               "has": {
+                "has": {
+                 "any": [
+                  {
+                   "all": [
+                    {
+                     "kind": "identifier"
+                    },
+                    {
+                     "regex": "^(?:runtime_refs)$"
+                    }
+                   ]
+                  },
+                  {
+                   "regex": "RuntimeBuilderSpec"
+                  }
+                 ],
+                 "stopBy": "end"
+                },
+                "stopBy": "neighbor",
+                "field": "parameters"
+               }
+              },
+              {
+               "has": {
+                "all": [
+                 {
+                  "kind": "call"
+                 },
+                 {
+                  "has": {
+                   "any": [
+                    {
+                     "all": [
+                      {
+                       "kind": "identifier"
+                      },
+                      {
+                       "regex": "^(?:CompiledStep)$"
+                      }
+                     ]
+                    },
+                    {
+                     "all": [
+                      {
+                       "kind": "attribute"
+                      },
+                      {
+                       "has": {
+                        "all": [
+                         {
+                          "kind": "identifier"
+                         },
+                         {
+                          "regex": "^(?:CompiledStep)$"
+                         }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "attribute"
+                       }
+                      }
+                     ]
+                    }
+                   ],
+                   "stopBy": "neighbor",
+                   "field": "function"
+                  }
+                 }
+                ],
+                "stopBy": "end"
+               }
+              }
+             ]
+            }
+           ]
+          }
+         ],
+         "stopBy": "end"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "state-function-source": {
+    "any": [
+     {
+      "all": [
+       {
+        "kind": "module"
+       },
+       {
+        "regex": "CompilationContext|CompiledStep|Hydrator|PipelineLifecycleEffect|PlanExecutor|ResolvedRefs|RuntimeBuilderName|RuntimeBuilderSpec|_lazy|_serverplan_runtime_txn|_serverplan_sql_conn|active_pipeline_txn_for_callbacks|builder_name|convert_row_to_model|create_usearch_index_class|def\\ compile|def\\ lower|def\\ post_op|def\\ pre_op|def\\ preprocess|deserialize_embedding|execute_runtime|execute_runtime_nested_steps|get_similarity_function|json\\.dumps|materialized_pipeline|np\\.array|pending_pipeline_effects|post_op_with_refs|pre_op_with_refs|runtime_builder|runtime_builder_post_op|runtime_hydrator|runtime_ref|runtime_refs"
+       }
+      ]
+     },
+     {
+      "all": [
+       {
+        "kind": "module"
+       },
+       {
+        "filePath": {
+         "regex": "^impl/common/l2070_server_plan/backend_profiles\\.py$"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "state-project-source": {
+    "all": [
+     {
+      "kind": "module"
+     },
+     {
+      "regex": "CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|def\\ compile|execute_runtime|execute_runtime_nested_steps|grammar_|in_server_plan_execution|pending_pipeline_effects|post_op|pre_op|preprocess|runtime_builder|runtime_ref|runtime_result"
+     }
+    ]
+   },
+   "quality-conditional-1-selected": {
+    "any": [
+     {
+      "kind": "module"
+     },
+     {
+      "kind": "class_definition"
+     },
+     {
+      "kind": "function_definition"
+     },
+     {
+      "kind": "decorated_definition"
+     },
+     {
+      "all": [
+       {
+        "kind": "argument_list"
+       },
+       {
+        "inside": {
+         "kind": "class_definition",
+         "stopBy": "neighbor"
+        }
+       }
+      ]
+     },
+     {
+      "inside": {
+       "all": [
+        {
+         "kind": "argument_list"
+        },
+        {
+         "inside": {
+          "kind": "class_definition",
+          "stopBy": "neighbor"
+         }
+        }
+       ],
+       "stopBy": "neighbor"
+      }
+     },
+     {
+      "inside": {
+       "any": [
+        {
+         "kind": "import_statement"
+        },
+        {
+         "kind": "import_from_statement"
+        }
+       ],
+       "stopBy": "end"
+      }
+     },
+     {
+      "kind": "import_statement"
+     },
+     {
+      "kind": "import_from_statement"
+     },
+     {
+      "inside": {
+       "any": [
+        {
+         "all": [
+          {
+           "kind": "function_definition"
+          },
+          {
+           "any": [
+            {
+             "has": {
+              "all": [
+               {
+                "kind": "identifier"
+               },
+               {
+                "regex": "^(?:_lower_conditional_step|compile_sql_conditional_step|require_sql_physical_conditional)$"
+               }
+              ],
+              "stopBy": "neighbor",
+              "field": "name"
+             }
+            },
+            {
+             "all": [
+              {
+               "filePath": {
+                "regex": "^(?:l2070_batching/conditional_step|impl/common/l2070_server_plan/steps/sql_conditional)\\.py$"
+               }
+              },
+              {
+               "has": {
+                "all": [
+                 {
+                  "kind": "identifier"
+                 },
+                 {
+                  "regex": "^(?:compile|execution_role|level)$"
+                 }
+                ],
+                "stopBy": "neighbor",
+                "field": "name"
+               }
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        },
+        {
+         "all": [
+          {
+           "kind": "function_definition"
+          },
+          {
+           "has": {
+            "regex": "\\bCallable\\b",
+            "stopBy": "neighbor",
+            "field": "parameters"
+           }
+          }
+         ]
+        }
+       ],
+       "stopBy": "end",
+       "field": "parameters"
+      }
+     },
+     {
+      "all": [
+       {
+        "any": [
+         {
+          "kind": "assignment"
+         },
+         {
+          "kind": "augmented_assignment"
+         }
+        ]
+       },
+       {
+        "any": [
+         {
+          "has": {
+           "all": [
+            {
+             "kind": "attribute"
+            },
+            {
+             "has": {
+              "all": [
+               {
+                "kind": "identifier"
+               },
+               {
+                "regex": "^(?:self)$"
+               }
+              ],
+              "stopBy": "neighbor",
+              "field": "object"
+             }
+            }
+           ],
+           "stopBy": "neighbor",
+           "field": "left"
+          }
+         },
+         {
+          "has": {
+           "regex": "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps",
+           "stopBy": "neighbor",
+           "field": "right"
+          }
+         },
+         {
+          "all": [
+           {
+            "kind": "assignment"
+           },
+           {
+            "has": {
+             "pattern": "$_",
+             "stopBy": "neighbor",
+             "field": "type"
+            }
+           },
+           {
+            "regex": "\\bCallable\\b"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "inside": {
+       "all": [
+        {
+         "any": [
+          {
+           "kind": "assignment"
+          },
+          {
+           "kind": "augmented_assignment"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "has": {
+            "all": [
+             {
+              "kind": "attribute"
+             },
+             {
+              "has": {
+               "all": [
+                {
+                 "kind": "identifier"
+                },
+                {
+                 "regex": "^(?:self)$"
+                }
+               ],
+               "stopBy": "neighbor",
+               "field": "object"
+              }
+             }
+            ],
+            "stopBy": "neighbor",
+            "field": "left"
+           }
+          },
+          {
+           "has": {
+            "regex": "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps",
+            "stopBy": "neighbor",
+            "field": "right"
+           }
+          },
+          {
+           "all": [
+            {
+             "kind": "assignment"
+            },
+            {
+             "has": {
+              "pattern": "$_",
+              "stopBy": "neighbor",
+              "field": "type"
+             }
+            },
+            {
+             "regex": "\\bCallable\\b"
+            }
+           ]
+          }
+         ]
+        }
+       ],
+       "stopBy": "neighbor"
+      }
+     },
+     {
+      "inside": {
+       "all": [
+        {
+         "kind": "assignment"
+        },
+        {
+         "has": {
+          "pattern": "$_",
+          "stopBy": "neighbor",
+          "field": "type"
+         }
+        },
+        {
+         "regex": "\\bCallable\\b"
+        }
+       ],
+       "stopBy": "end"
+      }
+     },
+     {
+      "all": [
+       {
+        "kind": "for_statement"
+       },
+       {
+        "has": {
+         "regex": "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps",
+         "stopBy": "neighbor",
+         "field": "right"
+        }
+       }
+      ]
+     },
+     {
+      "inside": {
+       "all": [
+        {
+         "kind": "for_statement"
+        },
+        {
+         "has": {
+          "regex": "then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps",
+          "stopBy": "neighbor",
+          "field": "right"
+         }
+        }
+       ],
+       "stopBy": "end",
+       "field": "left"
+      }
+     },
+     {
+      "all": [
+       {
+        "any": [
+         {
+          "kind": "if_statement"
+         },
+         {
+          "kind": "elif_clause"
+         },
+         {
+          "kind": "conditional_expression"
+         },
+         {
+          "kind": "match_statement"
+         }
+        ]
+       },
+       {
+        "any": [
+         {
+          "has": {
+           "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+           "stopBy": "neighbor",
+           "field": "condition"
+          }
+         },
+         {
+          "has": {
+           "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+           "stopBy": "neighbor",
+           "field": "subject"
+          }
+         },
+         {
+          "all": [
+           {
+            "kind": "conditional_expression"
+           },
+           {
+            "regex": "\\b(?:backend_type|is_sql_backend)\\b"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "inside": {
+       "all": [
+        {
+         "any": [
+          {
+           "kind": "if_statement"
+          },
+          {
+           "kind": "elif_clause"
+          },
+          {
+           "kind": "conditional_expression"
+          },
+          {
+           "kind": "match_statement"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "has": {
+            "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+            "stopBy": "neighbor",
+            "field": "condition"
+           }
+          },
+          {
+           "has": {
+            "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+            "stopBy": "neighbor",
+            "field": "subject"
+           }
+          },
+          {
+           "all": [
+            {
+             "kind": "conditional_expression"
+            },
+            {
+             "regex": "\\b(?:backend_type|is_sql_backend)\\b"
+            }
+           ]
+          }
+         ]
+        }
+       ],
+       "stopBy": "end",
+       "field": "condition"
+      }
+     },
+     {
+      "inside": {
+       "all": [
+        {
+         "any": [
+          {
+           "kind": "if_statement"
+          },
+          {
+           "kind": "elif_clause"
+          },
+          {
+           "kind": "conditional_expression"
+          },
+          {
+           "kind": "match_statement"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "has": {
+            "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+            "stopBy": "neighbor",
+            "field": "condition"
+           }
+          },
+          {
+           "has": {
+            "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+            "stopBy": "neighbor",
+            "field": "subject"
+           }
+          },
+          {
+           "all": [
+            {
+             "kind": "conditional_expression"
+            },
+            {
+             "regex": "\\b(?:backend_type|is_sql_backend)\\b"
+            }
+           ]
+          }
+         ]
+        }
+       ],
+       "stopBy": "end",
+       "field": "subject"
+      }
+     },
+     {
+      "inside": {
+       "all": [
+        {
+         "kind": "conditional_expression"
+        },
+        {
+         "all": [
+          {
+           "any": [
+            {
+             "kind": "if_statement"
+            },
+            {
+             "kind": "elif_clause"
+            },
+            {
+             "kind": "conditional_expression"
+            },
+            {
+             "kind": "match_statement"
+            }
+           ]
+          },
+          {
+           "any": [
+            {
+             "has": {
+              "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+              "stopBy": "neighbor",
+              "field": "condition"
+             }
+            },
+            {
+             "has": {
+              "regex": "\\b(?:backend_type|is_sql_backend)\\b",
+              "stopBy": "neighbor",
+              "field": "subject"
+             }
+            },
+            {
+             "all": [
+              {
+               "kind": "conditional_expression"
+              },
+              {
+               "regex": "\\b(?:backend_type|is_sql_backend)\\b"
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ],
+       "stopBy": "end"
+      }
+     },
+     {
+      "all": [
+       {
+        "kind": "call"
+       },
+       {
+        "has": {
+         "any": [
+          {
+           "all": [
+            {
+             "kind": "identifier"
+            },
+            {
+             "regex": "^(?:compile)$"
+            }
+           ]
+          },
+          {
+           "all": [
+            {
+             "kind": "attribute"
+            },
+            {
+             "has": {
+              "all": [
+               {
+                "kind": "identifier"
+               },
+               {
+                "regex": "^(?:compile)$"
+               }
+              ],
+              "stopBy": "neighbor",
+              "field": "attribute"
+             }
+            }
+           ]
+          }
+         ],
+         "stopBy": "neighbor",
+         "field": "function"
+        }
+       }
+      ]
+     },
+     {
+      "inside": {
+       "all": [
+        {
+         "kind": "call"
+        },
+        {
+         "has": {
+          "any": [
+           {
+            "all": [
+             {
+              "kind": "identifier"
+             },
+             {
+              "regex": "^(?:compile)$"
+             }
+            ]
+           },
+           {
+            "all": [
+             {
+              "kind": "attribute"
+             },
+             {
+              "has": {
+               "all": [
+                {
+                 "kind": "identifier"
+                },
+                {
+                 "regex": "^(?:compile)$"
+                }
+               ],
+               "stopBy": "neighbor",
+               "field": "attribute"
+              }
+             }
+            ]
+           }
+          ],
+          "stopBy": "neighbor",
+          "field": "function"
+         }
+        }
+       ],
+       "stopBy": "neighbor"
+      }
+     },
+     {
+      "inside": {
+       "all": [
+        {
+         "kind": "function_definition"
+        },
+        {
+         "any": [
+          {
+           "has": {
+            "all": [
+             {
+              "kind": "identifier"
+             },
+             {
+              "regex": "^(?:_lower_conditional_step|compile_sql_conditional_step|require_sql_physical_conditional)$"
+             }
+            ],
+            "stopBy": "neighbor",
+            "field": "name"
+           }
+          },
+          {
+           "all": [
+            {
+             "filePath": {
+              "regex": "^(?:l2070_batching/conditional_step|impl/common/l2070_server_plan/steps/sql_conditional)\\.py$"
+             }
+            },
+            {
+             "has": {
+              "all": [
+               {
+                "kind": "identifier"
+               },
+               {
+                "regex": "^(?:compile|execution_role|level)$"
+               }
+              ],
+              "stopBy": "neighbor",
+              "field": "name"
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ],
+       "stopBy": "end"
+      }
+     }
+    ]
+   }
+  }
+ },
+ "facts": {
+  "py_nodes": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "not": {
+           "any": [
+            {
+             "kind": "comment"
+            },
+            {
+             "kind": "string_start"
+            },
+            {
+             "kind": "string_content"
+            },
+            {
+             "kind": "string_end"
+            },
+            {
+             "kind": "escape_sequence"
+            },
+            {
+             "kind": "line_continuation"
+            }
+           ]
+          }
+         },
+         {
+          "pattern": "$NODE"
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "pattern": "$PARENT",
+             "stopBy": "neighbor"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$NAME",
+             "stopBy": "neighbor",
+             "field": "name"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$LEFT",
+             "stopBy": "neighbor",
+             "field": "left"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$RIGHT",
+             "stopBy": "neighbor",
+             "field": "right"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$VALUE",
+             "stopBy": "neighbor",
+             "field": "value"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$TYPE",
+             "stopBy": "neighbor",
+             "field": "type"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$FUNCTION",
+             "stopBy": "neighbor",
+             "field": "function"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$ARGUMENTS",
+             "stopBy": "neighbor",
+             "field": "arguments"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$OBJECT",
+             "stopBy": "neighbor",
+             "field": "object"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$ATTRIBUTE",
+             "stopBy": "neighbor",
+             "field": "attribute"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$BODY",
+             "stopBy": "neighbor",
+             "field": "body"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$PARAMETERS",
+             "stopBy": "neighbor",
+             "field": "parameters"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$RETURN_TYPE",
+             "stopBy": "neighbor",
+             "field": "return_type"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$CONDITION",
+             "stopBy": "neighbor",
+             "field": "condition"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$SUBJECT",
+             "stopBy": "neighbor",
+             "field": "subject"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$ALIAS",
+             "stopBy": "neighbor",
+             "field": "alias"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$MODULE_NAME",
+             "stopBy": "neighbor",
+             "field": "module_name"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "kind": "capture.NODE.kind",
+      "text": "capture.NODE",
+      "line": "capture.NODE.startLine",
+      "parent_start": "capture.PARENT.startByte",
+      "parent_end": "capture.PARENT.endByte",
+      "parent_kind": "capture.PARENT.kind",
+      "name_start": "capture.NAME.startByte",
+      "name_end": "capture.NAME.endByte",
+      "name_kind": "capture.NAME.kind",
+      "name_source": "capture.NAME",
+      "left_start": "capture.LEFT.startByte",
+      "left_end": "capture.LEFT.endByte",
+      "left_kind": "capture.LEFT.kind",
+      "right_start": "capture.RIGHT.startByte",
+      "right_end": "capture.RIGHT.endByte",
+      "right_kind": "capture.RIGHT.kind",
+      "right_source": "capture.RIGHT",
+      "value_start": "capture.VALUE.startByte",
+      "value_end": "capture.VALUE.endByte",
+      "value_kind": "capture.VALUE.kind",
+      "type_start": "capture.TYPE.startByte",
+      "type_end": "capture.TYPE.endByte",
+      "type_kind": "capture.TYPE.kind",
+      "function_start": "capture.FUNCTION.startByte",
+      "function_end": "capture.FUNCTION.endByte",
+      "function_kind": "capture.FUNCTION.kind",
+      "arguments_start": "capture.ARGUMENTS.startByte",
+      "arguments_end": "capture.ARGUMENTS.endByte",
+      "arguments_kind": "capture.ARGUMENTS.kind",
+      "object_start": "capture.OBJECT.startByte",
+      "object_end": "capture.OBJECT.endByte",
+      "object_kind": "capture.OBJECT.kind",
+      "object_source": "capture.OBJECT",
+      "attribute_start": "capture.ATTRIBUTE.startByte",
+      "attribute_end": "capture.ATTRIBUTE.endByte",
+      "attribute_kind": "capture.ATTRIBUTE.kind",
+      "attribute_source": "capture.ATTRIBUTE",
+      "body_start": "capture.BODY.startByte",
+      "body_end": "capture.BODY.endByte",
+      "body_kind": "capture.BODY.kind",
+      "parameters_start": "capture.PARAMETERS.startByte",
+      "parameters_end": "capture.PARAMETERS.endByte",
+      "parameters_kind": "capture.PARAMETERS.kind",
+      "return_type_start": "capture.RETURN_TYPE.startByte",
+      "return_type_end": "capture.RETURN_TYPE.endByte",
+      "return_type_kind": "capture.RETURN_TYPE.kind",
+      "condition_start": "capture.CONDITION.startByte",
+      "condition_end": "capture.CONDITION.endByte",
+      "condition_kind": "capture.CONDITION.kind",
+      "subject_start": "capture.SUBJECT.startByte",
+      "subject_end": "capture.SUBJECT.endByte",
+      "subject_kind": "capture.SUBJECT.kind",
+      "alias_start": "capture.ALIAS.startByte",
+      "alias_end": "capture.ALIAS.endByte",
+      "alias_kind": "capture.ALIAS.kind",
+      "alias_source": "capture.ALIAS",
+      "module_name_start": "capture.MODULE_NAME.startByte",
+      "module_name_end": "capture.MODULE_NAME.endByte",
+      "module_name_kind": "capture.MODULE_NAME.kind",
+      "module_name_source": "capture.MODULE_NAME"
+     }
+    }
+   }
+  },
+  "sel_sfp": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "kind": "module"
+         },
+         {
+          "all": [
+           {
+            "$option": "entryPoint",
+            "cases": {
+             "scan_project_sources": {
+              "filePath": {
+               "regex": "(?s).*"
+              }
+             }
+            },
+            "default": {
+             "$option": "sourceProvided",
+             "cases": {
+              "true": {
+               "any": [
+                {
+                 "matches": "state-function-source"
+                },
+                {
+                 "inside": {
+                  "matches": "state-function-source",
+                  "stopBy": "end"
+                 }
+                }
+               ]
+              },
+              "false": {
+               "filePath": {
+                "regex": "(?s).*"
+               }
+              }
+             }
+            }
+           },
+           {
+            "all": [
+             {
+              "$option": "entryPoint",
+              "cases": {
+               "scan_project_sources": {
+                "filePath": {
+                 "regex": "(?s).*"
+                }
+               }
+              },
+              "default": {
+               "any": [
+                {
+                 "matches": "state-flow-source"
+                },
+                {
+                 "inside": {
+                  "matches": "state-flow-source",
+                  "stopBy": "end"
+                 }
+                }
+               ]
+              }
+             },
+             {
+              "all": [
+               {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                 "true": {
+                  "filePath": {
+                   "regex": "(?s).*"
+                  }
+                 },
+                 "false": {
+                  "any": [
+                   {
+                    "matches": "state-project-source"
+                   },
+                   {
+                    "inside": {
+                     "matches": "state-project-source",
+                     "stopBy": "end"
+                    }
+                   }
+                  ]
+                 }
+                }
+               },
+               {
+                "all": [
+                 {
+                  "$option": "entryPoint",
+                  "cases": {
+                   "scan_project_sources": {
+                    "filePath": {
+                     "regex": "(?s).*"
+                    }
+                   }
+                  },
+                  "default": {
+                   "filePath": {
+                    "regex": "\\b\\B"
+                   }
+                  }
+                 },
+                 {
+                  "all": [
+                   {
+                    "$option": "entryPoint",
+                    "cases": {
+                     "all": {
+                      "filePath": {
+                       "regex": "(?s).*"
+                      }
+                     },
+                     "scan_project_sources": {
+                      "filePath": {
+                       "regex": "(?s).*"
+                      }
+                     }
+                    },
+                    "default": {
+                     "filePath": {
+                      "regex": "\\b\\B"
+                     }
+                    }
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "pattern": "$NODE"
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "kind": "capture.NODE.kind"
+     }
+    }
+   }
+  },
+  "sel_qc": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "not": {
+           "any": [
+            {
+             "kind": "comment"
+            },
+            {
+             "kind": "string_start"
+            },
+            {
+             "kind": "string_content"
+            },
+            {
+             "kind": "string_end"
+            },
+            {
+             "kind": "escape_sequence"
+            },
+            {
+             "kind": "line_continuation"
+            }
+           ]
+          }
+         },
+         {
+          "$option": "entryPoint",
+          "cases": {
+           "all": {
+            "filePath": {
+             "regex": "(?s).*"
+            }
+           },
+           "conditional_architecture_findings": {
+            "filePath": {
+             "regex": "(?s).*"
+            }
+           }
+          },
+          "default": {
+           "filePath": {
+            "regex": "\\b\\B"
+           }
+          }
+         },
+         {
+          "matches": "quality-conditional-1-selected"
+         },
+         {
+          "pattern": "$NODE"
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "matches": "quality-conditional-1-selected"
+              },
+              {
+               "pattern": "$ANCESTOR"
+              }
+             ],
+             "stopBy": {
+              "matches": "quality-conditional-1-selected"
+             }
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "kind": "capture.NODE.kind",
+      "ancestor_start": "capture.ANCESTOR.startByte",
+      "ancestor_end": "capture.ANCESTOR.endByte",
+      "ancestor_kind": "capture.ANCESTOR.kind"
+     }
+    }
+   }
+  }
+ }
+}
