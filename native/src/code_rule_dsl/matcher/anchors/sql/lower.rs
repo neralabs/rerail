@@ -11,6 +11,7 @@ use decode::Property;
 mod render;
 use render::Definitions;
 pub(super) mod lifetime;
+mod waves;
 #[cfg(feature = "code-rule-profile")]
 pub(super) mod working_set;
 
@@ -774,10 +775,6 @@ fn finish_decoded(
     mut indexed: BTreeSet<String>,
     decoding: HashMap<String, decode::Demand>,
 ) -> Statement {
-    use std::sync::LazyLock;
-    static IDENTIFIER: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"[A-Za-z_][A-Za-z_0-9]*").expect("identifier expression")
-    });
     let query = queries.join("\n");
     // Candidate broadening and approximate negation can discard a whole dependency tree.
     // Only materialize tables reachable from the final batch outputs.
@@ -821,24 +818,20 @@ fn finish_decoded(
             );
         }
     }
+    let span_names = decoding
+        .iter()
+        .filter(|(_, demand)| demand.property == Property::Span)
+        .map(|(name, _)| name.clone())
+        .collect();
+    let (levels, uses) = waves::analyze(&ctes, &span_names, &query);
+    let mut span_scopes: std::collections::BTreeMap<usize, BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    let mut stage_levels = HashMap::new();
     let graph = ctes.clone();
     let names: Vec<_> = ctes
         .iter()
         .map(|cte| cte.split_once('(').expect("CTE columns").0.to_owned())
         .collect();
-    let mut uses: HashMap<&str, usize> = names.iter().map(|name| (name.as_str(), 0)).collect();
-    for sql in ctes
-        .iter()
-        .map(|cte| cte.split_once(" AS ").expect("CTE body").1)
-        .chain(std::iter::once(query.as_str()))
-    {
-        // These are generated identifiers. User expressions and literals are bound parameters.
-        for token in IDENTIFIER.find_iter(sql) {
-            if let Some(count) = uses.get_mut(token.as_str()) {
-                *count += 1;
-            }
-        }
-    }
     let mut inline = Definitions::default();
     let mut stages = Vec::new();
     if let Some(demand) = universal {
@@ -863,14 +856,25 @@ fn finish_decoded(
         if let Some(demand) = decoding.get(name)
             && !(universal.is_some() && demand.property == Property::Node)
         {
-            let sql = demand.population(&mut inline);
-            stages.push(Stage {
-                name: format!("decode_{name}"),
-                sql,
-                index: None,
-                temporary: false,
-                covering: false,
-            });
+            if demand.property == Property::Span {
+                // All span demands in this language-qualified statement bind the same
+                // source-spans contract and tape slot. Selectors contribute keys only.
+                span_scopes
+                    .entry(levels[name])
+                    .or_default()
+                    .insert(demand.scope.clone());
+            } else {
+                let sql = demand.population(&mut inline);
+                let stage_name = format!("decode_{name}");
+                stage_levels.insert(stage_name.clone(), (levels[name], 1));
+                stages.push(Stage {
+                    name: stage_name,
+                    sql,
+                    index: None,
+                    temporary: false,
+                    covering: false,
+                });
+            }
         }
         let columns = cte.split_once(") AS ").expect("CTE header").0.to_owned();
         let index = if columns.contains("fid") && columns.contains("pre") {
@@ -882,15 +886,14 @@ fn finish_decoded(
         };
         let body = cte.split_once(" AS ").expect("CTE body").1;
         let cost = 1usize.saturating_add(
-            IDENTIFIER
-                .find_iter(body)
-                .filter_map(|token| expansion.get(token.as_str()))
+            waves::identifiers(body)
+                .filter_map(|token| expansion.get(token))
                 .copied()
                 .sum::<usize>(),
         );
         // Keep small shared sets in one statement. Cut before repeated dependencies
         // multiply beyond SQLite's preparation limits; each physical table resets the cost.
-        let shared = indexed.contains(name) || (uses[name.as_str()] > 1 && cost >= 32);
+        let shared = indexed.contains(name) || (uses[name] > 1 && cost >= 32);
         expansion.insert(name.as_str(), if shared { 1 } else { cost });
         inline.push(cte);
         if shared {
@@ -915,6 +918,7 @@ fn finish_decoded(
                 "CREATE TEMP TABLE \"{name}\" AS {}",
                 inline.render(&format!("SELECT {projection} FROM {name}"))
             );
+            stage_levels.insert(name.clone(), (levels[name], 1));
             stages.push(Stage {
                 name: name.clone(),
                 sql,
@@ -925,6 +929,20 @@ fn finish_decoded(
             inline.pop();
         }
     }
+    for (level, scopes) in span_scopes {
+        let name = format!("decode_source_spans_wave_{level}");
+        stage_levels.insert(name.clone(), (level, 0));
+        stages.push(Stage {
+            name,
+            sql: decode::Demand::span_population(&scopes, &mut inline),
+            index: None,
+            temporary: false,
+            covering: false,
+        });
+    }
+    // Stable order preserves every non-span dependency within a wave. A span fill
+    // follows all its lower-wave selectors and precedes readers in its own wave.
+    stages.sort_by_cached_key(|stage| stage_levels.get(&stage.name).copied().unwrap_or((0, 1)));
     let queries: Vec<_> = queries.iter().map(|query| inline.render(query)).collect();
     let schedule = lifetime::Schedule::new(
         &stages

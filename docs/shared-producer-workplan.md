@@ -1,6 +1,6 @@
 # Shared producer implementation workplan
 
-Status: WP1 has its first implementation. Physical shared execution remains open.
+Status: WP1 and WP2 have their first implementation slices. Complete shared execution remains open.
 The [SQL recovery workplan](sql-performance-recovery-workplan.md) now defines the execution order after the aggregate regression.
 Its acceptance, accounting, eligibility, and publication steps precede WP1.
 WP1 starts at recovery step R4 in this same worktree.
@@ -82,6 +82,19 @@ The protected-view alternative fails on SQLite count optimization and ambiguous 
 Its existing generated-view exception remains unchanged and must not become the shared-owner isolation mechanism.
 
 ## WP2: deliver the first shared execution path
+
+Implemented: independent span selectors share one SQL fill per necessary dependency wave.
+The production two-rule test preserves 130 findings across two result packets with one actual span-fill execution.
+The original state guard reduces 22 fills per normal frontier to two.
+The fill reads existing selector tables and reuses the retained `decoded_spans` owner.
+Overlap, empty demand, invalidation, failure, retry, and the source-predicate fence retain focused coverage.
+The one-pass planner adds no algorithm switch or generic scheduler.
+
+Complete recovery remains open. The selected guard submits 9,481 statements versus 9,113 at the catalog checkpoint.
+Named provenance exposes changed clause order under allocation-address sorting and different upstream lowered frontiers.
+The next slice must isolate this effect with fixed compiled-plan permutations and make producer composition independent of heap placement.
+Do not repeat the rejected authored-order or work-estimate heuristics without new evidence.
+The [wave evidence](../fixtures/host/data-layer-port/profiling/shared-span-waves-20261024.json) retains all CPU controls, counts, and the frozen-frontier comparison.
 
 The initial vertical slice uses source spans because repeated demanded-span preparation already appears in captured workloads.
 The compiler binds span requests from different consumers to one named owner.
