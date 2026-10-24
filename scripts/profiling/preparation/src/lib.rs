@@ -1,6 +1,8 @@
 //! Small replay host. All SQLite adapters and codecs come from production sources.
 #[path = "../../../../native/src/code_rule_dsl/profile/clock.rs"]
 mod clock;
+#[cfg(test)]
+use clock::thread_cpu_ns;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/functions.rs"]
 mod functions;
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/lower/lifetime.rs"]
@@ -12,6 +14,9 @@ mod nodes;
 #[cfg(test)]
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/store/publication.rs"]
 mod publication;
+#[cfg(test)]
+#[path = "../../../../native/src/code_rule_dsl/profile/trace.rs"]
+mod trace;
 // Replay reads stored segments; production also uses this module's encoder.
 #[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/postings.rs"]
@@ -32,6 +37,7 @@ mod wire;
 mod working_set;
 
 pub mod composition;
+pub mod fts;
 pub mod residency;
 
 mod code_rule_dsl {
