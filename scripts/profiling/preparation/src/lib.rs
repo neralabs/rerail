@@ -16,6 +16,7 @@ mod nodes;
 mod publication;
 #[cfg(test)]
 #[path = "../../../../native/src/code_rule_dsl/profile/trace.rs"]
+#[allow(dead_code)]
 mod trace;
 // Replay reads stored segments; production also uses this module's encoder.
 #[allow(dead_code)]

@@ -28,7 +28,8 @@ pub(crate) fn emit(prefix: &str, value: Value) {
 }
 
 fn emit_to(writer: &mut impl Write, prefix: &str, value: Value) -> std::io::Result<()> {
-    writeln!(writer, "{prefix} {value}")
+    let line = format!("{prefix} {value}\n");
+    writer.write_all(line.as_bytes())
 }
 
 #[cfg(test)]
