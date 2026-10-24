@@ -93,7 +93,10 @@ def summary(report):
     budget = report.get("sqlExecutionBudget")
     lines = [f"Elapsed: {report['elapsedSeconds']:.3f}s; exit: {report['exitCode']}; timeout: {report['timedOut']}"]
     if budget:
-        lines += [f"SQL execution budget: {budget['status']}; {budget['observed']}/{budget['limit']} actual statements for the complete job; target exit: {report.get('targetExitCode')}."]
+        if "sqliteInternal" in budget and "totalObserved" in budget:
+            lines += [f"SQL execution budget: {budget['status']}; {budget['observed']}/{budget['limit']} engine submissions for the complete job; {budget['sqliteInternal']} SQLite internal executions; {budget['totalObserved']} total; target exit: {report.get('targetExitCode')}."]
+        else:
+            lines += [f"Legacy SQL total: {budget['observed']}; origin split unavailable; not proof of the current engine-submission limit."]
     if "process" in report:
         process = report["process"]
         lines += [f"Sampled process tree: CPU >= {process['treeCpuSecondsLowerBound']:.3f}s; peak summed RSS {process['peakTreeRssBytes']} bytes; {process['samples']} samples.", process["note"]]

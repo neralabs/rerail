@@ -227,6 +227,12 @@ It exposes missing triggers for the new native admission/publication guard files
 A Python summary test also exposes the old total-count label after the origin-boundary clarification.
 `budget-summary-red` records that failure. Historical totals must remain labeled as legacy when origin evidence is absent.
 
+The CI and outer-report green run passes all 26 Node guard/report tests and 75 Python profiling tests.
+`ci-and-summary-green` includes the mandatory-step checks, workload script identity, and regression-file triggers.
+Both native admission/publication guard files now trigger the profiling addon and mandatory gates.
+The Python summary separates engine submissions, internal executions, and total executions.
+Historical counters without origin evidence remain explicitly labeled legacy and do not become current acceptance proof.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
