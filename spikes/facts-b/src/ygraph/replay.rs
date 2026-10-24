@@ -1,6 +1,7 @@
-//! `facts-b ygraph replay`: the base graph over the strict-majority membership, the 40
-//! worktrees as deltas, S3's events maintained one at a time, each (or every N-th) checked
-//! against a from-scratch build of that worktree in a forked child.
+//! `facts-b ygraph replay`: the base graph over the strict-majority membership, a cluster
+//! overlay per range of worktrees (`--flat`: none), the 40 worktrees as deltas over their
+//! layers, S3's events maintained one at a time, each (or every N-th) checked against a
+//! from-scratch build of that worktree in a forked child.
 use super::engine::{self, KIND_NAMES, NK};
 use super::view::{assign_def_ids, Graph, GraphRead, GraphView};
 use super::world::*;
@@ -10,6 +11,10 @@ use serde_json::json;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
+
+/// Spike B's cluster ranges (`replay::CLUSTERS`): the 40 worktrees ordered by commit date, cut
+/// where the divergence table steps.
+const CLUSTERS: [(u32, u32); 8] = [(1, 3), (4, 9), (10, 12), (13, 16), (17, 23), (24, 28), (29, 34), (35, 40)];
 
 pub fn memo_kinds(sh: &Shared, base: &Base) -> serde_json::Value {
     let mut n = [0usize; NK];
@@ -96,19 +101,19 @@ fn diff(sh: &mut Shared, base: &FxHashMap<u32, u32>, w: &[(String, String)]) -> 
     out
 }
 
-/// Divergence of a worktree: member paths whose content differs from the base.
-fn divergence(_base: &Base, d: &Delta) -> usize {
+/// Divergence of a worktree: member paths whose content differs from the layers below it.
+fn divergence(d: &Delta) -> usize {
     d.paths.len()
 }
 
 /// Exactness check of worktree `d` in a forked child: a from-scratch build of its members, its
 /// edges (as `linked_edges` rows) and refusal/incomplete state compared with the maintained one.
-fn check_child(sh: &mut Shared, base: &Base, d: &Delta, label: &str, out: &std::path::Path) -> ! {
+fn check_child(sh: &mut Shared, below: &Below, d: &Delta, label: &str, out: &std::path::Path) -> ! {
     let t = Instant::now();
-    let maintained = edge_rows(sh, base, d);
-    let members: Vec<(u32, u32)> = d.members(base).into_iter().map(|(p, r)| (p, r.content)).collect();
-    let (empty, sd, _) = scratch(sh, &members);
-    let fresh = edge_rows(sh, &empty, &sd);
+    let maintained = edge_rows(sh, below, d);
+    let members: Vec<(u32, u32)> = d.members(below).into_iter().map(|(p, r)| (p, r.content)).collect();
+    let (sd, _) = scratch(sh, &members);
+    let fresh = edge_rows(sh, &Below::default(), &sd);
     let only_m: Vec<_> = maintained.iter().filter(|r| fresh.binary_search(r).is_err()).take(5).map(|r| format!("{} {} -> {} {}", sh.it.str(r.0), r.1, sh.it.str(r.3), r.4)).collect();
     let only_f: Vec<_> = fresh.iter().filter(|r| maintained.binary_search(r).is_err()).take(5).map(|r| format!("{} {} -> {} {}", sh.it.str(r.0), r.1, sh.it.str(r.3), r.4)).collect();
     let n_m = maintained.iter().filter(|r| fresh.binary_search(r).is_err()).count();
@@ -150,7 +155,7 @@ impl Checks {
             }
         }
     }
-    fn spawn(&mut self, sh: &mut Shared, base: &Base, d: &Delta, label: &str) {
+    fn spawn(&mut self, sh: &mut Shared, below: &Below, d: &Delta, label: &str) {
         while self.inflight >= self.max {
             self.reap(true);
         }
@@ -158,7 +163,7 @@ impl Checks {
         let pid = unsafe { libc::fork() };
         assert!(pid >= 0, "fork");
         if pid == 0 {
-            check_child(sh, base, d, label, &self.file);
+            check_child(sh, below, d, label, &self.file);
         }
         self.inflight += 1;
         self.forked += 1;
@@ -231,39 +236,85 @@ pub fn run(args: &[String]) {
     let base_mem: Vec<(u32, u32)> = base_m.iter().map(|(p, h)| (sh.it.intern(p), sh.it.intern(h))).collect();
     let base_map: FxHashMap<u32, u32> = base_mem.iter().copied().collect();
     let t = Instant::now();
-    let (_e, bd, bstep) = scratch(&mut sh, &base_mem);
+    let (bd, bstep) = scratch(&mut sh, &base_mem);
     let base_build_s = t.elapsed().as_secs_f64();
-    let base = bd.freeze();
+    let base = bd.freeze(false);
     assign_def_ids(&mut sh, &base, None);
     let fp_base = mem_json();
     let bb = base.bytes();
     let base_info = json!({
-        "members": base_m.len(), "build_s": base_build_s, "step": bstep, "bytes": bb,
+        "members": base_m.len(), "build_s": base_build_s, "step": bstep, "bytes": bb, "total_bytes": base.total_bytes(),
         "memo_kinds": memo_kinds(&sh, &base), "counters": base.counters,
         "interner_strings": sh.it.len(), "interner_bytes": sh.it.bytes(), "interner_growth_bytes": sh.it.bytes() - it_before,
         "qtable_bytes": sh.qt.bytes(), "deftable_bytes": sh.defs.bytes(), "mem": fp_base,
     });
     eprintln!("base: {}", serde_json::to_string(&base_info).unwrap());
 
-    // worktrees as deltas
+    // cluster overlays (Spike B's contiguous ranges by commit date): each the majority
+    // membership of its worktrees, a frozen delta over the base; `--flat`: none
+    let flat = args.iter().any(|a| a == "--flat");
+    let ms: Vec<Vec<(String, String)>> = (1..=40u32).map(|w| read_members(&mdir.join(format!("{w:02}.tsv")))).collect();
+    let t = Instant::now();
+    let mut cluster_layers: Vec<Base> = Vec::new();
+    let mut cluster_maps: Vec<FxHashMap<u32, u32>> = Vec::new();
+    let mut cluster_info = Vec::new();
+    if !flat {
+        for &(lo, hi) in &CLUSTERS {
+            // per path held by a majority of the cluster's worktrees, its most frequent content
+            // (ties: the smallest hash) — Spike B's plurality base, so that a path whose content
+            // churns stays in the layer instead of being added by every worktree
+            let mut count: FxHashMap<&str, FxHashMap<&str, usize>> = FxHashMap::default();
+            for w in lo..=hi {
+                for (p, h) in &ms[w as usize - 1] {
+                    *count.entry(p.as_str()).or_default().entry(h.as_str()).or_default() += 1;
+                }
+            }
+            let need = (hi - lo + 1) as usize / 2 + 1;
+            let cm: Vec<(String, String)> = count
+                .into_iter()
+                .filter(|(_, hs)| hs.values().sum::<usize>() >= need)
+                .map(|(p, hs)| {
+                    let best = hs.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0))).unwrap();
+                    (p.to_owned(), best.0.to_string())
+                })
+                .collect();
+            let ch = diff(&mut sh, &base_map, &cm);
+            let below = Below::new(vec![&base]);
+            let mut d = Delta::at(&below);
+            let st = apply(&mut sh, &below, &mut d, &ch);
+            let layer = d.freeze(true);
+            assign_def_ids(&mut sh, &layer, None);
+            cluster_info.push(json!({"worktrees": [lo, hi], "divergence": ch.len(), "ms": st.ms, "work": st.work, "bytes": layer.total_bytes()}));
+            cluster_maps.push(cm.iter().map(|(p, h)| (sh.it.intern(p), sh.it.intern(h))).collect());
+            cluster_layers.push(layer);
+        }
+    }
+    let clusters_s = t.elapsed().as_secs_f64();
+    let cluster_bytes: usize = cluster_layers.iter().map(Base::total_bytes).sum();
+    let cluster_of = |w: u32| -> Option<usize> { if flat { None } else { CLUSTERS.iter().position(|&(lo, hi)| lo <= w && w <= hi) } };
+    let mut belows: FxHashMap<u32, Below> = FxHashMap::default();
+    let below_of = |w: u32| -> Below { match cluster_of(w) { Some(c) => Below::new(vec![&cluster_layers[c], &base]), None => Below::new(vec![&base]) } };
+
+    // worktrees as deltas over their layers
     let mut wts: std::collections::BTreeMap<u32, Delta> = Default::default();
     let t = Instant::now();
     let mut load_steps = Vec::new();
     for w in 1..=40u32 {
-        let m = read_members(&mdir.join(format!("{w:02}.tsv")));
-        let ch = diff(&mut sh, &base_map, &m);
-        let mut d = Delta::at_base(&base);
-        let st = apply(&mut sh, &base, &mut d, &ch);
-        load_steps.push(json!({"worktree": w, "changes": ch.len(), "ms": st.ms, "work": st.work, "rows_touched": st.table_rows_touched, "keys_changed": st.keys_changed, "bytes": d.bytes(), "breakdown": d.breakdown(), "divergence": divergence(&base, &d)}));
+        let below = below_of(w);
+        let ch = diff(&mut sh, cluster_of(w).map_or(&base_map, |c| &cluster_maps[c]), &ms[w as usize - 1]);
+        let mut d = Delta::at(&below);
+        let st = apply(&mut sh, &below, &mut d, &ch);
+        load_steps.push(json!({"worktree": w, "changes": ch.len(), "ms": st.ms, "work": st.work, "rows_touched": st.table_rows_touched, "keys_changed": st.keys_changed, "bytes": d.bytes(), "breakdown": d.breakdown(), "memo_kinds": d.memo_kinds(&sh.qt, &below), "divergence": divergence(&d)}));
         if check_load {
-            checks.spawn(&mut sh, &base, &d, &format!("load w{w:02}"));
+            checks.spawn(&mut sh, &below, &d, &format!("load w{w:02}"));
         }
         wts.insert(w, d);
+        belows.insert(w, below);
     }
     let deltas_s = t.elapsed().as_secs_f64();
     let fp_loaded = mem_json();
     let delta_bytes_loaded: usize = wts.values().map(Delta::bytes).sum();
-    eprintln!("40 deltas: {deltas_s:.1}s, Σ delta {:.1} MB, mem {fp_loaded}", mb(delta_bytes_loaded));
+    eprintln!("40 deltas: {deltas_s:.1}s, Σ delta {:.1} MB, clusters {:.1} MB, mem {fp_loaded}", mb(delta_bytes_loaded), mb(cluster_bytes));
 
     // the shared graph API, materialised once over the base
     let t = Instant::now();
@@ -285,19 +336,32 @@ pub fn run(args: &[String]) {
     let mut probes_edit: Vec<f64> = Vec::new();
     let mut lat_other: Vec<f64> = Vec::new();
     let mut fallbacks = json!({"init": 0, "incomplete_flip": 0});
-    let mut fp_samples = vec![json!({"at": "loaded", "mem": fp_loaded, "delta_bytes": delta_bytes_loaded, "interner_bytes": sh.it.bytes()})];
+    let mut fp_samples = vec![json!({"at": "loaded", "mem": fp_loaded, "delta_bytes": delta_bytes_loaded, "cluster_bytes": cluster_bytes, "interner_bytes": sh.it.bytes()})];
+    // the per-step edge delta (Step::edges_*), applied to each worktree's pair set and compared
+    // with a recomputation at every check
+    let root = Below::new(vec![&base]);
+    let base_pairs: rustc_hash::FxHashSet<(u32, u32)> = all_pairs(&mut sh, &root, &Delta::at(&root)).into_iter().collect();
+    let mut pairs: FxHashMap<u32, rustc_hash::FxHashSet<(u32, u32)>> = FxHashMap::default();
+    for (w, d) in &wts {
+        pairs.insert(*w, all_pairs(&mut sh, &belows[w], d).into_iter().collect());
+    }
+    let (mut delta_checks, mut delta_mismatch) = (0usize, 0usize);
     for (i, ev) in events.iter().enumerate() {
         if ev.group == "new_worktree" || ev.group == "commit_init" {
             assert!(!wts.contains_key(&ev.worktree));
-            wts.insert(ev.worktree, Delta::at_base(&base));
+            // a clone of the script's base, which is the base
+            wts.insert(ev.worktree, Delta::at(&root));
+            belows.insert(ev.worktree, root.clone());
+            pairs.insert(ev.worktree, base_pairs.clone());
         }
+        let below = &belows[&ev.worktree];
         let changes: Vec<Change> = ev
             .changes
             .iter()
             .map(|(p, o, n)| Change { path: sh.it.intern(p), old: o.as_ref().map(|x| sh.it.intern(x)), new: n.as_ref().map(|x| sh.it.intern(x)) })
             .collect();
         let d = wts.get_mut(&ev.worktree).unwrap();
-        let st = apply(&mut sh, &base, d, &changes);
+        let st = apply(&mut sh, below, d, &changes);
         if st.init_fallback {
             fallbacks["init"] = json!(fallbacks["init"].as_u64().unwrap() + 1);
         }
@@ -313,14 +377,24 @@ pub fn run(args: &[String]) {
         } else {
             lat_other.push(st.ms);
         }
+        let ps = pairs.get_mut(&ev.worktree).unwrap();
+        for e in &st.edges_removed {
+            ps.remove(e);
+        }
+        ps.extend(st.edges_added.iter().copied());
         let d = &wts[&ev.worktree];
-        per.push(json!({"seq": ev.seq, "worktree": ev.worktree, "group": ev.group, "kind": ev.kind, "step": st, "delta_bytes": d.bytes(), "divergence": divergence(&base, d)}));
+        per.push(json!({"seq": ev.seq, "worktree": ev.worktree, "group": ev.group, "kind": ev.kind, "step": st, "edges_added": st.edges_added.len(), "edges_removed": st.edges_removed.len(), "delta_bytes": d.bytes(), "divergence": divergence(d)}));
         if (i + 1) % check_every == 0 {
-            checks.spawn(&mut sh, &base, d, &format!("event {}", ev.seq));
+            checks.spawn(&mut sh, below, d, &format!("event {}", ev.seq));
+            let full: rustc_hash::FxHashSet<(u32, u32)> = all_pairs(&mut sh, below, d).into_iter().collect();
+            delta_checks += 1;
+            if full != pairs[&ev.worktree] {
+                delta_mismatch += 1;
+            }
         }
         if (i + 1) % 100 == 0 {
             let db: usize = wts.values().map(Delta::bytes).sum();
-            fp_samples.push(json!({"at": format!("event {}", i + 1), "mem": mem_json(), "delta_bytes": db, "interner_bytes": sh.it.bytes()}));
+            fp_samples.push(json!({"at": format!("event {}", i + 1), "mem": mem_json(), "delta_bytes": db, "cluster_bytes": cluster_bytes, "interner_bytes": sh.it.bytes()}));
             eprintln!("event {}: p50 {:.1} ms, Σ delta {:.1} MB, checks forked {}", i + 1, pct(&mut lat_edit.clone(), 0.5), mb(db), checks.forked);
         }
     }
@@ -334,11 +408,12 @@ pub fn run(args: &[String]) {
         let g = Graph::build(shr, &base);
         for (w, d) in &wts {
             let t = Instant::now();
-            let v = GraphView::build(&g, shr, &base, d);
+            let below = &belows[w];
+            let v = GraphView::build(&g, shr, below, d);
             let ms = t.elapsed().as_secs_f64() * 1e3;
             // smoke: every view module's edges resolve to defs of the view
             let mut dangling = 0usize;
-            for (p, r) in d.members(&base) {
+            for (p, r) in d.members(below) {
                 if !r.linked {
                     continue;
                 }
@@ -350,18 +425,20 @@ pub fn run(args: &[String]) {
                     }
                 }
             }
-            views.push(json!({"worktree": w, "build_ms": ms, "view_bytes": v.bytes(), "delta_bytes": d.bytes(), "divergence": divergence(&base, d), "epoch": v.epoch(), "dangling": dangling, "incomplete": v.incomplete(), "refused": v.refused()}));
+            views.push(json!({"worktree": w, "build_ms": ms, "view_bytes": v.bytes(), "delta_bytes": d.bytes(), "divergence": divergence(d), "epoch": v.epoch(), "dangling": dangling, "incomplete": v.incomplete(), "refused": v.refused()}));
         }
     }
     checks.finish();
     let db_end: usize = wts.values().map(Delta::bytes).sum();
-    fp_samples.push(json!({"at": "end", "mem": mem_json(), "delta_bytes": db_end, "interner_bytes": sh.it.bytes()}));
+    fp_samples.push(json!({"at": "end", "mem": mem_json(), "delta_bytes": db_end, "cluster_bytes": cluster_bytes, "interner_bytes": sh.it.bytes()}));
     // exactness summary
     let lines: Vec<serde_json::Value> = std::fs::read_to_string(&checks.file).unwrap_or_default().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     let unequal: Vec<&serde_json::Value> = lines.iter().filter(|l| !l["equal"].as_bool().unwrap()).collect();
-    let exactness = json!({"checks": lines.len(), "forked": checks.forked, "unequal": unequal.len(), "first_unequal": unequal.iter().take(5).collect::<Vec<_>>()});
+    let exactness = json!({"checks": lines.len(), "forked": checks.forked, "unequal": unequal.len() + delta_mismatch, "first_unequal": unequal.iter().take(5).collect::<Vec<_>>(),
+        "edge_delta_checks": delta_checks, "edge_delta_mismatch": delta_mismatch});
     let res = json!({
         "inputs": inputs, "base": base_info, "graph": {"build_s": graph_s, "bytes": graph_bytes, "edges": graph_edges},
+        "clusters": {"flat": flat, "build_s": clusters_s, "bytes": cluster_bytes, "layers": cluster_info},
         "load": {"deltas_s": deltas_s, "steps": load_steps, "delta_bytes": delta_bytes_loaded},
         "latency_single_file_ms": summary(lat_edit), "touched_single_file": summary(rows_edit), "rerun_single_file": summary(rerun_edit),
         "probes_single_file": summary(probes_edit), "latency_other_ms": summary(lat_other),
@@ -374,7 +451,7 @@ pub fn run(args: &[String]) {
     short["load"].as_object_mut().unwrap().remove("steps");
     println!("{}", serde_json::to_string_pretty(&short).unwrap());
     let _ = engine::HMAX;
-    if !unequal.is_empty() {
+    if !unequal.is_empty() || delta_mismatch > 0 {
         std::process::exit(1);
     }
 }

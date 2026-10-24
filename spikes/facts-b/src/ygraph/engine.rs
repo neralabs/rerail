@@ -39,6 +39,8 @@ pub fn dep_key(t: u8, h: u64) -> u64 {
 
 type Rows = Vec<(Row, u32)>;
 
+/// A frozen layer's tables. In an overlay layer an empty key is a tombstone (the key has no
+/// rows here, whatever the layers below hold).
 #[derive(Default)]
 pub struct BaseTables {
     pub t: [FxHashMap<Sym, Box<[(Row, u32)]>>; NT],
@@ -49,8 +51,18 @@ pub struct DeltaTables {
     pub t: [FxHashMap<Sym, Rows>; NT],
 }
 
+/// The frozen layers under a delta, top first (a worktree's cluster, then the base).
+pub fn below_rows<'a>(below: &[&'a BaseTables], t: u8, k: Sym) -> &'a [(Row, u32)] {
+    for b in below {
+        if let Some(r) = b.t[t as usize].get(&k) {
+            return r;
+        }
+    }
+    &[]
+}
+
 pub struct TView<'a> {
-    pub base: &'a BaseTables,
+    pub below: Vec<&'a BaseTables>,
     pub delta: &'a DeltaTables,
 }
 
@@ -59,7 +71,7 @@ impl<'a> TView<'a> {
     pub fn rows(&self, t: u8, k: Sym) -> &'a [(Row, u32)] {
         match self.delta.t[t as usize].get(&k) {
             Some(r) => r,
-            None => self.base.t[t as usize].get(&k).map_or(&[], |r| r),
+            None => below_rows(&self.below, t, k),
         }
     }
 }
@@ -71,9 +83,9 @@ pub struct Touch {
 }
 
 impl DeltaTables {
-    pub fn add(&mut self, base: &BaseTables, touch: &mut Touch, t: u8, k: Sym, row: Row, by: i32) {
+    pub fn add(&mut self, below: &[&BaseTables], touch: &mut Touch, t: u8, k: Sym, row: Row, by: i32) {
         let m = &mut self.t[t as usize];
-        let rows = m.entry(k).or_insert_with(|| base.t[t as usize].get(&k).map_or_else(Vec::new, |r| r.to_vec()));
+        let rows = m.entry(k).or_insert_with(|| below_rows(below, t, k).to_vec());
         touch.before.entry((t, k)).or_insert_with(|| rows.clone());
         match rows.binary_search_by(|x| x.0.cmp(&row)) {
             Ok(i) => {
@@ -201,8 +213,8 @@ pub enum V {
     /// type_key: (min class, min k, distinct classes)
     TypeKey(Option<(Sym, i32, u32)>),
     Bool(bool),
-    /// reference_order: (class, dist, seq), depth ≥ 64 reached
-    Order(Vec<(Sym, u8, Box<str>)>, bool),
+    /// reference_order: (class, dist, seq as an interned string), depth ≥ 64 reached
+    Order(Vec<(Sym, u8, Sym)>, bool),
     /// field_class: (member class, lo, hi)
     Field(Vec<(Sym, i32, i32)>),
     Body(Box<Body>),
@@ -210,20 +222,6 @@ pub enum V {
 }
 
 impl V {
-    pub fn bytes(&self) -> usize {
-        std::mem::size_of::<V>()
-            + match self {
-                V::BaseClass(_) | V::Bool(_) | V::TypeKey(_) => 0,
-                V::Syms(v) => v.capacity() * 4,
-                V::SymK(v) => v.capacity() * 8,
-                V::Pairs(v) => v.capacity() * 8,
-                V::Targets(v) => v.capacity() * 8,
-                V::Order(v, _) => v.capacity() * 24 + v.iter().map(|x| x.2.len()).sum::<usize>(),
-                V::Field(v) => v.capacity() * 12,
-                V::Body(b) => std::mem::size_of::<Body>() + b.terms.capacity() * 12 + b.kids.capacity() * 16,
-                V::Link(v) => v.len() * 4,
-            }
-    }
     /// Contribution to the refusal count when the query is registered as a refusal root.
     pub fn refuses(&self) -> bool {
         match self {
@@ -233,21 +231,109 @@ impl V {
             _ => false,
         }
     }
-}
 
-pub struct Memo {
-    pub val: Rc<V>,
-    pub ins: Box<[u64]>,
-    pub qs: Box<[QId]>,
-}
+    /// The value as words (memos store values this way: one allocation per memo).
+    pub fn encode(&self, out: &mut Vec<u32>) {
+        match self {
+            V::BaseClass(None) => out.push(0),
+            V::BaseClass(Some((None, s))) => out.extend([1, *s]),
+            V::BaseClass(Some((Some(c), s))) => out.extend([2, *c, *s]),
+            V::Syms(v) => out.extend_from_slice(v),
+            V::SymK(v) => v.iter().for_each(|&(s, k)| out.extend([s, k as u32])),
+            V::Pairs(v) => v.iter().for_each(|&(a, b)| out.extend([a, b])),
+            V::Targets(v) => v.iter().for_each(|&(a, b)| out.extend([a, b])),
+            V::TypeKey(None) => {}
+            V::TypeKey(Some((c, k, s))) => out.extend([*c, *k as u32, *s]),
+            V::Bool(b) => out.push(*b as u32),
+            V::Order(v, deep) => {
+                out.push(*deep as u32);
+                v.iter().for_each(|&(c, d, s)| out.extend([c, d as u32, s]));
+            }
+            V::Field(v) => v.iter().for_each(|&(c, lo, hi)| out.extend([c, lo as u32, hi as u32])),
+            V::Body(b) => {
+                out.extend([b.root_refusal as u32, b.terms.len() as u32]);
+                b.terms.iter().for_each(|&(d, lo, hi)| out.extend([d, lo as u32, hi as u32]));
+                b.kids.iter().for_each(|&(k, delta, chk, lo, hi)| out.extend([k, delta as u32 | (chk as u32) << 8, lo as u32, hi as u32]));
+            }
+            V::Link(v) => out.extend_from_slice(v),
+        }
+    }
 
-impl Memo {
-    pub fn bytes(&self) -> usize {
-        std::mem::size_of::<Memo>() + 16 + self.val.bytes() + self.ins.len() * 8 + self.qs.len() * 4
+    pub fn decode(kind: u8, w: &[u32]) -> V {
+        let pairs = |w: &[u32]| -> Vec<(u32, u32)> { w.chunks_exact(2).map(|c| (c[0], c[1])).collect() };
+        match kind {
+            K_BASECLASS => V::BaseClass(match w[0] {
+                0 => None,
+                1 => Some((None, w[1])),
+                _ => Some((Some(w[1]), w[2])),
+            }),
+            K_FQ | K_CLASSOF => V::SymK(w.chunks_exact(2).map(|c| (c[0], c[1] as i32)).collect()),
+            K_BASES => V::Pairs(pairs(w)),
+            K_BASETARGETS => V::Targets(pairs(w)),
+            K_TYPEKEY => V::TypeKey((!w.is_empty()).then(|| (w[0], w[1] as i32, w[2]))),
+            K_CLASSROOT | K_OWNREF | K_REFSUP => V::Bool(w[0] != 0),
+            K_SUBCLASS | K_MF0 | K_MF1 | K_COMPOSE => V::Syms(w.to_vec()),
+            K_ORDER => V::Order(w[1..].chunks_exact(3).map(|c| (c[0], c[1] as u8, c[2])).collect(), w[0] != 0),
+            K_FIELD => V::Field(w.chunks_exact(3).map(|c| (c[0], c[1] as i32, c[2] as i32)).collect()),
+            K_BODY => {
+                let nt = w[1] as usize;
+                let terms = w[2..2 + 3 * nt].chunks_exact(3).map(|c| (c[0], c[1] as i32, c[2] as i32)).collect();
+                let kids = w[2 + 3 * nt..].chunks_exact(4).map(|c| (c[0], (c[1] & 0xff) as u8, c[1] >> 8 != 0, c[2] as i32, c[3] as i32)).collect();
+                V::Body(Box::new(Body { terms, kids, root_refusal: w[0] != 0 }))
+            }
+            K_LINK => V::Link(w.into()),
+            _ => unreachable!(),
+        }
     }
 }
 
-/// The frozen base: memos by id, reverse indexes.
+/// One memo in one allocation: [n_ins | n_qs << 16, ins as (lo, hi) word pairs, qs, value].
+#[derive(Clone, PartialEq, Eq)]
+pub struct Memo {
+    data: Box<[u32]>,
+}
+
+impl Memo {
+    pub fn new(ins: &[u64], qs: &[QId], val: &[u32]) -> Memo {
+        assert!(ins.len() < 1 << 16 && qs.len() < 1 << 16, "memo read set over 65535");
+        let mut d = Vec::with_capacity(1 + 2 * ins.len() + qs.len() + val.len());
+        d.push(ins.len() as u32 | (qs.len() as u32) << 16);
+        for &k in ins {
+            d.extend([k as u32, (k >> 32) as u32]);
+        }
+        d.extend_from_slice(qs);
+        d.extend_from_slice(val);
+        Memo { data: d.into_boxed_slice() }
+    }
+    fn n(&self) -> (usize, usize) {
+        ((self.data[0] & 0xffff) as usize, (self.data[0] >> 16) as usize)
+    }
+    pub fn ins(&self) -> impl Iterator<Item = u64> + '_ {
+        let (ni, _) = self.n();
+        self.data[1..1 + 2 * ni].chunks_exact(2).map(|c| c[0] as u64 | (c[1] as u64) << 32)
+    }
+    /// The read set (ins and qs) as stored, for equality.
+    pub fn reads(&self) -> &[u32] {
+        let (ni, nq) = self.n();
+        &self.data[..1 + 2 * ni + nq]
+    }
+    pub fn qs(&self) -> &[QId] {
+        let (ni, nq) = self.n();
+        &self.data[1 + 2 * ni..1 + 2 * ni + nq]
+    }
+    pub fn val(&self) -> &[u32] {
+        let (ni, nq) = self.n();
+        &self.data[1 + 2 * ni + nq..]
+    }
+    pub fn bytes(&self) -> usize {
+        16 + self.data.len() * 4
+    }
+}
+
+/// Map entry bytes of a memo map (key, boxed slice, control byte).
+const MEMO_ENTRY: usize = 4 + 16 + 1;
+
+/// A frozen layer's memos by id, and its reverse indexes.
 #[derive(Default)]
 pub struct BaseMemos {
     pub memos: FxHashMap<QId, Memo>,
@@ -260,12 +346,6 @@ pub struct DeltaMemos {
     pub memos: FxHashMap<QId, Memo>,
     pub readers: FxHashMap<u64, Vec<QId>>,
     pub parents: FxHashMap<QId, Vec<QId>>,
-}
-
-impl Clone for Memo {
-    fn clone(&self) -> Self {
-        Memo { val: self.val.clone(), ins: self.ins.clone(), qs: self.qs.clone() }
-    }
 }
 
 impl DeltaMemos {
@@ -285,7 +365,7 @@ impl DeltaMemos {
         }
     }
     pub fn bytes(&self) -> usize {
-        self.memos.capacity() * 12 + self.memos.values().map(Memo::bytes).sum::<usize>()
+        self.memos.capacity() * MEMO_ENTRY + self.memos.values().map(Memo::bytes).sum::<usize>()
             + self.readers.capacity() * 32 + self.readers.values().map(|v| v.capacity() * 4).sum::<usize>()
             + self.parents.capacity() * 28 + self.parents.values().map(|v| v.capacity() * 4).sum::<usize>()
     }
@@ -293,7 +373,7 @@ impl DeltaMemos {
 
 impl BaseMemos {
     pub fn bytes(&self) -> usize {
-        self.memos.capacity() * 12 + self.memos.values().map(Memo::bytes).sum::<usize>()
+        self.memos.capacity() * MEMO_ENTRY + self.memos.values().map(Memo::bytes).sum::<usize>()
             + self.readers.capacity() * 24 + self.readers.values().map(|v| v.len() * 4).sum::<usize>()
             + self.parents.capacity() * 20 + self.parents.values().map(|v| v.len() * 4).sum::<usize>()
     }
@@ -335,7 +415,8 @@ pub struct Ctx<'a> {
     pub it: &'a mut Interner,
     pub qt: &'a mut QTable,
     pub defs: &'a mut super::world::DefTable,
-    pub base: &'a BaseMemos,
+    /// the frozen layers' memos, top first
+    pub base: Vec<&'a BaseMemos>,
     pub delta: &'a mut DeltaMemos,
     frames: Vec<Frame>,
     pub work: Work,
@@ -350,7 +431,7 @@ impl<'a> Ctx<'a> {
         it: &'a mut Interner,
         qt: &'a mut QTable,
         defs: &'a mut super::world::DefTable,
-        base: &'a BaseMemos,
+        base: Vec<&'a BaseMemos>,
         delta: &'a mut DeltaMemos,
         anomalies: &'a mut Anomalies,
     ) -> Self {
@@ -381,8 +462,12 @@ impl<'a> Ctx<'a> {
         self.tv.rows(t, k)
     }
 
+    fn below_memo(&self, q: QId) -> Option<&'a Memo> {
+        self.base.iter().find_map(|b| b.memos.get(&q))
+    }
+
     pub fn memo(&self, q: QId) -> Option<&Memo> {
-        self.delta.memos.get(&q).or_else(|| self.base.memos.get(&q))
+        self.delta.memos.get(&q).or_else(|| self.below_memo(q))
     }
 
     /// The value of query `q` (computed on first demand), recorded as a read of the caller.
@@ -392,7 +477,7 @@ impl<'a> Ctx<'a> {
             f.qs.push(id);
         }
         if let Some(m) = self.memo(id) {
-            return m.val.clone();
+            return Rc::new(V::decode(q.kind, m.val()));
         }
         self.work.fresh += 1;
         self.run(id, q)
@@ -404,23 +489,24 @@ impl<'a> Ctx<'a> {
             self.work.link_nodes += 1;
         }
         self.frames.push(Frame { ins: Vec::new(), qs: Vec::new() });
-        let v = Rc::new(super::link::exec(self, q));
+        let v = super::link::exec(self, q);
         let mut f = self.frames.pop().unwrap();
         f.ins.sort_unstable();
         f.ins.dedup();
         f.qs.sort_unstable();
         f.qs.dedup();
-        // A re-run that reproduces the base entry (value and reads) leaves nothing in the delta:
-        // the base entry is valid here again, and its reads are in the base reverse index.
-        if let Some(b) = self.base.memos.get(&id) {
-            if *b.val == *v && *b.ins == *f.ins && *b.qs == *f.qs {
-                self.delta.memos.remove(&id);
-                self.work.backdated += 1;
-                return b.val.clone();
-            }
+        let mut words = Vec::new();
+        v.encode(&mut words);
+        let m = Memo::new(&f.ins, &f.qs, &words);
+        // A re-run that reproduces the entry below (value and reads) leaves nothing in the delta:
+        // that entry is valid here again, and its reads are in the reverse index below.
+        if self.below_memo(id).is_some_and(|b| *b == m) {
+            self.delta.memos.remove(&id);
+            self.work.backdated += 1;
+            return Rc::new(v);
         }
-        // A re-run reading what it read before is already in a reverse index (base or delta).
-        let same = self.memo(id).is_some_and(|m| *m.ins == *f.ins && *m.qs == *f.qs);
+        // A re-run reading what it read before is already in a reverse index (below or delta).
+        let same = self.memo(id).is_some_and(|old| old.reads() == m.reads());
         if !same {
             for &k in &f.ins {
                 self.delta.readers.entry(k).or_default().push(id);
@@ -429,8 +515,8 @@ impl<'a> Ctx<'a> {
                 self.delta.parents.entry(c).or_default().push(id);
             }
         }
-        self.delta.memos.insert(id, Memo { val: v.clone(), ins: f.ins.into_boxed_slice(), qs: f.qs.into_boxed_slice() });
-        v
+        self.delta.memos.insert(id, m);
+        Rc::new(v)
     }
 
     /// Re-run every reader of the changed keys, in level order, with early cutoff.
@@ -443,20 +529,27 @@ impl<'a> Ctx<'a> {
             }
         };
         for k in changed_keys {
-            for &q in self.base.readers.get(k).map_or(&[][..], |v| v).iter().chain(self.delta.readers.get(k).map_or(&[][..], |v| v)) {
+            let mut rs: Vec<QId> = self.delta.readers.get(k).cloned().unwrap_or_default();
+            for b in &self.base {
+                rs.extend(b.readers.get(k).map_or(&[][..], |v| v));
+            }
+            for q in rs {
                 self.work.dirty_seeds += 1;
                 push(&mut heap, &mut queued, self.qt, q);
             }
         }
         while let Some(std::cmp::Reverse((_, id))) = heap.pop() {
-            let Some(old) = self.memo(id).map(|m| m.val.clone()) else { continue };
+            let Some(old) = self.memo(id).map(|m| m.val().to_vec()) else { continue };
             let q = self.qt.qs[id as usize];
             self.work.rerun += 1;
-            let new = self.run(id, q);
-            if *new != *old {
+            self.run(id, q);
+            if self.memo(id).map(Memo::val) != Some(&old[..]) {
                 self.work.changed += 1;
                 self.changed.push(id);
-                let ps: Vec<QId> = self.base.parents.get(&id).map_or(&[][..], |v| v).iter().chain(self.delta.parents.get(&id).map_or(&[][..], |v| v)).copied().collect();
+                let mut ps: Vec<QId> = self.delta.parents.get(&id).cloned().unwrap_or_default();
+                for b in &self.base {
+                    ps.extend(b.parents.get(&id).map_or(&[][..], |v| v));
+                }
                 for p in ps {
                     push(&mut heap, &mut queued, self.qt, p);
                 }

@@ -43,13 +43,12 @@ pub fn read_members(p: &std::path::Path) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Build a worktree's graph from scratch: every member added to an empty state.
-pub fn scratch(sh: &mut Shared, members: &[(engine::QId, engine::QId)]) -> (Base, Delta, Step) {
-    let empty = Base::default();
+/// Build a worktree's graph from scratch: every (path, content) member added over no layers.
+pub fn scratch(sh: &mut Shared, members: &[(intern::Sym, intern::Sym)]) -> (Delta, Step) {
     let mut d = Delta::default();
     let changes: Vec<Change> = members.iter().map(|&(p, c)| Change { path: p, old: None, new: Some(c) }).collect();
-    let step = apply(sh, &empty, &mut d, &changes);
-    (empty, d, step)
+    let step = apply(sh, &Below::default(), &mut d, &changes);
+    (d, step)
 }
 
 pub fn run_big<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
@@ -88,9 +87,9 @@ fn parity(args: &[String]) {
     let fp_loaded = replay::mem_json();
     let mem: Vec<(u32, u32)> = ms.iter().map(|(p, h)| (sh.it.intern(p), sh.it.intern(h))).collect();
     let t = std::time::Instant::now();
-    let (empty, d, step) = scratch(&mut sh, &mem);
+    let (d, step) = scratch(&mut sh, &mem);
     let build_s = t.elapsed().as_secs_f64();
-    let rows = edge_rows(&sh, &empty, &d);
+    let rows = edge_rows(&sh, &Below::default(), &d);
     let mut got = std::collections::BTreeMap::<(String, u32, String, u32, u32, u32), u32>::new();
     for r in &rows {
         *got.entry((sh.it.str(r.0).to_owned(), r.1, sh.it.str(r.3).to_owned(), r.4, r.5, r.8)).or_default() += 1;
@@ -104,7 +103,7 @@ fn parity(args: &[String]) {
     let extra: Vec<_> = got.iter().filter(|(k, _)| !want_e.contains_key(*k)).map(|(k, c)| (k.clone(), *c)).collect();
     let n_rows = rows.len();
     drop(rows);
-    let base = d.freeze();
+    let base = d.freeze(false);
     let fp_built = replay::mem_json();
     let res = serde_json::json!({
         "members": ms.len(), "summaries_loaded": n, "load_s": load_s, "build_s": build_s,

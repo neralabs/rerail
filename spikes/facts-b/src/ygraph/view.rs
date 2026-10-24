@@ -5,10 +5,10 @@
 //! Ids are u32 throughout: `Sym` (one interner), `ModuleId` (the module's path Sym), `DefId`
 //! (one per (path, def idx), stable across content edits), `ContentId` (the content hash Sym),
 //! `NodeId` (the def's index in its content's summary).
-use super::engine::T_BYNAME;
+use super::engine::{TView, T_BYNAME};
 use super::intern::{Interner, Sym};
 use super::path::CLASS;
-use super::world::{Base, Delta, Shared};
+use super::world::{Base, Below, Delta, Shared};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 pub type ModuleId = u32;
@@ -97,8 +97,9 @@ fn module_defs(sh: &Shared, p: Sym, r: &super::world::PathRec) -> Vec<Def> {
     let _ = &sh.it;
     r.defs
         .iter()
-        .map(|d| Def {
-            id: *sh.defs.map.get(&(p, d.idx)).unwrap_or(&u32::MAX),
+        .zip(super::path::occurrences(&r.defs))
+        .map(|(d, occ)| Def {
+            id: sh.defs.get(p, d.name, occ).unwrap_or(u32::MAX),
             module: p,
             name: d.name,
             kind: if d.flags & CLASS != 0 { DefKind::Class } else { DefKind::Function },
@@ -111,11 +112,14 @@ fn module_defs(sh: &Shared, p: Sym, r: &super::world::PathRec) -> Vec<Def> {
         .collect()
 }
 
-fn module_edges(content: ContentId, defs: &[Def], out: &[(u32, u32)], src_id: &dyn Fn(u32) -> DefId) -> ModuleEdges {
-    let name_of: FxHashMap<u32, Sym> = defs.iter().map(|d| (d.node, d.name)).collect();
+fn module_edges(content: ContentId, defs: &[Def], out: &[(u32, u32)]) -> ModuleEdges {
+    let at: FxHashMap<u32, (Sym, DefId)> = defs.iter().map(|d| (d.node, (d.name, d.id))).collect();
     let mut es: Vec<(Sym, Edge)> = out
         .iter()
-        .map(|&(idx, dst)| (name_of.get(&idx).copied().unwrap_or(0), Edge { src_def: src_id(idx), dst_def: dst, kind: EdgeKind::Ref, site: (content, idx) }))
+        .map(|&(idx, dst)| {
+            let (name, src) = at.get(&idx).copied().unwrap_or((0, u32::MAX));
+            (name, Edge { src_def: src, dst_def: dst, kind: EdgeKind::Ref, site: (content, idx) })
+        })
         .collect();
     es.sort_unstable_by_key(|(n, e)| (*n, e.src_def, e.dst_def));
     let mut by_name: Vec<(Sym, u32, u32)> = Vec::new();
@@ -128,24 +132,15 @@ fn module_edges(content: ContentId, defs: &[Def], out: &[(u32, u32)], src_id: &d
     ModuleEdges { edges: es.into_iter().map(|x| x.1).collect(), by_name }
 }
 
-/// Give every definition of the base (`d` None) or of a delta's paths its id.
+/// Give every definition of a layer (`d` None) or of a delta's paths its id.
 pub fn assign_def_ids(sh: &mut Shared, base: &Base, d: Option<&Delta>) {
-    match d {
-        None => {
-            for (p, r) in &base.paths {
-                for dd in r.defs.iter() {
-                    sh.defs.id(*p, dd.idx);
-                }
-            }
-        }
-        Some(d) => {
-            for (p, r) in d.paths.iter() {
-                if let Some(r) = r {
-                    for dd in r.defs.iter() {
-                        sh.defs.id(*p, dd.idx);
-                    }
-                }
-            }
+    let recs: Vec<(Sym, &super::world::PathRec)> = match d {
+        None => base.paths.iter().filter_map(|(p, r)| r.as_ref().map(|r| (*p, r))).collect(),
+        Some(d) => d.paths.iter().filter_map(|(p, r)| r.as_ref().map(|r| (*p, r))).collect(),
+    };
+    for (p, r) in recs {
+        for (dd, occ) in r.defs.iter().zip(super::path::occurrences(&r.defs)) {
+            sh.defs.id(p, dd.name, occ);
         }
     }
 }
@@ -161,12 +156,8 @@ pub struct Graph<'a> {
     refused: bool,
 }
 
-fn src_ids<'s>(sh: &'s Shared, p: Sym) -> impl Fn(u32) -> DefId + 's {
-    move |idx| *sh.defs.map.get(&(p, idx)).unwrap_or(&u32::MAX)
-}
-
 fn by_name_defs(sh: &Shared, rows: &[([u32; 4], u32)]) -> Vec<DefId> {
-    let mut v: Vec<DefId> = rows.iter().filter_map(|r| sh.defs.map.get(&(r.0[0], r.0[1])).copied()).collect();
+    let mut v: Vec<DefId> = rows.iter().filter_map(|r| sh.defs.get(r.0[0], r.0[3], r.0[1])).collect();
     v.sort_unstable();
     v.dedup();
     v
@@ -179,7 +170,7 @@ impl<'a> Graph<'a> {
         let mut modules = FxHashMap::default();
         let mut def_at = FxHashMap::default();
         let mut to: Vec<Edge> = Vec::new();
-        for (p, r) in &base.paths {
+        for (p, r) in base.paths.iter().filter_map(|(p, r)| r.as_ref().map(|r| (p, r))) {
             if !r.linked {
                 continue;
             }
@@ -187,7 +178,7 @@ impl<'a> Graph<'a> {
             for (i, d) in defs.iter().enumerate() {
                 def_at.insert(d.id, (*p, i as u32));
             }
-            let me = module_edges(r.content, &defs, base.out.get(p).map_or(&[], |o| o), &src_ids(sh, *p));
+            let me = module_edges(r.content, &defs, base.out.get(p).map_or(&[], |o| o));
             to.extend_from_slice(&me.edges);
             modules.insert(*p, (defs, me));
         }
@@ -276,10 +267,18 @@ pub struct GraphView<'a> {
 }
 
 impl<'a> GraphView<'a> {
-    /// Needs every def's id (`assign_def_ids` over the delta first).
-    pub fn build(g: &'a Graph<'a>, sh: &Shared, base: &Base, d: &Delta) -> GraphView<'a> {
+    /// The worktree `d` over `below` (its cluster overlay, if any, then the base `g` was built
+    /// from). Needs every def's id (`assign_def_ids` over the overlays and the delta first).
+    pub fn build(g: &'a Graph<'a>, sh: &Shared, below: &Below, d: &Delta) -> GraphView<'a> {
+        let overlays = &below.layers[..below.layers.len().saturating_sub(1)];
         let mut over: FxHashSet<ModuleId> = d.paths.keys().copied().collect();
         over.extend(d.out.keys().copied());
+        let mut bn_keys: FxHashSet<Sym> = d.tables.t[T_BYNAME as usize].keys().copied().collect();
+        for l in overlays {
+            over.extend(l.paths.keys().copied());
+            over.extend(l.out.keys().copied());
+            bn_keys.extend(l.tables.t[T_BYNAME as usize].keys().copied());
+        }
         let mut modules = FxHashMap::default();
         let mut def_at = FxHashMap::default();
         let mut new_in: FxHashMap<DefId, Vec<Edge>> = FxHashMap::default();
@@ -291,13 +290,13 @@ impl<'a> GraphView<'a> {
             for dd in g.definitions(p) {
                 def_at.insert(dd.id, None);
             }
-            match d.rec(base, p).filter(|r| r.linked) {
+            match d.rec(below, p).filter(|r| r.linked) {
                 Some(r) => {
                     let defs = module_defs(sh, p, r);
                     for (i, dd) in defs.iter().enumerate() {
                         def_at.insert(dd.id, Some((p, i as u32)));
                     }
-                    let me = module_edges(r.content, &defs, d.out(base, p), &src_ids(sh, p));
+                    let me = module_edges(r.content, &defs, d.out(below, p));
                     for e in &me.edges {
                         affected.insert(e.dst_def);
                         new_in.entry(e.dst_def).or_default().push(*e);
@@ -317,7 +316,8 @@ impl<'a> GraphView<'a> {
             l.sort_unstable_by_key(|e| (e.src_def, e.dst_def));
             to.insert(dst, l);
         }
-        let by_name = d.tables.t[T_BYNAME as usize].iter().map(|(k, rows)| (*k, by_name_defs(sh, rows))).collect();
+        let tv = TView { below: below.tables(), delta: &d.tables };
+        let by_name = bn_keys.into_iter().map(|k| (k, by_name_defs(sh, tv.rows(T_BYNAME, k)))).collect();
         GraphView { base: g, modules, def_at, to, by_name, epoch: d.epoch, incomplete: d.incomplete(), refused: d.refused() }
     }
 

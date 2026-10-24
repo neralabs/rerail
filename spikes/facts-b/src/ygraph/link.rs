@@ -91,7 +91,7 @@ fn method_defs(cx: &mut Ctx, k: &str) -> Vec<u32> {
     let rows = cx.rows(T_BYNAME, k);
     let mut out = Vec::new();
     for r in rows.iter().filter(|r| !cls_flag(r)) {
-        out.push(cx.defs.id(r.0[0], r.0[1]));
+        out.push(cx.defs.id(r.0[0], r.0[3], r.0[1]));
     }
     out
 }
@@ -187,7 +187,8 @@ fn bases_of(cx: &mut Ctx, c: Sym) -> Vec<(Sym, Sym)> {
 }
 
 /// The `supers` targets whose base_class is `b` (any `several`): the reverse of base_class,
-/// through the aliases by target and the `<base>` targets by short name.
+/// through the base-class alias index (`T_ALIAS_T`: aliases by target, only keys some `supers`
+/// target resolves through) and the `<base>` targets by short name.
 fn base_targets(cx: &mut Ctx, b: Sym) -> V {
     let mut cand: Vec<Sym> = Vec::new();
     let alias_rows = cx.rows_sym(T_ALIAS_T, b);
@@ -196,14 +197,9 @@ fn base_targets(cx: &mut Ctx, b: Sym) -> V {
     keys.dedup();
     for k in keys {
         let ks = s(cx, k);
-        for tok in [".<imported>.", ".<class>."] {
-            let mut from = 0;
-            while let Some(i) = ks[from..].find(tok).map(|i| i + from) {
-                let t = format!("{}.<base>.{}", &ks[..i], &ks[i + tok.len()..]);
-                if t.find(".<base>.") == Some(i) && !cx.rows(T_SUPERS_T, &t).is_empty() {
-                    cand.push(cx.it.get(&t).unwrap());
-                }
-                from = i + 1;
+        for t in super::world::base_targets_of_key(&ks) {
+            if !cx.rows(T_SUPERS_T, &t).is_empty() {
+                cand.push(cx.it.get(&t).unwrap());
             }
         }
     }
@@ -316,14 +312,15 @@ fn order(cx: &mut Ctx, root: Sym) -> V {
             seen.insert(*c, (d + 1, sq.clone()));
         }
     }
-    let mut out: Vec<(Sym, u8, Box<str>)> = seen.into_iter().map(|(c, (d, sq))| (c, d, sq.into_boxed_str())).collect();
+    let mut out: Vec<(Sym, u8, Sym)> = seen.into_iter().map(|(c, (d, sq))| (c, d, cx.it.intern(&sq))).collect();
     out.sort_unstable();
     V::Order(out, deep)
 }
 
+/// reference_order of `root` with each seq as text (compared as text).
 fn order_of(cx: &mut Ctx, root: Sym) -> Vec<(Sym, u8, Box<str>)> {
     match &*cx.get(q(K_ORDER, root, 0)) {
-        V::Order(v, _) => v.clone(),
+        V::Order(v, _) => v.iter().map(|&(c, d, s)| (c, d, cx.it.str(s).into())).collect(),
         _ => unreachable!(),
     }
 }
@@ -690,7 +687,7 @@ fn method_terms(cx: &mut Ctx, b: &mut Body, classes: &[Sym], attr: &str, lo: i32
 fn byname_terms(cx: &mut Ctx, b: &mut Body, key: &str) {
     let rows = cx.rows(T_BYNAME, key);
     for r in rows {
-        let d = cx.defs.id(r.0[0], r.0[1]);
+        let d = cx.defs.id(r.0[0], r.0[3], r.0[1]);
         push_term(cx, b, d, 0, 99);
     }
 }

@@ -8,26 +8,30 @@ use super::summary::Summaries;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::time::Instant;
 
-/// Definition ids: one per (path, def idx), shared by the base and every worktree. A def keeps
-/// its id while its path's content changes (spans are read through the worktree's view).
+/// Definition ids: one per (path, def name, occurrence of the name in the path), shared by the
+/// base and every worktree. A def keeps its id while its path's content changes around it (its
+/// idx and span are read through the worktree's view).
 #[derive(Default)]
 pub struct DefTable {
-    pub map: FxHashMap<(u32, u32), u32>,
-    pub defs: Vec<(u32, u32)>,
+    pub map: FxHashMap<(u32, u32, u32), u32>,
+    pub defs: Vec<(u32, u32, u32)>,
 }
 
 impl DefTable {
-    pub fn id(&mut self, path: u32, idx: u32) -> u32 {
-        if let Some(&d) = self.map.get(&(path, idx)) {
+    pub fn id(&mut self, path: u32, name: u32, occ: u32) -> u32 {
+        if let Some(&d) = self.map.get(&(path, name, occ)) {
             return d;
         }
         let d = self.defs.len() as u32;
-        self.defs.push((path, idx));
-        self.map.insert((path, idx), d);
+        self.defs.push((path, name, occ));
+        self.map.insert((path, name, occ), d);
         d
     }
+    pub fn get(&self, path: u32, name: u32, occ: u32) -> Option<u32> {
+        self.map.get(&(path, name, occ)).copied()
+    }
     pub fn bytes(&self) -> usize {
-        self.map.capacity() * 13 + self.defs.capacity() * 8
+        self.map.capacity() * 17 + self.defs.capacity() * 12
     }
 }
 
@@ -91,19 +95,65 @@ pub struct Counters {
     pub refusal_roots: u32,
 }
 
-/// The frozen base graph state.
+/// A frozen layer: the base graph state, or (overlay) a cluster's rows that differ from the
+/// layers below it. Overlay entries override: a None path, an empty edge list, an empty table
+/// key and a false contribution all mean "not here", whatever lies below.
 #[derive(Default)]
 pub struct Base {
     pub tables: BaseTables,
     pub memos: BaseMemos,
-    pub paths: FxHashMap<Sym, PathRec>,
+    pub paths: FxHashMap<Sym, Option<PathRec>>,
     pub pkg: FxHashMap<String, u32>,
     pub out: FxHashMap<Sym, Box<[(u32, u32)]>>,
     pub counters: Counters,
-    pub contrib: FxHashSet<QId>,
+    pub contrib: FxHashMap<QId, bool>,
 }
 
-/// One worktree: the rows that differ from the base.
+/// The frozen layers under a worktree, top first: its cluster's overlay (if any), the base.
+#[derive(Clone, Default)]
+pub struct Below<'a> {
+    pub layers: Vec<&'a Base>,
+}
+
+impl<'a> Below<'a> {
+    pub fn new(layers: Vec<&'a Base>) -> Self {
+        Below { layers }
+    }
+    pub fn rec(&self, p: Sym) -> Option<&'a PathRec> {
+        self.layers.iter().find_map(|l| l.paths.get(&p)).and_then(Option::as_ref)
+    }
+    pub fn out(&self, p: Sym) -> &'a [(u32, u32)] {
+        self.layers.iter().find_map(|l| l.out.get(&p)).map_or(&[], |o| o)
+    }
+    pub fn contrib(&self, q: QId) -> bool {
+        self.layers.iter().find_map(|l| l.contrib.get(&q)).copied().unwrap_or(false)
+    }
+    pub fn tables(&self) -> Vec<&'a BaseTables> {
+        self.layers.iter().map(|l| &l.tables).collect()
+    }
+    pub fn memos(&self) -> Vec<&'a BaseMemos> {
+        self.layers.iter().map(|l| &l.memos).collect()
+    }
+    /// Every member path with its record, overrides applied.
+    pub fn members(&self) -> FxHashMap<Sym, &'a PathRec> {
+        let mut m: FxHashMap<Sym, &PathRec> = FxHashMap::default();
+        for l in self.layers.iter().rev() {
+            for (p, r) in &l.paths {
+                match r {
+                    Some(r) => {
+                        m.insert(*p, r);
+                    }
+                    None => {
+                        m.remove(p);
+                    }
+                }
+            }
+        }
+        m
+    }
+}
+
+/// One worktree: the rows that differ from the layers below it.
 #[derive(Default, Clone)]
 pub struct Delta {
     pub tables: DeltaTables,
@@ -130,27 +180,51 @@ pub struct Step {
     pub init_fallback: bool,
     pub incomplete_flip: bool,
     pub ms: f64,
+    /// The step's change to the graph, for local rules (Y2): (source def, target def) pairs
+    /// added and removed, and the paths whose definitions were re-read.
+    #[serde(skip)]
+    pub edges_added: Vec<(u32, u32)>,
+    #[serde(skip)]
+    pub edges_removed: Vec<(u32, u32)>,
+    #[serde(skip)]
+    pub def_paths: Vec<Sym>,
 }
 
 impl Delta {
-    pub fn rec<'a>(&'a self, base: &'a Base, p: Sym) -> Option<&'a PathRec> {
+    pub fn rec<'a>(&'a self, below: &Below<'a>, p: Sym) -> Option<&'a PathRec> {
         match self.paths.get(&p) {
             Some(r) => r.as_ref(),
-            None => base.paths.get(&p),
+            None => below.rec(p),
         }
     }
 
-    pub fn out<'a>(&'a self, base: &'a Base, p: Sym) -> &'a [(u32, u32)] {
+    pub fn out<'a>(&'a self, below: &Below<'a>, p: Sym) -> &'a [(u32, u32)] {
         match self.out.get(&p) {
             Some(o) => o,
-            None => base.out.get(&p).map_or(&[], |o| o),
+            None => below.out(p),
         }
     }
 
-    pub fn members<'a>(&'a self, base: &'a Base) -> Vec<(Sym, &'a PathRec)> {
-        let mut out: Vec<(Sym, &PathRec)> = base.paths.iter().filter(|(p, _)| !self.paths.contains_key(p)).map(|(p, r)| (*p, r)).collect();
-        out.extend(self.paths.iter().filter_map(|(p, r)| r.as_ref().map(|r| (*p, r))));
-        out
+    pub fn contrib(&self, below: &Below, q: QId) -> bool {
+        match self.contrib.get(&q) {
+            Some(c) => *c,
+            None => below.contrib(q),
+        }
+    }
+
+    pub fn members<'a>(&'a self, below: &Below<'a>) -> Vec<(Sym, &'a PathRec)> {
+        let mut m = below.members();
+        for (p, r) in &self.paths {
+            match r {
+                Some(r) => {
+                    m.insert(*p, r);
+                }
+                None => {
+                    m.remove(p);
+                }
+            }
+        }
+        m.into_iter().collect()
     }
 
     pub fn incomplete(&self) -> bool {
@@ -185,37 +259,65 @@ impl Delta {
         })
     }
 
-    /// Freeze a delta built over the empty base into a base.
-    pub fn freeze(self) -> Base {
+    /// Delta memos by kind: (overriding an entry below, new here, bytes).
+    pub fn memo_kinds(&self, qt: &QTable, below: &Below) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        let mut by: FxHashMap<u8, (usize, usize, usize)> = FxHashMap::default();
+        for (id, m) in &self.memos.memos {
+            let e = by.entry(qt.qs[*id as usize].kind).or_default();
+            if below.layers.iter().any(|l| l.memos.memos.contains_key(id)) {
+                e.0 += 1;
+            } else {
+                e.1 += 1;
+            }
+            e.2 += m.bytes();
+        }
+        for (k, (o, n, b)) in by {
+            out.insert(KIND_NAMES[k as usize].into(), serde_json::json!({"override": o, "new": n, "bytes": b}));
+        }
+        serde_json::Value::Object(out)
+    }
+
+    /// Freeze a delta into a layer. Over nothing (`overlay` false) it is the base: overrides
+    /// meaning "not here" are dropped; over layers they are kept as overrides.
+    pub fn freeze(self, overlay: bool) -> Base {
         let mut tables = BaseTables::default();
         for (i, m) in self.tables.t.into_iter().enumerate() {
-            tables.t[i] = m.into_iter().filter(|(_, r)| !r.is_empty()).map(|(k, r)| (k, r.into_boxed_slice())).collect();
+            tables.t[i] = m.into_iter().filter(|(_, r)| overlay || !r.is_empty()).map(|(k, r)| (k, r.into_boxed_slice())).collect();
         }
         Base {
             tables,
             memos: self.memos.freeze(),
-            paths: self.paths.into_iter().filter_map(|(p, r)| r.map(|r| (p, r))).collect(),
+            paths: self.paths.into_iter().filter(|(_, r)| overlay || r.is_some()).collect(),
             pkg: self.pkg,
-            out: self.out.into_iter().filter(|(_, o)| !o.is_empty()).collect(),
+            out: self.out.into_iter().filter(|(_, o)| overlay || !o.is_empty()).collect(),
             counters: self.counters,
-            contrib: self.contrib.into_iter().filter(|(_, c)| *c).map(|(q, _)| q).collect(),
+            contrib: self.contrib.into_iter().filter(|(_, c)| overlay || *c).collect(),
         }
     }
 
-    /// A worktree at the base.
-    pub fn at_base(base: &Base) -> Delta {
-        Delta { pkg: base.pkg.clone(), counters: base.counters, ..Default::default() }
+    /// A worktree at the top of `below`.
+    pub fn at(below: &Below) -> Delta {
+        match below.layers.first() {
+            Some(top) => Delta { pkg: top.pkg.clone(), counters: top.counters, ..Default::default() },
+            None => Delta::default(),
+        }
     }
 }
 
 impl Base {
+    /// Heap bytes of the layer (tables, memos with their reverse indexes, paths, edges).
+    pub fn total_bytes(&self) -> usize {
+        let b = self.bytes();
+        b.tables + b.memos + b.paths + b.out + self.contrib.capacity() * 8
+    }
     pub fn bytes(&self) -> BaseBytes {
         BaseBytes {
             tables: self.tables.bytes(),
             table_rows: self.tables.rows(),
             memos: self.memos.bytes(),
             memo_count: self.memos.memos.len(),
-            paths: self.paths.capacity() * 12 + self.paths.values().map(PathRec::bytes).sum::<usize>(),
+            paths: self.paths.capacity() * 12 + self.paths.values().map(|r| r.as_ref().map_or(0, PathRec::bytes)).sum::<usize>(),
             out: self.out.capacity() * 20 + self.out.values().map(|o| o.len() * 8).sum::<usize>(),
             edges: self.out.values().map(|o| o.len()).sum(),
         }
@@ -246,22 +348,21 @@ fn under(dir: &str, path: &str) -> bool {
 }
 
 /// Apply one block's rows with sign `by`.
-fn apply_block(base: &BaseTables, dt: &mut DeltaTables, touch: &mut Touch, it: &Interner, p: Sym, b: &Block, by: i32) -> u64 {
+fn apply_block(below: &[&BaseTables], dt: &mut DeltaTables, touch: &mut Touch, it: &Interner, p: Sym, b: &Block, by: i32) -> u64 {
     if !b.linked {
         return 0;
     }
     let mut n = 0u64;
     let mut add = |t: u8, k: Sym, row: Row| {
-        dt.add(base, touch, t, k, row, by);
+        dt.add(below, touch, t, k, row, by);
         n += 1;
     };
-    for &(k, idx, flags, name) in &b.by_name {
-        add(T_BYNAME, k, [p, idx, flags, name]);
-        add(T_BYNAME_D, name, [p, k, idx, 0]);
+    for &(k, occ, flags, name) in &b.by_name {
+        add(T_BYNAME, k, [p, occ, flags, name]);
+        add(T_BYNAME_D, name, [p, k, 0, 0]);
     }
     for &(k, t) in &b.aliases {
         add(T_ALIAS, k, [p, t, 0, 0]);
-        add(T_ALIAS_T, t, [p, k, 0, 0]);
     }
     for &o in &b.opaque {
         add(T_OPAQUE, o, [p, 0, 0, 0]);
@@ -287,8 +388,82 @@ fn apply_block(base: &BaseTables, dt: &mut DeltaTables, touch: &mut Touch, it: &
     for &m in &b.markers {
         add(T_MARKER, m, [p, 0, 0, 0]);
     }
-    for &(idx, nm) in &b.edges {
-        add(T_EDGESRC, nm, [p, idx, 0, 0]);
+    for &(_, nm) in &b.edges {
+        add(T_EDGESRC, nm, [p, 0, 0, 0]);
+    }
+    n
+}
+
+/// The `<base>` targets a `<imported>`/`<class>` alias key names (base_target's key map).
+pub fn base_targets_of_key(k: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for tok in [".<imported>.", ".<class>."] {
+        let mut from = 0;
+        while let Some(i) = k[from..].find(tok).map(|i| i + from) {
+            let t = format!("{}.<base>.{}", &k[..i], &k[i + tok.len()..]);
+            if t.find(".<base>.") == Some(i) {
+                out.push(t);
+            }
+            from = i + 1;
+        }
+    }
+    out
+}
+
+/// The alias keys whose `<base>` target is `t` (the inverse of `base_targets_of_key`).
+fn alias_keys_of_target(t: &str) -> Vec<String> {
+    let Some(i) = t.find(".<base>.") else { return Vec::new() };
+    [".<imported>.", ".<class>."].iter().map(|tok| format!("{}{tok}{}", &t[..i], &t[i + 8..])).collect()
+}
+
+/// `T_ALIAS_T`, aliases by target, holds only the alias keys a `supers` target resolves
+/// through (the rows `base_targets` can use): a filtered index over `T_ALIAS` and `T_SUPERS_T`,
+/// updated after the blocks of a step from the keys of either that changed.
+fn update_alias_index(bt: &[&BaseTables], dt: &mut DeltaTables, touch: &mut Touch, it: &Interner) -> u64 {
+    let mut keys: FxHashSet<Sym> = FxHashSet::default();
+    {
+        let tv = TView { below: bt.to_vec(), delta: dt };
+        for ((t, k), before) in &touch.before {
+            match *t {
+                T_ALIAS => {
+                    keys.insert(*k);
+                }
+                T_SUPERS_T if before.is_empty() != tv.rows(T_SUPERS_T, *k).is_empty() => {
+                    for ak in alias_keys_of_target(it.str(*k)) {
+                        if let Some(s) = it.get(&ak) {
+                            keys.insert(s);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut edits: Vec<(Sym, Row, i32)> = Vec::new();
+    {
+        let tv = TView { below: bt.to_vec(), delta: dt };
+        let rows_at = |t: u8, k: Sym, before: bool| -> Vec<(Row, u32)> {
+            match touch.before.get(&(t, k)).filter(|_| before) {
+                Some(r) => r.clone(),
+                None => tv.rows(t, k).to_vec(),
+            }
+        };
+        for k in keys {
+            let targets = base_targets_of_key(it.str(k));
+            let eligible = |before: bool| targets.iter().any(|t| it.get(t).is_some_and(|ts| !rows_at(T_SUPERS_T, ts, before).is_empty()));
+            let old = if eligible(true) { rows_at(T_ALIAS, k, true) } else { Vec::new() };
+            let new = if eligible(false) { rows_at(T_ALIAS, k, false) } else { Vec::new() };
+            for r in old.iter().filter(|r| !new.contains(r)) {
+                edits.push((r.0[1], [r.0[0], k, 0, 0], -1));
+            }
+            for r in new.iter().filter(|r| !old.contains(r)) {
+                edits.push((r.0[1], [r.0[0], k, 0, 0], 1));
+            }
+        }
+    }
+    let n = edits.len() as u64;
+    for (target, row, by) in edits {
+        dt.add(bt, touch, T_ALIAS_T, target, row, by);
     }
     n
 }
@@ -313,17 +488,18 @@ pub struct Change {
     pub new: Option<Sym>,
 }
 
-/// Maintain worktree `d` over `base` for one event's changes. With an empty base and an empty
-/// delta, the same step is the from-scratch build.
-pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) -> Step {
+/// Maintain worktree `d` over the layers `below` for one event's changes. Over no layers and
+/// from an empty delta, the same step is the from-scratch build.
+pub fn apply(sh: &mut Shared, below: &Below, d: &mut Delta, changes: &[Change]) -> Step {
     let t0 = Instant::now();
     let mut step = Step { paths_changed: changes.len() as u32, ..Default::default() };
     let was_incomplete = d.incomplete();
+    let bt = below.tables();
     // 1. new member contents, package markers
     let mut new_content: FxHashMap<Sym, Option<Sym>> = FxHashMap::default();
     let mut dirs_changed: Vec<String> = Vec::new();
     for c in changes {
-        let old = d.rec(base, c.path).map(|r| r.content);
+        let old = d.rec(below, c.path).map(|r| r.content);
         assert_eq!(old, c.old, "{}: old content mismatch", sh.it.str(c.path));
         new_content.insert(c.path, c.new);
         let ps = sh.it.str(c.path).to_owned();
@@ -349,7 +525,7 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
     // 2. affected paths: the changed ones, and (fallback 2) every member under a changed marker
     let mut affected: Vec<Sym> = changes.iter().map(|c| c.path).collect();
     if !dirs_changed.is_empty() {
-        let members: Vec<Sym> = d.members(base).into_iter().map(|(p, _)| p).collect();
+        let members: Vec<Sym> = d.members(below).into_iter().map(|(p, _)| p).collect();
         for p in members {
             let ps = sh.it.str(p);
             if dirs_changed.iter().any(|dir| under(dir, ps)) && !new_content.contains_key(&p) {
@@ -363,11 +539,12 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
     // 3. per path: old block out, new block in
     let mut touch = Touch::default();
     let mut out_dirty: FxHashSet<Sym> = FxHashSet::default();
+    let mut old_recs: FxHashMap<Sym, Option<PathRec>> = FxHashMap::default();
     let pkg = d.pkg.clone();
     let has_pkg = |dir: &str| pkg.contains_key(dir);
     for &p in &affected {
         let ps = sh.it.str(p).to_owned();
-        let old = d.rec(base, p).cloned();
+        let old = d.rec(below, p).cloned();
         let content = match new_content.get(&p) {
             Some(c) => *c,
             None => old.as_ref().map(|r| r.content),
@@ -380,6 +557,7 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
             }
         }
         step.paths_reblocked += 1;
+        old_recs.insert(p, old.clone());
         let block_of = |sh: &mut Shared, c: Sym, ctx: &ModuleCtx| -> Block {
             let Shared { sums, it, .. } = sh;
             match sums.get(p, c) {
@@ -393,7 +571,7 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
         };
         if let Some(o) = &old {
             let ob = block_of(sh, o.content, &o.ctx);
-            step.table_rows_touched += apply_block(&base.tables, &mut d.tables, &mut touch, &sh.it, p, &ob, -1);
+            step.table_rows_touched += apply_block(&bt, &mut d.tables, &mut touch, &sh.it, p, &ob, -1);
             if ob.refused.is_some() {
                 d.counters.refused_paths -= 1;
             }
@@ -405,7 +583,7 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
             Some(c) => {
                 let nb = block_of(sh, c, &ctx);
                 intern_shorts(&mut sh.it, &nb);
-                step.table_rows_touched += apply_block(&base.tables, &mut d.tables, &mut touch, &sh.it, p, &nb, 1);
+                step.table_rows_touched += apply_block(&bt, &mut d.tables, &mut touch, &sh.it, p, &nb, 1);
                 if nb.refused.is_some() {
                     d.counters.refused_paths += 1;
                 }
@@ -426,28 +604,38 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
             }
             None => None,
         };
-        if base.paths.get(&p) == rec.as_ref() {
+        if below.rec(p) == rec.as_ref() {
             d.paths.remove(&p);
         } else {
             d.paths.insert(p, rec);
         }
         out_dirty.insert(p);
     }
+    // 3b. the filtered alias index, from the keys the blocks changed
+    step.table_rows_touched += update_alias_index(&bt, &mut d.tables, &mut touch, &sh.it);
     // 4. changed keys
     let mut changed: Vec<(u8, Sym)> = Vec::new();
     {
-        let tv = TView { base: &base.tables, delta: &d.tables };
+        let tv = TView { below: bt.clone(), delta: &d.tables };
         for ((t, k), before) in &touch.before {
             if tv.rows(*t, *k) != &before[..] {
                 changed.push((*t, *k));
             }
         }
     }
+    // a touched key whose rows are those below again holds no delta
+    for (t, k) in touch.before.keys() {
+        let m = &mut d.tables.t[*t as usize];
+        let below_r = below_rows(&bt, *t, *k);
+        if m.get(k).is_some_and(|r| &r[..] == below_r) {
+            m.remove(k);
+        }
+    }
     changed.sort_unstable();
     step.keys_changed = changed.len() as u64;
     let dep_keys: Vec<u64> = changed.iter().map(|&(t, k)| dep_key(t, sh.it.hash_of(k))).collect();
     // 5. re-run the readers (level order, early cutoff), then roots and refusals
-    let mut cx = Ctx::new(TView { base: &base.tables, delta: &d.tables }, &mut sh.it, &mut sh.qt, &mut sh.defs, &base.memos, &mut d.memos, &mut sh.anomalies);
+    let mut cx = Ctx::new(TView { below: bt.clone(), delta: &d.tables }, &mut sh.it, &mut sh.qt, &mut sh.defs, below.memos(), &mut d.memos, &mut sh.anomalies);
     cx.propagate(&dep_keys);
     let mut cand: Vec<Q> = Vec::new();
     for &(t, k) in &changed {
@@ -504,7 +692,7 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
         let Some(id) = cx.qt.ids.get(&qq).copied() else { continue };
         let before = match d.contrib.get(&id) {
             Some(c) => *c,
-            None => base.contrib.contains(&id),
+            None => below.contrib(id),
         };
         if before != contributes {
             if contributes {
@@ -512,7 +700,7 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
             } else {
                 d.counters.refusal_roots -= 1;
             }
-            if base.contrib.contains(&id) == contributes {
+            if below.contrib(id) == contributes {
                 d.contrib.remove(&id);
             } else {
                 d.contrib.insert(id, contributes);
@@ -524,7 +712,7 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
     for p in out_dirty {
         let rec = match d.paths.get(&p) {
             Some(r) => r.as_ref(),
-            None => base.paths.get(&p),
+            None => below.rec(p),
         };
         let mut o: Vec<(u32, u32)> = Vec::new();
         if let Some(r) = rec.filter(|r| r.linked) {
@@ -536,13 +724,35 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
         }
         o.sort_unstable();
         o.dedup();
-        let same_as_base = base.out.get(&p).map_or(o.is_empty(), |b| **b == *o);
+        // the change as (source def, target def) pairs; sources by their (name, occurrence)
+        let old_out: &[(u32, u32)] = match d.out.get(&p) {
+            Some(x) => x,
+            None => below.out(p),
+        };
+        let old_rec = match old_recs.get(&p) {
+            Some(r) => r.as_ref(),
+            None => rec,
+        };
+        let pairs = |defs: &mut DefTable, r: Option<&PathRec>, out: &[(u32, u32)]| -> Vec<(u32, u32)> {
+            let Some(r) = r else { return Vec::new() };
+            let ids: FxHashMap<u32, u32> = r.defs.iter().zip(path::occurrences(&r.defs)).map(|(x, occ)| (x.idx, defs.id(p, x.name, occ))).collect();
+            let mut v: Vec<(u32, u32)> = out.iter().filter_map(|&(idx, dd)| ids.get(&idx).map(|&s| (s, dd))).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        let before = pairs(cx.defs, old_rec, old_out);
+        let after = pairs(cx.defs, rec, &o);
+        step.edges_added.extend(after.iter().filter(|e| before.binary_search(e).is_err()));
+        step.edges_removed.extend(before.iter().filter(|e| after.binary_search(e).is_err()));
+        let same_as_base = *below.out(p) == *o;
         if same_as_base {
             d.out.remove(&p);
         } else {
             d.out.insert(p, o.into_boxed_slice());
         }
     }
+    step.def_paths = old_recs.keys().copied().collect();
     step.work = cx.work;
     d.epoch += 1;
     step.incomplete_flip = was_incomplete != d.incomplete();
@@ -554,18 +764,35 @@ pub fn apply(sh: &mut Shared, base: &Base, d: &mut Delta, changes: &[Change]) ->
 /// (path, start, end, target_path, target_start, target_end, source_name, target_name, class).
 pub type EdgeRow = (u32, u32, u32, u32, u32, u32, u32, u32, u32);
 
-pub fn edge_rows(sh: &Shared, base: &Base, d: &Delta) -> Vec<EdgeRow> {
-    let mut out = Vec::new();
-    let find = |r: &PathRec, idx: u32| -> Vec<SDef> { r.defs.iter().filter(|x| x.idx == idx).cloned().collect() };
-    for (p, r) in d.members(base) {
+/// Every (source def, target def) pair of the worktree, recomputed (checks `Step::edges_*`).
+pub fn all_pairs(sh: &mut Shared, below: &Below, d: &Delta) -> Vec<(u32, u32)> {
+    let mut v = Vec::new();
+    for (p, r) in d.members(below) {
         if !r.linked {
             continue;
         }
-        for &(idx, dd) in d.out(base, p) {
-            let (tp, tidx) = sh.defs.defs[dd as usize];
-            let tr = d.rec(base, tp).expect("edge target path is a member");
+        let ids: FxHashMap<u32, u32> = r.defs.iter().zip(path::occurrences(&r.defs)).map(|(x, occ)| (x.idx, sh.defs.id(p, x.name, occ))).collect();
+        v.extend(d.out(below, p).iter().filter_map(|&(idx, dd)| ids.get(&idx).map(|&s| (s, dd))));
+    }
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+pub fn edge_rows(sh: &Shared, below: &Below, d: &Delta) -> Vec<EdgeRow> {
+    let mut out = Vec::new();
+    let find = |r: &PathRec, idx: u32| -> Vec<SDef> { r.defs.iter().filter(|x| x.idx == idx).cloned().collect() };
+    let target = |r: &PathRec, name: u32, occ: u32| -> Option<SDef> { path::find_def(&r.defs, name, occ).map(|i| r.defs[i].clone()) };
+    for (p, r) in d.members(below) {
+        if !r.linked {
+            continue;
+        }
+        for &(idx, dd) in d.out(below, p) {
+            let (tp, tname, tocc) = sh.defs.defs[dd as usize];
+            let tr = d.rec(below, tp).expect("edge target path is a member");
             for sd in find(r, idx) {
-                for td in find(tr, tidx) {
+                let td = target(tr, tname, tocc).expect("edge target def is in its path");
+                {
                     out.push((p, sd.start, sd.stop, tp, td.start, td.stop, sd.name, td.name, (td.flags & CLASS != 0) as u32));
                 }
             }

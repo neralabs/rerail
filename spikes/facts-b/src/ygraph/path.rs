@@ -87,6 +87,23 @@ pub struct SDef {
 pub const CLASS: u32 = 2;
 pub const SHADOWED: u32 = 64;
 
+/// Each def's occurrence among the path's defs of the same name (defs in idx order).
+pub fn occurrences(defs: &[SDef]) -> Vec<u32> {
+    let mut seen: rustc_hash::FxHashMap<Sym, u32> = Default::default();
+    defs.iter()
+        .map(|d| {
+            let e = seen.entry(d.name).or_insert(0);
+            *e += 1;
+            *e - 1
+        })
+        .collect()
+}
+
+/// The def (path-local position) a (name, occurrence) identifies in `defs`.
+pub fn find_def(defs: &[SDef], name: Sym, occ: u32) -> Option<usize> {
+    defs.iter().enumerate().filter(|(_, d)| d.name == name).nth(occ as usize).map(|(i, _)| i)
+}
+
 /// Everything one path contributes: its own rows and its rows of the keyed global tables.
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Block {
@@ -99,7 +116,9 @@ pub struct Block {
     pub module: Option<Sym>,
     pub defs: Vec<SDef>,
     pub edges: Vec<(u32, Sym)>,
-    /// by_name rows: (key, idx, flags, name)
+    /// by_name rows: (key, occurrence of the def's name in the path, flags, name). The def is
+    /// identified by (path, name, occurrence), not by its idx: an edit that adds a def above
+    /// shifts every idx below it but no (name, occurrence).
     pub by_name: Vec<(Sym, u32, u32, Sym)>,
     /// aliases (key, target)
     pub aliases: Vec<(Sym, Sym)>,
@@ -232,6 +251,7 @@ pub fn block(path: &str, sum: &Summary, ctx: &ModuleCtx, it: &mut Interner) -> B
     let sub = |s: Sym| *subst.get(&s).unwrap_or(&s);
     // s_def
     b.defs = v.defs.iter().map(|d: &RawDef| SDef { idx: d.idx, name: sub(d.name), start: d.start, stop: d.end, flags: d.flags }).collect();
+    b.defs.sort_by_key(|d| d.idx);
     let mut edges: Vec<(u32, Sym)> = v.edges.iter().map(|&(i, nm)| (i, sub(nm))).collect();
     edges.sort_unstable();
     edges.dedup();
@@ -296,10 +316,10 @@ pub fn block(path: &str, sum: &Summary, ctx: &ModuleCtx, it: &mut Interner) -> B
         out
     };
     let mut by_name = Vec::new();
-    for d in &b.defs {
+    for (d, occ) in b.defs.iter().zip(occurrences(&b.defs)) {
         if d.flags & SHADOWED == 0 {
             for k in spell(d.name, it) {
-                by_name.push((k, d.idx, d.flags, d.name));
+                by_name.push((k, occ, d.flags, d.name));
             }
         }
     }
