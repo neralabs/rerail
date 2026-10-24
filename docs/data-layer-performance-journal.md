@@ -75,6 +75,19 @@ The engine target succeeds; the outer gate correctly rejects the missing complet
 The storage regression test requires inventory entries to reference the shared query catalogue.
 `inventory-storage-red` fails on duplicated SQL text before the reporter fix.
 
+The reporter repair removes duplicated inventory SQL and the extra top-level copies of query plans and bytecode.
+The query catalogue retains every observed plan. Compact JSON avoids whitespace inflation in large opcode arrays.
+All 23 Node profiling tests pass in `catalog-storage-green` (2.419 seconds).
+Offline regeneration completes in `admission-report-repair-2` (6.321 seconds).
+Its exit status remains one because the actual workload exceeds the unchanged allowance.
+
+The repaired complete capture contains 22,181 actual executions, down from 24,159 (1,978 fewer; 8.19%).
+Coverage reconciles with no errors, and both original observations pass snapshot/workspace parity.
+The inventory attributes 936 setup, 1,232 catalog publication, 272 file publication, 16,402 candidate preparation, and 3,339 relational executions.
+No execution has an unknown phase. Undeclared producer bindings and generations remain explicit null identities.
+This is a count comparison, not an unprofiled CPU improvement claim.
+Snapshot and global relational preparation still account for eager work that the local change cannot remove.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
