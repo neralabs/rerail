@@ -10,6 +10,16 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 
 ## Recovery TDD: 2026-10-23
 
+### Compiler schema reuse across documents: red
+
+The complete cold job compiles more than one document. Its execution allowance never resets at a document boundary.
+The stronger test permits one prototype inference across both documents, rather than one inference per document.
+The document-owned implementation fails on two seed CTAS executions where one is required.
+Evidence: `.rerail/profiles/sql-stage-recovery-20261023/job-scope-red`.
+The target shares only immutable schema metadata across compilations in the process, with the same fixed retention bounds.
+Complete typed keys and per-clause validation remain mandatory. SQLite connections and runtime rows never enter this cache.
+A cache lock covers prototype inference so simultaneous compilations cannot duplicate the same admitted inference.
+
 ### Repeated compiler stage schemas: green
 
 The document-owned cache passes all 306 focused native tests in `stage-green` (34.888 seconds).

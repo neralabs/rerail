@@ -82,7 +82,7 @@ it.skipIf(!required)("validates independent input and syntax schemas without exe
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 40_000);
 
-it.skipIf(!required)("infers repeated stage schemas once per compilation and validates deferred expressions without DDL", () => {
+it.skipIf(!required)("infers repeated stage schemas once across document compilations in one cold job", () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-stage-schema-"));
   try {
     const program = `
@@ -112,10 +112,10 @@ it.skipIf(!required)("infers repeated stage schemas once per compilation and val
       expect(events.filter(e => e.kind === "sql")).toHaveLength(catalogue.executionCoverage.completed);
       for (const event of events) if (event.kind === "sql") statements.push(queries.get(event.query)!);
     }
-    expect(statements.filter(sql => /^CREATE TEMP TABLE "seed" AS/.test(sql))).toHaveLength(2);
-    expect(statements.filter(sql => /^CREATE TEMP TABLE "copied" AS/.test(sql))).toHaveLength(2);
-    expect(statements.filter(sql => /^ALTER TABLE/.test(sql))).toHaveLength(2);
+    expect(statements.filter(sql => /^CREATE TEMP TABLE "seed" AS/.test(sql))).toHaveLength(1);
+    expect(statements.filter(sql => /^CREATE TEMP TABLE "copied" AS/.test(sql))).toHaveLength(1);
+    expect(statements.filter(sql => /^ALTER TABLE/.test(sql))).toHaveLength(1);
     expect(statements.filter(sql => /(?:CREATE TEMP TABLE|DROP TABLE) "__stage_/.test(sql))).toEqual([]);
-    expect(statements).toHaveLength(6);
+    expect(statements).toHaveLength(3);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 40_000);
