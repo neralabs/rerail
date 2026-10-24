@@ -25,6 +25,11 @@ The green invocation is `.rerail/profiles/sql-recovery-tdd-20261023/guard-green`
 All 22 Node profiling tests pass, including the 100/101 boundary and cross-worker accounting tests.
 The real workload remains a budget failure at 24,159 executions; this fix does not claim runtime recovery.
 
+The next red test requires an exact execution inventory before optimization.
+It places identical SQL in compiler, publication, candidate, relational, and unknown contexts across three workers.
+Enclosing operator CPU must not inflate SQL counts or SQL CPU.
+`.rerail/profiles/sql-recovery-tdd-20261023/inventory-red` fails because the report has no execution inventory.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
