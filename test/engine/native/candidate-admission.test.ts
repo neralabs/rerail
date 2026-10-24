@@ -87,7 +87,7 @@ it.skipIf(!required)("relational preparation does not reactivate an excluded loc
 }, 30_000);
 
 it.skipIf(!required)("a plan that exceeds its lowering bound preserves earlier shared producers", () => {
-  function capture(complex: boolean) {
+  function capture(complex: boolean, lastExpression = "^v[0-9]+$", failures = 1) {
     const program = `
       import { readFileSync } from 'node:fs';
       import { loadNativeBinding } from ${JSON.stringify(engine)};
@@ -95,7 +95,7 @@ it.skipIf(!required)("a plan that exceeds its lowering bound preserves earlier s
       caps.limits.maxVisitsPerNode=0;
       const clause=(id,rule)=>({id,forbid:{ast:{language:'python',rule}},violation:{code:'ROW',message:'Row',anchor:'witness.span'}});
       const simple={kind:'identifier',regex:'^v[0-9]+$'};
-      const clauses=[clause('first',simple),...(${complex}?[clause('bounded',{kind:'identifier',all:Array.from({length:80},(_,i)=>({regex:'^.{0,'+(i+3)+'}$'}))})]:[]),clause('last',simple)];
+      const clauses=[clause('kinds',{kind:'identifier'}),clause('first',simple),...(${complex}?Array.from({length:${failures}},(_,n)=>clause('bounded'+n,{kind:'identifier',all:Array.from({length:80},(_,i)=>({regex:'^.{0,'+(i+3)+'}$'}))})):[]),clause('last',{...simple,regex:${JSON.stringify(lastExpression)}})];
       const rule=native.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id:'rollback',revision:1,mode:'log',clauses}),'json',JSON.stringify(caps));
       const ws=new native.CodeRuleDslWorkspace();ws.addCodeRule(rule);
       try {console.log(await ws.applyAsync(JSON.stringify({revision:1,removed:[],files:[{path:'a.py',language:'python',source:'v0\\n'}]})));}finally{ws.close();}
@@ -107,10 +107,10 @@ it.skipIf(!required)("a plan that exceeds its lowering bound preserves earlier s
     expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
     const result = JSON.parse(child.stdout.trim()).evaluation;
     expect(result.failures).toEqual([]);
-    expect(result.violations).toHaveLength(complex ? 3 : 2);
+    expect(result.violations).toHaveLength(complex ? 3 + failures : 3);
     const profiles = child.stderr.split("\n").filter(l => l.startsWith("RERAIL_CODE_RULE_PROFILE ")).map(l => JSON.parse(l.slice(25)));
     expect(profiles.length).toBeGreaterThan(0);
-    expect(profiles.reduce((n, p) => n + p.anchorPlanBroadenings, 0)).toBe(complex ? 1 : 0);
+    expect(profiles.reduce((n, p) => n + p.anchorPlanBroadenings, 0)).toBe(complex ? failures : 0);
     const trace = child.stderr.split("\n").filter(l => l.startsWith("RERAIL_TRACE ")).map(l => JSON.parse(l.slice(13)));
     const lower = trace.filter(t => t.phase === "anchor-lower" && t.name === "template");
     expect(lower).toHaveLength(1);
@@ -118,4 +118,6 @@ it.skipIf(!required)("a plan that exceeds its lowering bound preserves earlier s
   }
   const baseline = capture(false);
   expect(capture(true), "failed-plan rollback must not rematerialize the earlier identical selector").toBe(baseline);
+  expect(capture(true, "^v[0-9]+$", 2), "consecutive failures must retain earlier shared producers").toBe(baseline);
+  capture(true, "^.{0,10}$"); // A failed branch's former parameter value must receive a valid new binding.
 }, 60_000);

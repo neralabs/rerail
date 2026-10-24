@@ -67,7 +67,9 @@ it("preserves source gates, scope, same-length edits, restoration and removal", 
 it("does not expose syntax from files without the input gate", () => {
   const value = policy();
   Object.assign(value.clauses[0]!.relational.inputs.eligible.evidence.query.ast.rule, { regex: "ELIGIBLE" });
-  expect(evaluate(compile(value)).violations).toEqual([]);
+  const result = evaluate(compile(value));
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toEqual([]);
 });
 
 it("keeps repository identities file-qualified and supports batched owner lookups", () => {
