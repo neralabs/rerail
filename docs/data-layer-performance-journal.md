@@ -221,6 +221,12 @@ R4–R7 remain open: named shared physical producers, bounded coalesced consumer
 The remaining 5,176 construction and 2,534 cleanup submissions motivate physical ownership across rules and packets.
 No acceptance requirement is marked complete because the numeric gate still fails.
 
+The last CI regression test proves the real workload remains mandatory and checks the changed-file triggers.
+It exposes missing triggers for the new native admission/publication guard files.
+`ci-budget-red` records that failure. The numeric allowance and ordinary launcher tests already pass.
+A Python summary test also exposes the old total-count label after the origin-boundary clarification.
+`budget-summary-red` records that failure. Historical totals must remain labeled as legacy when origin evidence is absent.
+
 ## SQL execution limit restored: 2026-10-23
 
 The source branch defines a fixed 100-execution job acceptance limit in commit `c109a915`.
