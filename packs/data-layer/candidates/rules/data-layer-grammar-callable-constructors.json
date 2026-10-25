@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "data-layer-grammar-callable-constructors",
-  "revision": 1,
+  "revision": 2,
   "mode": "block",
   "description": "Candidate port of nera-data-layer grammar_callable_constructors at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
@@ -2872,52 +2872,6 @@
                         {
                           "any": [
                             {
-                              "kind": "lambda"
-                            },
-                            {
-                              "all": [
-                                {
-                                  "kind": "identifier"
-                                },
-                                {
-                                  "pattern": "$NAME"
-                                },
-                                {
-                                  "inside": {
-                                    "matches": {
-                                      "symbol-scope": {
-                                        "NAME": "$NAME"
-                                      }
-                                    },
-                                    "stopBy": {
-                                      "any": [
-                                        {
-                                          "all": [
-                                            {
-                                              "kind": "function_definition"
-                                            },
-                                            {
-                                              "regex": "^def\\s"
-                                            }
-                                          ]
-                                        },
-                                        {
-                                          "kind": "module"
-                                        }
-                                      ]
-                                    }
-                                  }
-                                }
-                              ]
-                            }
-                          ]
-                        },
-                        {
-                          "pattern": "$ROW"
-                        },
-                        {
-                          "any": [
-                            {
                               "inside": {
                                 "all": [
                                   {
@@ -2982,6 +2936,52 @@
                               }
                             }
                           ]
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "lambda"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "pattern": "$NAME"
+                                },
+                                {
+                                  "inside": {
+                                    "matches": {
+                                      "symbol-scope": {
+                                        "NAME": "$NAME"
+                                      }
+                                    },
+                                    "stopBy": {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "function_definition"
+                                            },
+                                            {
+                                              "regex": "^def\\s"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "kind": "module"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "pattern": "$ROW"
                         }
                       ]
                     }

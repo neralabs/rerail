@@ -4355,3 +4355,13 @@ Identifiers inside an attribute therefore trigger scope scans before their paren
 A new 1,800-call synthetic test reproduces incomplete evidence with the ordinary capabilities.
 The test requires complete, empty results. No budget is increased.
 The selected correction moves argument-position guards before lexical-scope analysis while retaining capture dependencies.
+
+The constructor ordering regression fails on both the existing addon and the partition-diagnostic addon.
+Moving the immediate argument guard first makes all seven candidate-admission tests pass.
+The original generated installer then completes with no failures and no findings.
+The rule revision increases to 2. The lexical-scope algorithm and all limits remain unchanged.
+The complete original batch 1–5 corpus and 120 supplemental controls pass all 1,236 replays on both execution paths.
+This run uses diagnostic addon `fc8be34fff719f3651fb3ff7a5f9dc918d4d76203dc75ec55daa034a77c08356`.
+Separately, all 198 batch 6 shards pass against the fragment addon, with 1,234 original observations and 376 guard repeats.
+The batch 6 aggregate verifies 405 positive and 829 clean original observations, exact source events, and native binary hashes.
+Its seven retained original cases remain explicit. These are not passes.
