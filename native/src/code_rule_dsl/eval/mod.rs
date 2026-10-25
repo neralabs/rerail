@@ -16,9 +16,10 @@ pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
     violation_ids,
 };
+pub(super) use query::Output;
 pub(super) use query::{
-    WitnessError, document_matcher, evaluate_query, file_language, grammar_matcher,
-    witness_from_match, witnesses_from_match,
+    TapeCacheSlot, WitnessError, document_matcher, evaluate_query, file_language, file_tape,
+    grammar_matcher, witness_from_match, witnesses_from_match,
 };
 #[cfg(test)]
 pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
@@ -244,7 +245,14 @@ pub(super) fn evaluate_code_rule(
     snapshot: &Snapshot,
     mode: &str,
 ) -> Result<Evaluation> {
-    evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses)
+    let mut evaluation = evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses)?;
+    if code_rule
+        .report_count_gt
+        .is_some_and(|maximum| evaluation.violations.len() <= maximum)
+    {
+        evaluation.violations.clear();
+    }
+    Ok(evaluation)
 }
 
 pub(super) fn evaluate_clauses(
@@ -253,6 +261,9 @@ pub(super) fn evaluate_clauses(
     mode: &str,
     clauses: &[CompiledClause],
 ) -> Result<Evaluation> {
+    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
+    let _tapes = TapeCacheSlot::install();
+    let _syntax = super::relational::syntax::Pool::install();
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
     }
@@ -286,7 +297,9 @@ pub(super) fn evaluate_clauses(
         },
         clauses: covered,
     };
+    prepare_candidates(code_rule, snapshot);
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
+    let mut relational_jobs = Vec::new();
     for clause in clauses {
         match &clause.kind {
             ClauseKind::Forbid(query) => {
@@ -299,7 +312,7 @@ pub(super) fn evaluate_clauses(
                     &code_rule.scope,
                     &mut evaluation.metrics,
                     limits,
-                    mode == "decision",
+                    mode == "decision" && code_rule.report_count_gt.is_none(),
                     &mut partial,
                     Some(&clause.violation),
                     &mut util_limit,
@@ -350,7 +363,7 @@ pub(super) fn evaluate_clauses(
                     evaluation
                         .violations
                         .push(violation_from_witness(code_rule, clause, witness));
-                    if mode == "decision" {
+                    if mode == "decision" && code_rule.report_count_gt.is_none() {
                         break;
                     }
                 }
@@ -393,6 +406,41 @@ pub(super) fn evaluate_clauses(
                     evidence::budget(code_rule, clause, query, rows),
                 );
             }
+            ClauseKind::Relational(plan) => {
+                let partitions = if plan.per_file {
+                    snapshot
+                        .files
+                        .iter()
+                        .filter(|file| code_rule.scope.matches(&file.path))
+                        .map(|file| Snapshot {
+                            revision: snapshot.revision,
+                            files: vec![file.clone()],
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![snapshot.clone()]
+                };
+                for partition in partitions {
+                    #[cfg(feature = "code-rule-profile")]
+                    let _context = super::profile::trace::Context::enter(
+                        &code_rule.id,
+                        &clause.id,
+                        (partition.files.len() == 1).then(|| partition.files[0].path.as_str()),
+                    );
+                    relational_jobs.push(super::relational::Job {
+                        code_rule,
+                        clause,
+                        inputs: super::relational::Inputs {
+                            gate: None,
+                            file_local: false,
+                            rows: None,
+                            facts: Vec::new(),
+                            snapshot: partition,
+                        },
+                        budget: super::budget::Context::capture(),
+                    });
+                }
+            }
             ClauseKind::Llm => evaluation.failures.push(failure(
                 &clause.id,
                 "missing-capability",
@@ -400,6 +448,9 @@ pub(super) fn evaluate_clauses(
                 None,
             )),
         }
+    }
+    for result in super::relational::evaluate_batch(relational_jobs) {
+        merge(&mut evaluation, result);
     }
     if evaluation.metrics.witnesses > limits.max_witnesses
         && !evaluation.failures.iter().any(|failure| {
@@ -423,14 +474,97 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
     evaluation.metrics.witnesses += other.metrics.witnesses;
 }
 
+fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
+    use crate::code_rule_dsl::matcher::{CorpusSlot, anchor_plans};
+    let plans = anchor_plans(std::iter::once(code_rule));
+    if plans.is_empty() {
+        return;
+    }
+    let corpus = CorpusSlot::current();
+    let mut demands = BTreeMap::new();
+    for file in snapshot
+        .files
+        .iter()
+        .filter(|file| code_rule.scope.matches(&file.path))
+    {
+        let Some(lang) = file_language(file) else {
+            continue;
+        };
+        if !plans.contains_key(&u32::from(
+            crate::code_rule_dsl::language::tape_tag(lang).expect("tape language"),
+        )) {
+            continue;
+        }
+        match file_tape(lang, file) {
+            Ok(None) => {}
+            Ok(Some((doc, _))) => {
+                demands.insert(
+                    file.path.clone(),
+                    crate::code_rule_dsl::matcher::anchor_plans_for_file(code_rule, file, &doc),
+                );
+                if let Err(error) = corpus.put(
+                    &file.path,
+                    &doc,
+                    &crate::code_rule_dsl::budget::matcher_budget_exhausted,
+                ) {
+                    eprintln!("SQL AST batch publication unavailable: {error}");
+                }
+            }
+            Err(error) => eprintln!("SQL AST batch source unavailable: {error}"),
+        }
+    }
+    #[cfg(feature = "code-rule-profile")]
+    corpus.record_origins(std::iter::once(code_rule));
+    if let Err(error) = corpus.prepare_files(&demands) {
+        eprintln!("SQL AST corpus batch unavailable; retaining authoritative candidates: {error}");
+    }
+}
+
+/// Full file-local projections preserve the original local semantic side tables.
+#[cfg(test)]
+pub(super) fn relational_rows(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    plan: &super::relational::Plan,
+    snapshot: &Snapshot,
+    metrics: &mut Metrics,
+) -> Result<Vec<evidence::Rows>> {
+    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
+    let _tapes = TapeCacheSlot::install();
+    let _calls = stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
+
+    plan.inputs
+        .iter()
+        .map(|(_, input)| {
+            stateless_rows(
+                code_rule,
+                clause,
+                (input, evidence::Side::Counted),
+                snapshot,
+                metrics,
+            )
+        })
+        .collect()
+}
+
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
 /// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
-fn stateless_rows(
+pub(super) fn stateless_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),
     snapshot: &Snapshot,
     metrics: &mut Metrics,
+) -> Result<evidence::Rows> {
+    stateless_rows_to(code_rule, clause, (relation, side), snapshot, metrics, None)
+}
+pub(super) fn stateless_rows_to(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    (relation, side): (&FactQuery, evidence::Side),
+    snapshot: &Snapshot,
+    metrics: &mut Metrics,
+    output: Option<&Output<'_>>,
 ) -> Result<evidence::Rows> {
     let ast = relation.ast.as_ref();
     let violation = evidence::producer_violation(clause, relation, side);
@@ -458,7 +592,7 @@ fn stateless_rows(
         let mut partial = BTreeMap::new();
         let mut util_limit = None;
         let mut file_metrics = Metrics::default();
-        let witnesses = evaluate_query(
+        let witnesses = query::evaluate_query_to(
             &ast.query,
             &single,
             &BTreeMap::new(),
@@ -469,6 +603,7 @@ fn stateless_rows(
             &mut partial,
             Some(&violation),
             &mut util_limit,
+            output,
         )?;
         metrics.visited_nodes += file_metrics.visited_nodes;
         match witnesses {
@@ -493,7 +628,7 @@ fn stateless_rows(
 /// spends the evaluation's work budget (`metrics.visited_nodes`); seed witnesses are no violation,
 /// so each seed evaluation has its own witness budget, as a workspace's seed producer has per
 /// file, and spends none of the clauses'.
-fn stateless_calls(
+pub(super) fn stateless_calls(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     clauses: &[CompiledClause],
@@ -501,7 +636,7 @@ fn stateless_calls(
 ) -> Result<Option<calls::EvaluationSlot>> {
     let mut terms = Terms::default();
     for clause in clauses {
-        if let ClauseKind::Forbid(query) = &clause.kind {
+        if let Some(query) = clause.kind.calls_query() {
             for term in query.calls() {
                 terms.add(&term);
             }
@@ -630,7 +765,7 @@ fn stateless_calls(
             evaluated.insert(Arc::clone(&term.seed_key), starts);
         }
     }
-    let view = calls::CallsView::build(terms.questions(), summaries.clone(), &seeds);
+    let view = calls::CallsView::build_modes(terms.questions(), summaries.clone(), &seeds);
     Ok(Some(calls::EvaluationSlot::install(
         calls::EvaluationCalls {
             view: Arc::new(view),

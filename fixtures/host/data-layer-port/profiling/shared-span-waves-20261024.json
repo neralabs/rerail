@@ -1,0 +1,1234 @@
+{
+  "format": "rerail.shared-span-waves/v1",
+  "date": "2026-10-24",
+  "status": "first physical span-sharing slice selected; complete recovery and deterministic frontier construction remain open",
+  "baselineCommit": "4b64350d",
+  "tddRedCommit": "5a0bdf6a",
+  "implementation": {
+    "owner": "existing SQL decoded_spans primary key (fid,pre), retained across consumers",
+    "admission": "existing live and eligible selectors only; no broadened file domain",
+    "grouping": "one fill for independent source-span demands per genuine dependency wave in each language-qualified statement",
+    "requests": "read existing physical selector tables; union keys in SQL and anti-join completed spans",
+    "limits": "balanced compound SELECTs below 128 arms; one host submission per wave",
+    "completion": "one row for each valid span key acts as both fact and completion; empty selector demand has zero keys; arbitrary empty-output producers still require separate completion",
+    "atomicity": "existing owning SQL transaction; failure rolls back publication; retry requests missing keys",
+    "consumerFence": "span lookup remains MATERIALIZED after demanded-key restriction and before expensive source predicates",
+    "planner": "specialized wave analysis fused with the existing generated-CTE reference pass; stable stage ordering with cached sort keys",
+    "optionality": "one production path; no new algorithm configuration flag"
+  },
+  "correctness": {
+    "nativeFacingTests": 308,
+    "standaloneSqlTests": 37,
+    "sourceReplay": {
+      "nativeCalls": 120,
+      "positiveCalls": 60,
+      "cleanCalls": 60,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "nativeSha256": "2a19d3be7254e47cf3e9cb4937e5f3de6bb4b434966fcc168fa39fc1c89eb5e6"
+    },
+    "tddLadder": [
+      "two rules and 130 clauses emit two result packets with one actual span-fill execution",
+      "overlapping and duplicate scope keys decode once",
+      "later consumption reuses completed keys",
+      "empty demand performs no decoding",
+      "different source IDs do not alias node ordinals",
+      "source invalidation removes old coverage",
+      "failed publication rolls back and retry succeeds",
+      "700 demand sources remain in one SQL statement",
+      "dependent source predicates wait for later waves"
+    ]
+  },
+  "guard": {
+    "limit": 100,
+    "engineSubmitted": 9481,
+    "sqliteInternal": 994,
+    "totalObserved": 10475,
+    "connections": 136,
+    "status": "budget-exceeded",
+    "problems": [],
+    "unknownOrigins": 0,
+    "enginePhases": {
+      "connectionSetup": 372,
+      "filePublication": 36,
+      "catalogPublication": 12,
+      "candidatePreparation": 4836,
+      "cleanup": 2444,
+      "relationalEvaluation": 1781
+    },
+    "firstOverBudget": {
+      "startNs": 1736947000,
+      "session": "profile-74516-32.json",
+      "query": 40,
+      "sql": "\nCREATE TRIGGER file_delete BEFORE DELETE ON file BEGIN\n    DELETE FROM ftsk WHERE rowid=OLD.fid;\nEND;",
+      "context": {
+        "component": "ast-index",
+        "stage": "schema"
+      },
+      "thread": "ThreadId(1)"
+    },
+    "parity": {
+      "nativeCalls": 2,
+      "positiveCalls": 1,
+      "cleanCalls": 1,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "nativeSha256": "2a19d3be7254e47cf3e9cb4937e5f3de6bb4b434966fcc168fa39fc1c89eb5e6"
+    }
+  },
+  "frontierCaptures": {
+    "catalog": [
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/acceptance/capture/sql/raw/candidate-63075-0.json",
+        "stages": 703,
+        "parameters": 237,
+        "peakLiveRelations": 88,
+        "spanFillStages": [
+          "decode_spans6",
+          "decode_spans34",
+          "decode_spans1288",
+          "decode_spans1430",
+          "decode_spans1451",
+          "decode_spans1490",
+          "decode_spans1501",
+          "decode_spans1536",
+          "decode_spans1554",
+          "decode_spans1575",
+          "decode_spans1586",
+          "decode_spans1671",
+          "decode_spans1806",
+          "decode_spans3627",
+          "decode_spans3638",
+          "decode_spans3667",
+          "decode_spans3678",
+          "decode_spans3791",
+          "decode_spans3808",
+          "decode_spans4593",
+          "decode_spans4769",
+          "decode_spans4808"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "state-signatures-1"
+          ],
+          [
+            1,
+            "state-signatures-1"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-signatures-1"
+          ],
+          [
+            6,
+            "state-signatures-1"
+          ],
+          [
+            7,
+            "state-signatures-1"
+          ],
+          [
+            8,
+            "state-signatures-1"
+          ],
+          [
+            9,
+            "state-flow-1"
+          ],
+          [
+            10,
+            "state-flow-1"
+          ],
+          [
+            11,
+            "state-flow-1"
+          ]
+        ]
+      },
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/acceptance/capture/sql/raw/candidate-63075-2.json",
+        "stages": 703,
+        "parameters": 237,
+        "peakLiveRelations": 88,
+        "spanFillStages": [
+          "decode_spans6",
+          "decode_spans34",
+          "decode_spans1288",
+          "decode_spans1430",
+          "decode_spans1451",
+          "decode_spans1490",
+          "decode_spans1501",
+          "decode_spans1536",
+          "decode_spans1554",
+          "decode_spans1575",
+          "decode_spans1586",
+          "decode_spans1671",
+          "decode_spans1806",
+          "decode_spans3627",
+          "decode_spans3638",
+          "decode_spans3667",
+          "decode_spans3678",
+          "decode_spans3791",
+          "decode_spans3808",
+          "decode_spans4593",
+          "decode_spans4769",
+          "decode_spans4808"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "state-signatures-1"
+          ],
+          [
+            1,
+            "state-signatures-1"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-signatures-1"
+          ],
+          [
+            6,
+            "state-signatures-1"
+          ],
+          [
+            7,
+            "state-signatures-1"
+          ],
+          [
+            8,
+            "state-signatures-1"
+          ],
+          [
+            9,
+            "state-flow-1"
+          ],
+          [
+            10,
+            "state-flow-1"
+          ],
+          [
+            11,
+            "state-flow-1"
+          ]
+        ]
+      },
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/acceptance/capture/sql/raw/candidate-63075-4.json",
+        "stages": 715,
+        "parameters": 265,
+        "peakLiveRelations": 102,
+        "spanFillStages": [
+          "decode_spans29",
+          "decode_spans1335",
+          "decode_spans1485",
+          "decode_spans1505",
+          "decode_spans1600",
+          "decode_spans1639",
+          "decode_spans1721",
+          "decode_spans1744",
+          "decode_spans1784",
+          "decode_spans1796",
+          "decode_spans1832",
+          "decode_spans1851",
+          "decode_spans1971",
+          "decode_spans2111",
+          "decode_spans2395",
+          "decode_spans2700",
+          "decode_spans2889",
+          "decode_spans2901",
+          "decode_spans2931",
+          "decode_spans2942",
+          "decode_spans4185",
+          "decode_spans4202"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "state-signatures-1"
+          ],
+          [
+            1,
+            "state-signatures-1"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ],
+          [
+            12,
+            "state-signatures-1"
+          ],
+          [
+            13,
+            "state-signatures-1"
+          ],
+          [
+            14,
+            "state-signatures-1"
+          ],
+          [
+            15,
+            "state-signatures-1"
+          ],
+          [
+            16,
+            "state-signatures-1"
+          ],
+          [
+            17,
+            "state-signatures-1"
+          ],
+          [
+            18,
+            "state-signatures-1"
+          ],
+          [
+            19,
+            "production-ir-construction"
+          ],
+          [
+            27,
+            "state-projection-recovery-2"
+          ]
+        ]
+      },
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/acceptance/capture/sql/raw/candidate-63075-6.json",
+        "stages": 715,
+        "parameters": 265,
+        "peakLiveRelations": 102,
+        "spanFillStages": [
+          "decode_spans29",
+          "decode_spans1335",
+          "decode_spans1485",
+          "decode_spans1505",
+          "decode_spans1600",
+          "decode_spans1639",
+          "decode_spans1721",
+          "decode_spans1744",
+          "decode_spans1784",
+          "decode_spans1796",
+          "decode_spans1832",
+          "decode_spans1851",
+          "decode_spans1971",
+          "decode_spans2111",
+          "decode_spans2395",
+          "decode_spans2700",
+          "decode_spans2889",
+          "decode_spans2901",
+          "decode_spans2931",
+          "decode_spans2942",
+          "decode_spans4185",
+          "decode_spans4202"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "state-signatures-1"
+          ],
+          [
+            1,
+            "state-signatures-1"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ],
+          [
+            12,
+            "state-signatures-1"
+          ],
+          [
+            13,
+            "state-signatures-1"
+          ],
+          [
+            14,
+            "state-signatures-1"
+          ],
+          [
+            15,
+            "state-signatures-1"
+          ],
+          [
+            16,
+            "state-signatures-1"
+          ],
+          [
+            17,
+            "state-signatures-1"
+          ],
+          [
+            18,
+            "state-signatures-1"
+          ],
+          [
+            19,
+            "production-ir-construction"
+          ],
+          [
+            27,
+            "state-projection-recovery-2"
+          ]
+        ]
+      }
+    ],
+    "initialWave": [
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/wave-acceptance/capture/sql/raw/candidate-31321-0.json",
+        "stages": 1333,
+        "parameters": 74,
+        "peakLiveRelations": 172,
+        "spanFillStages": [
+          "decode_source_spans_wave_1",
+          "decode_source_spans_wave_2",
+          "decode_source_spans_wave_3"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "production-ir-construction"
+          ],
+          [
+            1,
+            "queue-udf-symbols"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-signatures-1"
+          ],
+          [
+            6,
+            "state-signatures-1"
+          ],
+          [
+            7,
+            "state-signatures-1"
+          ],
+          [
+            8,
+            "state-signatures-1"
+          ],
+          [
+            9,
+            "state-signatures-1"
+          ],
+          [
+            10,
+            "state-signatures-1"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ]
+        ]
+      },
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/wave-acceptance/capture/sql/raw/candidate-31321-2.json",
+        "stages": 1333,
+        "parameters": 74,
+        "peakLiveRelations": 172,
+        "spanFillStages": [
+          "decode_source_spans_wave_1",
+          "decode_source_spans_wave_2",
+          "decode_source_spans_wave_3"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "production-ir-construction"
+          ],
+          [
+            1,
+            "queue-udf-symbols"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-signatures-1"
+          ],
+          [
+            6,
+            "state-signatures-1"
+          ],
+          [
+            7,
+            "state-signatures-1"
+          ],
+          [
+            8,
+            "state-signatures-1"
+          ],
+          [
+            9,
+            "state-signatures-1"
+          ],
+          [
+            10,
+            "state-signatures-1"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ]
+        ]
+      },
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/wave-acceptance/capture/sql/raw/candidate-31321-4.json",
+        "stages": 695,
+        "parameters": 239,
+        "peakLiveRelations": 97,
+        "spanFillStages": [
+          "decode_source_spans_wave_1",
+          "decode_source_spans_wave_2"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "queue-udf-symbols"
+          ],
+          [
+            1,
+            "private-lazy-ref"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-signatures-1"
+          ],
+          [
+            6,
+            "state-projection-recovery-2"
+          ],
+          [
+            7,
+            "serverplan-ddl"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ],
+          [
+            12,
+            "state-flow-1"
+          ],
+          [
+            13,
+            "state-flow-1"
+          ],
+          [
+            25,
+            "state-projection-recovery-2"
+          ]
+        ]
+      },
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/wave-acceptance/capture/sql/raw/candidate-31321-6.json",
+        "stages": 695,
+        "parameters": 239,
+        "peakLiveRelations": 97,
+        "spanFillStages": [
+          "decode_source_spans_wave_1",
+          "decode_source_spans_wave_2"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "queue-udf-symbols"
+          ],
+          [
+            1,
+            "private-lazy-ref"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-signatures-1"
+          ],
+          [
+            6,
+            "state-projection-recovery-2"
+          ],
+          [
+            7,
+            "serverplan-ddl"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ],
+          [
+            12,
+            "state-flow-1"
+          ],
+          [
+            13,
+            "state-flow-1"
+          ],
+          [
+            25,
+            "state-projection-recovery-2"
+          ]
+        ]
+      }
+    ],
+    "selected": [
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/wave-fused-acceptance/capture/sql/raw/candidate-74516-0.json",
+        "stages": 761,
+        "parameters": 206,
+        "peakLiveRelations": 114,
+        "spanFillStages": [
+          "decode_source_spans_wave_1",
+          "decode_source_spans_wave_2"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "state-signatures-1"
+          ],
+          [
+            1,
+            "state-signatures-1"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-projection-recovery-2"
+          ],
+          [
+            8,
+            "serverplan-ddl"
+          ],
+          [
+            9,
+            "state-signatures-1"
+          ],
+          [
+            10,
+            "state-signatures-1"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ],
+          [
+            12,
+            "state-signatures-1"
+          ],
+          [
+            13,
+            "state-signatures-1"
+          ]
+        ]
+      },
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/wave-fused-acceptance/capture/sql/raw/candidate-74516-2.json",
+        "stages": 761,
+        "parameters": 206,
+        "peakLiveRelations": 114,
+        "spanFillStages": [
+          "decode_source_spans_wave_1",
+          "decode_source_spans_wave_2"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "state-signatures-1"
+          ],
+          [
+            1,
+            "state-signatures-1"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-projection-recovery-2"
+          ],
+          [
+            8,
+            "serverplan-ddl"
+          ],
+          [
+            9,
+            "state-signatures-1"
+          ],
+          [
+            10,
+            "state-signatures-1"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ],
+          [
+            12,
+            "state-signatures-1"
+          ],
+          [
+            13,
+            "state-signatures-1"
+          ]
+        ]
+      },
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/wave-fused-acceptance/capture/sql/raw/candidate-74516-4.json",
+        "stages": 721,
+        "parameters": 231,
+        "peakLiveRelations": 118,
+        "spanFillStages": [
+          "decode_source_spans_wave_1",
+          "decode_source_spans_wave_2"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "production-ir-construction"
+          ],
+          [
+            1,
+            "serverplan-ddl"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-signatures-1"
+          ],
+          [
+            6,
+            "state-signatures-1"
+          ],
+          [
+            7,
+            "state-signatures-1"
+          ],
+          [
+            8,
+            "queue-udf-symbols"
+          ],
+          [
+            9,
+            "state-signatures-1"
+          ],
+          [
+            10,
+            "state-signatures-1"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ]
+        ]
+      },
+      {
+        "capture": ".rerail/profiles/shared-producers-20261024/wave-fused-acceptance/capture/sql/raw/candidate-74516-6.json",
+        "stages": 721,
+        "parameters": 231,
+        "peakLiveRelations": 118,
+        "spanFillStages": [
+          "decode_source_spans_wave_1",
+          "decode_source_spans_wave_2"
+        ],
+        "firstAttributedConsumers": [
+          [
+            0,
+            "production-ir-construction"
+          ],
+          [
+            1,
+            "serverplan-ddl"
+          ],
+          [
+            2,
+            "state-signatures-1"
+          ],
+          [
+            3,
+            "state-signatures-1"
+          ],
+          [
+            4,
+            "state-signatures-1"
+          ],
+          [
+            5,
+            "state-signatures-1"
+          ],
+          [
+            6,
+            "state-signatures-1"
+          ],
+          [
+            7,
+            "state-signatures-1"
+          ],
+          [
+            8,
+            "queue-udf-symbols"
+          ],
+          [
+            9,
+            "state-signatures-1"
+          ],
+          [
+            10,
+            "state-signatures-1"
+          ],
+          [
+            11,
+            "state-signatures-1"
+          ]
+        ]
+      }
+    ]
+  },
+  "countQualification": "No net complete-job submission improvement: 9113 to 9481. Allocation-sensitive Arc address ordering changes the upstream lowered frontier before span grouping. The initial rewrite exposed a larger 11829-submission frontier. Named provenance confirms different clause order; no claim that union batching itself produces those extra upstream stages.",
+  "matchedCpu": {
+    "priorCatalog": {
+      "nativeSha256": "a982b7e2d471f59ca94c42d00b8379c2d32b8b29e55aab1d1798a6b261392aa9",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2189.07,
+          "systemMs": 100.973,
+          "cpuMs": 2290.043,
+          "wallMs": 5119.606541,
+          "maxRSSRaw": 378736,
+          "memory": {
+            "rss": 333309464,
+            "heapTotal": 105021440,
+            "heapUsed": 34271888,
+            "external": 48035945,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2403.861,
+          "systemMs": 112.491,
+          "cpuMs": 2516.352,
+          "wallMs": 7450.142583000001,
+          "maxRSSRaw": 375024,
+          "memory": {
+            "rss": 330474480,
+            "heapTotal": 107921408,
+            "heapUsed": 42257696,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2527.163,
+          "systemMs": 130.675,
+          "cpuMs": 2657.838,
+          "wallMs": 9484.060292,
+          "maxRSSRaw": 373456,
+          "memory": {
+            "rss": 328361688,
+            "heapTotal": 109232128,
+            "heapUsed": 42492848,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2516.352,
+      "minCpuMs": 2290.043,
+      "maxCpuMs": 2657.838,
+      "medianReportedMaxRSSKiB": 375024
+    },
+    "selected": {
+      "nativeSha256": "2a19d3be7254e47cf3e9cb4937e5f3de6bb4b434966fcc168fa39fc1c89eb5e6",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2263.43,
+          "systemMs": 110.788,
+          "cpuMs": 2374.218,
+          "wallMs": 6371.9634160000005,
+          "maxRSSRaw": 387872,
+          "memory": {
+            "rss": 343106856,
+            "heapTotal": 106971136,
+            "heapUsed": 40902064,
+            "external": 53016455,
+            "arrayBuffers": 45390435
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2327.695,
+          "systemMs": 116.478,
+          "cpuMs": 2444.173,
+          "wallMs": 8290.114584,
+          "maxRSSRaw": 341408,
+          "memory": {
+            "rss": 293840096,
+            "heapTotal": 109346816,
+            "heapUsed": 40188400,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2625.27,
+          "systemMs": 154.566,
+          "cpuMs": 2779.836,
+          "wallMs": 10013.633083,
+          "maxRSSRaw": 367312,
+          "memory": {
+            "rss": 321447448,
+            "heapTotal": 108281856,
+            "heapUsed": 40253688,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2444.173,
+      "minCpuMs": 2374.218,
+      "maxCpuMs": 2779.836,
+      "medianReportedMaxRSSKiB": 367312
+    },
+    "medianChangePercent": -2.868398379876902
+  },
+  "initialWaveComparison": {
+    "prior": {
+      "nativeSha256": "a982b7e2d471f59ca94c42d00b8379c2d32b8b29e55aab1d1798a6b261392aa9",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2390.411,
+          "systemMs": 116.893,
+          "cpuMs": 2507.304,
+          "wallMs": 4067.6393749999997,
+          "maxRSSRaw": 354352,
+          "memory": {
+            "rss": 307750256,
+            "heapTotal": 105021440,
+            "heapUsed": 34196432,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2149.52,
+          "systemMs": 85.455,
+          "cpuMs": 2234.975,
+          "wallMs": 3195.0737500000005,
+          "maxRSSRaw": 332080,
+          "memory": {
+            "rss": 284632168,
+            "heapTotal": 108544000,
+            "heapUsed": 40391200,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2037.53,
+          "systemMs": 75.214,
+          "cpuMs": 2112.744,
+          "wallMs": 3562.367416,
+          "maxRSSRaw": 341312,
+          "memory": {
+            "rss": 294823400,
+            "heapTotal": 106201088,
+            "heapUsed": 40217808,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2234.975,
+      "minCpuMs": 2112.744,
+      "maxCpuMs": 2507.304,
+      "medianReportedMaxRSSKiB": 341312
+    },
+    "waveWithExtraPlannerScan": {
+      "nativeSha256": "30b4ee62c287c3e7bf8bd9abc693cb7dcefbefe4210614aff7d3a6ffb50482ab",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2259.504,
+          "systemMs": 101.89,
+          "cpuMs": 2361.394,
+          "wallMs": 3419.0251660000004,
+          "maxRSSRaw": 336752,
+          "memory": {
+            "rss": 290301008,
+            "heapTotal": 107921408,
+            "heapUsed": 42201064,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2470.966,
+          "systemMs": 106.44,
+          "cpuMs": 2577.406,
+          "wallMs": 4111.408665999999,
+          "maxRSSRaw": 359904,
+          "memory": {
+            "rss": 246982024,
+            "heapTotal": 108544000,
+            "heapUsed": 40776664,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2356.663,
+          "systemMs": 116.154,
+          "cpuMs": 2472.817,
+          "wallMs": 4738.407708,
+          "maxRSSRaw": 353360,
+          "memory": {
+            "rss": 308454984,
+            "heapTotal": 105021440,
+            "heapUsed": 34230608,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2472.817,
+      "minCpuMs": 2361.394,
+      "maxCpuMs": 2577.406,
+      "medianReportedMaxRSSKiB": 353360
+    },
+    "medianChangePercent": 10.641819259723274,
+    "decision": "replace extra planner scan with one shared reference-analysis pass; retain all trials; do not compare groups as a causal estimate of scan cost"
+  },
+  "frozenFrontier": {
+    "method": "same captured workspace frontier, database, parameters, consumers, scope tables, and schedule builder; split only each broad fill into one fill per scope; three alternating fresh processes per shape",
+    "controlFiles": [
+      "fixed-frontier/split.json",
+      "fixed-frontier/wave.json"
+    ],
+    "helperBinarySha256": "fc9c5bd05fc11e10c4abf56bb7efe4a68cbd97fcd7c7efedc981252b5e719bdc",
+    "cacheBudgetKiB": {
+      "main": 1024,
+      "temp": 512
+    },
+    "results": {
+      "split": {
+        "sqlCpuMs": [
+          108.291376,
+          108.72425,
+          103.018626
+        ],
+        "medianSqlCpuMs": 108.291376,
+        "completeReplayCpuMs": [
+          132.357,
+          129.787,
+          123.651
+        ],
+        "stages": 715,
+        "rows": [
+          48,
+          48,
+          48
+        ],
+        "peakLiveRelations": [
+          97,
+          97,
+          97
+        ],
+        "sqliteSteppingHeapPeaks": [
+          20978144,
+          20978144,
+          20978144
+        ],
+        "sqliteCompilationHeapPeaks": [
+          3617568,
+          3617568,
+          3617568
+        ]
+      },
+      "wave": {
+        "sqlCpuMs": [
+          106.08733,
+          93.874969,
+          104.902873
+        ],
+        "medianSqlCpuMs": 104.902873,
+        "completeReplayCpuMs": [
+          127.683,
+          114.44999999999999,
+          125.28199999999998
+        ],
+        "stages": 695,
+        "rows": [
+          48,
+          48,
+          48
+        ],
+        "peakLiveRelations": [
+          97,
+          97,
+          97
+        ],
+        "sqliteSteppingHeapPeaks": [
+          20978112,
+          20978112,
+          20978112
+        ],
+        "sqliteCompilationHeapPeaks": [
+          3617536,
+          3617536,
+          3617536
+        ]
+      }
+    },
+    "medianSqlCpuChangePercent": -3.1290608035121847,
+    "qualification": "instrumented SQL diagnostic; small overlapping ranges; rows count equal; original full-result parity is established separately by native corpus replay; no aggregate speedup claim"
+  },
+  "producerExports": {
+    "valid": true,
+    "errors": [],
+    "clashes": []
+  },
+  "validation": [
+    "native Clippy with profiling",
+    "native Clippy without profiling",
+    "standalone all-target Clippy",
+    "npm run check",
+    "native and standalone Rust formatting",
+    "git diff --check"
+  ],
+  "method": {
+    "workers": 4,
+    "build": "opt1 engine, deps3, no LTO, 256 codegen units, code-rule-profile in both binaries",
+    "allocator": "same system allocator shim",
+    "order": "three alternating fresh-process pairs; own builds, tests and diagnostics finish before timing",
+    "cpuScope": "process.cpuUsage around complete replay including compilation, snapshot/workspace evaluation, parity and cleanup",
+    "tracing": false,
+    "memory": "process.resourceUsage maxRSS in KiB; no retained-ownership claim",
+    "machine": "shared host; ranges overlap; no aggregate recovery claim",
+    "commandScript": ".rerail/profiles/shared-producers-20261024/cpu_wave_fused.py"
+  },
+  "remaining": [
+    "remove allocation-address ordering from physical frontier decisions",
+    "make lowering admission independent of earlier producer-cache warmth and prove this with fixed-plan permutations",
+    "coalesce remaining node/child demand and named selectors",
+    "whole-job publication and remaining session lifetimes",
+    "general empty-output completion and cross-clause owner readers",
+    "full corpus, full repository CPU, memory and at most 100 engine submissions"
+  ],
+  "evidenceDirectory": ".rerail/profiles/shared-producers-20261024"
+}

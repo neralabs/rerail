@@ -5,6 +5,7 @@
 //! runs per file as the term's seed query; the callee's subtree is never walked at query time.
 
 pub(crate) mod closure;
+pub(crate) mod contracts;
 pub(crate) mod names;
 pub(crate) mod php;
 pub(crate) mod rust;
@@ -64,6 +65,35 @@ impl Through {
     }
 }
 
+/// The graph relation and the node at which a term asks its reachability question.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Mode {
+    pub(crate) through: Through,
+    pub(crate) references: bool,
+    pub(crate) definition: bool,
+    pub(crate) links: contracts::Key,
+}
+
+impl From<Through> for Mode {
+    fn from(through: Through) -> Self {
+        Self {
+            through,
+            references: false,
+            definition: false,
+            links: 0,
+        }
+    }
+}
+
+impl Mode {
+    fn allows(self, flags: u8) -> bool {
+        self.through.allows(flags)
+    }
+    fn index(self) -> (bool, contracts::Key, usize) {
+        (self.references, self.links, self.through.index())
+    }
+}
+
 /// The `calls` term at a call node: its term's key.
 #[derive(Clone, Debug)]
 pub(crate) struct CallsTest {
@@ -77,13 +107,14 @@ pub(crate) struct CallsTest {
     /// `chain`: the capture a reaching call binds to its chain of definitions
     /// (`a.fetch -> b.pause`), for messages.
     pub(crate) chain: Option<String>,
+    pub(crate) definition: bool,
 }
 
 /// A term found while compiling a query's rules, before its seed query is compiled.
 pub(crate) struct FoundTerm {
     pub(crate) key: Arc<str>,
     pub(crate) seed_key: Arc<str>,
-    pub(crate) through: Through,
+    pub(crate) through: Mode,
     pub(crate) inner: Value,
     pub(crate) path: String,
 }
@@ -95,14 +126,16 @@ pub(crate) struct CallsCollector {
     /// Collecting for a seed query, which cannot hold `calls` (a shared utility may bring one).
     seed: bool,
     found: RefCell<Vec<FoundTerm>>,
+    max_pattern: usize,
 }
 
 impl CallsCollector {
-    pub(crate) fn new(salt: String, seed: bool) -> Self {
+    pub(crate) fn new(salt: String, seed: bool, max_pattern: usize) -> Self {
         Self {
             salt,
             seed,
             found: RefCell::new(Vec::new()),
+            max_pattern,
         }
     }
 
@@ -132,13 +165,38 @@ impl CallsCollector {
             through,
             chain,
             inner,
+            references,
+            definition,
+            links,
+            constructor,
         } = split(value, path)?;
+        if (references || definition) && Family::of(language) != Family::Python {
+            return Err(invalid(format!(
+                "{path}: reference graphs and definition queries require Python"
+            )));
+        }
+        if (links.is_some() || constructor.is_some()) && !references {
+            return Err(invalid(format!(
+                "{path}/siblingLinks requires graph references"
+            )));
+        }
+        let links =
+            contracts::compile(links.as_ref(), constructor.as_ref(), path, self.max_pattern)?;
+        let mode = Mode {
+            through,
+            references,
+            definition,
+            links,
+        };
         let digest = |canonical: serde_json::Result<String>| -> Result<Arc<str>> {
             let canonical = canonical.map_err(|error| invalid(error.to_string()))?;
             Ok(format!("{:x}", Sha256::digest(canonical.as_bytes())).into())
         };
         let key = digest(serde_json::to_string(&(
             through_name(through),
+            references,
+            definition,
+            contracts::get(links).canonical.as_ref(),
             &inner,
             &self.salt,
         )))?;
@@ -146,7 +204,7 @@ impl CallsCollector {
         self.found.borrow_mut().push(FoundTerm {
             key: Arc::clone(&key),
             seed_key,
-            through,
+            through: mode,
             inner,
             path: path.to_owned(),
         });
@@ -156,6 +214,7 @@ impl CallsCollector {
             language,
             call_kinds,
             chain,
+            definition,
         })
     }
 }
@@ -172,13 +231,41 @@ pub(crate) struct Split {
     pub(crate) through: Through,
     pub(crate) chain: Option<String>,
     pub(crate) inner: Value,
+    pub(crate) references: bool,
+    pub(crate) definition: bool,
+    pub(crate) links: Option<Value>,
+    pub(crate) constructor: Option<Value>,
 }
 
 /// The keys of a `calls` value that are its own; the rest is its inner rule.
-const OWN_KEYS: [&str; 2] = ["through", "chain"];
+const OWN_KEYS: [&str; 6] = [
+    "through",
+    "chain",
+    "graph",
+    "at",
+    "siblingLinks",
+    "constructorFields",
+];
 
 pub(crate) fn split(value: &Value, path: &str) -> Result<Split> {
     let calls = object(value, path)?;
+    let references = match calls.get("graph").and_then(Value::as_str) {
+        None if !calls.contains_key("graph") => false,
+        Some("calls") => false,
+        Some("references") => true,
+        _ => return Err(invalid(format!("{path}/graph must be calls or references"))),
+    };
+    let definition = match calls.get("at").and_then(Value::as_str) {
+        None if !calls.contains_key("at") => false,
+        Some("call") => false,
+        Some("definition") => true,
+        _ => return Err(invalid(format!("{path}/at must be call or definition"))),
+    };
+    if references && !definition {
+        return Err(invalid(format!(
+            "{path}: graph references requires at definition"
+        )));
+    }
     let through = match calls.get("through") {
         None => Through::Any,
         Some(Value::String(through)) if through == "sync" => Through::Sync,
@@ -214,6 +301,10 @@ pub(crate) fn split(value: &Value, path: &str) -> Result<Split> {
         through,
         chain,
         inner: Value::Object(inner),
+        references,
+        definition,
+        links: calls.get("siblingLinks").cloned(),
+        constructor: calls.get("constructorFields").cloned(),
     })
 }
 
@@ -390,7 +481,7 @@ impl FileSeeds {
 /// query is unknown. Terms asking the same share one answer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Question {
-    through: Through,
+    through: Mode,
     seeds: Vec<DefRef>,
     unknown: Vec<u32>,
 }
@@ -465,8 +556,11 @@ pub(crate) struct Verdict {
 /// A linked call graph and each term's answer over it: what `calls` terms read. Answers are
 /// computed when first read, shared by terms asking the same, and kept across updates until an
 /// edit can change them.
+type OpenRegions = BTreeMap<(bool, contracts::Key, usize), OnceLock<Arc<HashSet<DefRef>>>>;
+
 pub(crate) struct CallsView {
     graph: Graph,
+    references: BTreeMap<contracts::Key, Graph>,
     keys: Vec<Arc<str>>,
     ids: HashMap<Arc<str>, TermId>,
     questions: Vec<Question>,
@@ -474,13 +568,14 @@ pub(crate) struct CallsView {
     shared: parking_lot::Mutex<HashMap<Question, Arc<Answer>>>,
     /// Per mode, the definitions that may reach something unknown: every term's open answer
     /// but for its unknown seed files.
-    open: [OnceLock<Arc<HashSet<DefRef>>>; 2],
+    open: OpenRegions,
 }
 
 impl Clone for CallsView {
     fn clone(&self) -> Self {
         Self {
             graph: self.graph.clone(),
+            references: self.references.clone(),
             keys: self.keys.clone(),
             ids: self.ids.clone(),
             questions: self.questions.clone(),
@@ -492,16 +587,74 @@ impl Clone for CallsView {
 }
 
 impl CallsView {
+    pub(crate) fn reference_rows(&self, key: contracts::Key) -> Option<closure::ReferenceRows> {
+        self.references.get(&key).map(Graph::reference_rows)
+    }
     /// Links `summaries` for `terms` with `seeds`; no term is answered yet.
+    #[cfg(test)]
     pub(crate) fn build(
         terms: Vec<(Arc<str>, Through)>,
         summaries: Vec<(Arc<str>, Arc<Summary>)>,
         seeds: &HashMap<Arc<str>, FileSeeds>,
     ) -> Self {
+        Self::build_modes(
+            terms
+                .into_iter()
+                .map(|(key, through)| (key, through.into()))
+                .collect(),
+            summaries,
+            seeds,
+        )
+    }
+
+    pub(crate) fn build_modes(
+        terms: Vec<(Arc<str>, Mode)>,
+        summaries: Vec<(Arc<str>, Arc<Summary>)>,
+        seeds: &HashMap<Arc<str>, FileSeeds>,
+    ) -> Self {
+        let link_keys = terms
+            .iter()
+            .filter(|(_, mode)| mode.references)
+            .map(|(_, mode)| mode.links)
+            .collect::<BTreeSet<_>>();
+        let references = link_keys
+            .iter()
+            .map(|links| {
+                (
+                    *links,
+                    Graph::link_references(
+                        *links,
+                        summaries
+                            .iter()
+                            .map(|(path, summary)| {
+                                (Arc::clone(path), Arc::new(summary.as_references(*links)))
+                            })
+                            .collect(),
+                    ),
+                )
+            })
+            .collect();
+        let mut open = BTreeMap::new();
+        for through in Through::ALL {
+            open.insert(Mode::from(through).index(), OnceLock::new());
+            for links in &link_keys {
+                open.insert(
+                    Mode {
+                        through,
+                        references: true,
+                        definition: false,
+                        links: *links,
+                    }
+                    .index(),
+                    OnceLock::new(),
+                );
+            }
+        }
         let graph = Graph::link(summaries);
         let questions = questions(&graph, &terms, seeds);
         Self {
             graph,
+            references,
             ids: terms
                 .iter()
                 .enumerate()
@@ -511,7 +664,7 @@ impl CallsView {
             answers: vec![OnceLock::new(); questions.len()],
             questions,
             shared: parking_lot::Mutex::default(),
-            open: Default::default(),
+            open,
         }
     }
 
@@ -526,9 +679,26 @@ impl CallsView {
         changes: Vec<(Arc<str>, Option<Arc<Summary>>)>,
         seeds: &HashMap<Arc<str>, FileSeeds>,
     ) -> BTreeSet<Arc<str>> {
+        let reference_update = self
+            .references
+            .iter_mut()
+            .map(|(links, graph)| {
+                (
+                    *links,
+                    graph.update(changes.iter().map(|(path, summary)| {
+                        (
+                            Arc::clone(path),
+                            summary
+                                .as_ref()
+                                .map(|summary| Arc::new(summary.as_references(*links))),
+                        )
+                    })),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         let update = self.graph.update(changes);
         // Sorted and distinct.
-        let (changed, reshaped) = (&update.slots, update.reshaped);
+        let changed = &update.slots;
         let terms = self
             .keys
             .iter()
@@ -536,9 +706,9 @@ impl CallsView {
             .map(|(key, question)| (Arc::clone(key), question.through))
             .collect::<Vec<_>>();
         let questions = questions(&self.graph, &terms, seeds);
-        let graph = &self.graph;
-        let reaches_into = |answer: &Answer| {
-            reshaped
+        let reaches_into = |answer: &Answer, graph: &Graph, update: &GraphUpdate| {
+            let changed = &update.slots;
+            update.reshaped
                 && (answer
                     .defs()
                     .any(|def| changed.binary_search(&def.file()).is_ok())
@@ -555,9 +725,17 @@ impl CallsView {
             let Some(old) = self.answers[term].take() else {
                 continue;
             };
+            let graph = self.graph_for(question.through);
+            let changed_graph = if question.through.references {
+                &reference_update[&question.through.links]
+            } else {
+                &update
+            };
             let answer = match shared.get(question) {
                 Some(answer) => Arc::clone(answer),
-                None if *question == self.questions[term] && !reaches_into(&old) => {
+                None if *question == self.questions[term]
+                    && !reaches_into(&old, graph, changed_graph) =>
+                {
                     Arc::clone(&old)
                 }
                 None => Arc::new(answer_of(graph, question)),
@@ -570,17 +748,38 @@ impl CallsView {
         }
         self.questions = questions;
         *self.shared.get_mut() = shared;
-        for through in Through::ALL {
-            let slot = &mut self.open[through.index()];
-            let Some(old) = slot.take() else {
+        for key in self.open.keys().copied().collect::<Vec<_>>() {
+            let through = Mode {
+                through: if key.2 == 0 {
+                    Through::Sync
+                } else {
+                    Through::Any
+                },
+                references: key.0,
+                definition: false,
+                links: key.1,
+            };
+            let Some(old) = self.open.get_mut(&key).and_then(OnceLock::take) else {
                 continue;
             };
-            let open = if reshaped {
-                Arc::new(open_after(&self.graph, through, old, &update, &mut moved))
+            let graph = self.graph_for(through);
+            let changed_graph = if through.references {
+                &reference_update[&through.links]
+            } else {
+                &update
+            };
+            let open = if changed_graph.reshaped {
+                Arc::new(open_after(
+                    graph,
+                    through.through,
+                    old,
+                    changed_graph,
+                    &mut moved,
+                ))
             } else {
                 old
             };
-            let _ = slot.set(open);
+            let _ = self.open[&key].set(open);
         }
         let mut files = changed
             .iter()
@@ -588,6 +787,14 @@ impl CallsView {
             .collect::<BTreeSet<_>>();
         if !moved.is_empty() {
             files.extend(self.graph.calling(&moved));
+            files.extend(
+                moved
+                    .iter()
+                    .filter_map(|def| self.graph.path(def.file()).cloned()),
+            );
+            for graph in self.references.values() {
+                files.extend(graph.calling(&moved));
+            }
         }
         files
     }
@@ -595,7 +802,22 @@ impl CallsView {
     /// Swaps in `path`'s new summary, which reads the same as its linked one but for where its
     /// definitions start.
     pub(crate) fn resummarize(&mut self, path: &str, summary: Arc<Summary>) {
+        for (links, graph) in &mut self.references {
+            graph.resummarize(path, Arc::new(summary.as_references(*links)));
+        }
         self.graph.resummarize(path, summary);
+    }
+
+    fn graph_for(&self, mode: Mode) -> &Graph {
+        if mode.references {
+            &self.references[&mode.links]
+        } else {
+            &self.graph
+        }
+    }
+
+    fn graph(&self, term: TermId) -> &Graph {
+        self.graph_for(self.questions[term as usize].through)
     }
 
     pub(crate) fn term(&self, key: &str) -> Option<TermId> {
@@ -608,13 +830,14 @@ impl CallsView {
             if let Some(answer) = self.shared.lock().get(question) {
                 return Arc::clone(answer);
             }
-            let answer = Arc::new(answer_of(&self.graph, question));
+            let answer = Arc::new(answer_of(self.graph(term), question));
             Arc::clone(self.shared.lock().entry(question.clone()).or_insert(answer))
         })
     }
 
-    fn open(&self, through: Through) -> &HashSet<DefRef> {
-        self.open[through.index()].get_or_init(|| Arc::new(open_region(&self.graph, through)))
+    fn open(&self, through: Mode) -> &HashSet<DefRef> {
+        self.open[&through.index()]
+            .get_or_init(|| Arc::new(open_region(self.graph_for(through), through.through)))
     }
 
     fn verdict_of(&self, defs: &[DefRef], open: bool, term: TermId) -> Verdict {
@@ -637,24 +860,43 @@ impl CallsView {
 
     /// Term `term`'s answer for a call of `name`.
     pub(crate) fn verdict(&self, name: &Name, term: TermId) -> Verdict {
-        let (defs, open) = self.graph.link_of(name);
+        let (defs, open) = self.graph(term).link_of(name);
         self.verdict_of(&defs, open, term)
     }
 
     /// The definitions a call of `name` reaches `term`'s seed through, along a shortest chain:
     /// `a.fetch -> b.pause`.
     pub(crate) fn chain(&self, name: &Name, term: TermId) -> String {
-        let (defs, _) = self.graph.link_of(name);
+        let graph = self.graph(term);
+        let (defs, _) = graph.link_of(name);
         let answer = self.answer(term);
         let mut chain = Vec::new();
         let mut at = defs
             .iter()
             .find_map(|def| Some((*def, *answer.reach.get(def)?)));
         while let Some((def, hop)) = at {
-            chain.push(self.graph.def_label(def));
+            chain.push(graph.def_label(def));
             at = match hop {
                 Hop::Seed => None,
                 Hop::Via(next) => Some((next, answer.reach[&next])),
+            };
+        }
+        chain.join(" -> ")
+    }
+
+    fn chain_of_definition(&self, def: DefRef, term: TermId) -> String {
+        let graph = self.graph(term);
+        let answer = self.answer(term);
+        let mut chain = Vec::new();
+        let mut at = Some(def);
+        while let Some(def) = at {
+            let Some(hop) = answer.reach.get(&def) else {
+                break;
+            };
+            chain.push(graph.def_label(def));
+            at = match hop {
+                Hop::Seed => None,
+                Hop::Via(next) => Some(*next),
             };
         }
         chain.join(" -> ")
@@ -668,36 +910,77 @@ impl CallsView {
         if summary.open {
             return Vec::new();
         }
-        let mut silent = terms.to_vec();
-        for target in &summary.targets {
-            if silent.is_empty() {
-                break;
-            }
-            let (defs, open) = self.graph.link_of(summary.interned(*target));
-            silent.retain(|term| !self.verdict_of(&defs, open, *term).reach);
-        }
-        silent
+        terms
+            .iter()
+            .copied()
+            .filter(|term| {
+                let mode = self.questions[*term as usize].through;
+                if mode.definition {
+                    return false;
+                }
+                let targets = if mode.references {
+                    &summary.reference_targets
+                } else {
+                    &summary.targets
+                };
+                !targets
+                    .iter()
+                    .any(|target| self.verdict(summary.interned(*target), *term).reach)
+            })
+            .collect()
     }
 
     /// What `summary`'s file reads of `terms`' answers: every callee name's verdict for each, and
     /// the chain of each it reaches, hashed. A file whose stamp is unchanged gets the same `calls`
     /// verdicts and chains at every call.
-    pub(crate) fn stamp(&self, summary: &Summary, terms: &[TermId]) -> HashKey {
+    pub(crate) fn stamp(&self, path: &str, summary: &Summary, terms: &[TermId]) -> HashKey {
         let mut bytes = Vec::with_capacity(summary.targets.len() * 16);
-        for target in &summary.targets {
-            let name = summary.interned(*target);
-            let (defs, open) = self.graph.link_of(name);
-            for &term in terms {
-                let verdict = self.verdict_of(&defs, open, term);
+        for &term in terms {
+            let mode = self.questions[term as usize].through;
+            let graph = self.graph(term);
+            let targets = if mode.definition {
+                summary
+                    .defs
+                    .iter()
+                    .map(|def| (def.name, Some(def.start)))
+                    .collect::<Vec<_>>()
+            } else {
+                (if mode.references {
+                    &summary.reference_targets
+                } else {
+                    &summary.targets
+                })
+                .iter()
+                .map(|name| (*name, None))
+                .collect()
+            };
+            for (target, start) in targets {
+                let name = summary.interned(target);
+                let verdict = if let Some(start) = start {
+                    graph
+                        .def_at(path, start)
+                        .map_or_else(Verdict::default, |def| self.verdict_of(&[def], false, term))
+                } else {
+                    self.verdict(name, term)
+                };
                 if verdict == Verdict::default() {
                     continue;
                 }
                 bytes.extend_from_slice(name.text().as_bytes());
                 bytes.push(0);
                 bytes.extend_from_slice(self.keys[term as usize].as_bytes());
+                if let Some(start) = start {
+                    bytes.extend_from_slice(&start.to_le_bytes());
+                }
                 bytes.push(u8::from(verdict.reach) | (u8::from(verdict.open) << 1));
                 if verdict.reach {
-                    bytes.extend_from_slice(self.chain(name, term).as_bytes());
+                    let chain = start
+                        .and_then(|start| graph.def_at(path, start))
+                        .map_or_else(
+                            || self.chain(name, term),
+                            |def| self.chain_of_definition(def, term),
+                        );
+                    bytes.extend_from_slice(chain.as_bytes());
                 }
                 bytes.push(0);
             }
@@ -710,7 +993,7 @@ impl CallsView {
 /// by start) and its unknown files.
 fn questions(
     graph: &Graph,
-    terms: &[(Arc<str>, Through)],
+    terms: &[(Arc<str>, Mode)],
     seeds: &HashMap<Arc<str>, FileSeeds>,
 ) -> Vec<Question> {
     let mut questions = terms
@@ -884,6 +1167,10 @@ pub(crate) struct EvaluationCalls {
 
 thread_local! {
     static EVALUATION: RefCell<Option<EvaluationCalls>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn reference_rows(key: contracts::Key) -> Option<closure::ReferenceRows> {
+    EVALUATION.with_borrow(|slot| slot.as_ref()?.view.reference_rows(key))
 }
 
 /// Installs an evaluation's `EvaluationCalls` until dropped.
@@ -1078,6 +1365,26 @@ pub(crate) fn holds<'t, D: Doc>(
     let Some(term) = view.term(&test.key) else {
         return Reach::Unknown;
     };
+    if test.definition {
+        let Some(path) = crate::code_rule_dsl::matcher::file_path() else {
+            return Reach::Unknown;
+        };
+        let Some(def) = view.graph(term).def_at(&path, range.start as u32) else {
+            return Reach::No;
+        };
+        let verdict = view.verdict_of(&[def], false, term);
+        return if verdict.reach {
+            Reach::Reaches(
+                test.chain
+                    .as_ref()
+                    .map(|_| view.chain_of_definition(def, term)),
+            )
+        } else if verdict.open {
+            Reach::Unknown
+        } else {
+            Reach::No
+        };
+    }
     // `None`: no callee; `Some(None)`: an unknown one.
     let callee = match known {
         Some(callee) => callee,

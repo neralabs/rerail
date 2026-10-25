@@ -1,0 +1,554 @@
+{
+  "format": "rerail.profile-selection/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "serverplan_quality",
+    "serverplan_target_architecture",
+    "impl_direct_execution"
+  ],
+  "files": [
+    {
+      "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+      "sha256": "bc621190321d665710266fdffc395d13684184090f82b063e125c89a464be8e6"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/sqlite_transition_cache_reader.py",
+      "sha256": "40262f622ce0b98f99e9a5ec7fa8675cd4edca3088318c1aee85343e92021bd3"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+      "sha256": "f5aa852c8d3879e8b4d6a59947e3c0ffd659fedf555f9cc9037e8a535f6d4481"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+      "sha256": "e77cbf987025c65e8145ebecfe07a6809f652a34b32ce131e04c3b793e9f7f0f"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/cross_branch.py",
+      "sha256": "58826ff0880409ba74c92c4308b74f4a4e87274b085d373eb3693669174ab88c"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+      "sha256": "bf01f26b2b566ab77068f7d8191e3752d06c3bab5d9faf97f21dffcc99ea78e4"
+    },
+    {
+      "path": "impl/common/l2100_sql_grammar/postgres_bootstrap_terminal.py",
+      "sha256": "a3ae7fc009eaaa495d6db0e24a22a1c62893d6f8a1911018222a9e88ece1e410"
+    },
+    {
+      "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+      "sha256": "0d53b36a1419f12f160546ac535d6465a9a1f9fd62dac53b62033d8c8aa0f556"
+    },
+    {
+      "path": "impl/common/l2200_sql_dialect/sql_direct_execution_services.py",
+      "sha256": "312df67e77519728bf76b9aaebf8156793ffb5efbad455b40c4550bfa342df9d"
+    },
+    {
+      "path": "impl/common/l2200_sql_dialect/sql_execution_mixin.py",
+      "sha256": "3721cc8d40b9180f2e65acfa7aaee5c0821c78d612d514a29f591cf0043d4612"
+    },
+    {
+      "path": "l2070_batching/conditional_step.py",
+      "sha256": "95b865f2a295007d49ffeff4dfde373850a86a56099b7dc24e0eb7922f25dc65"
+    },
+    {
+      "path": "scripts/lint_serverplan_quality.py",
+      "sha256": "dee2bb86c5caa07d29883a65f3eea18a2405706bef08345011086665c4ca1e60"
+    }
+  ],
+  "expectations": {
+    "serverplan_quality": [],
+    "serverplan_target_architecture": [
+      {
+        "path": "l2070_batching/execution_receipt.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "BackendExecutionReceipt: required target contract is missing from l2070_batching/execution_receipt.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/execution_receipt.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PhysicalResultSet: required target contract is missing from l2070_batching/execution_receipt.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_executor.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA011",
+        "message": "BackendExecutor.execute_program: backend execution must accept a physical program and return a typed receipt",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_placement.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA003",
+        "message": "ApplicationPlacementUnit.application: physical placement must select a closed runtime application",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ClosedApplicationRegion: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ExternalIoRegion: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PhysicalTransportProgram: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PhysicalTransportRegion: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PhysicalTransportRequest: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "SqlStatementRegion: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "FailureIsolationKind: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "FailureIsolationRequirement: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "OrderedEffect: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PythonBoundary: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PythonBoundaryKind: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "RecursiveQueryRequirement: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ResultTransportKind: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ResultTransportRequirement: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "SessionContextRequirement: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "SessionContextScope: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "StepPlanningContract: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ApplyLifecycleEffectApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "BuildTerminalPayloadApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "DecodeAffectedCountApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "DecodeScalarApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "HydrateManyApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "HydrateOneApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PopulateCacheApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "RuntimeApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/step.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA002",
+        "message": "ServerPlanStep.planning_contract: semantic producers must expose one typed planning contract",
+        "severity": "hard-fail"
+      }
+    ],
+    "impl_direct_execution": [
+      {
+        "path": "impl/common/l2070_server_plan/sqlite_transition_cache_reader.py",
+        "line": 23,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\.fetchone\\(: row = connection.execute(statement, parameters).fetchone()",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/cross_branch.py",
+        "line": 5901,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: conn._execute_direct_internal(statement)",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/cross_branch.py",
+        "line": 5933,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: await conn._execute_direct_internal_async(statement)",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/cross_branch.py",
+        "line": 6015,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: result = conn._execute_direct_internal(statement, fetch_mode=\"all\")",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/cross_branch.py",
+        "line": 6023,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: conn._execute_direct_internal(statement)",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/cross_branch.py",
+        "line": 6048,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: result = await conn._execute_direct_internal_async(statement, fetch_mo",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/cross_branch.py",
+        "line": 6062,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: await conn._execute_direct_internal_async(statement)",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2100_sql_grammar/postgres_bootstrap_terminal.py",
+        "line": 913,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: result = await cast(Any, conn)._execute_direct_internal_async(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5319,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5337,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5364,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: rows = self._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5443,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5455,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5733,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: store_row = self._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5740,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: chunk_rows = self._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5755,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: store_row = await self._execute_direct_internal_async(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5762,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: chunk_rows = await self._execute_direct_internal_async(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5823,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5834,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 5889,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(select_stmt, fetch_mode=\"all\"),",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_core_support_mixin.py",
+        "line": 6022,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(insert_stmt)",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_direct_execution_services.py",
+        "line": 125,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: return self._conn._execute_direct_internal(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_direct_execution_services.py",
+        "line": 140,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: return await self._conn._execute_direct_internal_async(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_execution_mixin.py",
+        "line": 621,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(SqlSavepoint(sp_ref), fetch_mode=\"none\")",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_execution_mixin.py",
+        "line": 623,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(stmt, fetch_mode=\"none\")",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_execution_mixin.py",
+        "line": 626,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(SqlRollbackToSavepoint(sp_ref), fetch_mo",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_execution_mixin.py",
+        "line": 637,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal\\(: self._execute_direct_internal(SqlReleaseSavepoint(sp_ref), fetch_mode=",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_execution_mixin.py",
+        "line": 646,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: await self._execute_direct_internal_async(SqlSavepoint(sp_ref), fetch_",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_execution_mixin.py",
+        "line": 648,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: await self._execute_direct_internal_async(stmt, fetch_mode=\"none\")",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_execution_mixin.py",
+        "line": 651,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: await self._execute_direct_internal_async(",
+        "severity": "error"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_execution_mixin.py",
+        "line": 659,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\._execute_direct_internal_async\\(: await self._execute_direct_internal_async(",
+        "severity": "error"
+      }
+    ]
+  }
+}

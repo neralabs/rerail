@@ -67,13 +67,15 @@ function corpus(language: SnapshotFile["language"]): SnapshotFile[] {
 function evaluate(compiled: NativeCompiledCodeRuleDsl, files: SnapshotFile[]) {
   const input = JSON.stringify({ facts: [], files, format: "rerail.repository-snapshot/v1", revision: 0 });
   const started = performance.now();
+  const cpuStarted = process.cpuUsage();
   const result = JSON.parse(compiled.evaluate(input, "report")) as {
     status: string;
     violations: Array<{ path: string }>;
     failures: unknown[];
     metrics: { files: number; visitedNodes: number };
   };
-  return { elapsedMs: performance.now() - started, result };
+  const cpu = process.cpuUsage(cpuStarted);
+  return { elapsedMs: performance.now() - started, cpuMs: (cpu.user + cpu.system) / 1000, result };
 }
 
 describe("TypeScript AST evaluation at scale", () => {
@@ -94,6 +96,6 @@ describe("TypeScript AST evaluation at scale", () => {
 
     const bytes = [...typescript, ...tsx].reduce((total, file) => total + file.source.length, 0);
     expect(bytes).toBeGreaterThan(1_000_000);
-    expect(mixed.elapsedMs, `evaluated ${bytes} bytes in ${mixed.elapsedMs.toFixed(0)}ms`).toBeLessThan(EVALUATION_BUDGET_MS);
+    expect(mixed.elapsedMs, `evaluated ${bytes} bytes in ${mixed.elapsedMs.toFixed(0)}ms wall, ${mixed.cpuMs.toFixed(0)}ms CPU`).toBeLessThan(EVALUATION_BUDGET_MS);
   });
 });

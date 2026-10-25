@@ -1,0 +1,514 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-backend-coupling",
+  "revision": 1,
+  "mode": "log",
+  "description": "Candidate port of nera-data-layer backend_coupling at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "api/**/*.py",
+      "data_layer/**/*.py",
+      "_internal/**/*.py",
+      "impl/**/*.py",
+      "l*/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/tmp/**",
+      "**/__pycache__/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "backend-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "import_from_statement"
+                              },
+                              {
+                                "has": {
+                                  "pattern": "$MOD",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "import_statement"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "dotted_name"
+                                            },
+                                            {
+                                              "pattern": "$MOD"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "aliased_import"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$MOD",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "nthChild": {
+                                        "position": 1,
+                                        "ofRule": {
+                                          "not": {
+                                            "kind": "comment"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "if_statement"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:TYPE_CHECKING)$"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "import_from_statement"
+                          },
+                          {
+                            "has": {
+                              "regex": "^(?:impl\\.doltdb|impl\\.mariadb|impl\\.mongodb|impl\\.neo4j|impl\\.postgres|impl\\.sqlite)",
+                              "stopBy": "neighbor",
+                              "field": "module_name"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "import_statement"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "dotted_name"
+                                        },
+                                        {
+                                          "regex": "^(?:impl\\.doltdb|impl\\.mariadb|impl\\.mongodb|impl\\.neo4j|impl\\.postgres|impl\\.sqlite)"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "aliased_import"
+                                        },
+                                        {
+                                          "has": {
+                                            "regex": "^(?:impl\\.doltdb|impl\\.mariadb|impl\\.mongodb|impl\\.neo4j|impl\\.postgres|impl\\.sqlite)",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nthChild": {
+                                    "position": 1,
+                                    "ofRule": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "impl\\.|impl/",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "impl\\.|impl/",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^api/(?:.*/)?[^/]*\\.py$|^data_layer/(?:.*/)?[^/]*\\.py$|^_internal/(?:.*/)?[^/]*\\.py$|^l[0-9][0-9][0-9][0-9]_[^/]*/(?:.*/)?[^/]*\\.py$|^impl/common/(?:.*/)?[^/]*\\.py$",
+              "notRegex": "^(?:.*/)?[^/]*l2000_connection/connection_factory\\.py$|^(?:.*/)?[^/]*l4000_permissions/validation\\.py$|^(?:.*/)?[^/]*l5100_fts/fts_search_manager\\.py$|^_internal/dynamic_import\\.py$|^api/(?:.*/)?__init__\\.py$|^data_layer/(?:.*/)?__init__\\.py$|^_internal/(?:.*/)?__init__\\.py$|^l[^/]*/(?:.*/)?__init__\\.py$|^impl/common/(?:.*/)?test_[^/]*\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "BC001",
+        "anchor": "witness.span",
+        "message": "BC001: backend-import"
+      }
+    },
+    {
+      "id": "sql-in-nonsql",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "import_from_statement"
+                              },
+                              {
+                                "has": {
+                                  "pattern": "$MOD",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "import_statement"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "dotted_name"
+                                            },
+                                            {
+                                              "pattern": "$MOD"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "aliased_import"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$MOD",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "nthChild": {
+                                        "position": 1,
+                                        "ofRule": {
+                                          "not": {
+                                            "kind": "comment"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "if_statement"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:TYPE_CHECKING)$"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "import_from_statement"
+                          },
+                          {
+                            "has": {
+                              "regex": "(?:impl\\.common\\.l2050_sql_clauses|impl\\.common\\.l2100_sql_grammar|impl\\.common\\.l2100_sql_params|impl\\.common\\.l2250_json_functions|impl\\.common\\.l5200_sql_query|impl\\.common\\.l6200_sql_logged_table|impl\\.common\\.l7250_versioned_sql_query|impl\\.common\\.l9700_sql_graph_query)",
+                              "stopBy": "neighbor",
+                              "field": "module_name"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "import_statement"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "dotted_name"
+                                        },
+                                        {
+                                          "regex": "(?:impl\\.common\\.l2050_sql_clauses|impl\\.common\\.l2100_sql_grammar|impl\\.common\\.l2100_sql_params|impl\\.common\\.l2250_json_functions|impl\\.common\\.l5200_sql_query|impl\\.common\\.l6200_sql_logged_table|impl\\.common\\.l7250_versioned_sql_query|impl\\.common\\.l9700_sql_graph_query)"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "aliased_import"
+                                        },
+                                        {
+                                          "has": {
+                                            "regex": "(?:impl\\.common\\.l2050_sql_clauses|impl\\.common\\.l2100_sql_grammar|impl\\.common\\.l2100_sql_params|impl\\.common\\.l2250_json_functions|impl\\.common\\.l5200_sql_query|impl\\.common\\.l6200_sql_logged_table|impl\\.common\\.l7250_versioned_sql_query|impl\\.common\\.l9700_sql_graph_query)",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nthChild": {
+                                    "position": 1,
+                                    "ofRule": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "impl\\.|impl/",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "impl\\.|impl/",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^impl/mongodb[^/]*/(?:.*/)?[^/]*\\.py$|^impl/neo4j[^/]*/(?:.*/)?[^/]*\\.py$",
+              "notRegex": "^(?:.*/)?[^/]*l2000_connection/connection_factory\\.py$|^(?:.*/)?[^/]*l4000_permissions/validation\\.py$|^(?:.*/)?[^/]*l5100_fts/fts_search_manager\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "BC001",
+        "anchor": "witness.span",
+        "message": "BC001: sql-in-nonsql"
+      }
+    }
+  ]
+}

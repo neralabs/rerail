@@ -203,6 +203,7 @@ mod tests {
 
     fn leaf() -> Query {
         Query::Regex {
+            options: Default::default(),
             regex: Regex::new("x").unwrap(),
             source: RegexSource::Content,
         }

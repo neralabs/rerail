@@ -94,9 +94,13 @@ export interface CodeRuleDslDefineClause {
   require_each?: never;
   budget?: never;
   llm?: never;
+  relational?: never;
 }
 
 export interface CodeRuleDslDefine {
+  /** Report all findings together only above this count. Failures remain visible. */
+  report_when?: { count: { gt: number } };
+
   /** The language `utils` compile for; required with them. */
   language?: CodeRuleLanguageId;
   /**
@@ -149,6 +153,7 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
       require_each?: never;
       budget?: never;
       llm?: never;
+      relational?: never;
     }
   | {
       forbid?: never;
@@ -158,6 +163,7 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
       };
       budget?: never;
       llm?: never;
+      relational?: never;
     }
   | {
       forbid?: never;
@@ -168,14 +174,38 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
         count: { lte: number; distinct?: string[] };
       };
       llm?: never;
+      relational?: never;
     }
   | {
       forbid?: never;
       require_each?: never;
       budget?: never;
       llm: unknown;
+      relational?: never;
     }
+  | { forbid?: never; require_each?: never; budget?: never; llm?: never; relational: CodeRuleDslRelational }
 );
+
+/** Finite SQL joins and recursive walks over projected native evidence tables. */
+export interface CodeRuleDslRelational {
+  /** Skip SQL when this declared evidence input is complete and empty. */
+  requireNonemptyInput?: string;
+  /** Authored file-start diagnostic locations, including files absent from the input inventory. */
+  locations?: string[];
+  /** Evaluate independent inputs and SQL stages per file, caching final local findings. */
+  partitionBy?: "file" | "repository";
+  syntax?: { name: string; gate: string; fields?: string[]; columns?: string[]; excludeKinds?: string[]; emptyTextKinds?: string[]; edges?: string; ownership?: string; owners?: Record<string,{kind:string;outermost?:boolean}> };
+  inputs: Record<string, CodeRuleDslRelation>;
+  references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
+  stages?: ({ name: string } & (
+    | { query: string; indexes?: string[][]; deferred?: Record<string, string>; reachability?: never }
+    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest" }; query?: never; indexes?: never; deferred?: never }
+  ))[];
+  query: string;
+  key?: string[];
+  code?: string;
+}
+
 
 export type CodeRuleDslQuery =
   | CodeRuleDslRegexQuery
@@ -187,11 +217,31 @@ export interface CodeRuleDslRegexQuery {
     source: "file.content" | "file.path";
     /** Named groups (`(?<NAME>…)`) become the witness's captures. */
     pattern: string;
+    /** Filters over each match's text: all include patterns hold and no exclude pattern holds. */
+    include?: string[];
+    exclude?: string[];
+    /** Conditions over the complete current file, before line scanning or match filters. Content queries only. */
+    content?: { include?: string[]; exclude?: string[] };
+    /** Scan independent Unicode lines, optionally skipping lines or reporting only their first match. Content only. */
+    lines?: {
+      include?: string[]; exclude?: string[]; first?: boolean; terminators?: "python" | "lf";
+      /** Process transitions before line filters, emitting only from the listed starting states. */
+      state?: { initial: string; emit: string[]; transitions: Array<{
+        from: string; to: string; pattern: string; skip?: boolean;
+        count?: { min?: number; max?: number; parity?: "odd" | "even" };
+      }> };
+      /** Suppress deeper indentation after a marker, until reset; ignored lines do not update the marker. */
+      indentation?: { excludeUnder: string; reset: string; ignore: string[] };
+    };
+    /** Restrict this clause's files within the document scope. */
+    paths?: CodeRuleDslScope;
   };
 }
 
 export interface CodeRuleDslAstQuery {
   ast: {
+    /** Gate on whole-file syntax. Invalid permits matches inside error regions. */
+    syntax?: "valid" | "invalid";
     language: CodeRuleLanguageId;
     rule: CodeRuleDslAstRule;
     /**
@@ -531,7 +581,9 @@ export interface CodeRuleDslCompare {
 /**
  * A cross-file relation projected from an AST query's matches in every file of the code rule's
  * scope (narrowed by `paths`). Each match is one row of the `project` fields: `capture.NAME`
- * (the capture's source text), `file.path`, `file.directory`, `file.name`, `file.stem` (the name
+ * (the capture's source text), `capture.NAME.text` (decoded exported text or host text),
+ * `capture.NAME.startByte`, `capture.NAME.endByte`, `capture.NAME.startLine`,
+ * `capture.NAME.kind` (host AST node kind), `file.path`, `file.directory`, `file.name`, `file.stem` (the name
  * without extensions), `file.module` or `file.package` (Python). A file whose query failed or
  * was read around syntax errors has unknown rows: no absence or upper bound ignores it.
  */
@@ -540,8 +592,15 @@ export interface CodeRuleDslEvidenceQuery {
     as: string;
     paths?: { include?: string[]; exclude?: string[] };
     query: CodeRuleDslAstQuery;
-    project: Record<string, string>;
+    project: Record<string, string | { source: string; regex: string; group: number }>;
     where?: CodeRuleDslPredicate;
+    /** Ordered, cycle-safe name closures over raw projected fields. */
+    /** Enumerate bindings before projecting rows. */
+    each?: string;
+    /** Report a selected capture's location; defaults to witness.span. */
+    anchor?: string;
+    closure?: { name: string; seeds?: string[]; seed_field?: string; edges?: { from: string; to: string };
+      extends?: string[]; partition_by?: string[]; contains: Record<string, string> }[];
   };
 }
 
@@ -560,6 +619,10 @@ export type CodeRuleDslPredicate =
   | { any: CodeRuleDslPredicate[] }
   | { not: CodeRuleDslPredicate }
   | { eq: [CodeRuleDslValue, CodeRuleDslValue] }
+  | { lt: [CodeRuleDslValue, CodeRuleDslValue] }
+  | { le: [CodeRuleDslValue, CodeRuleDslValue] }
+  | { gt: [CodeRuleDslValue, CodeRuleDslValue] }
+  | { ge: [CodeRuleDslValue, CodeRuleDslValue] }
   | { ne: [CodeRuleDslValue, CodeRuleDslValue] };
 
 export type CodeRuleDslAstPattern = string | { context: string; selector: string };
@@ -590,6 +653,8 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
   kind?: string;
   regex?: string;
   nthChild?: CodeRuleDslNthChild;
+  /** File path condition that can also scope a call-graph seed. */
+  filePath?: CodeRuleDslTextCondition;
   all?: CodeRuleDslAstRule[];
   any?: CodeRuleDslAstRule[];
   not?: CodeRuleDslAstRule;
@@ -608,7 +673,10 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
 }
 
 /** A `calls` term: its inner rule's keys, plus how chains pass and what they bind. */
-export type CodeRuleDslCalls = CodeRuleDslAstRule & { through?: "sync" | "any"; chain?: string };
+export type CodeRuleDslCalls = CodeRuleDslAstRule & { through?: "sync" | "any"; chain?: string;
+  graph?: "calls" | "references"; at?: "call" | "definition";
+  siblingLinks?: { decorator: string; name: { replace: string; by: string } }[];
+  constructorFields?: { fieldToParameter: { replace: string; by: string } } };
 
 /** A count of lines or bytes: exactly `eq`, or from `min` to `max` inclusive (either may be left out). */
 export type CodeRuleDslLineCount = { eq: number } | { min?: number; max?: number };
@@ -645,6 +713,11 @@ export interface CodeRuleDslLayoutGap {
  * is not evaluated in a file with syntax errors. A parsed tree's rule (`parse`) refuses it.
  */
 export interface CodeRuleDslLayout {
+  /** Regex on the complete first line of the node, or the preceding line. */
+  line?: string;
+  previousLine?: string;
+  /** Regex over a bounded window around the first line, optionally ending at the first matching line, inclusive. */
+  context?: { before?: number; after?: number; through?: string; regex: string };
   span?: CodeRuleDslLineCount;
   start?: CodeRuleDslLineCount;
   before?: CodeRuleDslLayoutGap;
@@ -710,7 +783,7 @@ export interface CodeRuleDslFormatArgs {
 }
 
 /** The sub-grammars `parse` applies (the engine's `literal::Grammar`). */
-export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc" | "rustFormat";
+export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc" | "rustFormat" | "identifierWords" | "pythonFString";
 
 /**
  * A string literal parsed by a sub-grammar, and a rule of that grammar's kinds matched on the parsed tree's root: the
@@ -789,6 +862,8 @@ export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotat
  */
 export interface CodeRuleDslParse extends CodeRuleDslAstRule {
   grammar: CodeRuleDslParseGrammar;
+  /** The opaque slot text in a pythonFString projection. Defaults to "{}". */
+  interpolation?: string;
 }
 
 /**
@@ -1247,7 +1322,7 @@ export interface CodeRuleDslAstCount {
   max?: number;
   /**
    * Metavariable name (without `$`) that a count which holds binds to `offset` plus the exact count, as decimal text.
-   * Only the violation's message may interpolate it; under `not` it binds nothing. The walk then runs to its end, and
+   * Messages and source-text comparisons may read it; under `not` it binds nothing outside that negation. The walk runs to its end, and
    * a count that is not known exactly (a node or stop verdict unknown) leaves the match unknown.
    */
   as?: string;

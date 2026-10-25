@@ -18,9 +18,11 @@ mod package_manifest;
 mod php_literal;
 mod php_view;
 mod placement;
+mod producers;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
 mod query;
+mod relational;
 mod scope;
 mod semver;
 mod soundness;
@@ -85,11 +87,12 @@ impl CodeRuleDslRuntime {
         let canonical_value = canonicalize_value(document);
         let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
         let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
-        let (id, rule_mode, scope, clauses, required) =
+        let (id, rule_mode, scope, clauses, required, report_count_gt) =
             compile_document(&canonical_value, &capabilities)?;
         Ok(CompiledCodeRuleDsl {
             inner: Arc::new(CompiledCodeRule {
                 id,
+                report_count_gt,
                 rule_mode,
                 canonical,
                 digest,
@@ -277,6 +280,12 @@ pub struct CompiledCodeRuleDsl {
 
 #[napi]
 impl CompiledCodeRuleDsl {
+    /// Audit the normal candidate compiler over fixed permutations. This executes no candidate SQL.
+    #[napi]
+    pub fn candidate_frontier_audit(&self) -> String {
+        matcher::candidate_frontier_audit(&self.inner).to_string()
+    }
+
     #[napi]
     pub fn canonical_json(&self) -> String {
         self.inner.canonical.clone()

@@ -1,10 +1,10 @@
 use super::*;
-use crate::code_rule_dsl::matcher::Semantic;
+use crate::code_rule_dsl::{language::GrammarDialect, matcher::Semantic};
 
 pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> AnchorPlan {
     match semantic {
         // Lines and bytes hold on any node.
-        Semantic::Layout(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
+        Semantic::Layout(_) | Semantic::FilePath(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
             AnchorPlan::unrestricted()
         }
         // Every value predicate except `constant: false` needs a known value, which only the
@@ -86,10 +86,17 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
             } else {
                 let this = resolves.this_global.then_some("this".to_owned());
                 let names = resolves.globals.iter().map(|name| regex::escape(name));
-                let names = names.chain(this).collect::<Vec<_>>().join("|");
+                let mut names = names.chain(this).collect::<Vec<_>>();
+                if resolves.language == GrammarDialect::Python {
+                    // Python resolves identifiers after NFKC normalization. A raw spelling
+                    // filter must retain non-ASCII names for the authoritative resolver.
+                    names.push(r"(?s:.*[^\x00-\x7f].*)".to_owned());
+                }
+                let names = names.join("|");
                 let pattern = format!(r"^(?:{names}|\((?s:.*))$");
                 match Regex::new(&pattern) {
                     Ok(regex) => Condition::Text {
+                        #[cfg(test)]
                         probe: TextProbe::compile(regex.as_str()),
                         regex,
                     },

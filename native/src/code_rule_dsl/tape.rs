@@ -23,7 +23,6 @@ use std::ops::Range;
 use std::sync::{Arc, Weak};
 use tree_sitter::{Language, Node as TsNode};
 
-const WIDTH: usize = 6;
 pub(super) const TAPE_FORMAT_VERSION: u32 = 7;
 const TAPE_MAGIC: &[u8; 8] = b"TMPTAPE7";
 /// The image header: magic, language, reserved bytes, version, source length and digest, and
@@ -33,12 +32,16 @@ const KIND_LIMIT: usize = 1024;
 const FIELD_LIMIT: usize = 64;
 const SENTINEL: u16 = u16::MAX;
 const NONE: u32 = u32::MAX;
-const CHECKPOINT_STRIDE: usize = 16;
 const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 /// Tree-sitter's ERROR symbol does not fit the 10-bit kind code. ERROR records store the
 /// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
 const ERROR_CODE: u16 = 0;
 const ERROR_SYMBOL: u16 = u16::MAX;
+
+mod index;
+mod wire;
+pub(super) use wire::index_span;
+use wire::{CHECKPOINT_STRIDE, WIDTH, read_varint};
 
 #[cfg(test)]
 thread_local! {
@@ -70,6 +73,12 @@ pub(super) struct Grammar {
 }
 
 impl Grammar {
+    pub(super) fn field_code(&self, name: &str) -> Option<u16> {
+        self.kinds.field_id(name)
+    }
+    pub(super) fn has_field(&self, name: &str) -> bool {
+        self.kinds.field_id(name).is_some()
+    }
     pub(super) fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         let kinds = lang.kinds();
         if kinds.kind_count() > KIND_LIMIT || kinds.field_count() >= FIELD_LIMIT {
@@ -548,22 +557,6 @@ fn varint(mut value: u32, output: &mut Vec<u8>) {
             break;
         }
     }
-}
-
-fn read_varint(bytes: &[u8], at: &mut usize) -> Result<u32, String> {
-    let mut result = 0u32;
-    for shift in (0..=28).step_by(7) {
-        let byte = *bytes.get(*at).ok_or("truncated tape span")?;
-        *at += 1;
-        if shift == 28 && byte > 0x0f {
-            return Err("span varint overflow".into());
-        }
-        result |= u32::from(byte & 127) << shift;
-        if byte & 128 == 0 {
-            return Ok(result);
-        }
-    }
-    Err("span varint overflow".into())
 }
 
 fn checkpoint(value: usize, bytes: &mut Vec<u8>) -> Result<(), String> {
@@ -1455,10 +1448,12 @@ struct Rec {
     extra: bool,
     error: bool,
     missing: bool,
+    first_field: bool,
 }
 
 #[derive(Clone)]
 pub(super) struct TapeDoc {
+    source_digest: [u8; 32],
     source: Arc<String>,
     grammar: Arc<Grammar>,
     data: Arc<Vec<Rec>>,
@@ -1532,6 +1527,8 @@ fn node_extents(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
         .map(|(standing, all)| if standing == NONE_YET { all } else { standing })
         .collect()
 }
+
+pub(super) type KindPostings = rustc_hash::FxHashMap<u16, Vec<u32>>;
 
 /// A node's row and column, as tree-sitter's `TSPoint` counts them: only `\n` ends a row. The
 /// evaluator's line table follows the linter a port mirrors (a lone `\r` ends a Ruff line), so
@@ -1692,7 +1689,7 @@ impl TapeDoc {
         let mut nodes: Vec<Rec> = Vec::with_capacity(count);
         let mut at = 0usize;
         let mut previous = 0i64;
-        let mut parent_stack: Vec<usize> = Vec::new();
+        let mut parent_stack: Vec<(usize, u64)> = Vec::new();
         let mut unwound = 0usize;
         for index in 0..count {
             if index % 256 == 0 {
@@ -1757,7 +1754,7 @@ impl TapeDoc {
             previous = i64::from(start);
             while parent_stack
                 .last()
-                .is_some_and(|&parent| index >= parent + nodes[parent].size as usize)
+                .is_some_and(|&(parent, _)| index >= parent + nodes[parent].size as usize)
             {
                 if unwound.is_multiple_of(256) {
                     checked(budget)?;
@@ -1771,7 +1768,7 @@ impl TapeDoc {
                 }
                 NONE
             } else {
-                let enclosing = *parent_stack.last().ok_or("orphan tape node")?;
+                let enclosing = parent_stack.last().ok_or("orphan tape node")?.0;
                 if pd == 0
                     || pd as usize > index
                     || index - pd as usize != enclosing
@@ -1785,6 +1782,13 @@ impl TapeDoc {
                 }
                 enclosing as u32
             };
+            let first_field = field != 0
+                && parent_stack.last_mut().is_some_and(|(_, fields)| {
+                    let bit = 1_u64 << field;
+                    let first = *fields & bit == 0;
+                    *fields |= bit;
+                    first
+                });
             let extra = image.extra.binary_search(&(index as u32)).is_ok();
             nodes.push(Rec {
                 kind,
@@ -1800,8 +1804,9 @@ impl TapeDoc {
                 extra,
                 error,
                 missing,
+                first_field,
             });
-            parent_stack.push(index);
+            parent_stack.push((index, 0));
         }
         if at != image.spans.len() {
             return Err("trailing span bytes".into());
@@ -1841,6 +1846,7 @@ impl TapeDoc {
         }
         checked(budget)?;
         Ok(Self {
+            source_digest: image.source_digest,
             points: Arc::new(Points {
                 source: Arc::clone(&source),
                 rows: std::sync::OnceLock::new(),
@@ -1950,6 +1956,10 @@ impl TapeDoc {
         Self::restore_with_lines(source, grammar, &image.file_image(), lines, budget)
     }
 
+    pub(super) fn index_source_digest(&self) -> &[u8; 32] {
+        &self.source_digest
+    }
+
     /// The source's line table, shared with the evaluator that restored this document.
     #[cfg(test)]
     pub(super) fn line_table(&self) -> &LineTable {
@@ -1964,7 +1974,6 @@ impl TapeDoc {
         self.data[node as usize].kind
     }
 
-    #[cfg(test)]
     fn kind_alias(&self, node: u32) -> Option<&(String, bool)> {
         self.kind_overrides
             .binary_search_by_key(&node, |&(index, _)| index)
@@ -1972,7 +1981,6 @@ impl TapeDoc {
             .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
     }
 
-    #[cfg(test)]
     fn node_is_named(&self, node: u32) -> bool {
         self.kind_alias(node).map_or_else(
             || self.grammar.kind_is_named(self.data[node as usize].kind),
@@ -1980,12 +1988,10 @@ impl TapeDoc {
         )
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_field(&self, node: u32) -> u16 {
         self.data[node as usize].field
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
@@ -1999,7 +2005,6 @@ impl TapeDoc {
         rec.start as usize..rec.end as usize
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
@@ -2077,6 +2082,16 @@ pub(super) struct TapeNode<'a> {
 }
 
 impl<'a> TapeNode<'a> {
+    #[cfg(test)]
+    pub(super) fn incoming_field(&self) -> u16 {
+        self.rec().field
+    }
+
+    /// Whether this is the first direct child in `field`, as `child_by_field_id` selects it.
+    pub(super) fn is_first_field(&self, field: u16) -> bool {
+        field != 0 && self.rec().field == field && self.rec().first_field
+    }
+
     fn rec(&self) -> &Rec {
         &self.nodes[self.index as usize]
     }
@@ -2264,7 +2279,18 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         if field_id == 0 {
             None
         } else {
-            self.children().find(|child| child.rec().field == field_id)
+            #[cfg(feature = "code-rule-profile")]
+            let mut examined = 0;
+            let found = self.children().find(|child| {
+                #[cfg(feature = "code-rule-profile")]
+                {
+                    examined += 1;
+                }
+                child.rec().field == field_id
+            });
+            #[cfg(feature = "code-rule-profile")]
+            super::profile::navigation::record(examined, found.is_some());
+            found
         }
     }
 }

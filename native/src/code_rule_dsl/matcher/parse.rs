@@ -33,6 +33,8 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) struct ParseTest {
     pub(crate) grammar: Grammar,
+    /// Opaque slot text for pythonFString; other grammars ignore it.
+    pub(crate) interpolation: String,
     /// The rule matched on the parsed tree's root, compiled for the grammar.
     pub(crate) rule: AstMatcher,
     /// The captures the rule may bind, exported to the host.
@@ -175,7 +177,7 @@ impl ParseTest {
             let _tables = SubTables::enter(table);
             return self.match_tree(node, env, tree);
         }
-        let tree = match parsed_tree(&node, self.grammar)? {
+        let tree = match parsed_tree_with(&node, self.grammar, &self.interpolation)? {
             Parsed::Tree(tree) => tree,
             Parsed::NotString => return None,
             Parsed::Unknown => {
@@ -236,7 +238,15 @@ impl ParseTest {
 /// The node's tree under a text grammar, parsed once per file; `None` when the budget ran out (the
 /// clause fails).
 pub(super) fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Option<Parsed> {
-    let key = (node.node_id(), grammar);
+    parsed_tree_with(node, grammar, "{}")
+}
+
+fn parsed_tree_with<D: Doc>(
+    node: &Node<'_, D>,
+    grammar: Grammar,
+    interpolation: &str,
+) -> Option<Parsed> {
+    let key = (node.node_id(), grammar, interpolation.to_owned());
     if let Some(memo) = memoized_parse(&key) {
         return Some(match memo {
             Some(tree) => Parsed::Tree(tree),
@@ -245,6 +255,9 @@ pub(super) fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Optio
     }
     let parsed = match grammar.literal_host() {
         LiteralHost::EcmaComment => literal::parse_comment(node, &mut spend_steps),
+        LiteralHost::PythonString if grammar == Grammar::PythonFString => {
+            literal::parse_python_fstring(node, interpolation, &mut spend_steps)
+        }
         LiteralHost::PythonString => literal::parse_string(node, grammar, &mut spend_steps),
         LiteralHost::PhpString => literal::parse_php_string(node, grammar, &mut spend_steps),
         LiteralHost::PhpComment => literal::parse_php_comment(node, &mut spend_steps),

@@ -4,14 +4,14 @@
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
-use super::global::{compile_query_plan, compile_relation_producer, evaluate_global};
+use super::global::{
+    compile_query_plan, compile_relation_producer, evaluate_batched_relations, evaluate_global,
+};
 use super::index::{RepositoryIndexOptions, WorkspaceIndexTask, reusable_directories};
 use super::ingest::{
     Request, apply_request, decode_buffer_request, file_needs_update, inline_input, is_cheap,
     is_file_local, make_file, reclaim_candidate_sets,
 };
-#[cfg(feature = "code-rule-profile")]
-use super::memory::record_workspace_residency;
 use super::memory::workspace_memory_profile;
 use super::persisted::{Persisted, candidate_catalog, persist_files};
 use super::results::{
@@ -200,6 +200,30 @@ impl CodeRuleDslWorkspace {
                         state
                             .relation_plans
                             .insert((index, clause.id.clone()), vec![id]);
+                    }
+                    ClauseKind::Relational(plan) => {
+                        let ids = plan
+                            .inputs
+                            .iter()
+                            .map(|(_, input)| {
+                                let id = compile_relation_producer(
+                                    input,
+                                    Side::Counted,
+                                    clause,
+                                    index,
+                                    code_rule,
+                                );
+                                if plan.per_file {
+                                    let producer = &mut code_rule.clauses[id.1];
+                                    producer.decision = true;
+                                    producer.violation.project.clear();
+                                    producer.violation.each = None;
+                                    producer.violation.node_regexes.clear();
+                                }
+                                id
+                            })
+                            .collect();
+                        state.relation_plans.insert((index, clause.id.clone()), ids);
                     }
                     ClauseKind::Llm => {}
                 }
@@ -568,6 +592,10 @@ fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
         }
         ClauseKind::Budget { query, .. } => in_manifest_family(&query.ast.query),
         ClauseKind::Llm => false,
+        ClauseKind::Relational(plan) => plan
+            .inputs
+            .iter()
+            .any(|(_, input)| in_manifest_family(&input.ast.query)),
     })
 }
 
@@ -874,7 +902,9 @@ impl WorkspaceApplyTask {
         let storage = state.storage.clone();
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
+        let anchor_corpus = Arc::clone(&state.anchor_corpus);
         let context = JobContext {
+            anchor_corpus: &anchor_corpus,
             code_rules: &code_rules,
             storage: storage.as_ref(),
             closed: &self.closed,
@@ -1103,10 +1133,17 @@ impl WorkspaceApplyTask {
                 files: Vec::new(),
             };
             let dirty = std::mem::take(&mut state.dirty_globals);
+            let mut relational =
+                evaluate_batched_relations(&mut state, &dirty, &snapshot, &self.closed)?;
             for index in dirty {
                 check_closed(&self.closed)?;
                 let budget = MatchBudget::work(&self.closed, CLAUSE_WORK_BUDGET);
-                let mut evaluation = evaluate_global(&state, index, &snapshot)?;
+                let mut evaluation = evaluate_global(
+                    &mut state,
+                    index,
+                    &snapshot,
+                    relational.remove(&index).unwrap_or_default(),
+                )?;
                 #[cfg(test)]
                 super::pass_deadline_at_test_phase("global-done");
                 // Only exhaustion some step observed cut it short; a finished evaluation is kept.
@@ -1124,8 +1161,6 @@ impl WorkspaceApplyTask {
             }
         }
         check_closed(&self.closed)?;
-        #[cfg(feature = "code-rule-profile")]
-        record_workspace_residency(&state);
         if quiet {
             let profile = metrics.clone();
             let serialization_started = Instant::now();

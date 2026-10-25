@@ -320,6 +320,118 @@ impl ContentStore {
         Ok(source.to_vec())
     }
 
+    /// Read immutable source IDs qualified by the canonical hashes from bulk metadata.
+    /// Cache hits require no source query. Cold frames use bounded typed batches.
+    pub(crate) fn get_sources_by_hash_bulk(
+        &self,
+        requests: &[(SourceId, HashKey)],
+        max_bytes: usize,
+    ) -> StoreResult<HashMap<SourceId, Vec<u8>>> {
+        let mut expected = HashMap::new();
+        for &(id, hash) in requests {
+            if expected.insert(id, hash).is_some_and(|old| old != hash) {
+                return Err(StoreError::Invalid(
+                    "source request has conflicting hashes".into(),
+                ));
+            }
+        }
+        let mut total = 0usize;
+        let mut result = HashMap::new();
+        let mut ids = Vec::new();
+        {
+            let mut cache = self
+                .decompressed_cache
+                .lock()
+                .expect("decompressed cache mutex poisoned");
+            for (&id, &hash) in &expected {
+                if let Some(bytes) = cache.get(CacheKey::Source(hash)) {
+                    total = total
+                        .checked_add(bytes.len())
+                        .filter(|n| *n <= max_bytes)
+                        .ok_or_else(|| {
+                            StoreError::Invalid("source batch exceeds byte budget".into())
+                        })?;
+                    result.insert(id, bytes.to_vec());
+                } else {
+                    ids.push(id.0);
+                }
+            }
+        }
+        ids.sort_unstable();
+        for ids in ids.chunks(128) {
+            let placeholders = std::iter::repeat_n("?", ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let frames = {
+                let connection = self
+                    .connection
+                    .lock()
+                    .expect("content store mutex poisoned");
+                let sql = format!(
+                    "SELECT s.source_id,s.raw_length,s.codec_id,s.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 FROM source_objects s JOIN hashes h ON h.hash_id=s.canonical_hash_id WHERE s.source_id IN ({placeholders})"
+                );
+                let mut statement = connection.prepare_cached(&sql)?;
+                let mut rows = statement.query(rusqlite::params_from_iter(ids))?;
+                let mut frames = Vec::new();
+                while let Some(row) = rows.next()? {
+                    let length: i64 = row.get(1)?;
+                    let length = usize::try_from(length)
+                        .map_err(|_| StoreError::Corrupt("invalid source length".into()))?;
+                    total = total
+                        .checked_add(length)
+                        .filter(|total| *total <= max_bytes)
+                        .ok_or_else(|| {
+                            StoreError::Invalid("source batch exceeds byte budget".into())
+                        })?;
+                    frames.push((
+                        SourceId(row.get(0)?),
+                        length,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                        HashKey {
+                            algorithm: row.get(4)?,
+                            lanes: [row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?],
+                        },
+                    ));
+                }
+                frames
+            };
+            for (id, length, codec, frame, hash) in frames {
+                if expected[&id] != hash {
+                    return Err(StoreError::Corrupt(
+                        "source identity does not match metadata".into(),
+                    ));
+                }
+                let key = CacheKey::Source(hash);
+                let cached = self
+                    .decompressed_cache
+                    .lock()
+                    .expect("decompressed cache mutex poisoned")
+                    .get(key);
+                let bytes = match cached {
+                    Some(bytes) => bytes,
+                    None => {
+                        if codec != CODEC_ZSTD {
+                            return Err(StoreError::Corrupt("unsupported source codec".into()));
+                        }
+                        let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+                        if bytes.len() != length || HashKey::sha256(&bytes) != hash {
+                            return Err(StoreError::Corrupt(
+                                "source length or hash does not match metadata".into(),
+                            ));
+                        }
+                        self.decompressed_cache
+                            .lock()
+                            .expect("decompressed cache mutex poisoned")
+                            .insert_bytes(key, bytes)?
+                    }
+                };
+                result.insert(id, bytes.to_vec());
+            }
+        }
+        Ok(result)
+    }
+
     pub fn put_tape(
         &self,
         source_id: SourceId,

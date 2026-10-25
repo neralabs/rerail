@@ -907,12 +907,18 @@ impl FieldRelation {
         env: &mut Cow<MetaVarEnv<'t, D>>,
     ) -> Option<Node<'t, D>> {
         let mut search = Search::start(WalkFilter::of(&self.rule, &self.filter));
-        let mut last = node.node_id();
+        let mut last = node.clone();
         let mut entered = |candidate: &Node<'t, D>| {
-            let expected = std::mem::replace(&mut last, candidate.node_id());
+            let expected = std::mem::replace(&mut last, candidate.clone());
+            if let Some(tape) = super::memo::file_node(&expected) {
+                let found = tape.get_inner_node().is_first_field(self.field);
+                #[cfg(feature = "code-rule-profile")]
+                crate::code_rule_dsl::profile::navigation::record_edge(found);
+                return found;
+            }
             candidate
                 .child_by_field_id(self.field)
-                .is_some_and(|child| child.node_id() == expected)
+                .is_some_and(|child| child.node_id() == expected.node_id())
         };
         let found = match &self.stop {
             StopBy::Neighbor => node.parent().and_then(|candidate| {

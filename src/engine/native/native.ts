@@ -82,6 +82,8 @@ export type CodeRuleDslSourceFormat = "json" | "yaml";
 export type CodeRuleDslEvaluationMode = "decision" | "report";
 
 export interface NativeCompiledCodeRuleDsl {
+  /** Diagnostic availability depends on the installed addon version. Uses the normal compiler. */
+  candidateFrontierAudit?(): string;
   canonicalJson(): string;
   /** Whether a repository-relative path is inside the code rule's scope; the matcher evaluation uses. */
   inScope(path: string): boolean;

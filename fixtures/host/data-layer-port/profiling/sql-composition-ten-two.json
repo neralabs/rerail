@@ -1,0 +1,288 @@
+{
+  "format": "rerail.profile-selection/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "serverplan_bypass",
+    "serverplan_steps",
+    "serverplan_state_tripwires",
+    "serverplan_dispatch_architecture",
+    "serverplan_quality",
+    "serverplan_target_architecture",
+    "execution_authority_bypass",
+    "impl_direct_execution",
+    "raw_execute_regression",
+    "legacy_execution_surfaces"
+  ],
+  "files": [
+    {
+      "path": "impl/common/l2070_server_plan/sqlite_transition_cache_reader.py",
+      "sha256": "40262f622ce0b98f99e9a5ec7fa8675cd4edca3088318c1aee85343e92021bd3"
+    },
+    {
+      "path": "scripts/lint_serverplan_quality.py",
+      "sha256": "dee2bb86c5caa07d29883a65f3eea18a2405706bef08345011086665c4ca1e60"
+    }
+  ],
+  "expectations": {
+    "execution_authority_bypass": [],
+    "impl_direct_execution": [
+      {
+        "path": "impl/common/l2070_server_plan/sqlite_transition_cache_reader.py",
+        "line": 23,
+        "column": null,
+        "code": "direct_execution",
+        "message": "\\.fetchone\\(: row = connection.execute(statement, parameters).fetchone()",
+        "severity": "error"
+      }
+    ],
+    "legacy_execution_surfaces": [],
+    "raw_execute_regression": [],
+    "serverplan_bypass": [],
+    "serverplan_dispatch_architecture": [],
+    "serverplan_quality": [],
+    "serverplan_state_tripwires": [],
+    "serverplan_steps": [],
+    "serverplan_target_architecture": [
+      {
+        "path": "l2070_batching/execution_receipt.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "BackendExecutionReceipt: required target contract is missing from l2070_batching/execution_receipt.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/execution_receipt.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PhysicalResultSet: required target contract is missing from l2070_batching/execution_receipt.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_executor.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA011",
+        "message": "BackendExecutor.execute_program: backend execution must accept a physical program and return a typed receipt",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_placement.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA003",
+        "message": "ApplicationPlacementUnit.application: physical placement must select a closed runtime application",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ClosedApplicationRegion: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ExternalIoRegion: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PhysicalTransportProgram: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PhysicalTransportRegion: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PhysicalTransportRequest: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/physical_program.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "SqlStatementRegion: required target contract is missing from l2070_batching/physical_program.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "FailureIsolationKind: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "FailureIsolationRequirement: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "OrderedEffect: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PythonBoundary: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PythonBoundaryKind: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "RecursiveQueryRequirement: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ResultTransportKind: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ResultTransportRequirement: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "SessionContextRequirement: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "SessionContextScope: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/planning_contract.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "StepPlanningContract: required target contract is missing from l2070_batching/planning_contract.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "ApplyLifecycleEffectApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "BuildTerminalPayloadApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "DecodeAffectedCountApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "DecodeScalarApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "HydrateManyApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "HydrateOneApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "PopulateCacheApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/runtime_application.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA001",
+        "message": "RuntimeApplication: required target contract is missing from l2070_batching/runtime_application.py",
+        "severity": "hard-fail"
+      },
+      {
+        "path": "l2070_batching/step.py",
+        "line": 1,
+        "column": null,
+        "code": "SPTA002",
+        "message": "ServerPlanStep.planning_contract: semantic producers must expose one typed planning contract",
+        "severity": "hard-fail"
+      }
+    ]
+  }
+}

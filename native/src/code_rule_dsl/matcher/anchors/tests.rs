@@ -11,7 +11,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 /// Compiles a rule with no `utils` in scope.
-fn compile_rule(
+pub(super) fn compile_rule(
     rule: &Value,
     language: GrammarDialect,
     path: &str,
@@ -91,6 +91,8 @@ where
     for<'a> D::Node<'a>: AnchorNode<'a>,
 {
     let index = FileAnchorIndex::build(root, &[plan], max_nodes, interrupted);
+    #[cfg(feature = "code-rule-profile")]
+    let _resident_bytes = index.estimated_bytes();
     let selection = index.select(plan);
     let all = matches!(selection, Selection::All);
     let ordinals = match &selection {
@@ -156,6 +158,17 @@ fn compare_matchers(
             selected(&native, matcher, &plan, usize::MAX, || false);
         let (tape_found, _, tape_visited, tape_complete, _) =
             selected(&tape, matcher, &plan, usize::MAX, || false);
+        let sql_index = sql::FileAnchorIndex::build(&tape, &[&plan], usize::MAX, || false);
+        assert!(sql_index.complete(), "SQL index {language:?} {rule}");
+        let sql_roots = match sql_index.select(&plan) {
+            Selection::Roots(roots) => roots.into_owned(),
+            Selection::All => (0..image.primary.node_count()).collect(),
+        };
+        let sql_found: Vec<_> = sql_roots
+            .iter()
+            .filter_map(|&pre| matched(sql_index.node(pre), matcher))
+            .collect();
+        assert_eq!(sql_found, expected, "SQL selection {language:?} {rule}");
         assert!(native_complete && tape_complete, "{language:?} {rule}");
         assert_eq!(
             native_visited,
@@ -1061,6 +1074,81 @@ fn utility_plans_select_as_precisely_as_the_rule_written_inline() {
             "utility {utility} with {utils}"
         );
     }
+}
+
+#[test]
+fn field_plans_select_the_actual_edge_including_through_utilities() {
+    let source = "const target = other; const other = target; target(other); other(target);\n";
+    let root = AstGrep::doc(StrDoc::new(source, GrammarDialect::TypeScript));
+    for (rule, expected) in [
+        (
+            json!({ "kind": "variable_declarator", "has": {
+            "field": "name", "kind": "identifier", "regex": "^target$" } }),
+            1,
+        ),
+        (
+            json!({ "kind": "identifier", "regex": "^target$", "inside": {
+            "field": "name", "kind": "variable_declarator" } }),
+            1,
+        ),
+        (
+            json!({ "kind": "call_expression", "has": {
+            "field": "function", "kind": "identifier", "regex": "^target$" } }),
+            1,
+        ),
+        (
+            json!({ "kind": "call_expression", "has": {
+            "field": "arguments", "stopBy": "end", "kind": "identifier", "regex": "^target$" } }),
+            1,
+        ),
+        (
+            json!({ "kind": "identifier", "regex": "^target$", "inside": {
+            "field": "arguments", "stopBy": "end", "kind": "call_expression" } }),
+            1,
+        ),
+    ] {
+        for ast in [
+            json!({ "rule": rule }),
+            json!({ "rule": { "matches": "u" }, "utils": { "u": rule } }),
+        ] {
+            let compiled = compiled(ast.clone());
+            let grammar = &grammar_matchers(&compiled)[0];
+            let (found, roots, _, complete, _) = selected(
+                &root,
+                &grammar.matcher,
+                &grammar.anchors,
+                usize::MAX,
+                || false,
+            );
+            assert!(complete);
+            assert_eq!(found, actual(&root, &grammar.matcher), "{ast}");
+            assert_eq!(roots, expected, "{ast}");
+        }
+    }
+}
+
+#[test]
+fn field_plans_preserve_nested_edges_stops_negation_and_repeated_fields() {
+    compare(
+        "if (target) { f(target); if (other) { target; } }\n",
+        GrammarDialect::TypeScript,
+        &[
+            json!({ "kind": "identifier", "inside": { "field": "condition", "kind": "if_statement", "stopBy": "end" } }),
+            json!({ "kind": "identifier", "inside": { "field": "consequence", "kind": "if_statement", "stopBy": "end" } }),
+            json!({ "kind": "identifier", "inside": { "field": "consequence", "kind": "if_statement", "stopBy": { "kind": "statement_block" } } }),
+            json!({ "kind": "if_statement", "has": { "field": "consequence", "kind": "identifier", "stopBy": "end" } }),
+            json!({ "not": { "has": { "field": "name", "kind": "identifier" } } }),
+            json!({ "kind": "if_statement", "has": { "field": "consequence", "kind": "identifier", "stopBy": { "kind": "statement_block" } } }),
+        ],
+    );
+    compare(
+        "a = b = c\n",
+        GrammarDialect::Python,
+        &[
+            json!({ "kind": "identifier", "inside": { "field": "left", "kind": "assignment", "stopBy": "end" } }),
+            json!({ "kind": "assignment", "has": { "field": "right", "kind": "identifier", "stopBy": "end" } }),
+        ],
+    );
 }
 
 /// A utility's plan is inlined once per plan and reused by every diamond path that reaches it.

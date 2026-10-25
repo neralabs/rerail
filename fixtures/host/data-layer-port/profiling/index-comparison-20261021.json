@@ -1,0 +1,472 @@
+{
+  "format": "rerail.index-comparison-evidence/v1",
+  "baseCommit": "5616076ad60127d6ac3df0fbf60eff9f7a523ca0",
+  "protocol": {
+    "trialsPerVersionWorkload": 3,
+    "execution": "Fresh processes, serial trials; order reversed in round two and rotated in round three",
+    "metrics": "Median cold process user+system CPU; median per-process peak RSS. Compilation CPU excluded.",
+    "settings": {
+      "deadlineSeconds": 115,
+      "killAfterSeconds": 112,
+      "trace": "off",
+      "external": "none",
+      "sqlProfile": false,
+      "memoryCensus": false,
+      "batchFiles": 32,
+      "allocator": "system malloc shim"
+    },
+    "parity": "Every trial passed exact workload and policy fingerprint guards, completed successfully, and had no parity, engine, or incremental failures."
+  },
+  "versions": {
+    "rust": {
+      "binaryPath": ".rerail/profiles/anchor-execution-20261021/final.node",
+      "sha256": "52692a151eea8bab2add9c1c3aeb8400bf0cf1e59e743f5ffdf176265b6f945b"
+    },
+    "sql-partition": {
+      "binaryPath": ".rerail/profiles/sql-ast-index-20261021/verified.node",
+      "sha256": "ba2d9b97390fdf3c3b2838caefadb07a301575b0655beabbcfbe8c00891fb61a"
+    },
+    "sql-corpus": {
+      "binaryPath": ".rerail/profiles/corpus-index-20261021/verified.node",
+      "sha256": "b8347b9f50101a7a9c2a089840c9eb806365d020e5509405c8193734bbea7f46"
+    },
+    "sql-batch": {
+      "binaryPath": ".rerail/profiles/batch-candidates-20261021/verified-final.node",
+      "sha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646"
+    }
+  },
+  "workloads": {
+    "positive-two": {
+      "recordingPath": ".rerail/profiles/batch-candidates-20261021/positive-two-recording.json",
+      "recordingSha256": "32a5da76de8f6ee733f81b541aa30842cf63e5244e8c41307f91cb4c2648e5a6"
+    },
+    "quality-five": {
+      "recordingPath": ".rerail/profiles/corpus-index-20261021/final-quality-five/selected-recording.json",
+      "recordingSha256": "f4938c2af4b5d76eb16e736d1cb4f14fcb0a42ff7e9739be8d9ddbb6ac8b43ee"
+    }
+  },
+  "summary": {
+    "positive-two": {
+      "versions": {
+        "rust": {
+          "medianCpuSeconds": 0.46157,
+          "medianPeakRssBytes": 319946752,
+          "medianSelectionCpuSeconds": 0.033621632,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-1/positive-two/rust/profile.json",
+              "cpuSeconds": 0.46157,
+              "peakRssBytes": 318996480,
+              "selectionCpuSeconds": 0.034280214,
+              "nativeSha256": "52692a151eea8bab2add9c1c3aeb8400bf0cf1e59e743f5ffdf176265b6f945b",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-2/positive-two/rust/profile.json",
+              "cpuSeconds": 0.424315,
+              "peakRssBytes": 346095616,
+              "selectionCpuSeconds": 0.033621632,
+              "nativeSha256": "52692a151eea8bab2add9c1c3aeb8400bf0cf1e59e743f5ffdf176265b6f945b",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-3/positive-two/rust/profile.json",
+              "cpuSeconds": 0.47204900000000005,
+              "peakRssBytes": 319946752,
+              "selectionCpuSeconds": 0.031908495,
+              "nativeSha256": "52692a151eea8bab2add9c1c3aeb8400bf0cf1e59e743f5ffdf176265b6f945b",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            }
+          ]
+        },
+        "sql-partition": {
+          "medianCpuSeconds": 2.338625,
+          "medianPeakRssBytes": 317784064,
+          "medianSelectionCpuSeconds": 1.862634633,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-1/positive-two/sql-partition/profile.json",
+              "cpuSeconds": 2.338625,
+              "peakRssBytes": 317882368,
+              "selectionCpuSeconds": 1.862634633,
+              "nativeSha256": "ba2d9b97390fdf3c3b2838caefadb07a301575b0655beabbcfbe8c00891fb61a",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-2/positive-two/sql-partition/profile.json",
+              "cpuSeconds": 2.276795,
+              "peakRssBytes": 317784064,
+              "selectionCpuSeconds": 1.825799487,
+              "nativeSha256": "ba2d9b97390fdf3c3b2838caefadb07a301575b0655beabbcfbe8c00891fb61a",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-3/positive-two/sql-partition/profile.json",
+              "cpuSeconds": 2.3621719999999997,
+              "peakRssBytes": 312442880,
+              "selectionCpuSeconds": 1.877272044,
+              "nativeSha256": "ba2d9b97390fdf3c3b2838caefadb07a301575b0655beabbcfbe8c00891fb61a",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            }
+          ]
+        },
+        "sql-corpus": {
+          "medianCpuSeconds": 2.6328320000000005,
+          "medianPeakRssBytes": 315850752,
+          "medianSelectionCpuSeconds": 2.228149376,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-1/positive-two/sql-corpus/profile.json",
+              "cpuSeconds": 2.6328320000000005,
+              "peakRssBytes": 315850752,
+              "selectionCpuSeconds": 2.228987414,
+              "nativeSha256": "b8347b9f50101a7a9c2a089840c9eb806365d020e5509405c8193734bbea7f46",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-2/positive-two/sql-corpus/profile.json",
+              "cpuSeconds": 2.6512459999999995,
+              "peakRssBytes": 318898176,
+              "selectionCpuSeconds": 2.228149376,
+              "nativeSha256": "b8347b9f50101a7a9c2a089840c9eb806365d020e5509405c8193734bbea7f46",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-3/positive-two/sql-corpus/profile.json",
+              "cpuSeconds": 2.5816079999999997,
+              "peakRssBytes": 315342848,
+              "selectionCpuSeconds": 2.20288887,
+              "nativeSha256": "b8347b9f50101a7a9c2a089840c9eb806365d020e5509405c8193734bbea7f46",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            }
+          ]
+        },
+        "sql-batch": {
+          "medianCpuSeconds": 2.136411,
+          "medianPeakRssBytes": 418791424,
+          "medianSelectionCpuSeconds": 1.755933795,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-1/positive-two/sql-batch/profile.json",
+              "cpuSeconds": 2.1165,
+              "peakRssBytes": 413843456,
+              "selectionCpuSeconds": 1.721400536,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-2/positive-two/sql-batch/profile.json",
+              "cpuSeconds": 2.218453,
+              "peakRssBytes": 418791424,
+              "selectionCpuSeconds": 1.804429049,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-3/positive-two/sql-batch/profile.json",
+              "cpuSeconds": 2.136411,
+              "peakRssBytes": 433422336,
+              "selectionCpuSeconds": 1.755933795,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "12cf7118ca61b5093059162cdfe149504ee1d676eb26f50a0301596a662fb3e8",
+              "policyDigests": {
+                "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+                "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+              },
+              "expected": 61,
+              "actual": 61
+            }
+          ]
+        }
+      },
+      "currentOverUnder": {
+        "rust": {
+          "cpuPercent": 362.85742140953704,
+          "rssPercent": 30.894100778369516
+        },
+        "sql-partition": {
+          "cpuPercent": -8.64670479448394,
+          "rssPercent": 31.78490410393895
+        },
+        "sql-corpus": {
+          "cpuPercent": -18.855019993679832,
+          "rssPercent": 32.59155514057475
+        }
+      }
+    },
+    "quality-five": {
+      "versions": {
+        "rust": {
+          "medianCpuSeconds": 2.647783,
+          "medianPeakRssBytes": 521519104,
+          "medianSelectionCpuSeconds": 0.506706833,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-1/quality-five/rust/profile.json",
+              "cpuSeconds": 2.670224,
+              "peakRssBytes": 525828096,
+              "selectionCpuSeconds": 0.500152789,
+              "nativeSha256": "52692a151eea8bab2add9c1c3aeb8400bf0cf1e59e743f5ffdf176265b6f945b",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-2/quality-five/rust/profile.json",
+              "cpuSeconds": 2.6469780000000003,
+              "peakRssBytes": 521519104,
+              "selectionCpuSeconds": 0.507494503,
+              "nativeSha256": "52692a151eea8bab2add9c1c3aeb8400bf0cf1e59e743f5ffdf176265b6f945b",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-3/quality-five/rust/profile.json",
+              "cpuSeconds": 2.647783,
+              "peakRssBytes": 487112704,
+              "selectionCpuSeconds": 0.506706833,
+              "nativeSha256": "52692a151eea8bab2add9c1c3aeb8400bf0cf1e59e743f5ffdf176265b6f945b",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            }
+          ]
+        },
+        "sql-partition": {
+          "medianCpuSeconds": 3.19636,
+          "medianPeakRssBytes": 520372224,
+          "medianSelectionCpuSeconds": 0.395512542,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-1/quality-five/sql-partition/profile.json",
+              "cpuSeconds": 3.2388600000000003,
+              "peakRssBytes": 514654208,
+              "selectionCpuSeconds": 0.40212045,
+              "nativeSha256": "ba2d9b97390fdf3c3b2838caefadb07a301575b0655beabbcfbe8c00891fb61a",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-2/quality-five/sql-partition/profile.json",
+              "cpuSeconds": 3.159161,
+              "peakRssBytes": 521175040,
+              "selectionCpuSeconds": 0.395512542,
+              "nativeSha256": "ba2d9b97390fdf3c3b2838caefadb07a301575b0655beabbcfbe8c00891fb61a",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-3/quality-five/sql-partition/profile.json",
+              "cpuSeconds": 3.19636,
+              "peakRssBytes": 520372224,
+              "selectionCpuSeconds": 0.395439082,
+              "nativeSha256": "ba2d9b97390fdf3c3b2838caefadb07a301575b0655beabbcfbe8c00891fb61a",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            }
+          ]
+        },
+        "sql-corpus": {
+          "medianCpuSeconds": 3.0253550000000002,
+          "medianPeakRssBytes": 516587520,
+          "medianSelectionCpuSeconds": 0.410593253,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-1/quality-five/sql-corpus/profile.json",
+              "cpuSeconds": 3.037361,
+              "peakRssBytes": 504659968,
+              "selectionCpuSeconds": 0.410593253,
+              "nativeSha256": "b8347b9f50101a7a9c2a089840c9eb806365d020e5509405c8193734bbea7f46",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-2/quality-five/sql-corpus/profile.json",
+              "cpuSeconds": 3.0253550000000002,
+              "peakRssBytes": 516587520,
+              "selectionCpuSeconds": 0.39635196,
+              "nativeSha256": "b8347b9f50101a7a9c2a089840c9eb806365d020e5509405c8193734bbea7f46",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-3/quality-five/sql-corpus/profile.json",
+              "cpuSeconds": 3.0067729999999995,
+              "peakRssBytes": 517144576,
+              "selectionCpuSeconds": 0.415982911,
+              "nativeSha256": "b8347b9f50101a7a9c2a089840c9eb806365d020e5509405c8193734bbea7f46",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            }
+          ]
+        },
+        "sql-batch": {
+          "medianCpuSeconds": 2.9562220000000003,
+          "medianPeakRssBytes": 643874816,
+          "medianSelectionCpuSeconds": 0.353628044,
+          "trials": [
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-1/quality-five/sql-batch/profile.json",
+              "cpuSeconds": 2.9562220000000003,
+              "peakRssBytes": 644055040,
+              "selectionCpuSeconds": 0.353628044,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-2/quality-five/sql-batch/profile.json",
+              "cpuSeconds": 2.898121,
+              "peakRssBytes": 643760128,
+              "selectionCpuSeconds": 0.355899161,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            },
+            {
+              "path": ".rerail/profiles/index-comparison-20261021/round-3/quality-five/sql-batch/profile.json",
+              "cpuSeconds": 3.032624,
+              "peakRssBytes": 643874816,
+              "selectionCpuSeconds": 0.350509587,
+              "nativeSha256": "03125d5d0097443a55f2825f65074439951f2f295b12f5d07dde020e44ce6646",
+              "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+              "policyDigests": {
+                "data-layer-serverplan-quality": "sha256:c7abdf92b8091203c20c7be234f5acba40254b59187172e7d5acdab847759d5e"
+              },
+              "expected": 0,
+              "actual": 0
+            }
+          ]
+        }
+      },
+      "currentOverUnder": {
+        "rust": {
+          "cpuPercent": 11.648953105296034,
+          "rssPercent": 23.46140554805065
+        },
+        "sql-partition": {
+          "cpuPercent": -7.512858376403142,
+          "rssPercent": 23.733509650199935
+        },
+        "sql-corpus": {
+          "cpuPercent": -2.2851202586142705,
+          "rssPercent": 24.64002537266097
+        }
+      }
+    }
+  },
+  "overUnderFormula": "100 * (current median / reference median - 1); positive means current uses more CPU or RSS",
+  "limits": [
+    "The Rust binary retains its earlier SQLite page-cache compile option. Comparisons cover complete implementations, not isolated data structures.",
+    "Three trials on a shared host do not establish statistical significance for small differences.",
+    "These are bounded subsets, not a full-repository comparison. No completed current ten-rule result is available under the two-minute cap."
+  ]
+}

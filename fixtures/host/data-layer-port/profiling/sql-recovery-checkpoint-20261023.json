@@ -1,0 +1,1097 @@
+{
+  "format": "rerail.sql-recovery/v1",
+  "date": "2026-10-23",
+  "status": "partial-recovery; complete-job gate still fails",
+  "cap": 100,
+  "engineSubmitted": 10443,
+  "sqliteInternal": 994,
+  "totalObserved": 11437,
+  "coverageProblems": [],
+  "enginePhases": {
+    "connectionSetup": 904,
+    "filePublication": 36,
+    "catalogPublication": 12,
+    "candidatePreparation": 5176,
+    "cleanup": 2534,
+    "relationalEvaluation": 1781
+  },
+  "earlierTotalObserved": 24159,
+  "totalCountReductionPercent": 52.659464381803886,
+  "controls": {
+    "sql-before": {
+      "nativeSha256": "dab45422f19898d582f330c38fd402aadffc0bd4edb8d916827d85cd63c90419",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 3235.52,
+          "systemMs": 205.482,
+          "cpuMs": 3441.002,
+          "wallMs": 9468.081750000001,
+          "maxRSSRaw": 480512,
+          "memory": {
+            "rss": 330834712,
+            "heapTotal": 109068288,
+            "heapUsed": 40674080,
+            "external": 52553783,
+            "arrayBuffers": 44927763
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 3286.799,
+          "systemMs": 175.263,
+          "cpuMs": 3462.062,
+          "wallMs": 6390.813625,
+          "maxRSSRaw": 436496,
+          "memory": {
+            "rss": 252044848,
+            "heapTotal": 105807872,
+            "heapUsed": 34310392,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 3206.127,
+          "systemMs": 173.729,
+          "cpuMs": 3379.856,
+          "wallMs": 9883.324292,
+          "maxRSSRaw": 476144,
+          "memory": {
+            "rss": 297461320,
+            "heapTotal": 106332160,
+            "heapUsed": 34161472,
+            "external": 47618265,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 3441.002,
+      "medianMaxRSSRaw": 476144
+    },
+    "recovered": {
+      "nativeSha256": "f52ffe46ee05e8728cc1b0917e9c5f108b9f7b74026d2b8f825af87382d4b27b",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2463.616,
+          "systemMs": 118.081,
+          "cpuMs": 2581.697,
+          "wallMs": 9140.967708,
+          "maxRSSRaw": 363488,
+          "memory": {
+            "rss": 318088944,
+            "heapTotal": 110592000,
+            "heapUsed": 67710752,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2446.388,
+          "systemMs": 121.004,
+          "cpuMs": 2567.392,
+          "wallMs": 5111.877417,
+          "maxRSSRaw": 415984,
+          "memory": {
+            "rss": 371877424,
+            "heapTotal": 105545728,
+            "heapUsed": 34192048,
+            "external": 47782937,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2366.586,
+          "systemMs": 122.692,
+          "cpuMs": 2489.278,
+          "wallMs": 6505.134208,
+          "maxRSSRaw": 370304,
+          "memory": {
+            "rss": 239527832,
+            "heapTotal": 105791488,
+            "heapUsed": 34211984,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2567.392,
+      "medianMaxRSSRaw": 370304
+    }
+  },
+  "cpuReductionPercent": 25.388244470651287,
+  "controlScope": "Same original positive and clean state-tripwire observations, snapshot plus workspace. Fresh processes, four workers, matched opt1/dependencies3/LTO-off/256-CGU addons, same system allocator shim. Detailed span and SQL tracing disabled; aggregate profiling timers remain compiled. CPU includes replay and compilation, excludes initial JS module imports. Shared host; raw CPU ranges retained. No whole-repository extrapolation.",
+  "oldRustReference": "Excluded: cannot compile the current policy reachability root column names. No timing ratio claimed.",
+  "nativeCases": 120,
+  "nativeRules": 60,
+  "positiveCases": 60,
+  "cleanCases": 60,
+  "hostGuardCases": 0,
+  "sourceCases": [
+    {
+      "check": "admin_async_purity",
+      "positive": true,
+      "test": "scripts/tests/test_lint_admin_async_purity.py::test_collect_violations_deeply_nested",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "admin_async_purity",
+      "positive": false,
+      "test": "scripts/tests/test_lint_admin_async_purity.py::test_collect_violations_triple_single_quote_also_suppresses",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "async_executor",
+      "positive": true,
+      "test": "scripts/tests/test_lint_async_executor.py::test_check_file_file_with_only_executor_call",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "async_executor",
+      "positive": false,
+      "test": "scripts/tests/test_lint_async_executor.py::test_main_no_violations_exits_zero",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "async_patterns",
+      "positive": true,
+      "test": "probe:async_patterns:internal-io:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-probes.json",
+      "sourceSha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+    },
+    {
+      "check": "async_patterns",
+      "positive": false,
+      "test": "probe:async_patterns:abstract-fallback:plugin",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-probes.json",
+      "sourceSha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+    },
+    {
+      "check": "async_sync_boundary",
+      "positive": true,
+      "test": "probe:async_sync_boundary:positive:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-probes.json",
+      "sourceSha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+    },
+    {
+      "check": "async_sync_boundary",
+      "positive": false,
+      "test": "probe:async_sync_boundary:clean:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-probes.json",
+      "sourceSha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+    },
+    {
+      "check": "async_sync_delegation",
+      "positive": true,
+      "test": "scripts/tests/test_lint_async_sync_delegation.py::test_analyze_source_only_async_function_no_await_does_not_raise",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-recording.json",
+      "sourceSha256": "4b8a3a2eb62e22d665bd41430958f41d4aa78c00b3f49f2faec080aaf9436f0a"
+    },
+    {
+      "check": "async_sync_delegation",
+      "positive": false,
+      "test": "batch-05:docstring-only-async",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "backend_coupling",
+      "positive": true,
+      "test": "scripts/tests/test_lint_backend_coupling.py::test_plain_import_statement_is_also_detected",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-recording.json",
+      "sourceSha256": "4b8a3a2eb62e22d665bd41430958f41d4aa78c00b3f49f2faec080aaf9436f0a"
+    },
+    {
+      "check": "backend_coupling",
+      "positive": false,
+      "test": "scripts/tests/test_lint_backend_coupling.py::test_impl_common_test_entity_files_are_skipped",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-recording.json",
+      "sourceSha256": "4b8a3a2eb62e22d665bd41430958f41d4aa78c00b3f49f2faec080aaf9436f0a"
+    },
+    {
+      "check": "backend_type_strings",
+      "positive": true,
+      "test": "scripts/tests/test_lint_backend_type_strings.py::test_check_file_column_values_1_indexed",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "backend_type_strings",
+      "positive": false,
+      "test": "scripts/tests/test_lint_backend_type_strings.py::test_comment_lines_are_skipped",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "classvar_check",
+      "positive": true,
+      "test": "probe:classvar_check:positive:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-probes.json",
+      "sourceSha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+    },
+    {
+      "check": "classvar_check",
+      "positive": false,
+      "test": "probe:classvar_check:chain-other-operator:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-probes.json",
+      "sourceSha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+    },
+    {
+      "check": "conn_or_txn_union",
+      "positive": true,
+      "test": "probe:conn_or_txn_union:positive:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-probes.json",
+      "sourceSha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+    },
+    {
+      "check": "conn_or_txn_union",
+      "positive": false,
+      "test": "probe:conn_or_txn_union:clean:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-probes.json",
+      "sourceSha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+    },
+    {
+      "check": "connection_caches",
+      "positive": true,
+      "test": "probe:connection_caches:production-trigger:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "connection_caches",
+      "positive": false,
+      "test": "scripts/tests/test_lint_connection_caches.py::test_find_violations_comment_line_suppresses_match",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-recording.json",
+      "sourceSha256": "6c9a169ca763b79501bda4bce33a056c634aae5af4b6901db8d69fbe62b94328"
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "positive": true,
+      "test": "batch-05:alias-29",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "positive": false,
+      "test": "batch-05:alias-30",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "positive": true,
+      "test": "batch-05:facade-28",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "positive": false,
+      "test": "scripts/tests/test_lint_data_layer_facade_purity.py::test_lint_targets_scans_directory",
+      "call": 2,
+      "source": "fixtures/host/data-layer-port/batch-05-recording.json",
+      "sourceSha256": "4b8a3a2eb62e22d665bd41430958f41d4aa78c00b3f49f2faec080aaf9436f0a"
+    },
+    {
+      "check": "dynamic_module_loading",
+      "positive": true,
+      "test": "scripts/tests/test_lint_dynamic_module_loading.py::test_scan_file_report_captures_stripped_line",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "dynamic_module_loading",
+      "positive": false,
+      "test": "scripts/tests/test_lint_dynamic_module_loading.py::test_scan_file_ignores_file_with_only_benign_content",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "error_handling",
+      "positive": true,
+      "test": "probe:error_handling:admin:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "error_handling",
+      "positive": false,
+      "test": "scripts/tests/test_lint_error_handling.py::test_allows_commit_outside_scanned_admin_owners",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-recording.json",
+      "sourceSha256": "6c9a169ca763b79501bda4bce33a056c634aae5af4b6901db8d69fbe62b94328"
+    },
+    {
+      "check": "execution_authority_bypass",
+      "positive": true,
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_legacy_boundary_contextvar_mutation",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "execution_authority_bypass",
+      "positive": false,
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_allows_signed_explicit_plan_execution_scope_callsite",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "forwardref",
+      "positive": true,
+      "test": "probe:forwardref:positive-callable:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-probes.json",
+      "sourceSha256": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a"
+    },
+    {
+      "check": "forwardref",
+      "positive": false,
+      "test": "scripts/tests/test_lint_forwardref.py::test_clean_file_has_no_findings",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "grammar_allowlist_burndown",
+      "positive": true,
+      "test": "probe:grammar_allowlist_burndown:nonempty:plugin",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "grammar_allowlist_burndown",
+      "positive": false,
+      "test": "probe:grammar_allowlist_burndown:empty:plugin",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "grammar_callable_constructors",
+      "positive": true,
+      "test": "probe:grammar_callable_constructors:assignment:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "grammar_callable_constructors",
+      "positive": false,
+      "test": "probe:grammar_callable_constructors:clean:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "grammar_fragment_usage",
+      "positive": true,
+      "test": "scripts/tests/test_lint_grammar_fragment_usage.py::test_flags_deleted_deferred_renderable_name",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-recording.json",
+      "sourceSha256": "ba3510d463199852460b048afbaccd91555f8c319f37dac2f88ba989e145cdab"
+    },
+    {
+      "check": "grammar_fragment_usage",
+      "positive": false,
+      "test": "probe:grammar_fragment_usage:safe:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "grammar_render_methods",
+      "positive": true,
+      "test": "scripts/tests/test_lint_grammar_render_methods.py::test_render_method_visitor_fstring_in_render_is_flagged",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-recording.json",
+      "sourceSha256": "ba3510d463199852460b048afbaccd91555f8c319f37dac2f88ba989e145cdab"
+    },
+    {
+      "check": "grammar_render_methods",
+      "positive": false,
+      "test": "scripts/tests/test_lint_grammar_render_methods.py::test_scan_file_non_grammar_module_clean",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-recording.json",
+      "sourceSha256": "ba3510d463199852460b048afbaccd91555f8c319f37dac2f88ba989e145cdab"
+    },
+    {
+      "check": "grammar_str_params",
+      "positive": true,
+      "test": "probe:grammar_str_params:inherited:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "grammar_str_params",
+      "positive": false,
+      "test": "scripts/tests/test_lint_grammar_str_params.py::test_ignores_non_grammar_class",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-recording.json",
+      "sourceSha256": "ba3510d463199852460b048afbaccd91555f8c319f37dac2f88ba989e145cdab"
+    },
+    {
+      "check": "hasattr_async",
+      "positive": true,
+      "test": "scripts/tests/test_lint_hasattr_async.py::test_main_aggregates_across_multiple_files",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "hasattr_async",
+      "positive": false,
+      "test": "scripts/tests/test_lint_hasattr_async.py::test_main_no_issues_returns_zero",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "imperative_private_functions",
+      "positive": true,
+      "test": "batch-05:signature",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "imperative_private_functions",
+      "positive": false,
+      "test": "batch-05:lazy-clean",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "impl_direct_execution",
+      "positive": true,
+      "test": "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_strips_line_whitespace",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "impl_direct_execution",
+      "positive": false,
+      "test": "scripts/tests/test_lint_impl_direct_execution.py::test_scan_directory_empty_when_all_allowed",
+      "call": 2,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "internal_dead_code",
+      "positive": true,
+      "test": "batch-05:unused-function",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "internal_dead_code",
+      "positive": false,
+      "test": "batch-05:exported-function",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "layer_violations",
+      "positive": true,
+      "test": "batch-05:layer-3",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "layer_violations",
+      "positive": false,
+      "test": "batch-05:api/l2050_transaction/tests/a.py",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "lazy_result_usage",
+      "positive": true,
+      "test": "probe:lazy_result_usage:positive:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "lazy_result_usage",
+      "positive": false,
+      "test": "probe:lazy_result_usage:protocol:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "legacy_execution_surfaces",
+      "positive": true,
+      "test": "scripts/tests/test_lint_legacy_execution_surfaces.py::test_scan_file_content_leg030_message_names_wrapper",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "legacy_execution_surfaces",
+      "positive": false,
+      "test": "scripts/tests/test_lint_legacy_execution_surfaces.py::test_filecollector_raw_cursor_skipped_when_receiver_unrelated",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "missing_async_pairs",
+      "positive": true,
+      "test": "scripts/tests/test_lint_missing_async_pairs.py::test_detects_missing_async_pair",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-recording.json",
+      "sourceSha256": "4b8a3a2eb62e22d665bd41430958f41d4aa78c00b3f49f2faec080aaf9436f0a"
+    },
+    {
+      "check": "missing_async_pairs",
+      "positive": false,
+      "test": "batch-05:non-execution-clean",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "module_level_caches",
+      "positive": true,
+      "test": "probe:module_level_caches:allowlisted:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "module_level_caches",
+      "positive": false,
+      "test": "probe:module_level_caches:allowlisted:plugin",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "no_api_root_imports",
+      "positive": true,
+      "test": "scripts/tests/test_lint_no_api_root_imports.py::test_flags_root_api_import_in_documentation_literal",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "no_api_root_imports",
+      "positive": false,
+      "test": "scripts/tests/test_lint_no_api_root_imports.py::test_allows_explicit_layer_import",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "no_blanket_grammar_bypass",
+      "positive": true,
+      "test": "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_nested_directory_scan",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "no_blanket_grammar_bypass",
+      "positive": false,
+      "test": "scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_syntax_error_in_sql_connection_is_ignored",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "no_source_inspection",
+      "positive": true,
+      "test": "scripts/tests/test_lint_no_source_inspection.py::test_find_violations_flags_from_inspect_import_getsource",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "no_source_inspection",
+      "positive": false,
+      "test": "scripts/tests/test_lint_no_source_inspection.py::test_main_clean_returns_zero",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "permission_error",
+      "positive": true,
+      "test": "scripts/tests/test_lint_permission_error.py::test_flags_builtin_permission_error",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "permission_error",
+      "positive": false,
+      "test": "scripts/tests/test_lint_permission_error.py::test_allows_other_exception",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "plan_scope_ownership",
+      "positive": true,
+      "test": "probe:plan_scope_ownership:store:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "plan_scope_ownership",
+      "positive": false,
+      "test": "probe:plan_scope_ownership:read-is-not-store:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "plan_scope_side_effects",
+      "positive": true,
+      "test": "probe:plan_scope_side_effects:raw:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "plan_scope_side_effects",
+      "positive": false,
+      "test": "probe:plan_scope_side_effects:clean:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "public_api_triples",
+      "positive": true,
+      "test": "batch-05-relational:all-scope-nonexecution",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-relational-probes.json",
+      "sourceSha256": "002c7960b067af0c7d9bbb849d2068979e24d6e57fee87643b049b79513858c4"
+    },
+    {
+      "check": "public_api_triples",
+      "positive": false,
+      "test": "batch-05:unexported-clean",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "raw_execute_regression",
+      "positive": true,
+      "test": "scripts/tests/test_lint_raw_execute_regression.py::test_flags_mixed_helper_text",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "raw_execute_regression",
+      "positive": false,
+      "test": "scripts/tests/test_lint_raw_execute_regression.py::test_allows_query_raw_materializer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "regex_sql_parsing",
+      "positive": true,
+      "test": "probe:regex_sql_parsing:parameter:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "regex_sql_parsing",
+      "positive": false,
+      "test": "probe:regex_sql_parsing:no-constant:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "removed_compat_surfaces",
+      "positive": true,
+      "test": "scripts/tests/test_lint_removed_compat_surfaces.py::test_removed_timer_runtime_surface_is_rejected",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "removed_compat_surfaces",
+      "positive": false,
+      "test": "scripts/tests/test_lint_removed_compat_surfaces.py::test_unrelated_symbols_are_accepted",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "render_fstrings",
+      "positive": true,
+      "test": "probe:render_fstrings:async:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "render_fstrings",
+      "positive": false,
+      "test": "probe:render_fstrings:outside:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "render_raw_strings",
+      "positive": true,
+      "test": "probe:render_raw_strings:debug-expression:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "render_raw_strings",
+      "positive": false,
+      "test": "probe:render_raw_strings:no-constant:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "rust_sql_grammar_boundary",
+      "positive": true,
+      "test": "probe:rust_sql_grammar_boundary:comment:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "rust_sql_grammar_boundary",
+      "positive": false,
+      "test": "probe:rust_sql_grammar_boundary:clean:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-probes.json",
+      "sourceSha256": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42"
+    },
+    {
+      "check": "serverplan_bypass",
+      "positive": true,
+      "test": "scripts/tests/test_lint_serverplan_bypass.py::test_flags_each_direct_bypass_method[_execute_raw_sql]",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_bypass",
+      "positive": false,
+      "test": "scripts/tests/test_lint_serverplan_bypass.py::test_allows_typed_grammar_execution",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_dispatch_architecture",
+      "positive": true,
+      "test": "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_base_server_plan_executor_provenance_cannot_escape_closed_contract[subscript access]",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_dispatch_architecture",
+      "positive": false,
+      "test": "dispatch-list-annotation",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-probes.json",
+      "sourceSha256": "3929777c02349b0dc43ac737dda73e41fb63b425f1704f004767b4f22885dbad"
+    },
+    {
+      "check": "serverplan_grammar_surface",
+      "positive": true,
+      "test": "scripts/tests/test_lint_serverplan_grammar_surface.py::test_flags_forbidden_ddl_escape_import",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "serverplan_grammar_surface",
+      "positive": false,
+      "test": "scripts/tests/test_lint_serverplan_grammar_surface.py::test_allows_grammar_step_module_imports",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "serverplan_name_inference",
+      "positive": true,
+      "test": "scripts/tests/test_lint_serverplan_name_inference.py::test_rejects_row_key_set_as_a_semantic_type_tag",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "serverplan_name_inference",
+      "positive": false,
+      "test": "scripts/tests/test_lint_serverplan_name_inference.py::test_accepts_locked_column_lookup_and_explicit_reference",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "serverplan_quality",
+      "positive": true,
+      "test": "scripts/tests/test_lint_serverplan_quality.py::test_graphql_relationship_spec_class_is_spq033",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_quality",
+      "positive": false,
+      "test": "scripts/tests/test_lint_serverplan_quality.py::test_global_batch_rules_survive_fact_extraction_and_cache[value = Category.ORDERED_SEMANTIC-SPQ-053]",
+      "call": 2,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_state_tripwires",
+      "positive": true,
+      "test": "scripts/tests/test_lint_serverplan_state_tripwires.py::test_rejects_lazy_result_private_step_ref_access",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_state_tripwires",
+      "positive": false,
+      "test": "scripts/tests/test_lint_serverplan_state_tripwires.py::test_collector_uses_generated_return_kinds_without_recomputing_project_map",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_steps",
+      "positive": true,
+      "test": "scripts/tests/test_lint_serverplan_steps.py::test_step029_rejects_runtime_builder_kind_callback_member",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_steps",
+      "positive": false,
+      "test": "scripts/tests/test_lint_serverplan_steps.py::test_step034_ignores_non_step_classes",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_target_architecture",
+      "positive": true,
+      "test": "scripts/tests/test_lint_serverplan_target_architecture.py::test_target_contract_dependency_direction_is_enforced",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "serverplan_target_architecture",
+      "positive": false,
+      "test": "scripts/tests/test_lint_serverplan_target_architecture.py::test_late_codegen_may_name_backend_specific_transport",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "check": "sql_grammar_escape_hatches",
+      "positive": true,
+      "test": "scripts/tests/test_lint_sql_grammar_escape_hatches.py::test_scan_usages_records_line_numbers",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-recording.json",
+      "sourceSha256": "ba3510d463199852460b048afbaccd91555f8c319f37dac2f88ba989e145cdab"
+    },
+    {
+      "check": "sql_grammar_escape_hatches",
+      "positive": false,
+      "test": "scripts/tests/test_lint_sql_grammar_escape_hatches.py::test_scan_usages_ignores_bare_mention",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-04-recording.json",
+      "sourceSha256": "ba3510d463199852460b048afbaccd91555f8c319f37dac2f88ba989e145cdab"
+    },
+    {
+      "check": "swallowed_exceptions",
+      "positive": true,
+      "test": "probe:swallowed_exceptions:positive:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "swallowed_exceptions",
+      "positive": false,
+      "test": "probe:swallowed_exceptions:clean:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "sync_async_signatures",
+      "positive": true,
+      "test": "batch-05:quoted",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sourceSha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "check": "sync_async_signatures",
+      "positive": false,
+      "test": "scripts/tests/test_lint_sync_async_signatures.py::test_ignores_unpaired_function",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-05-recording.json",
+      "sourceSha256": "4b8a3a2eb62e22d665bd41430958f41d4aa78c00b3f49f2faec080aaf9436f0a"
+    },
+    {
+      "check": "transaction_callback_wrappers",
+      "positive": true,
+      "test": "probe:transaction_callback_wrappers:inline-lambda:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "transaction_callback_wrappers",
+      "positive": false,
+      "test": "probe:transaction_callback_wrappers:clean:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "transaction_closures",
+      "positive": true,
+      "test": "probe:transaction_closures:positive:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "transaction_closures",
+      "positive": false,
+      "test": "scripts/tests/test_lint_transaction_closures.py::test_closure_linter_handles_no_keywords_and_no_args",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-recording.json",
+      "sourceSha256": "6c9a169ca763b79501bda4bce33a056c634aae5af4b6901db8d69fbe62b94328"
+    },
+    {
+      "check": "transaction_patterns",
+      "positive": true,
+      "test": "probe:transaction_patterns:positive:analyzer",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-probes.json",
+      "sourceSha256": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8"
+    },
+    {
+      "check": "transaction_patterns",
+      "positive": false,
+      "test": "scripts/tests/test_lint_transaction_patterns.py::test_finder_handles_no_params_function",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-03-recording.json",
+      "sourceSha256": "6c9a169ca763b79501bda4bce33a056c634aae5af4b6901db8d69fbe62b94328"
+    },
+    {
+      "check": "type_safety_patterns",
+      "positive": true,
+      "test": "scripts/tests/test_lint_type_safety_patterns.py::test_check_file_flags_expression_any_any",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "type_safety_patterns",
+      "positive": false,
+      "test": "scripts/tests/test_lint_type_safety_patterns.py::test_check_clean_file",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "unresolved_forward_refs",
+      "positive": true,
+      "test": "scripts/tests/test_lint_unresolved_forward_refs.py::test_findings_at_module_level",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "unresolved_forward_refs",
+      "positive": false,
+      "test": "scripts/tests/test_lint_unresolved_forward_refs.py::test_clean_file_returns_empty",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-02-recording.json",
+      "sourceSha256": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c"
+    },
+    {
+      "check": "versioned_lifecycle_legacy_surfaces",
+      "positive": true,
+      "test": "scripts/tests/test_lint_versioned_lifecycle_legacy_surfaces.py::test_versioned_lifecycle_surface_guardrail_cases",
+      "call": 1,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    },
+    {
+      "check": "versioned_lifecycle_legacy_surfaces",
+      "positive": false,
+      "test": "scripts/tests/test_lint_versioned_lifecycle_legacy_surfaces.py::test_versioned_lifecycle_surface_guardrail_cases",
+      "call": 3,
+      "source": "fixtures/host/data-layer-port/batch-01-recording.json",
+      "sourceSha256": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8"
+    }
+  ],
+  "evidence": ".rerail/profiles/sql-recovery-tdd-20261023"
+}

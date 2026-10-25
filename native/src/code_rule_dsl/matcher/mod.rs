@@ -31,7 +31,11 @@ use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 pub(super) use analysis::RequiredText;
 pub(crate) use analysis::calls_positive_only;
-pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
+pub(super) use anchors::AnchorPlan;
+pub(super) use anchors::sql::{
+    Corpus, CorpusSlot, FileAnchorIndex, anchor_plans, anchor_plans_for_file,
+    candidate_frontier_audit,
+};
 pub(super) use arguments::{Arguments, Passed, SlotKind};
 pub(super) use arguments_sql::SQL_CALL_KINDS;
 use ast_grep_core::matcher::Matcher;
@@ -50,7 +54,7 @@ pub(crate) use exported::{
     WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable,
 };
 pub(crate) use format_args::{FormatArgs, Style};
-pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
+pub(crate) use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
@@ -60,6 +64,7 @@ use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
+pub(in crate::code_rule_dsl) use resolve::file_path;
 pub(crate) use resolve::{
     FileGates, calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives,
     file_lines, file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,
@@ -115,6 +120,8 @@ pub(super) struct GrammarMatcher {
     pub(super) text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
     pub(super) sound_under_errors: bool,
+    /// Explicit whole-file syntax gate; true admits invalid files and their error regions.
+    pub(super) invalid_syntax: Option<bool>,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
     pub(super) utils: Arc<UtilTable>,
@@ -146,6 +153,24 @@ impl GrammarMatcher {
 /// Whole-root matching: production matches each candidate root within a clause `begin_clause` set
 /// up (`match_rule`); `match_root` sets one up per root, for tests.
 impl GrammarMatcher {
+    /// Share cheap syntax and text admission across preparation and matching.
+    pub(super) fn admits_source<'a>(
+        &'a self,
+        source: &str,
+        errors: &crate::code_rule_dsl::soundness::SyntaxErrors,
+        searched: &mut rustc_hash::FxHashMap<&'a str, bool>,
+    ) -> bool {
+        self.invalid_syntax
+            .is_none_or(|invalid| invalid != errors.is_empty())
+            && self.text.as_ref().is_none_or(|text| {
+                text.holds_with(source, &mut |source: &str, literal| {
+                    *searched.entry(literal).or_insert_with(|| {
+                        memchr::memmem::find(source.as_bytes(), literal.as_bytes()).is_some()
+                    })
+                })
+            })
+    }
+
     /// Whether a file whose own source type is `file` may get this matcher: one its
     /// `when.sourceType` lists, or, while the file's syntax is unread (`None`), a module or
     /// CommonJS listed.

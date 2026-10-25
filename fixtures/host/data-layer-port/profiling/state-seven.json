@@ -1,0 +1,40 @@
+{
+  "format": "rerail.profile-selection/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "serverplan_state_tripwires"
+  ],
+  "files": [
+    {
+      "path": "impl/common/l2070_server_plan/steps/sql_projection.py",
+      "sha256": "f86133858b97315f6ebd1d38455176582f09f3ae9682938859ccba0c3c844f39"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/versioned_hybrid_search.py",
+      "sha256": "dcefe9eed5201c9648e2b1a300a3961cb31b141738ca41ec5042c29e40d5d084"
+    },
+    {
+      "path": "impl/common/l5250_matching/exact_dense.py",
+      "sha256": "45cd165bec4b02338052aeb78880092ac8731e0946dfdf79daaef0ea4f3cb406"
+    },
+    {
+      "path": "impl/common/l5250_matching/native_result_support.py",
+      "sha256": "5488af308928e10ba613c14f173e7ead25a96d4b307a29923fbcfb60aac6fbe0"
+    },
+    {
+      "path": "impl/common/l8000_admin/approval_db_runtime.py",
+      "sha256": "f72d3c1937c6fd50e91544d7debce3e183fbd525998efda0cff0af0fd3dfdbf7"
+    },
+    {
+      "path": "impl/read_through/transaction.py",
+      "sha256": "63146c495e7d8f56ddf96024c2a9b346634940fe3e1912bccac2a886a941ef7a"
+    },
+    {
+      "path": "l2080_lazy_orm/lazy_table.py",
+      "sha256": "ccb167aba9733e02e87f574e0c79da0d16bc42ddd1d6adef826bfff4b5bdaa03"
+    }
+  ],
+  "expectations": {
+    "serverplan_state_tripwires": []
+  }
+}

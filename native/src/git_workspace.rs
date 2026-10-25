@@ -907,7 +907,9 @@ mod tests {
         for (path, contents) in files {
             std::fs::write(root.join(path), contents).unwrap();
         }
-        run_git(root, &["add", "."]);
+        let mut paths = vec!["add", "--"];
+        paths.extend(files.iter().map(|(path, _)| *path));
+        run_git(root, &paths);
         run_git(root, &["commit", "-m", "initial"]);
     }
 

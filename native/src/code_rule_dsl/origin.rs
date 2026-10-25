@@ -185,22 +185,6 @@ impl<'t> InFile<'t> {
         }
     }
 
-    /// The text of a range of the document, as `text` reads a node's: the file's where it stands
-    /// for one range, else `own`.
-    pub(crate) fn range_text<'a>(&self, range: Range<usize>, own: &'a str) -> Cow<'a, str>
-    where
-        't: 'a,
-    {
-        match self
-            .places(range)
-            .single()
-            .and_then(|range| self.source.get(range))
-        {
-            Some(text) => Cow::Borrowed(text),
-            None => Cow::Borrowed(own),
-        }
-    }
-
     /// The diagnostic span of file bytes `range`.
     pub(crate) fn span(&self, range: Range<usize>) -> Span {
         self.lines().span(range.start, range.end)

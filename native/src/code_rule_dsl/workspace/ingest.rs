@@ -218,6 +218,7 @@ pub(super) fn make_file(
     );
     let source_digest = Sha256::digest(input.source.as_bytes()).into();
     FileState {
+        prepared: None,
         input,
         source_digest,
         source_revision,
@@ -925,6 +926,36 @@ pub(super) fn apply_request(
             if store_busy {
                 state.note_store_busy("while removing files");
             }
+        }
+    }
+    // Remove stale postings before publishing the new logical file versions. A failed
+    // preparation leaves a missing index, which authoritative matching can still answer.
+    for path in &request.removed {
+        state
+            .anchor_corpus
+            .remove(path)
+            .map_err(|e| invalid(e.to_string()))?;
+    }
+    for input in inputs
+        .iter()
+        .filter(|input| file_needs_update(state, input))
+    {
+        let lang = crate::code_rule_dsl::eval::file_language(input)
+            .and_then(crate::code_rule_dsl::language::tape_tag)
+            .map(u32::from);
+        let digest: [u8; 32] = Sha256::digest(input.source.as_bytes()).into();
+        let same = match lang {
+            Some(lang) => state
+                .anchor_corpus
+                .contains(&input.path, lang, &digest)
+                .map_err(|e| invalid(e.to_string()))?,
+            None => false,
+        };
+        if !same {
+            state
+                .anchor_corpus
+                .remove(&input.path)
+                .map_err(|e| invalid(e.to_string()))?;
         }
     }
     // Nothing below fails: the request's context changes are the workspace's now.

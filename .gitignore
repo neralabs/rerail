@@ -8,6 +8,7 @@ target/
 /native/index.d.ts
 coverage/
 .DS_Store
+__pycache__/
 .rerail/
 /tmp/
 
