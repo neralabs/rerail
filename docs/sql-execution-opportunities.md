@@ -15,6 +15,10 @@ Production remains at `82d82d89`, with 975 engine submissions and 106 separately
 The [survey evidence](../fixtures/host/data-layer-port/profiling/post-c-sql-survey-20261024.json) reconciles every engine submission to one bucket.
 These counts describe the complete fixed guard, including snapshot and workspace execution for two observations.
 
+All areas below now have [executable spikes and recorded decisions](sql-post-c-spikes.md).
+The corrected combined runtime/policy prototype measures 718 submissions, with overlapping CPU and RSS ranges against C.
+Storage and compiler experiments remain separate component measurements. Production retains the 975-submission C implementation.
+
 | Disjoint work | Submissions | Recommended treatment |
 | --- | ---: | --- |
 | Candidate preparation and retirement | 312 | Reduce physical cuts and repeated demand preparation through bounded SQL pipelines and shared producer owners. |

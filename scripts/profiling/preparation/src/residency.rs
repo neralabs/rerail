@@ -121,7 +121,9 @@ fn measure(
         .db
         .pragma_update(Some("temp"), "cache_size", -budget.1)?;
     store.db.execute_batch("BEGIN")?;
+    let mut submitted = 1usize;
     if data["fileScope"] == true {
+        submitted += 1 + data["files"].as_array().unwrap().len().div_ceil(128);
         crate::session::request(
             &store.db,
             &data["files"]
@@ -193,6 +195,7 @@ fn measure(
         return Err(rusqlite::Error::InvalidQuery);
     }
     for sql in &ownership.setup {
+        submitted += 1;
         store.db.execute_batch(sql)?;
     }
     let schedule_cpu_ms = (thread_cpu_ns().unwrap() - started) as f64 / 1e6;
@@ -230,6 +233,7 @@ fn measure(
         store.readers.clear();
         match group[0] {
             Action::Prepare(i) => {
+                submitted += 1;
                 let mut q = store.db.prepare(inputs[i].sql)?;
                 compile_ns += thread_cpu_ns().unwrap() - started;
                 let (prepared, prepare_peak) = heap(true)?;
@@ -251,6 +255,7 @@ fn measure(
                     peak = peak.max(live);
                 }
                 if let Some(columns) = stages[i]["index"].as_str() {
+                    submitted += 1;
                     store.db.execute_batch(&format!(
                         "CREATE INDEX temp.\"{}_keys\" ON \"{}\"({columns})",
                         inputs[i].name, inputs[i].name
@@ -259,6 +264,7 @@ fn measure(
                 prepare_ns += thread_cpu_ns().unwrap() - started;
             }
             Action::Query(i) => {
+                submitted += 1;
                 let mut q = store.db.prepare(&queries[i])?;
                 compile_ns += thread_cpu_ns().unwrap() - started;
                 let (prepared, prepare_peak) = heap(true)?;
@@ -286,6 +292,8 @@ fn measure(
                     })
                     .collect::<Vec<_>>();
                 let sql = ownership.release(&relation_names, &ids, &populated);
+                // Release SQL contains generated identifiers and terminators only.
+                submitted += sql.split(';').filter(|sql| !sql.trim().is_empty()).count();
                 store.db.execute_batch(&sql)?;
                 live -= group.len();
                 release_ns += thread_cpu_ns().unwrap() - started;
@@ -302,8 +310,10 @@ fn measure(
     assert_eq!(live, 0);
     store.readers.clear();
     if !ownership.setup.is_empty() {
+        submitted += 1;
         store.db.execute_batch("DROP TABLE candidate_keys")?;
     }
+    submitted += 1;
     store.db.execute_batch("COMMIT")?;
     snapshots
         .push(json!({"label":"finished","operation":operation,"sample":observe(&store.db,0)?}));
@@ -319,7 +329,7 @@ fn measure(
     heap_peaks.sort_by_key(|s| std::cmp::Reverse(s["peakBytes"].as_i64().unwrap()));
     statements.truncate(20);
     heap_peaks.truncate(20);
-    let result = json!({"capture":capture,"layout":layout,"observation":observation,"replayProcessCpuMs":crate::composition::cpu_ms()-process_start,"processPeakRssBytes":crate::composition::peak_bytes(),"cacheBudgetKiB":{"main":budget.0,"temp":budget.1},"statementCounters":{"vmSteps":vm[0],"fullscanSteps":vm[1],"sorts":vm[2],"scope":"stage and result statements; index and release batches excluded"},"rows":rows.len(),"stages":stages.len(),"queries":queries.len(),"peakLiveRelations":peak,"scheduledPeakLiveRelations":schedule.peak_relations,"scheduleCpuMs":schedule_cpu_ms,"sqliteCompileCpuMs":compile_ns as f64/1e6,"largestStatements":statements,"largestCompilePeaks":compile_peaks,"largestHeapPeaks":heap_peaks,"heapPeakScope":"stepping, index construction, finalization; compilation peaks are separate","prepareCpuMs":prepare_ns as f64/1e6,"resultsCpuMs":results_ns as f64/1e6,"releaseCpuMs":release_ns as f64/1e6,"sqlCpuMs":(prepare_ns+results_ns+release_ns) as f64/1e6,"snapshots":snapshots});
+    let result = json!({"executionStatements":submitted,"executionStatementScope":"Captured candidate schedule, request, store/index setup, retirement and transactions. Frozen input publication, reader configuration and diagnostic observations are outside this component count.","capture":capture,"layout":layout,"observation":observation,"replayProcessCpuMs":crate::composition::cpu_ms()-process_start,"processPeakRssBytes":crate::composition::peak_bytes(),"cacheBudgetKiB":{"main":budget.0,"temp":budget.1},"statementCounters":{"vmSteps":vm[0],"fullscanSteps":vm[1],"sorts":vm[2],"scope":"stage and result statements; index and release batches excluded"},"rows":rows.len(),"stages":stages.len(),"queries":queries.len(),"peakLiveRelations":peak,"scheduledPeakLiveRelations":schedule.peak_relations,"scheduleCpuMs":schedule_cpu_ms,"sqliteCompileCpuMs":compile_ns as f64/1e6,"largestStatements":statements,"largestCompilePeaks":compile_peaks,"largestHeapPeaks":heap_peaks,"heapPeakScope":"stepping, index construction, finalization; compilation peaks are separate","prepareCpuMs":prepare_ns as f64/1e6,"resultsCpuMs":results_ns as f64/1e6,"releaseCpuMs":release_ns as f64/1e6,"sqlCpuMs":(prepare_ns+results_ns+release_ns) as f64/1e6,"snapshots":snapshots});
     std::fs::write(output, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
     println!(
         "{}",

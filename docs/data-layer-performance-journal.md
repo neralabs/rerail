@@ -8,6 +8,114 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Spikes across the remaining inventory: 2026-10-24
+
+Every area in the 975-submission survey now has an executable prototype.
+Production retains C. Runtime changes live in an isolated worktree and a checked patch, with no production algorithm flag.
+The [design and decisions](sql-post-c-spikes.md) describe the selected shapes and remaining integration.
+The [checked evidence](../fixtures/host/data-layer-port/profiling/post-c-spikes-20261024.json) retains complete trials, hashes, accounting, and validation.
+
+### Combined runtime result
+
+The complete fixed guard decreases from **975 to 718 engine submissions: 257 removed**.
+SQLite internal executions decrease from 106 to 100. Unknown origins remain zero, and complete guard parity passes.
+The unchanged final 100 gate correctly fails by 618 submissions after complete execution.
+The combined count includes publication, setup, transactions, preparation, evaluation, and retirement.
+
+The isolated policy copy adds complete-empty admission to the remaining 28 event clauses.
+It also places four nonrecursive single-consumer flow stages inside their consumer SQL scope.
+These policy changes measure 975 → 766 on the existing C addon.
+The runtime prototype adds eponymous native bindings, metadata-based capture provenance, and fewer incidental candidate cuts.
+These changes reduce the combined guard further to 718.
+Required posting and interval indexes remain physical boundaries. Separate output packets retain separate reader identities.
+
+| Complete engine work | C | Selected combined prototype |
+| --- | ---: | ---: |
+| Connection and compiler setup | 229 | 232 |
+| File publication | 36 | 36 |
+| Catalog publication | 12 | 12 |
+| Candidate preparation | 308 | 276 |
+| Cleanup | 24 | 4 |
+| Relational evaluation | 366 | 158 |
+| **Total** | **975** | **718** |
+
+Five alternating fresh-process pairs compare C with the corrected prototype.
+Both artifacts use matching build settings, allocator, shim, workers, policies appropriate to each artifact, and the unchanged recording.
+Tracing, SQL capture, census, and sampling are off. No other local build or test runs during these controls.
+Other host workloads remain uncontrolled.
+
+| Fixed-guard metric | C | Selected combined prototype |
+| --- | ---: | ---: |
+| Median CPU | 585.845 ms | 579.437 ms |
+| CPU range | 573.313–597.824 ms | 554.644–606.254 ms |
+| Median process peak RSS | 299,696 KiB | 297,616 KiB |
+| RSS range | 292,832–300,528 KiB | 287,232–299,824 KiB |
+
+CPU and memory ranges overlap. This demonstrates fewer submissions, with no established aggregate CPU or memory gain.
+These small-guard results do not predict full-repository performance.
+
+### Component choices
+
+The storage prototype compares fresh databases, cleared-store reuse, and private clones of an immutable SQLite schema/catalog seed.
+It retains positional FTS and typed bulk publication. Complete logical index fingerprints match across all modes and domains.
+Every setup, publication, retirement, and verification statement counts. Backup API calls remain visible and count in CPU.
+Four common verification queries appear in each component count.
+
+| Storage component | Fresh | Clear and reuse | Private seed clones |
+| --- | ---: | ---: | ---: |
+| Engine submissions | 220 | 100 | 127 |
+| Internal executions, small input | 236 | 434 | 216 |
+| Median CPU, small input | 20.509 ms | 7.803 ms | 18.043 ms |
+| Median CPU, 128 copies per source | 63.542 ms | 71.157 ms | 63.242 ms |
+| Internal executions, replicated input | 10,912 | 29,791 | 10,892 |
+
+Select private seed clones. Fresh/seed stress CPU ranges overlap, and clones require fewer submissions.
+Cleared-store reuse needs a reset protocol and generates substantially more FTS deletion work.
+The seed contains no file facts or rule outputs; all mutable domain state remains private.
+This addresses schema/catalog repetition. Shared source publication across separate domains remains open.
+The component uses Python SQLite, unlike the Rust runtime. Cache limits are explicit; comparable per-mode process RSS is not measured.
+
+The compiler prototype batches independent cold stages into bounded SQLite CTAS inference statements.
+It uses the production schema adapter, authorizer, and typed cache. Authored functions never execute during inference.
+All declared columns and types match serial inference, including CAST, NULL, BLOB, compound, and window expressions.
+Original programs decrease **53 → 31 statements**. The selected flow pipelines change cache reuse; their programs decrease **56 → 35**.
+For the latter, median CPU is 22.015 → 22.487 ms, with overlapping ranges.
+SQLite heap peaks are 827,872 → 830,640 bytes. Select bounded compiler batching for its lower count and retained SQLite semantics.
+
+Frozen candidate experiments compare the complete output multisets from all four captured domains.
+Set folding decreases component submissions **272 → 252**. Unrestricted private cuts reach 226.
+CPU ranges overlap, but stepping heap peaks increase from 10,845,456 to 11,833,184 and 11,881,120 bytes respectively.
+Do not promote the generated-SQL string rewriter or its unrestricted cuts.
+Keep the narrower typed runtime change, which preserves required indexes and passes the broader regressions.
+Any later set simplification belongs in the existing typed graph and needs another memory check.
+
+Component counts cannot be added to 718 without integration and another complete-job capture.
+The storage and compiler prototypes remain separate from the combined runtime artifact.
+No full-repository recovery or final 100-limit acceptance follows from these experiments.
+
+### Regression ladder and validation
+
+The first native-binding prototype omitted empty runtime syntax relations.
+A new empty/repeated-empty/populated-domain test caught the omission.
+The compiler's prepare-only schema cannot serve as an executable empty source. The corrected adapter provides a real empty cursor.
+
+The first private-cut heuristic reached 710 submissions but failed three Rust tests.
+It removed explicitly required owners and interval indexes, losing both range bounds and linear nesting behavior.
+Preserving required indexes raises the count to 718 and passes the original tests without weakening them.
+The selector fixture now crosses three packets with both selectors; it passes on C and the corrected prototype.
+
+The corrected artifact passes all 1,604 Rust tests, with 23 existing ignored tests.
+It passes 324 native-facing tests across 19 files, all 77 state observations, and 120 positive/clean observations across 60 rules.
+Both corpora report zero false positives, false negatives, engine failures, or execution-path differences.
+The preparation host passes 60 tests. Six new Python semantic tests cover the standalone rewrites and schema fixtures.
+Profiling and budget tooling, TypeScript, boundaries, structure, Windows paths, formatting, and profiling-enabled all-target Clippy pass.
+Initial all-target Clippy compilation exceeded the deadline; splitting out the library check allowed the all-target retry to finish within it.
+The nonprofiling runtime library also passes Clippy.
+
+Raw builds, rejected attempts, controls, and captures reside under `.rerail/profiles/post-c-spikes-20261024/`.
+Builds use the standing permission to finish. Runtime experiments and checks retain the 115-second deadline.
+No Linear tickets are created.
+
 ## Remaining SQL submission survey: 2026-10-24
 
 Production remains at `82d82d89`: 975 engine submissions, 106 SQLite internal executions, and zero unknown origins.

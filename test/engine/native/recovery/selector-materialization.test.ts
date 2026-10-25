@@ -17,7 +17,9 @@ it.skipIf(!required)("shares one indexed SQL owner across independent selector p
       const native=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
       const ws=new native.CodeRuleDslWorkspace();
       for(const [id,kind] of [['names','identifier'],['calls','call']]) {
-        const clauses=Array.from({length:65},(_,i)=>({id:'selected'+i,
+        // Each selector crosses result packets, so both require physical owners.
+        // Repeated uses inside a single packet already share its materialized CTE.
+        const clauses=Array.from({length:130},(_,i)=>({id:'selected'+i,
           forbid:{ast:{language:'python',rule:{kind}}},
           violation:{code:'MATCH',message:'Match',anchor:'witness.span'}}));
         ws.addCodeRule(native.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id,revision:1,mode:'log',clauses}),'json',caps));
@@ -31,10 +33,10 @@ it.skipIf(!required)("shares one indexed SQL owner across independent selector p
     });
     expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
     const result = JSON.parse(child.stdout.trim()).evaluation;
-    expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(130);
+    expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(260);
     const candidates = readdirSync(directory).filter(f => /^candidate-.*\.json$/.test(f))
       .map(f => JSON.parse(readFileSync(join(directory, f), "utf8"))).filter(c => c.variant === "normal");
-    expect(candidates).toHaveLength(1); expect(candidates[0].queries).toHaveLength(2);
+    expect(candidates).toHaveLength(1); expect(candidates[0].queries).toHaveLength(3);
     let creates = 0, indexes = 0, releases = 0;
     for (const file of readdirSync(directory).filter(f => /^profile-.*\.json$/.test(f))) {
       const catalogue = JSON.parse(readFileSync(join(directory, file), "utf8"));

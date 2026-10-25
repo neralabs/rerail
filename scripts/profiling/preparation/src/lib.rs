@@ -14,7 +14,7 @@ mod nodes;
 #[cfg(test)]
 #[path = "../../../../native/src/code_rule_dsl/matcher/anchors/sql/store/publication.rs"]
 mod publication;
-#[cfg(test)]
+#[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/relational/schema.rs"]
 mod schema;
 #[cfg(test)]
@@ -45,7 +45,7 @@ mod working_set;
 #[path = "../../../../native/src/code_rule_dsl/producers/mod.rs"]
 mod producers;
 
-#[cfg(test)]
+#[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/relational/authorizer.rs"]
 mod authorizer;
 #[cfg(test)]
@@ -72,6 +72,7 @@ pub mod candidate_owner;
 pub mod composition;
 pub mod fts;
 pub mod owner_projection;
+pub mod post_c;
 pub mod residency;
 
 mod code_rule_dsl {
