@@ -20,6 +20,22 @@ from unittest.mock import patch
 
 
 class ProfileTests(unittest.TestCase):
+    def test_lowering_breakdown_keeps_parent_and_children_separate(self):
+        import report as profiling_report
+        events = [{"rule":"", "clause":"", "path":None, "name":"planning", "thread":"main",
+                   "startUnixUs":0, "detail":{}, "phase":phase, "wallNs":ms*1_000_000, "cpuNs":ms*1_000_000}
+                  for phase, ms in [("anchor-lower",10),("anchor-fragment",4),("anchor-ownership",6)]]
+        native, parsed = aggregate("\n".join("RERAIL_TRACE "+json.dumps(event) for event in events))
+        text = summary({"elapsedSeconds":1,"exitCode":0,"timedOut":False,"native":native,"samples":[]})
+        self.assertIn("Candidate lowering breakdown (ms; included in anchor-lower): anchor-fragment=4.000; anchor-ownership=6.000", text)
+        api = next(line for line in text.splitlines() if line.startswith("Candidate SQL API CPU"))
+        self.assertIn("anchor-lower=10.000", api)
+        self.assertNotIn("anchor-fragment", api)
+        leaves = profiling_report.sample_leaf_phases(parsed)
+        self.assertNotIn("anchor-lower", leaves)
+        self.assertIn("anchor-fragment", leaves)
+        self.assertIn("anchor-lower", profiling_report.sample_leaf_phases(parsed[:1]))
+
     def test_vmmap_keeps_residency_and_allocator_views_separate(self):
         result = vmmap_summary("""Physical footprint:         1.5G
 Physical footprint (peak):  2G
