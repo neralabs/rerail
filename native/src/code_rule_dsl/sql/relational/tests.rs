@@ -530,40 +530,56 @@ fn relational_key_demand_retains_recursive_dependencies_and_shared_answers() {
 /// Count the matching interval only. Keep the counter at a stable address until callbacks stop.
 pub(super) struct ExecutionTrace<'a> {
     db: &'a rusqlite::Connection,
-    count: Box<std::sync::atomic::AtomicUsize>,
+    count: Box<ExecutionCounts>,
+}
+#[derive(Default)]
+struct ExecutionCounts {
+    count: std::sync::atomic::AtomicUsize,
+    statement: std::sync::atomic::AtomicUsize,
 }
 impl<'a> ExecutionTrace<'a> {
     pub(super) fn start(db: &'a rusqlite::Connection) -> Self {
         unsafe extern "C" fn trace(
             mask: u32,
             context: *mut std::ffi::c_void,
-            _: *mut std::ffi::c_void,
+            statement: *mut std::ffi::c_void,
             _: *mut std::ffi::c_void,
         ) -> i32 {
             if mask == rusqlite::ffi::SQLITE_TRACE_STMT {
                 // SAFETY: ExecutionTrace owns this allocation and unregisters before dropping it.
-                let count = unsafe { &*context.cast::<std::sync::atomic::AtomicUsize>() };
-                count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let count = unsafe { &*context.cast::<ExecutionCounts>() };
+                count
+                    .count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                count
+                    .statement
+                    .store(statement as usize, std::sync::atomic::Ordering::Relaxed);
             }
             0
         }
-        let count = Box::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = Box::<ExecutionCounts>::default();
         // SAFETY: the connection and stable counter outlive the installed callback.
         let result = unsafe {
             rusqlite::ffi::sqlite3_trace_v2(
                 db.handle(),
                 rusqlite::ffi::SQLITE_TRACE_STMT,
                 Some(trace),
-                (&*count as *const std::sync::atomic::AtomicUsize)
-                    .cast_mut()
-                    .cast(),
+                (&*count as *const ExecutionCounts).cast_mut().cast(),
             )
         };
         assert_eq!(result, rusqlite::ffi::SQLITE_OK);
         Self { db, count }
     }
+    /// Read before dropping the executed statement. The trace owns no SQLite handle.
+    pub(super) fn scan(&self) -> Value {
+        super::scan::read(
+            self.count
+                .statement
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
     pub(super) fn count(&self) -> usize {
-        self.count.load(std::sync::atomic::Ordering::Relaxed)
+        self.count.count.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 impl Drop for ExecutionTrace<'_> {

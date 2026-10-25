@@ -4,17 +4,67 @@ use super::{
 };
 
 #[derive(Default)]
+struct PlanningDecisions {
+    anchors: Vec<super::planner_stats::AnchorDecision>,
+    edges: Vec<super::planner_stats::EdgeDecision>,
+}
+type AnchorDecisions = std::rc::Rc<std::cell::RefCell<PlanningDecisions>>;
+
+#[derive(Default)]
 struct Emitter {
     aliases: usize,
     bound_regions: bool,
     domains: std::collections::HashMap<usize, usize>,
     component: Option<(usize, Vec<usize>)>,
+    stats: Option<super::planner_stats::PlannerStats>,
+    decisions: AnchorDecisions,
 }
 
 pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, String> {
     Ok(format!(
         "WITH RECURSIVE\n{}\nSELECT 0,file,node,json_array() FROM r0 ORDER BY file,node",
         definitions(program, plan)?.join(",\n")
+    ))
+}
+
+/// Statistics affect only pure join anchors. Default compilation remains independent of data.
+pub(super) fn emit_with_stats(
+    program: &Program,
+    plan: &[RelationPlan],
+    stats: &super::planner_stats::PlannerStats,
+) -> Result<(String, Vec<super::planner_stats::AnchorDecision>), String> {
+    let (sql, anchors, _) = emit_with_stats_detailed(program, plan, stats)?;
+    Ok((sql, anchors))
+}
+
+type PlannedSql = (
+    String,
+    Vec<super::planner_stats::AnchorDecision>,
+    Vec<super::planner_stats::EdgeDecision>,
+);
+
+pub(super) fn emit_with_stats_detailed(
+    program: &Program,
+    plan: &[RelationPlan],
+    stats: &super::planner_stats::PlannerStats,
+) -> Result<PlannedSql, String> {
+    let decisions = std::rc::Rc::new(std::cell::RefCell::new(PlanningDecisions::default()));
+    let definitions = definitions_for_stats(
+        program,
+        plan,
+        true,
+        &[],
+        Some(stats),
+        Some(decisions.clone()),
+    )?;
+    let decisions = decisions.borrow();
+    Ok((
+        format!(
+            "WITH RECURSIVE\n{}\nSELECT 0,file,node,json_array() FROM r0 ORDER BY file,node",
+            definitions.join(",\n")
+        ),
+        decisions.anchors.clone(),
+        decisions.edges.clone(),
     ))
 }
 
@@ -28,7 +78,20 @@ fn definitions_for(
     project_root: bool,
     inline_outputs: &[usize],
 ) -> Result<Vec<String>, String> {
+    definitions_for_stats(program, plan, project_root, inline_outputs, None, None)
+}
+
+fn definitions_for_stats(
+    program: &Program,
+    plan: &[RelationPlan],
+    project_root: bool,
+    inline_outputs: &[usize],
+    stats: Option<&super::planner_stats::PlannerStats>,
+    decisions: Option<AnchorDecisions>,
+) -> Result<Vec<String>, String> {
     let mut emitter = Emitter {
+        stats: stats.cloned(),
+        decisions: decisions.unwrap_or_default(),
         domains: program
             .relations
             .iter()
@@ -37,6 +100,8 @@ fn definitions_for(
             .collect(),
         ..Emitter::default()
     };
+    let storage =
+        stats.map(|stats| super::planner_stats::materialization_decisions(program, plan, stats));
     let mut relations = Vec::new();
     let active = emitted_relations(program, project_root, inline_outputs);
     let mut regions = std::collections::BTreeSet::new();
@@ -222,7 +287,12 @@ fn definitions_for(
             && arms[0].references.len() == 1
             && program.relations[id].keys.is_none()
             && program.relations[id].domain.is_none();
-        let stored = if id != 0 && !alias {
+        let stored = if id != 0
+            && !alias
+            && storage
+                .as_ref()
+                .is_none_or(|choices| choices[id].materialized)
+        {
             "MATERIALIZED "
         } else {
             ""
@@ -550,7 +620,9 @@ impl Emitter {
             consumed_region = Some((node, roots));
         } else {
             // Begin at selective kind evidence rather than at the output root by default.
-            let node = arm
+            let decision = self.stats.as_ref().and_then(|stats| stats.anchor(arm));
+            if let Some(decision) = &decision { self.decisions.borrow_mut().anchors.push(decision.clone()); }
+            let node = decision.map(|decision| decision.variable).unwrap_or_else(|| arm
                 .predicates
                 .iter()
                 .filter_map(|p| match p {
@@ -558,15 +630,26 @@ impl Emitter {
                     _ => None,
                 })
                 .min_by_key(|(_, size)| *size)
-                .map_or(0, |(n, _)| n);
+                .map_or(0, |(n, _)| n));
             sources.push(format!("node AS {}", names[node]));
             known[node] = true;
         }
         while known.iter().any(|k| !k) {
-            let Some(&(from, edge, to)) = arm
-                .edges
-                .iter()
-                .find(|(from, _, to)| known[*from] != known[*to])
+            let decision = self
+                .stats
+                .as_ref()
+                .and_then(|stats| stats.incident_edge(arm, &known));
+            if let Some(decision) = &decision {
+                self.decisions.borrow_mut().edges.push(decision.clone());
+            }
+            let Some(&(from, edge, to)) = decision
+                .as_ref()
+                .map(|d| &arm.edges[d.edge_index])
+                .or_else(|| {
+                    arm.edges
+                        .iter()
+                        .find(|(from, _, to)| known[*from] != known[*to])
+                })
             else {
                 return Err("relational compiler: disconnected join graph".into());
             };

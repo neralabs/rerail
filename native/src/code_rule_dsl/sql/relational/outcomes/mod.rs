@@ -39,7 +39,11 @@ mod emit;
 mod field_end_tests;
 mod field_tests;
 mod finite_all_tests;
+mod finite_cfg;
+mod finite_cfg_emit;
 mod finite_helper_tests;
+mod finite_kind_summary;
+mod finite_kind_tests;
 pub(super) mod finite_lower;
 mod finite_lower_tests;
 mod finite_recursive_tests;
@@ -60,8 +64,10 @@ mod predicate_memo;
 #[cfg(test)]
 mod predicate_memo_tests;
 mod predicate_run_tests;
+mod projected_tail;
 mod pruning_tests;
 mod publication_tests;
+mod pure_kind_summary;
 mod pure_recursive_tests;
 mod reached_tests;
 mod recursive_search_tests;
@@ -74,6 +80,12 @@ mod tests;
 mod traversal_memo_tests;
 mod utility_memo;
 mod utility_plan_tests;
+mod utility_projection_emit;
+mod utility_projection_kinds;
+mod utility_projection_lower;
+mod utility_projection_producer;
+#[cfg(test)]
+mod utility_projection_tests;
 
 use super::{Compiled, ir::Set};
 use crate::code_rule_dsl::matcher::GrammarMatcher;
@@ -314,6 +326,9 @@ fn finite_plan(mut plan: Plan, share_recursion: bool) -> Result<Plan, String> {
     Ok(plan)
 }
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
+    if let Some(compiled) = emit::parsed_frontier::try_compile(&[grammar], i64::MAX, 0, 0)? {
+        return Ok(compiled);
+    }
     select_composition(|shape| compile_mode(grammar, shape))
 }
 pub(super) fn compile_namespaced(
@@ -321,6 +336,11 @@ pub(super) fn compile_namespaced(
     prefix: usize,
     clause: usize,
 ) -> Result<Compiled, String> {
+    if let Some(compiled) =
+        emit::parsed_frontier::try_compile(&[grammar], i64::MAX, prefix, clause)?
+    {
+        return Ok(compiled);
+    }
     select_composition(|shape| compile_mode_namespaced(grammar, shape, Some((prefix, clause))))
 }
 fn compile_mode(grammar: &GrammarMatcher, shape: Composition) -> Result<Compiled, String> {
@@ -417,6 +437,9 @@ fn root_filter(grammar: &GrammarMatcher, file_guard: Option<usize>) -> String {
 
 /// Bounded workspace publication kernel. Terminal IDs share one batch namespace.
 pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Compiled, String> {
+    if let Some(compiled) = emit::parsed_frontier::try_compile(grammars, work, 0, 0)? {
+        return Ok(compiled);
+    }
     select_composition(|shape| compile_job_mode(grammars, work, shape))
 }
 fn compile_job_finite(grammars: &[&GrammarMatcher], work: i64) -> Result<Compiled, String> {

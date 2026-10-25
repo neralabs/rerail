@@ -220,7 +220,15 @@ pub(super) fn check_work_compiler(
                         (actual, metrics)
                     });
                     assert_eq!(frames[4], 0);
-                    let expected_statements = compiled.relations["spikeStages"]
+                    let stage_key = if compiled.relations["physicalStages"]
+                        .as_array()
+                        .is_some_and(|s| !s.is_empty())
+                    {
+                        "physicalStages"
+                    } else {
+                        "spikeStages"
+                    };
+                    let expected_statements = compiled.relations[stage_key]
                         .as_array()
                         .map_or(1, |s| s.len() + 1);
                     assert_eq!(metrics["matchingStatements"], expected_statements);

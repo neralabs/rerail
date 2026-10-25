@@ -37,6 +37,9 @@ pub(super) enum Instruction {
 }
 
 pub(super) struct Function {
+    /// Original immutable body for physical projection alternatives. Recursive
+    /// adapters leave this absent and retain their proven control program.
+    pub original: Option<Plan>,
     pub entry: usize,
     /// None is a transient utility entry, which spends work but bypasses memo.
     pub memo: Option<usize>,
@@ -46,6 +49,7 @@ pub(super) struct Function {
 }
 
 pub(super) struct Program {
+    pub source: Option<Plan>,
     pub share_search: bool,
     pub code: Vec<Node>,
     pub functions: Vec<Function>,
@@ -193,6 +197,7 @@ impl Builder {
             let id = self.functions.len();
             self.calls.insert(key, id);
             self.functions.push(Function {
+                original: Some((**body).clone()),
                 entry: usize::MAX,
                 memo,
                 effects: body.effects,
@@ -324,7 +329,15 @@ pub(super) fn lower_with_recursion(plan: &Plan, share_recursion: bool) -> Result
         return Err("finite control: distinct control operators exceed 256".into());
     }
     Ok(Program {
-        share_search: share_recursion,
+        source: Some(plan.clone()),
+        // Search-template reuse is independent of recursive-function exposure.
+        share_search: share_recursion
+            || builder
+                .code
+                .iter()
+                .filter(|n| matches!(n.op, Instruction::Search { .. }))
+                .count()
+                > 1,
         code: builder.code,
         functions: builder.functions,
         regions: builder.regions,

@@ -269,6 +269,10 @@ fn pure_recursive_contiguous_predicates_fuse_without_crossing_utility_effects() 
                 object
                     .get("pureControl")
                     .is_some_and(|p| p["unfusedInstructions"].as_u64() > p["instructions"].as_u64())
+                    || (object
+                        .get("operator")
+                        .is_some_and(|v| v == "projected pure self tail")
+                        && object.get("booleanContinuations").is_some_and(|v| v == 0))
                     || object.values().any(reduced)
             }
             Value::Array(values) => values.iter().any(reduced),

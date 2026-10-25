@@ -25,6 +25,7 @@ fn node(op: Instruction) -> super::super::finite_lower::Node {
 }
 fn program(regions: Vec<Plan>, code: Vec<Instruction>, entry: usize) -> Program {
     Program {
+        source: None,
         share_search: false,
         code: code.into_iter().map(node).collect(),
         functions: vec![],

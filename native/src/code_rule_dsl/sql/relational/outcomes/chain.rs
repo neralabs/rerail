@@ -13,6 +13,12 @@ pub(super) struct Components {
     pub(super) downward: BTreeMap<usize, (String, BTreeMap<u32, String>)>,
     /// Immutable compiler tables, materialized once for all reached roots.
     constants: Vec<String>,
+    pub(super) stage_root: Option<String>,
+    pub(super) stage_demands: BTreeMap<usize, Vec<String>>,
+    pub(super) physical_stages: Vec<String>,
+    pub(super) closed_demands: BTreeMap<usize, String>,
+    pub(super) closed_demand_collected: bool,
+    pub(super) projected: BTreeMap<usize, String>,
 }
 
 impl Components {
@@ -35,6 +41,23 @@ impl Sql {
         self.profile
             .push(json!({"operator":operator,"relation":name,"scope":"statement","constant":true}));
         name
+    }
+
+    pub(super) fn projection_namespace(&self) -> String {
+        let components = self.generation.components.borrow();
+        format!(
+            "projection{}_{}",
+            components.clause,
+            components.constants.len()
+        )
+    }
+
+    pub(super) fn register_projection_definitions(&mut self, definitions: Vec<String>) {
+        self.generation
+            .components
+            .borrow_mut()
+            .constants
+            .extend(definitions);
     }
 
     /// This is called once at the statement boundary, never in a correlated child.

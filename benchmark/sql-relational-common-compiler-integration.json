@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "recordedUtc": "2026-10-25T02:18:28.350288+00:00",
+  "scope": "Common relational compiler integration. The production SQL selector remains unchanged. Preparation is separate from execution.",
+  "productionCutover": false,
+  "qualified": false,
+  "checkpoint": 34,
+  "baseCommit": "4dcd60b2804282c4245d54605c988465b3936f1a",
+  "referenceGates": [
+    {
+      "policy": "ruff-sim905-split-static-string",
+      "nativeParity": true,
+      "referenceGatePassed": false,
+      "vm": 199888288,
+      "vmLimit": 44832610,
+      "totalSqlBytes": 179233,
+      "sqlByteLimit": 62980,
+      "executions": 15,
+      "nativeRows": 77,
+      "typedReturnRows": 985864,
+      "typedReturnCells": 7388864,
+      "continuations": {
+        "peekRequests": 0,
+        "pops": 127598,
+        "pushes": 127598,
+        "reservedCellsWritten": 1531176
+      },
+      "sorts": 28,
+      "sqlSha256": "113bef0177017fa8d8b93fbdce76e73f0f1427fa08ad4e475f1c7fa180821773"
+    },
+    {
+      "policy": "ruff-f632-is-literal",
+      "nativeParity": true,
+      "referenceGatePassed": true,
+      "vm": 18957323,
+      "vmLimit": 24034427,
+      "totalSqlBytes": 29457,
+      "sqlByteLimit": 37435,
+      "executions": 1,
+      "nativeRows": 42,
+      "typedReturnRows": 41489,
+      "typedReturnCells": 192752,
+      "continuations": {
+        "peekRequests": 254,
+        "pops": 8544,
+        "pushes": 8544,
+        "reservedCellsWritten": 102528
+      },
+      "sorts": 46,
+      "sqlSha256": "9534fb55f3280ccf74843c34b63ebdfcda1304433b36d12b2ecbf6cd7c487432"
+    }
+  ],
+  "catalog": {
+    "nativeParity": true,
+    "unchangedVmBudgetsPassed": true,
+    "grammars": 146,
+    "fixtureFiles": 597,
+    "fixtureBytes": 385321,
+    "totalVm": 1770516493,
+    "executionSumIsNotWholeJob": true
+  },
+  "wholeJob": {
+    "nativeParity": true,
+    "files": 597,
+    "grammars": 146,
+    "nativeRows": 2477,
+    "executions": 37,
+    "executionLimit": 100,
+    "matchingPacks": 23,
+    "physicalExecutions": 14,
+    "vm": 2156234044,
+    "maxMatchingSqlBytes": 255978
+  },
+  "regressionControls": [
+    {
+      "policy": "ruff-b033-duplicate-value",
+      "passed": true,
+      "vm": 13593912,
+      "limit": 13615296
+    },
+    {
+      "policy": "bandit-b615-huggingface-unsafe-download",
+      "passed": true,
+      "vm": 237968660,
+      "limit": 347286337
+    }
+  ],
+  "remainingSim905Work": {
+    "driverVm": 179736160,
+    "stageVm": 20152128,
+    "driverSqlBytes": 121217,
+    "stageSqlBytes": 58016,
+    "driverFractionOfVm": 0.8991830476831139,
+    "requiredChange": "Compose maximal pure regions with their recursive summaries before the effect scheduler; share helper producers across callers. Further stage lookup tuning cannot close this gap."
+  },
+  "astIndexPriorArt": {
+    "commit": "9449260fea46fa81358fc638bf95a1566d475e27",
+    "transferred": [
+      "language-scoped immutable kind cardinalities",
+      "direct parent-child fanout estimates",
+      "rare-anchor selection and physical join direction",
+      "inline versus shared pure producers"
+    ],
+    "guard": "Statistics choose physical SQL only; they cannot reorder effects or change native work."
+  },
+  "validation": {
+    "broadRustSuite": {
+      "passed": 2194,
+      "failed": 0,
+      "ignored": 54,
+      "filteredOut": 1,
+      "excluded": "Only common_compiler_matches_structural_reference_budgets, run separately and recorded as failed."
+    },
+    "catalogGate": true,
+    "workspaceClippy": true,
+    "codeRuleProfileClippy": true,
+    "fmt": true,
+    "catalogAccountingPythonTests": 6,
+    "sourcesChanged": [],
+    "memoVsEntryNegativeControl": {
+      "rejectedBuild": 28,
+      "observedPeak": 5,
+      "nativePeak": 4,
+      "work": 8,
+      "correction": "Different producer result types preserve ordered logical entries while deduplicating memo answers."
+    }
+  },
+  "measurement": {
+    "normalBinarySha256": "4d6bcc8c490b39fa0bbb530aec6b04bcb792b8330c48cc82c20b1aa54e45e1da",
+    "scanBinarySha256": "e972fe44ad94aa90bc839dd44ff2f6075d2d7ac4a641cfede4498ca1909225ff",
+    "sourceManifestSha256": "de52efd68f6356bd58f288093809d4e01de70eff3d67e0cce7aac1bb8021bee0",
+    "instrumentedVmQualifiesBudgets": false,
+    "scanCycleCaution": "Loop hardware cycles are inclusive and must not be summed as CPU time. Instrumentation adds VM instructions.",
+    "scanPlanCaution": "Executed scan IDs and separately prepared post-execution EXPLAIN IDs differ for some nodes. Use the executed scan tree and its own descriptions; do not join the two plans blindly.",
+    "allocator": "real jemalloc",
+    "profile": "loop, unbounded-work, local test executable LTO disabled"
+  },
+  "reproduction": {
+    "ordinaryBuild": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=<real-jemalloc-archive> RUSTC_WRAPPER=<archived-wrapper> cargo test -p rerail-engine --lib --profile loop --features unbounded-work --no-run",
+    "suite": "PATH=/usr/bin:$PATH RUST_MIN_STACK=67108864 <binary> --skip common_compiler_matches_structural_reference_budgets --test-threads=1",
+    "references": "RUST_MIN_STACK=67108864 RERAIL_COMMON_COMPILER_EVIDENCE=<output>/common <binary> common_compiler_matches_structural_reference_budgets --nocapture --test-threads=1",
+    "catalog": "RUST_MIN_STACK=67108864 RERAIL_RELATIONAL_CUTOVER_LEDGER=<output>/catalog.json RERAIL_RELATIONAL_CUTOVER_SQL_DIR=<output>/catalog-sql <binary> relational_cutover_catalog_fixture_parity --ignored --nocapture --test-threads=1",
+    "catalogBudgets": "python3 -B benchmark/relational-catalog-performance.py <output>/catalog.json",
+    "scanBuild": "Same build with LIBSQLITE3_FLAGS=-DSQLITE_ENABLE_STMT_SCANSTATUS; use only for diagnostics."
+  },
+  "checkpointProgress": [
+    {
+      "checkpoint": 30,
+      "vm": 272744739,
+      "totalSqlBytes": 200238,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 31,
+      "vm": 252918999,
+      "totalSqlBytes": 199938,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 32,
+      "vm": 242559289,
+      "totalSqlBytes": 195518,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 33,
+      "vm": 239979113,
+      "totalSqlBytes": 177592,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 34,
+      "vm": 199888288,
+      "totalSqlBytes": 179233,
+      "nativeParity": true
+    }
+  ],
+  "evidence": {
+    "archive": "benchmark/sql-relational-common-compiler-integration-trace.tar.gz",
+    "archiveSha256": "bad54396bfc69c242467bddc5681e55d6bb55aed147e571a5978a25949a9bdaa",
+    "files": 1579
+  }
+}

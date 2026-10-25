@@ -293,6 +293,7 @@ pub(in crate::code_rule_dsl::sql::relational) fn check(
                     }
                 }
                 let elapsed = started.elapsed();
+                let scan = trace.scan();
                 let final_executions = trace.count();
                 let executions = final_executions + stages.executions;
                 drop(trace);
@@ -343,9 +344,10 @@ pub(in crate::code_rule_dsl::sql::relational) fn check(
                     "coverageGap":if native_matches==0 { Some("No positive native witness in the complete fixture batch; empty-result parity does not cover successful publication.") } else { None },
                     "failureContract":"Native clause/file failures discard provisional matches. SQL failure tags and surviving outputs are compared. No fault injection or finite allowance sweep in this gate."
                 });
+                report["scan"] = scan.clone();
                 if stages.active() {
                     report["stageExecution"] = stages.profile();
-                    report["finalStatement"] = json!({"matchingStatements":final_executions,"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep),"sorts":stmt.get_status(rusqlite::StatementStatus::Sort),"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"executionCpuNs":elapsed.cpu,"executionWallNs":elapsed.wall});
+                    report["finalStatement"] = json!({"scan":scan,"matchingStatements":final_executions,"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep),"sorts":stmt.get_status(rusqlite::StatementStatus::Sort),"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"executionCpuNs":elapsed.cpu,"executionWallNs":elapsed.wall});
                 }
                 Ok(report)
             },

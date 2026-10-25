@@ -224,12 +224,17 @@ fn structural_spike_full_f632_fixture_batch() {
     let p = parse_tests::policy("python", ast["rule"].clone(), ast["utils"].clone());
     let grammars = grammar_matchers(&p);
     let compiled = super::compile(&[&grammars[0]], i64::MAX).unwrap();
-    if let Ok(path) = std::env::var("RERAIL_PARSED_RELATION_SPIKE_EVIDENCE") {
-        std::fs::write(
-            std::path::Path::new(&path).with_extension("sql"),
-            &compiled.sql,
-        )
-        .unwrap();
+    use sha2::{Digest, Sha256};
+    let sql_bytes = compiled.sql.len();
+    let sql_sha256 = format!("{:x}", Sha256::digest(compiled.sql.as_bytes()));
+    let full_sql_path = std::env::var("RERAIL_PARSED_RELATION_SPIKE_EVIDENCE")
+        .ok()
+        .map(|path| std::path::Path::new(&path).with_extension("full-f632.sql"));
+    if let Some(path) = &full_sql_path {
+        std::fs::write(path, &compiled.sql).unwrap();
+        let persisted = std::fs::read(path).unwrap();
+        assert_eq!(persisted.len(), sql_bytes);
+        assert_eq!(format!("{:x}", Sha256::digest(&persisted)), sql_sha256);
     }
     let fixtures = execution::fixtures(root);
     assert_eq!(compiled.relations["evidence"]["rejectedRootCost"], json!(2));
@@ -238,6 +243,7 @@ fn structural_spike_full_f632_fixture_batch() {
         json!(true)
     );
     let r = execution::check(&grammars[0], compiled, &fixtures).unwrap();
+    assert_eq!(r["sqlSha256"], json!(sql_sha256));
     assert_eq!(
         r["passed"],
         json!(true),
@@ -256,7 +262,7 @@ fn structural_spike_full_f632_fixture_batch() {
         writeln!(
             f,
             "{}",
-            json!({"case":"full-f632-fixture-batch","files":fixtures.len(),"result":r})
+            json!({"case":"full-f632-fixture-batch","files":fixtures.len(),"sqlBytes":sql_bytes,"sqlSha256":sql_sha256,"sqlPath":full_sql_path,"result":r})
         )
         .unwrap();
     }

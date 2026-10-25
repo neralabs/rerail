@@ -97,7 +97,7 @@ The parsed spike preserves the original F632 first arm. Rejected-root compressio
 
 The spike assigns terminal IDs before lowering. It does not reparse generated SQL to replace numeric IDs. Each closed branch receives separate clause, memo, component, and scope identities.
 
-Packing obeys both limits: at most 32 branches and at most 256,000 SQL bytes per statement. Every packed statement receives the full compatible file batch. The complete 146-grammar job must execute at most 100 matching statements.
+Packing obeys both limits: at most 32 branches and at most 256,000 SQL bytes per statement. Every packed statement receives the full compatible file batch. The complete 146-grammar job must execute at most 100 SQL statements, including schema, reset, population, index, and matching work. Preparation and EXPLAIN remain separate.
 
 A production implementation should use typed terminal IDs with explicit allocation. The spike uses temporary terminal prefixes to test namespace correctness. Those placeholder terminals are not installed for execution.
 
@@ -193,7 +193,7 @@ The SIM905 baseline uses 449,083,864 VM instructions and 1,581,869 typed transfe
 
 The complete fused SIM905 graph has 46,387 SQL bytes. It fails SQLite preparation with `too many references to "node": max 65535`. Keep real table boundaries at closed producer cuts. The earlier missing-CTE-name failure was a generator defect and supplies no evidence for this decision.
 
-The F632 baseline uses 240,957,037 VM instructions and 1,440,173 typed transfers. The reference uses 19,227,542 and 41,489. Continuation pushes decrease from 131,436 to 8,544. Its single statement has 7,831 bytes. Native outputs, remaining work, reached parsing, exported identities, and tested logical-depth boundaries agree.
+The F632 baseline uses 240,957,037 VM instructions and 1,440,173 typed transfers. The reference uses 19,227,542 and 41,489. Continuation pushes decrease from 131,436 to 8,544. The complete reference statement has 29,948 bytes at the catalog work allowance. The previous 7,831-byte figure came from a later control that overwrote its SQL artifact. The native and VM measurements remain valid. The corrected 125% SQL-size gate is 37,435 bytes; the original archive remains unchanged. Native outputs, remaining work, reached parsing, exported identities, and tested logical-depth boundaries agree.
 
 The result-only SIM905 reference uses 5,198,507 VM instructions. It speculates over Value checks and lacks the full work/effect contract. It remains a result-only structural comparison, not an accepted replacement.
 
@@ -239,3 +239,13 @@ python3 benchmark/relational-catalog-qualification.py /path/to/test-executable /
 Both runners require a new output directory. They pin their inputs and reject source changes during execution. The structural runner requires every registered suite to pass. The catalog runner separately checks all 146 grammars and existing performance ceilings.
 
 `benchmark/sql-relational-structural-spikes.json` contains the compact results. `benchmark/sql-relational-structural-trace.tar.gz` contains SQL, EXPLAIN output, counters, native comparisons, rejected checkpoints, and validation logs. Its manifest records file hashes and the measurement environment. Raw timing is diagnostic; the acceptance gates use VM work, statement counts, native observations, and source size.
+
+## Common compiler integration status
+
+The common compiler now contains demand-scoped pure producers, metadata proofs, static Boolean routes, parsed frontiers, and bounded job packing. Physical cuts retain completed dependency summaries in keyed tables. Memo answer sets and ordered logical entries have separate result types. The scheduler uses one recursive arm. Proved silent false search candidates do not enter that scheduler.
+
+Immutable batch statistics select rare anchors, direct-edge join order, and storage for pure relations. These decisions preserve logical work and effect order. Unknown statistics remain distinct from a known zero count.
+
+The integration report is `benchmark/sql-relational-common-compiler-integration.json`. Its archive contains pinned sources and fixtures, emitted SQL, EXPLAIN output, loop traces, and native comparisons. The report identifies its measured checkpoint. The journal records subsequent experiments until their qualification completes.
+
+The common compiler remains test-only. SIM905 still fails the reference-relative VM and SQL-size gates. Existing catalog ceilings and the whole-job execution limit do not substitute for those gates. Production cutover remains unqualified.

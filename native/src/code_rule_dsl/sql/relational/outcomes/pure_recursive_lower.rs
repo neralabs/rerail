@@ -47,6 +47,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) enum Instruction {
     },
 }
 pub(in crate::code_rule_dsl::sql::relational::outcomes) struct Program {
+    pub projection: Option<super::super::projected_tail::Projection>,
     pub instructions: Vec<Instruction>,
     pub functions: Vec<usize>,
     pub entry: usize,
@@ -302,7 +303,10 @@ pub(super) fn try_lower(
     if source.utility(util).is_err() || !source.progress() || source.legacy_root(util) {
         return Ok(None);
     }
+    let filter = candidate_filter(&AstMatcher::Util(util.clone()), lower, three)?;
+    let projection = super::super::projected_tail::admit(util, lower, three, filter);
     let mut program = Program {
+        projection,
         instructions: vec![
             Instruction::Return(true),
             Instruction::Return(false),

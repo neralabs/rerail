@@ -20,7 +20,7 @@ mod recursive;
 mod recursive_machine;
 mod recursive_machine_tests;
 mod run;
-mod scan;
+use crate::code_rule_dsl::sql::scan;
 mod shapes;
 mod terminal_set;
 mod tests;

@@ -230,7 +230,17 @@ fn utility_dag_is_shared_instead_of_rejected_for_exponential_expansion() {
     let rules = [json!({"matches":"u9"})];
     let p = policy_utils(&rules, utils);
     for allowance in [0, 1, 8, 9, 10, 20, 100, 10000] {
-        check_work(&p, &rules, &["x; y;"], None, allowance);
+        let result = check_work(&p, &rules, &["x; y;"], None, allowance);
+        if allowance == 10000 {
+            let publications = result["metrics"]["execution"]["memoStorage"]["publications"]
+                .as_u64()
+                .unwrap();
+            assert!(
+                publications <= 100,
+                "completed DAG must publish unique answers, got {publications}"
+            );
+            eprintln!("utility DAG completed memo publications={publications}");
+        }
     }
 }
 

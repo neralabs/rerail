@@ -144,7 +144,16 @@ fn label(relations: &Value, ordinal: usize) -> String {
 }
 
 pub(super) fn run(db: &Connection, relations: &Value, final_sql: &str) -> Result<Report, String> {
-    let Some(stages) = relations.get("spikeStages") else {
+    super::scan::configure(db, true).map_err(|e| e.to_string())?;
+    let physical = relations
+        .get("physicalStages")
+        .and_then(Value::as_array)
+        .is_some_and(|s| !s.is_empty());
+    let Some(stages) = (if physical {
+        relations.get("physicalStages")
+    } else {
+        relations.get("spikeStages")
+    }) else {
         return Ok(Report::default());
     };
     let stages = stages
@@ -167,7 +176,26 @@ pub(super) fn run(db: &Connection, relations: &Value, final_sql: &str) -> Result
             let sql = value
                 .as_str()
                 .ok_or_else(|| format!("{label} admission: stage must be a SQL string"))?;
-            validate(sql).map_err(|error| format!("{label} admission: {error}"))?;
+            if physical {
+                if sql.len() > 256000 {
+                    return Err(format!("{label}: statement exceeds256000 bytes"));
+                }
+                let words = words(sql)?;
+                let okay = words.starts_with(&[
+                    "CREATE".into(),
+                    "TEMP".into(),
+                    "TABLE".into(),
+                    "IF".into(),
+                    "NOT".into(),
+                    "EXISTS".into(),
+                ]) || words.starts_with(&["DELETE".into(), "FROM".into()])
+                    || words.starts_with(&["INSERT".into(), "INTO".into()]);
+                if !okay {
+                    return Err(format!("{label}: invalid common physical statement"));
+                }
+            } else {
+                validate(sql).map_err(|error| format!("{label} admission: {error}"))?;
+            }
             Ok(sql)
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -202,6 +230,7 @@ pub(super) fn run(db: &Connection, relations: &Value, final_sql: &str) -> Result
             .map_err(|e| format!("{label} execution: {e}"))?;
         let execution = started.elapsed();
         let executions = trace.count();
+        let scan = trace.scan();
         drop(trace);
         let vm = i64::from(stmt.get_status(StatementStatus::VmStep));
         let automatic_index = i64::from(stmt.get_status(StatementStatus::AutoIndex));
@@ -238,7 +267,7 @@ pub(super) fn run(db: &Connection, relations: &Value, final_sql: &str) -> Result
         } else {
             None
         };
-        report.records.push(json!({"outputTable":output,"outputRows":output_rows,"cardinalityIncludedInExecution":false,"ordinal":ordinal,"purpose":purpose(relations,ordinal),"sql":sql,"sqlBytes":sql.len(),"explain":explain,"matchingStatements":executions,"vmSteps":vm,"automaticIndexRows":automatic_index,"fullscanSteps":fullscan,"sorts":sorts,"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"executionCpuNs":execution.cpu,"executionWallNs":execution.wall}));
+        report.records.push(json!({"scan":scan,"outputTable":output,"outputRows":output_rows,"cardinalityIncludedInExecution":false,"ordinal":ordinal,"purpose":purpose(relations,ordinal),"sql":sql,"sqlBytes":sql.len(),"explain":explain,"matchingStatements":executions,"vmSteps":vm,"automaticIndexRows":automatic_index,"fullscanSteps":fullscan,"sorts":sorts,"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"executionCpuNs":execution.cpu,"executionWallNs":execution.wall}));
     }
     Ok(report)
 }
@@ -303,5 +332,35 @@ mod tests {
         );
         let large = format!("CREATE TABLE t AS SELECT '{}' x", "x".repeat(256000));
         assert!(validate(&large).is_err());
+    }
+}
+
+#[test]
+fn common_physical_cuts_reset_before_prepared_query_reexecution() {
+    let db = Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        "CREATE TABLE source(node INTEGER PRIMARY KEY); INSERT INTO source VALUES(1),(2),(3)",
+    )
+    .unwrap();
+    let stages = json!({"physicalStages":["CREATE TEMP TABLE IF NOT EXISTS cut(node INTEGER PRIMARY KEY) WITHOUT ROWID","DELETE FROM cut","INSERT INTO cut SELECT node FROM source"]});
+    let first = run(&db, &stages, "SELECT node FROM cut ORDER BY node").unwrap();
+    assert_eq!(first.executions, 3);
+    let mut query = db.prepare("SELECT node FROM cut ORDER BY node").unwrap();
+    for expected in [vec![1, 2, 3], vec![], vec![9]] {
+        db.execute("DELETE FROM source", []).unwrap();
+        for node in &expected {
+            db.execute("INSERT INTO source VALUES(?)", [node]).unwrap();
+        }
+        let report = run(&db, &stages, "SELECT node FROM cut ORDER BY node").unwrap();
+        assert_eq!(report.executions, 3);
+        assert_eq!(report.expected_statements(), 4);
+        let trace = ExecutionTrace::start(&db);
+        let actual = query
+            .query_map([], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(trace.count(), 1);
     }
 }

@@ -1,122 +1,13 @@
 //! Bounded statement packing, not cross-rule work sharing. Terminals receive
 //! final IDs before lowering; each closed MATERIALIZED branch has private memo
 //! and scope IDs. All files remain in every statement's batch.
-use super::{Compiled, compile_namespaced};
-use crate::code_rule_dsl::{
-    matcher::{self, GrammarMatcher},
-    sql::terminals::Terminal,
-};
+
+use super::job::{Arm, Pack};
+use crate::code_rule_dsl::matcher::{self, GrammarMatcher};
+use crate::code_rule_dsl::sql::terminals::Terminal;
 use serde_json::{Value, json};
-struct Arm {
-    clause: usize,
-    sql: String,
-    columns: usize,
-    names: Vec<String>,
-}
-struct Pack {
-    sql: String,
-    terminals: Vec<Terminal>,
-    arms: Vec<Arm>,
-}
-fn names(compiled: &Compiled) -> Vec<String> {
-    if let Some(c) = compiled.relations["captures"].as_array() {
-        c.iter()
-            .map(|c| c["name"].as_str().unwrap().into())
-            .collect()
-    } else {
-        compiled.relations["capture"]
-            .as_str()
-            .map(String::from)
-            .into_iter()
-            .collect()
-    }
-}
-fn packed_sql(arms: &[Arm]) -> String {
-    let definitions = arms
-        .iter()
-        .enumerate()
-        .map(|(index, arm)| {
-            format!(
-                "branch_{index}({}) AS MATERIALIZED ({})",
-                if arm.columns == 6 {
-                    "clause,file,node,payload,failure,work"
-                } else {
-                    "clause,file,node,payload"
-                },
-                arm.sql
-            )
-        })
-        .collect::<Vec<_>>();
-    let selects = arms
-        .iter()
-        .enumerate()
-        .map(|(index, arm)| {
-            format!(
-                "SELECT {} clause,file,node,payload,{} failure,{} work FROM branch_{index}",
-                arm.clause,
-                if arm.columns == 6 { "failure" } else { "0" },
-                if arm.columns == 6 {
-                    "work"
-                } else {
-                    "9223372036854775807"
-                }
-            )
-        })
-        .collect::<Vec<_>>();
-    format!(
-        "WITH RECURSIVE {} {} ORDER BY clause,file,node",
-        definitions.join(","),
-        selects.join(" UNION ALL ")
-    )
-}
 fn pack(grammars: &[&GrammarMatcher]) -> Result<Vec<Pack>, String> {
-    let mut packs = vec![];
-    let mut arms = vec![];
-    let mut terminals = vec![];
-    for (clause, grammar) in grammars.iter().enumerate() {
-        loop {
-            let prefix = terminals.len();
-            let mut compiled = compile_namespaced(grammar, prefix, clause)?;
-            let capture_names = names(&compiled);
-            arms.push(Arm {
-                clause,
-                sql: compiled.sql,
-                columns: if compiled.relations["failureColumn"].as_u64() == Some(4) {
-                    6
-                } else {
-                    4
-                },
-                names: capture_names,
-            });
-            let sql = packed_sql(&arms);
-            if arms.len() <= 32 && sql.len() <= 256_000 {
-                terminals.extend(compiled.terminals.drain(prefix..));
-                break;
-            }
-            let rejected = arms.pop().unwrap();
-            if arms.is_empty() {
-                return Err(format!(
-                    "clause {clause} closed branch exceeds packing bound: {} bytes",
-                    sql.len()
-                ));
-            }
-            let sql = packed_sql(&arms);
-            packs.push(Pack {
-                sql,
-                terminals: std::mem::take(&mut terminals),
-                arms: std::mem::take(&mut arms),
-            });
-            drop(rejected);
-        }
-    }
-    if !arms.is_empty() {
-        packs.push(Pack {
-            sql: packed_sql(&arms),
-            terminals,
-            arms,
-        })
-    }
-    Ok(packs)
+    super::job::compile(grammars, &super::planner_stats::PlannerStats::default())
 }
 
 #[cfg(test)]
@@ -294,6 +185,11 @@ mod tests {
                     pack.terminals,
                     |db, batch, _| -> Result<Value, String> {
                         super::super::leaves::register(db, batch).map_err(|e| e.to_string())?;
+                        let stages = super::super::spike_stages::run(
+                            db,
+                            &json!({"physicalStages":pack.stages}),
+                            &pack.sql,
+                        )?;
                         let mut stmt =
                             db.prepare(&pack.sql).map_err(|e| format!("prepare: {e}"))?;
                         let trace = ExecutionTrace::start(db);
@@ -334,7 +230,7 @@ mod tests {
                             ));
                         }
                         Ok(
-                            json!({"bytes":pack.sql.len(),"arms":pack.arms.len(),"matchingExecutions":executions,"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"allFiles":batch.files.len()}),
+                            json!({"bytes":pack.sql.len(),"arms":pack.arms.len(),"matchingExecutions":executions+stages.executions,"physicalStages":stages.profile(),"vmSteps":i64::from(stmt.get_status(rusqlite::StatementStatus::VmStep))+stages.vm,"allFiles":batch.files.len()}),
                         )
                     },
                 )
@@ -361,7 +257,16 @@ mod tests {
                 (expected.len() != actual.len()).then_some(expected.len().min(actual.len()))
             });
         let probe_parity = !probes || native_probes == sql_probes;
-        let mut report = json!({"passed":difference.is_none() && probe_parity,"grammars":grammars.len(),"files":batch.len(),"matchingExecutions":reports.len(),"statements":reports,"nativeRows":expected.len(),"sqlRows":actual.len(),"difference":difference.map(|i|json!({"index":i,"expected":expected.get(i),"actual":actual.get(i)})),"contract":"work-aware statement packing; native outputs and published remaining work; no cross-rule VM sharing claim"});
+        let executions: u64 = reports
+            .iter()
+            .map(|r| r["matchingExecutions"].as_u64().unwrap())
+            .sum();
+        if executions > 100 {
+            return Err(format!(
+                "job exceeded hard execution budget: {executions}/100"
+            ));
+        }
+        let mut report = json!({"passed":difference.is_none() && probe_parity,"grammars":grammars.len(),"files":batch.len(),"matchingExecutions":executions,"statements":reports,"nativeRows":expected.len(),"sqlRows":actual.len(),"difference":difference.map(|i|json!({"index":i,"expected":expected.get(i),"actual":actual.get(i)})),"contract":"work-aware statement packing; native outputs and published remaining work; no cross-rule VM sharing claim"});
         if probes {
             report["nativeValueProbes"] = json!(native_probes);
             report["sqlValueProbes"] = json!(sql_probes);
@@ -420,7 +325,16 @@ mod tests {
             .parent()
             .unwrap();
         let batch = fixtures(root);
-        let packs = pack(&grammars).unwrap();
+        let language = grammars[0].language;
+        let indexed = exec::Batch::new(
+            batch
+                .iter()
+                .map(|f| (tape(language, &f.source), Default::default()))
+                .collect(),
+            vec![],
+        );
+        let stats = super::super::planner_stats::PlannerStats::from_batch(&indexed, language);
+        let packs = super::super::job::compile(&grammars, &stats).unwrap();
         assert!(packs.len() <= 100);
         let report = validate(&grammars, packs, &batch).unwrap();
         if let Ok(path) = std::env::var("RERAIL_JOB_RELATION_SPIKE_EVIDENCE") {
@@ -547,6 +461,13 @@ mod tests {
             })
             .collect();
         Pack {
+            stages: compiled.relations["physicalStages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|s| s.as_str())
+                .map(str::to_owned)
+                .collect(),
             sql: compiled.sql,
             terminals: compiled.terminals,
             arms,

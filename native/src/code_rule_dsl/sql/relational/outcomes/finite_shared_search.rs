@@ -5,6 +5,40 @@ use crate::code_rule_dsl::sql::relational::outcomes::{
     Axis,
     finite_lower::{Instruction, Program},
 };
+use std::collections::BTreeMap;
+
+/// These kinds come from a proof of the whole candidate body before CFG
+/// flattening. Omitted nodes return false without work, memo, depth, or effects.
+fn candidate_filter(kinds: &BTreeMap<usize, Vec<u16>>, pc: &str) -> Option<(String, String)> {
+    if kinds.is_empty() {
+        return None;
+    }
+    let sites = kinds
+        .keys()
+        .map(|site| (site + 10).to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let cases = kinds
+        .iter()
+        .map(|(site, kinds)| {
+            let predicate = if kinds.is_empty() {
+                "0".into()
+            } else {
+                format!(
+                    "candidate.kind IN ({})",
+                    kinds
+                        .iter()
+                        .map(u16::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            };
+            format!("WHEN {} THEN ({predicate})", site + 10)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some((sites, format!("CASE {pc} {cases} ELSE 1 END")))
+}
 
 pub(super) fn metadata(program: &Program) -> Option<String> {
     let rows = program
@@ -94,8 +128,16 @@ fn eligible(p: &str, edge: &str) -> String {
     )
 }
 
-pub(super) fn enter_all(program: &Program, table: &str, seed: &str) -> Result<String, String> {
+pub(super) fn enter_all(
+    program: &Program,
+    table: &str,
+    seed: &str,
+    candidates: &BTreeMap<usize, Vec<u16>>,
+) -> Result<String, String> {
     let first = r#"CASE s.axis WHEN 0 THEN CASE WHEN s.field IS NULL THEN (SELECT candidate.id FROM node candidate WHERE candidate.file=d.file AND candidate.parent=s.node ORDER BY candidate.id LIMIT 1) ELSE (SELECT candidate.id FROM node candidate WHERE candidate.file=d.file AND candidate.parent=s.node AND candidate.field=s.field AND candidate.ffirst=1 LIMIT 1) END WHEN 1 THEN CASE WHEN s.field IS NULL OR s.ending=1 OR (origin.field=s.field AND origin.ffirst=1) THEN origin.parent END WHEN 2 THEN origin.prev ELSE origin.next END"#;
+    let first = candidate_filter(candidates,"s.pc").map_or_else(||first.to_string(),|(sites,filter)|format!(
+        "CASE WHEN s.pc IN ({sites}) THEN CASE WHEN s.ending=1 THEN (SELECT candidate.id FROM node candidate WHERE candidate.file=d.file AND candidate.id>s.node AND candidate.id<=origin.\"last\" AND ({filter}) ORDER BY candidate.id LIMIT 1) ELSE (SELECT candidate.id FROM node candidate WHERE candidate.file=d.file AND candidate.parent=s.node AND ({filter}) ORDER BY candidate.id LIMIT 1) END ELSE ({first}) END"
+    ));
     let body_guard = format!(
         "CASE WHEN s.stop_first OR s.minimum IS NOT NULL THEN 1 ELSE ({}) AND ({}) END",
         eligible("s", "origin"),
@@ -128,11 +170,19 @@ pub(super) fn enter_all(program: &Program, table: &str, seed: &str) -> Result<St
     ))
 }
 
-pub(super) fn finish_all(program: &Program, table: &str, seed: &str) -> Result<String, String> {
+pub(super) fn finish_all(
+    program: &Program,
+    table: &str,
+    seed: &str,
+    candidates: &BTreeMap<usize, Vec<u16>>,
+) -> Result<String, String> {
     let own = "CASE WHEN p.axis=0 AND p.stop IS NOT NULL AND p.c0=7 THEN p.c10 ELSE p.truth END";
     let stopped = "CASE WHEN p.stop IS NULL THEN 0 WHEN p.axis=0 THEN CASE WHEN p.c0=7 THEN p.truth ELSE 0 END ELSE CASE WHEN p.c0=7 THEN p.truth ELSE p.c10 END END";
     let decisive = "CASE WHEN p.minimum IS NOT NULL THEN CASE WHEN p.maximum IS NOT NULL THEN p.low>p.maximum WHEN p.count_slot IS NULL THEN p.own=1 AND p.low>=p.minimum ELSE 0 END WHEN p.strict THEN p.own IN (1,2) OR p.c9 ELSE p.own=1 END";
     let next = "CASE p.axis WHEN 0 THEN CASE WHEN p.ending=0 THEN CASE WHEN p.field IS NULL THEN (SELECT candidate.id FROM node candidate WHERE candidate.file=d.file AND candidate.parent=p.c1 AND candidate.id>n.\"last\" ORDER BY candidate.id LIMIT 1) END ELSE CASE WHEN (CASE WHEN p.stopped<>0 THEN n.\"last\"+1 ELSE n.id+1 END)<=p.c5 THEN CASE WHEN p.stopped<>0 THEN n.\"last\"+1 ELSE n.id+1 END END END WHEN 1 THEN CASE WHEN p.ending=1 AND p.stopped=0 THEN n.parent END WHEN 2 THEN CASE WHEN p.ending=1 AND p.stopped=0 THEN n.prev END WHEN 3 THEN CASE WHEN p.ending=1 AND p.stopped=0 THEN n.next END END";
+    let next = candidate_filter(candidates,"p.c3").map_or_else(||next.to_string(),|(sites,filter)|format!(
+        "CASE WHEN p.c3 IN ({sites}) THEN CASE WHEN p.ending=1 THEN (SELECT candidate.id FROM node candidate WHERE candidate.file=d.file AND candidate.id>n.id AND candidate.id<=p.c5 AND ({filter}) ORDER BY candidate.id LIMIT 1) ELSE (SELECT candidate.id FROM node candidate WHERE candidate.file=d.file AND candidate.parent=p.c1 AND candidate.id>n.\"last\" AND ({filter}) ORDER BY candidate.id LIMIT 1) END ELSE ({next}) END"
+    ));
     let result = verdict("p.low", "p.uncertain", "p.open", "p");
     let done_truth =
         format!("CASE WHEN p.own<0 THEN p.own WHEN p.stopped<0 THEN p.stopped ELSE ({result}) END");
@@ -170,6 +220,7 @@ mod tests {
     };
     fn program() -> Program {
         Program {
+            source: None,
             share_search: true,
             code: vec![Node {
                 op: Instruction::Search {
@@ -202,13 +253,25 @@ mod tests {
                 .unwrap()
                 .contains("(10,0,0,17,12,13,1,4,70,-2,1)")
         );
-        let enter = enter_all(&p, "instructions", "SELECT seed.* FROM seed").unwrap();
+        let enter = enter_all(
+            &p,
+            "instructions",
+            "SELECT seed.* FROM seed",
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert!(enter.contains(
             "candidate.parent=s.node AND candidate.field=s.field AND candidate.ffirst=1"
         ));
         assert!(enter.contains("relation_state_project(s.scope,s.env,0,0)"));
         assert!(!enter.contains("UNION"));
-        let finish = finish_all(&p, "instructions", "SELECT popped.* FROM popped").unwrap();
+        let finish = finish_all(
+            &p,
+            "instructions",
+            "SELECT popped.* FROM popped",
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert!(finish.contains("candidate.id>n.\"last\""));
         assert!(
             finish.contains("relation_state_put(p.scope,p.c6,p.count_slot,p.low+p.count_offset)")

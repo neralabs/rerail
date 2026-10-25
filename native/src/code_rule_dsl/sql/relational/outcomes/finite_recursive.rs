@@ -80,6 +80,7 @@ impl Builder {
         let function = self.functions.len();
         self.functions.push(Function {
             entry: usize::MAX,
+            original: None,
             memo: (component.memo && !component.bypass).then_some(2_000_000 + id),
             effects: plan.effects,
             mentions: plan.mentions.clone(),

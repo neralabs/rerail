@@ -52,6 +52,43 @@ fn seed(alias: &str, guard: &str, popped: bool) -> String {
 }
 impl Sql {
     pub(super) fn finite_program(&mut self, p: &Program, input: &Demand) -> Result<Output, String> {
+        if let Some(source) = &p.source {
+            self.collect_closed_demands(source)?;
+        }
+        let kind_summaries = super::super::finite_kind_summary::compile(p);
+        let original_booleans = p
+            .code
+            .iter()
+            .filter(|n| matches!(n.op, Instruction::Boolean { .. } | Instruction::Not(_)))
+            .count();
+        let cfg = super::super::finite_cfg::compile(p);
+        let adapted = cfg
+            .as_ref()
+            .and_then(|cfg| super::super::finite_cfg_emit::adapt(p, cfg));
+        let cfg = if adapted.is_some() { cfg } else { None };
+        let candidate_kinds = cfg.as_ref().map_or_else(
+            || kind_summaries.search_candidates.clone(),
+            |cfg| {
+                cfg.sites
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(site, source)| {
+                        kind_summaries
+                            .search_candidates
+                            .get(&source.source)
+                            .cloned()
+                            .map(|kinds| (site, kinds))
+                    })
+                    .collect()
+            },
+        );
+        let p = adapted.as_ref().unwrap_or(p);
+        let cfg_routes = cfg.as_ref().map(|cfg| {
+            self.constant_relation(
+                "static Boolean routes",
+                super::super::finite_cfg_emit::metadata(cfg),
+            )
+        });
         let mut generation = self.generation.clone();
         generation.peak_tracking = true;
         generation.return_cells = generation
@@ -121,6 +158,8 @@ impl Sql {
             },
         );
         let layout = self.generation.memo_layout.clone();
+        let mut projections = self.pure_function_projections(p, input)?;
+        self.extend_kind_projections(p, input, &kind_summaries, &mut projections)?;
         let functions = p
             .functions
             .iter()
@@ -134,7 +173,7 @@ impl Sql {
                 });
                 format!(
                     "({id},{},{},{})",
-                    f.entry + 10,
+                    projections.entries[id].unwrap_or(f.entry + 10),
                     identity.map_or("NULL".into(), |m| m.to_string()),
                     usize::from(f.effects.cache_fills)
                 )
@@ -207,6 +246,19 @@ impl Sql {
             let owners=p.functions.iter().enumerate().filter(|(_,f)|f.writes.contains(slot)).map(|(i,_)|i.to_string()).collect::<Vec<_>>().join(",");
             let col=layout.as_ref().map_or(*slot,|l|l.column(*slot));format!(" AND m.v{col} IS CASE WHEN p.truth=1 AND f.id IN ({owners}) THEN relation_state_get(p.env,{slot}) END")
         }).collect::<String>();
+        let mut call_frame = vec![
+            "0",
+            "s.node",
+            "s.level",
+            "s.function",
+            "s.work",
+            "CASE WHEN s.fills THEN relation_cache_fill_steps() END",
+            "s.token",
+            "s.env",
+        ];
+        if cfg.is_some() {
+            call_frame.push("s.pc");
+        }
         let enter = format!(
             r#"WITH reached AS MATERIALIZED ({}), s AS MATERIALIZED (SELECT s.*,f.id function,f.entry,f.memo,f.fills FROM reached s JOIN {code} i ON i.pc=s.pc JOIN {functions} f ON f.id=i.a),
 lookup AS MATERIALIZED (SELECT s.*,m.truth hit,m.cost,m.peak,CASE WHEN m.truth=1 AND s.work>=m.cost THEN {hit_env} ELSE s.env END hit_env FROM s JOIN {functions} f ON f.id=s.function LEFT JOIN relation_memo m ON m.mode IS CASE WHEN f.memo IS NOT NULL THEN 0 END AND m.clause IS {clause} AND m.utility IS f.memo AND m.file IS d.file AND m.node IS s.node{input_key} AND m.peak<=256-s.level),
@@ -223,16 +275,7 @@ CASE WHEN s.hit IS NOT NULL THEN MAX(0,s.work-s.cost) WHEN s.level<256 AND s.wor
                 "frame",
                 "s.hit IS NULL AND s.level<256",
                 "s.handle",
-                &[
-                    "0",
-                    "s.node",
-                    "s.level",
-                    "s.function",
-                    "s.work",
-                    "CASE WHEN s.fills THEN relation_cache_fill_steps() END",
-                    "s.token",
-                    "s.env"
-                ]
+                &call_frame
             )
         );
         let bool_start = format!(
@@ -274,20 +317,31 @@ CASE WHEN s.hit IS NOT NULL THEN MAX(0,s.work-s.cost) WHEN s.level<256 AND s.wor
                 &["4", "s.node", "s.level", "s.pc", "0", "0", "s.env"]
             )
         );
-        let mut phases = vec![
-            (
+        let has_calls = p.code.iter().any(|n| matches!(n.op, Instruction::Call(_)));
+        let has_booleans = p
+            .code
+            .iter()
+            .any(|n| matches!(n.op, Instruction::Boolean { .. }));
+        let has_not = p.code.iter().any(|n| matches!(n.op, Instruction::Not(_)));
+        let mut phases = vec![];
+        if has_calls {
+            phases.push((
                 enter,
                 format!("machine.pc IN (SELECT pc FROM {code} WHERE op=2)"),
-            ),
-            (
+            ));
+        }
+        if has_booleans {
+            phases.push((
                 bool_start,
                 format!("machine.pc IN (SELECT pc FROM {code} WHERE op IN (3,4))"),
-            ),
-            (
+            ));
+        }
+        if has_not {
+            phases.push((
                 not_start,
                 format!("machine.pc IN (SELECT pc FROM {code} WHERE op=5)"),
-            ),
-        ];
+            ));
+        }
         let finish_call = format!(
             r#"WITH reached AS MATERIALIZED ({}),closed AS MATERIALIZED (SELECT p.*,relation_peak_close(p.c6) measured FROM reached p)
 SELECT p.c1,0,p.c2,p.work,p.parent,COALESCE(m.truth,p.truth),CASE WHEN p.truth=1 THEN p.env ELSE p.c7 END,p.scope FROM closed p JOIN {functions} f ON f.id=p.c3 LEFT JOIN relation_memo m ON m.mode IS CASE WHEN f.memo IS NOT NULL AND p.truth>=0 THEN 1 END AND m.clause IS {clause} AND m.utility IS f.memo AND m.file IS d.file AND m.node IS p.c1{return_key} AND m.vtruth IS p.truth AND m.vcost IS CASE WHEN p.c5 IS NULL THEN p.c4-p.work ELSE MAX(0,p.c4-p.work-relation_cache_fill_delta(p.c5)) END AND m.vpeak IS p.measured{supplied} WHERE p.measured>=0"#,
@@ -320,13 +374,41 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 AND p.blocked THEN 2 EL
 CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE p.c6 END WHEN p.c0=3 AND p.truth=1 THEN p.env WHEN p.c0=2 AND p.truth=1 AND NOT p.uncertain THEN p.current_env ELSE p.c6 END,p.scope FROM s p {again}"#,
             seed("p", "p.c0 IN (2,3)", true)
         );
+        let finish_call = cfg.as_ref().map_or_else(
+            || finish_call.clone(),
+            |_cfg| {
+                super::super::finite_cfg_emit::route(
+                    &finish_call,
+                    cfg_routes.as_ref().unwrap(),
+                    "p.c8",
+                    "p.parent",
+                )
+            },
+        );
+        let finish_bool = cfg.as_ref().map_or_else(
+            || finish_bool.clone(),
+            |_cfg| {
+                super::super::finite_cfg_emit::route(
+                    &finish_bool,
+                    cfg_routes.as_ref().unwrap(),
+                    "p.c3",
+                    "p.parent",
+                )
+            },
+        );
         let mut finishes = vec![
             "SELECT p.node,-1,p.level,p.work,NULL,p.truth,p.env,p.scope WHERE p.handle IS NULL"
                 .into(),
-            finish_call,
-            finish_not,
-            finish_bool,
         ];
+        if has_calls {
+            finishes.push(finish_call);
+        }
+        if has_not {
+            finishes.push(finish_not);
+        }
+        if has_booleans {
+            finishes.push(finish_bool);
+        }
         let mut profiles = vec![];
         let mut region_operators = vec![];
         let search_count = p
@@ -345,16 +427,34 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
             );
             let guard = format!("machine.pc IN (SELECT pc FROM {table})");
             phases.push((
-                shared_search::enter_all(p, &table, &seed("machine", &guard, false))?,
+                shared_search::enter_all(
+                    p,
+                    &table,
+                    &seed("machine", &guard, false),
+                    &candidate_kinds,
+                )?,
                 guard,
             ));
-            finishes.push(shared_search::finish_all(
+            let finish = shared_search::finish_all(
                 p,
                 &table,
                 &seed("p", "p.c0 IN (1,7)", true),
-            )?);
+                &candidate_kinds,
+            )?;
+            finishes.push(cfg.as_ref().map_or_else(
+                || finish.clone(),
+                |_cfg| {
+                    super::super::finite_cfg_emit::route(
+                        &finish,
+                        cfg_routes.as_ref().unwrap(),
+                        "p.c3",
+                        "p.parent",
+                    )
+                },
+            ));
             profiles.push(json!({"physicalOperator":"shared search transition","instructionRows":search_count,"enterTemplates":1,"returnTemplates":1}));
         }
+        let mut emitted_regions = std::collections::BTreeSet::new();
         for (id, node) in p.code.iter().enumerate() {
             let pc = id + 10;
             match &node.op {
@@ -371,12 +471,23 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
                         )?,
                         format!("machine.pc={pc}"),
                     ));
-                    finishes.push(search::finish(
+                    let finish = search::finish(
                         p,
                         pc,
                         node,
                         &seed("p", &format!("p.c0 IN (1,7) AND p.c3={pc}"), true),
-                    )?);
+                    )?;
+                    finishes.push(cfg.as_ref().map_or_else(
+                        || finish.clone(),
+                        |_cfg| {
+                            super::super::finite_cfg_emit::route(
+                                &finish,
+                                cfg_routes.as_ref().unwrap(),
+                                "p.c3",
+                                "p.parent",
+                            )
+                        },
+                    ));
                 }
                 Instruction::Binding { .. } => {
                     phases.push((
@@ -388,14 +499,42 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
                         )?,
                         format!("machine.pc={pc}"),
                     ));
-                    finishes.push(binding::finish(
+                    let finish = binding::finish(
                         p,
                         pc,
                         node,
                         &seed("p", &format!("p.c0=6 AND p.c3={pc}"), true),
-                    )?);
+                    )?;
+                    finishes.push(cfg.as_ref().map_or_else(
+                        || finish.clone(),
+                        |_cfg| {
+                            super::super::finite_cfg_emit::route(
+                                &finish,
+                                cfg_routes.as_ref().unwrap(),
+                                "p.c3",
+                                "p.parent",
+                            )
+                        },
+                    ));
                 }
                 Instruction::Eval(region) => {
+                    if !emitted_regions.insert(*region) {
+                        continue;
+                    }
+                    let pcs = p
+                        .code
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, n)| {
+                            matches!(n.op, Instruction::Eval(r) if r == *region)
+                                .then_some((i + 10).to_string())
+                        })
+                        .collect::<Vec<_>>();
+                    let guard = if pcs.len() == 1 {
+                        format!("machine.pc={}", pcs[0])
+                    } else {
+                        format!("machine.pc IN ({})", pcs.join(","))
+                    };
                     let plan = &p.regions[*region];
                     let mut child_generation = generation.clone();
                     child_generation.return_cells = child_generation
@@ -422,7 +561,17 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
                     let cols = fields(&region_slots, |slot| {
                         format!("relation_state_get(machine.env,{slot})")
                     });
-                    let demand=Demand{name:child.relation("shared region input",format!("SELECT 1 k,d.file,machine.node,machine.work{cols} WHERE machine.pc={pc}"),true,"reached typed snapshot"),slots:region_slots};
+                    let demand = Demand {
+                        name: child.relation(
+                            "shared region input",
+                            format!(
+                                "SELECT 1 k,d.file,machine.node,machine.work{cols} WHERE {guard}"
+                            ),
+                            true,
+                            "reached typed snapshot",
+                        ),
+                        slots: region_slots,
+                    };
                     let before = child.generation.operators.get();
                     let out = child.emit(plan, &demand).map_err(|error| {
                         format!("{error}; finite region {region} at pc {pc}, prior region operator counts {region_operators:?}")
@@ -441,7 +590,7 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
                             format!("relation_state_put(s.scope,{env},{slot},r.c{})", i + 2)
                         },
                     );
-                    phases.push((format!("WITH s AS MATERIALIZED ({}) SELECT s.node,0,s.level,r.c1,s.handle,r.c0,CASE WHEN r.c0=1 THEN {env} ELSE s.env END,s.scope FROM s {}",seed("machine",&format!("machine.pc={pc}"),false),bridge(&query,2+plan.writes.len())),format!("machine.pc={pc}")));
+                    phases.push((format!("WITH s AS MATERIALIZED ({}) SELECT s.node,0,s.level,r.c1,s.handle,r.c0,CASE WHEN r.c0=1 THEN {env} ELSE s.env END,s.scope FROM s {}",seed("machine",&guard,false),bridge(&query,2+plan.writes.len())),guard));
                     profiles.push(json!({"pc":pc,"region":region,"compositionOperators":emitted,"sqlBytes":query.len(),"typedReturnColumns":2+plan.writes.len(),"relations":child.profile}));
                 }
                 _ => {}
@@ -470,9 +619,40 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
             "SELECT d.node node,{} pc,({depth}) level,d.work work,NULL handle,0 truth,{initial} env,owner.scope scope FROM owner",
             p.entry + 10
         )];
-        for (query, guard) in phases {
-            arms.push(format!("SELECT r.c0,r.c1,r.c2,r.c3,r.c4,r.c5,r.c6,r.c7 FROM schedule machine {} WHERE {guard}",bridge(&query,8)));
+        // Projection entries are complete function bodies, not CFG sites. Their
+        // return must reach the caller's existing completion frame before the
+        // caller's static route applies. Fallback entries are ordinary CFG sites.
+        let mut phases = phases
+            .into_iter()
+            .map(|(q, g)| (q, g, true))
+            .chain(projections.phases().into_iter().map(|(q, g)| (q, g, false)))
+            .collect::<Vec<_>>();
+        // Guards partition program counters. Return processing is frequent and
+        // can precede the other mutually exclusive handlers without reordering effects.
+        phases.sort_by_key(|(_, guard, _)| guard != "machine.pc=0");
+        let dispatcher_phases = phases.len();
+        let mut dispatch_arms = Vec::new();
+        for (query, guard, is_site) in phases {
+            let query = if guard == "machine.pc=0" || !is_site {
+                query
+            } else {
+                cfg.as_ref().map_or_else(
+                    || query.clone(),
+                    |_cfg| {
+                        super::super::finite_cfg_emit::route(
+                            &query,
+                            cfg_routes.as_ref().unwrap(),
+                            "machine.pc",
+                            "machine.handle",
+                        )
+                    },
+                )
+            };
+            dispatch_arms.push(format!("SELECT * FROM ({query}) WHERE {guard}"));
         }
+        // Read the recursive queue once. The scalar compound query stops at
+        // its first applicable handler; each handler also retains its reached-row barrier.
+        arms.push(format!("SELECT r.c0,r.c1,r.c2,r.c3,r.c4,r.c5,r.c6,r.c7 FROM schedule machine {} WHERE machine.pc<>-1 AND r.c0 IS NOT NULL",bridge(&dispatch_arms.join(" UNION ALL "),8)));
         let cols = p
             .writes
             .iter()
@@ -503,7 +683,7 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
             true,
             "shared lazy SQL bodies; persistent capture snapshots",
         );
-        self.profile.last_mut().unwrap()["sharedFinite"] = json!({"functions":p.functions.len(),"instructions":p.code.len(),"regions":profiles,"recursiveColumns":8,"captureVectorCopies":false});
+        self.profile.last_mut().unwrap()["sharedFinite"] = json!({"functions":p.functions.len(),"instructions":p.code.len(),"regions":profiles,"recursiveColumns":8,"recursiveArms":1,"dispatcherPhases":dispatcher_phases,"zeroWorkCandidateSearches":if p.share_search {candidate_kinds.len()} else {0},"captureVectorCopies":false,"staticBooleanCfg":cfg.is_some(),"originalBooleans":original_booleans,"retainedBooleans":p.code.iter().filter(|n|matches!(n.op,Instruction::Boolean{..}|Instruction::Not(_))).count(),"booleanContinuationPolicy":"memo-observable Any failure followers retain dynamic boundary"});
         Ok(Output { name })
     }
 }

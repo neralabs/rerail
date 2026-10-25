@@ -1,11 +1,18 @@
 #[cfg(test)]
 #[path = "capture_recursive_depth_tests.rs"]
 mod capture_recursive_depth_tests;
+#[path = "closed_demand.rs"]
+mod closed_demand;
 #[cfg(test)]
 #[path = "finite_emission_inventory_tests.rs"]
 mod finite_emission_inventory_tests;
 #[path = "finite_emit.rs"]
 mod finite_emit;
+#[cfg(test)]
+#[path = "finite_kind_depth_tests.rs"]
+mod finite_kind_depth_tests;
+#[path = "finite_kind_emit.rs"]
+mod finite_kind_emit;
 #[cfg(test)]
 #[path = "finite_recursive_depth_tests.rs"]
 mod finite_recursive_depth_tests;
@@ -20,6 +27,15 @@ mod mixed_capture_emit;
 mod mixed_recursive_emit;
 #[path = "peak_memo.rs"]
 mod peak_memo;
+#[cfg(test)]
+#[path = "projected_tail_depth_tests.rs"]
+mod projected_tail_depth_tests;
+#[path = "projected_tail_emit.rs"]
+mod projected_tail_emit;
+#[path = "projection_storage.rs"]
+mod projection_storage;
+#[path = "utility_projection_adapter.rs"]
+mod utility_projection_adapter;
 use super::super::ir::Set;
 #[path = "binding_emit.rs"]
 mod binding_emit;
@@ -51,6 +67,8 @@ mod parse_emit;
 mod parse_host_emit;
 #[path = "parse_recursive_emit.rs"]
 mod parse_recursive_emit;
+#[path = "parsed_frontier.rs"]
+pub(super) mod parsed_frontier;
 #[cfg(test)]
 #[path = "parsed_relation_spike.rs"]
 mod parsed_relation_spike;

@@ -40,6 +40,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs_with_bas
     let mut composition = vec![];
     let mut return_cells = vec![];
     let mut recursive_components = 0;
+    let mut physical_stages = Vec::new();
     for (clause, &(plan, slots, applies, root_filter)) in plans.iter().enumerate() {
         sql.generation = super::Generation::default();
         sql.generation.peak_tracking = plan.effects.needs_peak;
@@ -82,6 +83,12 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs_with_bas
             slots: Slots::new(),
         };
         sql.generation.components.borrow_mut().roots = roots.name.clone();
+        sql.generation.components.borrow_mut().stage_root = Some(format!(
+            "{}(file,node) AS MATERIALIZED (SELECT n.file,n.id FROM node n WHERE {} AND {})",
+            roots.name,
+            usize::from(applies),
+            root_filter
+        ));
         let output = if plan.fallible() {
             let (query, profile) = program(
                 plan,
@@ -110,6 +117,14 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs_with_bas
         };
         recursive_components += sql.generation.components.borrow().len();
         sql.publish_components();
+        physical_stages.extend(
+            sql.generation
+                .components
+                .borrow()
+                .physical_stages
+                .iter()
+                .cloned(),
+        );
         composition.push(sql.generation.operators.get());
         return_cells.push(sql.generation.return_peak.get());
         let mut observed: Vec<_> = plan.writes.iter().copied().collect();
@@ -184,6 +199,10 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs_with_bas
         return Err("publication: SQL text exceeds 256000 bytes".into());
     }
     let mut profile = json!({"scope":"Workspace clause/file failure publication kernel","clauses":clauses,"relations":sql.profile,"compositionOperators":composition,"outcomes":{"false":0,"true":1,"unknown":2,"depth":-1,"work":-2,"scope":-3,"value":-4},"failureColumn":4,"remainingWorkColumn":5,"initialWork":work,"publicationWidth":5+width,"nativeComposition":false,"flags":["Fallible clauses sequence roots within each file; total clauses retain set composition.","Provisional matches are withheld until the clause/file outcome is complete."],"limitations":["Work accounting covers the admitted outcome operators. Utility answers use local typed columns or clause/file keyed storage when traversal extends their lifetime. Native depth limits and deadlines remain unproved.","Native depth/stack budgets, decisions and enumeration remain unproved.","This publication contract is for workspace local clauses. Stateless query aggregation has a different failure scope."]});
+    if physical_stages.len() + 1 > 100 {
+        return Err("publication: physical stages exceed hard100 execution budget".into());
+    }
+    profile["physicalStages"] = json!(physical_stages);
     profile["nestedReturnCells"] = json!(return_cells);
     profile["nestedReturnCellBudget"] = json!(128);
     profile["recursiveComponents"] = json!(recursive_components);

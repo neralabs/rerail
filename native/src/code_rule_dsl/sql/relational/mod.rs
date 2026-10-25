@@ -10,6 +10,8 @@ mod capture_cell;
 mod capture_env;
 mod capture_state;
 mod classify;
+#[cfg(test)]
+mod compiler_shape_tests;
 mod continuation_store;
 mod cutover_tests;
 mod demand;
@@ -19,6 +21,7 @@ mod file_condition_tests;
 mod file_guard;
 mod format_facts;
 mod ir;
+mod job;
 pub(super) mod leaves;
 mod lower;
 mod memo_store;
@@ -29,11 +32,13 @@ mod pattern_capture;
 mod pattern_leaf;
 mod peak_tracker;
 mod physical;
+mod planner_stats;
 mod recursion;
 mod recursion_tests;
 mod recursive_chain;
 mod recursive_downward;
 mod row;
+mod shared_job;
 mod sibling_state;
 mod span_capture;
 #[cfg(test)]
@@ -52,6 +57,13 @@ pub(super) struct Compiled {
 }
 
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
+    compile_with_stats(grammar, &planner_stats::PlannerStats::default())
+}
+
+pub(super) fn compile_with_stats(
+    grammar: &GrammarMatcher,
+    stats: &planner_stats::PlannerStats,
+) -> Result<Compiled, String> {
     if grammar.file.is_some() {
         return outcomes::compile(grammar);
     }
@@ -70,7 +82,7 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
         }
         classify::Representation::TotalRelations => {}
     }
-    match compile_total(grammar) {
+    match compile_total_with_prefix(grammar, 0, stats.for_dialect(grammar.language)) {
         Ok(compiled) => Ok(compiled),
         Err(reason) => {
             let mut compiled = outcomes::compile(grammar)
@@ -82,9 +94,13 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
 }
 
 fn compile_total(grammar: &GrammarMatcher) -> Result<Compiled, String> {
-    compile_total_with_prefix(grammar, 0)
+    compile_total_with_prefix(grammar, 0, None)
 }
-fn compile_total_with_prefix(grammar: &GrammarMatcher, prefix: usize) -> Result<Compiled, String> {
+fn compile_total_with_prefix(
+    grammar: &GrammarMatcher,
+    prefix: usize,
+    stats: Option<&planner_stats::PlannerStats>,
+) -> Result<Compiled, String> {
     analysis::admit(grammar)?;
     let mut program = if prefix == 0 {
         lower::compile(grammar)?
@@ -96,7 +112,7 @@ fn compile_total_with_prefix(grammar: &GrammarMatcher, prefix: usize) -> Result<
     demand::apply(&mut program);
     let plan = physical::plan(&program)?;
     let active = ir::reachable(&program);
-    let relations = serde_json::json!({
+    let mut relations = serde_json::json!({
         "scope": "capture-free total relations, structural components, ancestor closure, and proved subtree demand",
         "components":plan.iter().enumerate().filter_map(|(id,p)|match p {
             physical::RelationPlan::Component {leader,members,..} if id==*leader => Some(serde_json::json!({
@@ -120,8 +136,21 @@ fn compile_total_with_prefix(grammar: &GrammarMatcher, prefix: usize) -> Result<
             "recursive":match &plan[id] {physical::RelationPlan::Joins(arms)=>arms.iter().any(|a| a.references.iter().any(|(_,r)| *r==id)),_=>true},
         })).collect::<Vec<_>>()
     });
+    let sql = if let Some(stats) = stats {
+        let (sql, decisions, edges) = emit::emit_with_stats_detailed(&program, &plan, stats)?;
+        relations["physicalPlanning"] = serde_json::json!({
+            "statistics": "exact atomic counts for this language and file batch",
+            "anchors": decisions.iter().map(|d| serde_json::json!({"variable":d.variable,"estimatedRows":d.estimated_rows,"reason":d.reason})).collect::<Vec<_>>(),
+            "edges": edges.iter().map(|d| serde_json::json!({"from":d.from,"to":d.to,"known":d.known,"target":d.target,"observedEdges":d.observed_edges,"knownRows":d.known_rows})).collect::<Vec<_>>(),
+            "storage": planner_stats::materialization_decisions(&program,&plan,stats).iter().map(|d| serde_json::json!({"relation":d.relation,"consumers":d.consumers,"materialized":d.materialized,"reason":d.reason})).collect::<Vec<_>>(),
+            "semanticReordering": false
+        });
+        sql
+    } else {
+        emit::emit(&program, &plan)?
+    };
     Ok(Compiled {
-        sql: emit::emit(&program, &plan)?,
+        sql,
         terminals: program.terminals,
         relations,
     })
@@ -143,10 +172,11 @@ mod job_relation_spike;
 #[cfg(test)]
 mod staged_job_spike;
 
-pub(super) fn compile_namespaced(
+pub(super) fn compile_namespaced_with_stats(
     grammar: &GrammarMatcher,
     prefix: usize,
     clause: usize,
+    stats: &planner_stats::PlannerStats,
 ) -> Result<Compiled, String> {
     // Packed jobs expose remaining work. Set-only compilation can erase utility
     // charges even when result truth is total; retain the ordered work contract.
@@ -166,10 +196,13 @@ pub(super) fn compile_namespaced(
             }
         }
         classify::Representation::TotalRelations => {
-            match compile_total_with_prefix(grammar, prefix) {
+            match compile_total_with_prefix(grammar, prefix, stats.for_dialect(grammar.language)) {
                 Ok(compiled) => Ok(compiled),
                 Err(_) => outcomes::compile_namespaced(grammar, prefix, clause),
             }
         }
     }
 }
+
+// Reuse SQLite loop instrumentation for every common-compiler statement.
+use super::scan;

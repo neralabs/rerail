@@ -33,6 +33,7 @@ fn catalog(execute: bool) -> Value {
     paths.sort();
     let fixtures = execute.then(|| execution::fixtures(root));
     let mut rows = Vec::new();
+    let mut snapshots = std::collections::HashMap::new();
     let mut policies = Vec::new();
     let mut refusals = BTreeMap::<String, usize>::new();
     let mut policy_errors = 0;
@@ -63,12 +64,32 @@ fn catalog(execute: bool) -> Value {
             if let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind {
                 for (index, grammar) in matchers.iter().enumerate() {
                     total += 1;
-                    let compiled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        super::compile(grammar)
-                    }))
-                    .unwrap_or_else(|payload| {
-                        Err(format!("compiler panic: {}", panic_reason(payload)))
+                    let stats = fixtures.as_ref().map(|fixtures| {
+                        snapshots.entry(grammar.language).or_insert_with(|| {
+                            let docs = fixtures
+                                .iter()
+                                .map(|f| {
+                                    (
+                                        crate::code_rule_dsl::sql::tests::differential::tape(
+                                            grammar.language,
+                                            &f.source,
+                                        ),
+                                        crate::code_rule_dsl::sql::exec::FileContext::default(),
+                                    )
+                                })
+                                .collect();
+                            let batch = crate::code_rule_dsl::sql::exec::Batch::new(docs, vec![]);
+                            super::planner_stats::PlannerStats::from_batch(&batch, grammar.language)
+                        })
                     });
+                    let compiled =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match stats {
+                            Some(stats) => super::compile_with_stats(grammar, stats),
+                            None => super::compile(grammar),
+                        }))
+                        .unwrap_or_else(|payload| {
+                            Err(format!("compiler panic: {}", panic_reason(payload)))
+                        });
                     let result = match compiled {
                         Ok(compiled) => {
                             admitted += 1;
@@ -83,7 +104,7 @@ fn catalog(execute: bool) -> Value {
                                 )
                                 .unwrap();
                             }
-                            let mut result = json!({"admitted":true,"sqlBytes":compiled.sql.len(),"sqlSha256":digest(compiled.sql.as_bytes()),"compilerScope":compiled.relations["scope"],"compilerLimitations":compiled.relations["limitations"],"lowering":compiled.relations["lowering"],"compositionOperators":compiled.relations["compositionOperators"],"nestedReturnCells":compiled.relations["nestedReturnCells"]});
+                            let mut result = json!({"physicalPlanning":compiled.relations["physicalPlanning"],"admitted":true,"sqlBytes":compiled.sql.len(),"sqlSha256":digest(compiled.sql.as_bytes()),"compilerScope":compiled.relations["scope"],"compilerLimitations":compiled.relations["limitations"],"lowering":compiled.relations["lowering"],"compositionOperators":compiled.relations["compositionOperators"],"nestedReturnCells":compiled.relations["nestedReturnCells"]});
                             if let Some(fixtures) = &fixtures {
                                 let checked =
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

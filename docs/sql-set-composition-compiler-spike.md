@@ -6195,3 +6195,183 @@ The plan and specification now include the selected physical shapes, the failed 
 The final independent catalog qualification also passes. All 146 grammars have positive native witnesses, zero refusals, zero execution failures, and unchanged resource ceilings. Aggregate default-compiler work remains 2,390,172,088 VM instructions. This confirms that the new reference reductions are not yet a production-wide speedup.
 
 The compact evidence is `benchmark/sql-relational-structural-spikes.json`. The compressed trace contains 223 files, including generated SQL, query plans, stage counts, native comparisons, failed checkpoints, and validation logs. Every archived file has a checked SHA-256 entry. No production compiler selection flag was introduced.
+
+## Common compiler integration after the structural spikes
+
+The user authorized implementation of the accepted shapes in the common compiler. The implementation also revisits ast-index-spike at `9449260fea46fa81358fc638bf95a1566d475e27`.
+
+The integration has four parts: generic answer/effect lowering, parsed-document frontiers, bounded job composition, and statistics-driven physical planning. Rule names and fixed source digests cannot select an implementation. Statistics can select equivalent pure plans. Statistics cannot reorder observable work or callbacks.
+
+The ast-index planner uses measured kind frequencies, edge fanout, and value posting counts to select anchors and traversal directions. Its materialization decisions also distinguish reuse and correlation. Rerail's current pure emitter chooses the smallest number of allowed kinds, which does not estimate candidate rows. The first transfer uses batch kind counts with explicit language identity. Unknown statistics remain distinct from an observed zero.
+
+### Correct the F632 SQL-size attribution
+
+The integration audit found an overwritten artifact in the previous spike run. A later selective control replaced `08-parsed_relation_spike.sql`. Its 7,831 bytes do not describe the full F632 query. The full record's SQL hash differs from the saved file. The 19,227,542 VM measurement remains tied to the full native-parity run.
+
+The full reference query is approximately 29,948 bytes at the catalog allowance. The old archive remains unchanged as historical evidence. New artifacts use distinct case paths and record both SQL length and hash. The historical 9,788-byte target came from that invalid attribution. The unchanged 125% rule applies to the complete 29,948-byte reference: 37,435 bytes. New tests compile the complete reference directly and compare sizes, independently of saved artifacts.
+
+### First common-compiler measurements
+
+The first build supplies one language-scoped statistics snapshot to each catalog compilation. All 146 native comparisons and existing VM ceilings pass. Total VM work decreases from 2,390,172,088 to 2,388,919,581. This small catalog change is expected: the largest costs occur in ordered utility composition.
+
+The skew controls reverse the rare endpoint and retain exact native rows. Measured anchor selection uses 56 instructions versus 3,641 for the opposite anchor. The reversed corpus uses 57 versus 7,224. Unknown counts and mixed-language kind collisions have separate passing tests.
+
+Single-use inlining wins all three producer-size controls. Materializing a cheap two-use producer loses slightly in all three controls. Multiple consumers therefore retain the conservative existing behavior. They do not establish a general materialization win.
+
+### Integration failure: empty handler cardinality
+
+The initial static Boolean control graph fails five native tests. The invocation scope remains open because the schedule stops without a terminal row. The row bridge turns an empty scalar result into an all-NULL row. A wrapped, inapplicable call handler then hides the applicable search handler. Filtering the synthetic NULL row preserves the original handler cardinality, including valid node zero. The cleanup gate remains unchanged.
+
+The first utility adapter also exposes repeated producers: each function creates its own descendant graph over all nodes. This is a diagnostic baseline, not the accepted shape. Integration must share one graph and remove demands after proven metadata outcomes.
+
+### First reference gates through common lowering
+
+Build 4 passes all six parsed-frontier tests and 46 finite-control tests. Full F632 has 42 native matches across 597 files. Common lowering uses 18,957,323 VM instructions and 29,457 SQL bytes. The complete reference uses 19,227,542 instructions and 29,948 bytes.
+
+Build 6 passes the six projection contracts and six statistics controls. Measured child-fanout ordering uses 2,611 instructions versus 6,188 for the opposite order, in both skew directions. The pure shared-job positive cases pass. Its refusal test used an invalid host capture fixture; the replacement uses a valid pattern capture.
+
+The SIM905 common gate still fails: 466,520,924 VM instructions and 202,457 SQL bytes, despite exact native output. Static Boolean routing reduces continuation pushes from 426,911 to 248,923 but does not reduce total VM work. This implementation is not accepted as the reference replacement. Its new projection adapter does not cover the recursive helper regions that dominate this workload.
+
+The next common change partially evaluates those pure recursive regions by node kind. Only a complete truth/cost/peak proof can bypass their control schedule. Unknown metadata, insufficient work, and depth limits retain the original execution path. This follows the reference's metadata stratification without policy names or source hashes.
+
+### Remove unreachable unknown routes before emission
+
+Build 7 preserves all 146 native catalog comparisons. Its fixed performance gate rejects B615: 347,294,172 VM versus the 347,286,337 ceiling. A metadata wrapper for a single utility entry adds overhead there. That wrapper now requires a proved multi-entry saving. The ceiling does not change.
+
+The static Boolean graph also constructed unknown-state suffixes for total predicates and pure recursive regions. Build 8 removes those unreachable routes before emission. All 46 finite tests pass. SIM905 decreases to 374,722,073 VM instructions and 167,480 SQL bytes. It still fails both reference-relative gates.
+
+The next structural transfer recognizes a pure acyclic base followed by a kind-guarded immediate-child self call. Recognition uses source structure and utility identity. It builds shared base answers, reached parent links, and ordered utility-entry rows. Work and depth failures then select an exact entry prefix. This removes the nested Boolean interpreter for that admitted shape. Its measurements and native failure controls remain required before acceptance.
+
+### Compile recursive entries as data
+
+Build 11 passes the new recursive-entry native test across twelve work allowances. The first common SIM905 query fails preparation with an unresolved shared-summary CTE. The definition exists in the generated SQL; its dependency ordering and repeated completion joins require correction. This is not evidence of an accepted SQLite limit.
+
+Build 12 passes all 32 selected pure tests and the new entry-prefix test. Metadata proofs now retain exact entry-depth sequences, so failed metadata cases use direct formulas rather than the original interpreter. The relational producer receives unresolved kinds and their recursive closure. Parsed contexts retain their existing document-aware path.
+
+The next build emits helper dependencies before consumers and stores reached-call flags in their existing summaries. Completion edges then read those flags without repeating each helper's join tree. A source-plan demand pass also collects conservative call-site domains. It executes no Value, parse, binding, or cache callback. Unknown contexts retain the wider domain, and dead demand definitions are removed through explicit dependency edges.
+
+All reported full-workload SIM905 implementation measurements still fail the reference gate. No production cutover or final qualification has been claimed.
+
+### Bound shared-summary expansion and preserve stage accounting
+
+Build 14 passes the projected-tail work/depth/peak controls and all six utility-projection controls. Full SIM905 still fails SQLite preparation. A reduced preparation probe isolates excessive view/subquery nesting. Larger consumers report missing summary tables even though those definitions exist. These errors are not evidence that the compiler omitted a table.
+
+Build 15 adds a keyed demand table. Creation, reset, and batched population remain part of the measured cold job. This cut alone does not fix preparation. The remaining dependency chain needs bounded summary cuts. Build 16 adds explicit cuts from the producer dependency graph, without parsing SQL text. A test-report visibility error prevents that build from completing.
+
+The job packer previously discarded the new stage metadata. Packing now preserves each accepted arm's stages and checks the combined stage and matching execution count against 100. The common reference test also saves profiles before execution and records preparation failures, so one failure cannot hide the other reference result.
+
+Build 17 uses keyed summary tables at bounded dependency depths. Table schemas are explicit; schema preparation does not repeat the population query. It also separates search-template sharing from recursive-function exposure. The previous selector repeated search templates in ordinary finite programs, even when the shared search emitter was available. All changes still require native and fixed performance gates. Preparation is reported separately from execution; cold schema and reset executions remain included.
+
+### Reject a quadratic summary join
+
+Build 17 prepares and preserves all 77 native SIM905 matches across 597 files. It uses 19 executions, including all physical stages. It fails the performance gates: 1,258,706,590 VM instructions and 197,784 total SQL bytes. F632 remains at 18,957,323 instructions and 29,457 bytes.
+
+The trace isolates 213,359,284 instructions in one summary population and 214,061,387 in its dependent population. EXPLAIN shows the cause: SQLite joins the helper summary on `incoming` before resolving the child node. It then probes every summary node for each parent demand. The intended key is `(file,node,incoming)`. This produces 78,645,734 node advances across the job, versus 576,222 in build 8.
+
+The next emitter change fixes the dependency order: demand, indexed child edge, then the keyed child summary. It also supplies the known file key directly. A new control increases the AST fourfold and requires less than fivefold VM growth. It checks every child-search truth, cost, and peak against the indexed source facts. The full reference gate remains unchanged.
+
+The source-demand audit also makes Any failure followers conservative. A successful body proof cannot exclude a later alternative reached after a work or depth failure.
+
+### Measure the join correction and reject catalog regressions
+
+Build 18 corrects the child-summary join. SIM905 falls from 1,258,706,590 to 399,108,008 VM instructions. Node advances fall from 78,645,734 to 897,313. The physical stages use 18,118,408 instructions; the final driver still uses 380,989,600. Total SQL is 198,144 bytes. Neither reference-relative gate passes.
+
+The new scaling test passes: 128 repeated source forms use 589,097 instructions; 512 use 2,355,497. All seven projection tests pass. The workspace Clippy check also passes for this source checkpoint.
+
+All 146 catalog native comparisons pass. The fixed performance gate rejects B033 at 140,985,817 instructions against 13,615,296. It also rejects B615 by four instructions. B033 globalizes a helper whose calls occur inside a captured, dynamically reached domain. The next admission correction must require a proved closed domain for that captured context. B615's emitted SQL differs only by singleton `IN` guards replacing scalar equality; normalization reconstructs the exact previous SQL.
+
+The next diagnostic build enables SQLite loop counters. Each physical stage and the final statement report measured visits, loop counts, estimates, and flags. These instrumented timings are separate from the ordinary benchmark. The remaining SIM905 driver performs 1,738,915 typed transfers, so smaller producer costs alone cannot meet the reference shape.
+
+### Full job accounting and loop evidence
+
+The build 18 packed job preserves all 2,477 native output rows for 146 grammars and 597 files. It uses 23 matching packs plus 21 physical-stage executions: 44 total executions. The total is 2,618,658,732 VM instructions. This passes the hard execution count and native-output requirements; it is not the reference performance result.
+
+Build 19 enables SQLite scan instrumentation. Its VM counter includes instrumentation instructions, so its 445,524,330 SIM905 instructions cannot replace the ordinary build's 399,108,008 measurement. The loop trace identifies a truth join that scans 1,379 rows for each of 11,639 utility-entry rows: 16,050,181 visits. The next shape aggregates entry cost and depth per root before a separate materialized truth lookup.
+
+Build 20 restores B615's exact baseline SQL hash by emitting equality for singleton guards. It also keeps B033's captured, unproved demand on reached evaluation. Both regression probes preserve native output and return to one execution. Their instrumented VM values are diagnostic only; the ordinary build must pass the original ceilings. The new physical-stage lifecycle test passes repeated execution, changed inputs, and an empty input without retaining stale rows.
+
+The catalog gate now distinguishes its pinned final matching statement from explicit physical cuts. It requires one recorded execution per cut, exact total accounting, and at most 100 executions. All physical work remains inside the unchanged per-grammar VM ceiling. The independent full-job gate counts all packs and stages together. Five gate tests reject hidden executions, changed final counts, unreported stage work, excess VM work, and a fully reported 101-execution job. The build 18 catalog remains rejected for both VM regressions after this accounting correction.
+
+### Confirm the ordinary-build regression fixes
+
+Build 21 passes the targeted catalog regression gate. B033 uses 13,593,912 VM instructions, below its unchanged 13,615,296 ceiling. B615 returns to exactly 347,286,337 instructions and its baseline SQL hash. Both use one execution and preserve native output.
+
+Aggregating entry metrics before the truth lookup reduces SIM905 to 336,720,606 instructions. Full scans fall from 16,631,369 to 1,317,036. Native parity still passes, but both reference gates fail: 336,720,606 / 44,832,610 instructions and 198,315 / 62,980 total SQL bytes. EXPLAIN still chooses a scan for the grouped root lookup. Build 23 replaces that lookup with a keyed union and reduction, so truth rows and metric rows each enter the reduction once.
+
+The loop trace identifies the next compiler boundary. The outer schedule visits 434,543 states for 4,460 roots. Two nested numeric schedules add 102,266 and 98,206 states. The pure producer changes have not removed these schedules. The next lowering must compose pure segments into weighted answers and ordered entry prefixes. It must reduce metadata-proved false search gaps before scheduling Value or memo-sensitive work. Shared recursive helper forests also need one utility identity across their callers. These changes address the remaining 1.74 million typed transfers; further index tuning alone does not.
+
+Build 22 moves loop instrumentation into one shared SQL module after Clippy rejects the duplicate module inclusion. Ordinary builds retain no link to SQLite's optional scanstatus symbol.
+
+### Complete the shared-DAG adapter controls
+
+Build 23 preserves all 146 catalog native comparisons and their unchanged VM ceilings. The packed job preserves 2,477 output rows in 41 executions: 23 matching packs and 18 physical stages. It uses 2,424,693,830 VM instructions. SIM905 uses 332,535,046 instructions and 198,307 total SQL bytes. Both SIM905 reference gates remain failed. F632 passes at 18,957,323 instructions and 29,457 bytes.
+
+The broad build 22 suite reports 2,188 passes and one failure, with the known failed reference gate run separately. The failure is a deeply reused utility DAG. SQLite exceeds its 65,535 node-reference limit while expanding the ordinary projection adapter. Build 24 shares the recursive producer's keyed demand and summary cuts with that adapter. This fixes preparation but exposes an invalid static Boolean route on completed projection bodies.
+
+A projection entry is a complete function body, not a source CFG site. Build 25 returns it through the existing function completion frame. That frame then applies the caller's route. The full DAG control passes all eight work allowances. The seven projection controls and both recursive-prefix controls also pass. B033 and B615 retain their fixed performance results. SIM905 remains at the build 23 result; the DAG repair supplies no claimed SIM905 improvement.
+
+The next experiment partially evaluates complete utility bodies by node kind. Each proof carries truth, logical cost, relative peak, and nested memo completion records. Only multi-entry bodies justify the new dispatch. Captures, reached Value or cache effects, structural searches, and unresolved paths retain their original execution. A complete proof applies only when its full cost and depth fit. Failed prefixes retain native memo and failure-follower behavior. This experiment still requires native controls and the fixed catalog gates.
+
+### Collapse complete metadata bodies and deduplicate memo answers
+
+Build 26 preserves SIM905 native results at 275,264,999 VM instructions, down from 332,535,046. Typed transfers decrease from 1,738,915 to 1,249,144. SQL grows from 198,307 to 200,336 bytes. This is a partial runtime improvement, not a reference-shape qualification. B033 and B615 retain their unchanged results. All 47 selected finite tests pass, plus the new work, unknown, callback-failure, and failure-follower control.
+
+The trace shows 17,208 sorts, versus 35 before the metadata adapter. Its reached-row memo reduction groups an already unique row on every invocation. Build 28 replaces that reduction with a scalar aggregate. The metadata controls pass both native logical-depth and warm-replay comparisons. Those depth fixtures avoid Value failures, which the logical-depth oracle does not encode. Separate publication controls exercise reached Value, unknowns, and injected Value failures.
+
+The ordinary projection completion recipe also enumerates repeated DAG paths. Build 28 changes memo completion to a set of reached answers. The deep DAG publishes 70 answers for seven nodes and ten utilities. It retains all 7,161 native work charges. A smaller control retains cost 31 and peak five while producing five memo answers.
+
+Build 28 is rejected as a complete implementation. The recursive-prefix consumer also uses the old completion relation as a logical entry trace. Deduplicating or reordering that trace is invalid. The existing depth/work gate catches the error: at node 14 and work eight, SQL reports peak five instead of native peak four. Ordinary full-workload parity does not expose this defect.
+
+Build 29 separates `Produced<MemoAnswers>` from `Produced<LogicalEntries>`. The ordinary adapter consumes deduplicated answers. The recursive-prefix adapter consumes repeated entries in source order. Their accessor methods differ, so the consumers cannot accidentally substitute one contract for the other. Both consumers still share the producer dependency graph and physical-cut machinery. Qualification remains pending.
+
+### Qualify the common integration checkpoint
+
+Build 30 passes 2,192 tests, with 54 ignored tests. Only the separately measured reference gate is excluded. Both workspace and code-rule-profile Clippy checks pass. All 146 catalog native comparisons pass their unchanged VM ceilings. Their combined VM count is 1,964,914,807; that sum is not the packed-job measurement.
+
+The packed job preserves all 2,477 native rows across 597 files. It uses 23 matching statements and 18 physical executions: 41 in total. Its measured total is 2,364,903,523 VM instructions. The largest matching statement contains 254,709 bytes, below the unchanged 256,000-byte cap.
+
+SIM905 uses 272,744,739 VM instructions, 200,238 total SQL bytes, and 1,249,144 typed transfers. Its sort count falls from 17,208 to 36. The final driver accounts for 254,626,331 instructions; physical stages account for 18,118,408. Driver SQL alone contains 139,480 bytes. Both reference gates remain failed. F632 passes at 18,957,323 instructions and 29,457 bytes.
+
+The fresh instrumented build generates identical SQL hashes and preserves native results. Its loop counts expose incomplete Boolean-route indexing. SQLite indexes only `branch`, then filters the source site. One lookup visits 2,908,482 rows across 110,365 requests. Two others visit 812,481 and 509,025 rows. These are keyed control-table lookups, not required native work.
+
+Build 31 encodes `(site, branch)` as one integer route key. SIM905 falls to 252,918,999 instructions and 199,938 bytes. Native parity and the B033/B615 regression probes pass. The reference gate still fails. The final loop trace must confirm that lookups now visit at most one answer per request.
+
+The same trace shows 369,950 outer schedule states for 4,460 roots. Each recursive handler scans that queue independently. Build 32 instead emits one recursive arm with a guarded scalar dispatcher. Return handling comes first; program-counter guards remain mutually exclusive. Each handler retains its own reached-row barrier. Handlers absent from the lowered program are omitted. This shape remains an experiment until native, work, depth, callback, catalog, and performance gates pass.
+
+### Check the single-arm scheduler and all-owner summary storage
+
+Build 32 passes all 146 catalog native comparisons and their unchanged VM ceilings. Its packed job preserves 2,477 rows in 41 executions. Total job work decreases from 2,364,903,523 to 2,249,980,304 VM instructions. B615 decreases from 347,286,337 to 289,052,995 instructions. B033 retains 13,593,912 instructions. Both Clippy configurations and the five accounting controls pass.
+
+The 48 selected finite tests pass. SIM905 preserves native output at 242,559,289 instructions and 195,518 total SQL bytes. Both reference gates remain failed. F632 retains 18,957,323 instructions and 29,457 bytes. The broad suite and fresh loop trace remain in progress.
+
+The next experiment changes the physical cuts. Each existing cut stores only its top summary. Downstream completion recipes can recompute lower summaries from the same forest. The new cut will store every completed owner in one keyed table. Four integer words retain all 256 possible reached flags. Each later stage will read stored owners and omit their private reduction definitions. Raw child rows remain available to the ordered entry recipe.
+
+The experiment retains the existing cut depths, logical entry order, work charges, and partial-failure path. Its controls cover all flag bits, multiple cuts, changed inputs, and empty inputs. Native depth and memo controls, catalog ceilings, total SQL bytes, and whole-job execution accounting remain mandatory. A reduction in SQL bytes alone does not qualify this change.
+
+The build 32 loop trace preserves both native comparisons and the ordinary build's SQL hashes. All 343,858 Boolean-route probes visit exactly one row. The scheduler now has one `SCAN machine` loop, with 369,950 visits. The previous trace contained a separate queue scan for each handler. These checks establish the intended physical changes. They do not eliminate the 369,950 logical scheduler states or qualify the failed reference budgets.
+
+Build 32 completes the broad suite with 2,192 passes and no failures. The separately run SIM905 reference gate remains failed. The saved integration report identifies this checkpoint and includes source pins, SQL, profiles, gates, and rejected build 28 evidence.
+
+Build 33 passes the storage control, eight projection controls, and both ordered-prefix depth controls. It preserves SIM905 native output at 239,979,113 instructions and 177,592 total SQL bytes. Executions decrease from 19 to 15. Stage work increases from 18,118,408 to 20,152,128 instructions, but the total decreases by 2,580,176. F632 and both catalog regression probes retain their previous results. Broader qualification remains pending.
+
+Build 34 adds a separate search correction. The shared scheduler previously created a frame for each candidate before a false metadata predicate rejected it. The compiler now proves silent false candidate kinds before CFG flattening. Only child searches without fields, stops, or counts can use this proof. Their SQL selects the next possible candidate directly. Omitted candidates must have zero work, zero peak, no memo completions, and no reached effects. Unknown or unresolved kinds remain candidates. The finite proof pass retains its shared 65,536-visit bound.
+
+The new native control covers neighbor and descendant searches, unknown results, work exhaustion, injected Value failures, and a stopped-search negative control. The full catalog and performance gates remain unchanged. This search shape is still experimental until those gates pass.
+
+Build 34 passes the new candidate-selection control and all 49 selected finite tests. SIM905 preserves native output at 199,888,288 instructions and 179,233 total SQL bytes. Candidate selection removes 40,090,825 instructions relative to build 33. Continuations decrease from 160,508 to 127,598. Typed transfers decrease from 1,249,144 to 985,864 rows. F632 remains unchanged. Both catalog regression probes pass. The broad suite, full catalog gate, and final loop trace remain pending.
+
+All 146 build 34 catalog comparisons pass their unchanged VM ceilings. The packed job preserves all 2,477 native rows in 37 executions: 23 matching packs and 14 physical stages. Total work is 2,156,234,044 instructions. The largest matching statement contains 255,978 bytes. Both Clippy configurations pass.
+
+The independent accounting gate now reconciles VM work as well as execution counts. Each stage must report its work. Their sum must equal the stage aggregate, and stage plus final work must equal the reported total. A sixth negative control rejects omitted or inconsistent stage work. The complete catalog passes this stronger gate. This validation-only change does not alter the measured Rust binary.
+
+The final instrumented build preserves both native comparisons and the normal build's SQL hashes. Its outer scheduler visits 304,130 states, compared with 369,950 in build 32. One queue scan remains. All 278,038 Boolean-route lookups visit exactly one row. Nested numeric schedules retain 4,148, 88, and 100 states.
+
+The executed scan tree and the separately prepared EXPLAIN have different plan IDs for some nodes. The trace records each executed node's own parent and description. Analysis uses that tree directly. It must not join those IDs blindly to the later EXPLAIN. Instrumented VM values remain diagnostic and do not qualify the ordinary VM budgets.
+
+### Remaining compiler boundary
+
+The main unresolved boundary is in `utility_projection_lower::Builder::plan`. It still refuses `Op::PureRecursive`. As a result, callers cannot compose an existing recursive summary into a larger pure projection. Their surrounding control remains in the finite driver. Complete-body adapters also retain the original partial-failure program, which increases SQL size.
+
+The next compiler change needs a typed input for closed recursive answers. That input must carry truth, cost, peak, and an ordered utility-entry recipe. A caller must consume complete answers and failed prefixes through the same relational contract. A set of memo completions cannot replace the ordered recipe, as rejected build 28 demonstrates. The first transfer gate must compose an existing recursive helper inside an acyclic caller, then sweep work, incoming depth, and warm nested memos. The SIM905 reference budgets remain the end-to-end acceptance gates.
+
+Build 34 completes the broad suite with 2,194 passes, 54 ignored tests, and no failures. The one excluded test is the separately executed reference gate. SIM905 fails both reference limits. F632 passes both. The integration report and archive now identify build 34 and preserve the earlier controls. No production cutover is qualified.
