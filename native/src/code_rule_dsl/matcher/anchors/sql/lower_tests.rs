@@ -226,6 +226,50 @@ fn compiler() -> Lower {
 }
 
 #[test]
+fn predicate_producers_run_once_before_join_fanout() {
+    use rusqlite::functions::FunctionFlags;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+    let store = super::super::store::Store::temporary().unwrap();
+    store
+        .db
+        .execute_batch(
+            "CREATE TABLE points(fid INTEGER,pre INTEGER,PRIMARY KEY(fid,pre));
+        INSERT INTO points SELECT 1,value FROM generate_series(0,1023,1);
+        CREATE TABLE demands(fid INTEGER,pre INTEGER);
+        INSERT INTO demands SELECT fid,pre FROM points CROSS JOIN generate_series(0,15,1)",
+        )
+        .unwrap();
+    let calls = Arc::new(AtomicU64::new(0));
+    let observed = calls.clone();
+    store
+        .db
+        .create_scalar_function(
+            c"producer_predicate",
+            1,
+            FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+            move |ctx| {
+                observed.fetch_add(1, Ordering::Relaxed);
+                Ok(ctx.get::<i64>(0)? % 2 == 0)
+            },
+        )
+        .unwrap();
+    let statement = finish_decoded(vec!["selected(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM points WHERE producer_predicate(pre))".into()],
+        vec!["SELECT 0,s.fid,s.pre FROM demands d CROSS JOIN selected s ON s.fid=d.fid AND s.pre=d.pre".into()],
+        vec![], BTreeSet::new(), HashMap::new());
+    let mut rows = 0;
+    super::super::execute::rows(&store, &statement, |_, _, _| rows += 1).unwrap();
+    assert_eq!(rows, 512 * 16);
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        1024,
+        "one relational reader can still repeat native work through fan-out"
+    );
+}
+
+#[test]
 fn single_reader_projection_pipelines_stream_without_private_row_copies() {
     use std::sync::{
         Arc,
