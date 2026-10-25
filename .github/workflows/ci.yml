@@ -121,6 +121,7 @@ jobs:
               - 'test/scripts/sql-execution-budget.test.mjs'
               - 'test/engine/native/relational-batch.test.ts'
               - 'test/engine/native/relational-completed.test.ts'
+              - 'test/engine/native/recovery/anchor-planning.test.ts'
               - 'test/engine/native/candidate-admission.test.ts'
               - 'test/engine/native/candidate-publication.test.ts'
               - 'test/engine/native/compiler-schema.test.ts'

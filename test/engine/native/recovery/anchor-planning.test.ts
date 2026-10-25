@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { loadNativeBinding } from "../../../src/engine/index.js";
+import { loadNativeBinding } from "../../../../src/engine/index.js";
 
 const native = loadNativeBinding();
-const capabilities = readFileSync(new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8");
-const policy = readFileSync(new URL("../../../packs/data-layer/candidates/rules/data-layer-sync-async-signatures.json", import.meta.url), "utf8");
+const capabilities = readFileSync(new URL("../../../../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8");
+const policy = readFileSync(new URL("../../../../packs/data-layer/candidates/rules/data-layer-sync-async-signatures.json", import.meta.url), "utf8");
 
 // Reduced from the full repository's generated_facades.py failure. No function
 // has an async name, so this policy has no signature pair to report.
