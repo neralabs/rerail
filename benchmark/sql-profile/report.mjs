@@ -157,7 +157,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
 export function writeReport(report, outputDirectory) {
   report.executionBudget = executionBudget(report);
   report.actionableSummary = actionableSummary(report);
-  if (!report.executionBudget.accepted) report.actionableSummary.nextStep = "Meet the complete-job 100-execution SQL budget and coverage requirements before accepting performance changes.";
+  if (!report.executionBudget.accepted) report.actionableSummary.nextStep = "Repair complete capture accounting and findings parity before interpreting the profile. SQL counts are diagnostic; performance acceptance requires full-repository cold CPU, wall time and peak RSS.";
   const hash = path => createHash("sha256").update(readFileSync(path)).digest("hex");
   report.analysis = { version: 1, reporterSha256: hash(new URL(import.meta.url)),
     executionBudgetSha256: hash(new URL("./execution-budget.mjs", import.meta.url)),

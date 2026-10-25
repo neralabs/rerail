@@ -27,13 +27,21 @@ const job = (counts = [25, 25, 25, 25]) => ({
   workload: { executor: "relational", nativeSha256: hash, results: { parity: true, exitCode: 0, timedOut: false, conformance: parity() } },
 });
 
-test("100 covers the complete job, across workers and batches, without a configurable reset", () => {
+test("the fixed 100 reference is diagnostic at complete-job scope, never performance acceptance", () => {
   assert.equal(requireExecutionBudget(job()).observed, 100);
-  assert.throws(() => requireExecutionBudget(job([25, 25, 25, 26])), /101\/100; budget-exceeded/);
-  assert.throws(() => requireExecutionBudget(job([100, 100, 100, 100])), /400\/100/);
+  for (const counts of [[25, 25, 25, 26], [100, 100, 100, 100]]) {
+    const result = requireExecutionBudget(job(counts));
+    assert.equal(result.observed, counts.reduce((a, b) => a + b, 0));
+    assert.equal(result.accepted, true, "complete capture and parity remain valid above 100");
+    assert.equal(result.status, "reference-exceeded");
+    assert.equal(result.diagnosticOnly, true);
+    assert.equal(result.performanceAccepted, null, "counts never establish performance acceptance");
+  }
   const report = job([101]); report.limit = 1000; report.workload.config = { executionBudget: 1000, batchSize: 1 };
   assert.equal(executionBudget(report).limit, 100);
-  assert.equal(executionBudget(report).accepted, false);
+  assert.equal(executionBudget(report).excess, 1);
+  const invalid = job([101]); invalid.captureCoverage.complete = false;
+  assert.throws(() => requireExecutionBudget(invalid), /invalid-capture/, "integrity takes precedence over the count reference");
 });
 
 test("setup, DDL, transactions, helper SQL and cleanup count; enclosing operators do not count twice", () => {
@@ -98,10 +106,10 @@ test("the report counts every execution across sessions and locates execution 10
   try {
     const report = await buildReport(rawJob(directory, [51, 50]), join(directory, "sql"), job().workload);
     assert.equal(report.executionBudget.observed, 101);
-    assert.equal(report.executionBudget.status, "budget-exceeded");
+    assert.equal(report.executionBudget.status, "reference-exceeded");
     assert.equal(report.firstOverBudget.startNs, 100);
     assert.equal(report.firstOverBudget.sql, "SELECT 1");
-    assert.equal(JSON.parse(readFileSync(join(directory, "sql", "execution-budget.json"))).accepted, false);
+    assert.equal(JSON.parse(readFileSync(join(directory, "sql", "execution-budget.json"))).accepted, true);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -122,19 +130,18 @@ test("removing an entire session or its close receipt invalidates a small captur
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
-test("the ordinary SQL report command exits nonzero at 101 after preserving its evidence", () => {
+test("the ordinary SQL report preserves execution 101 without treating it as a performance failure", () => {
   for (const count of [100, 101]) {
     const directory = mkdtempSync(join(tmpdir(), "rerail-budget-cli-"));
     try {
       rawJob(directory, [count]);
       const child = spawnSync(process.execPath, ["scripts/profiling/sql-report.mjs", directory], { encoding: "utf8" });
-      assert.equal(child.status, count === 100 ? 0 : 1, child.stderr);
+      assert.equal(child.status, 0, child.stderr);
       assert.equal(JSON.parse(readFileSync(join(directory, "sql", "execution-budget.json"))).observed, count);
-      if (count === 101) assert.match(child.stderr, /101\/100; budget-exceeded/);
       const profile = join(directory, "profile.json");
       writeFileSync(profile, JSON.stringify({ ...JSON.parse(readFileSync(profile)), exitCode: 1 }));
       const again = spawnSync(process.execPath, ["scripts/profiling/sql-report.mjs", directory], { encoding: "utf8" });
-      assert.equal(again.status, count === 100 ? 0 : 1, again.stderr);
+      assert.equal(again.status, 0, again.stderr);
       assert.equal(JSON.parse(readFileSync(join(directory, "sql", "profile.json"))).workload.results.parity, true);
     } finally { rmSync(directory, { recursive: true, force: true }); }
   }
@@ -151,7 +158,7 @@ test("the CI workload refuses an existing output directory without rewriting its
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
-test("the CI launcher independently rejects a missing or bypassed execution gate", () => {
+test("the CI launcher independently validates complete accounting, with counts diagnostic", () => {
   const launcher = resolve("scripts/profiling/sql-budget.mjs");
   const fixture = "fixtures/host/data-layer-port/batch-06-recording.json";
   const original = JSON.parse(readFileSync(fixture));
@@ -168,7 +175,7 @@ test("the CI launcher independently rejects a missing or bypassed execution gate
       mkdirSync(join(source, "profiling"));
       writeFileSync(join(source, "profiling", "sql-execution-opportunities-20261024.json"), ledger);
       const tools = join(sandbox, "scripts", "profiling"); mkdirSync(tools, { recursive: true });
-      // Simulate a broken controller that reports success without enforcing the budget.
+      // Simulate a broken controller that reports success without checking capture integrity.
       const report = count === null ? null : job([count]);
       writeFileSync(join(tools, "run.py"), [
         "import json, pathlib, sys",
@@ -180,14 +187,13 @@ test("the CI launcher independently rejects a missing or bypassed execution gate
         "    (output / 'execution-budget.json').write_text(json.dumps({'status':'passed','accepted':True,'limit':100,'observed':0,'problems':[]}))",
       ].join("\n"));
       const child = spawnSync(process.execPath, [launcher, join(sandbox, "output")], { cwd: sandbox, encoding: "utf8", timeout: 15000 });
-      assert.equal(child.status, count === 100 ? 0 : 1, `count=${count}\n${child.stdout}\n${child.stderr}`);
-      if (count === 101) assert.match(child.stderr, /101\/100; budget-exceeded/);
+      assert.equal(child.status, count === null ? 1 : 0, `count=${count}\n${child.stdout}\n${child.stderr}`);
     } finally { rmSync(sandbox, { recursive: true, force: true }); }
   }
 });
 
 
-test("100 engine submissions remain bounded while every SQLite internal execution stays visible", () => {
+test("engine submissions and every SQLite internal execution stay separately visible above the reference", () => {
   const report = job([100]);
   const session = report.executionCoverage[0];
   session.started = session.completed = session.observed = 600;
@@ -202,7 +208,10 @@ test("100 engine submissions remain bounded while every SQLite internal executio
   report.queries[0].runs++; report.queries[0].originRuns.engine++;
   session.started++; session.completed++; session.observed++;
   session.origins.engine.started++; session.origins.engine.completed++; session.observedOrigins.engine++;
-  assert.throws(() => requireExecutionBudget(report), /101\/100; budget-exceeded/);
+  const above = requireExecutionBudget(report);
+  assert.equal(above.observed, 101);
+  assert.equal(above.sqliteInternal, 500);
+  assert.equal(above.status, "reference-exceeded");
 });
 
 test("a small capture without reconciled origin evidence cannot satisfy the engine submission gate", () => {
@@ -215,11 +224,11 @@ test("a small capture without reconciled origin evidence cannot satisfy the engi
 });
 
 
-test("CI keeps the 100-submission gate mandatory when its workload or regression tests change", () => {
+test("CI keeps complete accounting and parity mandatory when the diagnostic workload changes", () => {
   const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
   const steps = Object.values(workflow.jobs).flatMap(job => job.steps ?? []);
   const gate = steps.find(step => step.run?.includes("npm run test:sql-execution-budget"));
-  assert.ok(gate, "CI must execute the real complete-job budget workload");
+  assert.ok(gate, "CI must execute the complete-job accounting workload");
   assert.equal(gate["continue-on-error"] ?? false, false);
   assert.equal(gate.if, "matrix.task == 'test'");
   assert.ok(gate.env.RERAIL_ENGINE_PATH);
@@ -234,7 +243,7 @@ test("CI keeps the 100-submission gate mandatory when its workload or regression
 });
 
 
-test("chunk A requires its full 3474 reduction and does not relax the final 100 limit", () => {
+test("historical chunk A retains its exact count target, separate from performance acceptance", () => {
   const target={baseline:7733,removal:3474};
   const ledger=JSON.parse(readFileSync("fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json"));
   assert.equal(ledger.engineSubmissions,target.baseline);
@@ -247,7 +256,7 @@ test("chunk A requires its full 3474 reduction and does not relax the final 100 
   const result=executionReduction(job([3685]),target);
   assert.equal(result.removed,4048);
   assert.equal(result.finalLimit,100);
-  assert.equal(result.finalLimitAccepted,false);
+  assert.equal(result.withinReference,false);
   const incomplete=job([3685]);incomplete.captureCoverage.complete=false;
   assert.equal(executionReduction(incomplete,target).accepted,false);
   assert.throws(()=>executionReduction(job([3685]),{baseline:7733,removal:0}),/explicit/);
@@ -262,11 +271,11 @@ test("chunk B requires all 1296 removals from the accepted 3685 checkpoint",()=>
   assert.equal(executionReduction(job([2390]),target).accepted,false);
   assert.equal(executionReduction(job([2685]),target).accepted,false,"a 1000-removal nibble does not complete B");
   assert.equal(executionReduction(job([2389]),target).finalLimit,100);
-  assert.equal(executionReduction(job([2389]),target).finalLimitAccepted,false);
+  assert.equal(executionReduction(job([2389]),target).withinReference,false);
 });
 
 
-test("chunk C requires its complete 1261 removal and keeps the final 100 gate",()=>{
+test("historical chunk C retains its complete 1261 removal as a diagnostic",()=>{
   const ledger=JSON.parse(readFileSync("fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json","utf8"));
   const chunk=ledger.orderedDeliveryChunks.find(c=>c.id==="R5-C");
   assert.equal(chunk.netRemovalTarget,1261);assert.equal(chunk.wholeJobAfterTarget,989);
@@ -275,7 +284,7 @@ test("chunk C requires its complete 1261 removal and keeps the final 100 gate",(
   assert.equal(executionReduction(job([990]),target).accepted,false);
   assert.equal(executionReduction(job([1250]),target).accepted,false,"1000 removals do not complete C");
   assert.equal(executionReduction(job([989]),target).finalLimit,100);
-  assert.equal(executionReduction(job([989]),target).finalLimitAccepted,false);
+  assert.equal(executionReduction(job([989]),target).withinReference,false);
   const launcher=readFileSync(new URL("../../scripts/profiling/sql-budget.mjs",import.meta.url),"utf8");
   assert.match(launcher,/chunk-c-budget\.json/);
 });

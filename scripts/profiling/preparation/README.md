@@ -192,5 +192,6 @@ Current captures include the logical graph in their `graph` field. Keep its arra
 The recompiler rejects an existing result, an existing copied database, or an already shared program.
 It adds no runtime engine option. Compare complete-process CPU separately with tracing and allocation accounting disabled.
 The fixed guard also records `chunk-a-budget.json`. This progress check requires all 3,474 expected removals.
-The final 100-submission gate remains independent and mandatory.
+Since 2026-10-25, the fixed 100-submission reference is diagnostic. Complete accounting and parity remain mandatory.
+Performance acceptance uses full-repository cold CPU, wall time and peak RSS, with compilation reported separately.
 SQL batch duration belongs to the batch. Use its captured logical membership when analyzing producer costs.

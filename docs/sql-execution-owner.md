@@ -85,4 +85,6 @@ The preparation host's `inference_guard` command accepts JSON with `inputs` decl
 It compares the original query with the production empty-input guard using the production prepare-only adapter.
 
 The [performance journal](data-layer-performance-journal.md) records measurements, rejected attempts, and validation scope.
-The fixed complete-job limit remains 100 engine-submitted statements. Internal SQLite executions remain separate.
+The fixed 100-statement reference is diagnostic. Internal SQLite executions remain separate.
+Performance acceptance requires full-repository cold CPU, wall time, peak RSS, and findings parity for both rule sets.
+Record compilation separately. The ownership and materialization choices above remain provisional until measured at that scale.

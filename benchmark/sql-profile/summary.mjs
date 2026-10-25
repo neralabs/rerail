@@ -232,7 +232,7 @@ export function summaryMarkdown(report) {
     "", summary.budget.interpretation, "", "## Where recorded CPU goes", "",
     "| Work | CPU ms | Recorded CPU | Executions |", "|---|---:|---:|---:|"];
   if (report.executionBudget) lines.splice(2, 0,
-    `SQL execution budget: **${report.executionBudget.status}** — **${report.executionBudget.observed}/${report.executionBudget.limit}** engine-submitted statements for the complete job; ${report.executionBudget.sqliteInternal} SQLite internal executions; ${report.executionBudget.totalObserved} total.`, "",
+    `SQL execution diagnostic: **${report.executionBudget.status}** — **${report.executionBudget.observed}/${report.executionBudget.limit}** engine-submitted statements for the complete job; ${report.executionBudget.sqliteInternal} SQLite internal executions; ${report.executionBudget.totalObserved} total. The 100 reference does not gate performance. Use full-repository cold CPU, wall time, peak RSS and findings parity; report compilation separately.`, "",
     ...report.executionBudget.problems.map(problem => `- ${problem}`), "");
   for (const cost of summary.costBreakdown) lines.push(`| ${cost.label} | ${fmt(cost.cpuMs)} | ${fmt(cost.measuredCpuPercent)}% | ${fmt(cost.executions)} |`);
   lines.push("", summary.budget.frameIndexCpuMs === null

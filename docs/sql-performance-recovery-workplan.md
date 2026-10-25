@@ -1,5 +1,227 @@
 # SQL performance recovery workplan
 
+## Active plan — 2026-10-25
+
+Status: ready for implementation in this worktree. Start with delivery A1.
+The older R0–R7 plan is historical. This plan supersedes its statement-count acceptance gates.
+Statement counts remain diagnostic. Each delivery includes failing tests, implementation, passing tests, and measured evidence.
+No production switches select competing implementations. Linear issues require prior user approval.
+
+### Starting evidence
+
+The completed 50-rule run covers 9,021 files and 137,924,324 source bytes.
+Its workload and policy digests match the passing pre-SQL reference.
+
+| Metric | Current | Passing pre-SQL reference |
+| --- | ---: | ---: |
+| Cold CPU | 958.590 s | 125.804 s |
+| Ingestion CPU | 875.286 s | 73.350 s |
+| Cold global CPU | 82.953 s | 52.144 s |
+| Cold wall | 1,978.154 s | 196.707 s |
+| Full-process OS peak RSS | 5.832 GiB | Not captured by the same method |
+| Findings | 24,820 | 24,820 |
+| Execution failures | 3 | 0 |
+
+Compilation used 1.585 CPU seconds and 3.688 wall seconds, separately from cold execution.
+The current host is heavily contended. Wall comparisons require matched conditions.
+
+Exclusive counters expose 537.411 CPU seconds in anchor selection and 136.765 seconds in index preparation.
+These are measured costs to investigate, not promised savings from a delivery.
+The default worker phase contains another 191.489 seconds. Its old label incorrectly implies candidate lookup alone.
+
+The user cancelled the 60-rule run after 3,149 files and at least 1,119.65 sampled CPU seconds.
+The benchmark controller and completion recorder stopped. Partial results do not establish full-repository timing or parity.
+Evidence remains in `.rerail/profiles/full-scale-direction-20261025/`.
+The [measurement journal](data-layer-performance-journal.md#full-repository-measurement-reset-2026-10-25) records hashes and build settings.
+
+### Target execution shape
+
+1. Publish immutable tape versions, query-independent indexes, and SQL statistics.
+2. Gather eligible demand across rules and files without executing candidate arms.
+3. Read the requested statistics in one batch and choose physical anchors.
+4. Compile only the chosen anchor paths and bounded refinements.
+5. Execute narrow family relations against their exact demand scopes.
+6. Evaluate candidates with the existing matcher and consolidate findings.
+
+Logical rule compilation can precede publication. Physical anchor planning requires the published statistics.
+Cold execution includes publication, statistics maintenance, physical planning, and evaluation.
+Record logical compilation and physical planning separately to prevent cost reclassification.
+
+The existing compiler and family dependency order are sufficient for this work.
+This plan adds no generic graph scheduler or alternate interpreter.
+Native producers use the same relation contracts as SQL bindings.
+Typed demand batches and typed output rows preserve the CPU, JIT, and GPU integration boundary.
+
+### Delivery order
+
+| Delivery | Complete scope | Evidence required before completion |
+| --- | --- | --- |
+| A1 | SQL statistics, selected-anchor lowering, decision-aware template reuse, both evaluation paths | Adaptive-anchor tests, unchanged findings, bounded controls, full-corpus measurement before acceptance |
+| A2 | Exact demand pushdown and fused candidate-family statements | No eager work for disabled demand, no scope inflation, measured CPU and memory improvement |
+| A3 | Batched native relation bindings and SQL-backed estimates | Whole-demand xFilter tests, SQL/native differential results, measured callback and runtime reduction |
+| A4 | Full recovery acceptance and remaining preparation/memory costs | Clean full 50/60 runs, separate compile timings, per-edit and integration measurements |
+
+The three execution regressions form a correctness track across A1–A3.
+Capture their failing tests at the start of A1. Close them before aggregate acceptance.
+A delivery does not complete through a statement-count reduction alone.
+
+### A1: choose anchors from SQL statistics
+
+**Problem:** `Lower::pattern` creates every posting, prices each with `count(*)`, and emits every anchor path.
+`Corpus::template` caches SQL by language and plan IDs, without a statistics decision identity.
+Replacing the pricing query alone leaves both eager posting construction and stale template choices.
+
+**Complete scope:**
+
+- Use `kfreq` and `file_kind_counts` as existing SQL-owned kind statistics.
+- Add exact posting cardinalities alongside existing value segments during publication.
+- Retain the current meaning of `vlex.n`: segment count is not node count.
+- Include uncovered value demand in estimates. Missing coverage never proves that a literal is absent.
+- Maintain the new counts on publication, replacement, retirement, and coexistence of pinned source versions.
+- Gather unique language, kind, and exact-literal requests across the admitted plan batch.
+- Read summaries with one bounded SQL batch. Chunk only at SQLite parameter limits.
+- Do not decode posting blobs or scan the full vocabulary to price candidates.
+- Select a mandatory anchor with deterministic tie-breaking by pattern ordinal.
+- Emit only the selected anchor path. Do not create whole-scope alternative postings for pricing or refinement.
+- Bound necessary refinements to selected roots. The existing matcher confirms the complete pattern.
+- Record the chosen anchor, statistics dependencies, estimates, and coverage fallback in plan diagnostics.
+- Cache physical templates by compiler/rule identity and decision fingerprint, with grammar and scope dependencies.
+- Refresh dependency values through batched reads. Recompile only when the decision changes.
+- Retain valid completed roots for immutable versions and identical scopes. A new plan does not require index republication.
+- Route workspace and stateless selection through this path. Do not leave an optimized helper unused by production.
+
+**TDD ladder:**
+
+1. Swap common and rare kind frequencies. Require the selected arm to flip and confirmed findings to remain equal.
+2. Make an exact literal rarer than its kind. Require the value anchor without enumerating the common kind for pricing.
+3. Cover absent kinds, equal counts, missing statistics, incomplete value coverage, and an initially empty store.
+4. Publish an edit that flips the decision. Require a new template and correct old/new consumer isolation.
+5. Repeat unchanged demand. Require template reuse without index rebuilds or posting recounts.
+6. Instrument an unchosen arm that fails on entry. Require zero entries, not merely zero output rows.
+7. Exercise file subsets, languages, and both evaluation paths against the existing matcher and recordings.
+
+**Primary sites:** `matcher/anchors/sql/{corpus.rs,lower.rs,access.rs,schema.sql,store.rs,values.rs}`.
+Tests belong in the existing SQL lowerer, corpus ownership, candidate-admission, and candidate-publication suites.
+New statistics and decision types stay separate from SQL rendering and storage ownership.
+
+**Boundary:** kind and exact-literal anchor choice, bounded refinement, and its cache lifecycle.
+New graph algorithms, regex cost models, word indexes, and new rule ports are outside A1.
+SQL aggregates required by rule semantics remain valid. The prohibition concerns execution-time anchor pricing.
+
+### A2: restrict demand before family execution
+
+The A1 plan supplies the demand frontier. A2 carries that frontier into fact preparation and SQL execution.
+
+- Preserve exact `(consumer, source version, file, range)` membership in demand relations.
+- Batch distinct scopes with explicit scope IDs. Do not replace them with their union.
+- Put conditional gates before producer entry, on the outer join side or in a recursive seed.
+- Compile fused, narrow statements per candidate family instead of CTAS, indexes, and ANALYZE per intermediate.
+- Default single-consumer relations to inline execution. Repeated syntax alone does not justify materialization.
+- Materialize only after a measured second consumer, with identical definition, version, and candidate scope.
+- Require compatible typed columns. Do not widen a family to every column from every consumer.
+- Include producer construction and every consumer read in the reuse comparison.
+- Keep tape values behind handles. Candidate relations carry keys and demanded scalar columns.
+- Decode only properties required by chosen demands. Preserve any complete sidecar only after a measured workload justifies it.
+- Apply base-table statistics maintenance at a publication boundary. Do not analyze every temporary stage.
+
+Tests require no producer entry for false gates and complete empty demand.
+They also require no decoded rows outside demanded files or ranges.
+Different scopes must remain separate. Identical scopes must produce identical answers with one reusable producer.
+A correlated second read must not accidentally rerun an expensive producer.
+Memory evidence records peak RSS, retained bytes, and decoded rows/bytes per source node.
+
+Primary sites are `workspace/evaluate.rs::prepare_candidates`, SQL plan gathering, lowerer access, decoding, and rendering.
+The legacy authored-SQL stage executor is not a new optimization platform for this delivery.
+
+### A3: expose native work as whole-demand relations
+
+- Route native terminal, syntax/owner, and graph producers through their declared narrow relations.
+- Supply the whole operator batch through `sqlite3_vtab_in` or a typed demand-frame relation.
+- Preserve exact tuples in the demand frame. Separate IN lists must not create a Cartesian product of scopes.
+- Require one `xFilter` per operator batch and `xNext` calls for output rows only.
+- Remove per-node scalar callbacks from the selected family path.
+- Replace the fixed 32-row range estimate with SQL-backed statistics for the actual relation and constraint shape.
+- Push producer, file, and range constraints into `xBestIndex` before native execution.
+- Claim ordering only for prefixes that the producer actually guarantees.
+- Preserve fault isolation per file. One exhausted file cannot invalidate an unrelated file in the batch.
+
+Start with the family that remains expensive after A1 and A2 measurements.
+Do not rebuild graph algorithms that already satisfy their contract.
+Differential tests compare SQL and native bindings through the same caller query.
+Counters must distinguish demand batches, xFilter calls, input rows, output rows, and scalar callbacks.
+The deployment path has one implementation choice, without an experimental production switch.
+
+### Correctness track
+
+| Rule / clause | Observed failure | Required next evidence |
+| --- | --- | --- |
+| `sync-async-signatures` / `transaction-connection` | Work budget on `generated_facades.py` | A recorded reproducer, candidate broadening trace, and the selected-root work responsible |
+| `grammar-callable-constructors` / `constructor-arg` | Name closure over incomplete evidence | A dependency trace that establishes whether this is independent or propagated |
+| `public-api-triples` / `exported-families` | Relational query interrupted | The precise producer/query, consumed allowance, plan, and a bounded reproducer |
+
+Start with the frozen failing addon. Reduce the input only while the failure persists and the repository context remains valid.
+Do not filter repository-wide expected findings into a subset and call that an oracle.
+Use upstream observations or a closed fixture with explicit expected findings.
+Keep existing allowances during diagnosis. Do not accept results by increasing budgets or suppressing failures.
+Any later findings-contract migration must preserve explicit incomplete/Unknown outcomes.
+
+### A4: measurement and acceptance
+
+Apply three levels after each delivery. A bounded control is a development screen, not a substitute for full acceptance.
+Do not defer all full-repository measurements until A1–A3 are complete.
+
+1. Run the relevant TDD ladder and the original positive/clean recordings.
+2. Run closed selections at increasing sizes, with fixed queries and comparable rule mixes.
+3. After the controls show improvement, run the full 9,021-file 50- and 60-rule sets before accepting the performance change.
+
+If a bounded control remains predictably slow, continue diagnosis before another expensive full run.
+Mark the implementation as unaccepted while full measurements or correctness fixes remain outstanding.
+A1 receives its own measurement review before A2 starts. Re-rank A2 and A3 from that evidence.
+
+Bound development commands and diagnostic captures at 115 seconds.
+An incomplete control remains incomplete. Do not reduce its scope silently or infer a full-corpus result.
+Use an external bottom-up profiler on separate diagnostic controls, outside the timing runs.
+Separate residual worker CPU from the old misleading candidate-lookup label before assigning its cause.
+
+Record cold CPU, cold wall, full-process OS peak RSS, compilation, physical planning, findings, and execution outcomes.
+Keep the same corpus, policies, workers, allocator, and build configuration for each comparison.
+Preserve captures, hashes, failing observations, and a keep/reject decision in the journal.
+
+Recovery requires the first 50 rules to reach the passing 125.804-second CPU reference with complete findings and no execution failures.
+Compare wall and RSS under matched conditions. Do not compare OS peak RSS directly with a historical driver-only peak.
+The first clean 60-rule run establishes its reference. The failed historical runs cannot establish a clean speed ratio.
+The unified integration also requires the 335-pattern CPython workload and per-edit latency checks.
+Record missing integration coverage explicitly. Full-repository CPU evidence is mandatory before a recovery claim.
+
+### Prior work and integration boundary
+
+This local plan agrees with the central direction and the prior work below.
+The source excerpts were read at ast-index-spike commit `9449260`.
+
+- Design index topic 5, `DESIGN.md` S050 L3081–3112: rare mandatory anchors bound the tail.
+- Design index topics 5/12, `DESIGN.md` S241 L6385–6437: batch planning joins stored frequencies and preserves ordinal tie-breaking.
+- Design index topic 11, `DESIGN.md` S155 L6927–6951: temporary tables plus ANALYZE materialize unnecessary work.
+- Design index topic 13, `README.md` L1116–1223: scope-identical sharing corrects the earlier S149 conclusion.
+- History index D35, `DESIGN_HISTORY.md` L1320–1331: `fts5vocab` does not push down arbitrary per-root doc/offset constraints.
+- History index D50, `DESIGN_HISTORY.md` L2681–2697: temporary-stage statistics do not repair the materialization cost.
+- Lessons ledger 2, 5, 9, 13, 17, 28: anchors, fusion, exact scope, narrow demand, callbacks, and end-to-end measurement.
+
+[Central direction](../../Pulling-it-all-together/docs/rule-engine-direction/README.md),
+[architecture](../../Pulling-it-all-together/docs/rule-engine-direction/architecture.md), and
+[prior-work protocol](../../Pulling-it-all-together/docs/rule-engine-direction/prior-work/README.md) define the integration target.
+
+The sibling architecture now proposes set-based findings and freezing authored SQL.
+Those changes need their own coordinated integration decision and harness migration.
+This recovery plan adds no authored SQL rules and does not relax corpus checks to hide the current failures.
+The recorded observations, relation contracts, and source-version isolation remain durable assets.
+The integration decision record must cite this evidence before implementation moves into the unified engine.
+
+## Historical plan through 2026-10-24
+
+The material below records previous requirements and experiments. Its count targets do not govern the active plan.
+
+---
+
 Status: R0 is enforced. R1 has an exact attributed inventory. R2 and R3 have tested implementation slices.
 General conditional candidate admission, whole-job publication, and R4–R7 remain open.
 Bounded C adds explicit admission for complete empty input domains.

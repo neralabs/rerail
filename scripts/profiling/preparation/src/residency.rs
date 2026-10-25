@@ -219,9 +219,14 @@ fn measure(
     let (mut prepare_ns, mut results_ns, mut release_ns) = (0u128, 0u128, 0u128);
     let mut rows = Vec::<(i64, i64, i64)>::new();
     let mut populated = vec![false; stages.len()];
-    let mut retirement=crate::ownership::Retirement::default();
-    let cohort_retirement=data.get("retirementRows").is_some();
-    if cohort_retirement { assert_eq!(data["retirementRows"].as_u64(),Some(crate::ownership::RETIREMENT_ROWS as u64)); }
+    let mut retirement = crate::ownership::Retirement::default();
+    let cohort_retirement = data.get("retirementRows").is_some();
+    if cohort_retirement {
+        assert_eq!(
+            data["retirementRows"].as_u64(),
+            Some(crate::ownership::RETIREMENT_ROWS as u64)
+        );
+    }
     let mut statements = Vec::new();
     let mut heap_peaks = Vec::new();
     let mut compile_ns = 0u128;
@@ -236,9 +241,10 @@ fn measure(
         store.readers.clear();
         match group[0] {
             Action::Prepare(i) => {
-                if cohort_retirement && let Some(sql)=retirement.before_prepare() {
-                    submitted+=1;
-                    let deleted=store.db.execute(&sql,[])?;retirement.retired(deleted);
+                if cohort_retirement && let Some(sql) = retirement.before_prepare() {
+                    submitted += 1;
+                    let deleted = store.db.execute(&sql, [])?;
+                    retirement.retired(deleted);
                 }
                 submitted += 1;
                 let mut q = store.db.prepare(inputs[i].sql)?;
@@ -247,7 +253,9 @@ fn measure(
                 statements.push(json!({"name":inputs[i].name,"sqlBytes":inputs[i].sql.len(),"statementBytes":q.get_status(rusqlite::StatementStatus::MemUsed),"heapAfterPrepare":prepared,"preparePeakBytes":prepare_peak}));
                 let n = q.parameter_count();
                 let inserted = q.execute(params_from_iter(&parameters[..n]))?;
-                if ownership.slot(i).is_some() {retirement.inserted(inserted);}
+                if ownership.slot(i).is_some() {
+                    retirement.inserted(inserted);
+                }
                 for &member in ownership.members(i) {
                     populated[member] = inserted != 0;
                 }
@@ -299,7 +307,11 @@ fn measure(
                         }
                     })
                     .collect::<Vec<_>>();
-                let sql = if cohort_retirement {retirement.release(&ownership,&relation_names,&ids,&populated)} else {ownership.release(&relation_names,&ids,&populated)};
+                let sql = if cohort_retirement {
+                    retirement.release(&ownership, &relation_names, &ids, &populated)
+                } else {
+                    ownership.release(&relation_names, &ids, &populated)
+                };
                 // Release SQL contains generated identifiers and terminators only.
                 submitted += sql.split(';').filter(|sql| !sql.trim().is_empty()).count();
                 store.db.execute_batch(&sql)?;

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// One fixed cold acceptance workload. The profiler counts every connection and execution.
+// One fixed diagnostic workload. Complete accounting and parity remain mandatory.
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
@@ -25,7 +25,7 @@ const events = tests.map(test => {
   }
   return matches[0];
 });
-if (!events[0].findings.length || events[1].findings.length) throw new Error("The acceptance workload requires positive and clean observations");
+if (!events[0].findings.length || events[1].findings.length) throw new Error("The diagnostic workload requires positive and clean observations");
 const input = join(directory, "recording.json");
 writeFileSync(input, JSON.stringify({ ...original, checks: ["serverplan_state_tripwires"], events }, null, 2) + "\n");
 writeFileSync(join(directory, "provenance.json"), JSON.stringify({ source, sourceSha256: createHash("sha256").update(bytes).digest("hex"),
@@ -35,23 +35,24 @@ const child = spawnSync("python3", ["scripts/profiling/run.py", "--trace", "off"
   "--recording", input, "--output", join(capture, "parity.json")], { stdio: "inherit", timeout: 118_000 });
 if (child.error) throw child.error;
 const reportPath = join(capture, "sql", "profile.json");
-if (!existsSync(reportPath)) throw new Error("Missing complete SQL execution report; acceptance fails closed.");
+if (!existsSync(reportPath)) throw new Error("Missing complete SQL execution report; capture validation fails closed.");
 const report = JSON.parse(readFileSync(reportPath));
 const budget = executionBudget(report);
 const ledger = JSON.parse(readFileSync("fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json"));
 const chunk = ledger.orderedDeliveryChunks.find(c => c.id === "R5-A");
 const progress = executionReduction(report, { baseline: ledger.engineSubmissions, removal: chunk.netRemovalTarget });
 writeFileSync(join(directory, "chunk-a-budget.json"), JSON.stringify(progress, null, 2) + "\n");
-console.log(`Chunk A: ${progress.accepted ? "passed" : "failed"}; removed ${progress.removed}/${progress.requiredRemoval} submissions; final 100 limit remains ${budget.status}.`);
+console.log(`Historical chunk A count target: ${progress.accepted ? "met" : "not met"}; removed ${progress.removed}/${progress.requiredRemoval} submissions; diagnostic only.`);
 const chunkB=ledger.orderedDeliveryChunks.find(c=>c.id==="R5-B");
 const progressB=executionReduction(report,{baseline:chunk.measuredResult.engineSubmissions,removal:chunkB.netRemovalTarget});
 writeFileSync(join(directory,"chunk-b-budget.json"),JSON.stringify(progressB,null,2)+"\n");
-console.log(`Chunk B: ${progressB.accepted?"passed":"failed"}; removed ${progressB.removed}/${progressB.requiredRemoval} submissions.`);
+console.log(`Historical chunk B count target: ${progressB.accepted?"met":"not met"}; removed ${progressB.removed}/${progressB.requiredRemoval} submissions; diagnostic only.`);
 const chunkC=ledger.orderedDeliveryChunks.find(c=>c.id==="R5-C");
 const progressC=executionReduction(report,{baseline:chunkB.measuredResult.engineSubmissions,removal:chunkC.netRemovalTarget});
 writeFileSync(join(directory,"chunk-c-budget.json"),JSON.stringify(progressC,null,2)+"\n");
-console.log(`Chunk C: ${progressC.accepted?"passed":"failed"}; removed ${progressC.removed}/${progressC.requiredRemoval} submissions.`);
-console.log(`SQL execution budget: ${budget.status}; ${budget.observed}/${budget.limit} engine submissions for the complete cold job; ${budget.sqliteInternal} SQLite internal executions; ${budget.totalObserved} total.`);
+console.log(`Historical chunk C count target: ${progressC.accepted?"met":"not met"}; removed ${progressC.removed}/${progressC.requiredRemoval} submissions; diagnostic only.`);
+console.log(`SQL execution diagnostic: ${budget.status}; ${budget.observed}/${budget.limit} engine submissions for the complete cold job; ${budget.sqliteInternal} SQLite internal executions; ${budget.totalObserved} total.`);
+console.log("Counts do not establish performance acceptance. Measure full-repository cold CPU, wall time, peak RSS and findings parity; report compilation separately.");
 if (budget.firstOverBudget) console.log(`Execution 101: ${budget.firstOverBudget.sql}`);
 requireExecutionBudget(report);
 process.exitCode = child.status ?? 1;

@@ -236,13 +236,13 @@ jobs:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:producer-shape
 
-      - name: Enforce 100 engine SQL submissions for the complete cold job
+      - name: Validate complete SQL accounting and parity; report submission counts
         if: matrix.task == 'test'
         env:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:sql-execution-budget -- "$RUNNER_TEMP/rerail-sql-budget"
 
-      - name: Preserve SQL execution budget evidence
+      - name: Preserve SQL execution accounting evidence
         if: always() && matrix.task == 'test'
         uses: actions/upload-artifact@v7
         with:

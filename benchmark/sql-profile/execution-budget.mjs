@@ -1,4 +1,4 @@
-// Restored from sql-capture-demand-spikes c109a915. One fixed allowance per complete job.
+// Historical reference from sql-capture-demand-spikes c109a915, diagnostic since 2026-10-25.
 export const JOB_SQL_EXECUTION_LIMIT = 100;
 
 export function sqlCategory(sql) {
@@ -39,7 +39,7 @@ function completeParity(workload) {
     && [p.falsePositives, p.falseNegatives, p.failures, p.incrementalDifferences].every(empty);
 }
 
-/** Acceptance after complete execution. Never stop matching at execution 101. */
+/** Validate a complete capture and preserve the fixed count reference. Counts do not gate performance. */
 export function executionBudget(report) {
   const queries = (report.queries ?? []).filter(q => q.kind === "sql");
   const totalObserved = queries.reduce((sum, q) => sum + (integer(q.runs) ? q.runs : 0), 0);
@@ -59,7 +59,7 @@ export function executionBudget(report) {
       || origins.reduce((n, origin) => n + (q.originRuns?.[origin] ?? 0), 0) !== q.runs)) {
     problems.push("Every SQL execution requires a reconciled engine or SQLite-internal origin.");
   }
-  if (totals.unknown > 0) problems.push("Unknown SQL execution origins cannot satisfy acceptance.");
+  if (totals.unknown > 0) problems.push("Unknown SQL execution origins invalidate capture accounting.");
   for (const s of sessions) {
     if (!["code-rule-dsl", "ast-session", "select-when", "crossfile"].includes(s.source)
         || s.fromSessionStart !== true || ![s.started, s.completed, s.running, s.observed].every(integer)
@@ -84,15 +84,16 @@ export function executionBudget(report) {
   if ((report.queries ?? []).some(q => q.incomplete > 0)) problems.push("The workload contains incomplete operations.");
   const exceeded = observed > JOB_SQL_EXECUTION_LIMIT;
   return { limit: JOB_SQL_EXECUTION_LIMIT, observed, totalObserved, sqliteInternal: totals.sqliteInternal, unknownOrigins: totals.unknown, excess: Math.max(0, observed - JOB_SQL_EXECUTION_LIMIT),
-    accepted: !exceeded && problems.length === 0,
-    status: exceeded ? "budget-exceeded" : problems.length ? "invalid-capture" : "passed",
+    // Legacy `accepted` describes capture integrity and parity only.
+    accepted: problems.length === 0, diagnosticOnly: true, performanceAccepted: null,
+    status: problems.length ? "invalid-capture" : exceeded ? "reference-exceeded" : "within-reference",
     scope: "One complete cold job across workers and connections. All engine-submitted publication, setup, DDL, helper statements, transactions, matching and cleanup count. SQLite internal executions are reported separately. Diagnostic EXPLAIN is excluded.",
-    enforcement: "Acceptance after the complete run; execution 101 does not truncate findings. No per-file, per-rule, per-batch or per-connection reset.",
+    enforcement: "Validate complete accounting and findings parity after the run. The fixed 100 reference is diagnostic, with no per-file, per-rule, per-batch or per-connection reset. Performance acceptance requires full-repository cold CPU, wall time and peak RSS for the 50- and 60-rule sets; report compilation separately.",
     categories, sessions, problems, firstOverBudget: exceeded ? report.firstOverBudget ?? null : null };
 }
 
 export function requireExecutionBudget(report) {
   const budget = executionBudget(report);
-  if (!budget.accepted) throw new Error(`SQL job execution budget FAILED: ${budget.observed}/${budget.limit}; ${budget.status}. ${budget.problems.join(" ")}`.trim());
+  if (!budget.accepted) throw new Error(`SQL capture validation FAILED: ${budget.observed}/${budget.limit}; ${budget.status}. ${budget.problems.join(" ")}`.trim());
   return budget;
 }

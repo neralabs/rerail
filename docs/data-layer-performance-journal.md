@@ -3692,6 +3692,122 @@ It fails against the frozen baseline addon: two creates, two indexes, and two dr
 The failing command uses `RERAIL_REQUIRE_PRODUCER_SHAPE=1` and the existing selector-materialization native test.
 No production change is included in this red commit.
 
+## Full-repository measurement reset (2026-10-25)
+
+**Decision:** statement counts are diagnostic. The acceptance workloads contain all 9,021 data-layer files,
+with separate runs for 50 and 60 rules. Gate on cold CPU, wall time, peak RSS, and complete findings parity.
+Record rule compilation separately. This supersedes the earlier fixed-100 acceptance statements in this journal.
+
+The previous full first-50 result was 2,507.496 s cold CPU, against 125.804 s before SQL candidate selection.
+That regression remained unmeasured after the 10-23 and 10-24 changes.
+Reducing the two-observation guard from 975 to 264 engine submissions did not demonstrate recovery.
+I used that proxy to choose work after the repository measurement had already identified anchor selection as the dominant cost.
+
+I read the sibling direction README, especially Statistics, Pushdown boundary, and Measurement gate,
+and its lessons ledger before selecting further engine changes.
+The current `Lower::pattern` still builds each possible posting, executes `count(*)` to price each arm,
+and joins the posting to its runtime choice. This conflicts with plan-time selection from stored SQL statistics.
+The producer adapter supports batched IN constraints, but its range path still estimates 32 rows.
+Logical rule compilation currently precedes corpus publication. Physical anchor planning must follow index publication,
+so it can use SQL statistics instead of reconstructing costs through candidate execution.
+Logical rule validation can remain earlier. Cold timings must include fact and index publication.
+This ordering does not require a generic graph scheduler.
+The shared owner, source-version isolation, parity harness, relational clauses, and producer contracts remain useful.
+The materialization boundaries and caches are provisional until full-scale measurements support them.
+
+The new runner is `scripts/profiling/full_repository.py`. It freezes the addon and policies,
+validates the two recording sizes, and runs fresh processes serially.
+It records recording, policy, driver, and binary hashes, OS CPU/wall/RSS, phase CPU, compilation, findings, and failures.
+SQL capture, detailed tracing, external sampling, and memory census are disabled in these timing runs.
+Compact phase markers remain enabled, matching the historical controls.
+
+The reference build uses engine opt-level 1, dependency opt-level 3, LTO disabled, 256 codegen units,
+four native workers, and the archived dynamic system-malloc shim.
+The recent small guard addon instead embedded real jemalloc. Those allocator configurations are not matched controls.
+I rebuilt with `JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib` before the full comparison.
+The matched addon SHA256 is `0b748ebd271647396e229918bf1af0acbbfa4286c55f9c886e4f4c54b5ee281b`.
+
+Command:
+
+```sh
+python3 scripts/profiling/full_repository.py \
+  --addon .rerail/profiles/full-scale-direction-20261025/matched-addon/engine.node \
+  --output .rerail/profiles/full-scale-direction-20261025/rerun
+```
+
+Inputs are the unchanged `full-repository-20261021/first-50-recording.json` and `all-60-recording.json`.
+Each has 9,021 files and 137,924,324 source bytes. Expected findings are 24,820 and 24,993 respectively.
+The runner manifest and per-run receipts are under `.rerail/profiles/full-scale-direction-20261025/rerun`.
+The reporting regression test first failed at 101 statements, then passed after removing the count gate.
+These two isolated checks took about 0.3 seconds total. No builds or engine test workloads ran concurrently from this worktree.
+The new report preserves the fixed reference, statement 101, internal counts, and complete-capture validation.
+Lightweight reporting tests passed: 29 JavaScript tests (1.5 s wall) and 25 Python tests (3.5 s wall).
+They ran during the 60-rule process. No engine builds or engine test workloads ran concurrently.
+The actual diagnostic guard will run after the timing processes finish.
+
+### First-50 result
+
+The first-50 process completed with exit code 1. Workload and all 50 policy digests match the passing pre-SQL reference.
+
+| Metric | Passing pre-SQL reference | Last SQL reference | Current run |
+| --- | ---: | ---: | ---: |
+| Cold process CPU | 125.804 s | 2,507.496 s | 958.590 s |
+| Ingestion CPU | 73.350 s | 2,456.015 s | 875.286 s |
+| Cold global evaluation CPU | 52.144 s | 51.145 s | 82.953 s |
+| Cold wall | 196.707 s | Historical wall is not reliable | 1,978.154 s |
+| Rule compilation CPU | 1.593 s | 1.635 s | 1.585 s |
+| Rule compilation wall | 4.015 s | 3.817 s | 3.688 s |
+| Driver peak RSS before close | 6.441 GiB | 6.143 GiB | 4.755 GiB |
+| Findings | 24,820 | 24,820 | 24,820 |
+| Execution failures | 0 | 0 | 3 |
+
+OS resource accounting through process exit records 963.920 CPU seconds, 1,990.140 wall seconds,
+and 6,261,948,416 bytes (5.832 GiB) peak RSS. This includes startup, compilation, reporting, and cleanup.
+Use this full-process RSS for acceptance. Do not compare it directly with historical driver-only high-water marks.
+The driver sampled its own high-water mark before workspace cleanup.
+
+Cold CPU is 2.616x faster than the last SQL measurement, but 7.620x slower than the passing pre-SQL reference.
+This run does not pass acceptance. Matching findings do not cancel execution failures:
+
+- `sync-async-signatures`, `transaction-connection`: clause work budget exceeded in `impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py`.
+- `grammar-callable-constructors`, `constructor-arg`: name closure cannot decide membership over incomplete evidence.
+- `public-api-triples`, `exported-families`: relational query interrupted.
+
+Exclusive native counters record 537.411 s in anchor selection, 136.765 s in index preparation,
+58.161 s in AST matching, and 11.148 s in parsing.
+The counter named `manifestCandidateLookupNs` totals 191.489 s, but the profiler also uses that phase as its default worker phase.
+It is residual worker CPU, not proof that candidate lookup alone caused that cost.
+The first-50 run had no failed candidate batches; the final failure list still prevents acceptance.
+
+The host had load around 73 on 18 cores and about 16.5 GiB swap in use during ingestion.
+These are observations, not an explanation for every cost. Wall comparisons need that context.
+Cold means a fresh process and workspace; OS filesystem caches were not flushed between serial runs.
+The user cancelled the 60-rule run before completion. The cancellation entry records the partial result.
+The completed 50-rule run remains an acceptance failure.
+
+## Recovery work prepared and long run cancelled (2026-10-25)
+
+The user requested the next work plan instead of waiting for the known-slow 60-rule run.
+I stopped its Node process group, benchmark controller, and automatic completion recorder.
+The run stopped after 3,149 files, with at least 1,119.65 sampled process CPU seconds.
+Its last progress message reported 6,920,577,608 resident bytes. That observation is not an OS peak RSS measurement.
+No completed cold timing, findings parity, or 60-rule acceptance result exists for this attempt.
+The frozen manifest marks the run `cancelled-by-user`. The partial evidence remains available.
+The cancellation receipt is `.rerail/profiles/full-scale-direction-20261025/rerun/all-60/cancellation.json`.
+The completion recorder did not run the planned diagnostic guard.
+
+The [active recovery plan](sql-performance-recovery-workplan.md#active-plan--2026-10-25) replaces the earlier count-driven sequence.
+A1 includes SQL-owned kind/value statistics, selected-anchor lowering, decision-aware template reuse, and both evaluation paths.
+It also starts the failing tests for the three full-scale execution regressions.
+A2 restricts demand and fuses family statements. A3 batches native relation bindings and supplies honest estimates.
+A4 establishes aggregate acceptance after bounded controls improve and the correctness regressions close.
+No engine implementation, new production switch, or Linear issue forms part of this planning change.
+
+The plan cites the central direction and both prior-work indexes.
+I read the cited ast-index-spike source at `9449260`, including the correction from union sharing to identical-scope sharing.
+The sibling integration also proposes a new findings contract and freezing authored SQL.
+Those proposals remain separate from local recovery and cannot justify suppressing the current failures.
+
 ## Future entries
 
 Each new entry must identify the hypothesis, baseline commit, workload hashes, build configuration, and exact commands.

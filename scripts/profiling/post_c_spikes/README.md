@@ -94,5 +94,6 @@ Keep external profiling, builds, and other local tests outside the matched contr
 Complete-job captures and component replays have different boundaries.
 Do not add component savings to a complete-job result without integrating and rerunning the complete job.
 All publication, maintenance, transaction, setup, and retirement replacements count within their stated experiment boundary.
-The final fixed limit remains 100 engine submissions. SQLite internal executions remain separately visible.
+Since 2026-10-25, the fixed 100-submission reference is diagnostic. Complete accounting and parity remain mandatory.
+Performance acceptance uses full-repository cold CPU, wall time and peak RSS, with compilation reported separately.
 The journal and checked evidence record selected prototypes, rejected attempts, ranges, and remaining integration work.

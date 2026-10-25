@@ -9,7 +9,7 @@ if (process.argv.length !== 3) throw new Error("Usage: node scripts/profiling/sq
 const directory = resolve(process.argv[2]);
 const profile = JSON.parse(readFileSync(join(directory, "profile.json"), "utf8"));
 const parity = profile.parity;
-// A previous report can fail its budget after the engine completed successfully.
+// A historical report could fail its count gate after the engine completed successfully.
 const targetExitCode = profile.targetExitCode ?? profile.exitCode;
 const targetTimedOut = profile.targetTimedOut ?? profile.timedOut;
 const applyCpuMs = parity?.phaseCpuMs ? Object.entries(parity.phaseCpuMs)
