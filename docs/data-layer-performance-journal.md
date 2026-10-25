@@ -4373,3 +4373,8 @@ It also requires filtered captures to declare incomplete whole-job coverage.
 The red run records two statements where the selected relational context contains only one.
 The implementation will expose a diagnostic context filter, without changing execution algorithms.
 The existing 100-statement validator rejects captures that lack whole-session coverage.
+
+The filtered-profiler unit ladder passes all nine SQL profiler tests.
+A separate production test reproduces unwanted candidate snapshots during a relational-only capture.
+The red test observes one `.sqlite` snapshot where none is requested.
+Candidate capture, origin discovery, and source-version capture will use the same context selection as the statement tracer.

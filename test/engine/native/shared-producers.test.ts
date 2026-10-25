@@ -93,3 +93,31 @@ it.skipIf(!required)("executes one source batch across two rules and two result 
     expect(fills, "independent ready selectors must feed one physical fill, across both result packets").toBe(1);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 45_000);
+
+it.skipIf(!required)("a relational-only SQL trace does not copy candidate databases", () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-filtered-sql-"));
+  try {
+    const program = `
+      import {readFileSync} from 'node:fs';
+      import {loadNativeBinding} from ${JSON.stringify(engine)};
+      const native=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
+      const rule=native.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id:'selected',revision:1,mode:'log',clauses:[{
+        id:'names',forbid:{ast:{language:'python',rule:{kind:'identifier'}}},violation:{code:'NAME',message:'Name',anchor:'witness.span'}}]}),'json',caps);
+      const ws=new native.CodeRuleDslWorkspace();ws.addCodeRule(rule);
+      try {console.log(await ws.applyAsync(JSON.stringify({revision:1,files:[{path:'a.py',language:'python',source:'target'}],removed:[]})));}
+      finally {ws.close();}
+    `;
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+      encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, RERAIL_SQL_PROFILE_DIR: directory, RERAIL_SQL_PROFILE_SCOPE: "relational" },
+    });
+    expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
+    const result = JSON.parse(child.stdout.trim()).evaluation;
+    expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(1);
+    const files = readdirSync(directory);
+    expect(files.filter(f => /^candidate-.*\.sqlite$/.test(f))).toEqual([]);
+    const catalogues = files.filter(f => /^profile-.*\.json$/.test(f)).map(f => JSON.parse(readFileSync(join(directory, f), "utf8")));
+    expect(catalogues.length).toBeGreaterThan(0);
+    expect(catalogues.every(c => c.executionCoverage.fromSessionStart === false && c.executionCoverage.contextFilter === "relational")).toBe(true);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}, 35_000);
