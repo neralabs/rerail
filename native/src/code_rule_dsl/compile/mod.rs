@@ -19,6 +19,7 @@ mod order;
 #[cfg(test)]
 mod params_tests;
 mod parse;
+mod regex_cache;
 mod relational;
 mod resolve;
 mod transform;
@@ -271,6 +272,7 @@ pub(super) fn compile_document(
     document: &Value,
     capabilities: &Capabilities,
 ) -> Result<CompiledDocument> {
+    let _regex_programs = regex_cache::Scope::enter();
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
     let root = object(document, "/")?;

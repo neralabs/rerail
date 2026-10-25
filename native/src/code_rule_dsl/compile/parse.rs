@@ -156,7 +156,7 @@ pub(super) fn validate_sub_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        Regex::new(source)
+        super::regex_cache::compile(source)
             .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
     }
     if let Some(capture) = rule.get("capture") {
@@ -452,9 +452,10 @@ pub(super) fn compile_sub_rule(
         ));
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(Regex::new(regex).map_err(|_| {
-            invalid(format!("{path}/regex: Parsing text matcher fails."))
-        })?));
+        terms.push(AstMatcher::Regex(
+            super::regex_cache::compile(regex)
+                .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?,
+        ));
     }
     if let Some(capture) = rule.get("capture") {
         terms.push(AstMatcher::Semantic(Semantic::Capture(

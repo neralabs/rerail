@@ -307,6 +307,87 @@ fn finite_kind_alternatives_use_one_scoped_filter_before_negation() {
 }
 
 #[test]
+fn exact_kind_boolean_filters_do_not_materialize_a_subtracted_copy() {
+    let store = super::super::store::Store::temporary().unwrap();
+    let doc = super::super::tests::document(
+        "const first = target(42); // comment\nconst second = other;",
+        crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+    );
+    let fid = store.put("a.ts", &doc).unwrap();
+    let kind = |code| AnchorPlan {
+        root_kinds: Some([code].into()),
+        condition: Condition::Always,
+        exact: true,
+    };
+    // Real data-layer syntax exclusions contain nested finite kind alternatives.
+    // Include duplicate arms and a utility; they must remain one predicate.
+    let mut branches: Vec<_> = (1..=64).map(kind).collect();
+    branches.push(AnchorPlan {
+        root_kinds: Some((1..=32).collect()),
+        condition: Condition::Any(vec![kind(1), kind(2), kind(1)]),
+        exact: true,
+    });
+    branches.push(AnchorPlan {
+        root_kinds: None,
+        condition: Condition::Utility(std::sync::Arc::new(kind(3))),
+        exact: true,
+    });
+    let alternatives = AnchorPlan {
+        root_kinds: None,
+        condition: Condition::Any(branches),
+        exact: true,
+    };
+    for negative in [false, true] {
+        let mut lower = compiler();
+        let scope = lower
+            .relation(
+                format!(
+                    "SELECT {fid},value FROM generate_series(0,{},1) WHERE value%2=0",
+                    doc.transducer_len() - 1
+                ),
+                true,
+            )
+            .unwrap();
+        // A decoder and one kind predicate suffice, including for negation.
+        lower.limit = lower.ctes.len() + 2;
+        let plan = if negative {
+            AnchorPlan {
+                root_kinds: None,
+                condition: Condition::Not(Box::new(alternatives.clone())),
+                exact: true,
+            }
+        } else {
+            alternatives.clone()
+        };
+        let selected = lower.plan(&plan, scope);
+        assert!(
+            selected.is_ok(),
+            "finite kind alternatives must fit one filter, negative={negative}"
+        );
+        let selected = selected.unwrap();
+        assert!(selected.exact && !lower.partial);
+        let statement = finish_decoded(
+            lower.ctes,
+            vec![format!("SELECT 0,fid,pre FROM {}", selected.name)],
+            lower.parameters,
+            lower.indexed,
+            lower.decoding,
+        );
+        let mut rows = Vec::new();
+        super::super::execute::rows(&store, &statement, |_, _, pre| rows.push(pre)).unwrap();
+        rows.sort_unstable();
+        let expected: Vec<_> = (0..doc.transducer_len())
+            .filter(|pre| {
+                pre % 2 == 0
+                    && ((1..=64).contains(&doc.transducer_kind(u32::try_from(*pre).unwrap()))
+                        != negative)
+            })
+            .collect();
+        assert_eq!(rows, expected);
+    }
+}
+
+#[test]
 fn predicate_producers_run_once_before_join_fanout() {
     use rusqlite::functions::FunctionFlags;
     use std::sync::{

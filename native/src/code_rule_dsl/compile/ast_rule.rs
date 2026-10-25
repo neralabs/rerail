@@ -149,7 +149,7 @@ pub(super) fn validate_ast_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        Regex::new(source)
+        super::regex_cache::compile(source)
             .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
     }
     if let Some(nth) = rule.get("nthChild") {
@@ -458,9 +458,10 @@ pub(crate) fn compile_ast_rule(
         });
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(Regex::new(regex).map_err(|_| {
-            invalid(format!("{path}/regex: Parsing text matcher fails."))
-        })?));
+        terms.push(AstMatcher::Regex(
+            super::regex_cache::compile(regex)
+                .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?,
+        ));
     }
     if let Some(capture) = rule.get("capture") {
         terms.push(
@@ -800,9 +801,10 @@ pub(crate) fn compile_ast_rule(
     }
     #[cfg(test)]
     if let Some(regex) = rule.get("testUnknown").and_then(Value::as_str) {
-        terms.push(AstMatcher::TestUnknown(Regex::new(regex).map_err(
-            |_| invalid(format!("{path}/testUnknown: Parsing text matcher fails.")),
-        )?));
+        terms.push(AstMatcher::TestUnknown(
+            super::regex_cache::compile(regex)
+                .map_err(|_| invalid(format!("{path}/testUnknown: Parsing text matcher fails.")))?,
+        ));
     }
     // Name resolution binds and reads nothing, so it may run last, after every cheaper term.
     if let Some(resolves) = rule.get("resolves")
