@@ -3,6 +3,61 @@
 from .common import *
 from .ast_relations import grouped_relations,python_stages
 
+# Detectors ported to syntax clauses (and one narrow relation) below; the typed-CST relations skip them.
+PORTED={51,52,53}
+LITERALS=('string','concatenated_string','integer','float','true','false','none')
+NOT_TESTS={'filePath':{'notRegex':r'(?:^|/)tests(?:/|$)'}}
+
+def exact(values):return '^(?:'+'|'.join(re.escape(v) for v in sorted(values))+')$'
+def py_name(values):
+ """An identifier read as a Python name: not a declaration, keyword or member label, not in an import."""
+ return A(K('identifier'),RX(exact(values)),N(I(O(K('function_definition'),K('class_definition'),K('keyword_argument')),'neighbor','name')),
+  N(I(K('attribute'),'neighbor','attribute')),N(I(O(K('import_statement'),K('import_from_statement')))))
+def member(values):return A(K('attribute'),F('attribute',names(values)))
+def keyword(values,value=None):return F('arguments',H(A(K('keyword_argument'),F('name',names(values)),*([F('value',value)] if value else []))))
+def base(name):return F('superclasses',H(A(N(K('keyword_argument')),RX(r'(?:^|\.)'+re.escape(name)+r'(?:\[.*\])?$'))))
+def class_field(cls):
+ """An assignment statement directly in a class body."""
+ return I(A(K('expression_statement'),I(A(K('block'),I(cls,'neighbor','body')),'neighbor')),'neighbor')
+def detector(entries,production,main=TRUE):
+ """Per-detector entries run unscoped; the source entry adds the detector's own file gate, and production the domain."""
+ return {'$option':'entryPoint','cases':{**{e:TRUE for e in entries},'_check_serverplan_quality_source':main,'all':choice('oracleAnalyzer',main,A(main,production))},'default':FALSE}
+def local(id,entries,number,rule,production,main=TRUE):
+ return {'id':id,'forbid':{'ast':{'language':'python','syntax':'valid','rule':A(detector(entries,production,main),rule)}},
+  'violation':{'code':'SPQ-'+str(number).zfill(3),'message':'Architecture contract violation','anchor':'witness.span'}}
+
+def callback_inventory_clauses(m,primary_ast,callback_ast):
+ callback_tokens=sorted(m.FORBIDDEN_CALLBACK_ARCHITECTURE_NAMES|{'CompiledStep','PipelineLifecycleEffect','pending_pipeline_effects'})
+ callback=A(O(primary_ast,callback_ast),I(A(K('module'),RX('|'.join(re.escape(v) for v in callback_tokens)))))
+ inventory=I(A(K('module'),RX('MAINTENANCE|ORDERED_SEMANTIC')))
+ entry=['_check_deleted_callback_architecture_surfaces']
+ names51=m.FORBIDDEN_CALLBACK_ARCHITECTURE_NAMES
+ clauses=[
+  local('callback-names',entry,51,A(py_name(names51),NOT_TESTS),callback),
+  local('callback-members',entry,51,A(member(names51),NOT_TESTS),callback),
+  local('callback-kwargs',entry,51,A(K('call'),F('function',term(['CompiledStep'])),keyword(m.FORBIDDEN_COMPILED_STEP_CALLBACK_KWARGS),NOT_TESTS),callback),
+  local('callback-effect-fields',entry,51,A(K('assignment'),F('left',names(m.FORBIDDEN_PIPELINE_EFFECT_FIELD_NAMES)),class_field(A(K('class_definition'),base('PipelineLifecycleEffect'))),NOT_TESTS),callback),
+  local('callback-pending-lambdas',entry,51,A(K('lambda'),I(fn('pending_pipeline_effects')),NOT_TESTS),callback),
+ ]
+ entry=['_check_removed_maintenance_batch_architecture']
+ for owner,member_name in sorted(m._REMOVED_BATCH_MEMBERS.items()):
+  clauses.append(local('removed-batch-member-'+owner+'-'+member_name,entry,52,A(K('attribute'),RX(r'(?:^|\.)'+re.escape(owner)+r'\.'+re.escape(member_name)+'$')),inventory))
+  clauses.append(local('removed-batch-field-'+owner+'-'+member_name,entry,52,A(K('assignment'),F('left',names([member_name])),F('right',N(K('assignment'))),class_field(A(K('class_definition'),F('name',names([owner]))))),inventory))
+ # Occurrences of ORDERED_SEMANTIC are counted per innermost class and function scope.
+ gate=detector(['_check_ordered_semantic_batch_inventory'],inventory)
+ scope=I(A(K('module'),RX('ORDERED_SEMANTIC')))
+ limits=json.dumps([(*key,value) for key,value in sorted(m._ORDERED_SEMANTIC_SCOPE_LIMITS.items())],separators=(',',':'))
+ inputs={'ordered':E(A(gate,member(['ORDERED_SEMANTIC']),{'filePath':{'notRegex':r'(?:^|/)tests(?:/|$)|(?:^|/)(?:data_history|build)(?:/|$)'}},F('attribute',P('ATTR'))),{'attr':'capture.ATTR'}),
+  'scope_classes':E(A(gate,K('class_definition'),scope,F('name',P('NAME'))),{'name':'capture.NAME'}),
+  'scope_fns':E(A(gate,K('function_definition'),scope,F('name',P('NAME'))),{'name':'capture.NAME'})}
+ innermost=lambda table:f"coalesce((SELECT s.name FROM {table} s WHERE s.__path=n.__path AND s.__start<=n.__start AND s.__end>=n.__end ORDER BY s.__end-s.__start LIMIT 1),'<module>')"
+ stages=[S('ordered_limits',"SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS class_name,json_extract(value,'$[2]') AS function_name,json_extract(value,'$[3]') AS maximum FROM json_each("+q(limits)+")",('path','class_name','function_name')),
+  S('ordered_occurrences',"SELECT *,row_number() OVER(PARTITION BY __path,class_name,function_name ORDER BY __start,__end DESC) AS occurrence FROM (SELECT n.__path,n.__start,n.__end,"+innermost('scope_classes')+" AS class_name,"+innermost('scope_fns')+" AS function_name FROM ordered n)")]
+ query="SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,'SPQ-053' AS issue,n.__start AS identity FROM ordered_occurrences n WHERE n.occurrence>coalesce((SELECT maximum FROM ordered_limits lim WHERE lim.path=n.__path AND lim.class_name=n.class_name AND lim.function_name=n.function_name),0)"
+ clauses.append({'id':'ordered-semantic-inventory','relational':{'inputs':inputs,'stages':stages,'query':query,'key':['issue','identity'],'code':'issue','partitionBy':'file'},
+  'violation':{'code':'architecture','message':'Architecture contract violation','anchor':'witness.span'}})
+ return clauses
+
 def quality_clauses(m):
  def rel(path):return path.relative_to(m.ROOT).as_posix() if path.is_relative_to(m.ROOT) else path.as_posix()
  def at(path):return 'p.__path='+q(rel(path))
@@ -39,6 +94,7 @@ def quality_clauses(m):
  }
  fallback_entries={'_check_conditional_serverplan_fallback','_check_projection_helper_execution_fallback','_check_materialized_row_semantics_fallback','_check_graphql_serverplan_boundary','_check_include_through_shared_lowering','_check_contract_first_relationship_runtime','_check_serverplan_cleanup_ratchets'}
  def add(entry,number,table,where,main='1',identity='n.id',join=''):
+  if number in PORTED:return
   es=(entry,) if isinstance(entry,str) else tuple(entry)
   sql=f"SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,{q('SPQ-'+str(number).zfill(3))} AS issue,{identity} AS identity,{q(es[0])} AS detector FROM {table} n JOIN files p ON p.__path=n.__path {join} WHERE {where}"
   source_sql=sql+' AND ('+main+') AND ('+source_gates.get(es[0],'1')+')'
@@ -117,6 +173,7 @@ def quality_clauses(m):
  query={'regex':{'source':'file.content','pattern':pattern,'paths':{'include':[rel(m.STRATEGY_DIR)+'/**/*.py'],'exclude':[]}}}
  empty={'regex':{'source':'file.content','pattern':r'(?<OVERFLOW>\b\B)'}}
  clauses.append({'id':'strategy-file-size','forbid':{'$option':'entryPoint','cases':{e:query for e in ['all','_check_serverplan_quality_source']},'default':empty},'violation':{'code':'SPQ-010','message':'Strategy file exceeds the line threshold','anchor':'capture.OVERFLOW'}})
+ clauses.extend(callback_inventory_clauses(m,primary_ast,callback_ast))
  from .quality_taxonomy import taxonomy_clauses
  clauses.extend(taxonomy_clauses(m))
  return clauses

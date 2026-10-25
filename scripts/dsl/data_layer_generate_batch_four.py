@@ -168,7 +168,21 @@ for id,rule,code in [('str-call',strcall,'STR_CALL_IN_RENDER'),('str-concat',A(K
 W('grammar_str_params',clauses,utils,arrays(m,'ALLOWLISTED_STR_CLASSES'))
 # Rust boundary is deliberately line based, including comments and string literals.
 m=modules['rust_sql_grammar_boundary']
-W('rust_sql_grammar_boundary',[R('pattern-'+str(i),p.pattern,'rust_sql_grammar_boundary') for i,(p,_) in enumerate(m.FORBIDDEN_PATTERNS)],roots=['rust/nera_compiler_sql/src/**/*.rs'],exclude=[])
+# Rust boundary tokens as tree-sitter-rust nodes. The three generated-code patterns test Rust code and the
+# text of Rust string literals (generated Python), anchored at the match inside the literal.
+expected=[r'\bpyo3\b',r'\bpythonize\b',r"\bPython\s*<\s*'_?\s*>",r'\bPyResult\b',r'\bPy[A-Z][A-Za-z0-9_]*\b',
+ r'generated_value_is_truthy\(&runtime::string_value\(',r'runtime::string_value\(\"self\.',r'\bast\.dump\b']
+if [p.pattern for p,_ in m.FORBIDDEN_PATTERNS]!=expected:raise ValueError('rust_sql_grammar_boundary patterns changed; update the AST shapes')
+def token(rx):return A(O(K('identifier'),K('type_identifier'),K('field_identifier')),RX(rx))
+def literal(rx):return A(O(K('string_literal'),K('raw_string_literal')),RX('(?P<AT>'+rx+')'))
+def callee(rx):return F('function',RX(rx))
+rust=[token('^pyo3$'),token('^pythonize$'),A(K('generic_type'),RX(r"\bPython\s*<\s*'_?\s*>$")),token('^PyResult$'),token('^Py[A-Z][A-Za-z0-9_]*$'),
+ O(A(K('call_expression'),callee('generated_value_is_truthy$'),F('arguments',RX(r'^\(&runtime::string_value\('))),literal(expected[5])),
+ O(A(K('call_expression'),callee('runtime::string_value$'),F('arguments',RX(r'^\("self\.'))),literal(expected[6])),
+ O(A(K('field_expression'),RX(r'\bast\.dump$')),literal(expected[7]))]
+W('rust_sql_grammar_boundary',[{'id':'pattern-'+str(i),'forbid':{'ast':{'language':'rust','rule':r}},
+ 'violation':{'code':'rust_sql_grammar_boundary','anchor':'capture.AT' if i>=5 else 'witness.span','message':'rust_sql_grammar_boundary: pattern-'+str(i)}}
+ for i,r in enumerate(rust)],roots=['rust/nera_compiler_sql/src/**/*.rs'],exclude=[])
 # Zero maximums make nonempty literal sets violations. Keep the reporter's variable grouping.
 m=modules['grammar_allowlist_burndown'];utils={}
 utils['set-string']=O(A(K('set'),H(CONST)),A(K('binary_operator'),F('operator',RX(r'^\|$')),O(F('left',M('set-string')),F('right',M('set-string')))))
@@ -260,8 +274,15 @@ clauses=[C('forbidden-class',A(K('class_definition'),F('name',forbidden)),'escap
    {'name':'aliases','extends':['classes'],'edges':{'from':'alias_from','to':'alias_to'},'contains':{'grammar':'base','safe':'leaf'}}],
   {'all':[{'eq':['row.grammar',True]},{'eq':['row.safe',False]},{'ne':['row.parameter',None]}]},'escape_hatch',
   groups=['row.path','row.position','row.owner'],anchor='capture.PARAMETER')]
+# The upstream text test `X(` / `import X` / `, X` as syntax: a callee or a definition named ...X followed by
+# its argument list, the first name after `import`, or any element that directly follows a comma.
 for i,name in enumerate(sorted(m.FORBIDDEN_ESCAPE_HATCHES)):
- c=R('usage-'+str(i),re.escape(name)+r'\(|import '+re.escape(name)+r'|, '+re.escape(name),'escape_hatch');c['forbid']['regex']['lines'].update(terminators='lf',exclude=[r'^\s*#']);clauses.append(c)
+ e=re.escape(name)
+ opened=A(K('identifier'),RX(e+'$'),O(I(K('call'),'neighbor','function'),I(A(K('attribute'),I(K('call'),'neighbor','function')),'neighbor','attribute'),
+  I(A(K('class_definition'),H(K('argument_list'),'superclasses')),'neighbor','name'),I(K('function_definition'),'neighbor','name')))
+ imported=A(O(K('dotted_name'),K('aliased_import')),RX('^'+e),{'follows':{'stopBy':'neighbor','regex':'^import$'}})
+ listed=A(O(K('identifier'),K('call'),K('attribute'),K('subscript'),K('dotted_name'),K('aliased_import'),K('generic_type'),K('type')),RX('^'+e),{'follows':{'stopBy':'neighbor','regex':'^,$'}})
+ clauses.append(C('usage-'+str(i),O(opened,imported,listed),'escape_hatch'))
 W('sql_grammar_escape_hatches',clauses,utils,options,roots=['api/**/*.py','impl/**/*.py'],mode='block')
 if args.signature_output is not None:
  args.signature_output.write_text(json.dumps({'source_commit':PIN,'source':'scripts/lint_sql_grammar_escape_hatches.py',

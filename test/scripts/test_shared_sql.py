@@ -67,19 +67,19 @@ class SharedSqlTests(unittest.TestCase):
 
     def test_conditional_declaration_keys_preserve_shadowing_and_class_ownership(self):
         policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
-        clause = next(c for c in policy['clauses'] if c.get('id') == 'quality-conditional-1')
+        clause = next(c for c in policy['clauses'] if c.get('id') == 'conditional-architecture')
         stages = {s['name']: s['query'] for s in clause['relational']['stages'] if 'query' in s}
         db = sqlite3.connect(':memory:')
-        db.executescript('CREATE TABLE classes (__path,id,name,__start); CREATE TABLE functions (__path,id,name,__start); CREATE TABLE ownership (__path,id,cls); CREATE TABLE module_names (__path,qualified);')
-        db.executemany('INSERT INTO classes VALUES (?,?,?,?)', [('a.py','c1','C',1),('a.py','c2','C',10),('a.py','d1','D',20)])
-        db.executemany('INSERT INTO functions VALUES (?,?,?,?)', [('a.py','m1','run',11),('a.py','m2','run',12),('a.py','m3','run',21),('a.py','g1','g',30),('a.py','g2','g',40)])
-        db.executemany('INSERT INTO ownership VALUES (?,?,?)', [('a.py','m1','c2'),('a.py','m2','c2'),('a.py','m3','d1'),('a.py','g1',None),('a.py','g2',None)])
+        db.executescript('CREATE TABLE classes (__path,__start,__end,name); CREATE TABLE fns (__path,__start,__end,name); CREATE TABLE module_names (__path,qualified); CREATE TABLE derived (name);')
+        # C is redefined; the later C owns both `run` methods, the later of which shadows the first.
+        db.executemany('INSERT INTO classes VALUES (?,?,?,?)', [('a.py',1,9,'C'),('a.py',10,19,'C'),('a.py',20,29,'D')])
+        db.executemany('INSERT INTO fns VALUES (?,?,?,?)', [('a.py',11,12,'run'),('a.py',13,14,'run'),('a.py',21,22,'run'),('a.py',30,31,'g'),('a.py',40,41,'g')])
         db.execute("INSERT INTO module_names VALUES ('a.py','pkg')")
-        for name in ['conditional_classes','conditional_methods','conditional_functions']:
+        for name in ['class_spans','fn_spans','cclasses','fn_owner','cmethods','cfunctions']:
             db.execute('CREATE TABLE ' + name + ' AS ' + stages[name])
-        self.assertEqual(db.execute('SELECT id,qualified_name FROM conditional_classes ORDER BY id').fetchall(), [('c2','pkg.C'),('d1','pkg.D')])
-        self.assertEqual(db.execute('SELECT id,cls FROM conditional_methods ORDER BY id').fetchall(), [('m2','c2'),('m3','d1')])
-        self.assertEqual(db.execute('SELECT id,qualified_name FROM conditional_functions').fetchall(), [('g2','pkg.g')])
+        self.assertEqual(db.execute('SELECT __start,qualified_name FROM cclasses ORDER BY __start').fetchall(), [(10,'pkg.C'),(20,'pkg.D')])
+        self.assertEqual(db.execute('SELECT __start,cls FROM cmethods ORDER BY __start').fetchall(), [(13,10),(21,20)])
+        self.assertEqual(db.execute('SELECT __start,qualified_name FROM cfunctions').fetchall(), [(40,'pkg.g')])
         db.close()
 
     def test_ast_ordinals_sort_narrow_rows_without_changing_node_values(self):

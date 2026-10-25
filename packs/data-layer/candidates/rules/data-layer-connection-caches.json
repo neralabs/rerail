@@ -39,507 +39,249 @@
     {
       "id": "pattern-0",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*staging_bypass.py",
-              "**/*sql_table_hnsw.py",
-              "**/*stmt_versioned.py",
-              "**/*intent_transaction.py",
-              "**/*intent_branch_ops.py",
-              "**/*versioning_intent_steps.py",
-              "**/*branch_ops_steps.py",
-              "**/*commit_branch_steps.py",
-              "**/*sql_versioned_write_transaction.py",
-              "**/*stmt_squash_validation.py",
-              "**/*squash_steps.py",
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "regex": "self$",
+                              "stopBy": "neighbor",
+                              "field": "object"
+                            }
+                          },
+                          {
+                            "has": {
+                              "regex": "^_\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*$",
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^(?:=|:|==|:=)$"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:staging_bypass\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_expected_tip_revision_id"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:sql_table_hnsw\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_max_layer_cache|_entry_point_cache"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:stmt_versioned\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:intent_transaction\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:intent_branch_ops\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:versioning_intent_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:branch_ops_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:commit_branch_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:sql_versioned_write_transaction\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_cached_tip_revision_id"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:stmt_squash_validation\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision_input"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:squash_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
                 ]
               },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-0",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_expected_tip_revision_id"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*staging_bypass.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "BranchId|RevisionId|branch_tip|cache|tip_revision",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "BranchId|RevisionId|branch_tip|cache|tip_revision",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
                 ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-1",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_max_layer_cache|_entry_point_cache"
+              }
             ]
           },
-          "paths": {
-            "include": [
-              "**/*sql_table_hnsw.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-2",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*stmt_versioned.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-3",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*intent_transaction.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-4",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*intent_branch_ops.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-5",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*versioning_intent_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-6",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*branch_ops_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-7",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*commit_branch_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-8",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_cached_tip_revision_id"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*sql_versioned_write_transaction.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-9",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision_input"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*stmt_squash_validation.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection-level branch/revision tip cache"
-      }
-    },
-    {
-      "id": "pattern-0-file-10",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\\w*\\s*[:=]",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*squash_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)(?:\\.pytest_cache|__pycache__|tests)/"
             }
           }
         }
@@ -553,507 +295,257 @@
     {
       "id": "pattern-1",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*staging_bypass.py",
-              "**/*sql_table_hnsw.py",
-              "**/*stmt_versioned.py",
-              "**/*intent_transaction.py",
-              "**/*intent_branch_ops.py",
-              "**/*versioning_intent_steps.py",
-              "**/*branch_ops_steps.py",
-              "**/*commit_branch_steps.py",
-              "**/*sql_versioned_write_transaction.py",
-              "**/*stmt_squash_validation.py",
-              "**/*squash_steps.py",
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "regex": "self$",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            },
+                            {
+                              "has": {
+                                "regex": "^_\\w*cache\\w*$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "left"
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "^dict\\[(?:BranchId|RevisionId)",
+                          "stopBy": "neighbor",
+                          "field": "type"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:staging_bypass\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_expected_tip_revision_id"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:sql_table_hnsw\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_max_layer_cache|_entry_point_cache"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:stmt_versioned\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:intent_transaction\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:intent_branch_ops\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:versioning_intent_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:branch_ops_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:commit_branch_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:sql_versioned_write_transaction\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_cached_tip_revision_id"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:stmt_squash_validation\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision_input"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:squash_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
                 ]
               },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-0",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_expected_tip_revision_id"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*staging_bypass.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "BranchId|RevisionId|branch_tip|cache|tip_revision",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "BranchId|RevisionId|branch_tip|cache|tip_revision",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
                 ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-1",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_max_layer_cache|_entry_point_cache"
+              }
             ]
           },
-          "paths": {
-            "include": [
-              "**/*sql_table_hnsw.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-2",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*stmt_versioned.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-3",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*intent_transaction.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-4",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*intent_branch_ops.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-5",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*versioning_intent_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-6",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*branch_ops_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-7",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*commit_branch_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-8",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_cached_tip_revision_id"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*sql_versioned_write_transaction.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-9",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision_input"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*stmt_squash_validation.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "connection dict cache keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-1-file-10",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w*cache\\w*\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*squash_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)(?:\\.pytest_cache|__pycache__|tests)/"
             }
           }
         }
@@ -1067,507 +559,287 @@
     {
       "id": "pattern-2",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*staging_bypass.py",
-              "**/*sql_table_hnsw.py",
-              "**/*stmt_versioned.py",
-              "**/*intent_transaction.py",
-              "**/*intent_branch_ops.py",
-              "**/*versioning_intent_steps.py",
-              "**/*branch_ops_steps.py",
-              "**/*commit_branch_steps.py",
-              "**/*sql_versioned_write_transaction.py",
-              "**/*stmt_squash_validation.py",
-              "**/*squash_steps.py",
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^_\\w+$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "regex": "^dict\\[(?:BranchId|RevisionId)",
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "typed_parameter"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^_\\w+$"
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "has": {
+                              "regex": "^dict\\[(?:BranchId|RevisionId)",
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          },
+                          {
+                            "layout": {
+                              "before": {
+                                "to": "token",
+                                "breaks": {
+                                  "min": 1
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:staging_bypass\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_expected_tip_revision_id"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:sql_table_hnsw\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_max_layer_cache|_entry_point_cache"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:stmt_versioned\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:intent_transaction\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:intent_branch_ops\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:versioning_intent_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:branch_ops_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:commit_branch_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:sql_versioned_write_transaction\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_cached_tip_revision_id"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:stmt_squash_validation\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision_input"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:squash_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
                 ]
               },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-0",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_expected_tip_revision_id"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*staging_bypass.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "BranchId|RevisionId|branch_tip|cache|tip_revision",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "BranchId|RevisionId|branch_tip|cache|tip_revision",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
                 ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-1",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_max_layer_cache|_entry_point_cache"
+              }
             ]
           },
-          "paths": {
-            "include": [
-              "**/*sql_table_hnsw.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-2",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*stmt_versioned.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-3",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*intent_transaction.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-4",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*intent_branch_ops.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-5",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*versioning_intent_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-6",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*branch_ops_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-7",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*commit_branch_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-8",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_cached_tip_revision_id"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*sql_versioned_write_transaction.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-9",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision_input"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*stmt_squash_validation.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "module-level dict keyed by BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-2-file-10",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "^\\s*_\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*squash_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)(?:\\.pytest_cache|__pycache__|tests)/"
             }
           }
         }
@@ -1581,507 +853,257 @@
     {
       "id": "pattern-3",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*staging_bypass.py",
-              "**/*sql_table_hnsw.py",
-              "**/*stmt_versioned.py",
-              "**/*intent_transaction.py",
-              "**/*intent_branch_ops.py",
-              "**/*versioning_intent_steps.py",
-              "**/*branch_ops_steps.py",
-              "**/*commit_branch_steps.py",
-              "**/*sql_versioned_write_transaction.py",
-              "**/*stmt_squash_validation.py",
-              "**/*squash_steps.py",
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "regex": "self$",
+                                "stopBy": "neighbor",
+                                "field": "object"
+                              }
+                            },
+                            {
+                              "has": {
+                                "regex": "^_\\w+$",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "left"
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "^dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
+                          "stopBy": "neighbor",
+                          "field": "type"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:staging_bypass\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_expected_tip_revision_id"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:sql_table_hnsw\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_max_layer_cache|_entry_point_cache"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:stmt_versioned\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:intent_transaction\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:intent_branch_ops\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:versioning_intent_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:branch_ops_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:commit_branch_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:sql_versioned_write_transaction\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_cached_tip_revision_id"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:stmt_squash_validation\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_tip_revision_input"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "filePath": {
+                                "regex": "(?:squash_steps\\.py)$"
+                              }
+                            },
+                            {
+                              "layout": {
+                                "line": "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
                 ]
               },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-0",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_expected_tip_revision_id"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*staging_bypass.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "BranchId|RevisionId|branch_tip|cache|tip_revision",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "BranchId|RevisionId|branch_tip|cache|tip_revision",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
                 ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-1",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_max_layer_cache|_entry_point_cache"
+              }
             ]
           },
-          "paths": {
-            "include": [
-              "**/*sql_table_hnsw.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-2",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*stmt_versioned.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-3",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*intent_transaction.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-4",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*intent_branch_ops.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-5",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*versioning_intent_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-6",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*branch_ops_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-7",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*commit_branch_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-8",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_cached_tip_revision_id"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*sql_versioned_write_transaction.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-9",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_tip_revision_input"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*stmt_squash_validation.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
-            }
-          }
-        }
-      },
-      "violation": {
-        "code": "CC001",
-        "anchor": "witness.span",
-        "message": "instance dict cache mapping BranchId/RevisionId"
-      }
-    },
-    {
-      "id": "pattern-3-file-10",
-      "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "self\\._\\w+\\s*:\\s*dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)",
-          "lines": {
-            "first": true,
-            "exclude": [
-              "^\\s*#",
-              "_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql"
-            ]
-          },
-          "paths": {
-            "include": [
-              "**/*squash_steps.py"
-            ],
-            "exclude": [
-              "**/.pytest_cache/**",
-              "**/__pycache__/**",
-              "**/tests/**"
-            ]
-          },
-          "content": {
-            "$option": "sourceGate",
-            "cases": {
-              "true": {
-                "include": [
-                  "BranchId|RevisionId|branch_tip|cache|tip_revision"
-                ]
-              },
-              "false": {}
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)(?:\\.pytest_cache|__pycache__|tests)/"
             }
           }
         }

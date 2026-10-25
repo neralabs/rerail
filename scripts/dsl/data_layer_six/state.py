@@ -7,7 +7,8 @@ def state_clauses(m):
  strings=O(K('string'),K('concatenated_string'))
  literal=lambda values:A(strings,{'value':{'regex':'^(?:'+'|'.join(re.escape(v) for v in sorted(values))+')$'}})
  args=lambda rule:F('arguments',H(rule))
- arg=lambda pos,rule:args(A(rule,{'nthChild':{'position':pos,'ofRule':N(K('comment'))}}))
+ # Position first: the argument's own (possibly deep) shape is tested only at that position.
+ arg=lambda pos,rule:args(A({'nthChild':{'position':pos,'ofRule':N(K('comment'))}},rule))
  kw=lambda name,rule:A(K('keyword_argument'),F('name',names([name])),F('value',rule))
  nottest=N({'filePath':{'regex':r'/tests/'}})
  pending=O(names(['pending_pipeline_effects']),A(K('identifier'),RX(r'^apply_.*_effect$')))
@@ -28,25 +29,26 @@ def state_clauses(m):
    items.append(A(K('call'),F('function',A(K('attribute'),F('attribute',names([last])),F('object',{'matches':key})))))
   return O(*items)
  def event(id,rule,code,detail=None,each=None,anchor=None):
-  root=A(gate(['scan_source','scan_tree','scan_project_sources']),rule,P('ROOT'),
-   optional(I(A(K('function_definition'),P('SCOPE')),K('function_definition'))),
-   optional(O(A(K('call'),F('function',O(A(K('identifier'),P('TERM')),A(K('attribute'),F('attribute',P('TERM')))))),
-    A(O(K('class_definition'),K('function_definition')),F('name',P('TERM'))),A(K('attribute'),F('attribute',P('TERM'))))))
-  project={'line':'capture.ROOT.startLine','scope':'capture.SCOPE.startByte','terminal':'capture.TERM'}
-  if detail:project['detail']=detail
-  input_=E(root,project,each=each,anchor=anchor)
-  group=['line','scope','terminal',*(['detail'] if detail else [])]
-  query='SELECT __path AS path,__start AS start_byte,__end AS end_byte,'+','.join('coalesce('+col+",'') AS "+col for col in group)+' FROM (SELECT *,row_number() OVER(PARTITION BY __path,'+','.join(group)+' ORDER BY __start,__end) AS chosen FROM events) WHERE chosen=1'
-  clauses.append({'id':id,'relational':{'inputs':{'events':input_},'query':query,'key':group},'violation':{'code':code,'message':id,'anchor':'witness.span'}})
+  # Findings are keyed by (path, line, code); the upstream (line, scope, terminal) identity only
+  # collapsed duplicates, so each event is a plain forbid query. The entry-point choice is a
+  # query gate, and the module source gate runs after the shape (appended below).
+  del detail,each
+  entries=['all','scan_source','scan_tree','scan_project_sources']
+  clauses.append({'id':id,'forbid':{'ast':{'language':'python','syntax':'valid','when':{'option':{'entryPoint':{'in':entries}}},'rule':rule}},
+   'violation':{'code':code,'message':id,'anchor':anchor or 'witness.span'}})
  event('queue-auth-definitions',A(K('function_definition'),F('name',names(m.FORBIDDEN_QUEUE_AUTH_NAMES)),nottest),'SPT-001')
  event('queue-auth-calls',A(call(m.FORBIDDEN_QUEUE_AUTH_NAMES),nottest),'SPT-001')
  event('terminal-hydration-definitions',A(K('function_definition'),F('name',names(m.FORBIDDEN_TERMINAL_HYDRATION_HELPER_NAMES))),'SPT-002')
  event('large-column-reentry',A(call(m.LARGE_COLUMN_HELPER_NAMES|m.FORBIDDEN_TERMINAL_HYDRATION_HELPER_NAMES),pure),'SPT-002')
  event('large-column-hydration',A(call(['convert_row_to_model']),pure,args(kw('hydrate_large_columns',K('true')))),'SPT-002')
- event('direct-planning-io',A(call(m.DIRECT_IO_NAMES),pure,N(preprocess)),'SPT-003')
+ # More than 16 alternatives give no per-file text prefilter; every direct IO name shares one
+ # literal, which the call's own text then must hold.
+ shared=next((t for t in ['grammar_'] if all(t in v for v in m.DIRECT_IO_NAMES)),None)
+ io_call=A(RX(re.escape(shared)),call(m.DIRECT_IO_NAMES)) if shared else call(m.DIRECT_IO_NAMES)
+ event('direct-planning-io',A(io_call,pure,N(preprocess)),'SPT-003')
  event('query-planning-io',A(tail_rule(m.FORBIDDEN_QUERY_CALL_TAILS),pure,N(preprocess),nottest),'SPT-003')
- event('preprocess-io',A(preprocess,nottest,O(call(m.DIRECT_IO_NAMES),A(K('call'),F('function',names(m.PREPROCESS_SQL_EXECUTION_NAMES))),tail_rule(m.FORBIDDEN_QUERY_CALL_TAILS|m.PREPROCESS_SQL_EXECUTION_CALL_TAILS))),'SPT-011')
- event('provider-io',A(provider,nottest,O(call(m.DIRECT_IO_NAMES),A(K('call'),F('function',names(m.PREPROCESS_SQL_EXECUTION_NAMES))),tail_rule(m.FORBIDDEN_QUERY_CALL_TAILS|m.PREPROCESS_SQL_EXECUTION_CALL_TAILS))),'SPT-019')
+ event('preprocess-io',A(preprocess,nottest,O(io_call,A(K('call'),F('function',names(m.PREPROCESS_SQL_EXECUTION_NAMES))),tail_rule(m.FORBIDDEN_QUERY_CALL_TAILS|m.PREPROCESS_SQL_EXECUTION_CALL_TAILS))),'SPT-011')
+ event('provider-io',A(provider,nottest,O(io_call,A(K('call'),F('function',names(m.PREPROCESS_SQL_EXECUTION_NAMES))),tail_rule(m.FORBIDDEN_QUERY_CALL_TAILS|m.PREPROCESS_SQL_EXECUTION_CALL_TAILS))),'SPT-019')
  event('nested-plan-execution',A(call(m.FORBIDDEN_EXECUTION_TIME_REPLANNING_NAMES),pure),'SPT-005')
  event('executor-plan-execution',A(tail_rule(m.FORBIDDEN_EXECUTION_TIME_REPLANNING_CALL_TAILS),pure,nottest),'SPT-005')
  event('queue-udf-symbols',A(literal(m.FORBIDDEN_SQLITE_QUEUE_UDF_STRINGS),nottest),'SPT-004')
@@ -65,7 +67,7 @@ def state_clauses(m):
  event('test-only-acknowledgement',A(K('call'),nottest,args(A(K('keyword_argument'),F('name',names(['tripwire_acknowledged_test_only']))))),'SPT-006')
  event('executor-ir-dispatch',A(call(['isinstance']),{'filePath':{'regex':'^(?:'+'|'.join(re.escape(v) for v in sorted(m.EXECUTOR_IR_DISPATCH_FILES))+')$'}},arg(2,O(A(ir,P('IR_NAME')),H(A(ir,P('IR_NAME')),stop='end'))),nottest),'SPT-006','capture.IR_NAME',each='IR_NAME')
  marker_fn=A(K('function_definition'),F('body',H(call(m.STEP_EXECUTION_MARKER_NAMES),stop='end')))
- event('step-aware-eager-helper',A(call(m.DIRECT_IO_NAMES),{'filePath':{'regex':'^(?:'+'|'.join(re.escape(v) for v in m.STEP_EXECUTION_EAGER_HELPER_PREFIXES)+')'}},I(marker_fn,K('function_definition')),nottest),'SPT-025')
+ event('step-aware-eager-helper',A(io_call,{'filePath':{'regex':'^(?:'+'|'.join(re.escape(v) for v in m.STEP_EXECUTION_EAGER_HELPER_PREFIXES)+')'}},I(marker_fn,K('function_definition')),nottest),'SPT-025')
  dc=A(K('class_definition'),F('name',O(names(['GraphSearchReadConfig','ContainmentEdgesReadConfig']),A(RX('Graph'),RX('Config$'),{'filePath':{'regex':'graph_read'}}))),I(A(K('decorated_definition'),H(A(K('decorator'),H(O(term(['dataclass']),call(['dataclass'])))))), 'neighbor'))
  ref_atom=A(K('identifier'),RX('ServerRef$'))
  broad=O(annword(['Any','LazyResult','object','str']),N(O(ref_atom,H(ref_atom,stop='end'))))
@@ -86,6 +88,7 @@ def state_clauses(m):
  clauses.extend(signature_clauses(m))
  from .state_flow import flow_clauses
  clauses.extend(flow_clauses(m))
+ for clause in clauses:utils.update(clause.pop('_utils',{}))
  utils['state-project-source']=A(K('module'),RX('|'.join(re.escape(v) for v in sorted(m.STATE_TRIPWIRE_SCAN_TOKENS))))
  utils['state-function-source']=O(A(K('module'),RX('|'.join(re.escape(v) for v in sorted(m.FUNCTION_FACT_SCAN_TOKENS)))),A(K('module'),{'filePath':{'regex':'^'+re.escape(m.BACKEND_PROVIDER_PURITY_FILE)+'$'}}))
  step_base=A(K('class_definition'),F('superclasses',H(A(N(K('keyword_argument')),O(RX('ServerPlanStep|IntentStep'),A(strings,{'value':{'regex':'ServerPlanStep|IntentStep'}}))))))
@@ -96,14 +99,30 @@ def state_clauses(m):
  source_gate=O({'matches':'state-project-source'},I({'matches':'state-project-source'}))
  function_gate=O({'matches':'state-function-source'},I({'matches':'state-function-source'}))
  for clause in clauses:
+  if 'forbid' in clause:
+   ast=clause['forbid']['ast'];ast['rule']=A(ast['rule'],choice('oracleAnalyzer',TRUE,source_gate))
+   continue
   if 'relational' not in clause:continue
-  for relation in clause['relational']['inputs'].values():
-   ast=relation['evidence']['query']['ast'];ast['rule']=A(choice('oracleAnalyzer',TRUE,source_gate),ast['rule'])
-   if clause['id'].startswith('state-signatures'):
-    ast['rule']=A(O({'matches':'state-signature-source'},I({'matches':'state-signature-source'})),ast['rule'])
-   if clause['id'].startswith('state-projection-recovery'):
-    ast['rule']=A({'filePath':{'regex':'|'.join(re.escape(v) for v in sorted(m.PROJECTION_RECOVERY_PATH_TOKENS))}},O({'matches':'state-projection-source'},I({'matches':'state-projection-source'})),ast['rule'])
-   if clause['id'].startswith('state-flow'):
-    ast['rule']=A({'$option':'entryPoint','cases':{'scan_project_sources':TRUE},'default':O({'matches':'state-flow-source'},I({'matches':'state-flow-source'}))},ast['rule'])
-    ast['rule']=A({'$option':'entryPoint','cases':{'scan_project_sources':TRUE},'default':choice('sourceProvided',function_gate,TRUE)},ast['rule'])
+  if clause['id']=='state-projection-recovery':
+   # Narrow candidate inputs: test each node's own shape first, then the module source gates.
+   for relation in clause['relational']['inputs'].values():
+    ast=relation['evidence']['query']['ast']
+    ast['rule']=A(ast['rule'],choice('oracleAnalyzer',TRUE,source_gate),{'filePath':{'regex':'|'.join(re.escape(v) for v in sorted(m.PROJECTION_RECOVERY_PATH_TOKENS))}},O({'matches':'state-projection-source'},I({'matches':'state-projection-source'})))
+   continue
+  gates=[choice('oracleAnalyzer',TRUE,source_gate)]
+  if clause['id'].startswith('state-signatures'):
+   gates.insert(0,O({'matches':'state-signature-source'},I({'matches':'state-signature-source'})))
+  if clause['id'].startswith('state-projection-recovery'):
+   gates[:0]=[{'filePath':{'regex':'|'.join(re.escape(v) for v in sorted(m.PROJECTION_RECOVERY_PATH_TOKENS))}},O({'matches':'state-projection-source'},I({'matches':'state-projection-source'}))]
+  if clause['id'].startswith('state-flow'):
+   gates[:0]=[{'$option':'entryPoint','cases':{'scan_project_sources':TRUE},'default':choice('sourceProvided',function_gate,TRUE)},
+    {'$option':'entryPoint','cases':{'scan_project_sources':TRUE},'default':O({'matches':'state-flow-source'},I({'matches':'state-flow-source'}))}]
+  # One per-file admission utility (decided once at the module) instead of one walk per gate.
+  if clause['id']=='state-flow-narrow':utils['state-flow-admit']=A(K('module'),*gates);gates=[O({'matches':'state-flow-admit'},I(A(K('module'),{'matches':'state-flow-admit'})))]
+  for name,relation in clause['relational']['inputs'].items():
+   ast=relation['evidence']['query']['ast']
+   # The writer lowers raw_nodes to a whole-file gate on the module node: test the kind first, so
+   # the gates (which walk to the module) never run at other nodes. Other inputs test their own
+   # shape first for the same reason.
+   ast['rule']=A(K('module'),*gates,ast['rule']) if name=='raw_nodes' else A(ast['rule']['all'][0],*gates,*ast['rule']['all'][1:]) if clause['id']=='state-flow-narrow' else A(ast['rule'],*gates)
  return clauses,utils

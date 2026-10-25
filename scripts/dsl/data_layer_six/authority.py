@@ -18,9 +18,13 @@ def authority_clause(m):
  monkey=A(K('call'),F('function',A(K('attribute'),F('attribute',names(['setattr'])))),O(arg(1,string(marker)),
   A(arg(2,string('^(?:'+'|'.join(re.escape(x) for x in sorted(m.PRIVATE_AUTH_SYMBOLS|{'_caller_token','verify_callsite_authorization'}))+')$')),
     arg(1,O(names(['execution_boundary']),A(K('attribute'),F('attribute',names(['execution_boundary']))))))))
+ # Frames matter only in files holding a candidate site; every site's text names one of these
+ # literals, so the frame inputs carry them as a file-level text requirement.
+ site_text=I(A(K('module'),RX('_legacy_boundary_var|_explicit_authority_var|explicit_execution_authority|execution_boundary')))
+ declaration_in=lambda kind:A(declaration(kind),site_text)
  inputs={
-  'raw_functions':E(declaration('function_definition'),{'name':'capture.NAME','wrapper':'capture.WRAPPER.startByte'}),
-  'raw_classes':E(declaration('class_definition'),{'name':'capture.NAME','wrapper':'capture.WRAPPER.startByte'}),
+  'raw_functions':E(declaration_in('function_definition'),{'name':'capture.NAME','wrapper':'capture.WRAPPER.startByte'}),
+  'raw_classes':E(declaration_in('class_definition'),{'name':'capture.NAME','wrapper':'capture.WRAPPER.startByte'}),
   'private_symbols':E(private,{'path':'file.path'}),
   'explicit_calls':E(call(['explicit_execution_authority']),{'path':'file.path'}),
   'monkeypatches':E(monkey,{'path':'file.path'}),
@@ -47,5 +51,5 @@ def authority_clause(m):
  (issue='AUTH001' AND __path<>'l2050_transaction/execution_boundary.py' AND NOT EXISTS(SELECT 1 FROM private_exceptions e WHERE e.path=s.__path AND e.qualname=s.qualname))
  OR (issue='AUTH002' AND NOT EXISTS(SELECT 1 FROM signed_callsites e WHERE e.module=s.module AND e.qualname=s.qualname) AND NOT EXISTS(SELECT 1 FROM explicit_exceptions e WHERE e.path=s.__path AND e.qualname=s.qualname))
  OR (issue='AUTH003' AND NOT EXISTS(SELECT 1 FROM private_exceptions e WHERE e.path=s.__path AND e.qualname=s.qualname))"""
- return {'id':'authority-sites','relational':{'inputs':inputs,'stages':stages,'query':query,'key':['issue'],'code':'issue'},
+ return {'id':'authority-sites','relational':{'inputs':inputs,'stages':stages,'query':query,'key':['issue'],'code':'issue','partitionBy':'file'},
   'violation':{'code':'AUTH001','message':'Execution authority boundary violation','anchor':'witness.span'}}

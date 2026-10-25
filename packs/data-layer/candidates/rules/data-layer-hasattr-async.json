@@ -121,34 +121,55 @@
     {
       "id": "hasattr",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "hasattr\\s*\\([^,]+,\\s*['\\\"](\\w+_async)['\\\"]",
-          "lines": {
-            "exclude": [
-              "^\\s*#",
-              "_has_sql_template_support_async",
-              "_has_sql_template_support\\b",
-              "hasattr\\(txn._conn, ['\\\"]_execute_template_with_params",
-              "hasattr\\(txn, ['\\\"]_conn['\\\"].*hasattr\\(txn._conn",
-              "_select_one_direct_async",
-              "insert_many_raw_async",
-              "upsert_many_raw_async",
-              "upsert_many_async",
-              "update_async",
-              "delete_async",
-              "delete_all_async",
-              "delete_many_async",
-              "getattr\\(scheme, ['\\\"]resolve_context_async",
-              "getattr\\(graph_scheme, ['\\\"]resolve_context_async",
-              "keyset_paginate_async",
-              "_execute_aggregate_async",
-              "_execute_windowed_async",
-              "_execute_grammar_async",
-              "fetchall_raw_async",
-              "_update_fts_polyfill_index_async"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "regex": "hasattr$",
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "argument_list"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "nthChild": 2
+                          },
+                          {
+                            "regex": "^['\"]\\w+_async['\"]$"
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "arguments"
+                }
+              },
+              {
+                "not": {
+                  "layout": {
+                    "line": "(?:_has_sql_template_support_async)|(?:_has_sql_template_support\\b)|(?:hasattr\\(txn._conn, ['\\\"]_execute_template_with_params)|(?:hasattr\\(txn, ['\\\"]_conn['\\\"].*hasattr\\(txn._conn)|(?:_select_one_direct_async)|(?:insert_many_raw_async)|(?:upsert_many_raw_async)|(?:upsert_many_async)|(?:update_async)|(?:delete_async)|(?:delete_all_async)|(?:delete_many_async)|(?:getattr\\(scheme, ['\\\"]resolve_context_async)|(?:getattr\\(graph_scheme, ['\\\"]resolve_context_async)|(?:keyset_paginate_async)|(?:_execute_aggregate_async)|(?:_execute_windowed_async)|(?:_execute_grammar_async)|(?:fetchall_raw_async)|(?:_update_fts_polyfill_index_async)"
+                  }
+                }
+              }
+            ]
           }
         }
       },
@@ -161,34 +182,77 @@
     {
       "id": "getattr",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "getattr\\s*\\([^,]+,\\s*['\\\"](\\w+_async)['\\\"],\\s*None\\s*\\)",
-          "lines": {
-            "exclude": [
-              "^\\s*#",
-              "_has_sql_template_support_async",
-              "_has_sql_template_support\\b",
-              "hasattr\\(txn._conn, ['\\\"]_execute_template_with_params",
-              "hasattr\\(txn, ['\\\"]_conn['\\\"].*hasattr\\(txn._conn",
-              "_select_one_direct_async",
-              "insert_many_raw_async",
-              "upsert_many_raw_async",
-              "upsert_many_async",
-              "update_async",
-              "delete_async",
-              "delete_all_async",
-              "delete_many_async",
-              "getattr\\(scheme, ['\\\"]resolve_context_async",
-              "getattr\\(graph_scheme, ['\\\"]resolve_context_async",
-              "keyset_paginate_async",
-              "_execute_aggregate_async",
-              "_execute_windowed_async",
-              "_execute_grammar_async",
-              "fetchall_raw_async",
-              "_update_fts_polyfill_index_async"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "regex": "getattr$",
+                  "stopBy": "neighbor",
+                  "field": "function"
+                }
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "argument_list"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "nthChild": 2
+                          },
+                          {
+                            "regex": "^['\"]\\w+_async['\"]$"
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "none"
+                          },
+                          {
+                            "nthChild": {
+                              "position": 3,
+                              "reverse": false
+                            }
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "reverse": true
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "arguments"
+                }
+              },
+              {
+                "not": {
+                  "layout": {
+                    "line": "(?:_has_sql_template_support_async)|(?:_has_sql_template_support\\b)|(?:hasattr\\(txn._conn, ['\\\"]_execute_template_with_params)|(?:hasattr\\(txn, ['\\\"]_conn['\\\"].*hasattr\\(txn._conn)|(?:_select_one_direct_async)|(?:insert_many_raw_async)|(?:upsert_many_raw_async)|(?:upsert_many_async)|(?:update_async)|(?:delete_async)|(?:delete_all_async)|(?:delete_many_async)|(?:getattr\\(scheme, ['\\\"]resolve_context_async)|(?:getattr\\(graph_scheme, ['\\\"]resolve_context_async)|(?:keyset_paginate_async)|(?:_execute_aggregate_async)|(?:_execute_windowed_async)|(?:_execute_grammar_async)|(?:fetchall_raw_async)|(?:_update_fts_polyfill_index_async)"
+                  }
+                }
+              }
+            ]
           }
         }
       },

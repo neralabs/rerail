@@ -105,7 +105,15 @@ def dispatch_clause(m):
 
 def dispatch_clauses(m):
  clause=dispatch_clause(m)
- clause['relational']['inputs']['raw_nodes']['evidence']['query']['ast']['rule']['all'].append({'filePath':{'regex':'^'+re.escape(m._BASE_SERVER_PLAN_FILE)+'$'}})
+ # The provenance relation reads one file: check its path before any node capture, and admit the
+ # relation only where that file's module is present, so other files build no SQL at all.
+ base_file={'filePath':{'regex':'^'+re.escape(m._BASE_SERVER_PLAN_FILE)+'$'}}
+ plan=clause['relational']
+ # The base file declares BaseServerPlan; that literal is a per-file text prefilter for every input.
+ base_text=I(A(K('module'),RX(r'class BaseServerPlan\b')))
+ plan['inputs']['raw_nodes']['evidence']['query']['ast']['rule']['all'][:0]=[base_file,base_text]
+ plan['inputs']['dispatch_gate']=E(A(base_file,K('module')),{'path':'file.path'})
+ plan['requireNonemptyInput']='dispatch_gate'
  clauses=[clause]
  late=N({'filePath':{'regex':'^(?:'+'|'.join(re.escape(x) for x in sorted(m._LATE_BOUNDARY_FILES))+')$'}})
  def c(id,rule,code):clauses.append(C(id,A(late,rule),code,['scan_source']))

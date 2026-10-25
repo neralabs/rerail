@@ -42,38 +42,68 @@
           "contains-Any": {
             "any": [
               {
-                "all": [
+                "any": [
                   {
-                    "kind": "identifier"
-                  },
-                  {
-                    "regex": "Any"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "any": [
+                    "all": [
                       {
-                        "kind": "string"
+                        "kind": "identifier"
                       },
                       {
-                        "kind": "concatenated_string"
+                        "regex": "Any"
                       }
                     ]
                   },
                   {
-                    "value": {
-                      "regex": "Any"
-                    }
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "regex": "Any"
+                      }
+                    ]
                   }
                 ]
               },
               {
                 "has": {
-                  "matches": "contains-Any",
-                  "stopBy": "neighbor"
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "Any"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "concatenated_string"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "Any"
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "end"
                 }
               }
             ]
@@ -81,38 +111,68 @@
           "contains-Versioned": {
             "any": [
               {
-                "all": [
+                "any": [
                   {
-                    "kind": "identifier"
-                  },
-                  {
-                    "regex": "Versioned"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "any": [
+                    "all": [
                       {
-                        "kind": "string"
+                        "kind": "identifier"
                       },
                       {
-                        "kind": "concatenated_string"
+                        "regex": "Versioned"
                       }
                     ]
                   },
                   {
-                    "value": {
-                      "regex": "Versioned"
-                    }
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "regex": "Versioned"
+                      }
+                    ]
                   }
                 ]
               },
               {
                 "has": {
-                  "matches": "contains-Versioned",
-                  "stopBy": "neighbor"
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "Versioned"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "concatenated_string"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "Versioned"
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "end"
                 }
               }
             ]
@@ -120,38 +180,68 @@
           "contains-CtePublicationContract": {
             "any": [
               {
-                "all": [
+                "any": [
                   {
-                    "kind": "identifier"
-                  },
-                  {
-                    "regex": "CtePublicationContract"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "any": [
+                    "all": [
                       {
-                        "kind": "string"
+                        "kind": "identifier"
                       },
                       {
-                        "kind": "concatenated_string"
+                        "regex": "CtePublicationContract"
                       }
                     ]
                   },
                   {
-                    "value": {
-                      "regex": "CtePublicationContract"
-                    }
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "regex": "CtePublicationContract"
+                      }
+                    ]
                   }
                 ]
               },
               {
                 "has": {
-                  "matches": "contains-CtePublicationContract",
-                  "stopBy": "neighbor"
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "CtePublicationContract"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "concatenated_string"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "CtePublicationContract"
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "end"
                 }
               }
             ]
@@ -159,38 +249,68 @@
           "contains-imported_contract": {
             "any": [
               {
-                "all": [
+                "any": [
                   {
-                    "kind": "identifier"
-                  },
-                  {
-                    "regex": "imported_contract"
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "any": [
+                    "all": [
                       {
-                        "kind": "string"
+                        "kind": "identifier"
                       },
                       {
-                        "kind": "concatenated_string"
+                        "regex": "imported_contract"
                       }
                     ]
                   },
                   {
-                    "value": {
-                      "regex": "imported_contract"
-                    }
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "regex": "imported_contract"
+                      }
+                    ]
                   }
                 ]
               },
               {
                 "has": {
-                  "matches": "contains-imported_contract",
-                  "stopBy": "neighbor"
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "imported_contract"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "concatenated_string"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "imported_contract"
+                        }
+                      ]
+                    }
+                  ],
+                  "stopBy": "end"
                 }
               }
             ]
@@ -3355,6 +3475,12 @@
                 "all": [
                   {
                     "kind": "call"
+                  },
+                  {
+                    "regex": "imported_contract"
+                  },
+                  {
+                    "regex": "CtePublicationContract"
                   },
                   {
                     "has": {

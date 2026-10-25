@@ -108,700 +108,377 @@
       "**/__pycache__/**",
       "**/tmp/**",
       "**/test/**",
-      "**/tests/**"
+      "**/tests/**",
+      "**/*conform/*",
+      "**/*conform/*/**",
+      "**/*/tests/*",
+      "**/*/tests/*/**",
+      "**/*_test.py*",
+      "**/*_test.py*/**",
+      "**/*test_*",
+      "**/*test_*/**",
+      "**/*conftest.py*",
+      "**/*conftest.py*/**",
+      "**/*l1400_types/__init__.py*",
+      "**/*l1400_types/__init__.py*/**",
+      "**/*impl/common/l2050_sql_types/backend_type.py*",
+      "**/*impl/common/l2050_sql_types/backend_type.py*/**",
+      "**/*.yaml*",
+      "**/*.yaml*/**",
+      "**/*.yml*",
+      "**/*.yml*/**",
+      "**/*.md*",
+      "**/*.md*/**",
+      "**/*.rst*",
+      "**/*.rst*/**",
+      "**/*security-*",
+      "**/*security-*/**"
     ]
   },
   "clauses": [
     {
       "id": "comparison-0-BT002",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "dialect\\.name\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "(?P<AT>dialect\\.name)\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']"
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT002",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Use BackendType enum instead of dialect.name == 'string'"
       }
     },
     {
       "id": "comparison-1-BT001",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "dialect\\.name\\s+in\\s+\\(",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "include": [
-            " in "
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "(?P<AT>dialect\\.name)\\s* in \\s*\\("
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT001",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Use BackendType enum with .is_mysql_family or .is_sql_backend instead of dialect.name in (...)"
       }
     },
     {
       "id": "comparison-1-BT002",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "dialect\\.name\\s+in\\s+\\(",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "exclude": [
-            " in "
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "(?P<AT>dialect\\.name)\\s+in\\s+\\("
+              },
+              {
+                "not": {
+                  "regex": "(?P<AT>dialect\\.name)\\s* in \\s*\\("
+                }
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT002",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Use BackendType enum instead of dialect.name == 'string'"
       }
     },
     {
       "id": "comparison-2-BT003",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "backend_type\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "(?P<AT>backend_type)\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']"
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT003",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Use BackendType enum instead of string comparison"
       }
     },
     {
       "id": "comparison-3-BT003",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bbackend\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "include": [
-            "backend ==|backend in"
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "\\b(?P<AT>backend) ==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']"
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT003",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Use BackendType enum instead of string comparison"
       }
     },
     {
       "id": "comparison-3-BT000",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bbackend\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "exclude": [
-            "backend ==|backend in"
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "\\b(?P<AT>backend)\\s*==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']"
+              },
+              {
+                "not": {
+                  "regex": "\\b(?P<AT>backend) ==\\s*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']"
+                }
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT000",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Possible backend type string comparison - consider using BackendType enum"
       }
     },
     {
       "id": "comparison-4-BT003",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bbackend\\s+in\\s+\\([^)]*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "include": [
-            "backend ==|backend in"
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "\\b(?P<AT>backend) in\\s+\\([^)]*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']"
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT003",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Use BackendType enum instead of string comparison"
       }
     },
     {
       "id": "comparison-4-BT000",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "\\bbackend\\s+in\\s+\\([^)]*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "exclude": [
-            "backend ==|backend in"
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "\\b(?P<AT>backend)\\s+in\\s+\\([^)]*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']"
+              },
+              {
+                "not": {
+                  "regex": "\\b(?P<AT>backend) in\\s+\\([^)]*[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']"
+                }
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT000",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Possible backend type string comparison - consider using BackendType enum"
       }
     },
     {
       "id": "comparison-5-BT004",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+\\w*class_name",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "include": [
-            " in "
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "(?P<AT>[\"\\'])(?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\\\"\\']\\s* in \\s*\\w*class_name"
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT004",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Use BackendType.from_connection_class() instead of substring matching"
       }
     },
     {
       "id": "comparison-5-BT000",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+\\w*class_name",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "exclude": [
-            " in "
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "(?P<AT>[\"\\'])(postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+\\w*class_name"
+              },
+              {
+                "not": {
+                  "regex": "(?P<AT>[\"\\'])(?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\\\"\\']\\s* in \\s*\\w*class_name"
+                }
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT000",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Possible backend type string comparison - consider using BackendType enum"
       }
     },
     {
       "id": "comparison-6-BT004",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+type\\(",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "include": [
-            " in "
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "(?P<AT>[\"\\'])(?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\\\"\\']\\s* in \\s*type\\("
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT004",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Use BackendType.from_connection_class() instead of substring matching"
       }
     },
     {
       "id": "comparison-6-BT000",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "[\"\\'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+type\\(",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "exclude": [
-            " in "
-          ],
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "regex": "(?P<AT>[\"\\'])(postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\\']\\s+in\\s+type\\("
+              },
+              {
+                "not": {
+                  "regex": "(?P<AT>[\"\\'])(?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\\\"\\']\\s* in \\s*type\\("
+                }
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT000",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Possible backend type string comparison - consider using BackendType enum"
       }
     },
     {
       "id": "comparison-7-BT005",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "__class__\\.__name__\\.lower\\(\\)",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": false
-          },
-          "paths": {
-            "include": [
-              "**/*.py"
-            ],
-            "exclude": [
-              "**/*conform/*",
-              "**/*conform/*/**",
-              "**/*/tests/*",
-              "**/*/tests/*/**",
-              "**/*_test.py*",
-              "**/*_test.py*/**",
-              "**/*test_*",
-              "**/*test_*/**",
-              "**/*conftest.py*",
-              "**/*conftest.py*/**",
-              "**/*l1400_types/__init__.py*",
-              "**/*l1400_types/__init__.py*/**",
-              "**/*impl/common/l2050_sql_types/backend_type.py*",
-              "**/*impl/common/l2050_sql_types/backend_type.py*/**",
-              "**/*.yaml*",
-              "**/*.yaml*/**",
-              "**/*.yml*",
-              "**/*.yml*/**",
-              "**/*.md*",
-              "**/*.md*/**",
-              "**/*.rst*",
-              "**/*.rst*/**",
-              "**/*security-*",
-              "**/*security-*/**"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "regex": "^lower$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "regex": "(?P<AT>__class__)\\.__name__\\.lower\\(\\)"
+              }
             ]
           }
         }
       },
       "violation": {
         "code": "BT005",
-        "anchor": "witness.span",
+        "anchor": "capture.AT",
         "message": "Use BackendType.from_connection_class() instead of class name inspection"
       }
     }

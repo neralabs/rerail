@@ -67,27 +67,42 @@ def store_target():
   I(A(K('as_pattern_target'),I(A(K('as_pattern'),I(K('with_item'),'neighbor')),'neighbor',field='alias')),'neighbor'))
 
 def nodecontains(text):
- return O(A(K('identifier'),RX(re.escape(text))),A(O(K('string'),K('concatenated_string')),{'value':{'regex':re.escape(text)}}),H({'matches':'contains-'+text}))
+ # A string literal is tested on its source text, not its parsed value: a value test makes the rule
+ # three-valued, which disables the engine's per-file literal prefilter. The two differ only for a
+ # literal split across implicit concatenation or spelled with escapes.
+ # A self-recursive utility makes the engine evaluate it across the whole file; "the node or any
+ # descendant" is the same set as an unbounded `has`.
+ leaf=O(A(K('identifier'),RX(re.escape(text))),A(O(K('string'),K('concatenated_string')),RX(re.escape(text))))
+ return O(leaf,H(leaf,stop='end'))
 def before(c):return {'layout':{'after':{'to':'capture.'+c,'breaks':{'min':0}}}}
 def after(c):return {'layout':{'before':{'to':'capture.'+c,'breaks':{'min':0}}}}
 def direct_stmt(r):return A(r,I(K('block')),I(K('function_definition'),FN,field='body'))
-# Cache scanner: exact stripped-line search, suffix-specific reviewed exceptions.
+# Cache scanner: the four line regexes as AST shapes, suffix-specific reviewed exceptions.
+# Comments, docstrings and string literals cannot match an AST shape, so no line filter remains.
 m=importlib.import_module('scripts.lint_connection_caches')
-clauses=[]
+expected_patterns=[r'self\._\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\w*\s*[:=]',
+ r'self\._\w*cache\w*\s*:\s*dict\[(?:BranchId|RevisionId)',r'^_\w+\s*:\s*dict\[(?:BranchId|RevisionId)',
+ r'self\._\w+\s*:\s*dict\[(?:BranchId|RevisionId)\s*,\s*(?:RevisionId|BranchId)']
+if [p.pattern for p,_ in m.ALL_PATTERNS]!=expected_patterns:raise ValueError('connection_caches patterns changed; update the AST shapes')
+def self_attr(name):return A(K('attribute'),F('object',RX('self$')),F('attribute',RX(name)))
+keyed=r'^dict\[(?:BranchId|RevisionId)'
+annotated=lambda left,type_:A(K('assignment'),F('left',left),F('type',RX(type_)))
+cache_shapes=[
+ # self._*branch_tip* followed by '=', ':', '==' or ':=' (assignment, annotation, comparison, dict key).
+ A(self_attr(r'^_\w*(?:branch_tip|revision_tip|tip_revision|branch_cache|revision_cache)\w*$'),{'precedes':{'stopBy':'neighbor','regex':'^(?:=|:|==|:=)$'}}),
+ annotated(self_attr(r'^_\w*cache\w*$'),keyed),
+ # A stripped line that starts with '_name: dict[BranchId': an annotated statement or a parameter on its own line.
+ O(annotated(A(K('identifier'),RX(r'^_\w+$')),keyed),
+   A(K('typed_parameter'),H(A(K('identifier'),RX(r'^_\w+$'))),F('type',RX(keyed)),{'layout':{'before':{'to':'token','breaks':{'min':1}}}})),
+ annotated(self_attr(r'^_\w+$'),r'^dict\[(?:BranchId|RevisionId)\s*,\s*(?:RevisionId|BranchId)')]
+cc_skip=r'(?:^|/)(?:'+'|'.join(re.escape(part) for part in sorted(m.SKIP_PARTS))+')/'
 allowed={}
-for file,token,_ in m.ALLOWED_CACHES:allowed.setdefault(file,[]).append(re.escape(token))
-for i,(pattern,label) in enumerate(m.ALL_PATTERNS):
- p=pattern.pattern
- if p.startswith('^'):p=r'^\s*'+p[1:]
- c=R('pattern-'+str(i),p,'CC001',paths={'include':['**/*.py'],'exclude':['**/*'+f for f in allowed]},exclude=[r'^\s*#'])
- c['violation']['message']=label
- clauses.append(c)
- for j,(file,tokens) in enumerate(allowed.items()):
-  c=R('allowed-'+str(j)+'-pattern-'+str(i),p,'CC001',paths={'include':['**/*'+file],'exclude':[]},exclude=[r'^\s*#','|'.join(tokens)])
-  # Preserve category identity across path partitions using the same clause id.
-  c['id']='pattern-'+str(i)+'-file-'+str(j)
-  c['violation']['message']=label
-  clauses.append(c)
+for file,token,_ in m.ALLOWED_CACHES:allowed.setdefault(file,[]).append(token)
+suffix=lambda files:'(?:'+'|'.join(re.escape(f) for f in files)+')$'
+# A reviewed exception holds where the file ends with its name and the stripped line contains its token.
+reviewed=O(*(A({'filePath':{'regex':suffix([file])}},{'layout':{'line':'|'.join(re.escape(t) for t in tokens)}}) for file,tokens in allowed.items()))
+clauses=[{'id':'pattern-'+str(i),'forbid':{'ast':{'language':'python','rule':A(shape,N(reviewed)),'file':{'path':{'notRegex':cc_skip}}}},
+  'violation':{'code':'CC001','anchor':'witness.span','message':label}} for i,((_,label),shape) in enumerate(zip(m.ALL_PATTERNS,cache_shapes))]
 W('connection_caches',clauses,roots=['api/**/*.py','impl/**/*.py'])
 # Error handling: only adjacent direct handler statements, and bare expression commit calls.
 logger=A(K('expression_statement'),H(A(K('call'),F('function',A(K('attribute'),F('object',names(['logger'])),F('attribute',names(['warning','error'])))))))
@@ -173,7 +188,9 @@ owned={'regex':'^(?:'+'|'.join(re.escape(x) for x in sorted(m.PLAN_SCOPE_OWNERSH
 clauses += [C('nested-terminal',A(K('call'),F('function',term(m.NESTED_VERSIONED_TERMINALS)),I(A(fn(),F('name',RX('nested_versioned'))),K('function_definition'))),'PSO006',file=owned),
  C('lifecycle-reflection',A(K('call'),F('function',term(['getattr','hasattr'])),O(*(O(A(K('identifier'),RX(re.escape(name))),H(A(K('identifier'),RX(re.escape(name))),stop='end'),H(A(O(K('string'),K('concatenated_string')),{'value':{'regex':re.escape(name)}}),stop='end')) for name in sorted(m.LIFECYCLE_NAMES)))),'PSO007',file=owned),
  C('base-versioned-name',A(K('call'),{'matches':'contains-Versioned'}),'PSO009',file={'regex':r'connection_plan_workflows\.py$'}),
- C('invent-contract',A(K('call'),F('function',{'matches':'contains-imported_contract'}),{'matches':'contains-CtePublicationContract'}),'PSO013')]
+ # The call's own text must contain both literals before the recursive identifier/string walks run;
+ # the literals also give the engine a per-file prefilter.
+ C('invent-contract',A(K('call'),RX('imported_contract'),RX('CtePublicationContract'),F('function',{'matches':'contains-imported_contract'}),{'matches':'contains-CtePublicationContract'}),'PSO013')]
 utils['store-target']=store_target()
 store=A(K('attribute'),F('attribute',names(['_callback_versioned_txn'])),{'matches':'store-target'})
 clauses.append(C('callback-owner',A(store,N(I(A(fn(),F('name',names(m.CALLBACK_OWNER_WRITERS))),K('function_definition')))),'PSO010'))
@@ -229,8 +246,14 @@ utils['contains-Transaction']=nodecontains('Transaction')
 utils['callback-annotation']=A({'matches':'contains-Callable'},{'matches':'contains-Transaction'})
 paramannot=A(O(K('typed_parameter'),K('typed_default_parameter')),F('type',{'matches':'callback-annotation'}))
 entrycall=A(K('call'),F('function',A(K('attribute'),F('attribute',names(m.TRANSACTION_ENTRYPOINTS)))))
+# A string literal whose value is exactly one of the names, tested on its source text so the rule stays
+# two-valued (a parsed-value test disables the per-file literal prefilter); escapes and implicit
+# concatenation inside the name are not recognised.
+def quoted(values):
+ alt='(?:'+'|'.join(re.escape(v) for v in sorted(values))+')'
+ return '^[rRuUfF]{0,2}(?:'+'|'.join(q+alt+q for q in ('"""',"'''",'"',"'"))+')$'
 reentrant=O(A(K('call'),F('function',A(K('attribute'),F('attribute',names(m.REENTRANT_VERSIONED_ENTRYPOINTS))))),
- A(K('call'),F('function',names(['getattr'])),F('arguments',H(A(O(K('string'),K('concatenated_string')),{'value':{'regex':'^(?:'+'|'.join(sorted(m.REENTRANT_VERSIONED_ENTRYPOINTS))+')$'}},N({'nthChild':{'position':1,'ofRule':N(K('comment'))}}))))))
+ A(K('call'),F('function',names(['getattr'])),F('arguments',H(A(K('string'),RX(quoted(m.REENTRANT_VERSIONED_ENTRYPOINTS)),N({'nthChild':{'position':1,'ofRule':N(K('comment'))}}))))))
 # Match the callback expression selected by keyword precedence, then by second positional argument.
 def callback_arg(selected):
  kw=A(K('keyword_argument'),F('name',names(['fn'])),F('value',selected))
@@ -240,13 +263,15 @@ boundary=A(F('name',names(m.TRANSACTION_ENTRYPOINTS)),I(A(K('class_definition'),
 base=A(fn(),{'pattern':'$OWNER'},N(boundary))
 allowed={'notRegex':'(?:^|/)(?:'+ '|'.join(re.escape(p) for p in sorted(m.ALLOWED_RELATIVE_PATHS))+')$'}
 # Lambda bodies stay in the current function; nested function definitions reset the collector context.
-helper=A(base,F('parameters',H(paramannot)),F('body',H(entrycall,stop=K('function_definition'))))
+# Each function's own text is tested first for literals its match needs (an annotated callback
+# parameter, a reentrant versioned call), so the tree walks below run only in candidate functions.
+helper=A(fn(),RX('Callable'),RX('Transaction'),base,F('parameters',H(paramannot)),F('body',H(entrycall,stop=K('function_definition'))))
 named_callback=A(entrycall,callback_arg(A(K('identifier'),{'pattern':'$CALLBACK_NAME'})))
 nested=A(fn(),F('name',A(K('identifier'),{'pattern':'$CALLBACK_NAME'})),
  I(A(K('block'),I(A(fn(),{'pattern':'$CHECK_OWNER'},same('OWNER','CHECK_OWNER')),'neighbor')),'neighbor'),
  F('body',H(reentrant,stop=K('function_definition'))))
-named_reentry=A(base,F('body',H(named_callback,stop=K('function_definition'))),F('body',H(nested)))
-lambda_reentry=A(base,F('body',H(A(entrycall,callback_arg(A(K('lambda'),F('body',O(reentrant,H(reentrant,stop=K('function_definition'))))))),stop=K('function_definition'))))
+named_reentry=A(fn(),RX('versioned_(?:read|write)'),base,F('body',H(named_callback,stop=K('function_definition'))),F('body',H(nested)))
+lambda_reentry=A(fn(),RX('versioned_(?:read|write)'),base,F('body',H(A(entrycall,callback_arg(A(K('lambda'),F('body',O(reentrant,H(reentrant,stop=K('function_definition'))))))),stop=K('function_definition'))))
 clauses=[C('callback-helper',helper,'transaction_callback_wrapper',file=allowed),
  C('inline-reentrant',O(named_reentry,lambda_reentry),'transaction_callback_wrapper',file=allowed)]
 W('transaction_callback_wrappers',clauses,utils=utils)
@@ -503,8 +528,4 @@ p=OUT/'data-layer-plan-scope-ownership.json';doc=json.loads(p.read_text());doc['
 p=OUT/'data-layer-lazy-result-usage.json';doc=json.loads(p.read_text());skip='|'.join(re.escape(part) for part in importlib.import_module('scripts.lint_lazy_result_usage').SKIP_PATTERNS)
 for clause in doc['clauses']:
  if 'forbid' in clause:clause['forbid']['ast']['file']={'path':{'notRegex':skip}}
-p.write_text(json.dumps(doc,indent=2)+'\n')
-p=OUT/'data-layer-connection-caches.json';doc=json.loads(p.read_text())
-for clause in doc['clauses']:
- if 'forbid' in clause:clause['forbid']['regex']['paths']['exclude'].extend('**/'+part+'/**' for part in sorted(importlib.import_module('scripts.lint_connection_caches').SKIP_PARTS))
 p.write_text(json.dumps(doc,indent=2)+'\n')

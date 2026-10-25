@@ -24,16 +24,27 @@
     {
       "id": "column-shape",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "(?:column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\)).*(?:==|!=)|(?:==|!=).*?(?:column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\))",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true,
-            "include": [
-              "['\\\"](?:count|deleted_count|ok|message|__exists|__result)['\\\"]"
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "comparison_operator"
+              },
+              {
+                "has": {
+                  "regex": "^(?:==|!=)$",
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "regex": "column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\)"
+              },
+              {
+                "layout": {
+                  "line": "['\"](?:count|deleted_count|ok|message|__exists|__result)['\"]"
+                }
+              }
             ]
           }
         }
@@ -47,14 +58,58 @@
     {
       "id": "reference-parse",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "ref[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\([^\\n]*?['\\\"](?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)['\\\"]",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "regex": "^(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "regex": "^['\"](?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)['\"]$"
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "arguments"
+                }
+              },
+              {
+                "layout": {
+                  "line": "ref[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\("
+                }
+              }
+            ]
           }
         }
       },
@@ -67,14 +122,61 @@
     {
       "id": "reference-synthesis",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "(?:ref|refs)[^\\n]*?\\.(?:get|pop|setdefault)\\s*\\(\\s*f['\\\"][^\\n]*?\\{[^}]*ref[^}]*\\}[^\\n]*?(?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "regex": "^(?:get|pop|setdefault)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "nthChild": 1
+                      },
+                      {
+                        "regex": "^f['\"][^\\n]*?\\{[^}]*ref[^}]*\\}[^\\n]*?(?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)"
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  },
+                  "stopBy": "neighbor",
+                  "field": "arguments"
+                }
+              },
+              {
+                "layout": {
+                  "line": "ref[^\\n]*?\\.(?:get|pop|setdefault)\\s*\\("
+                }
+              }
+            ]
           }
         }
       },
@@ -87,20 +189,46 @@
     {
       "id": "column-type",
       "forbid": {
-        "regex": {
-          "source": "file.content",
-          "pattern": "column[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\(",
-          "lines": {
-            "exclude": [
-              "^\\s*#"
-            ],
-            "first": true
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "regex": "^(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)$",
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "layout": {
+                  "line": "column[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\("
+                }
+              }
+            ]
           },
-          "paths": {
-            "include": [
-              "**/sql_column_type_hints.py"
-            ],
-            "exclude": []
+          "file": {
+            "path": {
+              "regex": "(?:^|/)sql_column_type_hints\\.py$"
+            }
           }
         }
       },
