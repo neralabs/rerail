@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { parseArgs } from "node:util";
 import { z } from "zod";
-import { codeRuleSchema, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES, type NativeCompiledCodeRuleDsl } from "../../src/engine/index.js";
+import { codeRuleSchema, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES, type NativeCompiledCodeRuleDsl, type NativeCodeRuleDslExecution } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
 import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
 
@@ -57,8 +57,8 @@ function subtract(left: string[], right: string[]): string[] {
   });
 }
 
-async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: Event): Promise<Result> {
-  const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
+async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: Event, execution: NativeCodeRuleDslExecution): Promise<Result> {
+  const workspace = execution.createWorkspace();
   try {
     workspace.addCodeRule(compiled);
     await workspace.applyAsync(JSON.stringify({ revision: 1, files: event.files!.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" })), removed: [], quiet: true }));
@@ -75,6 +75,12 @@ async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: E
 }
 
 export async function replay(recordingPath: string | string[], outputPath: string, policies = "packs/data-layer/candidates/rules"): Promise<boolean> {
+  const execution = new (loadNativeBinding().CodeRuleDslExecution)();
+  try { return await replayOwned(recordingPath, outputPath, policies, execution); }
+  finally { execution.close(); }
+}
+
+async function replayOwned(recordingPath: string | string[], outputPath: string, policies: string, execution: NativeCodeRuleDslExecution): Promise<boolean> {
   const paths = typeof recordingPath === "string" ? [recordingPath] : recordingPath;
   if (paths.length === 0) throw new Error("At least one recording is required");
   const inputs = paths.map(path => recordingSchema.parse(JSON.parse(readFileSync(path, "utf8"))));
@@ -168,10 +174,10 @@ export async function replay(recordingPath: string | string[], outputPath: strin
     const before = performance.now();
     const signatureFailure = event.check === "sql_grammar_escape_hatches" && event.entry === "plugin.reporter"
       ? escapeHatchSignatureFailure(policy, event.oracle_config?.allowlist_signature) : undefined;
-    const stateless = signatureFailure ?? resultSchema.parse(JSON.parse(rule.evaluate(input, "report")));
+    const stateless = signatureFailure ?? resultSchema.parse(JSON.parse(execution.evaluate(rule, input, "report")));
     const statelessMs = performance.now() - before;
     const workspaceStarted = performance.now();
-    const result = signatureFailure ?? await workspaceEvaluation(rule, event);
+    const result = signatureFailure ?? await workspaceEvaluation(rule, event, execution);
     const workspaceMs = performance.now() - workspaceStarted;
     const columns = event.check === "backend_type_strings";
     const expected = event.findings.map(finding => {

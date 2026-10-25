@@ -228,6 +228,14 @@ export function encodeCodeRuleWorkspaceRequest(request: {
 
 export type NativeCodeRuleDslWorkspaceConstructor = new () => NativeCodeRuleDslWorkspace;
 
+/** One job's immutable SQL facts, shared by independently scoped evaluations. */
+export interface NativeCodeRuleDslExecution {
+  evaluate(compiled: NativeCompiledCodeRuleDsl, snapshot: string, mode: string): string;
+  createWorkspace(): NativeCodeRuleDslWorkspace;
+  close(): void;
+}
+export type NativeCodeRuleDslExecutionConstructor = new () => NativeCodeRuleDslExecution;
+
 export interface NativeCodeRuleDslRuntimeConstructor {
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
 }
@@ -277,6 +285,7 @@ export interface NativeBinding {
   ConversationEngine: NativeConversationEngineConstructor;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
   CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;
+  CodeRuleDslExecution: NativeCodeRuleDslExecutionConstructor;
 }
 
 const require = createRequire(import.meta.url);

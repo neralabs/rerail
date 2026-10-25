@@ -1,90 +1,155 @@
-//! Keep four idle SQL readers. Resident admission bounds active consumers and preserves broad producer waves.
-use super::{Database, Result, configure, connection, sql_error};
+//! One SQL owner per execution; consumers keep private aliases and independent budgets.
+use super::{Database, Result, configure_in_place, connection};
+use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 use std::{
-    cell::{Cell, RefCell},
+    cell::{OnceCell, RefCell},
     ops::Deref,
     rc::Rc,
     sync::{Arc, atomic::AtomicUsize},
 };
-const READERS: usize = 4;
+
 #[derive(Default, Clone)]
-pub(super) struct Pool(Rc<RefCell<Vec<Database>>>);
-pub(super) struct Lease {
-    db: Option<Database>,
-    pool: Pool,
-    pub reusable: Cell<bool>,
+pub(in crate::code_rule_dsl) struct Backing(Arc<Mutex<Option<Database>>>);
+struct Inner {
+    db: OnceCell<Database>,
 }
-impl Pool {
-    pub fn trim(&self, capacity: usize) {
-        let mut idle = self.0.borrow_mut();
-        while idle
-            .iter()
-            .map(|db| {
-                db.resident_bytes()
-                    .unwrap_or(usize::MAX)
-                    .saturating_add(db.storage.borrow().bytes())
-            })
-            .fold(0usize, usize::saturating_add)
-            > capacity
+#[derive(Clone)]
+pub(super) struct Pool(Rc<Inner>);
+impl Default for Pool {
+    fn default() -> Self {
+        Self(Rc::new(Inner {
+            db: OnceCell::new(),
+        }))
+    }
+}
+pub(super) struct Scope {
+    pool: Option<Pool>,
+    backing: ArcMutexGuard<RawMutex, Option<Database>>,
+}
+impl Backing {
+    pub(super) fn enter(&self) -> Scope {
+        let mut backing = self.0.lock_arc();
+        let pool = Pool::default();
+        if let Some(db) = backing.take() {
+            let _ = pool.0.db.set(db);
+        }
+        Scope {
+            pool: Some(pool),
+            backing,
+        }
+    }
+}
+impl Scope {
+    pub(super) fn pool(&self) -> Pool {
+        self.pool.as_ref().unwrap().clone()
+    }
+}
+impl Drop for Scope {
+    fn drop(&mut self) {
+        let pool = self.pool.take().unwrap();
+        if let Ok(inner) = Rc::try_unwrap(pool.0)
+            && let Some(db) = inner.db.into_inner()
         {
-            if idle.pop().is_none() {
-                break;
+            let _ = db.progress_handler(0, None::<fn() -> bool>);
+            for (name, n) in [
+                ("source_text", 3),
+                ("rx_matches", 2),
+                ("rx_extract", 3),
+                ("rx_replace", 3),
+            ] {
+                let _ = db.remove_function(name, n);
+            }
+            let bounded = db.bindings.borrow().bytes() <= 4 * 1024 * 1024;
+            let clean = bounded || db.storage.borrow_mut().evict(&db, 0).is_ok();
+            if !bounded {
+                db.bindings.borrow_mut().forget();
+            }
+            if clean && db.healthy.get() && db.is_autocommit() {
+                *self.backing = Some(db);
             }
         }
     }
+}
+pub(super) struct Lease {
+    pool: Pool,
+    pub id: usize,
+    modules: RefCell<Vec<String>>,
+    pins: RefCell<Vec<String>>,
+}
+impl Pool {
+    pub fn trim(&self, capacity: usize) {
+        if let Some(db) = self.0.db.get() {
+            if db.bindings.borrow().bytes() > 4 * 1024 * 1024 {
+                db.bindings.borrow_mut().forget();
+            }
+            let _ = db.storage.borrow_mut().evict(db, capacity);
+        }
+    }
     pub fn take(&self, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Lease> {
-        let db = match self.0.borrow_mut().pop() {
-            Some(db) => configure(db, max_pattern, work)?,
-            None => connection(max_pattern, work)?,
-        };
+        if self.0.db.get().is_none() {
+            let _ = self.0.db.set(connection(max_pattern, work.clone())?);
+        }
+        let db = self.0.db.get().unwrap();
+        configure_in_place(db, max_pattern, work)?;
+        let id = db.bindings.borrow_mut().lease();
+        db.active.set(id);
+        db.storage.borrow_mut().owner = Some(id);
         Ok(Lease {
-            db: Some(db),
             pool: self.clone(),
-            reusable: Cell::new(false),
+            id,
+            modules: RefCell::default(),
+            pins: RefCell::default(),
         })
     }
 }
 impl Lease {
+    pub fn private(&self, name: &str) -> String {
+        format!("__private_{}_{}", self.id, name)
+    }
+    pub fn module(&self, name: String) {
+        self.modules.borrow_mut().push(name);
+    }
+    pub fn pin(&self, name: &str) {
+        self.storage.borrow_mut().pin(name);
+        self.pins.borrow_mut().push(name.to_owned());
+    }
+    pub fn activate(&self, max: usize, work: Arc<AtomicUsize>) -> Result<()> {
+        if self.active.get() != self.id {
+            configure_in_place(self, max, work)?;
+            self.active.set(self.id);
+        }
+        self.storage.borrow_mut().owner = Some(self.id);
+        Ok(())
+    }
     pub fn resident_bytes(&self) -> rusqlite::Result<usize> {
-        Ok(self
-            .deref()
-            .resident_bytes()?
-            .saturating_add(self.storage.borrow().bytes()))
+        Ok(self.deref().resident_bytes()?.saturating_add(
+            self.storage
+                .borrow()
+                .bytes()
+                .saturating_add(self.bindings.borrow().bytes()),
+        ))
     }
 }
 impl Deref for Lease {
     type Target = Database;
     fn deref(&self) -> &Database {
-        self.db.as_ref().unwrap()
+        self.pool.0.db.get().unwrap()
     }
 }
 impl Drop for Lease {
     fn drop(&mut self) {
-        let Some(db) = self.db.take() else { return };
-        if !self.reusable.get() || !db.is_autocommit() {
-            return;
+        let _ = self.progress_handler(0, None::<fn() -> bool>);
+        if !self.is_autocommit() {
+            let _ = self.execute_batch("ROLLBACK");
         }
-        if db.storage.borrow_mut().clear(&db).is_err() || !db.storage.borrow().bounded() {
-            return;
+        let modules = std::mem::take(self.modules.get_mut());
+        for module in modules {
+            let _ = super::table::unregister(self, &module);
         }
-        for (name, arity) in [
-            ("source_text", 3),
-            ("rx_matches", 2),
-            ("rx_extract", 3),
-            ("rx_replace", 3),
-        ] {
-            if db.remove_function(name, arity).is_err() {
-                return;
-            }
-        }
-        if db
-            .resident_bytes()
-            .map(|n| n.saturating_add(db.storage.borrow().bytes()))
-            .map_err(sql_error)
-            .is_ok_and(|n| n <= 16 * 1024 * 1024)
-            && self.pool.0.borrow().len() < READERS
-        {
-            self.pool.0.borrow_mut().push(db);
+        let _ = self.storage.borrow_mut().clear_owner(self, self.id);
+        let pins = std::mem::take(self.pins.get_mut());
+        for name in pins {
+            self.storage.borrow_mut().unpin(&name);
         }
     }
 }
@@ -128,7 +193,6 @@ mod tests {
                     .unwrap(),
                 "old"
             );
-            db.reusable.set(true);
         }
         let work = Arc::new(AtomicUsize::new(100));
         let db = pool.take(1024, work.clone()).unwrap();
@@ -156,10 +220,16 @@ mod tests {
         let pool = Pool::default();
         {
             let db = pool.take(1024, Arc::new(AtomicUsize::new(100))).unwrap();
-            db.execute_batch("CREATE TABLE unfinished(value);INSERT INTO unfinished VALUES(1)")
+            let name = db.private("unfinished");
+            db.storage
+                .borrow_mut()
+                .declare(&db, &name, format!("CREATE TABLE {name}(value)"), true)
                 .unwrap();
+            db.execute_batch(&format!("INSERT INTO {name} VALUES(1)"))
+                .unwrap();
+            db.storage.borrow_mut().written(&name, true);
         }
         let db = pool.take(1024, Arc::new(AtomicUsize::new(100))).unwrap();
-        assert!(db.prepare("SELECT * FROM unfinished").is_err());
+        assert!(db.prepare("SELECT * FROM __private_1_unfinished").is_err());
     }
 }

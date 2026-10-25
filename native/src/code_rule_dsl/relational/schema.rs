@@ -10,6 +10,8 @@ use std::{
 };
 #[path = "schema/cache.rs"]
 pub(crate) mod cache;
+#[path = "schema/inference.rs"]
+pub(crate) mod inference;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Column {

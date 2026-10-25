@@ -25,6 +25,8 @@ def run(manifest, output):
             stem = output / (variant['name'] + '-' + str(trial))
             env['RERAIL_ENGINE_PATH'] = str(Path(variant['addon']).resolve())
             command = ['node', '--import', 'tsx', 'conformance/data-layer/post-c-control.mjs', variant['recording'], variant['policies'], str(stem)]
+            if variant.get('driver'):
+                command.append(str(Path(variant['driver']).resolve()))
             with stem.with_suffix('.stdout.log').open('w') as stdout, stem.with_suffix('.stderr.log').open('w') as stderr:
                 subprocess.run(command, env=env, stdout=stdout, stderr=stderr, timeout=110, check=True)
             row = json.loads(stem.with_suffix('.json').read_text())

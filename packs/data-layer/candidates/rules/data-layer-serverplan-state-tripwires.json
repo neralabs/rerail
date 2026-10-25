@@ -1286,7 +1286,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-001",
@@ -1549,7 +1550,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-001",
@@ -1776,7 +1778,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-002",
@@ -2163,7 +2166,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-002",
@@ -2585,7 +2589,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-002",
@@ -3005,7 +3010,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-003",
@@ -3468,7 +3474,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-003",
@@ -4805,7 +4812,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-011",
@@ -6133,7 +6141,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-019",
@@ -6520,7 +6529,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-005",
@@ -7028,7 +7038,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-005",
@@ -7264,7 +7275,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-004",
@@ -7622,7 +7634,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-012",
@@ -8093,7 +8106,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-020",
@@ -8520,7 +8534,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-010",
@@ -8840,7 +8855,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-006",
@@ -9123,7 +9139,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-006",
@@ -9475,7 +9492,8 @@
           "terminal",
           "detail"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-006",
@@ -9723,7 +9741,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-006",
@@ -10080,7 +10099,8 @@
           "terminal",
           "detail"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-006",
@@ -10413,7 +10433,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-025",
@@ -10869,7 +10890,8 @@
           "terminal",
           "detail"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-032",
@@ -11160,7 +11182,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-008",
@@ -11604,7 +11627,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-009",
@@ -11886,7 +11910,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-034",
@@ -12244,7 +12269,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-033",
@@ -12489,7 +12515,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-031",
@@ -13107,7 +13134,8 @@
           "scope",
           "terminal"
         ],
-        "partitionBy": "file"
+        "partitionBy": "file",
+        "requireNonemptyInput": "events"
       },
       "violation": {
         "code": "SPT-030",

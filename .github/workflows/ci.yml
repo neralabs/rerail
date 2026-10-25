@@ -128,6 +128,7 @@ jobs:
               - 'test/engine/native/frontier-determinism.test.ts'
               - 'test/engine/native/recovery/child-demand.test.ts'
               - 'test/engine/native/recovery/relational-storage.test.ts'
+              - 'test/engine/native/recovery/execution-owner.test.ts'
               - 'test/engine/native/recovery/input-admission.test.ts'
               - 'test/engine/native/recovery/eponymous-sources.test.ts'
               - 'test/engine/native/recovery/state-syntax-domain.test.ts'

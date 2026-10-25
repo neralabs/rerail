@@ -6,7 +6,10 @@ pub(in crate::code_rule_dsl) struct Database {
     #[cfg(feature = "code-rule-profile")]
     profiler: Option<Box<crate::code_rule_dsl::profile::sql::Profiler>>,
     connection: Connection,
+    pub(super) healthy: std::cell::Cell<bool>,
+    pub(super) active: std::cell::Cell<usize>,
     pub(super) storage: std::cell::RefCell<super::storage::Storage>,
+    pub(super) bindings: std::cell::RefCell<super::shared::Bindings>,
 }
 
 impl Database {
@@ -54,7 +57,10 @@ impl Database {
             #[cfg(feature = "code-rule-profile")]
             profiler,
             connection,
+            healthy: std::cell::Cell::new(true),
+            active: std::cell::Cell::new(0),
             storage: Default::default(),
+            bindings: Default::default(),
         })
     }
 

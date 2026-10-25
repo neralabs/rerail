@@ -712,9 +712,9 @@ fn corpus_publishes_once_across_partitions_and_updates_only_changed_files() {
         None,
     );
     assert_eq!(old.len(), 2);
-    corpus.put("a.ts", &b, &|| false).unwrap();
+    let current = corpus.put("a.ts", &b, &|| false).unwrap();
     corpus.remove("b.ts").unwrap();
-    // A concurrent reader keeps a coherent old snapshot; a new lease sees the new corpus.
+    // A concurrent reader keeps a coherent snapshot. Membership selects the current version.
     assert_eq!(
         before
             .db
@@ -729,13 +729,28 @@ fn corpus_publishes_once_across_partitions_and_updates_only_changed_files() {
             .db
             .query_row("SELECT count(*) FROM file", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        1
+        3,
+        "physical versions remain in the owner after logical removal"
     );
     let stored: Vec<u8> = after
         .db
-        .query_row("SELECT src FROM file WHERE path='a.ts'", [], |r| r.get(0))
+        .query_row("SELECT src FROM file WHERE fid=?1", [current], |r| r.get(0))
         .unwrap();
     assert_eq!(stored, b"other(value);");
+    assert!(
+        corpus
+            .prepared_file(
+                "b.ts",
+                u32::from(language::tape_tag(GrammarDialect::TypeScript).unwrap()),
+                b.index_source_digest()
+            )
+            .is_none()
+    );
+    assert_eq!(
+        corpus.census().1,
+        3,
+        "the owner retains immutable versions independently of logical membership"
+    );
 }
 
 #[test]

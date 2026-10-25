@@ -10,6 +10,7 @@
 //! - `results` and `memory`: reporting and memory accounting.
 
 mod api;
+pub(in crate::code_rule_dsl) use api::CodeRuleDslWorkspace;
 mod calls_state;
 mod crossfile;
 mod documents;

@@ -182,6 +182,9 @@ mod tests {
             expand: false,
         };
         let stage = Stage {
+            reads_source: false,
+            recursive: false,
+            inputs: Default::default(),
             name: "reachable".into(),
             query: String::new(),
             indexes: vec![],

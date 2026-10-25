@@ -98,6 +98,17 @@ pub(in crate::code_rule_dsl) struct Facts {
     selections: Selections,
 }
 impl Facts {
+    pub(super) fn version(&self) -> (u32, [u8; 32]) {
+        use ast_grep_core::Doc;
+        (
+            u32::from(
+                crate::code_rule_dsl::language::tape_tag(*self.doc.get_lang())
+                    .expect("tape grammar"),
+            ),
+            *self.doc.index_source_digest(),
+        )
+    }
+
     pub(in crate::code_rule_dsl) fn build(file: &FileInput) -> Result<Arc<Self>> {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-prepare", "document");
@@ -755,15 +766,6 @@ pub(in crate::code_rule_dsl) fn compiler_schema(
         .collect()
 }
 
-fn schema(db: &Connection, spec: &Spec) -> Result<Vec<String>> {
-    declarations(spec)?
-        .into_iter()
-        .map(|(name, declaration)| {
-            db.execute_batch(&declaration).map_err(sql_error)?;
-            Ok(name)
-        })
-        .collect()
-}
 fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
     let selected = facts.select(&spec.exclude_kinds, false)?;
     let mut result = Vec::new();
@@ -869,6 +871,41 @@ impl Source for Union {
         self.sources[i].column(r - self.offsets[i], c, ctx)
     }
 }
+/// Executable empty relation. Compiler-only schemas deliberately cannot run.
+struct Empty {
+    columns: Arc<super::schema::Columns>,
+    meter: Arc<Meter>,
+}
+impl Source for Empty {
+    fn columns(&self) -> Vec<String> {
+        self.columns.iter().map(|c| c.name.clone()).collect()
+    }
+    fn column_types(&self) -> Vec<String> {
+        self.columns
+            .iter()
+            .map(|c| c.declared_type.clone())
+            .collect()
+    }
+    fn len(&self) -> usize {
+        0
+    }
+    fn estimated_matches(&self, _: usize, _: bool) -> usize {
+        0
+    }
+    fn indexed(&self, _: usize) -> bool {
+        false
+    }
+    fn lookup(&self, _: usize, _: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
+        Ok(Some(Vec::new()))
+    }
+    fn column(&self, _: usize, _: usize, _: &mut Context) -> rusqlite::Result<()> {
+        Err(rusqlite::Error::InvalidQuery)
+    }
+    fn charge(&self, n: usize) -> rusqlite::Result<()> {
+        self.meter.charge(n)
+    }
+}
+
 pub(super) type Files = Vec<(String, Arc<Facts>)>;
 pub(super) fn load(
     db: &Connection,
@@ -884,7 +921,17 @@ pub(super) fn load(
     names.extend(spec.edges.iter().cloned());
     names.extend(spec.ownership.iter().cloned());
     if files.is_empty() {
-        schema(db, spec)?;
+        for (name, columns) in compiler_schema(db, spec)? {
+            super::table::register(
+                db,
+                &name,
+                Arc::new(Empty {
+                    columns,
+                    meter: Arc::clone(&meter),
+                }),
+            )
+            .map_err(sql_error)?;
+        }
         return Ok(names);
     }
     let mut families: Vec<Vec<Nodes>> = (0..names.len()).map(|_| Vec::new()).collect();

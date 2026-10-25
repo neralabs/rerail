@@ -44,6 +44,7 @@ fn jobs<'a>(rule: &'a CompiledCodeRuleDsl, files: Vec<FileInput>) -> Vec<Job<'a>
                 code_rule,
                 clause,
                 inputs: Inputs {
+                    versions: Default::default(),
                     gate: None,
                     file_local: false,
                     rows: None,

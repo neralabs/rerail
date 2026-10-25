@@ -8,7 +8,7 @@ CREATE TABLE kind(lang INTEGER NOT NULL, code INTEGER NOT NULL, name TEXT, named
 CREATE TABLE field(lang INTEGER NOT NULL, fcode INTEGER NOT NULL, name TEXT,
     PRIMARY KEY(lang,fcode)) WITHOUT ROWID;
 CREATE TABLE file (
-    fid INTEGER PRIMARY KEY, nodes INTEGER NOT NULL, path TEXT NOT NULL UNIQUE,
+    fid INTEGER PRIMARY KEY, nodes INTEGER NOT NULL, path TEXT NOT NULL,
     digest BLOB NOT NULL, lang INTEGER NOT NULL, srcenc TEXT NOT NULL DEFAULT 'UTF8', src BLOB NOT NULL,
     rec BLOB NOT NULL, spans BLOB NOT NULL, checkpoints BLOB NOT NULL,
     parb BLOB NOT NULL, sizb BLOB NOT NULL, flags BLOB NOT NULL
@@ -35,6 +35,9 @@ CREATE TABLE vcov(fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE CASCADE,ki
 CREATE TABLE decoded_properties(fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE CASCADE,pre INTEGER NOT NULL,
     parent INTEGER NOT NULL,end INTEGER NOT NULL,kind INTEGER NOT NULL,field INTEGER NOT NULL,flags INTEGER NOT NULL,
     PRIMARY KEY(fid,pre)) WITHOUT ROWID;
+-- Complete structural publication already contains every direct child edge. Seek the first
+-- child for a field rather than constructing a separate requested-edge cache per wave.
+CREATE INDEX decoded_child_lookup ON decoded_properties(fid,parent,field,pre);
 CREATE TABLE decoded_files(fid INTEGER PRIMARY KEY REFERENCES file(fid) ON DELETE CASCADE);
 CREATE TABLE decoded_spans(fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE CASCADE,pre INTEGER NOT NULL,
     start INTEGER NOT NULL,len INTEGER NOT NULL,PRIMARY KEY(fid,pre)) WITHOUT ROWID;

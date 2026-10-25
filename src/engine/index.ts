@@ -84,6 +84,7 @@ export {
   loadNativeBinding,
   type NativeBinding,
   type NativeCodeRuleDslWorkspace,
+  type NativeCodeRuleDslExecution,
   type NativeCompiledCodeRuleDsl,
   nativePlatformSuffix,
   resolveNativeBindingPath,

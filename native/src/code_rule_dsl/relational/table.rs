@@ -8,8 +8,8 @@ use rusqlite::{
     Connection, Result,
     types::Value,
     vtab::{
-        Context, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConfig,
-        VTabConnection, VTabCursor, VTabKind,
+        Context, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConfig, VTabConnection,
+        VTabCursor,
     },
 };
 use std::{
@@ -23,12 +23,11 @@ struct Shared {
     source: Arc<dyn Source>,
     stats: Arc<Counters>,
 }
-type Registration = Arc<parking_lot::Mutex<Option<Shared>>>;
+type Registration = Shared;
 #[repr(C)]
 struct Table {
     base: rusqlite::ffi::sqlite3_vtab,
     shared: Shared,
-    registration: Registration,
 }
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
@@ -45,19 +44,15 @@ pub(super) fn register(
         return Err(failure("invalid native table name"));
     }
     let stats = Arc::new(Counters::default());
-    let module = CString::new(format!("native_source_{name}"))
-        .map_err(|_| failure("invalid module name"))?;
-    const MODULE: Module<Table> = Module::read_only_module();
-    let registration = Arc::new(parking_lot::Mutex::new(Some(Shared {
+    let module = CString::new(name).map_err(|_| failure("invalid module name"))?;
+    const MODULE: Module<Table> = Module::eponymous_only_module();
+    let registration = Shared {
         source,
         stats: Arc::clone(&stats),
-    })));
+    };
     db.create_module(module.as_c_str(), &MODULE, Some(registration))?;
-    db.execute_batch(&format!(
-        "CREATE VIRTUAL TABLE {} USING {}",
-        quote(name),
-        quote(module.to_str().unwrap())
-    ))?;
+    // Resolve xConnect before an authored-query authorizer is installed.
+    db.prepare(&format!("SELECT * FROM {}", quote(name)))?;
     Ok(stats)
 }
 // SAFETY: SQLite's base is first; auxiliary data and cursors own Arc references.
@@ -74,10 +69,7 @@ unsafe impl<'a> VTab<'a> for Table {
     ) -> Result<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::Innocuous)?;
         let registration = aux.ok_or_else(|| failure("missing native row source"))?;
-        let shared = registration
-            .lock()
-            .clone()
-            .ok_or_else(|| failure("native row source was released"))?;
+        let shared = registration.clone();
         let sql = CString::new(format!(
             "CREATE TABLE x({})",
             shared
@@ -95,7 +87,6 @@ unsafe impl<'a> VTab<'a> for Table {
             Self {
                 base: rusqlite::ffi::sqlite3_vtab::default(),
                 shared,
-                registration: Arc::clone(registration),
             },
         ))
     }
@@ -240,14 +231,6 @@ impl Cursor {
             .map_or(self.range.start, |r| r[self.position])
     }
 }
-impl<'a> CreateVTab<'a> for Table {
-    const KIND: VTabKind = VTabKind::Default;
-    fn destroy(&self) -> Result<()> {
-        // Disconnect can reconnect through the module. DROP releases its ownership.
-        self.registration.lock().take();
-        Ok(())
-    }
-}
 // SAFETY: SQLite's cursor base is first. No borrowed SQLite value escapes filter.
 unsafe impl VTabCursor for Cursor {
     fn filter(&mut self, index: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
@@ -342,4 +325,27 @@ unsafe impl VTabCursor for Cursor {
     fn rowid(&self) -> Result<i64> {
         Ok(self.row() as i64 + 1)
     }
+}
+
+/// Release an eponymous binding without a schema write or a retained row source.
+pub(super) fn unregister(db: &Connection, name: &str) -> Result<()> {
+    let name = CString::new(name).map_err(|_| failure("invalid native module name"))?;
+    // SAFETY: the live connection owns its module. SQLite releases its auxiliary
+    // data and keeps any already-open cursor's Arc ownership intact.
+    let code = unsafe {
+        rusqlite::ffi::sqlite3_create_module_v2(
+            db.handle(),
+            name.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            None,
+        )
+    };
+    if code != rusqlite::ffi::SQLITE_OK {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(code),
+            None,
+        ));
+    }
+    Ok(())
 }

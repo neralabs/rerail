@@ -716,7 +716,7 @@ pub(super) struct CompiledCodeRule {
     /// Report the rule's combined findings only when their count exceeds this ceiling.
     pub(super) report_count_gt: Option<usize>,
     pub(super) rule_mode: RuleMode,
-    pub(super) canonical: String,
+    pub(super) canonical: Arc<str>,
     pub(super) digest: String,
     pub(super) required_capabilities: String,
     pub(super) scope: CodeRuleScope,

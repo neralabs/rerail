@@ -14,6 +14,7 @@ use std::{
 pub(super) struct Reads {
     pub fields: Arc<parking_lot::Mutex<BTreeMap<String, BTreeSet<String>>>>,
     pub source: Arc<AtomicBool>,
+    pub recursive: Arc<AtomicBool>,
 }
 pub(super) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Reads> {
     let tables = tables.clone();
@@ -23,9 +24,15 @@ pub(super) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Read
     let observed = Arc::clone(&reads);
     let source_read = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let source_observed = Arc::clone(&source_read);
+    let recursive = Arc::new(AtomicBool::new(false));
+    let observed_recursive = Arc::clone(&recursive);
     db.authorizer(Some(
         move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
-            AuthAction::Select | AuthAction::Recursive => Authorization::Allow,
+            AuthAction::Select => Authorization::Allow,
+            AuthAction::Recursive => {
+                observed_recursive.store(true, Ordering::Relaxed);
+                Authorization::Allow
+            }
             AuthAction::Read {
                 table_name,
                 column_name,
@@ -119,5 +126,6 @@ pub(super) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Read
     Ok(Reads {
         fields: reads,
         source: source_read,
+        recursive,
     })
 }

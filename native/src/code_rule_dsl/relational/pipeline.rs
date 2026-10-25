@@ -1,0 +1,214 @@
+//! Compose validated SQL producers into shared scopes around actual native/deferred barriers.
+use super::{Plan, Stage, quote};
+use std::collections::{BTreeMap, BTreeSet};
+
+const SQL_BYTES: usize = 1024 * 1024;
+
+fn occurrences(query: &str, name: &str) -> usize {
+    static IDENTIFIER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"[A-Za-z_][A-Za-z_0-9]*").expect("SQL identifiers")
+    });
+    // The authorizer supplies the actual read set. Textual counts can overestimate
+    // references in literals or local aliases, which only adds a conservative cut.
+    IDENTIFIER
+        .find_iter(query)
+        .filter(|token| token.as_str().eq_ignore_ascii_case(name))
+        .count()
+        .max(1)
+}
+
+fn closure(
+    needed: &BTreeSet<String>,
+    stages: &BTreeMap<String, &Stage>,
+    retained: &BTreeSet<String>,
+    selected: &mut BTreeSet<String>,
+    external: &mut BTreeSet<String>,
+) {
+    for name in needed {
+        if !retained.contains(name)
+            && let Some(stage) = stages.get(name)
+        {
+            if selected.insert(name.clone()) {
+                closure(&stage.inputs, stages, retained, selected, external);
+            }
+        } else {
+            external.insert(name.clone());
+        }
+    }
+}
+
+fn render(stages: &[Stage], selected: &BTreeSet<String>, query: &str) -> String {
+    if selected.is_empty() {
+        return query.to_owned();
+    }
+    let definitions = stages
+        .iter()
+        .filter(|s| selected.contains(&s.name))
+        .map(|s| format!("{} AS MATERIALIZED ({})", quote(&s.name), s.query))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("WITH RECURSIVE {definitions} SELECT * FROM ({query})")
+}
+
+/// Every original stage was already validated, including stages unused by the result.
+/// Shared ancestors crossing physical scopes become owners; multiple reads inside one scope
+/// use one materialized CTE. The chosen implementation has no execution configuration flag.
+pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<String>) {
+    let stages = plan
+        .stages
+        .iter()
+        .map(|s| (s.name.clone(), s))
+        .collect::<BTreeMap<_, _>>();
+    let mut retained = plan
+        .stages
+        .iter()
+        .filter(|s| {
+            s.reachability.is_some()
+                || !s.deferred.is_empty()
+                || s.recursive
+                || s.query.to_ascii_uppercase().contains("COLLATE")
+        })
+        .map(|s| s.name.clone())
+        .collect::<BTreeSet<_>>();
+    loop {
+        let mut scopes = Vec::new();
+        let mut changed = false;
+        for stage in &plan.stages {
+            if !retained.contains(&stage.name) {
+                continue;
+            }
+            if stage.reachability.is_some()
+                && let Some(name) = stage
+                    .inputs
+                    .iter()
+                    .find(|n| stages.contains_key(*n) && !retained.contains(*n))
+            {
+                retained.insert(name.clone());
+                changed = true;
+                break;
+            }
+            let mut inline = BTreeSet::new();
+            let mut external = BTreeSet::new();
+            closure(
+                &stage.inputs,
+                &stages,
+                &retained,
+                &mut inline,
+                &mut external,
+            );
+            scopes.push((stage.query.as_str(), inline, &stage.inputs));
+        }
+        if changed {
+            continue;
+        }
+        let mut inline = BTreeSet::new();
+        let mut external = BTreeSet::new();
+        closure(&final_reads, &stages, &retained, &mut inline, &mut external);
+        scopes.push((plan.query.as_str(), inline, &final_reads));
+        let mut uses = BTreeMap::<String, usize>::new();
+        for (_, scope, _) in &scopes {
+            for name in scope {
+                *uses.entry(name.clone()).or_default() += 1;
+            }
+        }
+        if let Some(stage) = plan
+            .stages
+            .iter()
+            .rev()
+            .find(|s| uses.get(&s.name).is_some_and(|&n| n > 1))
+        {
+            retained.insert(stage.name.clone());
+            continue;
+        }
+        // AS MATERIALIZED controls execution, but SQLite still expands CTE references
+        // during preparation. Bound the expanded producer graph as well as SQL text.
+        let mut costs = BTreeMap::<String, usize>::new();
+        for stage in &plan.stages {
+            let mut cost = stage.query.len();
+            for input in &stage.inputs {
+                if !retained.contains(input) {
+                    cost = cost.saturating_add(
+                        occurrences(&stage.query, input)
+                            .saturating_mul(*costs.get(input).unwrap_or(&0)),
+                    );
+                }
+            }
+            costs.insert(stage.name.clone(), cost);
+        }
+        let oversized = scopes
+            .iter()
+            .filter_map(|(query, selected, reads)| {
+                let cost = reads.iter().filter(|name| selected.contains(*name)).fold(
+                    query.len(),
+                    |n, name| {
+                        n.saturating_add(occurrences(query, name).saturating_mul(costs[name]))
+                    },
+                );
+                (cost > SQL_BYTES).then_some((*query, selected, *reads))
+            })
+            .next();
+        if let Some((query, selected, reads)) = oversized {
+            let mut weights = reads
+                .iter()
+                .filter(|name| selected.contains(*name))
+                .map(|n| (n.clone(), occurrences(query, n)))
+                .collect::<BTreeMap<_, _>>();
+            for stage in plan
+                .stages
+                .iter()
+                .rev()
+                .filter(|s| selected.contains(&s.name))
+            {
+                let weight = *weights.get(&stage.name).unwrap_or(&0);
+                for input in stage.inputs.iter().filter(|name| selected.contains(*name)) {
+                    let old = weights.entry(input.clone()).or_default();
+                    *old =
+                        old.saturating_add(weight.saturating_mul(occurrences(&stage.query, input)));
+                }
+            }
+            if let Some(stage) = plan
+                .stages
+                .iter()
+                .filter(|s| selected.contains(&s.name))
+                .max_by_key(|s| costs[&s.name].saturating_mul(*weights.get(&s.name).unwrap_or(&0)))
+            {
+                retained.insert(stage.name.clone());
+                continue;
+            }
+        }
+        break;
+    }
+    let mut physical = Vec::new();
+    let mut last = BTreeMap::new();
+    for stage in &plan.stages {
+        if !retained.contains(&stage.name) {
+            continue;
+        }
+        let mut inline = BTreeSet::new();
+        let mut external = BTreeSet::new();
+        closure(
+            &stage.inputs,
+            &stages,
+            &retained,
+            &mut inline,
+            &mut external,
+        );
+        let mut stage = stage.clone();
+        stage.reads_source |= inline.iter().any(|n| stages[n].reads_source);
+        stage.query = render(&plan.stages, &inline, &stage.query);
+        stage.inputs = external;
+        for input in &stage.inputs {
+            last.insert(input.clone(), physical.len());
+        }
+        physical.push(stage);
+    }
+    let mut inline = BTreeSet::new();
+    let mut external = BTreeSet::new();
+    closure(&final_reads, &stages, &retained, &mut inline, &mut external);
+    plan.query = render(&plan.stages, &inline, &plan.query);
+    for input in external {
+        last.insert(input, physical.len());
+    }
+    plan.last_uses = last;
+    plan.stages = physical;
+}

@@ -111,6 +111,7 @@ pub(super) fn rows_for(
     let relation_names: Vec<_> = statement.stages.iter().map(|s| s.name.as_str()).collect();
     let mut live = vec![false; statement.stages.len()];
     let mut populated = vec![false; statement.stages.len()];
+    let mut retirement = super::lower::ownership::Retirement::default();
     let mut live_count = 0usize;
     let mut owner_created = false;
     #[cfg(feature = "code-rule-profile")]
@@ -147,6 +148,10 @@ pub(super) fn rows_for(
                     store.readers.clear();
                     #[cfg(feature = "code-rule-profile")]
                     let mut prepare = Span::start("anchor-prepare", &stage.name);
+                    if let Some(sql) = retirement.before_prepare() {
+                        let deleted = store.db.execute(&sql, [])?;
+                        retirement.retired(deleted);
+                    }
                     let mut create = store.db.prepare(&stage.sql)?;
                     #[cfg(feature = "code-rule-profile")]
                     {
@@ -164,6 +169,7 @@ pub(super) fn rows_for(
                         create.execute(params_from_iter(&statement.parameters[..count]))?;
                     if stage.temporary {
                         if statement.ownership.slot(i).is_some() {
+                            retirement.inserted(inserted);
                             for &member in statement.ownership.members(i) {
                                 live[member] = true;
                                 populated[member] = inserted != 0;
@@ -264,9 +270,12 @@ pub(super) fn rows_for(
                             i
                         })
                         .collect();
-                    let sql = statement
-                        .ownership
-                        .release(&relation_names, &indices, &populated);
+                    let sql = retirement.release(
+                        &statement.ownership,
+                        &relation_names,
+                        &indices,
+                        &populated,
+                    );
                     store.db.execute_batch(&sql)?;
                     for action in actions {
                         let Action::Release(i) = *action else {

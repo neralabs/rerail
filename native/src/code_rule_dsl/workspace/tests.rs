@@ -3503,9 +3503,11 @@ fn positional_index_lives_with_the_workspace_across_applies_and_deletions() {
         .unwrap()
         .transient_failure = true;
     tape_test_apply(&workspace, 4, vec![file("a.py", "print('a')\n")]);
-    assert_eq!(census(), first);
-    tape_test_apply(&workspace, 5, vec![file("a.py", "print('edited')\n")]);
+    // Retrying one file can prepare a narrower candidate domain. Immutable source
+    // versions remain unchanged; SQL preparation writes are counted separately.
     assert_eq!(census().1, 2);
+    tape_test_apply(&workspace, 5, vec![file("a.py", "print('edited')\n")]);
+    assert_eq!(census().1, 3);
     assert!(census().0 > first.0);
     let mut remove = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
@@ -3514,8 +3516,19 @@ fn positional_index_lives_with_the_workspace_across_applies_and_deletions() {
         request_buffer: None,
         request_direct: None,
     };
-    remove.compute().unwrap();
-    assert_eq!(census().1, 1);
+    let removed: Value = serde_json::from_str(&remove.compute().unwrap()).unwrap();
+    assert_eq!(
+        removed["evaluation"]["violations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        census().1,
+        3,
+        "idle immutable versions remain owned until bounded eviction"
+    );
     // A new workspace has no rows from the previous workspace's SQL corpus.
     let independent = CodeRuleDslWorkspace::new();
     assert_eq!(

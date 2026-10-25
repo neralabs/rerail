@@ -8,6 +8,8 @@ use napi::Result;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, atomic::AtomicUsize};
+#[path = "relational/inference.rs"]
+mod inference;
 
 fn names(value: &Value, path: &str) -> Result<Vec<String>> {
     let array = value
@@ -51,6 +53,10 @@ pub(super) fn compile(
         ],
         path,
     )?;
+    let eager_types = spec
+        .get("stages")
+        .and_then(Value::as_array)
+        .is_some_and(|stages| stages.iter().any(|stage| stage.get("deferred").is_some()));
     let per_file = match spec.get("partitionBy") {
         None => false,
         Some(Value::String(value)) if value == "file" => true,
@@ -106,6 +112,7 @@ pub(super) fn compile(
     db.context(serde_json::json!({"scope":"compile", "producer":"relational-schema-validation", "path":path}));
     let mut tables = BTreeSet::new();
     let mut schemas = relational::schema::Registry::new();
+    let mut inference = relational::schema::inference::Inference::default();
     let mut inputs = Vec::new();
     for (name, value) in input_spec {
         if !relational::identifier(name) {
@@ -285,6 +292,8 @@ pub(super) fn compile(
                     "{at}/name must be a new relation identifier"
                 )));
             }
+            let mut stage_reads_source = false;
+            let mut dependencies = BTreeSet::new();
             let reachability = spec
                 .get("reachability")
                 .map(|value| -> Result<_> {
@@ -324,7 +333,9 @@ pub(super) fn compile(
                         )?;
                         let (selected, reads, source) = relational::inspect_fields(&db, &query, &tables)?;
                         reads_source |= source;
+                        stage_reads_source |= source;
                         for (name,fields) in reads {
+                            dependencies.insert(name.clone());
                             input_fields.entry(name.clone()).or_default().extend(fields);
                             last_uses.insert(name, index);
                         }
@@ -366,9 +377,12 @@ pub(super) fn compile(
                     capabilities.limits.max_ast_pattern_bytes,
                 )?
             };
-            let (mut columns, reads, source) = relational::inspect_fields(&db, &query, &tables)?;
+            let (mut columns, reads, source, recursive) =
+                relational::inspect_fields_recursive(&db, &query, &tables)?;
             let schema_reads = reads.keys().cloned().collect::<Vec<_>>();
+            dependencies.extend(schema_reads.iter().cloned());
             reads_source |= source;
+            stage_reads_source |= source;
             for (name, fields) in reads {
                 input_fields.entry(name.clone()).or_default().extend(fields);
                 last_uses.insert(name, index);
@@ -441,6 +455,9 @@ pub(super) fn compile(
                 .transpose()?
                 .unwrap_or_default();
             let mut stage = Stage {
+                inputs: dependencies,
+                reads_source: stage_reads_source,
+                recursive,
                 name,
                 query,
                 indexes,
@@ -450,31 +467,79 @@ pub(super) fn compile(
                 output_columns: columns,
                 declaration: Arc::from(""),
             };
+            inference
+                .before(
+                    &db,
+                    &mut schemas,
+                    &schema_reads,
+                    &stage.query,
+                    &stage.output_columns,
+                )
+                .map_err(|error| invalid(format!("relational query: {error}")))?;
+            if !stage.deferred.is_empty() {
+                inference
+                    .flush(&db, &mut schemas)
+                    .map_err(|error| invalid(format!("relational query: {error}")))?;
+            }
             let schema_key = relational::schema::cache::Key::new(
                 &stage.query,
                 &schemas,
                 schema_reads.iter(),
                 stage.deferred.keys(),
             );
-            let (columns, created) = {
-                let mut stage_schemas = relational::schema::cache::shared();
-                if let Some(columns) = stage_schemas.get(&schema_key) {
-                    relational::schema::bind(
+            let cached = if eager_types {
+                relational::schema::cache::shared()
+                    .get(&schema_key)
+                    .cloned()
+            } else {
+                None
+            };
+            let (columns, created) = if !eager_types {
+                let columns = Arc::new(
+                    stage
+                        .output_columns
+                        .iter()
+                        .map(|name| relational::schema::Column {
+                            name: name.clone(),
+                            declared_type: String::new(),
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                relational::schema::bind(
+                    &db,
+                    &stage.name,
+                    relational::schema::declaration(&stage.name, &columns),
+                )
+                .map_err(relational::sql_error)?;
+                (columns, false)
+            } else if let Some(columns) = cached {
+                relational::schema::bind(
+                    &db,
+                    &stage.name,
+                    relational::schema::declaration(&stage.name, &columns),
+                )
+                .map_err(|error| invalid(format!("relational query: {error}")))?;
+                (columns, false)
+            } else if stage.deferred.is_empty() {
+                let columns = inference
+                    .queue(
                         &db,
+                        &mut schemas,
                         &stage.name,
-                        relational::schema::declaration(&stage.name, columns),
+                        &stage.query,
+                        stage.output_columns.clone(),
+                        schema_key,
                     )
                     .map_err(|error| invalid(format!("relational query: {error}")))?;
-                    (Arc::clone(columns), false)
-                } else {
-                    relational::create_stage(&db, &stage, false, &work)?;
-                    let columns = Arc::new(
-                        relational::schema::describe(&db, &stage.name)
-                            .map_err(|error| invalid(format!("relational query: {error}")))?,
-                    );
-                    stage_schemas.insert(schema_key, columns.clone());
-                    (columns, true)
-                }
+                (columns, false)
+            } else {
+                relational::create_stage(&db, &stage, false, &work)?;
+                let columns = Arc::new(
+                    relational::schema::describe(&db, &stage.name)
+                        .map_err(|error| invalid(format!("relational query: {error}")))?,
+                );
+                relational::schema::cache::shared().insert(schema_key, columns.clone());
+                (columns, true)
             };
             reads_source |= relational::deferred::validate(&db, &stage, &columns)?;
             let physical_columns = columns
@@ -494,12 +559,27 @@ pub(super) fn compile(
             stages.push(stage);
         }
     }
+    inference
+        .flush(&db, &mut schemas)
+        .map_err(|error| invalid(format!("relational query: {error}")))?;
+    for stage in &mut stages {
+        let physical = schemas[&stage.name]
+            .iter()
+            .filter(|column| !stage.deferred.contains_key(&column.name))
+            .cloned()
+            .collect::<Vec<_>>();
+        stage.declaration =
+            relational::schema::declaration(&relational::deferred::physical_name(stage), &physical)
+                .replacen("CREATE TABLE", "CREATE TEMP TABLE", 1)
+                .into();
+    }
     let query = text(
         spec.get("query"),
         &format!("{path}/query"),
         capabilities.limits.max_ast_pattern_bytes,
     )?;
     let (columns, reads, source) = relational::inspect_fields(&db, &query, &tables)?;
+    let final_reads = reads.keys().cloned().collect();
     reads_source |= source;
     for (name, fields) in reads {
         input_fields.entry(name.clone()).or_default().extend(fields);
@@ -530,7 +610,7 @@ pub(super) fn compile(
         let fields = input_fields.get(name);
         input.retain_projected_fields(fields);
     }
-    Ok(Plan {
+    let mut plan = Plan {
         require_nonempty,
         syntax: syntax.map(Arc::new),
         per_file,
@@ -543,5 +623,10 @@ pub(super) fn compile(
         code,
         last_uses,
         reads_source,
-    })
+    };
+    relational::pipeline::lower(&mut plan, final_reads);
+    if !eager_types {
+        inference::finish(&mut plan, &db, &mut schemas)?;
+    }
+    Ok(plan)
 }

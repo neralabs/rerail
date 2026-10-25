@@ -122,7 +122,9 @@ fn run_prepared(
     let mut deferred = None;
     let _syntax = super::syntax::Pool::install();
     let mut allowance = producer::Allowance::default();
-    let pool = super::pool::Pool::default();
+    let corpus = crate::code_rule_dsl::matcher::CorpusSlot::current();
+    let scope = corpus.sql_backing().enter();
+    let pool = scope.pool();
     let mut stats = Stats::default();
     while deferred.is_some() || !jobs.is_empty() {
         allowance.clear_resident();
@@ -238,14 +240,12 @@ fn run_prepared(
                 }
             };
             // Empty backing is retained only within the existing total SQL admission allowance.
-            pool.trim(sql_limit.saturating_sub(sql_bytes.saturating_add(ready.sql_bytes)));
+            pool.trim(sql_limit.saturating_sub(sql_bytes.max(ready.sql_bytes)));
             // Include the one candidate held while the admitted partition drains.
             stats.peak_sessions = stats.peak_sessions.max(cohort.len() + 1);
-            stats.peak_sql_bytes = stats
-                .peak_sql_bytes
-                .max(sql_bytes.saturating_add(ready.sql_bytes));
+            stats.peak_sql_bytes = stats.peak_sql_bytes.max(sql_bytes.max(ready.sql_bytes));
             if !cohort.is_empty()
-                && (sql_bytes.saturating_add(ready.sql_bytes) > sql_limit
+                && (sql_bytes.max(ready.sql_bytes) > sql_limit
                     || !footprint.admit(&ready.demand, input_limit))
             {
                 deferred = Some(ready);
@@ -261,7 +261,7 @@ fn run_prepared(
                 observe(&mut results[ready.index], ready.clause, &ready.budget);
                 continue;
             }
-            sql_bytes = sql_bytes.saturating_add(ready.sql_bytes);
+            sql_bytes = sql_bytes.max(ready.sql_bytes);
             cohort.push(ready);
             // One consumer may exceed this scheduling target; its existing work and output limits still apply.
             if sql_bytes >= sql_limit {

@@ -3,6 +3,7 @@
 use super::super::AnchorPlan;
 use super::{candidates::Roots, store::Store};
 use crate::code_rule_dsl::tape::TapeDoc;
+use ast_grep_core::Doc;
 use parking_lot::Mutex;
 use rusqlite::Result;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -10,8 +11,12 @@ use std::{cell::RefCell, sync::Arc};
 
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Corpus {
-    state: Mutex<Option<State>>,
+    state: Arc<Mutex<Option<State>>>,
+    sql: crate::code_rule_dsl::relational::pool::Backing,
+    members: Mutex<HashMap<String, (Key, Arc<File>)>>,
 }
+
+type Key = (Arc<str>, u32, [u8; 32]);
 
 #[derive(Clone)]
 pub(super) struct File {
@@ -22,22 +27,50 @@ pub(super) struct File {
     pub(super) roots: HashMap<usize, Roots>,
     pub(super) bytes: usize,
     structural: bool,
+    scope: Arc<Vec<Key>>,
+    published_bytes: usize,
 }
 
 struct State {
-    files: HashMap<String, Arc<File>>,
+    files: HashMap<Key, Arc<File>>,
+    pins: HashMap<Key, usize>,
+    idle: std::collections::BTreeMap<u64, Key>,
+    idle_keys: HashMap<Key, u64>,
+    tick: u64,
+    idle_bytes: usize,
     batch_queries: usize,
     data_statements: usize,
     plans: HashMap<usize, Arc<AnchorPlan>>,
     templates: HashMap<(u32, Vec<usize>), Arc<super::lower::Statement>>,
     languages: HashSet<u32>,
     #[cfg(test)]
-    idle: Vec<Store>,
+    connections: Vec<Store>,
     // Drops after query connections, so the database is closed before unlinking it.
     writer: Store,
 }
 
+#[path = "corpus/owner.rs"]
+mod owner;
+#[cfg(test)]
+#[path = "corpus/owner_tests.rs"]
+mod owner_tests;
+
 impl Corpus {
+    pub(in crate::code_rule_dsl) fn sql_backing(
+        &self,
+    ) -> crate::code_rule_dsl::relational::pool::Backing {
+        self.sql.clone()
+    }
+
+    /// A new logical membership over the same immutable fact owner.
+    pub(in crate::code_rule_dsl) fn fork(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            sql: self.sql.clone(),
+            members: Mutex::default(),
+        }
+    }
+
     #[cfg(feature = "code-rule-profile")]
     pub(in crate::code_rule_dsl) fn record_origins<'a>(
         &self,
@@ -73,13 +106,18 @@ impl Corpus {
         if state.is_none() {
             *state = Some(State {
                 files: HashMap::new(),
+                pins: HashMap::new(),
+                idle: Default::default(),
+                idle_keys: HashMap::new(),
+                tick: 0,
+                idle_bytes: 0,
                 batch_queries: 0,
                 data_statements: 0,
                 plans: HashMap::new(),
                 templates: HashMap::new(),
                 languages: HashSet::new(),
                 #[cfg(test)]
-                idle: Vec::new(),
+                connections: Vec::new(),
                 writer: Store::temporary()?,
             });
         }
@@ -88,11 +126,10 @@ impl Corpus {
             crate::code_rule_dsl::language::tape_tag(*ast_grep_core::Doc::get_lang(doc))
                 .expect("tape language"),
         );
-        if let Some(file) = state
-            .files
-            .get(path)
-            .filter(|file| file.lang == lang && &file.digest == doc.index_source_digest())
-        {
+        state.collect()?;
+        let key = (Arc::from(path), lang, *doc.index_source_digest());
+        if let Some(file) = state.files.get(&key).cloned() {
+            self.bind(state, key, file.clone());
             #[cfg(feature = "code-rule-profile")]
             crate::code_rule_dsl::profile::record_sql_index_reuse();
             return Ok(file.fid);
@@ -104,23 +141,27 @@ impl Corpus {
         let fid = state.writer.put_known(
             path,
             doc,
-            state.files.get(path).map(|file| file.fid),
+            None,
             state.languages.contains(&lang),
             interrupted,
         )?;
         state.languages.insert(lang);
-        state.files.insert(
-            path.to_owned(),
-            Arc::new(File {
-                fid,
-                lang,
-                digest: *doc.index_source_digest(),
-                nodes: doc.transducer_len(),
-                roots: HashMap::new(),
-                bytes: 0,
-                structural: false,
-            }),
-        );
+        let file = Arc::new(File {
+            fid,
+            lang,
+            digest: *doc.index_source_digest(),
+            nodes: doc.transducer_len(),
+            roots: HashMap::new(),
+            bytes: 0,
+            structural: false,
+            scope: Arc::default(),
+            published_bytes: doc
+                .get_source()
+                .len()
+                .saturating_add(doc.transducer_len().saturating_mul(64)),
+        });
+        state.files.insert(key.clone(), file.clone());
+        self.bind(state, key, file);
         Ok(fid)
     }
 
@@ -130,11 +171,10 @@ impl Corpus {
         lang: u32,
         digest: &[u8; 32],
     ) -> Option<Arc<File>> {
-        self.state
+        self.members
             .lock()
-            .as_ref()?
-            .files
             .get(path)
+            .map(|(_, file)| file)
             .filter(|file| file.lang == lang && &file.digest == digest)
             .cloned()
     }
@@ -150,7 +190,16 @@ impl Corpus {
             return Ok(());
         };
         for (&lang, plans) in plans {
-            Self::prepare_group(state, lang, plans, None)?;
+            let files = self
+                .members
+                .lock()
+                .values()
+                .map(|(key, _)| key.clone())
+                .collect();
+            Self::prepare_group(state, lang, plans, Some(&files))?;
+            for (key, file) in self.members.lock().values_mut() {
+                *file = Arc::clone(&state.files[key]);
+            }
         }
         Ok(())
     }
@@ -164,10 +213,11 @@ impl Corpus {
         let Some(state) = guard.as_mut() else {
             return Ok(());
         };
-        type Domain = (Vec<Arc<AnchorPlan>>, HashSet<String>);
+        type Domain = (Vec<Arc<AnchorPlan>>, HashSet<Key>);
         let mut groups = BTreeMap::<(u32, Vec<usize>), Domain>::new();
+        let mut members = self.members.lock();
         for (path, plans) in demands {
-            let Some(file) = state.files.get(path) else {
+            let Some((key, file)) = members.get(path) else {
                 continue;
             };
             if plans.is_empty() {
@@ -183,10 +233,15 @@ impl Corpus {
                 .entry((file.lang, ids))
                 .or_insert_with(|| (plans, HashSet::new()))
                 .1
-                .insert(path.clone());
+                .insert(key.clone());
         }
         for ((lang, _), (plans, paths)) in groups {
             Self::prepare_group(state, lang, &plans, Some(&paths))?;
+            for key in &paths {
+                if let Some((_, prepared)) = members.get_mut(key.0.as_ref()) {
+                    *prepared = Arc::clone(&state.files[key]);
+                }
+            }
         }
         Ok(())
     }
@@ -195,8 +250,30 @@ impl Corpus {
         state: &mut State,
         lang: u32,
         plans: &[Arc<AnchorPlan>],
-        paths: Option<&HashSet<String>>,
+        paths: Option<&HashSet<Key>>,
     ) -> Result<()> {
+        // Cached candidates bind the complete admitted file set, not the owner's contents.
+        let mut fids = state
+            .files
+            .iter()
+            .filter(|(key, file)| {
+                file.lang == lang && paths.is_none_or(|paths| paths.contains(*key))
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        fids.sort_unstable();
+        let scope = Arc::new(fids);
+        for (key, file) in &mut state.files {
+            if file.lang == lang
+                && paths.is_none_or(|paths| paths.contains(key))
+                && file.scope != scope
+            {
+                let file = Arc::make_mut(file);
+                file.roots.clear();
+                file.bytes = 0;
+                file.scope = Arc::clone(&scope);
+            }
+        }
         for plan in plans {
             state
                 .plans
@@ -277,7 +354,7 @@ impl Corpus {
         ids: &[usize],
         plans: &[&AnchorPlan],
         covered: bool,
-        paths: Option<&HashSet<String>>,
+        paths: Option<&HashSet<Key>>,
     ) -> Result<()> {
         let files: Vec<_> = state
             .files
@@ -299,6 +376,14 @@ impl Corpus {
             let ids: Vec<_> = active.iter().map(|&i| ids[i]).collect();
             let plans: Vec<_> = active.iter().map(|&i| plans[i]).collect();
             return Self::select_group(state, lang, &ids, &plans, covered, paths);
+        }
+        #[cfg(feature = "code-rule-profile")]
+        if std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_some() {
+            *state.writer.versions.lock() = state
+                .files
+                .values()
+                .map(|file| (file.fid, (file.lang, file.digest)))
+                .collect();
         }
         // Keep bind counts bounded, without issuing a query for each file or rule.
         for files in files.chunks(16_384) {
@@ -391,7 +476,11 @@ impl Corpus {
             .iter()
             .map(|&plan| plan as *const AnchorPlan as usize)
             .collect();
-        Self::select_group(state, lang, &ids, plans, false, None)
+        Self::select_group(state, lang, &ids, plans, false, None)?;
+        for (key, file) in self.members.lock().values_mut() {
+            *file = Arc::clone(&state.files[key]);
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -420,12 +509,11 @@ impl Corpus {
     }
 
     pub(in crate::code_rule_dsl) fn remove(&self, path: &str) -> Result<()> {
-        let mut state = self.state.lock();
-        if let Some(state) = state.as_mut()
-            && let Some(file) = state.files.get(path)
+        let mut guard = self.state.lock();
+        if let Some(state) = guard.as_mut()
+            && let Some((key, _)) = self.members.lock().remove(path)
         {
-            state.writer.remove_known(file.fid)?;
-            state.files.remove(path);
+            state.unpin(&key);
         }
         Ok(())
     }
@@ -449,7 +537,7 @@ impl Corpus {
     pub(super) fn connection(self: &Arc<Self>) -> Result<Connection> {
         let mut guard = self.state.lock();
         let state = guard.as_mut().expect("publish before querying corpus");
-        let store = match state.idle.pop() {
+        let store = match state.connections.pop() {
             Some(store) => store,
             None => Store::open(std::path::Path::new(
                 state.writer.db.path().expect("file-backed corpus"),
@@ -488,7 +576,7 @@ impl Drop for Connection {
         if store.db.execute_batch("ROLLBACK").is_ok() {
             let mut guard = self.corpus.state.lock();
             if let Some(state) = guard.as_mut() {
-                state.idle.push(store);
+                state.connections.push(store);
             }
         }
     }

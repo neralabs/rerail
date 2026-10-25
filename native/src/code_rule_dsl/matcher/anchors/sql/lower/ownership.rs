@@ -463,3 +463,90 @@ mod retirement_tests {
         );
     }
 }
+
+/// Logical release is immediate. Physical retirement is one bounded cohort delete;
+/// the final owner DROP discards the remaining retired rows without deleting them first.
+#[derive(Default)]
+pub struct Retirement {
+    pending: BTreeSet<usize>,
+    rows: usize,
+}
+pub const RETIREMENT_ROWS: usize = 131_072;
+impl Retirement {
+    pub fn inserted(&mut self, rows: usize) {
+        self.rows = self.rows.saturating_add(rows);
+    }
+    pub fn release(
+        &mut self,
+        layout: &Layout,
+        names: &[&str],
+        indices: &[usize],
+        populated: &[bool],
+    ) -> String {
+        let mut private = Vec::new();
+        for &i in indices {
+            if let Some(slot) = layout.slot(i) {
+                if populated[i] {
+                    self.pending.insert(slot);
+                }
+            } else {
+                private.push(i);
+            }
+        }
+        layout.release(names, &private, populated)
+    }
+    pub fn before_prepare(&self) -> Option<String> {
+        (self.rows >= RETIREMENT_ROWS && !self.pending.is_empty()).then(|| {
+            format!(
+                "DELETE FROM {STORE} WHERE producer IN ({})",
+                self.pending
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        })
+    }
+    pub fn retired(&mut self, rows: usize) {
+        self.rows = self.rows.saturating_sub(rows);
+        self.pending.clear();
+    }
+}
+
+#[cfg(test)]
+mod cohort_tests {
+    use super::*;
+    #[test]
+    fn defers_small_retirements_flushes_under_row_pressure_and_keeps_live_slots()
+    -> rusqlite::Result<()> {
+        let db = rusqlite::Connection::open_in_memory()?;
+        db.execute_batch("CREATE TABLE candidate_keys(producer INTEGER,fid INTEGER,pre INTEGER);WITH RECURSIVE n(x) AS(VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<131072) INSERT INTO candidate_keys SELECT 0,1,x FROM n;INSERT INTO candidate_keys VALUES(1,1,7)")?;
+        let layout = Layout {
+            slots: vec![Some(0), Some(1)],
+            ..Default::default()
+        };
+        let mut retirement = Retirement::default();
+        retirement.inserted(1);
+        assert_eq!(
+            retirement.release(&layout, &["a", "b"], &[0], &[true, true]),
+            ""
+        );
+        assert!(retirement.before_prepare().is_none());
+        retirement.inserted(RETIREMENT_ROWS);
+        let deleted = db.execute(&retirement.before_prepare().unwrap(), [])?;
+        retirement.retired(deleted);
+        assert_eq!(deleted, RETIREMENT_ROWS);
+        assert_eq!(
+            db.query_row("SELECT producer FROM candidate_keys", [], |r| r
+                .get::<_, i64>(0))?,
+            1
+        );
+        assert!(retirement.before_prepare().is_none());
+        assert_eq!(
+            retirement.release(&layout, &["a", "b"], &[1], &[true, true]),
+            ""
+        );
+        db.execute_batch("DROP TABLE candidate_keys")?;
+        Ok(())
+    }
+}

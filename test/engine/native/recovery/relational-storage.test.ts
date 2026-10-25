@@ -31,7 +31,7 @@ it.skipIf(!required)("reuses empty relational backing across clauses without ind
    expect(events.filter(e=>e.kind==='sql')).toHaveLength(catalogue.executionCoverage.completed);
    for(const e of events.filter(e=>e.kind==='sql'&&e.origin==='engine')){const sql=queries.get(e.query)??'';configuration+=Number(sql.includes('PRAGMA analysis_limit=1000'));indexes+=Number(sql.startsWith('CREATE INDEX')&&sql.includes('__empty_'));statistics+=Number(sql.startsWith('ANALYZE temp.')&&sql.includes('empty'));}
   }
-  expect(configuration,'one reusable clause connection in each evaluation').toBe(3);
+  expect(configuration,'one SQL owner across all workspace evaluations').toBe(1);
   expect([indexes,statistics],'empty relations need no physical indexes or statistics').toEqual([0,0]);
  }finally{rmSync(directory,{recursive:true,force:true});}
 },35_000);
@@ -51,4 +51,25 @@ it.skipIf(!required)("preserves deferred CAST affinity through a later stored st
  expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
  const results=JSON.parse(child.stdout);expect(results).toHaveLength(3);
  for(const result of results){expect(result.failures).toEqual([]);expect(result.violations).toHaveLength(1);}
+});
+
+it("preserves stored-stage affinity and collation at SQL pipeline boundaries", () => {
+ const policies = [
+  "SELECT __path,__start,__end,+1 value FROM events UNION ALL SELECT __path,__start,__end,CAST('01' AS TEXT) value FROM events",
+  "SELECT __path,__start,__end,CAST('a' AS TEXT) COLLATE NOCASE value FROM events",
+ ];
+ const predicates = ["value='1'", "value='A'"];
+ const program = `
+  import {readFileSync} from 'node:fs';import {loadNativeBinding} from ${JSON.stringify(engine)};
+  const n=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(caps)}),'utf8');
+  const queries=${JSON.stringify(policies)}, predicates=${JSON.stringify(predicates)};
+  const results=queries.map((query,i)=>{
+    const policy={format:'rerail.policy/v1',id:'boundary'+i,revision:1,mode:'log',clauses:[{id:'test',relational:{inputs:{events:{evidence:{as:'e',query:{ast:{language:'python',rule:{kind:'identifier'}}},project:{path:'file.path'}}}},stages:[{name:'stored',query}],query:'SELECT __path path,__start start_byte,__end end_byte,value FROM stored WHERE '+predicates[i],key:['value']},violation:{code:'FOUND',message:'Found',anchor:'witness.span'}}]};
+    const rule=n.CodeRuleDslRuntime.compile(JSON.stringify(policy),'json',caps);
+    return JSON.parse(rule.evaluate(JSON.stringify({format:'rerail.repository-snapshot/v1',revision:1,files:[{path:'a.py',language:'python',source:'target()'}]}),'report'));
+  });console.log(JSON.stringify(results));
+ `;
+ const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30_000});
+ expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
+ for(const [i,result] of JSON.parse(child.stdout).entries()){expect(result.failures).toEqual([]);expect(result.violations,policies[i]).toHaveLength(0);}
 });

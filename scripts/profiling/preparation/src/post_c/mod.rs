@@ -1,5 +1,7 @@
 //! Isolated prototypes for the remaining post-C execution boundaries.
+mod guard;
 use crate::schema::{self, Column, Columns, Registry, cache};
+pub use guard::inference_guard;
 use rusqlite::{Connection, Result, functions::FunctionFlags, hooks::Authorization};
 use serde::Deserialize;
 use serde_json::json;
@@ -86,11 +88,15 @@ fn flush(
         );
     }
     let temporary = format!("__inference_{}", *statements);
-    db.execute_batch(&format!(
-        "CREATE TEMP TABLE {} AS SELECT {} FROM {} WHERE 0",
-        quote(&temporary),
+    let query = format!(
+        "SELECT {} FROM {}",
         projection.join(","),
         sources.join(" CROSS JOIN ")
+    );
+    db.execute_batch(&format!(
+        "CREATE TEMP TABLE {} AS {}",
+        quote(&temporary),
+        schema::inference::empty(&query)
     ))?;
     *statements += 1;
     let all = schema::describe(db, &temporary)?;
@@ -191,9 +197,9 @@ fn compile(programs: &[Program], batch: bool) -> Result<(usize, Schemas)> {
                 });
             } else {
                 db.execute_batch(&format!(
-                    "CREATE TEMP TABLE {} AS SELECT * FROM ({}) LIMIT 0",
+                    "CREATE TEMP TABLE {} AS {}",
                     quote(&stage.name),
-                    stage.query
+                    schema::inference::empty(&stage.query)
                 ))?;
                 statements += 1;
                 let columns = Arc::new(schema::describe(&db, &stage.name)?);

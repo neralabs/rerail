@@ -113,7 +113,7 @@ it.skipIf(!required)("infers each physical and deferred public schema once acros
       for (const event of events) if (event.kind === "sql") statements.push(queries.get(event.query)!);
     }
     expect(statements.filter(sql => /^CREATE TEMP TABLE "seed" AS/.test(sql))).toHaveLength(1);
-    expect(statements.filter(sql => /^CREATE TEMP TABLE "copied" AS/.test(sql))).toHaveLength(1);
+    expect(statements.filter(sql => /^CREATE TEMP TABLE "__inference_\d+" AS/.test(sql)), "one bounded inference batch for copied").toHaveLength(1);
     expect(statements.filter(sql => /^ALTER TABLE/.test(sql))).toHaveLength(1);
     expect(statements.filter(sql => /(?:CREATE TEMP TABLE|DROP TABLE) "__stage_/.test(sql))).toEqual([]);
     expect(statements.filter(sql => /^CREATE TEMP TABLE "__deferred_schema_seed" AS/.test(sql))).toHaveLength(1);

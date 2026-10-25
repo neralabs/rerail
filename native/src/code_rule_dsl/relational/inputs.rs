@@ -103,7 +103,7 @@ impl Sink<'_> {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn stream(
     db: &Connection,
-    table: &str,
+    (table, _label): (&str, &str),
     input: &FactQuery,
     work: &Arc<AtomicUsize>,
     code_rule: &CompiledCodeRule,
@@ -112,7 +112,7 @@ pub(super) fn stream(
     metrics: &mut Metrics,
 ) -> Result<Rows> {
     #[cfg(feature = "code-rule-profile")]
-    let mut trace = crate::code_rule_dsl::profile::trace::Span::start("input-stream", table);
+    let mut trace = crate::code_rule_dsl::profile::trace::Span::start("input-stream", _label);
     let mut sink = Sink {
         db,
         table,

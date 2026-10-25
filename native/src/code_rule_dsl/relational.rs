@@ -9,7 +9,10 @@ use rusqlite::Connection;
 use rusqlite::functions::FunctionFlags;
 use rusqlite::hooks::Authorization;
 mod authorizer;
-mod pool;
+pub(super) mod pipeline;
+pub(super) mod pool;
+mod shared;
+pub(super) use shared::Versions;
 mod storage;
 
 mod admission;
@@ -38,6 +41,9 @@ use std::sync::{
 #[derive(Clone)]
 pub(super) struct Stage {
     pub(super) name: String,
+    pub(super) inputs: BTreeSet<String>,
+    pub(super) reads_source: bool,
+    pub(super) recursive: bool,
     pub(super) query: String,
     pub(super) indexes: Vec<Vec<String>>,
     pub(super) reachability: Option<Reachability>,
@@ -89,13 +95,13 @@ pub(super) fn identifier(value: &str) -> bool {
 fn quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
-fn sql_error(error: rusqlite::Error) -> napi::Error {
+pub(super) fn sql_error(error: rusqlite::Error) -> napi::Error {
     invalid(format!("relational query: {error}"))
 }
 
 pub(super) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
     let db = validation_connection(max_pattern, work)?;
-    db.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA analysis_limit=1000;")
+    db.execute_batch("PRAGMA temp_store=FILE; PRAGMA cache_spill=ON; PRAGMA cache_size=-1024; PRAGMA temp.cache_size=-512; PRAGMA analysis_limit=1000;")
         .map_err(sql_error)?;
     Ok(db)
 }
@@ -109,6 +115,10 @@ pub(super) fn validation_connection(
     configure(Database::open().map_err(sql_error)?, max_pattern, work)
 }
 fn configure(db: Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+    configure_in_place(&db, max_pattern, work)?;
+    Ok(db)
+}
+fn configure_in_place(db: &Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<()> {
     db.progress_handler(0, None::<fn() -> bool>)
         .map_err(sql_error)?;
     db.set_limit(
@@ -184,8 +194,8 @@ fn configure(db: Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result
         })
         .map_err(sql_error)?;
     }
-    source::install(&db, None, work)?;
-    Ok(db)
+    source::install(db, None, work)?;
+    Ok(())
 }
 
 /// Preparation checks the complete statement, including its function calls.
@@ -214,6 +224,14 @@ pub(super) fn inspect_fields(
     query: &str,
     tables: &BTreeSet<String>,
 ) -> Result<(Vec<String>, FieldReads, bool)> {
+    inspect_fields_recursive(db, query, tables)
+        .map(|(cols, fields, source, _)| (cols, fields, source))
+}
+pub(super) fn inspect_fields_recursive(
+    db: &Connection,
+    query: &str,
+    tables: &BTreeSet<String>,
+) -> Result<(Vec<String>, FieldReads, bool, bool)> {
     let observed = authorizer::install(db, tables).map_err(sql_error)?;
     let result = (|| {
         let statement = db.prepare(query).map_err(sql_error)?;
@@ -238,6 +256,7 @@ pub(super) fn inspect_fields(
             columns,
             observed.fields.lock().clone(),
             observed.source.load(Ordering::Relaxed),
+            observed.recursive.load(Ordering::Relaxed),
         ))
     })();
     db.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>)
@@ -432,6 +451,7 @@ pub(super) enum Preparation {
 }
 
 pub(super) struct Inputs {
+    pub versions: Option<Versions>,
     pub gate: Option<Rows>,
     pub rows: Option<Vec<Rows>>,
     pub facts: syntax::Files,
@@ -450,6 +470,10 @@ struct Session<'a> {
     work: Arc<AtomicUsize>,
     tables: BTreeSet<String>,
     next: usize,
+    aliases: BTreeMap<String, String>,
+    physical_stages: Vec<Stage>,
+    needed: BTreeSet<String>,
+    visible: Snapshot,
 }
 impl<'a> Session<'a> {
     fn new(
@@ -474,6 +498,16 @@ impl<'a> Session<'a> {
         db.context(json!({"scope":"relational", "ruleId":code_rule.id, "clauseId":clause.id,
             "path":(snapshot.files.len() == 1).then(|| snapshot.files[0].path.as_str()), "stage":"inputs"}));
         db.execute_batch("BEGIN").map_err(sql_error)?;
+        let aliases = plan
+            .inputs
+            .iter()
+            .map(|(name, _)| (name.clone(), db.private(name)))
+            .chain(
+                plan.references
+                    .iter()
+                    .map(|_| ("reference_edges".into(), db.private("reference_edges"))),
+            )
+            .collect::<BTreeMap<_, _>>();
         let gate_slot = plan.require_nonempty.filter(|_| inputs.gate.is_some());
         if let (Some(rows), Some(slot)) = (&mut inputs.rows, gate_slot) {
             rows[slot] = inputs.gate.take().expect("admitted gate");
@@ -505,14 +539,22 @@ impl<'a> Session<'a> {
                             .iter()
                             .map(|p| p.field.clone())
                             .collect::<Vec<_>>();
-                        create_input(&db, name, &fields)?;
+                        let physical = &aliases[name];
+                        create_input(&db, physical, &fields)?;
                         let before = db.total_changes();
                         let rows = inputs::stream(
-                            &db, name, input, &work, code_rule, clause, snapshot, metrics,
+                            &db,
+                            (physical, name),
+                            input,
+                            &work,
+                            code_rule,
+                            clause,
+                            snapshot,
+                            metrics,
                         )?;
                         db.storage
                             .borrow_mut()
-                            .written(name, db.total_changes() != before);
+                            .written(physical, db.total_changes() != before);
                         Ok(rows)
                     })
                     .collect::<Result<Vec<_>>>()?
@@ -560,30 +602,88 @@ impl<'a> Session<'a> {
         }
         work.store(allowance - spent, Ordering::Relaxed);
         let anchors = anchors::collect(plan, &rows);
+        let visible = Snapshot {
+            revision: snapshot.revision,
+            files: snapshot
+                .files
+                .iter()
+                .filter(|f| code_rule.scope.matches(&f.path))
+                .cloned()
+                .collect(),
+        };
         if plan.reads_source {
-            let visible = Snapshot {
-                revision: snapshot.revision,
-                files: snapshot
-                    .files
-                    .iter()
-                    .filter(|file| code_rule.scope.matches(&file.path))
-                    .cloned()
-                    .collect(),
-            };
             source::install(&db, Some(&visible), Arc::clone(&work))?;
+        }
+        let mut aliases = aliases;
+        let versions = inputs
+            .versions
+            .unwrap_or_else(|| Versions::snapshot(snapshot));
+        let domain = plan.per_file.then(|| {
+            snapshot
+                .files
+                .iter()
+                .map(|f| f.path.clone())
+                .collect::<Vec<_>>()
+        });
+        let mut sources = BTreeMap::new();
+        {
+            let mut bindings = db.bindings.borrow_mut();
+            for (name, _) in &plan.inputs {
+                sources.insert(
+                    name.clone(),
+                    bindings.evidence(code_rule, &clause.id, name, &versions, &domain, 0),
+                );
+            }
+            if plan.references.is_some() {
+                sources.insert(
+                    "reference_edges".into(),
+                    bindings.evidence(
+                        code_rule,
+                        &clause.id,
+                        "reference_edges",
+                        &versions,
+                        &domain,
+                        db.id,
+                    ),
+                );
+            }
+            if plan.reads_source {
+                sources.insert(
+                    "__source_text".into(),
+                    bindings.evidence(
+                        code_rule,
+                        &clause.id,
+                        "__source_text",
+                        &versions,
+                        &domain,
+                        0,
+                    ),
+                );
+            }
         }
         let mut tables = BTreeSet::new();
         if let Some(spec) = &plan.syntax {
-            for name in std::iter::once(&spec.name)
-                .chain(spec.edges.iter())
-                .chain(spec.ownership.iter())
-            {
-                db.storage
-                    .borrow_mut()
-                    .discard(&db, name)
-                    .map_err(sql_error)?;
+            let mut physical = (**spec).clone();
+            physical.name = db.private(&spec.name);
+            physical.edges = spec.edges.as_ref().map(|n| db.private(n));
+            physical.ownership = spec.ownership.as_ref().map(|n| db.private(n));
+            for (family, name) in [
+                (0, Some(&spec.name)),
+                (1, spec.edges.as_ref()),
+                (2, spec.ownership.as_ref()),
+            ] {
+                if let Some(name) = name {
+                    sources.insert(
+                        name.clone(),
+                        db.bindings.borrow_mut().source(spec, &syntax_files, family),
+                    );
+                    aliases.insert(name.clone(), db.private(name));
+                    tables.insert(name.clone());
+                }
             }
-            tables.extend(syntax::load(&db, spec, &syntax_files, Arc::clone(&work))?);
+            for name in syntax::load(&db, &physical, &syntax_files, Arc::clone(&work))? {
+                db.module(name);
+            }
         }
         for (slot, ((name, input), rows)) in plan.inputs.iter().zip(rows).enumerate() {
             #[cfg(feature = "code-rule-profile")]
@@ -602,7 +702,8 @@ impl<'a> Session<'a> {
                 tables.insert(name.clone());
                 continue;
             }
-            create_input(&db, name, &fields)?;
+            let physical = &aliases[name];
+            create_input(&db, physical, &fields)?;
             // Bind projection positions once per shared schema, never search field names per row.
             let mut layouts = HashMap::new();
             for witness in &rows.witnesses {
@@ -620,7 +721,7 @@ impl<'a> Session<'a> {
             let before = db.total_changes();
             insert::insert_rows(
                 &db,
-                name,
+                physical,
                 fields.len() + 3,
                 rows.witnesses.iter().map(|witness| {
                     use rusqlite::types::ValueRef;
@@ -645,7 +746,7 @@ impl<'a> Session<'a> {
             )?;
             db.storage
                 .borrow_mut()
-                .written(name, db.total_changes() != before);
+                .written(physical, db.total_changes() != before);
             tables.insert(name.clone());
             // SQL owns the copied values; only compact anchors remain necessary.
         }
@@ -661,7 +762,7 @@ impl<'a> Session<'a> {
             }
             create_input(
                 &db,
-                "reference_edges",
+                &aliases["reference_edges"],
                 &REFERENCE_FIELDS
                     .iter()
                     .map(|field| (*field).to_owned())
@@ -670,7 +771,7 @@ impl<'a> Session<'a> {
             let before = db.total_changes();
             insert::insert_rows(
                 &db,
-                "reference_edges",
+                &aliases["reference_edges"],
                 9,
                 graph
                     .edges
@@ -697,31 +798,54 @@ impl<'a> Session<'a> {
             )?;
             db.storage
                 .borrow_mut()
-                .written("reference_edges", db.total_changes() != before);
+                .written(&aliases["reference_edges"], db.total_changes() != before);
             tables.insert("reference_edges".to_owned());
         }
         db.execute_batch("COMMIT").map_err(sql_error)?;
-        let guard = Arc::clone(&work);
-        // One relational work unit is one input row, regex chunk, or bounded
-        // batch of 64 SQLite VM instructions. The shared allowance also polls
-        // each batch; SQL opcodes are not AST node visits.
-        db.progress_handler(
-            64,
-            Some(move || {
-                #[cfg(feature = "code-rule-profile")]
-                if super::profile::sql::explaining() {
-                    return false;
+        let bindings =
+            db.bindings
+                .borrow_mut()
+                .stages(plan, &sources, limits.max_regex_pattern_bytes);
+        for stage in &plan.stages {
+            let name = if stage.reachability.is_some() || !stage.deferred.is_empty() {
+                db.private(&stage.name)
+            } else {
+                shared::physical(bindings[&stage.name])
+            };
+            aliases.insert(stage.name.clone(), name);
+        }
+        let physical_stages = plan
+            .stages
+            .iter()
+            .map(|stage| {
+                let inputs = stage
+                    .inputs
+                    .iter()
+                    .map(|n| (n.clone(), aliases[n].clone()))
+                    .collect();
+                shared::stage(stage, &aliases[&stage.name], &inputs)
+            })
+            .collect::<Vec<_>>();
+        let mut needed = plan
+            .last_uses
+            .iter()
+            .filter(|(_, last)| **last == plan.stages.len())
+            .map(|(n, _)| n.clone())
+            .collect::<BTreeSet<_>>();
+        needed.extend(
+            plan.stages
+                .iter()
+                .filter(|s| s.reachability.is_some())
+                .map(|s| s.name.clone()),
+        );
+        for (logical, physical) in plan.stages.iter().zip(&physical_stages).rev() {
+            if needed.contains(&logical.name) {
+                db.pin(&physical.name);
+                if !db.storage.borrow().ready(&physical.name) {
+                    needed.extend(logical.inputs.iter().cloned());
                 }
-                guard
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
-                        left.checked_sub(1)
-                    })
-                    .is_err()
-                    || super::budget::step_budget_exhausted()
-            }),
-        )
-        .map_err(sql_error)?;
-
+            }
+        }
         Ok(Self {
             code_rule,
             clause,
@@ -734,32 +858,83 @@ impl<'a> Session<'a> {
             work,
             tables,
             next: 0,
+            aliases,
+            physical_stages,
+            needed,
+            visible,
         })
     }
+    fn activate(&self) -> Result<()> {
+        self.db.activate(
+            self.code_rule.capabilities.limits.max_regex_pattern_bytes,
+            Arc::clone(&self.work),
+        )?;
+        if self.plan.reads_source {
+            source::install(&self.db, Some(&self.visible), Arc::clone(&self.work))?;
+        }
+        #[cfg(feature = "code-rule-profile")]
+        self.db.context(json!({"scope":"relational","ruleId":self.code_rule.id,"clauseId":self.clause.id,"path":(self.visible.files.len()==1).then(||self.visible.files[0].path.as_str())}));
+        let guard = Arc::clone(&self.work);
+        self.db
+            .progress_handler(
+                64,
+                Some(move || {
+                    #[cfg(feature = "code-rule-profile")]
+                    if super::profile::sql::explaining() {
+                        return false;
+                    }
+                    guard
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                            left.checked_sub(1)
+                        })
+                        .is_err()
+                        || super::budget::step_budget_exhausted()
+                }),
+            )
+            .map_err(sql_error)
+    }
+    fn query(
+        &self,
+        query: &str,
+        inputs: impl Iterator<Item = String>,
+    ) -> (String, BTreeSet<String>) {
+        let aliases = inputs
+            .filter(|n| self.tables.contains(n))
+            .map(|n| (n.clone(), self.aliases[&n].clone()))
+            .collect::<BTreeMap<_, _>>();
+        let tables = aliases.values().cloned().collect();
+        (shared::resolve(query, &aliases), tables)
+    }
     fn release(&mut self) -> Result<()> {
-        // Explain before the last-use release removes the query's inputs.
         #[cfg(feature = "code-rule-profile")]
         self.db.checkpoint().map_err(sql_error)?;
-        let stage = &self.plan.stages[self.next];
-        self.tables.insert(stage.name.clone());
+        self.tables.insert(self.plan.stages[self.next].name.clone());
+        // Logical last-use permissions remain per consumer. Physical shared facts
+        // survive until owner eviction; private bindings leave with this lease.
         for (name, _) in self
             .plan
             .last_uses
             .iter()
             .filter(|(_, last)| **last == self.next)
         {
-            release_owned(&self.db, name, &self.plan.stages)?;
             self.tables.remove(name);
         }
         self.next += 1;
         Ok(())
     }
     fn advance(&mut self) -> Result<Option<producer::Demand>> {
+        self.activate()?;
         let _reader = producer::ReadOnly::enter();
-        while let Some(stage) = self.plan.stages.get(self.next) {
+        while let Some(logical) = self.plan.stages.get(self.next) {
+            let stage = &self.physical_stages[self.next];
+            if !self.needed.contains(&logical.name) || self.db.storage.borrow().ready(&stage.name) {
+                self.release()?;
+                continue;
+            }
             #[cfg(feature = "code-rule-profile")]
-            self.db.stage(&stage.name);
-            columns(&self.db, &stage.query, &self.tables)?;
+            self.db.stage(&logical.name);
+            let (_, allowed) = self.query(&logical.query, logical.inputs.iter().cloned());
+            columns(&self.db, &stage.query, &allowed)?;
             if let Some(spec) = stage.reachability.as_ref().filter(|s| s.syntax.is_some()) {
                 return Ok(Some(syntax::demand(
                     &self.db,
@@ -772,39 +947,39 @@ impl<'a> Session<'a> {
             #[cfg(feature = "code-rule-profile")]
             let operation = self
                 .db
-                .operation(&format!("/*RELATIONAL_STAGE*/ {}", stage.name), self.next);
+                .operation(&format!("/*RELATIONAL_STAGE*/ {}", logical.name), self.next);
             create_stage(&self.db, stage, true, &self.work)
-                .map_err(|e| invalid(format!("relational stage {}: {}", stage.name, e.reason)))?;
+                .map_err(|e| invalid(format!("relational stage {}: {}", logical.name, e.reason)))?;
+            if stage.reachability.is_none() && stage.deferred.is_empty() {
+                self.db.storage.borrow_mut().publish(&stage.name);
+            }
             #[cfg(feature = "code-rule-profile")]
-            operation
-                .into_iter()
-                .for_each(|operation| operation.finish_unobserved());
+            operation.into_iter().for_each(|op| op.finish_unobserved());
             self.release()?;
         }
         Ok(None)
     }
     fn publish(&mut self, output: producer::Completed) -> Result<()> {
-        let _reader = producer::ReadOnly::enter();
-        let stage = &self.plan.stages[self.next];
+        self.activate()?;
+        let stage = &self.physical_stages[self.next];
         #[cfg(feature = "code-rule-profile")]
-        self.db.stage(&stage.name);
+        self.db.stage(&self.plan.stages[self.next].name);
         #[cfg(feature = "code-rule-profile")]
-        let operation = self
-            .db
-            .operation(&format!("/*RELATIONAL_PUBLISH*/ {}", stage.name), self.next);
-        self.db
-            .storage
-            .borrow_mut()
-            .discard(&self.db, &stage.name)
-            .map_err(sql_error)?;
+        let operation = self.db.operation(
+            &format!(
+                "/*RELATIONAL_PUBLISH*/ {}",
+                self.plan.stages[self.next].name
+            ),
+            self.next,
+        );
         output.publish(&self.db, &stage.name, &self.work)?;
+        self.db.module(stage.name.clone());
         #[cfg(feature = "code-rule-profile")]
-        operation
-            .into_iter()
-            .for_each(|operation| operation.finish_unobserved());
+        operation.into_iter().for_each(|op| op.finish_unobserved());
         self.release()
     }
     fn finish(&self) -> Result<Vec<Value>> {
+        self.activate()?;
         #[cfg(feature = "code-rule-profile")]
         self.db.stage("result");
         let _reader = producer::ReadOnly::enter();
@@ -820,8 +995,9 @@ impl<'a> Session<'a> {
         } = self;
         #[cfg(feature = "code-rule-profile")]
         let _span = super::profile::trace::Span::start("sql-result", "query");
-        let names = columns(db, &plan.query, tables)?;
-        let mut statement = db.prepare(&plan.query).map_err(sql_error)?;
+        let (query, allowed) = self.query(&plan.query, tables.iter().cloned());
+        let names = columns(db, &query, &allowed)?;
+        let mut statement = db.prepare(&query).map_err(sql_error)?;
         let mut query = statement.query([]).map_err(sql_error)?;
         let mut findings = Vec::new();
         let mut identities = BTreeSet::new();
@@ -927,48 +1103,37 @@ impl<'a> Session<'a> {
             finding["variables"]["row"] = json!(values);
             findings.push(finding);
         }
+        drop(query);
+        drop(statement);
+        #[cfg(feature = "code-rule-profile")]
+        shared::capture(
+            db,
+            &code_rule.id,
+            &clause.id,
+            plan,
+            &self.aliases,
+            &self.physical_stages,
+        )
+        .map_err(sql_error)?;
         self.finished.set(true);
         Ok(findings)
     }
 }
-fn release_owned(db: &Database, name: &str, stages: &[Stage]) -> Result<()> {
-    if let Some(stage) = stages.iter().find(|s| s.name == name)
-        && !stage.deferred.is_empty()
-    {
-        db.storage
-            .borrow_mut()
-            .retire(db, &deferred::physical_name(stage))
-            .map_err(sql_error)?;
-        return Ok(());
-    }
-    if db
-        .storage
-        .borrow_mut()
-        .retire(db, name)
-        .map_err(sql_error)?
-    {
-        return Ok(());
-    }
-    deferred::release(db, name, stages)
-}
 impl Drop for Session<'_> {
     fn drop(&mut self) {
         if !self.finished.get() {
-            return;
+            self.db.healthy.set(false);
         }
-        if self.db.progress_handler(0, None::<fn() -> bool>).is_err() {
-            return;
-        }
-        #[cfg(feature = "code-rule-profile")]
-        if self.db.checkpoint().is_err() {
-            return;
-        }
-        for name in &self.tables {
-            if release_owned(&self.db, name, &self.plan.stages).is_err() {
-                return;
+        let _ = self.db.progress_handler(0, None::<fn() -> bool>);
+        for stage in &self.physical_stages[..self.next] {
+            if stage
+                .reachability
+                .as_ref()
+                .is_some_and(|r| r.syntax.is_none())
+            {
+                let _ = deferred::release(&self.db, &stage.name, &self.physical_stages);
             }
         }
-        self.db.reusable.set(true);
     }
 }
 
@@ -978,11 +1143,13 @@ pub(super) fn evaluate(
     _plan: &Plan,
     rows: Vec<Rows>,
     snapshot: &Snapshot,
+    versions: Versions,
 ) -> Evaluation {
     evaluate_batch(vec![Job {
         code_rule,
         clause,
         inputs: Inputs {
+            versions: Some(versions),
             gate: None,
             file_local: false,
             rows: Some(rows),

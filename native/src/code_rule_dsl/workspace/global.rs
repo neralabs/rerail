@@ -167,6 +167,33 @@ fn relation_rows(state: &WorkspaceState, id: ClauseId, relation: &FactQuery) -> 
     rows
 }
 
+fn relational_versions(
+    state: &WorkspaceState,
+) -> Result<crate::code_rule_dsl::relational::Versions> {
+    let paths = state
+        .files
+        .keys()
+        .chain(state.evicted_inputs.keys())
+        .collect::<BTreeSet<_>>();
+    let files = paths
+        .into_iter()
+        .map(|path| {
+            let input = state
+                .files
+                .get(path)
+                .map(|f| &f.input)
+                .or_else(|| state.evicted_inputs.get(path))
+                .expect("workspace source metadata");
+            super::documents::current_version(state, path)
+                .map(|version| (input, version.source_digest()))
+                .ok_or_else(|| invalid("relational source version unavailable"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(crate::code_rule_dsl::relational::Versions::new(
+        files.into_iter(),
+    ))
+}
+
 fn evaluate_relations(
     state: &WorkspaceState,
     code_rule: &CompiledCodeRule,
@@ -193,7 +220,15 @@ fn evaluate_relations(
                 .zip(ids)
                 .map(|((_, input), id)| relation_rows(state, *id, input))
                 .collect();
-            crate::code_rule_dsl::relational::evaluate(code_rule, clause, plan, rows, snapshot)
+            match relational_versions(state) {
+                Ok(versions) => crate::code_rule_dsl::relational::evaluate(
+                    code_rule, clause, plan, rows, snapshot, versions,
+                ),
+                Err(e) => Evaluation {
+                    failures: vec![failure(&clause.id, "source-incomplete", &e.reason, None)],
+                    ..Default::default()
+                },
+            }
         }
         _ => unreachable!("relation plans are compiled for relation clauses"),
     }
@@ -581,6 +616,15 @@ pub(super) fn evaluate_batched_relations(
     let mut jobs = Vec::new();
     let mut keys = Vec::new();
     let mut results = BTreeMap::new();
+    let versions = catalog
+        .iter()
+        .any(|(_, _, clauses)| {
+            clauses
+                .iter()
+                .any(|c| matches!(c.kind, ClauseKind::Relational(_)))
+        })
+        .then(|| relational_versions(state))
+        .transpose()?;
     for (index, code_rule, clauses) in &catalog {
         let index = *index;
         let results = results
@@ -637,6 +681,7 @@ pub(super) fn evaluate_batched_relations(
                         code_rule,
                         clause,
                         inputs: relational::Inputs {
+                            versions: versions.clone(),
                             gate: None,
                             file_local: false,
                             rows: None,
@@ -685,6 +730,7 @@ pub(super) fn evaluate_batched_relations(
                     code_rule,
                     clause,
                     inputs: relational::Inputs {
+                        versions: versions.clone(),
                         gate: None,
                         file_local: false,
                         rows: None,

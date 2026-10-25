@@ -89,6 +89,7 @@ mod tests {
     }
     fn cached() -> Inputs {
         Inputs {
+            versions: Default::default(),
             gate: Some(eval::evidence::Rows::default()),
             rows: None,
             facts: vec![],

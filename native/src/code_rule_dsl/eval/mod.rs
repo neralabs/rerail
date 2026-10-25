@@ -300,6 +300,7 @@ pub(super) fn evaluate_clauses(
     prepare_candidates(code_rule, snapshot);
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
     let mut relational_jobs = Vec::new();
+    let relational_versions = std::cell::OnceCell::new();
     for clause in clauses {
         match &clause.kind {
             ClauseKind::Forbid(query) => {
@@ -407,6 +408,8 @@ pub(super) fn evaluate_clauses(
                 );
             }
             ClauseKind::Relational(plan) => {
+                let versions = relational_versions
+                    .get_or_init(|| super::relational::Versions::snapshot(snapshot));
                 let partitions = if plan.per_file {
                     snapshot
                         .files
@@ -431,6 +434,7 @@ pub(super) fn evaluate_clauses(
                         code_rule,
                         clause,
                         inputs: super::relational::Inputs {
+                            versions: Some(versions.clone()),
                             gate: None,
                             file_local: false,
                             rows: None,

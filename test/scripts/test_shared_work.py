@@ -274,5 +274,30 @@ class CommandTests(unittest.TestCase):
             self.assertFalse(json.loads(output.read_text())["valid"])
 
 
+class RelationalCaptures(unittest.TestCase):
+    def test_comparison_preserves_types_nulls_duplicate_bags_and_uses_two_batches(self):
+        import sqlite3
+        from contextlib import closing
+        from relational_facts import compare
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            captures = []
+            for index, values in enumerate(["(NULL),(7),(7),(X'00ff')", "(NULL),(7),(X'00ff')"]):
+                database = root / f"{index}.sqlite"
+                with closing(sqlite3.connect(database)) as db:
+                    db.executescript(f"CREATE TABLE fact(value);INSERT INTO fact VALUES {values}")
+                capture = root / f"{index}.json"
+                capture.write_text(json.dumps({"format": "rerail.relational-capture/v1", "database": database.name, "aliases": {"shared": "fact"}}))
+                captures.append(capture)
+            report = compare(*captures)
+            self.assertEqual(report["sqlReadBatches"], 2)
+            self.assertEqual(len(report["differences"]), 1)
+            difference = report["differences"][0]
+            self.assertEqual(difference["rowCounts"], [4, 3])
+            self.assertEqual(difference["onlyLeft"], [('[["integer","7"]]', 1)])
+            self.assertEqual(difference["onlyRight"], [])
+            self.assertEqual(compare(captures[0], captures[0])["differences"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

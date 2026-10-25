@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct Storage {
     objects: BTreeMap<String, Object>,
+    pub(super) owner: Option<usize>,
+    pins: BTreeMap<String, usize>,
 }
 struct Object {
     definition: String,
@@ -11,6 +13,8 @@ struct Object {
     dirty: bool,
     indexes: BTreeMap<String, String>,
     analyzed: Option<usize>,
+    owner: Option<usize>,
+    ready: bool,
 }
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
@@ -29,6 +33,15 @@ impl Storage {
             .get(name)
             .is_some_and(|o| o.definition == definition && o.table == table)
         {
+            if let Some(o) = self.objects.get_mut(name)
+                && !o.ready
+            {
+                o.owner = self.owner;
+                if o.table && o.dirty {
+                    db.execute(&format!("DELETE FROM {}", quote(name)), [])?;
+                    o.dirty = false;
+                }
+            }
             return Ok(());
         }
         self.discard(db, name)?;
@@ -41,6 +54,8 @@ impl Storage {
                 dirty: false,
                 indexes: BTreeMap::new(),
                 analyzed: None,
+                owner: self.owner,
+                ready: false,
             },
         );
         Ok(())
@@ -79,6 +94,9 @@ impl Storage {
         let Some(o) = self.objects.get_mut(&name.to_ascii_lowercase()) else {
             return Ok(false);
         };
+        if o.ready {
+            return Ok(true);
+        }
         if o.table && o.dirty {
             db.execute(&format!("DELETE FROM {}", quote(name)), [])?;
             o.dirty = false;
@@ -95,12 +113,73 @@ impl Storage {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub fn clear(&mut self, db: &Connection) -> Result<()> {
         for (name, o) in &mut self.objects {
-            if o.table && o.dirty {
+            if o.table && o.dirty && !o.ready {
                 db.execute(&format!("DELETE FROM {}", quote(name)), [])?;
                 o.dirty = false;
             }
+        }
+        Ok(())
+    }
+    pub fn ready(&self, name: &str) -> bool {
+        self.objects
+            .get(&name.to_ascii_lowercase())
+            .is_some_and(|o| o.ready)
+    }
+    pub fn publish(&mut self, name: &str) {
+        if let Some(object) = self.objects.get_mut(&name.to_ascii_lowercase()) {
+            object.ready = true;
+            object.owner = None;
+        }
+    }
+    pub fn pin(&mut self, name: &str) {
+        *self.pins.entry(name.to_owned()).or_default() += 1;
+    }
+    pub fn unpin(&mut self, name: &str) {
+        if let Some(n) = self.pins.get_mut(name) {
+            *n -= 1;
+            if *n == 0 {
+                self.pins.remove(name);
+            }
+        }
+    }
+    pub fn clear_owner(&mut self, db: &Connection, owner: usize) -> Result<()> {
+        let owned = self
+            .objects
+            .iter()
+            .filter(|(_, o)| o.owner == Some(owner))
+            .map(|(n, _)| n.clone())
+            .collect::<Vec<_>>();
+        for name in owned {
+            if name.starts_with("__private_") || name.starts_with("__stage___private_") {
+                if let Some(o) = self.objects.remove(&name) {
+                    db.execute_batch(&format!(
+                        "DROP {} IF EXISTS {}",
+                        if o.table { "TABLE" } else { "VIEW" },
+                        quote(&name)
+                    ))?;
+                }
+            } else {
+                self.retire(db, &name)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn evict(&mut self, db: &Connection, capacity: usize) -> Result<()> {
+        // Admission owns the capacity. Only completed, unpinned producers can leave it.
+        let names = self
+            .objects
+            .iter()
+            .filter(|(n, o)| o.ready && !self.pins.contains_key(*n))
+            .map(|(n, _)| n.clone())
+            .collect::<Vec<_>>();
+        for name in names {
+            if self.bounded() && self.bytes() <= capacity.min(4 * 1024 * 1024) {
+                break;
+            }
+            self.discard(db, &name)?;
         }
         Ok(())
     }

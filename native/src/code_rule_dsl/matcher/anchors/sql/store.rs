@@ -30,6 +30,8 @@ pub(super) fn kind_token(code: u32) -> String {
 
 pub(super) struct Store {
     #[cfg(feature = "code-rule-profile")]
+    pub(super) versions: parking_lot::Mutex<std::collections::BTreeMap<i64, (u32, [u8; 32])>>,
+    #[cfg(feature = "code-rule-profile")]
     pub(super) graph: parking_lot::Mutex<super::graph::Graph>,
     #[cfg(feature = "code-rule-profile")]
     pub(super) origins:
@@ -83,6 +85,8 @@ impl Store {
             }),
         )?;
         Ok(Self {
+            #[cfg(feature = "code-rule-profile")]
+            versions: Default::default(),
             #[cfg(feature = "code-rule-profile")]
             graph: parking_lot::Mutex::default(),
             #[cfg(feature = "code-rule-profile")]
@@ -298,12 +302,39 @@ impl Store {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn remove_known(&self, fid: i64) -> Result<()> {
         self.readers.clear();
         let tx = self.db.unchecked_transaction()?;
         remove(&tx, fid)?;
         tx.commit()?;
         self.values.lock().remove(fid);
+        Ok(())
+    }
+
+    /// Retire unpinned versions in SQL batches. Existing FTS and vocabulary maintenance counts.
+    pub fn remove_many(&self, files: &[i64]) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        self.readers.clear();
+        let tx = self.db.unchecked_transaction()?;
+        for files in files.chunks(128) {
+            let ids = std::iter::repeat_n("?", files.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            tx.execute(&format!("WITH removed AS MATERIALIZED (SELECT f.lang,c.code,sum(c.n) AS n FROM file f JOIN file_kind_counts c USING(fid) WHERE f.fid IN ({ids}) GROUP BY f.lang,c.code) UPDATE kfreq SET n=n-r.n FROM removed r WHERE r.lang=kfreq.lang AND r.code=kfreq.code"), rusqlite::params_from_iter(files))?;
+            tx.execute("DELETE FROM kfreq WHERE n=0", [])?;
+            tx.execute(
+                &format!("DELETE FROM file WHERE fid IN ({ids})"),
+                rusqlite::params_from_iter(files),
+            )?;
+        }
+        tx.commit()?;
+        let mut values = self.values.lock();
+        for &fid in files {
+            values.remove(fid);
+        }
         Ok(())
     }
     #[cfg(test)]

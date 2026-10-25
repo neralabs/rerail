@@ -71,18 +71,23 @@ pub(super) fn save(
         let definition=statement.graph.iter().find_map(|cte|cte.strip_prefix(&format!("{}(",stage.name)).and_then(|s|s.split_once(") AS ")));
         serde_json::json!({"name":stage.name,"sql":stage.sql,"slot":statement.ownership.slot(i),"members":statement.ownership.members(i),"index":stage.index,"temporary":stage.temporary,"relationId":node.map(|n|n.id),"class":node.map(|n|format!("{:?}",n.class)),"columns":definition.map(|d|d.0),"body":definition.map(|d|d.1)})
     }).collect();
-    let mut versions = store
-        .db
-        .prepare("SELECT fid,lang,hex(digest) FROM file ORDER BY fid")?;
-    let versions = versions
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>>>()?;
+    let membership = files
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let versions = store
+        .versions
+        .lock()
+        .iter()
+        .filter(|(fid, _)| !statement.file_scope || membership.contains(fid))
+        .map(|(&fid, &(lang, digest))| {
+            let hex = digest
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<String>();
+            (fid, i64::from(lang), hex)
+        })
+        .collect::<Vec<_>>();
     let generation = serde_json::to_string(&versions).expect("source versions");
     let mut manifest = statement
         .producers
@@ -124,7 +129,7 @@ pub(super) fn save(
         serde_json::to_vec_pretty(&manifest).expect("producer manifest"),
     )
     .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
-    let output = serde_json::json!({"format":"rerail.candidate-replay/v3","variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"graph":statement.graph,"setup":statement.ownership.setup,"sharedStore":super::lower::ownership::STORE,"parameters":parameters,"admissions":statement.admissions,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
+    let output = serde_json::json!({"format":"rerail.candidate-replay/v4","retirementRows":super::lower::ownership::RETIREMENT_ROWS,"variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"graph":statement.graph,"setup":statement.ownership.setup,"sharedStore":super::lower::ownership::STORE,"parameters":parameters,"admissions":statement.admissions,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
     std::fs::write(
         directory.join(format!("{stem}.json")),
         serde_json::to_vec_pretty(&output).expect("serializable candidate capture"),

@@ -63,6 +63,16 @@ pub struct CodeRuleDslWorkspace {
     pub(super) closed: Arc<AtomicBool>,
 }
 
+impl CodeRuleDslWorkspace {
+    pub(in crate::code_rule_dsl) fn with_corpus(
+        corpus: Arc<crate::code_rule_dsl::matcher::Corpus>,
+    ) -> Self {
+        let workspace = Self::new();
+        workspace.state.lock().expect("new workspace").anchor_corpus = corpus;
+        workspace
+    }
+}
+
 impl Default for CodeRuleDslWorkspace {
     fn default() -> Self {
         Self::new()

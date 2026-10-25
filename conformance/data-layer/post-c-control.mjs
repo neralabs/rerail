@@ -1,7 +1,9 @@
 import { writeFileSync } from "node:fs";
-import { replay } from "./replay.ts";
+import { pathToFileURL } from "node:url";
 
-const [recording, policies, stem] = process.argv.slice(2);
+const [recording, policies, stem, driver] = process.argv.slice(2);
+// Historical addons use their matching historical replay API. Import before timing.
+const { replay } = await import(driver ? pathToFileURL(driver).href : "./replay.ts");
 const start = process.cpuUsage();
 const wall = performance.now();
 const passed = await replay(recording, stem + "-parity.json", policies);

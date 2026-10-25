@@ -877,15 +877,28 @@ fn prepare_decoded(
         .iter()
         .filter_map(|cte| decoding.get(cte.split_once('(').expect("CTE columns").0))
         .find(|d| d.property == Property::Node && d.scope == "all_nodes");
+    let required_indexes = indexed.clone();
     for demand in ctes
         .iter()
         .filter_map(|cte| decoding.get(cte.split_once('(').expect("CTE columns").0))
     {
-        if !(universal.is_some() && demand.property == Property::Node) {
+        if !(universal.is_some() && matches!(demand.property, Property::Node | Property::Child(_)))
+        {
             indexed.insert(demand.scope.clone());
         }
     }
     if universal.is_some() {
+        for cte in &mut ctes {
+            let name = cte.split_once('(').expect("CTE name").0;
+            if let Some(demand) = decoding.get(name)
+                && let Property::Child(field) = demand.property
+            {
+                *cte = format!(
+                    "{name}(fid,pre,field,child) AS NOT MATERIALIZED (SELECT s.fid,s.pre,{field},(SELECT c.pre FROM decoded_properties c WHERE c.fid=s.fid AND c.parent=s.pre AND c.field={field} AND c.pre>s.pre ORDER BY c.pre LIMIT 1) FROM {} s)",
+                    demand.scope
+                );
+            }
+        }
         indexed.remove("all_nodes");
         if let Some(all) = ctes.iter_mut().find(|cte| cte.starts_with("all_nodes(")) {
             *all="all_nodes(fid,pre) AS NOT MATERIALIZED (SELECT d.fid,d.pre FROM cf CROSS JOIN decoded_properties d ON d.fid=cf.fid)".into();
@@ -908,10 +921,24 @@ fn prepare_decoded(
     }
     let barrier_names = decoding
         .iter()
-        .filter(|(_, demand)| matches!(demand.property, Property::Span | Property::Child(_)))
+        .filter(|(_, demand)| {
+            demand.property == Property::Span
+                || (universal.is_none() && matches!(demand.property, Property::Child(_)))
+        })
         .map(|(name, _)| name.clone())
         .collect();
     let (levels, uses) = waves::analyze(&ctes, &barrier_names, &query);
+    // Repeated output arms share one WITH scope. They are one SQL reader,
+    // rather than a reason to cut a cheap selector into another physical table.
+    let mut duplicate_output_uses = HashMap::<String, usize>::new();
+    for packet in &queries {
+        let mut seen = BTreeSet::new();
+        for name in waves::identifiers(packet) {
+            if !seen.insert(name) {
+                *duplicate_output_uses.entry(name.to_owned()).or_default() += 1;
+            }
+        }
+    }
     let mut span_scopes: std::collections::BTreeMap<usize, BTreeSet<String>> =
         std::collections::BTreeMap::new();
     let mut child_scopes: std::collections::BTreeMap<usize, BTreeSet<(u16, String)>> =
@@ -944,7 +971,8 @@ fn prepare_decoded(
     let mut expansion: HashMap<&str, usize> = HashMap::new();
     for (name, cte) in names.iter().zip(ctes) {
         if let Some(demand) = decoding.get(name)
-            && !(universal.is_some() && demand.property == Property::Node)
+            && !(universal.is_some()
+                && matches!(demand.property, Property::Node | Property::Child(_)))
         {
             if demand.property == Property::Span {
                 // All span demands in this language-qualified statement bind the same
@@ -988,7 +1016,13 @@ fn prepare_decoded(
         );
         // Keep small shared sets in one statement. Cut before repeated dependencies
         // multiply beyond SQLite's preparation limits; each physical table resets the cost.
-        let shared = indexed.contains(name) || (uses[name] > 1 && cost >= 32);
+        // A cheap selector with one logical reader stays in that SQL pipeline.
+        // Decoder population can read it again at its real barrier; retain cuts
+        // for shared or expensive selectors so preparation remains bounded.
+        let readers = uses[name].saturating_sub(*duplicate_output_uses.get(name).unwrap_or(&0));
+        let shared = required_indexes.contains(name)
+            || (indexed.contains(name) && (readers > 1 || cost >= 32))
+            || (uses[name] > 1 && cost >= 32);
         expansion.insert(name.as_str(), if shared { 1 } else { cost });
         let cte = if shared {
             render::owned(cte, name)
