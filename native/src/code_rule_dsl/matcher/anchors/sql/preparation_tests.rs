@@ -2,6 +2,65 @@ use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 
 #[test]
+fn direct_parent_membership_scales_with_demand_instead_of_parent_cross_product() {
+    use super::super::{Condition, Direction};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+    let measure = |count: usize| {
+        let store = store::Store::temporary().unwrap();
+        let dialect = GrammarDialect::TypeScript;
+        let doc = tests::document(&"target(value);\n".repeat(count), dialect);
+        let fid = store.put("selected.ts", &doc).unwrap();
+        store.put("excluded.ts", &doc).unwrap();
+        let plan = AnchorPlan {
+            root_kinds: Some([dialect.kinds().kind_id("identifier")].into()),
+            condition: Condition::Relation {
+                inner: Box::new(AnchorPlan {
+                    root_kinds: Some([dialect.kinds().kind_id("call_expression")].into()),
+                    condition: Condition::Always,
+                    exact: true,
+                }),
+                direction: Direction::Inside,
+                recursive: false,
+                field: None,
+            },
+            exact: true,
+        };
+        let language = u32::from(crate::code_rule_dsl::language::tape_tag(dialect).unwrap());
+        let statement = tests::planned_batch(&store, &[&plan], language, &[fid]);
+        let ticks = Arc::new(AtomicU64::new(0));
+        let observed = ticks.clone();
+        store
+            .db
+            .progress_handler(
+                100,
+                Some(move || {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                    false
+                }),
+            )
+            .unwrap();
+        let mut roots = Vec::new();
+        execute::rows(&store, &statement, |_, file, pre| roots.push((file, pre))).unwrap();
+        assert_eq!(roots.len(), count);
+        assert!(
+            roots
+                .iter()
+                .all(|&(file, pre)| file == fid && doc.transducer_text_str(pre as u32) == "target")
+        );
+        ticks.load(Ordering::Relaxed)
+    };
+    let small = measure(256);
+    let large = measure(512);
+    assert!(
+        large <= small * 3,
+        "doubling demand must not quadruple SQL work: {small} -> {large}"
+    );
+}
+
+#[test]
 fn streaming_structural_columns_match_scalar_decoding() {
     let store = store::Store::temporary().unwrap();
     for (dialect, source) in [
