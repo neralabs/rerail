@@ -229,3 +229,35 @@ fn anchor_planning_retains_a_cheap_conjunct_when_a_larger_conjunct_exceeds_admis
         "bounded admission must retain the rejecting conjunct"
     );
 }
+
+#[test]
+fn physical_frontier_changes_reuse_unchanged_plan_fragments() {
+    let corpus = Corpus::default();
+    let fid = corpus.put("a.ts", &doc("target();"), &|| false).unwrap();
+    let first_plan = plan();
+    let second_plan = plan();
+    let before = super::super::lower::fragment_compilations();
+    template(&corpus, &first_plan);
+    assert_eq!(super::super::lower::fragment_compilations() - before, 1);
+    let statement = {
+        let mut guard = corpus.state.lock();
+        let state = guard.as_mut().unwrap();
+        let lang = u32::from(crate::code_rule_dsl::language::tape_tag(GrammarDialect::TypeScript).unwrap());
+        let plans = [&first_plan, &second_plan];
+        let ids = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect::<Vec<_>>();
+        for p in plans { state.plans.insert(Arc::as_ptr(p) as usize, p.clone()); }
+        let refs = plans.map(|p|p.as_ref());
+        let statistics = super::super::statistics::Statistics::read(&state.writer.db, refs.iter().map(|p|(lang,*p))).unwrap();
+        Corpus::template(state, lang, &ids, &refs, &statistics)
+    };
+    assert_eq!(super::super::lower::fragment_compilations() - before, 2,
+        "a changed admitted frontier re-lowers an unchanged plan");
+    let guard = corpus.state.lock();
+    let mut rows = Vec::new();
+    super::super::execute::rows_for(&guard.as_ref().unwrap().writer, &statement, &[fid], false, |q,f,p| rows.push((q,f,p))).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, 0);
+    assert_eq!(rows[1].0, 1);
+    assert_eq!(rows[0].1, rows[1].1);
+    assert_eq!(rows[0].2, rows[1].2);
+}

@@ -41,7 +41,7 @@ struct State {
     batch_queries: usize,
     data_statements: usize,
     plans: HashMap<usize, Arc<AnchorPlan>>,
-    templates: HashMap<(u32, Vec<usize>), Template>,
+    templates: super::cache::Cache<(u32, Vec<usize>), Template>,
     languages: HashSet<u32>,
     #[cfg(test)]
     connections: Vec<Store>,
@@ -96,7 +96,7 @@ impl Corpus {
                     .sum::<usize>()
             })
             .sum::<usize>();
-        serde_json::json!({"templates":state.templates.len(),"sqlBytes":sql,"graphBytes":graph,"candidateBytes":state.files.values().map(|f|f.bytes).sum::<usize>(),"files":state.files.len(),"plans":state.plans.len(),"idleBytesEstimate":state.idle_bytes})
+        serde_json::json!({"templates":state.templates.len(),"sqlBytes":sql,"graphBytes":graph,"candidateBytes":state.files.values().map(|f|f.bytes).sum::<usize>(),"files":state.files.len(),"plans":state.plans.len(),"idleBytesEstimate":state.idle_bytes,"templateSqlBudgetBytes":64 * 1024 * 1024,"retainedTemplateSqlBytes":state.templates.bytes()})
     }
 
     pub(in crate::code_rule_dsl) fn sql_backing(
@@ -157,7 +157,7 @@ impl Corpus {
                 batch_queries: 0,
                 data_statements: 0,
                 plans: HashMap::new(),
-                templates: HashMap::new(),
+                templates: super::cache::Cache::new(64 * 1024 * 1024),
                 languages: HashSet::new(),
                 #[cfg(test)]
                 connections: Vec::new(),
@@ -418,6 +418,7 @@ impl Corpus {
                     decisions,
                     statement: Arc::clone(&statement),
                 },
+                statement.retained_sql_bytes(),
             );
         }
         statement

@@ -4289,3 +4289,13 @@ The external sample attributes 327 of 458 active native stack observations to in
 It attributes 408 observations to SQLite overall. These are wall-time samples, not CPU percentages.
 At 4,641 files, phase CPU totals include 230.929 seconds for selection, 91.076 for indexing, and 87.468 for physical planning.
 This evidence does not establish aggregate recovery.
+
+### Template ownership and fragment reuse ladder
+
+Two cache tests reproduce missing eviction and admission of an oversized SQL statement.
+The red build passes compilation and fails both tests in `cache-red.log`.
+The production template owner now exposes its retained SQL estimate and a fixed 64 MiB SQL budget.
+The red cache still ignores that budget; the next implementation enforces it.
+A separate regression requires unchanged plan fragments to survive changes to the admitted frontier.
+Another regression requires one kind posting with one SQL consumer to stay in the result statement.
+These tests target retained memory, repeated compilation, and unnecessary physical materialization separately.

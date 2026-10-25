@@ -669,3 +669,18 @@ fn file_scoped_structural_reads_do_not_scan_retained_corpus_rows() {
         "scoped structural work grew: {before} -> {after}"
     );
 }
+
+#[test]
+fn a_single_reader_kind_posting_stays_in_the_result_statement() {
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    let dialect = GrammarDialect::TypeScript;
+    let rule = compiled(serde_json::json!({"language":"typescript","rule":{"kind":"call_expression"}}));
+    let store = store::Store::temporary().unwrap();
+    let fid = store.put("a.ts", &tests::document("target(); other();", dialect)).unwrap();
+    let lang = u32::from(crate::code_rule_dsl::language::tape_tag(dialect).unwrap());
+    let statement = tests::planned_batch(&store, &[&grammar_matchers(&rule)[0].anchors], lang, &[fid]);
+    assert!(statement.stages.is_empty(), "one consumer builds physical candidate stages: {:?}", statement.stages.iter().map(|s|&s.name).collect::<Vec<_>>());
+    let mut rows = Vec::new();
+    execute::rows(&store, &statement, |_,f,p| rows.push((f,p))).unwrap();
+    assert_eq!(rows.len(), 2);
+}

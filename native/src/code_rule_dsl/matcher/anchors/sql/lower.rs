@@ -51,6 +51,13 @@ pub(super) struct Statement {
     pub ownership: ownership::Layout,
 }
 impl Statement {
+    pub(super) fn retained_sql_bytes(&self) -> usize {
+        self.stages.iter().map(|s|s.sql.capacity()).sum::<usize>()
+        + self.queries.iter().map(String::capacity).sum::<usize>()
+        + self.graph.iter().map(String::capacity).sum::<usize>()
+        + self.ownership.setup.iter().map(String::capacity).sum::<usize>()
+    }
+
     pub fn preparations(&self, covered: bool) -> usize {
         self.schedule.actions.iter().filter(|a|matches!(a,lifetime::Action::Prepare(i) if !(covered&&self.stages[*i].covering))).count()
     }
@@ -790,6 +797,11 @@ fn scope(
     lower
 }
 
+#[cfg(test)]
+thread_local! { static FRAGMENT_COMPILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+#[cfg(test)]
+pub(super) fn fragment_compilations() -> usize { FRAGMENT_COMPILES.get() }
+
 fn batch_scope(
     plans: &[&AnchorPlan],
     lang: u32,
@@ -810,6 +822,8 @@ fn batch_scope(
     let mut admissions = Vec::new();
     let mut anchors = Vec::new();
     for (qid, plan) in plans.iter().enumerate() {
+        #[cfg(test)]
+        FRAGMENT_COMPILES.set(FRAGMENT_COMPILES.get() + 1);
         #[cfg(feature = "code-rule-profile")]
         let mut fragment =
             crate::code_rule_dsl::profile::trace::Span::start("anchor-fragment", "lower");
