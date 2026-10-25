@@ -11,6 +11,14 @@ The other files here:
 
 - `lessons-ledger.md`: 36 lessons from PR 2539 and ast-index-spike, each marked as adopted, re-learned (where and when), violated, or not yet relevant in the current branches. It also has a like-for-like runtime comparison.
 - `flip.py`, `guard_sqlite2.py`, `vocab.py`: small, self-contained SQLite experiments cited below. Run them with `python3 -I <script>`.
+- `architecture.md`: the module layout, the starting point, and the integration phases.
+- `findings-contract.md`: the loosest output contract that supports the end-to-end task.
+- `authored-sql.md`: why rules came to carry SQL, a census of that SQL, and how to remove it.
+- `prior-work/`: decision indexes into ast-index-spike's design record and journal, and the protocol for using them.
+- `decisions/`: decision records, each citing the prior work it consulted.
+- `spec.md`: the normative specification (§0–§19), with `spec-transducer.md` (the transducer IR), `spec-indexes.md` (exact index DDL), `spec-fusion.md` (transducer fusion) and `spec-tooling.md` (memory limits, debugging, testing, profiling).
+- `research/`: the evidence behind each spec section: tape regularity and v8/v9np measurements, the transducer IR, the SQL/transducer boundary, Metal recursion and device-side enqueue, fusion, the fusion opportunity and cost model on the data-layer rules, heavy-rule execution profiles, regex lowering and trigram indexes (`regex.md`), the heavy relational inputs (`heavy-inputs.md`), the latest SSC fragment work (`ssc-fragments.md`), Tempo tape residency (`tempo-residency.md`), measurements M1 and M2/M7, the data-layer rule shape fixes with their measured costs (`shape-fixes.md`), and the workstream scan.
+- `experiments/`: the code and raw output for each research document. Database files are not checked in.
 
 ## Product targets
 
@@ -22,7 +30,7 @@ All three are required:
 
 ## Architecture
 
-1. **Substrate.** There is one common tape: the code_rule_dsl v7 tape, derived from the ast-index-spike record format. Statistics are kept in SQL, derived from indexes where possible (see Statistics below).
+1. **Substrate.** There is one common tape: the code_rule_dsl v7 tape, derived from the ast-index-spike record format, moving to the regular v9np layout (decision 0003, `spec.md` §3). Statistics are kept in SQL, derived from indexes where possible (see Statistics below).
 
 2. **Logical relation contracts.** Each contract is a named, typed, narrow relation with declared output ordering. Examples: `node`, `kids`, `terminal_match(term, file, root, match_ord, captures…)`, and one relation per fact family. Every contract has two interchangeable bindings:
    - a pure-SQL CTE over the tape;
@@ -64,7 +72,10 @@ The shape choice belongs in the compiler, from stored statistics. Don't trust SQ
 Where each statistic lives:
 
 - **Kind frequencies** are already in SQL. `fts5vocab(search_kind_fts, 'row')` gives node count and file count per kind.
-- **Positions** come from `fts5vocab(search_kind_fts, 'instance')`, which gives per-file node positions; a token's offset is the node's ordinal. A workspace subset is a join on membership.
+- **Positions** come from `fts5vocab(search_kind_fts, 'instance')`, which gives per-file node positions; a token's offset is the node's ordinal.
+  - `fts5vocab` pushes a term constraint but not a document constraint. Counting a workspace subset by term therefore works as a membership join; that is the 6.6 ms below.
+  - Looking up one document's positions does not push down. DLRE added per-file postings for that (`matcher/anchors/sql/lower.rs:299`).
+  - Under decision 0004 the transducer scans the kind column inside a document, so positions in SQL may not be needed at all (`spec-indexes.md` Q2).
 - **Cost** (`vocab.py`, 3.2M nodes): a point lookup takes 0.27 ms; a subset of one common kind takes 6.6 ms; scanning the whole vocabulary takes 348 ms, so don't.
 - **Still to add:**
   - parent→child edge frequencies (an FTS edge-token family or a small aggregate table);
@@ -101,6 +112,11 @@ The ledger has details and citations. The most frequent:
 - **Narrow facts, one table per family, extracted only on demand.** Generic entity/attribute/value facts were too wide.
 - **Measure the code that's actually running.** Several results came from code paths that were not wired in.
 
-## Open question
+## Output contract and rule language
 
-The DSL has operational semantics: work allowances, memo cache-fill versus replay cost, depth peaks, and first-decisive ordered alternatives. Reproducing them exactly in relational form forces an interpreter back into SQL. They must either be pushed down behind a virtual table or redefined declaratively. This decision is still open.
+- **Findings are a set** (`findings-contract.md`). A finding is keyed on rule, code, path and line. Order, multiplicity, witness choice, span precision, message text, captures, clause structure and every operational behaviour (allowances, memo replay, depth, ordered alternatives) are not requirements. Budgets yield an explicit `Unknown` per (rule, file). An earlier draft of this document asked whether the DSL's operational semantics had to be reproduced exactly; they do not.
+- **Rules carry no SQL or code** (`authored-sql.md`). Rules compose declarative operators over named relations. Generic analyses (scope, names, imports, hierarchy, reachability) are engine relation contracts, computed once and shared.
+
+## Prior work protocol
+
+Every design decision consults the ast-index-spike indexes and the lessons ledger first, and is recorded with citations in `decisions/`. See `prior-work/README.md`.

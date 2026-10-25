@@ -1,0 +1,154 @@
+{
+  "compile_s": 0.008919208,
+  "distinct_leaf_texts": 6938,
+  "expansions": 1575,
+  "files": 1,
+  "keys": [],
+  "load_s": 0.213026375,
+  "nodes": 206043,
+  "op_classes": {
+    "all": 47,
+    "any": 16,
+    "bind": 5,
+    "call": 2,
+    "compare": 1,
+    "const": 2,
+    "kind": 18,
+    "layout": 1,
+    "named": 1,
+    "not": 9,
+    "nth": 1,
+    "regex": 6,
+    "rel.neighbor": 36,
+    "rel.range": 8,
+    "util.backref": 3,
+    "value": 3
+  },
+  "ops": 159,
+  "program_nodes_actual": 206043,
+  "program_nodes_scope": 206043,
+  "programs": 1,
+  "regexes": 6,
+  "results": [
+    {
+      "counters": {
+        "bind_memo_hits": 0,
+        "dispatch": 906,
+        "evals": 11273244,
+        "mask_builds": 0,
+        "mask_cells": 0,
+        "memo_cells": 0,
+        "memo_hits": 0,
+        "regex_bytes": 415,
+        "regex_calls": 27,
+        "regex_sym_hits": 417300,
+        "scan_visits": 6390378,
+        "util_depth_cut": 0
+      },
+      "findings": 0,
+      "mode": "plain",
+      "ns_per_eval": 85.67643297705612,
+      "ns_per_program_node_actual": 4687.62022490451,
+      "ns_per_program_node_scope": 4687.62022490451,
+      "ns_per_scope_node": 4687.62022490451,
+      "seconds_min": 0.965851334,
+      "top_files": [
+        [
+          "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+          206043,
+          0.965630875
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-sync-async-signatures",
+          "transaction-connection",
+          11273244
+        ]
+      ]
+    },
+    {
+      "counters": {
+        "bind_memo_hits": 0,
+        "dispatch": 906,
+        "evals": 2088634,
+        "mask_builds": 0,
+        "mask_cells": 0,
+        "memo_cells": 2472516,
+        "memo_hits": 416399,
+        "regex_bytes": 415,
+        "regex_calls": 27,
+        "regex_sym_hits": 901,
+        "scan_visits": 1380015,
+        "util_depth_cut": 0
+      },
+      "findings": 0,
+      "mode": "memo",
+      "ns_per_eval": 314.12374882339367,
+      "ns_per_program_node_actual": 3184.236018695127,
+      "ns_per_program_node_scope": 3184.236018695127,
+      "ns_per_scope_node": 3184.236018695127,
+      "seconds_min": 0.656089542,
+      "top_files": [
+        [
+          "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+          206043,
+          0.656061125
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-sync-async-signatures",
+          "transaction-connection",
+          2088634
+        ]
+      ]
+    },
+    {
+      "counters": {
+        "bind_memo_hits": 0,
+        "dispatch": 906,
+        "evals": 2088634,
+        "mask_builds": 0,
+        "mask_cells": 0,
+        "memo_cells": 2472516,
+        "memo_hits": 416399,
+        "regex_bytes": 415,
+        "regex_calls": 27,
+        "regex_sym_hits": 901,
+        "scan_visits": 1380015,
+        "util_depth_cut": 0
+      },
+      "findings": 0,
+      "mode": "mask",
+      "ns_per_eval": 60.641967429429954,
+      "ns_per_program_node_actual": 614.7205923035483,
+      "ns_per_program_node_scope": 614.7205923035483,
+      "ns_per_scope_node": 614.7205923035483,
+      "seconds_min": 0.126658875,
+      "top_files": [
+        [
+          "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+          206043,
+          0.126631625
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-sync-async-signatures",
+          "transaction-connection",
+          2088634
+        ]
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "id": "data-layer-sync-async-signatures",
+      "programs": 1,
+      "scope_files": 1,
+      "scope_nodes": 206043
+    }
+  ],
+  "syntax_error_files": []
+}

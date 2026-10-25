@@ -1,0 +1,6 @@
+corpus: 9010 files, 28230057 nodes, 137896473 bytes, load wall 2.6s parse+build cpu 38.2s
+compiled 535 queries in 5.26s: 6821 DAG ops (279204 expansions), 2014 relations (229 shared, 341 recursive-dependent), max stratum 14
+sep        171.53s   6076.1 ns/node  findings 8650988 steps 4984146350 mask_nodes 0 re 229644298/2594105MB pat 1821949  per-file ms p50 1.783 p90 21.884 p99 324.905 max 5484.1
+memo       119.92s   4248.1 ns/node  findings 8650988 steps 3194995157 mask_nodes 0 re 92447339/3076MB pat 1802925  per-file ms p50 1.330 p90 15.878 p99 246.382 max 2110.0
+mask        78.61s   2784.7 ns/node  findings 8650988 steps 3241318199 mask_nodes 1130305324 re 97679833/3150MB pat 1802925  per-file ms p50 1.201 p90 12.132 p99 158.859 max 1111.0
+text regex: 196393 clause×file pairs, 4339.2 MB scanned, 11.61s, 1369 hits

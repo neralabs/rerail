@@ -1,0 +1,5 @@
+(?:^|\.)(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\w*(?:Intent|Step|Strategy))$
+\|
+^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\w*(?:Intent|Step|Strategy))$
+^[rRuUbBfF]*[\"']{1,3}[a-z]
+^[rRuUbBfF]*[\"']{1,3}_

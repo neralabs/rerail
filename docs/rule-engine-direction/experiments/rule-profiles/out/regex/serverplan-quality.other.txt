@@ -1,0 +1,4 @@
+\b(?:backend_type|is_sql_backend)\b
+\bCallable\b
+^[rRuUbBfF]*[\"']{1,3}[a-z]
+^[rRuUbBfF]*[\"']{1,3}_

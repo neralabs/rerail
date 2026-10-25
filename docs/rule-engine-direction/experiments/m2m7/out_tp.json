@@ -1,0 +1,437 @@
+{
+  "compile_s": 0.021720542,
+  "distinct_leaf_texts": 211263,
+  "expansions": 87630,
+  "files": 3095,
+  "keys": [],
+  "load_s": 2.268029709,
+  "nodes": 11767134,
+  "op_classes": {
+    "all": 91,
+    "any": 22,
+    "bind": 1,
+    "const": 2,
+    "kind": 21,
+    "not": 21,
+    "nth": 3,
+    "regex": 24,
+    "rel.neighbor": 50,
+    "rel.range": 5,
+    "util.backref": 2,
+    "value": 3
+  },
+  "ops": 245,
+  "program_nodes_actual": 175314725,
+  "program_nodes_scope": 270644082,
+  "programs": 23,
+  "regexes": 24,
+  "results": [
+    {
+      "counters": {
+        "bind_memo_hits": 0,
+        "dispatch": 958789,
+        "evals": 128287810,
+        "mask_builds": 0,
+        "mask_cells": 0,
+        "memo_cells": 0,
+        "memo_hits": 0,
+        "regex_bytes": 341917,
+        "regex_calls": 14323,
+        "regex_sym_hits": 1787021,
+        "scan_visits": 42719191,
+        "util_depth_cut": 0
+      },
+      "findings": 0,
+      "mode": "plain",
+      "ns_per_eval": 13.229359048221339,
+      "ns_per_program_node_actual": 9.680678562510936,
+      "ns_per_program_node_scope": 6.270839131076954,
+      "ns_per_scope_node": 144.22930001476996,
+      "seconds_min": 1.6971655,
+      "top_files": [
+        [
+          "impl/neo4j/versioned_transaction_sparse.py",
+          3993,
+          0.069377083
+        ],
+        [
+          "impl/postgres/execution_support_service.py",
+          9664,
+          0.062115916
+        ],
+        [
+          "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          115252,
+          0.0413095
+        ],
+        [
+          "l2070_batching/execution_runtime.py",
+          111420,
+          0.034993541
+        ],
+        [
+          "impl/common/l2070_server_plan/embedding_store_scope.py",
+          651,
+          0.034258209
+        ],
+        [
+          "impl/postgres/__init__.py",
+          1920,
+          0.031520125
+        ],
+        [
+          "l1450_keys/factory.py",
+          1533,
+          0.029796292
+        ],
+        [
+          "l6500_evidence/capability_signing.py",
+          1611,
+          0.02927775
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-transaction-patterns",
+          "internal-5",
+          8066995
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-6",
+          8066995
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-9",
+          8066995
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-10",
+          8066995
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-11",
+          8066995
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-13",
+          8066995
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "category-14",
+          8066995
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-14",
+          8066995
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "category-15",
+          8066995
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-15",
+          8066995
+        ]
+      ]
+    },
+    {
+      "counters": {
+        "bind_memo_hits": 898365,
+        "dispatch": 958789,
+        "evals": 9342446,
+        "mask_builds": 0,
+        "mask_cells": 0,
+        "memo_cells": 295190619,
+        "memo_hits": 97042,
+        "regex_bytes": 341917,
+        "regex_calls": 13995,
+        "regex_sym_hits": 90139,
+        "scan_visits": 2481835,
+        "util_depth_cut": 0
+      },
+      "findings": 0,
+      "mode": "memo",
+      "ns_per_eval": 33.9212334756872,
+      "ns_per_program_node_actual": 1.8076478858236238,
+      "ns_per_program_node_scope": 1.1709374528278065,
+      "ns_per_scope_node": 26.93156141503955,
+      "seconds_min": 0.316907292,
+      "top_files": [
+        [
+          "impl/remote/intent_codec.py",
+          17020,
+          0.028938667
+        ],
+        [
+          "impl/read_through/generated_lowering_mixin.py",
+          14905,
+          0.01745425
+        ],
+        [
+          "impl/common/l2070_server_plan/steps/embedding_collision_steps.py",
+          6112,
+          0.015253416
+        ],
+        [
+          "impl/common/l2100_sql_grammar/trigger_expression.py",
+          7770,
+          0.011528541
+        ],
+        [
+          "impl/read_through/republication.py",
+          9763,
+          0.009444583
+        ],
+        [
+          "l7200_versioned_transactions/versioned_transactions.py",
+          28680,
+          0.0079055
+        ],
+        [
+          "impl/common/l2100_sql_grammar/domain/infra/content_store.py",
+          5948,
+          0.006155833
+        ],
+        [
+          "impl/common/l2100_sql_params/native_list_codecs.py",
+          2261,
+          0.006104042
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-transaction-patterns",
+          "internal-5",
+          7515782
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-30",
+          132156
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-6",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-9",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-10",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-11",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-13",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "category-14",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-14",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "category-15",
+          120848
+        ]
+      ]
+    },
+    {
+      "counters": {
+        "bind_memo_hits": 898365,
+        "dispatch": 958789,
+        "evals": 9342446,
+        "mask_builds": 0,
+        "mask_cells": 0,
+        "memo_cells": 295190619,
+        "memo_hits": 97042,
+        "regex_bytes": 341917,
+        "regex_calls": 13995,
+        "regex_sym_hits": 90139,
+        "scan_visits": 2481835,
+        "util_depth_cut": 0
+      },
+      "findings": 0,
+      "mode": "mask",
+      "ns_per_eval": 35.16679411366145,
+      "ns_per_program_node_actual": 1.8740232744283174,
+      "ns_per_program_node_scope": 1.2139333421670753,
+      "ns_per_scope_node": 27.920466869842734,
+      "seconds_min": 0.328543875,
+      "top_files": [
+        [
+          "impl/common/l2070_server_plan/steps/write_side_effect_intents.py",
+          30124,
+          0.032112625
+        ],
+        [
+          "l2050_transaction/lazy_mixin.py",
+          48780,
+          0.029563708
+        ],
+        [
+          "impl/common/l2070_server_plan/steps/cross_branch.py",
+          86819,
+          0.02651725
+        ],
+        [
+          "l2050_transaction/transaction.py",
+          23262,
+          0.016359875
+        ],
+        [
+          "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+          115252,
+          0.012856416
+        ],
+        [
+          "impl/mongodb/connection.py",
+          25218,
+          0.009950792
+        ],
+        [
+          "impl/common/l2100_sql_grammar/domain/graph/graph_sparse.py",
+          27072,
+          0.00930175
+        ],
+        [
+          "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+          206043,
+          0.007826042
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-transaction-patterns",
+          "internal-5",
+          7515782
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-30",
+          132156
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-6",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-9",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-10",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-11",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-13",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "category-14",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "internal-14",
+          120848
+        ],
+        [
+          "data-layer-transaction-patterns",
+          "category-15",
+          120848
+        ]
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "id": "data-layer-transaction-patterns",
+      "programs": 23,
+      "scope_files": 3095,
+      "scope_nodes": 11767134
+    }
+  ],
+  "syntax_error_files": [
+    "impl/common/l2066_plan_optimizer/adapter_contracts.py",
+    "impl/common/l2066_plan_optimizer/adapter_table_names.py",
+    "impl/common/l2066_plan_optimizer/ir.py",
+    "impl/common/l2070_server_plan/sql_backend_executor.py",
+    "impl/common/l2070_server_plan/steps/intent_graph.py",
+    "impl/common/l2100_sql_grammar/domain/ddl/ddl_connection_ripple.py",
+    "impl/common/l2200_sql_dialect/sql_connection.py",
+    "impl/common/l2200_sql_dialect/sql_schema_services.py",
+    "impl/common/l2200_sql_dialect/sql_schema_type_services.py",
+    "impl/common/l3000_schema_builder/schema_builder.py",
+    "impl/common/l3100_schema_introspector/schema_introspector.py",
+    "impl/common/l3150_schema_diff/validation_suppression.py",
+    "impl/common/l3250_migrations/executor.py",
+    "impl/l1570_llm_client/chat_lifecycle.py",
+    "impl/l1570_llm_client/client.py",
+    "impl/mariadb/connection.py",
+    "impl/mariadb/metadata_schema_service.py",
+    "impl/postgres/connection.py",
+    "impl/postgres/metadata_schema_service.py",
+    "impl/sqlite/connection.py",
+    "impl/sqlite/metadata_schema_service.py",
+    "impl/sqlite/udf_values.py",
+    "l1000_schema/column_semantics.py",
+    "l1000_schema/column_utils.py",
+    "l1000_schema/schema_def.py",
+    "l1000_schema/typed_field.py",
+    "l2000_connection/backend_operations.py",
+    "l2000_connection/connection_contracts.py",
+    "l2000_connection/ddl_lockdown_runtime.py",
+    "l2000_connection/plan_scopes.py",
+    "l2000_connection/schema_transaction.py",
+    "l2000_connection/schema_transaction_contracts.py",
+    "l2000_connection/version_handles.py",
+    "l2000_connection/versioned_protocols.py",
+    "l2060_query_builder/query_contracts.py",
+    "l2070_batching/optimizer.py",
+    "l3200_metadata/column_schema_evolution.py",
+    "l3200_metadata/json_schema_version_sync.py",
+    "l3200_metadata/schema_diff.py",
+    "l3200_metadata/schema_evolution.py",
+    "l3200_metadata/schema_state_snapshot.py",
+    "l3200_metadata/schema_validation.py",
+    "l7000_versioned_schema/materialization_policy.py",
+    "l7000_versioned_schema/native_versioning.py",
+    "l7000_versioned_schema/versioned_connection.py",
+    "l7000_versioned_schema/versioned_schema.py"
+  ]
+}

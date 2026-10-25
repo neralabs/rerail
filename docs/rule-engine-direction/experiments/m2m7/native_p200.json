@@ -1,0 +1,22 @@
+{
+ "rules": {
+  "data-layer-sync-async-signatures": {
+   "compileMs": 11.516624999999976,
+   "wallMs": 140.24037500000009,
+   "cpuMs": 130.736,
+   "violations": 0,
+   "keys": [],
+   "failures": [
+    {
+     "clauseId": "transaction-connection",
+     "code": "budget-exceeded",
+     "message": "`matches` and `count` exceeded their work budget (maxVisitedNodes utility evaluations and counted nodes per file)",
+     "path": "l2050_transaction/synthetic_pairs.py",
+     "ruleId": "data-layer-sync-async-signatures"
+    }
+   ],
+   "nFailures": 1,
+   "peakRssBytes": 220020736
+  }
+ }
+}

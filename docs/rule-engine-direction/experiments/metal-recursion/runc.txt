@@ -1,0 +1,25 @@
+nodes 5396512, files 2049, kinds 109, max depth 34, device Apple M5 Max
+
+Q1 fn has Yield, stopBy nested scope (EXISTS)
+  roots 72480, targets 1781, nodes touched 4929644, CPU 1-thread interval   15.758 ms
+  (c) persistent threads + queue     GPU median    5.135 ms  dispatches 1  mismatches 0 (items 2762722, overflow 0, timeout 1, all-runs-ok false)
+
+Q2 fn has Return, stopBy nested scope (EXISTS)
+  roots 72480, targets 25558, nodes touched 4528751, CPU 1-thread interval  190.223 ms
+  (c) persistent threads + queue     GPU median   10.999 ms  dispatches 1  mismatches 0 (items 2295325, overflow 0, timeout 1, all-runs-ok false)
+
+Q3 count Call in fn, stopBy end (COUNT)
+  roots 72480, targets 420719, nodes touched 5305864, CPU 1-thread interval   19.221 ms
+  (c) persistent threads + queue     GPU median    5.238 ms  dispatches 1  mismatches 0 (items 2986344, overflow 0, timeout 1, all-runs-ok false)
+
+Q4 Module has Lambda, stopBy end (COUNT, huge roots)
+  roots 2049, targets 2227, nodes touched 5394463, CPU 1-thread interval   20.546 ms
+  (c) persistent threads + queue     GPU median    4.987 ms  dispatches 1  mismatches 0 (items 2958756, overflow 0, timeout 1, all-runs-ok false)
+
+Q5 every Call has Lambda, stopBy end (COUNT, 420k nested roots)
+  roots 420719, targets 2227, nodes touched 3467914, CPU 1-thread interval   10.709 ms
+  (c) persistent threads + queue     GPU median    5.664 ms  dispatches 1  mismatches 0 (items 2057049, overflow 0, timeout 1, all-runs-ok false)
+
+Q6 every Call inside Try, stopBy scope (ancestor)
+  roots 420719, targets 7738, nodes touched 1196188, CPU 1-thread interval    3.375 ms
+  (e) parent walk                    GPU median    0.120 ms  dispatches 1  mismatches 0 

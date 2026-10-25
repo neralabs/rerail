@@ -1,0 +1,5 @@
+# Regenerable run outputs: large result databases and raw run dumps.
+*.db
+fusion-model/out/run_A.json
+fusion-model/out/run_B.json
+regex/out/text_scope.json

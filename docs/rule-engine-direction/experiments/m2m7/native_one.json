@@ -1,0 +1,22 @@
+{
+ "rules": {
+  "data-layer-sync-async-signatures": {
+   "compileMs": 55.465791999999965,
+   "wallMs": 6349.7826669999995,
+   "cpuMs": 1896.795,
+   "violations": 0,
+   "keys": [],
+   "failures": [
+    {
+     "clauseId": "transaction-connection",
+     "code": "budget-exceeded",
+     "message": "clause work budget exceeded",
+     "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+     "ruleId": "data-layer-sync-async-signatures"
+    }
+   ],
+   "nFailures": 1,
+   "peakRssBytes": 256688128
+  }
+ }
+}

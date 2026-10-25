@@ -1,0 +1,25 @@
+{
+ "rules": {
+  "data-layer-sync-async-signatures": {
+   "compileMs": 9.555333000000019,
+   "wallMs": 8.589667000000077,
+   "cpuMs": 8.772,
+   "violations": 10,
+   "keys": [
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",31,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",34,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",37,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",40,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",43,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",46,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",49,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",52,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",55,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",58,\"sync_async_signature_mismatch\"]"
+   ],
+   "failures": [],
+   "nFailures": 0,
+   "peakRssBytes": 219709440
+  }
+ }
+}

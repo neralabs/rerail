@@ -1,0 +1,4 @@
+^(?:SqlAliasName|SqlColumnName|SqlIndexName|SqlIntegerLiteral|SqlQualifiedIdentifier|SqlQuotedIdentifier|SqlTableName|append|endswith|format|join|replace|repr|startswith|str)$
+^(?:SqlFragment)$
+^(?:Template)$
+^(?:static)$

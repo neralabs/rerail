@@ -1,0 +1,9 @@
+Sql
+\b\B
+^(?:GrammarException)$
+^(?:SF|SqlFragment)$
+^(?:Template|t)$
+^(?:format)$
+^(?:join)$
+^(?:render)$
+^(?:static)$

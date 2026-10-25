@@ -1,0 +1,1 @@
+^(?:wtxn|vtxn|rtxn|vrtxn|txn|tx)$

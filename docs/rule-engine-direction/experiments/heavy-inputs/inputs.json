@@ -1,0 +1,5307 @@
+[
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_18",
+  "sep_seconds": 14.460344042,
+  "candidates": 28230057,
+  "matches": 1154094,
+  "files": 9010,
+  "root_kinds": null,
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "right_source",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind",
+   "condition_start",
+   "condition_end",
+   "condition_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind",
+   "alias_source",
+   "module_name_start",
+   "module_name_source"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-6",
+  "input": "raw_nodes",
+  "sep_seconds": 8.601768209,
+  "candidates": 2343210,
+  "matches": 563,
+  "files": 264,
+  "root_kinds": null,
+  "stratum": 5,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source"
+  ],
+  "used_by": [
+   "nodes"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-1",
+  "input": "raw_nodes",
+  "sep_seconds": 4.7304215,
+  "candidates": 2343210,
+  "matches": 152170,
+  "files": 264,
+  "root_kinds": null,
+  "stratum": 6,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "return_type_start",
+   "return_type_end",
+   "return_type_kind",
+   "condition_start",
+   "condition_end",
+   "condition_kind"
+  ],
+  "used_by": [
+   "nodes"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-5",
+  "input": "raw_nodes",
+  "sep_seconds": 4.455310875,
+  "candidates": 2343210,
+  "matches": 200417,
+  "files": 264,
+  "root_kinds": null,
+  "stratum": 5,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_source",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind"
+  ],
+  "used_by": [
+   "nodes"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-3",
+  "input": "raw_nodes",
+  "sep_seconds": 3.983906083,
+  "candidates": 2343210,
+  "matches": 81534,
+  "files": 264,
+  "root_kinds": null,
+  "stratum": 4,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind"
+  ],
+  "used_by": [
+   "nodes"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_24",
+  "sep_seconds": 3.452321084,
+  "candidates": 4311171,
+  "matches": 1644489,
+  "files": 702,
+  "root_kinds": null,
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_source",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "condition_start",
+   "condition_end",
+   "condition_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_19",
+  "sep_seconds": 3.3347725,
+  "candidates": 3587568,
+  "matches": 292124,
+  "files": 9010,
+  "root_kinds": [
+   "module",
+   "expression_statement",
+   "return_statement",
+   "if_statement",
+   "elif_clause",
+   "else_clause",
+   "match_statement",
+   "block",
+   "case_clause",
+   "for_statement",
+   "function_definition",
+   "class_definition",
+   "argument_list",
+   "decorated_definition",
+   "assignment",
+   "augmented_assignment",
+   "keyword_argument"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "right_source",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind",
+   "condition_start",
+   "condition_end",
+   "condition_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-project-1",
+  "input": "raw_strings_2",
+  "sep_seconds": 3.1614978750000002,
+  "candidates": 276189,
+  "matches": 60914,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "string_values"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "private-lazy-ref",
+  "input": "events",
+  "sep_seconds": 2.9624985,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-project-1",
+  "input": "raw_strings_0",
+  "sep_seconds": 2.784579625,
+  "candidates": 276189,
+  "matches": 16699,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "string_values"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "legacy-preop",
+  "input": "events",
+  "sep_seconds": 2.720695375,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-project-1",
+  "input": "raw_strings_1",
+  "sep_seconds": 2.714544541,
+  "candidates": 276189,
+  "matches": 81842,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "string_values"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "lazy-callback-terminal",
+  "input": "events",
+  "sep_seconds": 2.689096417,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 6,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-1",
+  "input": "raw_strings_0",
+  "sep_seconds": 2.67625425,
+  "candidates": 276189,
+  "matches": 16699,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "string_values"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "graph-terminal-chain",
+  "input": "events",
+  "sep_seconds": 2.644067958,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 4,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "mcp-default-graph",
+  "input": "events",
+  "sep_seconds": 2.605500042,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-1",
+  "input": "raw_strings_1",
+  "sep_seconds": 2.545384,
+  "candidates": 276189,
+  "matches": 81842,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "string_values"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-1",
+  "input": "raw_strings_2",
+  "sep_seconds": 2.539189125,
+  "candidates": 276189,
+  "matches": 60914,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "string_values"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "serverplan-ddl",
+  "input": "events",
+  "sep_seconds": 2.498247625,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "step-aware-eager-helper",
+  "input": "events",
+  "sep_seconds": 2.390415041,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "nested-plan-execution",
+  "input": "events",
+  "sep_seconds": 2.35606575,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "executor-ir-dispatch",
+  "input": "events",
+  "sep_seconds": 2.303112917,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal",
+   "detail"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "compiled-ir-value",
+  "input": "events",
+  "sep_seconds": 2.302602375,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal",
+   "detail"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-2",
+  "input": "raw_nodes",
+  "sep_seconds": 2.287745667,
+  "candidates": 2343210,
+  "matches": 82154,
+  "files": 264,
+  "root_kinds": null,
+  "stratum": 6,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind",
+   "return_type_start",
+   "return_type_end",
+   "return_type_kind"
+  ],
+  "used_by": [
+   "nodes"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "production-ir-construction",
+  "input": "events",
+  "sep_seconds": 2.174319333,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "test-only-acknowledgement",
+  "input": "events",
+  "sep_seconds": 2.15859325,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "resolved-ref-access",
+  "input": "events",
+  "sep_seconds": 2.1542835,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "large-column-hydration",
+  "input": "events",
+  "sep_seconds": 2.1103465,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "queue-auth-calls",
+  "input": "events",
+  "sep_seconds": 2.043678833,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "large-column-reentry",
+  "input": "events",
+  "sep_seconds": 2.015049375,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "provider-io",
+  "input": "events",
+  "sep_seconds": 1.998987333,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-4",
+  "input": "raw_nodes",
+  "sep_seconds": 1.993478667,
+  "candidates": 2343210,
+  "matches": 34625,
+  "files": 264,
+  "root_kinds": null,
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind"
+  ],
+  "used_by": [
+   "nodes"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "preprocess-io",
+  "input": "events",
+  "sep_seconds": 1.882204458,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "executor-plan-execution",
+  "input": "events",
+  "sep_seconds": 1.881620292,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "direct-planning-io",
+  "input": "events",
+  "sep_seconds": 1.880016125,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "context-authority",
+  "input": "events",
+  "sep_seconds": 1.8547480410000001,
+  "candidates": 336262,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "attribute"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "materialized-pipeline",
+  "input": "events",
+  "sep_seconds": 1.841770208,
+  "candidates": 336262,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "attribute"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "query-planning-io",
+  "input": "events",
+  "sep_seconds": 1.780618541,
+  "candidates": 412415,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_0",
+  "sep_seconds": 1.572087625,
+  "candidates": 6016211,
+  "matches": 119499,
+  "files": 9010,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "graph-id-config",
+  "input": "events",
+  "sep_seconds": 1.513345167,
+  "candidates": 212009,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "assignment"
+  ],
+  "stratum": 6,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal",
+   "detail"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "queue-udf-symbols",
+  "input": "events",
+  "sep_seconds": 1.505152917,
+  "candidates": 276189,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_2",
+  "sep_seconds": 1.2895931250000001,
+  "candidates": 6016211,
+  "matches": 39066,
+  "files": 9010,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-projection-recovery-2",
+  "input": "raw_strings_1",
+  "sep_seconds": 1.241737667,
+  "candidates": 276189,
+  "matches": 3149,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "string_values"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-projection-recovery-2",
+  "input": "raw_strings_2",
+  "sep_seconds": 1.239477917,
+  "candidates": 276189,
+  "matches": 3473,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "string_values"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_3",
+  "sep_seconds": 1.140473541,
+  "candidates": 6016211,
+  "matches": 38652,
+  "files": 9010,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-projection-recovery-2",
+  "input": "raw_strings_0",
+  "sep_seconds": 1.104175458,
+  "candidates": 276189,
+  "matches": 412,
+  "files": 3095,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "string_values"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_1",
+  "sep_seconds": 1.01369175,
+  "candidates": 6016211,
+  "matches": 131081,
+  "files": 9010,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_5",
+  "sep_seconds": 0.930405542,
+  "candidates": 6016211,
+  "matches": 179741,
+  "files": 9010,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_24",
+  "sep_seconds": 0.717788166,
+  "candidates": 3046108,
+  "matches": 10831,
+  "files": 450,
+  "root_kinds": null,
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "return_type_start",
+   "return_type_end",
+   "return_type_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_11",
+  "sep_seconds": 0.716760917,
+  "candidates": 1056492,
+  "matches": 6617,
+  "files": 9010,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "function_start",
+   "function_end",
+   "function_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_4",
+  "sep_seconds": 0.654151042,
+  "candidates": 6016211,
+  "matches": 38694,
+  "files": 9010,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_parameters",
+  "sep_seconds": 0.623207083,
+  "candidates": 2770262,
+  "matches": 136624,
+  "files": 3110,
+  "root_kinds": [
+   "identifier",
+   "default_parameter",
+   "typed_default_parameter",
+   "typed_parameter"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "owner",
+   "name",
+   "annotation"
+  ],
+  "used_by": [
+   "parameters"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_12",
+  "sep_seconds": 0.598952958,
+  "candidates": 871877,
+  "matches": 32011,
+  "files": 9010,
+  "root_kinds": [
+   "attribute"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_source"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_6",
+  "sep_seconds": 0.594579125,
+  "candidates": 6016211,
+  "matches": 16076,
+  "files": 9010,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_9",
+  "sep_seconds": 0.565360042,
+  "candidates": 784501,
+  "matches": 726,
+  "files": 9010,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_0",
+  "sep_seconds": 0.517433292,
+  "candidates": 991149,
+  "matches": 205983,
+  "files": 702,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_parameters",
+  "sep_seconds": 0.502577416,
+  "candidates": 2770262,
+  "matches": 136624,
+  "files": 3110,
+  "root_kinds": [
+   "identifier",
+   "default_parameter",
+   "typed_default_parameter",
+   "typed_parameter"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "owner",
+   "name",
+   "annotation"
+  ],
+  "used_by": [
+   "parameters"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_13",
+  "sep_seconds": 0.469742583,
+  "candidates": 707583,
+  "matches": 17342,
+  "files": 9010,
+  "root_kinds": [
+   "type"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "right_source",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind",
+   "condition_start",
+   "condition_end",
+   "condition_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind",
+   "alias_source",
+   "module_name_start",
+   "module_name_source"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-execution-authority-bypass",
+  "clause": "authority-sites",
+  "input": "private_symbols",
+  "sep_seconds": 0.435804292,
+  "candidates": 5880637,
+  "matches": 6,
+  "files": 7416,
+  "root_kinds": [
+   "identifier",
+   "attribute"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": [
+   "sites"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_module_names",
+  "sep_seconds": 0.434757584,
+  "candidates": 2641136,
+  "matches": 0,
+  "files": 3110,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "name",
+   "decorated_function",
+   "decorated_class",
+   "function",
+   "class",
+   "class_body",
+   "default_value",
+   "nested_class",
+   "control"
+  ],
+  "used_by": [
+   "module_names"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_16",
+  "sep_seconds": 0.42465125,
+  "candidates": 455903,
+  "matches": 7397,
+  "files": 9010,
+  "root_kinds": [
+   "integer",
+   "float",
+   "true",
+   "false",
+   "none"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "right_source",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind",
+   "condition_start",
+   "condition_end",
+   "condition_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind",
+   "alias_source",
+   "module_name_start",
+   "module_name_source"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_11",
+  "sep_seconds": 0.369865292,
+  "candidates": 163216,
+  "matches": 151021,
+  "files": 702,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_5",
+  "sep_seconds": 0.358479584,
+  "candidates": 991149,
+  "matches": 158299,
+  "files": 702,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_returns",
+  "sep_seconds": 0.342058458,
+  "candidates": 906242,
+  "matches": 21317,
+  "files": 619,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "name",
+   "owner",
+   "class",
+   "method"
+  ],
+  "used_by": [
+   "returns"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_14",
+  "sep_seconds": 0.338445542,
+  "candidates": 403980,
+  "matches": 7539,
+  "files": 9010,
+  "root_kinds": [
+   "parameters",
+   "typed_default_parameter",
+   "typed_parameter"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "right_source",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind",
+   "condition_start",
+   "condition_end",
+   "condition_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind",
+   "alias_source",
+   "module_name_start",
+   "module_name_source"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_2",
+  "sep_seconds": 0.334121083,
+  "candidates": 991149,
+  "matches": 125885,
+  "files": 702,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_10",
+  "sep_seconds": 0.313753542,
+  "candidates": 784501,
+  "matches": 257,
+  "files": 9010,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_7",
+  "sep_seconds": 0.312781,
+  "candidates": 6016211,
+  "matches": 0,
+  "files": 9010,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_13",
+  "sep_seconds": 0.300367459,
+  "candidates": 161651,
+  "matches": 149448,
+  "files": 702,
+  "root_kinds": [
+   "argument_list"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "terminal-hydration-definitions",
+  "input": "events",
+  "sep_seconds": 0.296663125,
+  "candidates": 64099,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "queue-auth-definitions",
+  "input": "events",
+  "sep_seconds": 0.290608625,
+  "candidates": 64099,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_4",
+  "sep_seconds": 0.275133334,
+  "candidates": 991149,
+  "matches": 68479,
+  "files": 702,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-contracts-1",
+  "input": "raw_fstring_parts",
+  "sep_seconds": 0.27190425,
+  "candidates": 784501,
+  "matches": 5911,
+  "files": 9010,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "strings"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_1",
+  "sep_seconds": 0.261731709,
+  "candidates": 991149,
+  "matches": 131698,
+  "files": 702,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-project-taxonomy",
+  "input": "candidates",
+  "sep_seconds": 0.253552458,
+  "candidates": 161553,
+  "matches": 245,
+  "files": 9010,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 4,
+  "project_cols": [
+   "name"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_17",
+  "sep_seconds": 0.252390375,
+  "candidates": 303660,
+  "matches": 4562,
+  "files": 9010,
+  "root_kinds": [
+   "list_pattern",
+   "tuple_pattern",
+   "pattern_list",
+   "list",
+   "set",
+   "tuple",
+   "dictionary",
+   "pair"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "right_source",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind",
+   "condition_start",
+   "condition_end",
+   "condition_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind",
+   "alias_source",
+   "module_name_start",
+   "module_name_source"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_3",
+  "sep_seconds": 0.250703458,
+  "candidates": 991149,
+  "matches": 141772,
+  "files": 702,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_parameter_annotations",
+  "sep_seconds": 0.227134375,
+  "candidates": 2641136,
+  "matches": 165937,
+  "files": 3110,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "owner",
+   "parameter",
+   "name"
+  ],
+  "used_by": [
+   "annotation_names"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_15",
+  "sep_seconds": 0.215699875,
+  "candidates": 283674,
+  "matches": 7735,
+  "files": 9010,
+  "root_kinds": [
+   "type_parameter",
+   "generic_type"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "right_source",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_source",
+   "body_start",
+   "body_end",
+   "body_kind",
+   "parameters_start",
+   "parameters_end",
+   "parameters_kind",
+   "condition_start",
+   "condition_end",
+   "condition_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind",
+   "alias_source",
+   "module_name_start",
+   "module_name_source"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_parameter_annotations",
+  "sep_seconds": 0.208551292,
+  "candidates": 2641136,
+  "matches": 165937,
+  "files": 3110,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "owner",
+   "parameter",
+   "name"
+  ],
+  "used_by": [
+   "annotation_names"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_12",
+  "sep_seconds": 0.202093166,
+  "candidates": 118742,
+  "matches": 109998,
+  "files": 702,
+  "root_kinds": [
+   "attribute"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_6",
+  "sep_seconds": 0.195926584,
+  "candidates": 991149,
+  "matches": 78853,
+  "files": 702,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_bases",
+  "sep_seconds": 0.1892475,
+  "candidates": 3086820,
+  "matches": 9383,
+  "files": 3110,
+  "root_kinds": [
+   "identifier",
+   "attribute",
+   "subscript",
+   "generic_type"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "owner",
+   "name"
+  ],
+  "used_by": [
+   "base_edges",
+   "bases"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "container_edges",
+  "sep_seconds": 0.1853925,
+  "candidates": 673396,
+  "matches": 9640,
+  "files": 264,
+  "root_kinds": [
+   "identifier",
+   "expression_list",
+   "call",
+   "list",
+   "set",
+   "tuple",
+   "dictionary",
+   "parenthesized_expression"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "src_start",
+   "src_end",
+   "src_kind",
+   "src_text",
+   "dst_start",
+   "dst_end",
+   "dst_kind",
+   "dst_text"
+  ],
+  "used_by": [
+   "edges"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_18",
+  "sep_seconds": 0.178269167,
+  "candidates": 137175,
+  "matches": 125761,
+  "files": 702,
+  "root_kinds": [
+   "type"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_source",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "condition_start",
+   "condition_end",
+   "condition_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_bases",
+  "sep_seconds": 0.176937958,
+  "candidates": 906242,
+  "matches": 4111,
+  "files": 619,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "name",
+   "owner"
+  ],
+  "used_by": [
+   "bases"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_return_annotations",
+  "sep_seconds": 0.168419666,
+  "candidates": 2641136,
+  "matches": 85251,
+  "files": 3110,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "owner",
+   "name"
+  ],
+  "used_by": [
+   "annotation_names"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-project-1",
+  "input": "syntax_gate",
+  "sep_seconds": 0.166587125,
+  "candidates": 3095,
+  "matches": 1048,
+  "files": 3095,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-execution-authority-bypass",
+  "clause": "authority-sites",
+  "input": "monkeypatches",
+  "sep_seconds": 0.156692709,
+  "candidates": 905509,
+  "matches": 0,
+  "files": 7416,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": [
+   "sites"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_14",
+  "sep_seconds": 0.156479792,
+  "candidates": 70222,
+  "matches": 65260,
+  "files": 702,
+  "root_kinds": [
+   "keyword_argument"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_source"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-contracts-1",
+  "input": "raw_strings",
+  "sep_seconds": 0.153065875,
+  "candidates": 784501,
+  "matches": 90366,
+  "files": 9010,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value"
+  ],
+  "used_by": [
+   "strings"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "keyword_edges",
+  "sep_seconds": 0.147050084,
+  "candidates": 43211,
+  "matches": 27261,
+  "files": 264,
+  "root_kinds": [
+   "keyword_argument"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "src_start",
+   "src_end",
+   "src_kind",
+   "src_text",
+   "dst_start",
+   "dst_end",
+   "dst_kind",
+   "dst_text"
+  ],
+  "used_by": [
+   "edges"
+  ]
+ },
+ {
+  "rule": "data-layer-execution-authority-bypass",
+  "clause": "authority-sites",
+  "input": "raw_classes",
+  "sep_seconds": 0.144721625,
+  "candidates": 30267,
+  "matches": 30267,
+  "files": 7416,
+  "root_kinds": [
+   "class_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "name",
+   "wrapper"
+  ],
+  "used_by": [
+   "frames"
+  ]
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_return_annotations",
+  "sep_seconds": 0.143917584,
+  "candidates": 2641136,
+  "matches": 85251,
+  "files": 3110,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "owner",
+   "name"
+  ],
+  "used_by": [
+   "annotation_names"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_22",
+  "sep_seconds": 0.143455375,
+  "candidates": 64985,
+  "matches": 59601,
+  "files": 702,
+  "root_kinds": [
+   "integer",
+   "float",
+   "true",
+   "false",
+   "none"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_source",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "condition_start",
+   "condition_end",
+   "condition_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-conditional-1",
+  "input": "syntax_8",
+  "sep_seconds": 0.139831709,
+  "candidates": 784501,
+  "matches": 58,
+  "files": 9010,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-contracts-1",
+  "input": "quoted_atoms",
+  "sep_seconds": 0.138255959,
+  "candidates": 784501,
+  "matches": 274,
+  "files": 9010,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "ann_start",
+   "ann_end",
+   "atom"
+  ],
+  "used_by": [
+   "annotation_atoms"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_15",
+  "sep_seconds": 0.136087458,
+  "candidates": 94189,
+  "matches": 85650,
+  "files": 702,
+  "root_kinds": [
+   "expression_statement"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_16",
+  "sep_seconds": 0.135073583,
+  "candidates": 104106,
+  "matches": 95568,
+  "files": 702,
+  "root_kinds": [
+   "return_statement",
+   "assignment",
+   "augmented_assignment"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_parameters",
+  "sep_seconds": 0.132556833,
+  "candidates": 906242,
+  "matches": 26250,
+  "files": 619,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 5,
+  "project_cols": [
+   "name",
+   "owner",
+   "class",
+   "method"
+  ],
+  "used_by": [
+   "parameters"
+  ]
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_bases",
+  "sep_seconds": 0.128923125,
+  "candidates": 3086820,
+  "matches": 9383,
+  "files": 3110,
+  "root_kinds": [
+   "identifier",
+   "attribute",
+   "subscript",
+   "generic_type"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "owner",
+   "name"
+  ],
+  "used_by": [
+   "base_edges",
+   "surfaces"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_union_names",
+  "sep_seconds": 0.1250465,
+  "candidates": 906242,
+  "matches": 3086,
+  "files": 619,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "name",
+   "alias"
+  ],
+  "used_by": [
+   "union_names"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-local-taxonomy",
+  "input": "candidates",
+  "sep_seconds": 0.113195334,
+  "candidates": 161553,
+  "matches": 48,
+  "files": 9010,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 4,
+  "project_cols": [
+   "name"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-execution-authority-bypass",
+  "clause": "authority-sites",
+  "input": "explicit_calls",
+  "sep_seconds": 0.107785458,
+  "candidates": 905509,
+  "matches": 11,
+  "files": 7416,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": [
+   "sites"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_10",
+  "sep_seconds": 0.1060095,
+  "candidates": 81738,
+  "matches": 24737,
+  "files": 702,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_20",
+  "sep_seconds": 0.09763,
+  "candidates": 68951,
+  "matches": 63404,
+  "files": 702,
+  "root_kinds": [
+   "type_parameter",
+   "generic_type"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_source",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "condition_start",
+   "condition_end",
+   "condition_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-impl-direct-execution",
+  "clause": "direct-execution-lines",
+  "input": "raw_tokens",
+  "sep_seconds": 0.097458208,
+  "candidates": 3095,
+  "matches": 67,
+  "files": 3095,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "line",
+   "method"
+  ],
+  "used_by": [
+   "matches"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_17",
+  "sep_seconds": 0.088944333,
+  "candidates": 63534,
+  "matches": 58211,
+  "files": 702,
+  "root_kinds": [
+   "block"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_23",
+  "sep_seconds": 0.087237125,
+  "candidates": 41744,
+  "matches": 37814,
+  "files": 702,
+  "root_kinds": [
+   "list_pattern",
+   "tuple_pattern",
+   "pattern_list",
+   "list",
+   "set",
+   "tuple",
+   "dictionary",
+   "pair"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_source",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "condition_start",
+   "condition_end",
+   "condition_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-contracts-1",
+  "input": "direct_imports",
+  "sep_seconds": 0.08447325,
+  "candidates": 12923,
+  "matches": 742,
+  "files": 9010,
+  "root_kinds": [
+   "import_statement"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "name",
+   "alias"
+  ],
+  "used_by": [
+   "scope_imports"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "production-ir-class",
+  "input": "events",
+  "sep_seconds": 0.083596958,
+  "candidates": 13221,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "class_definition"
+  ],
+  "stratum": 4,
+  "project_cols": [
+   "line",
+   "scope",
+   "terminal"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_9",
+  "sep_seconds": 0.082777542,
+  "candidates": 81738,
+  "matches": 44771,
+  "files": 702,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_19",
+  "sep_seconds": 0.078370083,
+  "candidates": 70823,
+  "matches": 65573,
+  "files": 702,
+  "root_kinds": [
+   "parameters",
+   "typed_default_parameter",
+   "typed_parameter"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_source",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "object_source",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "condition_start",
+   "condition_end",
+   "condition_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-impl-direct-execution",
+  "clause": "direct-execution-lines",
+  "input": "raw_calls",
+  "sep_seconds": 0.07815,
+  "candidates": 412415,
+  "matches": 361,
+  "files": 3095,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "line",
+   "method"
+  ],
+  "used_by": [
+   "matches"
+  ]
+ },
+ {
+  "rule": "data-layer-impl-direct-execution",
+  "clause": "direct-execution-lines",
+  "input": "raw_strings",
+  "sep_seconds": 0.072527416,
+  "candidates": 557126,
+  "matches": 20,
+  "files": 3095,
+  "root_kinds": [
+   "string",
+   "string_content"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": [
+   "strings"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-contracts-2",
+  "input": "syntax_gate",
+  "sep_seconds": 0.072432792,
+  "candidates": 9010,
+  "matches": 399,
+  "files": 9010,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_7",
+  "sep_seconds": 0.069980666,
+  "candidates": 991149,
+  "matches": 0,
+  "files": 702,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_annotations",
+  "sep_seconds": 0.069233292,
+  "candidates": 906242,
+  "matches": 11508,
+  "files": 619,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 6,
+  "project_cols": [
+   "name",
+   "owner",
+   "field"
+  ],
+  "used_by": [
+   "annotations"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-contracts-3",
+  "input": "syntax_gate",
+  "sep_seconds": 0.066825291,
+  "candidates": 9010,
+  "matches": 69,
+  "files": 9010,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-signatures-1",
+  "input": "syntax_gate",
+  "sep_seconds": 0.061207125,
+  "candidates": 3095,
+  "matches": 74,
+  "files": 3095,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 4,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_execution_calls",
+  "sep_seconds": 0.061169166,
+  "candidates": 413188,
+  "matches": 0,
+  "files": 3110,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 4,
+  "project_cols": [
+   "owner",
+   "name"
+  ],
+  "used_by": [
+   "execution_calls"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_3",
+  "sep_seconds": 0.059598583,
+  "candidates": 723563,
+  "matches": 1190,
+  "files": 450,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_decorators",
+  "sep_seconds": 0.055702834,
+  "candidates": 19236,
+  "matches": 19236,
+  "files": 3110,
+  "root_kinds": [
+   "decorator"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "owner",
+   "name"
+  ],
+  "used_by": [
+   "decorators"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_0",
+  "sep_seconds": 0.0527335,
+  "candidates": 723563,
+  "matches": 1012,
+  "files": 450,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_21",
+  "sep_seconds": 0.051178709,
+  "candidates": 34468,
+  "matches": 31442,
+  "files": 702,
+  "root_kinds": [
+   "function_definition",
+   "class_definition",
+   "decorated_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_source"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_6",
+  "sep_seconds": 0.04980475,
+  "candidates": 723563,
+  "matches": 609,
+  "files": 450,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-contracts-1",
+  "input": "syntax_gate",
+  "sep_seconds": 0.047665083,
+  "candidates": 9010,
+  "matches": 889,
+  "files": 9010,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-impl-direct-execution",
+  "clause": "direct-execution-lines",
+  "input": "full_comments",
+  "sep_seconds": 0.046799084,
+  "candidates": 28664,
+  "matches": 0,
+  "files": 3095,
+  "root_kinds": [
+   "comment"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": [
+   "comments"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_5",
+  "sep_seconds": 0.045392084,
+  "candidates": 723563,
+  "matches": 953,
+  "files": 450,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-contracts-1",
+  "input": "from_imports",
+  "sep_seconds": 0.045053792,
+  "candidates": 110945,
+  "matches": 22582,
+  "files": 9010,
+  "root_kinds": [
+   "import_from_statement"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "module",
+   "name",
+   "alias"
+  ],
+  "used_by": [
+   "scope_imports",
+   "diagnostics_4"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_2",
+  "sep_seconds": 0.04290275,
+  "candidates": 723563,
+  "matches": 1102,
+  "files": 450,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_imports",
+  "sep_seconds": 0.042790583,
+  "candidates": 52201,
+  "matches": 52201,
+  "files": 3110,
+  "root_kinds": [
+   "import_statement",
+   "import_from_statement"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "base",
+   "items",
+   "top"
+  ],
+  "used_by": [
+   "imports"
+  ]
+ },
+ {
+  "rule": "data-layer-execution-authority-bypass",
+  "clause": "authority-sites",
+  "input": "raw_functions",
+  "sep_seconds": 0.041231292,
+  "candidates": 135842,
+  "matches": 135842,
+  "files": 7416,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "name",
+   "wrapper"
+  ],
+  "used_by": [
+   "frames"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_7",
+  "sep_seconds": 0.040840084,
+  "candidates": 723563,
+  "matches": 0,
+  "files": 450,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-quality",
+  "clause": "quality-contracts-1",
+  "input": "file_starts",
+  "sep_seconds": 0.039956458,
+  "candidates": 9010,
+  "matches": 889,
+  "files": 9010,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": [
+   "diagnostics_5"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_4",
+  "sep_seconds": 0.038655417,
+  "candidates": 723563,
+  "matches": 549,
+  "files": 450,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_1",
+  "sep_seconds": 0.038602042,
+  "candidates": 723563,
+  "matches": 805,
+  "files": 450,
+  "root_kinds": [
+   "identifier"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_dynamic_imports",
+  "sep_seconds": 0.038351166,
+  "candidates": 3110,
+  "matches": 33,
+  "files": 3110,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "entry"
+  ],
+  "used_by": [
+   "dead_roots"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "from_imports",
+  "sep_seconds": 0.031933208,
+  "candidates": 19426,
+  "matches": 16894,
+  "files": 702,
+  "root_kinds": [
+   "import_from_statement"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "module",
+   "name",
+   "alias",
+   "line"
+  ],
+  "used_by": [
+   "raw_boundaries",
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "positional_edges",
+  "sep_seconds": 0.031843125,
+  "candidates": 673396,
+  "matches": 70130,
+  "files": 264,
+  "root_kinds": [
+   "identifier",
+   "expression_list",
+   "call",
+   "list",
+   "set",
+   "tuple",
+   "dictionary",
+   "parenthesized_expression"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "src_start",
+   "src_end",
+   "src_kind",
+   "src_text",
+   "dst_start",
+   "dst_end",
+   "dst_kind",
+   "dst_text"
+  ],
+  "used_by": [
+   "edges"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_22",
+  "sep_seconds": 0.031502959,
+  "candidates": 43841,
+  "matches": 352,
+  "files": 450,
+  "root_kinds": [
+   "integer",
+   "float",
+   "true",
+   "false",
+   "none"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "return_type_start",
+   "return_type_end",
+   "return_type_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_imports",
+  "sep_seconds": 0.028023959,
+  "candidates": 52201,
+  "matches": 52201,
+  "files": 3110,
+  "root_kinds": [
+   "import_statement",
+   "import_from_statement"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "base",
+   "items",
+   "top"
+  ],
+  "used_by": [
+   "imports"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-project-1",
+  "input": "project_mode",
+  "sep_seconds": 0.024529667,
+  "candidates": 3095,
+  "matches": 1048,
+  "files": 3095,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": [
+   "taints"
+  ]
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_functions",
+  "sep_seconds": 0.023592917,
+  "candidates": 64273,
+  "matches": 62038,
+  "files": 3110,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "name",
+   "class_name",
+   "return_annotation",
+   "class_start",
+   "body_start"
+  ],
+  "used_by": [
+   "inventory"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_functions",
+  "sep_seconds": 0.023071375,
+  "candidates": 64273,
+  "matches": 62038,
+  "files": 3110,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "name",
+   "class_name",
+   "return_annotation",
+   "class_start",
+   "body_start"
+  ],
+  "used_by": [
+   "inventory",
+   "function_headers"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-1",
+  "input": "syntax_gate",
+  "sep_seconds": 0.022954,
+  "candidates": 3095,
+  "matches": 1048,
+  "files": 3095,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-flow-1",
+  "input": "project_mode",
+  "sep_seconds": 0.022752667,
+  "candidates": 3095,
+  "matches": 1048,
+  "files": 3095,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": [
+   "taints"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "syntax_8",
+  "sep_seconds": 0.018722917,
+  "candidates": 81738,
+  "matches": 4156,
+  "files": 702,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_20",
+  "sep_seconds": 0.018505625,
+  "candidates": 49416,
+  "matches": 424,
+  "files": 450,
+  "root_kinds": [
+   "type_parameter",
+   "generic_type"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "return_type_start",
+   "return_type_end",
+   "return_type_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_decorators",
+  "sep_seconds": 0.018190542,
+  "candidates": 19236,
+  "matches": 19236,
+  "files": 3110,
+  "root_kinds": [
+   "decorator"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "owner",
+   "name"
+  ],
+  "used_by": [
+   "decorators"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_classes",
+  "sep_seconds": 0.01725325,
+  "candidates": 13274,
+  "matches": 13274,
+  "files": 3110,
+  "root_kinds": [
+   "class_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "name",
+   "body_start"
+  ],
+  "used_by": [
+   "inventory"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-state-tripwires",
+  "clause": "state-projection-recovery-2",
+  "input": "syntax_gate",
+  "sep_seconds": 0.017213666,
+  "candidates": 3095,
+  "matches": 22,
+  "files": 3095,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_classes",
+  "sep_seconds": 0.016382375,
+  "candidates": 13274,
+  "matches": 13274,
+  "files": 3110,
+  "root_kinds": [
+   "class_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "name",
+   "body_start"
+  ],
+  "used_by": [
+   "inventory"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_modules",
+  "sep_seconds": 0.01583675,
+  "candidates": 3110,
+  "matches": 3110,
+  "files": 3110,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "module"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-5",
+  "input": "relaxed",
+  "sep_seconds": 0.014638625,
+  "candidates": 264,
+  "matches": 0,
+  "files": 264,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_11",
+  "sep_seconds": 0.011486708,
+  "candidates": 120563,
+  "matches": 898,
+  "files": 450,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_13",
+  "sep_seconds": 0.011418709,
+  "candidates": 118534,
+  "matches": 886,
+  "files": 450,
+  "root_kinds": [
+   "argument_list"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_members",
+  "sep_seconds": 0.010734792,
+  "candidates": 67512,
+  "matches": 9937,
+  "files": 619,
+  "root_kinds": [
+   "assignment"
+  ],
+  "stratum": 4,
+  "project_cols": [
+   "name",
+   "owner",
+   "type"
+  ],
+  "used_by": [
+   "members"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_16",
+  "sep_seconds": 0.010711791,
+  "candidates": 76466,
+  "matches": 619,
+  "files": 450,
+  "root_kinds": [
+   "return_statement",
+   "assignment",
+   "augmented_assignment"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "type_start",
+   "type_end",
+   "type_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_assignments",
+  "sep_seconds": 0.009989958,
+  "candidates": 67849,
+  "matches": 1320,
+  "files": 619,
+  "root_kinds": [
+   "assignment",
+   "augmented_assignment"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "name"
+  ],
+  "used_by": [
+   "symbols"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_18",
+  "sep_seconds": 0.009627875,
+  "candidates": 97697,
+  "matches": 880,
+  "files": 450,
+  "root_kinds": [
+   "type"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "return_type_start",
+   "return_type_end",
+   "return_type_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_10",
+  "sep_seconds": 0.009568959,
+  "candidates": 45925,
+  "matches": 181,
+  "files": 450,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_12",
+  "sep_seconds": 0.009547875,
+  "candidates": 88676,
+  "matches": 943,
+  "files": 450,
+  "root_kinds": [
+   "attribute"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_9",
+  "sep_seconds": 0.009109417,
+  "candidates": 45925,
+  "matches": 82,
+  "files": 450,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_15",
+  "sep_seconds": 0.008521875,
+  "candidates": 67806,
+  "matches": 679,
+  "files": 450,
+  "root_kinds": [
+   "expression_statement"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_methods",
+  "sep_seconds": 0.008313667,
+  "candidates": 22879,
+  "matches": 15699,
+  "files": 619,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 4,
+  "project_cols": [
+   "name",
+   "owner"
+  ],
+  "used_by": [
+   "methods"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_19",
+  "sep_seconds": 0.008158625,
+  "candidates": 51236,
+  "matches": 489,
+  "files": 450,
+  "root_kinds": [
+   "parameters",
+   "typed_default_parameter",
+   "typed_parameter"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "return_type_start",
+   "return_type_end",
+   "return_type_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_8",
+  "sep_seconds": 0.007690791,
+  "candidates": 45925,
+  "matches": 26,
+  "files": 450,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_0"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_functions",
+  "sep_seconds": 0.007674125,
+  "candidates": 22879,
+  "matches": 6218,
+  "files": 619,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "name"
+  ],
+  "used_by": [
+   "symbols"
+  ]
+ },
+ {
+  "rule": "data-layer-legacy-execution-surfaces",
+  "clause": "legacy-execution-graphs",
+  "input": "direct_imports",
+  "sep_seconds": 0.007105291,
+  "candidates": 480,
+  "matches": 389,
+  "files": 702,
+  "root_kinds": [
+   "import_statement"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "name"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "calls",
+  "sep_seconds": 0.006727958,
+  "candidates": 94314,
+  "matches": 94314,
+  "files": 264,
+  "root_kinds": [
+   "call"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "callee",
+   "full_callee",
+   "refs",
+   "runtime_refs"
+  ],
+  "used_by": [
+   "nodes",
+   "consumers",
+   "refless",
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_14",
+  "sep_seconds": 0.006641,
+  "candidates": 50098,
+  "matches": 331,
+  "files": 450,
+  "root_kinds": [
+   "keyword_argument"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "value_start",
+   "value_end",
+   "value_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_17",
+  "sep_seconds": 0.0066395,
+  "candidates": 45889,
+  "matches": 459,
+  "files": 450,
+  "root_kinds": [
+   "block"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "postops",
+  "sep_seconds": 0.006263792,
+  "candidates": 43211,
+  "matches": 716,
+  "files": 264,
+  "root_kinds": [
+   "keyword_argument"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "value_start",
+   "value_end",
+   "value_kind",
+   "value_text",
+   "call",
+   "keyword"
+  ],
+  "used_by": [
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-target-architecture",
+  "clause": "required-contracts",
+  "input": "raw_classes",
+  "sep_seconds": 0.005671042,
+  "candidates": 3864,
+  "matches": 3860,
+  "files": 619,
+  "root_kinds": [
+   "class_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "name",
+   "frozen"
+  ],
+  "used_by": [
+   "classes"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_21",
+  "sep_seconds": 0.005517125,
+  "candidates": 26113,
+  "matches": 193,
+  "files": 450,
+  "root_kinds": [
+   "function_definition",
+   "class_definition",
+   "decorated_definition"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "return_type_start",
+   "return_type_end",
+   "return_type_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-dispatch-architecture",
+  "clause": "executor-provenance",
+  "input": "syntax_23",
+  "sep_seconds": 0.005335708,
+  "candidates": 20883,
+  "matches": 105,
+  "files": 450,
+  "root_kinds": [
+   "list_pattern",
+   "tuple_pattern",
+   "pattern_list",
+   "list",
+   "set",
+   "tuple",
+   "dictionary",
+   "pair"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "kind",
+   "text",
+   "line",
+   "parent_start",
+   "parent_end",
+   "parent_kind",
+   "ancestor_start",
+   "ancestor_end",
+   "ancestor_kind",
+   "name_start",
+   "name_end",
+   "name_kind",
+   "name_source",
+   "left_start",
+   "left_end",
+   "left_kind",
+   "right_start",
+   "right_end",
+   "right_kind",
+   "value_start",
+   "value_end",
+   "value_kind",
+   "type_start",
+   "type_end",
+   "type_kind",
+   "function_start",
+   "function_end",
+   "function_kind",
+   "arguments_start",
+   "arguments_end",
+   "arguments_kind",
+   "object_start",
+   "object_end",
+   "object_kind",
+   "attribute_start",
+   "attribute_end",
+   "attribute_kind",
+   "attribute_source",
+   "return_type_start",
+   "return_type_end",
+   "return_type_kind",
+   "subject_start",
+   "subject_end",
+   "subject_kind"
+  ],
+  "used_by": [
+   "syntax_rows_1"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "bindings",
+  "sep_seconds": 0.005097292,
+  "candidates": 39567,
+  "matches": 29201,
+  "files": 264,
+  "root_kinds": [
+   "assignment"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value_start",
+   "value_end",
+   "value_kind",
+   "value_text",
+   "name"
+  ],
+  "used_by": [
+   "nodes",
+   "locals"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "returns",
+  "sep_seconds": 0.004560583,
+  "candidates": 18619,
+  "matches": 18619,
+  "files": 264,
+  "root_kinds": [
+   "return_statement"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "value_start",
+   "value_end",
+   "value_kind",
+   "value_text",
+   "fn"
+  ],
+  "used_by": [
+   "nodes",
+   "consumers",
+   "refless",
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "functions",
+  "sep_seconds": 0.003802458,
+  "candidates": 15960,
+  "matches": 15960,
+  "files": 264,
+  "root_kinds": [
+   "function_definition"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "name"
+  ],
+  "used_by": [
+   "contexts",
+   "locals",
+   "consumers",
+   "refless",
+   "__final__"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "dictionary_edges",
+  "sep_seconds": 0.003414791,
+  "candidates": 892,
+  "matches": 287,
+  "files": 264,
+  "root_kinds": [
+   "pair"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "src_start",
+   "src_end",
+   "src_kind",
+   "src_text",
+   "dst_start",
+   "dst_end",
+   "dst_kind",
+   "dst_text"
+  ],
+  "used_by": [
+   "edges"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-3",
+  "input": "relaxed",
+  "sep_seconds": 0.002940625,
+  "candidates": 264,
+  "matches": 0,
+  "files": 264,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-6",
+  "input": "relaxed",
+  "sep_seconds": 0.002910334,
+  "candidates": 264,
+  "matches": 0,
+  "files": 264,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": [
+   "legacy_postops"
+  ]
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-1",
+  "input": "relaxed",
+  "sep_seconds": 0.002896916,
+  "candidates": 264,
+  "matches": 0,
+  "files": 264,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-2",
+  "input": "relaxed",
+  "sep_seconds": 0.002896625,
+  "candidates": 264,
+  "matches": 0,
+  "files": 264,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "step-contracts-4",
+  "input": "relaxed",
+  "sep_seconds": 0.002888625,
+  "candidates": 264,
+  "matches": 0,
+  "files": 264,
+  "root_kinds": [
+   "module"
+  ],
+  "stratum": 0,
+  "project_cols": [
+   "path"
+  ],
+  "used_by": []
+ },
+ {
+  "rule": "data-layer-serverplan-steps",
+  "clause": "runtime-reference-summaries",
+  "input": "spread_edges",
+  "sep_seconds": 0.002834458,
+  "candidates": 45,
+  "matches": 35,
+  "files": 264,
+  "root_kinds": [
+   "dictionary_splat"
+  ],
+  "stratum": 2,
+  "project_cols": [
+   "src_start",
+   "src_end",
+   "src_kind",
+   "src_text",
+   "dst_start",
+   "dst_end",
+   "dst_kind",
+   "dst_text"
+  ],
+  "used_by": [
+   "edges"
+  ]
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_all_names",
+  "sep_seconds": 0.001005375,
+  "candidates": 7364,
+  "matches": 7072,
+  "files": 120,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "owner",
+   "name"
+  ],
+  "used_by": [
+   "all_names"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_all_names",
+  "sep_seconds": 0.000888917,
+  "candidates": 7364,
+  "matches": 7072,
+  "files": 120,
+  "root_kinds": [
+   "concatenated_string",
+   "string"
+  ],
+  "stratum": 3,
+  "project_cols": [
+   "owner",
+   "name"
+  ],
+  "used_by": [
+   "all_names"
+  ]
+ },
+ {
+  "rule": "data-layer-public-api-triples",
+  "clause": "exported-families",
+  "input": "raw_all",
+  "sep_seconds": 0.000205375,
+  "candidates": 260,
+  "matches": 114,
+  "files": 120,
+  "root_kinds": [
+   "assignment"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "array"
+  ],
+  "used_by": [
+   "explicit_exports"
+  ]
+ },
+ {
+  "rule": "data-layer-internal-dead-code",
+  "clause": "unreachable-internal-symbols",
+  "input": "raw_all",
+  "sep_seconds": 0.00018475,
+  "candidates": 260,
+  "matches": 114,
+  "files": 120,
+  "root_kinds": [
+   "assignment"
+  ],
+  "stratum": 1,
+  "project_cols": [
+   "array"
+  ],
+  "used_by": [
+   "explicit_exports"
+  ]
+ }
+]
