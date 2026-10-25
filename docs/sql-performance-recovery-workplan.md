@@ -2,7 +2,9 @@
 
 ## Active plan — 2026-10-25
 
-Status: ready for implementation in this worktree. Start with delivery A1.
+Status: A1 implementation is committed at `e771dc6c`; performance acceptance remains open.
+The first matched controls regress CPU by 16–18%. The journal records that result.
+The next implementation corrects quadratic parent membership exposed by those controls.
 The older R0–R7 plan is historical. This plan supersedes its statement-count acceptance gates.
 Statement counts remain diagnostic. Each delivery includes failing tests, implementation, passing tests, and measured evidence.
 No production switches select competing implementations. Linear issues require prior user approval.
@@ -111,6 +113,18 @@ SQL aggregates required by rule semantics remain valid. The prohibition concerns
 ### A2: restrict demand before family execution
 
 The A1 plan supplies the demand frontier. A2 carries that frontier into fact preparation and SQL execution.
+
+The first measured family is direct-parent membership.
+Four statements each execute roughly 23 million scan steps on the 32-file control.
+Their materialized child projections lack a usable parent index, so selected parents repeatedly scan every child candidate.
+Red commit `9621e074` reproduces the quadratic growth without wall-time assertions.
+Doubling candidate demand increases measured SQL work from 1.29 million to 4.94 million VM instructions.
+
+Use selected parent keys as the outer relation and seek `decoded_child_lookup(fid,parent,field,pre)`.
+The final intersection must retain the original consumer scope and source version.
+Keep field and first-child predicates. This change adds no new materialized relation or native callback.
+Compare the same 32- and 128-file controls before selecting the next family.
+This first correction does not complete the broader A2 scope.
 
 - Preserve exact `(consumer, source version, file, range)` membership in demand relations.
 - Batch distinct scopes with explicit scope IDs. Do not replace them with their union.

@@ -498,20 +498,19 @@ impl Lower {
             _ => self.all(),
         };
         let inner = self.plan(inner, inner_scope)?;
-        let seed = if matches!(direction, Direction::Has) {
-            &inner
-        } else {
-            &scope
-        };
-        let properties = self.decoded(seed, Property::Node);
-        let name = format!("w{}", self.ctes.len());
-        self.ctes.push(format!("{name}(fid,origin,child,pre,field,flags) AS MATERIALIZED (SELECT s.fid,s.pre,s.pre,s.parent,s.field,s.flags FROM {properties} s)"));
-        let field = field.map_or(String::new(), |field| {
-            format!(" AND w.field={field} AND (w.flags&16)<>0")
+        let guard = field.map_or(String::new(), |field| {
+            format!(" AND c.field={field} AND (c.flags&16)<>0")
         });
         let selected = match direction {
-            Direction::Has => self.relation(format!("SELECT DISTINCT w.fid,w.pre FROM {name} w WHERE w.pre>=0{field}"), inner.exact)?,
-            Direction::Inside => self.relation(format!("SELECT DISTINCT w.fid,w.origin FROM {name} w JOIN {} m ON m.fid=w.fid AND m.pre=w.pre WHERE w.pre>=0{field}", inner.name), inner.exact && scope.exact)?,
+            Direction::Has => {
+                let properties = self.decoded(&inner, Property::Node);
+                self.relation(format!("SELECT DISTINCT c.fid,c.parent FROM {properties} c WHERE c.parent>=0{guard}"), inner.exact)?
+            }
+            // The scope's structural demand populated these child rows before the
+            // inner predicate. Seek the persistent (fid,parent,field,pre) index from
+            // selected parents; joining two materialized projections can scan their
+            // Cartesian product when SQLite underestimates either relation.
+            Direction::Inside => self.relation(format!("SELECT m.fid,c.pre FROM {} m CROSS JOIN decoded_properties c ON c.fid=m.fid AND c.parent=m.pre WHERE m.pre>=0{guard}", inner.name), inner.exact && scope.exact)?,
             _ => unreachable!(),
         };
         self.combine(

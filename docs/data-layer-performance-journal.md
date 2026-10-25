@@ -3905,6 +3905,53 @@ They account for about 4.18 CPU seconds in that diagnostic run.
 The next investigation captures those exact statements and their query plans before changing materialization.
 
 
+## Indexed parent membership after A1 (2026-10-25)
+
+Hypothesis: direct-parent membership creates quadratic scans when SQLite underestimates a materialized child projection.
+The captured generated-facades queries confirm this shape. Queries 187–190 perform 838 million VM instructions and 91 million scan steps in total.
+They use 4.277 CPU seconds in the diagnostic SQL capture.
+The plan shows nested scans of `m` and `w`, without an automatic index.
+The existing persistent child index already supports the required inverse lookup.
+
+Red commit `9621e074` doubles direct-parent demand from 256 to 512 calls.
+Its SQL work increases from about 1.29 million to 4.94 million VM instructions.
+The test also requires correct roots and excludes a second file with identical contents.
+The implementation seeks `decoded_child_lookup(fid,parent,field,pre)` from selected parents.
+The final intersection retains the exact original scope. Field and first-child guards remain in place.
+The upward `has` path also reads its narrow properties directly, without an intermediate wide projection.
+This follows the prior-work lessons on narrow relations, indexed anchors, and avoiding temporary stage construction.
+
+The scaling test now passes. All 1,507 Rust DSL tests pass; 23 remain ignored and 114 unrelated tests remain outside that filter.
+The frozen addon hash is `a8257da224e2e6e4274ea2859873173239751cba0c40f3754e9e0cfbb4e3c2f1`.
+Build settings, allocator, worker count, recording, and selection hashes match the A1 controls.
+
+| Sample / rules | Frozen before CPU | A1 CPU | Indexed-parent CPU | Change from before |
+| --- | ---: | ---: | ---: | ---: |
+| 32 / 50 | 9.588 s | 11.270 s | 7.002 s | −27.0% |
+| 128 / 50 | 15.395 s | 17.937 s | 13.563 s | −11.9% |
+
+These are ingestion-only CPU measurements. Repository analyses and complete finding parity remain outside these controls.
+The indexed-parent runs have no local execution failures; both frozen-before runs retain the known signature failure.
+Physical planning remains inside ingestion CPU. Logical compilation uses 1.518 and 1.611 CPU seconds for the two new runs.
+The new 32-file run uses 14.590 ingestion wall seconds and 1,169,195,008 bytes of full-process OS peak RSS.
+The new 128-file run uses 24.591 ingestion wall seconds and 1,316,282,368 bytes of full-process OS peak RSS.
+The host remains heavily contended; these single wall-time observations do not establish a latency gain.
+
+Commands and OS resource files are in `control-parent-{32,128}-50/` under the A1 evidence directory.
+The exact commands use `run-control.py parent FILES 50`; each invocation receipt records the command and host load.
+Keep the indexed path. The result does not complete A2 or establish full-repository recovery.
+
+The original generated-facades source also completes `sync-async-signatures` with no findings or failures.
+Its recorded reproducer is `signature-recording.json`, and its A1 result is `signature-a1.json`.
+Source batches 4–5 contain another 330 executable observations with no finding differences or engine failures.
+Their overall replay commands return nonzero because six listed checks have no executable observations in those original recordings.
+Do not count those checks as covered by these recordings. The separate 120-observation controls supply positive and clean cases for every rule.
+Batch-six replay remains incomplete. Its timed-out commands and unchanged smaller shards remain available.
+
+The SQL diagnostic command itself completes, but its report validation returns nonzero because the ingestion-only driver supplies no parity report.
+That is not a count-limit failure. Its report cannot establish correctness acceptance.
+The fixed 100 reference remains diagnostic.
+
 ## Future entries
 
 Each new entry must identify the hypothesis, baseline commit, workload hashes, build configuration, and exact commands.
