@@ -25,6 +25,19 @@ it("snapshot planning rejects absent async names before utility work exhausts it
   expect(result.violations).toEqual([]);
 }, 60_000);
 
+it("multiple rare leaves produce one confirmed finding at their shared root", () => {
+  const rule = native.CodeRuleDslRuntime.compile(JSON.stringify({
+    format: "rerail.policy/v1", id: "rare-leaves", revision: 1, mode: "log",
+    clauses: [{ id: "calls", forbid: { ast: { language: "typescript", rule: { pattern: "$FUNC(target, target)" } } },
+      violation: { code: "CALL", message: "Call", anchor: "witness.span" } }],
+  }), "json", capabilities);
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 1,
+    files: [{ path: "a.ts", language: "typescript", source: "f(target, target);\n" + "(0)();\n".repeat(100) }],
+  }), "report"));
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toHaveLength(1);
+});
+
 it("workspace planning rejects absent async names before utility work exhausts its allowance", async () => {
   const workspace = new native.CodeRuleDslWorkspace();
   try {
