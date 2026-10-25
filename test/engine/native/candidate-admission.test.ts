@@ -115,7 +115,8 @@ it.skipIf(!required)("a plan that exceeds its lowering bound preserves earlier s
     const lower = trace.filter(t => t.phase === "anchor-lower" && t.name === "template");
     expect(lower).toHaveLength(1);
     const materialized = trace.filter(t => t.phase === "anchor-materialize" && t.detail.relationId != null);
-    expect(materialized.length).toBeGreaterThan(0);
+    expect(trace.filter(t => t.phase === "anchor-results").length).toBeGreaterThan(0);
+    // A single SQL reader can now remain fused, with no physical producer stage.
     // A bounded conjunction can retain useful filters instead of falling back to
     // root kinds. Count constructions per producer, not all retained filters.
     expect(new Set(materialized.map(t => t.detail.relationId)).size,

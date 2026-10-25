@@ -7,10 +7,12 @@ mod access;
 #[path = "decode.rs"]
 mod decode;
 use decode::Property;
+mod fragments;
 mod kind_alternatives;
 #[path = "lower/render.rs"]
 mod render;
 mod source;
+pub(super) use fragments::Fragments;
 use render::Definitions;
 mod children;
 pub(super) mod lifetime;
@@ -52,10 +54,15 @@ pub(super) struct Statement {
 }
 impl Statement {
     pub(super) fn retained_sql_bytes(&self) -> usize {
-        self.stages.iter().map(|s|s.sql.capacity()).sum::<usize>()
-        + self.queries.iter().map(String::capacity).sum::<usize>()
-        + self.graph.iter().map(String::capacity).sum::<usize>()
-        + self.ownership.setup.iter().map(String::capacity).sum::<usize>()
+        self.stages.iter().map(|s| s.sql.capacity()).sum::<usize>()
+            + self.queries.iter().map(String::capacity).sum::<usize>()
+            + self.graph.iter().map(String::capacity).sum::<usize>()
+            + self
+                .ownership
+                .setup
+                .iter()
+                .map(String::capacity)
+                .sum::<usize>()
     }
 
     pub fn preparations(&self, covered: bool) -> usize {
@@ -111,6 +118,7 @@ struct Lower {
     roots: HashMap<BTreeSet<u16>, Set>,
     limit: usize,
     indexed: BTreeSet<String>,
+    preferred: BTreeSet<String>,
     reuse: Reuse,
     decoding: HashMap<String, decode::Demand>,
     predicates: HashMap<String, (String, String)>,
@@ -149,6 +157,7 @@ impl Lower {
             roots: HashMap::new(),
             limit: 256,
             indexed: BTreeSet::new(),
+            preferred: BTreeSet::new(),
             reuse: Reuse::default(),
             decoding: HashMap::new(),
             predicates: HashMap::new(),
@@ -361,8 +370,8 @@ impl Lower {
             selected=self.relation(format!("SELECT p.fid,p.pre FROM {properties} p WHERE p.kind NOT IN (0,65535) OR (p.flags&8) {op} 0"),true)?;
         }
         self.roots.insert(kinds.clone(), selected.clone());
-        // Base postings otherwise get re-scanned inside every physical consumer statement.
-        self.indexed.insert(selected.name.clone());
+        // Repeated physical readers can share postings; one reader stays fused.
+        self.preferred.insert(selected.name.clone());
         self.reuse
             .kinds
             .insert(selected.name.clone(), kinds.clone());
@@ -739,7 +748,13 @@ impl Lower {
 }
 
 pub(super) fn batch_files(plans: &[&AnchorPlan], lang: u32, files: &[i64]) -> Statement {
-    batch_files_planned(plans, lang, files, &Default::default())
+    batch_files_planned(
+        plans,
+        lang,
+        files,
+        &Default::default(),
+        &mut Fragments::default(),
+    )
 }
 
 pub(super) fn batch_files_planned(
@@ -747,8 +762,9 @@ pub(super) fn batch_files_planned(
     lang: u32,
     files: &[i64],
     statistics: &super::statistics::Statistics,
+    fragments: &mut Fragments,
 ) -> Statement {
-    batch_scope(plans, lang, Some(files), None, statistics)
+    batch_scope(plans, lang, Some(files), None, statistics, fragments)
 }
 
 #[cfg(test)]
@@ -767,6 +783,7 @@ pub(super) fn batch(
         fid.as_ref().map(std::slice::from_ref),
         path_glob,
         &statistics,
+        &mut Fragments::default(),
     )
 }
 
@@ -800,7 +817,9 @@ fn scope(
 #[cfg(test)]
 thread_local! { static FRAGMENT_COMPILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 #[cfg(test)]
-pub(super) fn fragment_compilations() -> usize { FRAGMENT_COMPILES.get() }
+pub(super) fn fragment_compilations() -> usize {
+    FRAGMENT_COMPILES.get()
+}
 
 fn batch_scope(
     plans: &[&AnchorPlan],
@@ -808,11 +827,13 @@ fn batch_scope(
     fids: Option<&[i64]>,
     path_glob: Option<&str>,
     statistics: &super::statistics::Statistics,
+    fragments: &mut Fragments,
 ) -> Statement {
     use super::graph::program::Program;
     let mut program = Program::default();
     let mut roots = Vec::new();
     let mut indexed_nodes = BTreeSet::new();
+    let mut preferred_nodes = BTreeSet::new();
     let mut decoded_nodes: std::collections::BTreeMap<
         usize,
         (Option<usize>, Property, BTreeSet<usize>),
@@ -822,66 +843,46 @@ fn batch_scope(
     let mut admissions = Vec::new();
     let mut anchors = Vec::new();
     for (qid, plan) in plans.iter().enumerate() {
-        #[cfg(test)]
-        FRAGMENT_COMPILES.set(FRAGMENT_COMPILES.get() + 1);
         #[cfg(feature = "code-rule-profile")]
-        let mut fragment =
+        let mut timing =
             crate::code_rule_dsl::profile::trace::Span::start("anchor-fragment", "lower");
-        // Admission belongs to the individual plan. Another consumer's cached
-        // producers cannot expand or shrink this plan's existing 256-node allowance.
-        let mut lower = scope(lang, fids, path_glob, statistics);
-        lower.consumer = qid;
-        let checkpoint = lower.ctes.len();
-        lower.limit = checkpoint + 256;
-        let attempted = lower.plan(plan, lower.all());
-        anchors.extend(std::mem::take(&mut lower.anchors));
+        let (fragment, _cached) = fragments.get(plan, lang, fids, path_glob, statistics);
+        anchors.extend(fragment.anchors.iter().cloned().map(|mut d| {
+            d.consumer = qid;
+            d
+        }));
         admissions.push(Admission {
             consumer: qid,
-            generated: lower.ctes.len() - checkpoint,
-            broadened: attempted.is_err() || lower.partial,
-            partial: lower.partial && attempted.is_ok(),
+            generated: fragment.admission.generated,
+            broadened: fragment.admission.broadened,
+            partial: fragment.admission.partial,
         });
         #[cfg(feature = "code-rule-profile")]
-        if attempted.is_err() || lower.partial {
+        if fragment.admission.broadened {
             crate::code_rule_dsl::profile::record_anchor_plan_broadening();
         }
-        let selected = match attempted {
-            Ok(selected) => selected,
-            Err(()) => {
-                // Discard the entire failed fragment, including predicates, parameters
-                // and reuse state. Earlier fragments already belong to the shared program.
-                lower = scope(lang, fids, path_glob, statistics);
-                lower.consumer = qid;
-                lower.limit = lower.ctes.len() + 256;
-                match &plan.root_kinds {
-                    Some(kinds) => lower.kinds(kinds).unwrap_or_else(|_| lower.all()),
-                    None => lower.all(),
-                }
-            }
-        };
-        let definitions = Definitions::new(std::mem::take(&mut lower.ctes));
-        let live = definitions
-            .live(&format!("SELECT fid,pre FROM {}", selected.name))
-            .into_iter()
-            .cloned()
-            .collect::<Vec<_>>();
         #[cfg(feature = "code-rule-profile")]
         {
-            fragment.detail(|| serde_json::json!({"consumer":qid,"generated":admissions[qid].generated,"liveCtes":live.len(),"partial":admissions[qid].partial}));
-            drop(fragment);
+            timing.detail(|| serde_json::json!({"consumer":qid,"generated":fragment.admission.generated,"liveCtes":fragment.live.len(),"partial":fragment.admission.partial,"cached":_cached}));
+            drop(timing);
         }
         #[cfg(feature = "code-rule-profile")]
         let _compose =
             crate::code_rule_dsl::profile::trace::Span::start("anchor-compose", "intern");
-        let nodes = program.add(&live, &lower.parameters, lang);
-        roots.push((nodes[&selected.name].id, qid));
-        for name in lower.indexed {
-            if let Some(node) = nodes.get(&name) {
+        let nodes = program.add(&fragment.live, &fragment.parameters, lang);
+        roots.push((nodes[&fragment.selected].id, qid));
+        for name in &fragment.indexed {
+            if let Some(node) = nodes.get(name) {
                 indexed_nodes.insert(node.id);
             }
         }
-        for (name, demand) in lower.decoding {
-            let Some(node) = nodes.get(&name) else {
+        for name in &fragment.preferred {
+            if let Some(node) = nodes.get(name) {
+                preferred_nodes.insert(node.id);
+            }
+        }
+        for (name, demand) in &fragment.decoding {
+            let Some(node) = nodes.get(name) else {
                 continue;
             };
             let scope = if demand.scope == "all_nodes" {
@@ -896,16 +897,16 @@ fn batch_scope(
                         *previous == scope && *property == demand.property,
                         "shared decoder definition"
                     );
-                    consumers.extend(&demand.consumers);
+                    consumers.insert(qid);
                 })
-                .or_insert((scope, demand.property, demand.consumers));
+                .or_insert((scope, demand.property, BTreeSet::from([qid])));
         }
-        for (name, (language, expression)) in lower.predicates {
-            let Some(node) = nodes.get(&name) else {
+        for (name, (language, expression)) in &fragment.predicates {
+            let Some(node) = nodes.get(name) else {
                 continue;
             };
             let value = |parameter: &str| {
-                lower.parameters[parameter
+                fragment.parameters[parameter
                     .strip_prefix('?')
                     .expect("bound value")
                     .parse::<usize>()
@@ -915,10 +916,10 @@ fn batch_scope(
             };
             predicates
                 .entry(node.id)
-                .or_insert_with(|| (value(&language), value(&expression)));
+                .or_insert_with(|| (value(language), value(expression)));
         }
-        for (name, (spans, expression, literal)) in lower.source_predicates {
-            if let Some(node) = nodes.get(&name) {
+        for (name, (spans, expression, literal)) in &fragment.source_predicates {
+            if let Some(node) = nodes.get(name) {
                 let at = expression
                     .strip_prefix('?')
                     .expect("bound expression")
@@ -928,9 +929,9 @@ fn batch_scope(
                     .entry(node.id)
                     .or_insert_with(|| {
                         (
-                            nodes[&spans].id,
-                            lower.parameters[at - 1].clone(),
-                            literal,
+                            nodes[spans].id,
+                            fragment.parameters[at - 1].clone(),
+                            *literal,
                             BTreeSet::new(),
                         )
                     })
@@ -958,6 +959,10 @@ fn batch_scope(
         .map(|arms| arms.join(" UNION ALL ") + " ORDER BY qid,fid,pre")
         .collect();
     let indexed = indexed_nodes
+        .into_iter()
+        .map(|node| layout.names[&node].clone())
+        .collect();
+    let preferred = preferred_nodes
         .into_iter()
         .map(|node| layout.names[&node].clone())
         .collect();
@@ -1018,6 +1023,7 @@ fn batch_scope(
         queries,
         layout.parameters,
         indexed,
+        preferred,
         decoding,
         source_predicates,
     );
@@ -1117,7 +1123,15 @@ fn prepare_decoded(
     indexed: BTreeSet<String>,
     decoding: HashMap<String, decode::Demand>,
 ) -> Statement {
-    prepare_families(ctes, queries, parameters, indexed, decoding, HashMap::new())
+    prepare_families(
+        ctes,
+        queries,
+        parameters,
+        indexed,
+        BTreeSet::new(),
+        decoding,
+        HashMap::new(),
+    )
 }
 
 fn prepare_families(
@@ -1125,6 +1139,7 @@ fn prepare_families(
     queries: Vec<String>,
     parameters: Vec<Value>,
     mut indexed: BTreeSet<String>,
+    preferred: BTreeSet<String>,
     mut decoding: HashMap<String, decode::Demand>,
     mut source_predicates: HashMap<String, source::Demand>,
 ) -> Statement {
@@ -1177,6 +1192,7 @@ fn prepare_families(
         .filter_map(|cte| decoding.get(cte.split_once('(').expect("CTE columns").0))
         .find(|d| d.property == Property::Node && d.scope == "all_nodes");
     let required_indexes = indexed.clone();
+    indexed.extend(preferred);
     for demand in ctes
         .iter()
         .filter_map(|cte| decoding.get(cte.split_once('(').expect("CTE columns").0))

@@ -21,7 +21,13 @@ pub(super) fn planned_batch(
 ) -> lower::Statement {
     let statistics =
         super::statistics::Statistics::read(&store.db, plans.iter().map(|p| (lang, *p))).unwrap();
-    lower::batch_files_planned(plans, lang, files, &statistics)
+    lower::batch_files_planned(
+        plans,
+        lang,
+        files,
+        &statistics,
+        &mut lower::Fragments::default(),
+    )
 }
 
 #[test]

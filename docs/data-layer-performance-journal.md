@@ -4299,3 +4299,47 @@ The red cache still ignores that budget; the next implementation enforces it.
 A separate regression requires unchanged plan fragments to survive changes to the admitted frontier.
 Another regression requires one kind posting with one SQL consumer to stay in the result statement.
 These tests target retained memory, repeated compilation, and unnecessary physical materialization separately.
+
+### Bounded SQL ownership and reusable fragments
+
+The fragment and fusion red run passes 111 SQL tests and fails the two new regressions.
+The cache green implementation passes eviction and oversized-entry tests.
+The completed implementation passes all 113 SQL tests, with one ignored test.
+It also passes 1,332 core tests and 194 workspace tests. There are 23 ignored core tests.
+All 42 production-shape tests pass after removing an obsolete requirement for at least one materialized producer.
+The test still requires executed result reads, unchanged findings, bounded admission, and one construction per physical producer.
+
+The template cache admits at most 64 MiB of retained SQL and graph strings.
+A separate 32 MiB fragment cache reuses per-plan lowering across admitted frontiers.
+Neither budget estimates the complete process heap. SQLite keeps ownership of published facts.
+Cache entries include language, logical plan identity, scope mode, path filter, and stored-statistic decisions.
+A changed anchor winner replaces the fragment. Consumer IDs are rebound during physical composition.
+One-reader posting relations remain inside their consumer statement; indexed membership and range probes retain required indexes.
+No production flag selects these changes.
+
+The frozen addon is `1734f8bc00d18c61cddcf4e6da84bf14007db6e4ad5371e52242f2758071533f`.
+Its 128-file, 60-rule diagnostic takes 18.783 CPU seconds and 37.638 wall seconds.
+Physical planning takes 3.619 CPU seconds, compared with 6.173 in the preceding control.
+Selection remains almost unchanged: 11.049 versus 11.063 CPU seconds.
+The driver peak RSS is 1,746,649,088 bytes. Compilation takes 1.785 CPU seconds.
+This single control overlaps the earlier full-repository diagnostic and cannot establish a wall-time acceptance result.
+The earlier fragment check failed on a Rust visibility error; the subsequent build corrects it.
+
+### First complete 50-rule result after anchor recovery
+
+All 9,021 files and 24,820 findings match, with zero false positives and zero false negatives.
+Two failures remain: constructor-arg incomplete evidence and exported-families query interruption.
+The earlier transaction-connection budget failure no longer occurs.
+Cold execution takes 899.070 CPU seconds and 1,897.468 wall seconds.
+Logical compilation takes 1.100 CPU seconds and 2.725 wall seconds.
+OS peak RSS is 5,332,975,616 bytes, or 4.967 GiB.
+The process-wide CPU total is 904.85 seconds, including startup and compilation.
+The previous cold CPU result is 958.590 seconds. This is a 6.2 percent reduction, far short of recovery.
+This artifact predates bounded SQL caches and fragment reuse.
+Its wall time overlaps development tests, builds, and external samples; it is diagnostic evidence.
+
+The full 60-rule run continues with the same frozen artifact.
+A separate constructor-only run over all repository inputs reproduces incomplete evidence.
+Both CPython and the generated native parser accept every one of the 9,010 Python sources.
+The three largest grammar files also pass independently under the constructor rule.
+The failure therefore requires evidence extraction or completion diagnosis; parser syntax is not established as its cause.

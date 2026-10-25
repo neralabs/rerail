@@ -41,7 +41,7 @@ impl Lower {
             let lang = self.parameter(i64::from(self.lang));
             let guard = self.value_kind_guard(domain.as_ref(), "v");
             let set = self.relation(format!("SELECT v.fid,p.pre FROM {terms} t CROSS JOIN cf CROSS JOIN vidx v ON v.fid=cf.fid CROSS JOIN nera_postings(v.postings) p WHERE v.lang={lang} AND v.term=t.term{guard}"), true)?;
-            self.indexed.insert(set.name.clone());
+            self.preferred.insert(set.name.clone());
             self.reuse.values.insert(key, set.clone());
             set
         };
@@ -50,7 +50,7 @@ impl Lower {
         let selected = self.value_within(scope, &indexed, bare)?;
         let guard = self.value_kind_guard(domain.as_ref(), "c");
         let uncovered = self.relation(format!("SELECT c.fid,p.pre FROM cf CROSS JOIN vcov c ON c.fid=cf.fid CROSS JOIN nera_postings(c.missing) p WHERE length(c.missing)>0{guard}"), true)?;
-        self.indexed.insert(uncovered.name.clone());
+        self.preferred.insert(uncovered.name.clone());
         let fallback = self.value_within(scope, &uncovered, bare)?;
         let expression = self.parameter(expression.to_owned());
         let spans = self.decoded(&fallback, Property::Span);

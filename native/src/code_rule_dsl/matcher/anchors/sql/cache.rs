@@ -14,7 +14,12 @@ pub(super) struct Cache<K, V> {
 }
 impl<K: Eq + Hash + Clone, V> Cache<K, V> {
     pub fn new(limit: usize) -> Self {
-        Self { entries: HashMap::new(), limit, bytes: 0, tick: 0 }
+        Self {
+            entries: HashMap::new(),
+            limit,
+            bytes: 0,
+            tick: 0,
+        }
     }
     pub fn get(&mut self, key: &K) -> Option<&V> {
         self.tick += 1;
@@ -23,14 +28,41 @@ impl<K: Eq + Hash + Clone, V> Cache<K, V> {
         Some(&entry.value)
     }
     pub fn insert(&mut self, key: K, value: V, bytes: usize) {
-        if let Some(previous) = self.entries.remove(&key) { self.bytes -= previous.bytes; }
+        if let Some(previous) = self.entries.remove(&key) {
+            self.bytes -= previous.bytes;
+        }
+        if bytes > self.limit {
+            return;
+        }
+        while self.bytes > self.limit - bytes {
+            let oldest = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(key, _)| key.clone())
+                .expect("over-budget cache has an entry");
+            self.bytes -= self.entries.remove(&oldest).expect("selected entry").bytes;
+        }
         self.tick += 1;
         self.bytes += bytes;
-        self.entries.insert(key, Entry { value, bytes, used: self.tick });
+        self.entries.insert(
+            key,
+            Entry {
+                value,
+                bytes,
+                used: self.tick,
+            },
+        );
     }
-    pub fn values(&self) -> impl Iterator<Item=&V> { self.entries.values().map(|e| &e.value) }
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn bytes(&self) -> usize { self.bytes }
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.entries.values().map(|e| &e.value)
+    }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
 }
 
 #[cfg(test)]
@@ -46,7 +78,10 @@ mod tests {
         cache.insert(2, second.clone(), 10);
         assert_eq!(cache.get(&1).unwrap().as_str(), "first");
         cache.insert(3, Arc::new(String::from("third")), 10);
-        assert!(cache.get(&2).is_none(), "least-recently-used SQL stays retained");
+        assert!(
+            cache.get(&2).is_none(),
+            "least-recently-used SQL stays retained"
+        );
         assert_eq!(Arc::strong_count(&second), 1);
         assert_eq!(cache.get(&1).unwrap().as_str(), "first");
         assert_eq!(cache.len(), 2);

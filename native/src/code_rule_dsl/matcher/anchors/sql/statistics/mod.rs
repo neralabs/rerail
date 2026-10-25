@@ -127,7 +127,7 @@ impl Statistics {
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub(super) struct Decision {
     pub consumer: usize,
     pub pattern: usize,

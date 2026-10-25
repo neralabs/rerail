@@ -41,6 +41,7 @@ struct State {
     batch_queries: usize,
     data_statements: usize,
     plans: HashMap<usize, Arc<AnchorPlan>>,
+    fragments: super::lower::Fragments,
     templates: super::cache::Cache<(u32, Vec<usize>), Template>,
     languages: HashSet<u32>,
     #[cfg(test)]
@@ -96,7 +97,7 @@ impl Corpus {
                     .sum::<usize>()
             })
             .sum::<usize>();
-        serde_json::json!({"templates":state.templates.len(),"sqlBytes":sql,"graphBytes":graph,"candidateBytes":state.files.values().map(|f|f.bytes).sum::<usize>(),"files":state.files.len(),"plans":state.plans.len(),"idleBytesEstimate":state.idle_bytes,"templateSqlBudgetBytes":64 * 1024 * 1024,"retainedTemplateSqlBytes":state.templates.bytes()})
+        serde_json::json!({"templates":state.templates.len(),"sqlBytes":sql,"graphBytes":graph,"candidateBytes":state.files.values().map(|f|f.bytes).sum::<usize>(),"files":state.files.len(),"plans":state.plans.len(),"idleBytesEstimate":state.idle_bytes,"templateSqlBudgetBytes":64 * 1024 * 1024,"retainedTemplateSqlBytes":state.templates.bytes(),"fragments":state.fragments.memory_profile()})
     }
 
     pub(in crate::code_rule_dsl) fn sql_backing(
@@ -157,6 +158,7 @@ impl Corpus {
                 batch_queries: 0,
                 data_statements: 0,
                 plans: HashMap::new(),
+                fragments: super::lower::Fragments::default(),
                 templates: super::cache::Cache::new(64 * 1024 * 1024),
                 languages: HashSet::new(),
                 #[cfg(test)]
@@ -408,6 +410,7 @@ impl Corpus {
             lang,
             &[],
             statistics,
+            &mut state.fragments,
         ));
         #[cfg(feature="code-rule-profile")]
         lower.detail(||serde_json::json!({"plans":plans.len(),"files":0,"template":true,"sqlBytes":statement.queries.iter().map(String::len).sum::<usize>()+statement.stages.iter().map(|s|s.sql.len()).sum::<usize>(),"materializations":statement.preparations(false),"resultQueries":statement.queries.len()}));
