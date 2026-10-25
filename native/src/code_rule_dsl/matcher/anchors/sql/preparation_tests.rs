@@ -2,6 +2,39 @@ use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 
 #[test]
+fn scoped_kind_refinement_never_opens_unrequested_kind_postings() {
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    let dialect = GrammarDialect::TypeScript;
+    let compiled = compiled(serde_json::json!({"language":"typescript","rule":{
+        "kind":"call_expression","has":{"kind":"identifier","field":"function","stopBy":"neighbor"}
+    }}));
+    let plan = &grammar_matchers(&compiled)[0].anchors;
+    for (calls, expected) in [("target(value); (0)();", 1), ("(0)();", 0)] {
+        let store = store::Store::temporary().unwrap();
+        let source = "const a = b;\n".repeat(100) + calls;
+        let doc = tests::document(&source, dialect);
+        let fid = store.put("selected.ts", &doc).unwrap();
+        let kind = dialect.kinds().kind_id("identifier");
+        store
+            .db
+            .execute(
+                "UPDATE file_kind_counts SET postings=X'80' WHERE fid=?1 AND code=?2",
+                rusqlite::params![fid, kind],
+            )
+            .unwrap();
+        let language = u32::from(crate::code_rule_dsl::language::tape_tag(dialect).unwrap());
+        let statement = tests::planned_batch(&store, &[plan], language, &[fid]);
+        let mut roots = Vec::new();
+        execute::rows(&store, &statement, |_, file, pre| roots.push((file, pre))).unwrap();
+        assert_eq!(roots.len(), expected);
+        assert!(
+            roots.iter().all(|&(file, pre)| file == fid
+                && doc.transducer_text_str(pre as u32) == "target(value)")
+        );
+    }
+}
+
+#[test]
 fn direct_parent_membership_scales_with_demand_instead_of_parent_cross_product() {
     use super::super::{Condition, Direction};
     use std::sync::{

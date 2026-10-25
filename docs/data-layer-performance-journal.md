@@ -3934,7 +3934,7 @@ These are ingestion-only CPU measurements. Repository analyses and complete find
 The indexed-parent runs have no local execution failures; both frozen-before runs retain the known signature failure.
 Physical planning remains inside ingestion CPU. Logical compilation uses 1.518 and 1.611 CPU seconds for the two new runs.
 The new 32-file run uses 14.590 ingestion wall seconds and 1,169,195,008 bytes of full-process OS peak RSS.
-The new 128-file run uses 24.591 ingestion wall seconds and 1,316,282,368 bytes of full-process OS peak RSS.
+The new 128-file run uses 24.591 ingestion wall seconds and 1,316,241,408 bytes of full-process OS peak RSS.
 The host remains heavily contended; these single wall-time observations do not establish a latency gain.
 
 Commands and OS resource files are in `control-parent-{32,128}-50/` under the A1 evidence directory.
@@ -3951,6 +3951,31 @@ Batch-six replay remains incomplete. Its timed-out commands and unchanged smalle
 The SQL diagnostic command itself completes, but its report validation returns nonzero because the ingestion-only driver supplies no parity report.
 That is not a count-limit failure. Its report cannot establish correctness acceptance.
 The fixed 100 reference remains diagnostic.
+
+The 60-rule comparison blocks aggregate acceptance of this candidate.
+The frozen before version completes 128-file ingestion in 28.149 CPU seconds and 80.271 wall seconds, with the known signature failure.
+The indexed-parent candidate exceeds the 115-second command limit and is terminated as a process group.
+It completes only three of five ingestion batches, which account for 33.897 worker CPU seconds.
+Its final cold timing, findings, and OS peak RSS remain unavailable.
+The receipts are `control-{before,parent}-128-60/invocation.json`.
+Do not report a 60-rule gain or extrapolate the 50-rule improvement to the full workload.
+
+The indexed-parent candidate also passes all 42 production-shape tests and the 120 positive/clean rule controls through both evaluation paths.
+The next TDD rung prohibits whole-kind enumeration during refinement of an already restricted candidate set.
+
+To reproduce a bounded ingestion control directly, set a fresh output path and a frozen addon:
+
+```sh
+RERAIL_ENGINE_PATH="$PWD/.rerail/profiles/anchor-planning-20261025/parent-addon/engine.node" \
+DYLD_INSERT_LIBRARIES=/tmp/librerail_jemalloc_check_shim.dylib RERAIL_NATIVE_WORKERS=4 \
+/usr/bin/time -lp -o CONTROL_RESOURCE_PATH \
+node --import tsx scripts/profiling/workloads/anchor-ingestion.ts \
+  --recording .rerail/profiles/full-repository-20261021/all-60-recording.json \
+  --files 128 --rules 50 --output CONTROL_REPORT_PATH
+```
+
+The recorded controller enforces a 115-second limit and terminates the whole process group on timeout.
+Detailed tracing, SQL capture, and memory census remain disabled in timing controls.
 
 ## Future entries
 
