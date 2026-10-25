@@ -115,6 +115,20 @@ pub(super) fn record_evidence(state: &mut WorkspaceState, path: &str, file: &Fil
             }
             _ => file.syntax.clone(),
         };
+        #[cfg(feature = "code-rule-profile")]
+        if failure.is_some() || syntax.is_some() {
+            let rule = &state.code_rules[id.0];
+            let _context = crate::code_rule_dsl::profile::trace::Context::enter(
+                &rule.id,
+                &rule.clauses[id.1].id,
+                Some(path),
+            );
+            let mut span = crate::code_rule_dsl::profile::trace::Span::start(
+                "evidence-incomplete",
+                "partition",
+            );
+            span.detail(|| serde_json::json!({"failure":failure,"syntax":syntax,"witnesses":witnesses.len()}));
+        }
         let partitions = state.evidence.entry(id).or_default();
         if failure.is_some() || syntax.is_some() || !witnesses.is_empty() {
             let partition = Partition {

@@ -4343,3 +4343,15 @@ A separate constructor-only run over all repository inputs reproduces incomplete
 Both CPython and the generated native parser accept every one of the 9,010 Python sources.
 The three largest grammar files also pass independently under the constructor rule.
 The failure therefore requires evidence extraction or completion diagnosis; parser syntax is not established as its cause.
+
+### Constructor evidence failure: reduced reproduction
+
+A bounded bisection reduces the full constructor failure to `rust_bridge/generated_install.py`.
+The generated installer contains two long functions with repeated `_facades.SomeClass` argument expressions.
+An evidence-partition trace identifies exhausted utility evaluations, with no syntax failure and no completed witnesses.
+The limit is the existing `maxVisitedNodes` utility allowance; this is not a name-closure traversal limit.
+The port evaluates lexical-scope utilities before checking immediate constructor-argument position.
+Identifiers inside an attribute therefore trigger scope scans before their parent shape rejects them.
+A new 1,800-call synthetic test reproduces incomplete evidence with the ordinary capabilities.
+The test requires complete, empty results. No budget is increased.
+The selected correction moves argument-position guards before lexical-scope analysis while retaining capture dependencies.

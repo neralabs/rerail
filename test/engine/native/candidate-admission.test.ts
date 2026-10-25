@@ -128,3 +128,26 @@ it.skipIf(!required)("a plan that exceeds its lowering bound preserves earlier s
   capture(true, "^v[0-9]+$", 2);
   capture(true, "^.{0,10}$"); // A failed branch's former parameter value must receive a valid new binding.
 }, 60_000);
+
+it.skipIf(!required)("constructor evidence rejects non-arguments before lexical scope walks", () => {
+  const program = `
+    import { readFileSync } from 'node:fs';
+    import { loadNativeBinding } from ${JSON.stringify(engine)};
+    const native=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
+    const document=readFileSync('packs/data-layer/candidates/rules/data-layer-grammar-callable-constructors.json','utf8');
+    const compiled=native.CodeRuleDslRuntime.compile(document,'json',caps);
+    const body=Array.from({length:900},(_,i)=>'    _install("module", "Class", _facades.C'+i+')').join(String.fromCharCode(10));
+    const source=['from lib import facades as _facades','def install():',body,'def restore():',body,''].join(String.fromCharCode(10));
+    const files=[{path:'impl/common/l2100_sql_grammar/rust_bridge/generated_install.py',language:'python',source}];
+    const ws=new native.CodeRuleDslWorkspace();ws.addCodeRule(compiled);
+    try {console.log(await ws.applyAsync(JSON.stringify({revision:1,files,removed:[]})));}finally{ws.close();}
+  `;
+  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+    encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
+    env: process.env,
+  });
+  expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
+  const result = JSON.parse(child.stdout.trim()).evaluation;
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toEqual([]);
+}, 35_000);
