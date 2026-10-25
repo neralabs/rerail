@@ -9,6 +9,84 @@ The workload includes positive and clean state-tripwire observations through sna
 It is the complete small guard, not the full data-layer repository. These counts must not be extrapolated linearly to the repository.
 The [count ledger](../fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json) records source hashes, witnesses, formulas, dependencies, and overlap.
 
+## Post-C survey: current 975 submissions
+
+Production remains at `82d82d89`, with 975 engine submissions and 106 separately counted SQLite internal executions.
+The [survey evidence](../fixtures/host/data-layer-port/profiling/post-c-sql-survey-20261024.json) reconciles every engine submission to one bucket.
+These counts describe the complete fixed guard, including snapshot and workspace execution for two observations.
+
+| Disjoint work | Submissions | Recommended treatment |
+| --- | ---: | --- |
+| Candidate preparation and retirement | 312 | Reduce physical cuts and repeated demand preparation through bounded SQL pipelines and shared producer owners. |
+| Simple event clauses | 202 | Apply the existing complete-input precondition. An isolated policy copy measures 202 → 12. |
+| State-flow SQL | 184 | Plan private pipelines around necessary indexed, shared, and native-producer boundaries. |
+| Index initialization and reader setup | 176 | Reuse physical SQL backing through an execution owner, with separate logical domains. |
+| Compiler affinity inference | 53 | Retain SQLite's type semantics. Reduce inference boundaries only with a proven replacement. |
+| File and language-catalog publication | 48 | Maintain typed bulk publication within the shared owner. Include maintenance costs. |
+| **Total** | **975** | **The final limit remains 100.** |
+
+### Proven admission opportunity
+
+The four C frontends use `requireNonemptyInput`, but the other 28 state clauses still query a single `events` input without that precondition.
+The trace contains 55 complete empty event evaluations and two nonempty evaluations.
+An isolated policy copy adds `requireNonemptyInput: events` to those 28 clauses, using the existing addon.
+The unchanged complete guard decreases from 975 to 785 submissions: **190 actual removals**, including all replacement and cleanup work.
+All 77 state observations retain parity: 64 positive and 13 clean, with zero engine failures or execution differences.
+Five fresh matched pairs measure median CPU of 575.665 → 587.471 ms, with overlapping ranges.
+Median peak RSS is 300,928 → 297,328 KiB. All controls retain parity.
+This experiment demonstrates a count reduction and no CPU improvement. It changes no production policy.
+Admission can supply a count component of the next delivery, but that complete delivery must pass CPU and memory acceptance.
+
+### Candidate boundaries and completion
+
+The 312 candidate statements include 110 fills of `candidate_keys`, 66 retirement DELETEs, 20 span fills, and 28 child fills.
+Seventy-four candidate fills, 26 retirements, 16 span fills, and 22 child fills change no rows in this recording.
+Zero changed rows do not prove that a statement can safely be skipped.
+The planner already batches independent roots and decoder requests. Additional savings require fewer physical cuts or fewer genuine dependency barriers.
+
+The next candidate experiment must compile the captured typed graph into bounded SQL pipelines.
+Cheap private work stays inside one SQL scope. Selected shared materializations retain one named owner and complete binding identity.
+Decoder boundaries retain their real dependencies. Integer key affinity and bounded memory remain required.
+Changing the preparation limit or concatenating rendered query trees does not establish a valid improvement.
+No net removal target is assigned until the complete replacement schedule passes replay and CPU/memory controls.
+
+### Physical owner lifetime
+
+Index initialization costs 168 statements: four repetitions of 42.
+Reader configuration adds eight statements. The four index lifetimes contain two distinct source hashes.
+The guard deliberately runs both snapshot and workspace paths. Both paths must continue to execute.
+A shared physical SQL owner can retain schema while logical domains retain their own versions, membership, completion, budgets, and failure attribution.
+The positional FTS index remains the starting point.
+One physical schema identifies a **gross ceiling of 126 avoided setup statements**.
+Domain publication, retirement, cleanup, and maintenance must be subtracted before this becomes a net target.
+A full-repository workspace already amortizes initialization, so this guard opportunity does not predict repository CPU savings.
+
+### Relational pipelines and compiler semantics
+
+The remaining state-flow work comprises two executions of 92 statements each.
+Each execution materializes 24 SQL-derived relations and crosses one native reachability boundary.
+Together they create 22 indexes and execute 14 ANALYZE statements.
+Private single-use stages can form SQL pipelines, while indexed or multiply consumed relations retain explicit owners.
+Recursive stages require separate cost and memory evidence before fusion.
+Eponymous native relations identify another 16 CREATE/DROP statements for investigation. Runtime rebinding and isolation still need an experiment.
+These are gross opportunities, not measured net removals.
+
+The compiler's 53 statements infer SQLite CTAS affinity on cold schema-cache misses.
+A larger warm cache does not remove first-use inference. Plain prepared SELECT metadata does not preserve all CTAS expression affinities.
+Any replacement must retain SQLite validation, column names, CAST/NULL/BLOB behavior, and authorization even when runtime admission is empty.
+
+### Capture and next delivery
+
+Four candidate statements come from capture provenance: `SELECT fid,lang,hex(digest) FROM file ORDER BY fid`.
+The profiler can obtain those versions from existing corpus metadata instead of querying SQL.
+All four remain counted until the queries are actually removed. Moving work into triggers does not count as a reduction.
+
+The next delivery must combine a priced set of these changes and remove its full promised count.
+The admission experiment supplies 190 measured removals, without a demonstrated CPU gain.
+Candidate pipelines and physical owner lifetime require compiled-plan experiments before pricing.
+Submission savings alone do not establish CPU recovery. SQL execution spans omit preparation CPU, and matched controls remain mandatory.
+The [survey journal](data-layer-performance-journal.md#remaining-sql-submission-survey-2026-10-24) records the experiment and qualifications.
+
 ## R5-A implementation result
 
 The complete guard now submits **3,685 statements**, down from **7,733**: **4,048 removed**.
@@ -153,7 +231,7 @@ The implementation sites are [relational sessions and stages](../native/src/code
 and [schema metadata](../native/src/code_rule_dsl/relational/schema.rs).
 The existing [shared-storage contract test](../scripts/profiling/preparation/src/shared_storage.rs) supplies an initial connection constraint.
 
-## R5-C: four state syntax frontends and empty-domain admission
+## R5-C: original planning price for the delivered state frontends
 
 **Target: remove at least 1,261 submissions from 2,250, reaching at most 989.**
 
@@ -193,9 +271,9 @@ Fewer submissions do not permit a CPU or memory regression. The rejected family-
 Count replacement INSERTs, DELETEs, schema changes, transactions, publication, and cleanup.
 Retain the fixed 100 limit without resets, reclassification, or truncated findings.
 
-The accepted R5-A and R5-B results leave 2,250 submissions, still 2,150 above the final limit.
-The bounded C specification targets 1,261 of that measured gap. Its projected remainder is 889 above the final limit.
-Subsequent work needs a new inventory after actual C delivery. No later savings are claimed now.
+The accepted R5-A and R5-B results leave 2,250 submissions. Delivered C removes another 1,275 and leaves 975.
+The current post-C survey records the remaining inventory and the isolated 190-removal admission experiment.
+Production remains 875 submissions above the final limit. Unmeasured architectural opportunities have no assigned net savings.
 CPU-only improvements, cheaper private CTEs, and speculative cache hits do not contribute to the submission targets.
 SQLite internal executions remain separately reported and do not inflate the projected engine savings.
 This plan creates no Linear issues and adds no optional production execution path.

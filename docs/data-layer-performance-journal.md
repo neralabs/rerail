@@ -8,6 +8,60 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Remaining SQL submission survey: 2026-10-24
+
+Production remains at `82d82d89`: 975 engine submissions, 106 SQLite internal executions, and zero unknown origins.
+The [checked survey](../fixtures/host/data-layer-port/profiling/post-c-sql-survey-20261024.json) assigns every engine statement to one disjoint bucket.
+Candidate execution costs 312, event clauses cost 202, flow execution costs 184, index/reader setup costs 176, compiler inference costs 53, and publication costs 48.
+The guard includes two observations through snapshot and workspace paths. Four physical index lifetimes cover two source hashes.
+These lifecycle counts do not predict full-repository CPU savings.
+
+### Isolated admission experiment
+
+The other 28 state clauses have one `events` input. They do not yet use C's explicit input precondition.
+The trace contains 55 complete empty event evaluations and two nonempty evaluations.
+An isolated policy copy adds `requireNonemptyInput: events`, using the unchanged C addon.
+The complete guard decreases from 975 to 785 submissions: 190 actual removals, including replacement and cleanup work.
+Both guard observations retain complete parity and trace coverage. The final 100 gate still correctly fails.
+All 77 state observations pass: 64 positive and 13 clean, with zero engine failures or execution differences.
+
+Five fresh alternating pairs compare the two policy versions under the same C addon.
+Tracing, phase profiling, SQL capture, census, and sampling are off in every control child.
+Median CPU is 575.665 → 587.471 ms, an observed increase of 2.05%.
+CPU ranges overlap: 574.271–599.989 ms before and 555.689–596.872 ms after.
+Median peak RSS is 300,928 → 297,328 KiB. Every trial retains parity.
+This series demonstrates no CPU improvement. It is separate from the earlier B/C delivery controls.
+The policy remains isolated. The 190 removals can contribute to a broader delivery that also passes CPU and memory acceptance.
+
+### Remaining architecture work
+
+Candidate execution includes 110 key fills, 66 retirement DELETEs, 20 span fills, and 28 child fills.
+Their zero-change counts are 74, 26, 16, and 22 respectively. Zero changed rows do not prove safe omission.
+The planner already batches roots and decoder demand. Remaining savings require fewer physical cuts or genuine dependency barriers.
+The next experiment must compile captured typed plans into bounded private SQL pipelines and selected shared owners.
+It must preserve dependency order, integer affinity, complete empty publication, and bounded retention.
+
+Index setup costs 168 statements, from four repetitions of 42. Reader setup adds eight.
+One physical schema identifies at most 126 gross avoided initialization statements.
+A shared execution owner must preserve separate logical domains, source versions, permissions, completion, and both parity paths.
+New domain publication, cleanup, and maintenance reduce that gross saving. No net target is assigned yet.
+The positional FTS index remains unchanged.
+
+Flow execution costs 92 statements twice. Each execution has 24 SQL-derived relations and one native reachability boundary.
+Private single-use relations can form pipelines. Indexed and multiply consumed relations need explicit owners.
+Eponymous native relations identify 16 CREATE/DROP statements for investigation, with runtime rebinding and isolation still unproven.
+The compiler's 53 cold inference statements require a replacement that preserves SQLite CTAS affinity and unconditional SQL validation.
+Publication remains typed and batched. Moving writes into triggers does not establish a reduction.
+
+Four counted candidate statements come from capture provenance reads of file versions.
+The profiler can use existing corpus metadata instead. Those statements remain counted until their queries are actually removed.
+The current capture therefore includes a small observer cost, which this survey does not reclassify or subtract.
+
+The [opportunity plan](sql-execution-opportunities.md#post-c-survey-current-975-submissions) records the recommended order and pricing requirements.
+No production policy, engine implementation, acceptance limit, or Linear ticket changes during this survey.
+Raw audits, the policy copy, SQL captures, corpus replay, and all control trials reside under `.rerail/profiles/post-c-survey-20261024/`.
+Every experiment completes within the 115-second deadline.
+
 ## State syntax domain delivery R5-C: 2026-10-24
 
 **Result: 1,275 engine submissions removed against the unchanged 1,261 target.**
