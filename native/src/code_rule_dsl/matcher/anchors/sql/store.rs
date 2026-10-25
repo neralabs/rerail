@@ -50,6 +50,8 @@ impl Store {
             .tempfile()
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let mut store = Self::open(file.path())?;
+        // The file is unlinked with the store, so commits need no durability.
+        store.db.execute_batch("PRAGMA synchronous=OFF")?;
         store._temporary = Some(file);
         Ok(store)
     }

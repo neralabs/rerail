@@ -424,3 +424,15 @@ fn a_binds_branch_never_turns_an_unknown_into_no_match() {
     let expected = vec![at("u2", 0), at("os", 10), at("os\n", 18), at("u1", 10)];
     assert_eq!(starts, expected, "{result}");
 }
+
+#[test]
+fn a_three_valued_rule_keeps_its_source_prefilter() {
+    // `needle` is a two-valued source-text requirement; the unknown leaf does not lift it.
+    let rule = json!({ "kind": "identifier", "all": [{ "regex": "^needle$" }, { "not": u_or_x() }] });
+    let compiled = compile_typescript_rule(rule.clone()).unwrap_or_else(|error| panic!("{}", error.reason));
+    let matcher = &grammar_matchers(&compiled)[0];
+    assert!(matcher.three_valued);
+    assert!(matcher.text.is_some());
+    assert_eq!(texts(rule.clone(), "a; u; x;\n"), Vec::<String>::new());
+    assert_eq!(texts(rule, "needle; u;\n"), ["needle"]);
+}

@@ -367,15 +367,18 @@ pub(super) fn create_stage(
         for (index, fields) in stage.indexes.iter().enumerate() {
             #[cfg(feature = "code-rule-profile")]
             let _span = super::profile::trace::Span::start("sql-index", &stage.name);
+            // Index names are global: name them after the physical table, which a stage that
+            // defers columns (`__stage_<name>`) and one that defers none (`<name>`) do not share.
+            let name = format!("__{}_{}", physical, index);
             db.storage
                 .borrow_mut()
                 .index(
                     db,
                     &physical,
-                    &format!("__{}_{}", stage.name, index),
+                    &name,
                     format!(
                         "CREATE INDEX {} ON {} ({})",
-                        quote(&format!("__{}_{}", stage.name, index)),
+                        quote(&name),
                         quote(&physical),
                         fields
                             .iter()
