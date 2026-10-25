@@ -165,6 +165,7 @@ pub(in crate::code_rule_dsl) struct Profiler {
     database: *mut ffi::sqlite3,
     state: RefCell<State>,
     stem: PathBuf,
+    context_filter: Option<String>,
 }
 
 // SAFETY: rusqlite's Connection may move between workers. Its callback is invoked synchronously
@@ -210,6 +211,7 @@ impl Profiler {
                 ..State::default()
             }),
             stem,
+            context_filter: None,
         });
         let _ = *ORIGIN;
         // SAFETY: SQLite retains the stable Box address until Drop unregisters this callback.

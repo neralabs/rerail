@@ -397,3 +397,23 @@ fn authored_comments_and_interleaved_open_cursors_remain_engine_submissions() {
     assert_eq!(state.origin_started, [2, 0, 0]);
     assert_eq!(state.origin_completed, [2, 0, 0]);
 }
+
+#[test]
+fn filtered_sql_capture_excludes_other_components_and_rejects_whole_job_coverage() {
+    let directory = tempfile::tempdir().unwrap();
+    let connection = Connection::open_in_memory().unwrap();
+    // SAFETY: the profiler drops before the connection.
+    let mut profiler = unsafe { Profiler::new(&connection, directory.path()) }.unwrap();
+    profiler.context_filter = Some("relational".into());
+    profiler.context(json!({"component":"ast-index"}));
+    connection.query_row("SELECT 41", [], |r|r.get::<_,i64>(0)).unwrap();
+    profiler.context(json!({"scope":"relational","stage":"result"}));
+    connection.query_row("SELECT 42", [], |r|r.get::<_,i64>(0)).unwrap();
+    profiler.checkpoint(&connection).unwrap();
+    let report: Value = serde_json::from_slice(&std::fs::read(profiler.stem.with_extension("json")).unwrap()).unwrap();
+    assert_eq!(report["executionCoverage"]["started"], 1, "excluded publication still enters the capture");
+    assert_eq!(report["executionCoverage"]["completed"], 1);
+    assert_eq!(report["executionCoverage"]["fromSessionStart"], false, "a filtered trace can masquerade as complete job accounting");
+    assert_eq!(report["executionCoverage"]["contextFilter"], "relational");
+    assert!(report["queries"].as_array().unwrap().iter().all(|q|q["sql"] != "SELECT 41"));
+}

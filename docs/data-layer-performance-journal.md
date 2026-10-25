@@ -4365,3 +4365,11 @@ This run uses diagnostic addon `fc8be34fff719f3651fb3ff7a5f9dc918d4d76203dc75ec5
 Separately, all 198 batch 6 shards pass against the fragment addon, with 1,234 original observations and 376 guard repeats.
 The batch 6 aggregate verifies 405 positive and 829 clean original observations, exact source events, and native binary hashes.
 Its seven retained original cases remain explicit. These are not passes.
+
+### Filtered SQL diagnosis
+
+A new red test requires SQL capture to exclude unrelated publication contexts.
+It also requires filtered captures to declare incomplete whole-job coverage.
+The red run records two statements where the selected relational context contains only one.
+The implementation will expose a diagnostic context filter, without changing execution algorithms.
+The existing 100-statement validator rejects captures that lack whole-session coverage.
