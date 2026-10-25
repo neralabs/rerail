@@ -1,0 +1,1929 @@
+{
+  "format": "rerail.post-c-spikes/v1",
+  "date": "2026-10-24",
+  "baseCommit": "44a716a95ab85d9c21afd66efbb6939da1ec90ff",
+  "productionRuntimeCommit": "82d82d89",
+  "status": "Isolated prototypes. Production engine and generated policies are unchanged. No production algorithm flag or Linear ticket is added.",
+  "scope": "Complete fixed state guard with snapshot/workspace paths, plus separately bounded component replays. These are not full-repository timing results.",
+  "sourceHashes": {
+    "conformance/data-layer/post-c-control.mjs": "09be3b0f0fc9d268bcbb33fa00a0b81c5cc4207b711c063dc810115628e2ad5c",
+    "scripts/profiling/post_c_spikes/README.md": "b35d5901b795b16471e131fa502338e40cfebf2ff6a161cd890c0047aa3c2722",
+    "scripts/profiling/post_c_spikes/affinity.py": "5b46e8d66fba5fc272c9d804ebc8a41deb251c305c81ccd3b0a5d7b36b26b64f",
+    "scripts/profiling/post_c_spikes/candidate_suite.py": "6f418ddc208ee40ad489288e77c6d0459b1d2e4c5452496f3dd9f33147c27d99",
+    "scripts/profiling/post_c_spikes/candidates.py": "4dbf82b15a57de931ffa6a334f38c5c6820f8fbf939722e63e12bfc0ec09da34",
+    "scripts/profiling/post_c_spikes/controls.py": "ac52972bcee24af97e4445862a45f6b994e90d8d46ba4b1079a7b1d7e72c3c97",
+    "scripts/profiling/post_c_spikes/policies.py": "cd5c2f9fa601392d031c4a787e6e64dc0ff131e89d65e6ea5d1ba9ec1cf99241",
+    "scripts/profiling/post_c_spikes/runtime.patch": "751f7087261fbb49edc33c48f8caa66d56834ced6f8426ac6cbefdc98c227b9b",
+    "scripts/profiling/post_c_spikes/storage.py": "1fd97de8b8d2b54b7eac01a22d19a1ec21292fa40f1bd4b2b40b34beb6aee36c",
+    "scripts/profiling/preparation/src/bin/post_c_affinity.rs": "31a4c0a19a556666f55efaf87068331584826d58a4a60726c66776d73de678a7",
+    "scripts/profiling/preparation/src/post_c/mod.rs": "547f1f5754744af484172a6d5279b2a904ca04e3dcbc3a01ac61fe4878580b0c",
+    "scripts/profiling/preparation/src/residency.rs": "10712f9a93d7a6ed07478bbf18bcc92ca2a4e3726f5e4f807b5961371f4681ad"
+  },
+  "recording": {
+    "path": ".rerail/profiles/chunk-c-20261024/delivery-acceptance/recording.json",
+    "sha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4"
+  },
+  "nativeBuild": {
+    "worktree": "/tmp/rerail-post-c-spike-20261024",
+    "patch": "scripts/profiling/post_c_spikes/runtime.patch",
+    "patchSha256": "751f7087261fbb49edc33c48f8caa66d56834ced6f8426ac6cbefdc98c227b9b",
+    "features": [
+      "code-rule-profile"
+    ],
+    "profile": "release",
+    "lto": false,
+    "codegenUnits": 256,
+    "engineOptLevel": 1,
+    "workers": 4,
+    "allocatorArchive": ".rerail/profiles/chunk-c-20261024/libjemalloc_pic.a",
+    "allocatorSha256": "1bc717af143508e2aa35085fbf3383071415215c4a2ff68a443067ca17833ba7",
+    "allocatorShim": "/tmp/librerail_jemalloc_check_shim.dylib",
+    "runtimeCommandsDeadlineSeconds": 115,
+    "buildsAllowedToFinish": true
+  },
+  "completeJob": {
+    "baselineEngineSubmissions": 975,
+    "selectedEngineSubmissions": 718,
+    "removed": 257,
+    "baselineSqliteInternalExecutions": 106,
+    "selectedSqliteInternalExecutions": 100,
+    "unknownOrigins": 0,
+    "enginePhases": {
+      "connectionSetup": 232,
+      "filePublication": 36,
+      "catalogPublication": 12,
+      "candidatePreparation": 276,
+      "cleanup": 4,
+      "relationalEvaluation": 158
+    },
+    "limit": 100,
+    "remainingAboveLimit": 618,
+    "finalGateAccepted": false,
+    "targetExitCode": 0,
+    "launcherExitCode": 1,
+    "guardProfile": ".rerail/profiles/post-c-spikes-20261024/selected-guard/profile.json",
+    "executionBudgetSha256": "5e141f9b910c965527340c22295bb17279207496bb1980d5ba606cc18aeecd4a",
+    "inventorySha256": "39246a1bd2522d185bfaaebf7310bf0eb5e98917a226ff777f609e30adb30270",
+    "interpretation": "Complete parity and trace coverage pass. The fixed final 100 gate still fails. Component reductions below are not added to this measured count."
+  },
+  "controls": {
+    "trials": {
+      "baseline": [
+        {
+          "passed": true,
+          "cpuMs": 573.313,
+          "userMs": 515.929,
+          "systemMs": 57.384,
+          "wallMs": 1026.2189169999997,
+          "maxRSSKiB": 299696
+        },
+        {
+          "passed": true,
+          "cpuMs": 585.845,
+          "userMs": 539.638,
+          "systemMs": 46.207,
+          "wallMs": 1451.8641249999998,
+          "maxRSSKiB": 300448
+        },
+        {
+          "passed": true,
+          "cpuMs": 595.461,
+          "userMs": 541.02,
+          "systemMs": 54.441,
+          "wallMs": 1656.612375,
+          "maxRSSKiB": 300528
+        },
+        {
+          "passed": true,
+          "cpuMs": 583.185,
+          "userMs": 536.371,
+          "systemMs": 46.814,
+          "wallMs": 1225.5687920000003,
+          "maxRSSKiB": 299248
+        },
+        {
+          "passed": true,
+          "cpuMs": 597.824,
+          "userMs": 541.136,
+          "systemMs": 56.688,
+          "wallMs": 1109.573375,
+          "maxRSSKiB": 292832
+        }
+      ],
+      "selected": [
+        {
+          "passed": true,
+          "cpuMs": 585.3,
+          "userMs": 526.179,
+          "systemMs": 59.121,
+          "wallMs": 1199.1634999999999,
+          "maxRSSKiB": 299824
+        },
+        {
+          "passed": true,
+          "cpuMs": 606.254,
+          "userMs": 556.004,
+          "systemMs": 50.25,
+          "wallMs": 1808.7045,
+          "maxRSSKiB": 298032
+        },
+        {
+          "passed": true,
+          "cpuMs": 579.437,
+          "userMs": 527.35,
+          "systemMs": 52.087,
+          "wallMs": 1300.5410419999998,
+          "maxRSSKiB": 297584
+        },
+        {
+          "passed": true,
+          "cpuMs": 554.644,
+          "userMs": 514.775,
+          "systemMs": 39.869,
+          "wallMs": 1144.329125,
+          "maxRSSKiB": 297616
+        },
+        {
+          "passed": true,
+          "cpuMs": 561.791,
+          "userMs": 513.907,
+          "systemMs": 47.884,
+          "wallMs": 1197.9257910000001,
+          "maxRSSKiB": 287232
+        }
+      ]
+    },
+    "summary": {
+      "baseline": {
+        "medianCpuMs": 585.845,
+        "cpuRangeMs": [
+          573.313,
+          597.824
+        ],
+        "medianPeakRSSKiB": 299696,
+        "rssRangeKiB": [
+          292832,
+          300528
+        ]
+      },
+      "selected": {
+        "medianCpuMs": 579.437,
+        "cpuRangeMs": [
+          554.644,
+          606.254
+        ],
+        "medianPeakRSSKiB": 297616,
+        "rssRangeKiB": [
+          287232,
+          299824
+        ]
+      }
+    },
+    "protocol": "Fresh process per trial. Five rotated/reversed trials per artifact. Imports precede CPU interval. Tracing, phase profiling, SQL capture, census and sampling are off. Node high-water RSS covers the complete process.",
+    "variants": [
+      {
+        "name": "baseline",
+        "addon": ".rerail/profiles/chunk-c-20261024/delivery-addon/engine.node",
+        "policies": "packs/data-layer/candidates/rules",
+        "recording": ".rerail/profiles/chunk-c-20261024/delivery-acceptance/recording.json",
+        "nativeSha256": "335879ddae6bdb92e13b99f0ea707f00d722f175dfd19b5b73b7d93f5d086010"
+      },
+      {
+        "name": "selected",
+        "addon": ".rerail/profiles/post-c-spikes-20261024/selected-addon/engine.node",
+        "policies": ".rerail/profiles/post-c-spikes-20261024/policies",
+        "recording": ".rerail/profiles/chunk-c-20261024/delivery-acceptance/recording.json",
+        "nativeSha256": "ac52c05bd608e89180d6f5d04cf436bcff51436165143397ccb0f4d253148a41"
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "area": "event admission",
+      "selected": "Existing requireNonemptyInput for all 28 remaining event clauses",
+      "countEvidence": "Complete guard 975 -> 785 in the prior isolated admission experiment; combined policy copy 766 after flow fusion.",
+      "reason": "Uses an existing complete evidence contract and preserves unconditional compiler validation."
+    },
+    {
+      "area": "flow pipelines",
+      "selected": "Four nonrecursive single-consumer flow stages inside their consumer SQL scope",
+      "countEvidence": "Complete guard 785 -> 766, net 19 after three additional cold schema-cache misses.",
+      "reason": "Simpler than another physical owner; keep native, recursive and multiply consumed boundaries."
+    },
+    {
+      "area": "native bindings",
+      "selected": "Eponymous immutable sources, including executable empty sources",
+      "countEvidence": "Sixteen CREATE/DROP statements are absent; combined guard also includes provenance and candidate changes.",
+      "reason": "Use the existing SQLite module API and source adapters, with no alternate rule evaluator."
+    },
+    {
+      "area": "capture provenance",
+      "selected": "Existing corpus metadata",
+      "countEvidence": "Four provenance SELECT submissions removed from the counted workload.",
+      "reason": "Removes duplicate observer work."
+    },
+    {
+      "area": "candidate preparation",
+      "selected": "Preserve required indexes; inline only cheap incidental decoder cuts; count output readers per packet",
+      "countEvidence": "Corrected combined guard 718. The earlier 710 result is rejected for three Rust regressions.",
+      "reason": "Retains interval-index bounds and linear nesting behavior. Frozen set-folding and unrestricted private rewrites are not promoted as a second SQL optimizer."
+    },
+    {
+      "area": "storage and typed publication",
+      "selected": "Immutable SQLite schema/catalog seed with private backup clones",
+      "countEvidence": "Component 220 -> 127 engine statements, including seed initialization, four verification queries, connection setup and publication; four backup API calls count in CPU.",
+      "reason": "Fresh/seed stress CPU ranges overlap. Seed has fewer submissions. Cleared-store reuse reaches 100 component statements but regresses stress CPU and FTS internal work.",
+      "integrationRemaining": "Versioned bounded seed ownership, concurrent/private logical domains, edits/removals/cancellation. Shared source publication across separate domains remains unimplemented."
+    },
+    {
+      "area": "compiler affinity",
+      "selected": "Bounded ready-stage CTAS inference batches in the existing compiler pass",
+      "countEvidence": "Original programs 53 -> 31; selected pipeline programs 56 -> 35. Complete column/type maps match.",
+      "reason": "CPU ranges overlap; fewer submissions with comparable SQLite heap. Keep SQLite type inference and the production authorizer/cache."
+    }
+  ],
+  "candidateReplay": {
+    "format": "rerail.post-c-candidate-suite/v1",
+    "summary": {
+      "baseline": {
+        "statements": 272,
+        "medianCpuMs": 65.16812,
+        "cpuRangeMs": [
+          60.072545,
+          66.696591
+        ],
+        "peakSqliteStepBytes": 10845456
+      },
+      "folded": {
+        "statements": 252,
+        "medianCpuMs": 63.855413999999996,
+        "cpuRangeMs": [
+          62.206051,
+          66.168465
+        ],
+        "peakSqliteStepBytes": 11833184
+      },
+      "private": {
+        "statements": 226,
+        "medianCpuMs": 66.646253,
+        "cpuRangeMs": [
+          61.687121,
+          66.922828
+        ],
+        "peakSqliteStepBytes": 11881120
+      }
+    },
+    "trials": [
+      {
+        "mode": "baseline",
+        "trial": 0,
+        "statements": 272,
+        "cpuMs": 65.71237500000001,
+        "prepareCpuMs": 47.024108999999996,
+        "peakSqliteStepBytes": 10845456,
+        "maxProcessRSSBytes": 25935872,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "folded",
+        "trial": 0,
+        "statements": 252,
+        "cpuMs": 66.168465,
+        "prepareCpuMs": 47.076209,
+        "peakSqliteStepBytes": 11833184,
+        "maxProcessRSSBytes": 25624576,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "private",
+        "trial": 0,
+        "statements": 226,
+        "cpuMs": 66.922828,
+        "prepareCpuMs": 47.575542,
+        "peakSqliteStepBytes": 11881120,
+        "maxProcessRSSBytes": 30081024,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "baseline",
+        "trial": 1,
+        "statements": 272,
+        "cpuMs": 66.696591,
+        "prepareCpuMs": 47.991408,
+        "peakSqliteStepBytes": 10845456,
+        "maxProcessRSSBytes": 25870336,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "private",
+        "trial": 1,
+        "statements": 226,
+        "cpuMs": 66.850416,
+        "prepareCpuMs": 46.314832,
+        "peakSqliteStepBytes": 11881120,
+        "maxProcessRSSBytes": 30703616,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "folded",
+        "trial": 1,
+        "statements": 252,
+        "cpuMs": 64.269412,
+        "prepareCpuMs": 45.268706,
+        "peakSqliteStepBytes": 11833184,
+        "maxProcessRSSBytes": 26329088,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "private",
+        "trial": 2,
+        "statements": 226,
+        "cpuMs": 66.57020800000001,
+        "prepareCpuMs": 46.648666,
+        "peakSqliteStepBytes": 11881120,
+        "maxProcessRSSBytes": 27099136,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "baseline",
+        "trial": 2,
+        "statements": 272,
+        "cpuMs": 60.072545,
+        "prepareCpuMs": 43.068336,
+        "peakSqliteStepBytes": 10845456,
+        "maxProcessRSSBytes": 24936448,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "folded",
+        "trial": 2,
+        "statements": 252,
+        "cpuMs": 63.855413999999996,
+        "prepareCpuMs": 45.333211,
+        "peakSqliteStepBytes": 11833184,
+        "maxProcessRSSBytes": 25575424,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "private",
+        "trial": 3,
+        "statements": 226,
+        "cpuMs": 61.687121,
+        "prepareCpuMs": 43.125206,
+        "peakSqliteStepBytes": 11881120,
+        "maxProcessRSSBytes": 30146560,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "folded",
+        "trial": 3,
+        "statements": 252,
+        "cpuMs": 62.427947,
+        "prepareCpuMs": 44.21837,
+        "peakSqliteStepBytes": 11833184,
+        "maxProcessRSSBytes": 24723456,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "baseline",
+        "trial": 3,
+        "statements": 272,
+        "cpuMs": 64.073093,
+        "prepareCpuMs": 45.920091,
+        "peakSqliteStepBytes": 10845456,
+        "maxProcessRSSBytes": 25837568,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "folded",
+        "trial": 4,
+        "statements": 252,
+        "cpuMs": 62.206051,
+        "prepareCpuMs": 43.909753,
+        "peakSqliteStepBytes": 11833184,
+        "maxProcessRSSBytes": 25018368,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "private",
+        "trial": 4,
+        "statements": 226,
+        "cpuMs": 66.646253,
+        "prepareCpuMs": 45.848923,
+        "peakSqliteStepBytes": 11881120,
+        "maxProcessRSSBytes": 30277632,
+        "multisetsMatch": true
+      },
+      {
+        "mode": "baseline",
+        "trial": 4,
+        "statements": 272,
+        "cpuMs": 65.16812,
+        "prepareCpuMs": 46.437332999999995,
+        "peakSqliteStepBytes": 10845456,
+        "maxProcessRSSBytes": 25788416,
+        "multisetsMatch": true
+      }
+    ],
+    "scope": "Four frozen candidate domains after the already completed structural phase. Includes candidate setup, requests, stage/result statements, retirement and transactions. Source publication and structural preparation are outside this component replay. No complete-job saving is inferred."
+  },
+  "compilerInference": {
+    "baselinePrograms": {
+      "format": "rerail.post-c-affinity-spike/v1",
+      "programs": [
+        "profile-4251-28:state-signatures-1",
+        "profile-4251-29:state-flow-1",
+        "profile-4251-30:state-projection-recovery-2",
+        "profile-4251-31:state-flow-project-1",
+        "profile-4251-65:state-flow-1"
+      ],
+      "scope": "Cold compiler metadata, including bounded cache sharing. Uses production schema module, typed cache keys and authorizer. Every inference statement counts. Input declarations use prepare-only modules. No authored expression executes. This is a component replay, not the complete guard.",
+      "trials": [
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 19.905,
+          "sqliteHeapPeakBytes": 595520,
+          "statements": 53,
+          "trial": 0
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 19.383,
+          "sqliteHeapPeakBytes": 587152,
+          "statements": 31,
+          "trial": 0
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 20.759,
+          "sqliteHeapPeakBytes": 587152,
+          "statements": 31,
+          "trial": 1
+        },
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 16.89500000000001,
+          "sqliteHeapPeakBytes": 595520,
+          "statements": 53,
+          "trial": 1
+        },
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 16.875,
+          "sqliteHeapPeakBytes": 595520,
+          "statements": 53,
+          "trial": 2
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 20.385999999999996,
+          "sqliteHeapPeakBytes": 587152,
+          "statements": 31,
+          "trial": 2
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 20.073000000000008,
+          "sqliteHeapPeakBytes": 587152,
+          "statements": 31,
+          "trial": 3
+        },
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 18.115999999999985,
+          "sqliteHeapPeakBytes": 595520,
+          "statements": 53,
+          "trial": 3
+        },
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 17.887,
+          "sqliteHeapPeakBytes": 595520,
+          "statements": 53,
+          "trial": 4
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 20.027000000000015,
+          "sqliteHeapPeakBytes": 587152,
+          "statements": 31,
+          "trial": 4
+        }
+      ],
+      "summary": {
+        "serial": {
+          "statements": 53,
+          "cpuMs": {
+            "median": 17.887,
+            "range": [
+              16.875,
+              19.905
+            ]
+          },
+          "peakSqliteHeapBytes": 595520
+        },
+        "batched": {
+          "statements": 31,
+          "cpuMs": {
+            "median": 20.073000000000008,
+            "range": [
+              19.383,
+              20.759
+            ]
+          },
+          "peakSqliteHeapBytes": 587152
+        }
+      },
+      "path": ".rerail/profiles/post-c-spikes-20261024/affinity-final.json",
+      "sha256": "63cb4983c7287cb0d24919a9b558c5de5b4de1b2676fdf5165d9e7892f46cb24"
+    },
+    "selectedPipelinePrograms": {
+      "format": "rerail.post-c-affinity-spike/v1",
+      "programs": [
+        "profile-88485-28:state-signatures-1",
+        "profile-88485-29:state-flow-1",
+        "profile-88485-30:state-projection-recovery-2",
+        "profile-88485-31:state-flow-project-1",
+        "profile-88485-65:state-flow-1"
+      ],
+      "scope": "Cold compiler metadata, including bounded cache sharing. Uses production schema module, typed cache keys and authorizer. Every inference statement counts. Input declarations use prepare-only modules. No authored expression executes. This is a component replay, not the complete guard.",
+      "trials": [
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 22.015,
+          "sqliteHeapPeakBytes": 827872,
+          "statements": 56,
+          "trial": 0
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 22.487,
+          "sqliteHeapPeakBytes": 830640,
+          "statements": 35,
+          "trial": 0
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 23.223999999999997,
+          "sqliteHeapPeakBytes": 830640,
+          "statements": 35,
+          "trial": 1
+        },
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 22.400999999999996,
+          "sqliteHeapPeakBytes": 827872,
+          "statements": 56,
+          "trial": 1
+        },
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 19.717,
+          "sqliteHeapPeakBytes": 827872,
+          "statements": 56,
+          "trial": 2
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 22.855000000000004,
+          "sqliteHeapPeakBytes": 830640,
+          "statements": 35,
+          "trial": 2
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 20.738,
+          "sqliteHeapPeakBytes": 830640,
+          "statements": 35,
+          "trial": 3
+        },
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 24.703000000000003,
+          "sqliteHeapPeakBytes": 827872,
+          "statements": 56,
+          "trial": 3
+        },
+        {
+          "batched": false,
+          "columnsMatch": true,
+          "cpuMs": 19.724999999999994,
+          "sqliteHeapPeakBytes": 827872,
+          "statements": 56,
+          "trial": 4
+        },
+        {
+          "batched": true,
+          "columnsMatch": true,
+          "cpuMs": 22.25200000000001,
+          "sqliteHeapPeakBytes": 830640,
+          "statements": 35,
+          "trial": 4
+        }
+      ],
+      "summary": {
+        "serial": {
+          "statements": 56,
+          "cpuMs": {
+            "median": 22.015,
+            "range": [
+              19.717,
+              24.703000000000003
+            ]
+          },
+          "peakSqliteHeapBytes": 827872
+        },
+        "batched": {
+          "statements": 35,
+          "cpuMs": {
+            "median": 22.487,
+            "range": [
+              20.738,
+              23.223999999999997
+            ]
+          },
+          "peakSqliteHeapBytes": 830640
+        }
+      },
+      "path": ".rerail/profiles/post-c-spikes-20261024/affinity-selected.json",
+      "sha256": "f8e87d011701978f6191d6b7ff242c9207aa981d99e1985ddb8d395ff2c271ef"
+    },
+    "inputHashes": {
+      ".rerail/profiles/post-c-spikes-20261024/affinity-programs.json": "95f0ed62ed7c44606c470dd142de64a7d70bba4caf9fcffcb0622ec41e8573b0",
+      ".rerail/profiles/post-c-spikes-20261024/affinity-selected-programs.json": "c814fe5b4b8948153c1621637b420500ac924af06feccd3ba31660b9d1b11055"
+    }
+  },
+  "storage": {
+    "normal": {
+      "counted": [
+        {
+          "trial": -1,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": 236,
+          "traceExecutions": 456,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 25.521999999999988,
+          "workCpuMs": 18.61399999999996,
+          "verificationCpuMs": 6.908000000000025,
+          "backupCalls": 0,
+          "copiedPages": [],
+          "fingerprint": [
+            {
+              "rows": 410,
+              "sha256": "ed5c60d49d0dc72788aa141dc9a48149d3569ff3d7d076f56497d498c2fb3013"
+            },
+            {
+              "rows": 410,
+              "sha256": "ed5c60d49d0dc72788aa141dc9a48149d3569ff3d7d076f56497d498c2fb3013"
+            },
+            {
+              "rows": 374,
+              "sha256": "8b395dc9256f461674860317b765ab88e9cd679b6ee6f5577c10c50884c892f6"
+            },
+            {
+              "rows": 374,
+              "sha256": "8b395dc9256f461674860317b765ab88e9cd679b6ee6f5577c10c50884c892f6"
+            }
+          ]
+        },
+        {
+          "trial": -1,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": 434,
+          "traceExecutions": 534,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 15.483999999999998,
+          "workCpuMs": 8.587000000000012,
+          "verificationCpuMs": 6.896999999999986,
+          "backupCalls": 0,
+          "copiedPages": [],
+          "fingerprint": [
+            {
+              "rows": 410,
+              "sha256": "ed5c60d49d0dc72788aa141dc9a48149d3569ff3d7d076f56497d498c2fb3013"
+            },
+            {
+              "rows": 410,
+              "sha256": "ed5c60d49d0dc72788aa141dc9a48149d3569ff3d7d076f56497d498c2fb3013"
+            },
+            {
+              "rows": 374,
+              "sha256": "8b395dc9256f461674860317b765ab88e9cd679b6ee6f5577c10c50884c892f6"
+            },
+            {
+              "rows": 374,
+              "sha256": "8b395dc9256f461674860317b765ab88e9cd679b6ee6f5577c10c50884c892f6"
+            }
+          ]
+        },
+        {
+          "trial": -1,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": 216,
+          "traceExecutions": 343,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 24.952999999999946,
+          "workCpuMs": 17.78799999999991,
+          "verificationCpuMs": 7.165000000000033,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ],
+          "fingerprint": [
+            {
+              "rows": 410,
+              "sha256": "ed5c60d49d0dc72788aa141dc9a48149d3569ff3d7d076f56497d498c2fb3013"
+            },
+            {
+              "rows": 410,
+              "sha256": "ed5c60d49d0dc72788aa141dc9a48149d3569ff3d7d076f56497d498c2fb3013"
+            },
+            {
+              "rows": 374,
+              "sha256": "8b395dc9256f461674860317b765ab88e9cd679b6ee6f5577c10c50884c892f6"
+            },
+            {
+              "rows": 374,
+              "sha256": "8b395dc9256f461674860317b765ab88e9cd679b6ee6f5577c10c50884c892f6"
+            }
+          ]
+        }
+      ],
+      "configuredCacheKiB": {
+        "main": 1024,
+        "temp": 512
+      },
+      "originAccounting": "Counted passes trace every SQLite execution. Each Meter call executes one engine statement; remaining callbacks are SQLite internal executions. Timed trials disable tracing. No new triggers are introduced. SQLite backup API calls are reported and included in CPU.",
+      "format": "rerail.post-c-storage-spike/v2",
+      "sqliteVersion": "3.54.1",
+      "scope": "Four SQL domains reconstructed from captured typed facts. All SQL setup, publication, retirement and verification count. Parsing, codec construction and rule execution are outside this component experiment. Verification CPU is reported separately. No complete-job saving is inferred.",
+      "copiesPerSource": 1,
+      "syntheticReplication": false,
+      "domains": 4,
+      "trials": [
+        {
+          "trial": 0,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 28.039999999999996,
+          "workCpuMs": 21.30199999999996,
+          "verificationCpuMs": 6.738000000000036,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 0,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 14.220999999999984,
+          "workCpuMs": 7.982000000000017,
+          "verificationCpuMs": 6.238999999999967,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 0,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 21.872000000000003,
+          "workCpuMs": 15.12700000000003,
+          "verificationCpuMs": 6.7449999999999735,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 1,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 25.686999999999987,
+          "workCpuMs": 19.051999999999957,
+          "verificationCpuMs": 6.63500000000003,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 1,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 34.413,
+          "workCpuMs": 26.63399999999999,
+          "verificationCpuMs": 7.779000000000008,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 1,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 13.962000000000002,
+          "workCpuMs": 7.803000000000031,
+          "verificationCpuMs": 6.1589999999999705,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 2,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 28.16200000000002,
+          "workCpuMs": 20.911000000000012,
+          "verificationCpuMs": 7.251000000000007,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 2,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 27.768999999999988,
+          "workCpuMs": 20.927999999999948,
+          "verificationCpuMs": 6.841000000000042,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 2,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 14.647000000000022,
+          "workCpuMs": 8.102999999999971,
+          "verificationCpuMs": 6.54400000000005,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 3,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 24.824000000000012,
+          "workCpuMs": 18.043000000000085,
+          "verificationCpuMs": 6.780999999999926,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 3,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 13.797000000000004,
+          "workCpuMs": 7.318000000000103,
+          "verificationCpuMs": 6.4789999999999015,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 3,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 26.967999999999993,
+          "workCpuMs": 20.509,
+          "verificationCpuMs": 6.4589999999999925,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 4,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 13.797000000000004,
+          "workCpuMs": 7.369000000000015,
+          "verificationCpuMs": 6.427999999999989,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 4,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 21.820000000000007,
+          "workCpuMs": 14.69200000000004,
+          "verificationCpuMs": 7.127999999999968,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 4,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 24.682999999999954,
+          "workCpuMs": 17.888999999999932,
+          "verificationCpuMs": 6.794000000000022,
+          "backupCalls": 0,
+          "copiedPages": []
+        }
+      ],
+      "summary": {
+        "fresh": {
+          "engineStatements": 220,
+          "sqliteInternalExecutions": 236,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "workCpuMs": {
+            "median": 20.509,
+            "range": [
+              17.888999999999932,
+              21.30199999999996
+            ]
+          },
+          "totalCpuMs": {
+            "median": 26.967999999999993,
+            "range": [
+              24.682999999999954,
+              28.039999999999996
+            ]
+          },
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        "reuse": {
+          "engineStatements": 100,
+          "sqliteInternalExecutions": 434,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "workCpuMs": {
+            "median": 7.803000000000031,
+            "range": [
+              7.318000000000103,
+              8.102999999999971
+            ]
+          },
+          "totalCpuMs": {
+            "median": 13.962000000000002,
+            "range": [
+              13.797000000000004,
+              14.647000000000022
+            ]
+          },
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        "seed": {
+          "engineStatements": 127,
+          "sqliteInternalExecutions": 216,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "workCpuMs": {
+            "median": 18.043000000000085,
+            "range": [
+              14.69200000000004,
+              26.63399999999999
+            ]
+          },
+          "totalCpuMs": {
+            "median": 24.824000000000012,
+            "range": [
+              21.820000000000007,
+              34.413
+            ]
+          },
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        }
+      },
+      "path": ".rerail/profiles/post-c-spikes-20261024/storage-final.json",
+      "sha256": "8981b30ffaa42c12a34293129a55d349edb7491a32a3bb5aabb69ea1540cd141",
+      "memoryLimitation": "Configured SQLite page-cache limits are reported; this component does not measure comparable fresh-process peak RSS for each mode. All modes load the same frozen fact inputs."
+    },
+    "stress128Copies": {
+      "counted": [
+        {
+          "trial": -1,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": 10912,
+          "traceExecutions": 11132,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 2056.5710000000004,
+          "workCpuMs": 1934.3500000000001,
+          "verificationCpuMs": 122.22100000000013,
+          "backupCalls": 0,
+          "copiedPages": [],
+          "fingerprint": [
+            {
+              "rows": 9681,
+              "sha256": "7471709ccb12b2c35d8009841cc9fefe1547ade15e6aeb7bf62c16ec96178c4b"
+            },
+            {
+              "rows": 9681,
+              "sha256": "7471709ccb12b2c35d8009841cc9fefe1547ade15e6aeb7bf62c16ec96178c4b"
+            },
+            {
+              "rows": 6216,
+              "sha256": "3253ef03a5c5da41d8dd4934da4b369296b233a68c647a60b51d0aa577bf6a7c"
+            },
+            {
+              "rows": 6216,
+              "sha256": "3253ef03a5c5da41d8dd4934da4b369296b233a68c647a60b51d0aa577bf6a7c"
+            }
+          ]
+        },
+        {
+          "trial": -1,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": 29791,
+          "traceExecutions": 29891,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 2020.2529999999995,
+          "workCpuMs": 1896.0999999999979,
+          "verificationCpuMs": 124.15300000000151,
+          "backupCalls": 0,
+          "copiedPages": [],
+          "fingerprint": [
+            {
+              "rows": 9681,
+              "sha256": "7471709ccb12b2c35d8009841cc9fefe1547ade15e6aeb7bf62c16ec96178c4b"
+            },
+            {
+              "rows": 9681,
+              "sha256": "7471709ccb12b2c35d8009841cc9fefe1547ade15e6aeb7bf62c16ec96178c4b"
+            },
+            {
+              "rows": 6216,
+              "sha256": "3253ef03a5c5da41d8dd4934da4b369296b233a68c647a60b51d0aa577bf6a7c"
+            },
+            {
+              "rows": 6216,
+              "sha256": "3253ef03a5c5da41d8dd4934da4b369296b233a68c647a60b51d0aa577bf6a7c"
+            }
+          ]
+        },
+        {
+          "trial": -1,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": 10892,
+          "traceExecutions": 11019,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 2048.7420000000006,
+          "workCpuMs": 1922.569000000001,
+          "verificationCpuMs": 126.17299999999965,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ],
+          "fingerprint": [
+            {
+              "rows": 9681,
+              "sha256": "7471709ccb12b2c35d8009841cc9fefe1547ade15e6aeb7bf62c16ec96178c4b"
+            },
+            {
+              "rows": 9681,
+              "sha256": "7471709ccb12b2c35d8009841cc9fefe1547ade15e6aeb7bf62c16ec96178c4b"
+            },
+            {
+              "rows": 6216,
+              "sha256": "3253ef03a5c5da41d8dd4934da4b369296b233a68c647a60b51d0aa577bf6a7c"
+            },
+            {
+              "rows": 6216,
+              "sha256": "3253ef03a5c5da41d8dd4934da4b369296b233a68c647a60b51d0aa577bf6a7c"
+            }
+          ]
+        }
+      ],
+      "configuredCacheKiB": {
+        "main": 1024,
+        "temp": 512
+      },
+      "originAccounting": "Counted passes trace every SQLite execution. Each Meter call executes one engine statement; remaining callbacks are SQLite internal executions. Timed trials disable tracing. No new triggers are introduced. SQLite backup API calls are reported and included in CPU.",
+      "format": "rerail.post-c-storage-spike/v2",
+      "sqliteVersion": "3.54.1",
+      "scope": "Four SQL domains reconstructed from captured typed facts. All SQL setup, publication, retirement and verification count. Parsing, codec construction and rule execution are outside this component experiment. Verification CPU is reported separately. No complete-job saving is inferred.",
+      "copiesPerSource": 128,
+      "syntheticReplication": true,
+      "domains": 4,
+      "trials": [
+        {
+          "trial": 0,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 195.401,
+          "workCpuMs": 65.47300000000004,
+          "verificationCpuMs": 129.92799999999997,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 0,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 199.34799999999996,
+          "workCpuMs": 71.15699999999995,
+          "verificationCpuMs": 128.191,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 0,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 193.646,
+          "workCpuMs": 63.456999999999766,
+          "verificationCpuMs": 130.18900000000022,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 1,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 202.28599999999997,
+          "workCpuMs": 64.62999999999985,
+          "verificationCpuMs": 137.65600000000012,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 1,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 190.49300000000002,
+          "workCpuMs": 63.24200000000013,
+          "verificationCpuMs": 127.25099999999989,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 1,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 201.522,
+          "workCpuMs": 71.01300000000023,
+          "verificationCpuMs": 130.50899999999976,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 2,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 189.44699999999992,
+          "workCpuMs": 60.11599999999984,
+          "verificationCpuMs": 129.33100000000007,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 2,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 185.5420000000001,
+          "workCpuMs": 62.854000000000184,
+          "verificationCpuMs": 122.6879999999999,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 2,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 205.38299999999987,
+          "workCpuMs": 72.53599999999972,
+          "verificationCpuMs": 132.84700000000015,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 3,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 194.2950000000001,
+          "workCpuMs": 61.472999999999445,
+          "verificationCpuMs": 132.82200000000066,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 3,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 208.7349999999999,
+          "workCpuMs": 77.2109999999997,
+          "verificationCpuMs": 131.5240000000002,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 3,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 189.85899999999978,
+          "workCpuMs": 63.541999999999106,
+          "verificationCpuMs": 126.31700000000068,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 4,
+          "mode": "reuse",
+          "engineStatements": 100,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "cpuMs": 197.72900000000027,
+          "workCpuMs": 70.77299999999998,
+          "verificationCpuMs": 126.95600000000029,
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        {
+          "trial": 4,
+          "mode": "seed",
+          "engineStatements": 127,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "cpuMs": 191.28100000000003,
+          "workCpuMs": 64.93200000000022,
+          "verificationCpuMs": 126.34899999999982,
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        },
+        {
+          "trial": 4,
+          "mode": "fresh",
+          "engineStatements": 220,
+          "sqliteInternalExecutions": null,
+          "traceExecutions": null,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "cpuMs": 191.0540000000003,
+          "workCpuMs": 62.208000000000055,
+          "verificationCpuMs": 128.84600000000023,
+          "backupCalls": 0,
+          "copiedPages": []
+        }
+      ],
+      "summary": {
+        "fresh": {
+          "engineStatements": 220,
+          "sqliteInternalExecutions": 10912,
+          "phases": {
+            "setup": 168,
+            "publication": 48,
+            "verification": 4
+          },
+          "workCpuMs": {
+            "median": 63.541999999999106,
+            "range": [
+              62.208000000000055,
+              65.47300000000004
+            ]
+          },
+          "totalCpuMs": {
+            "median": 191.0540000000003,
+            "range": [
+              185.5420000000001,
+              202.28599999999997
+            ]
+          },
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        "reuse": {
+          "engineStatements": 100,
+          "sqliteInternalExecutions": 29791,
+          "phases": {
+            "setup": 42,
+            "publication": 39,
+            "verification": 4,
+            "retirement": 15
+          },
+          "workCpuMs": {
+            "median": 71.15699999999995,
+            "range": [
+              70.77299999999998,
+              77.2109999999997
+            ]
+          },
+          "totalCpuMs": {
+            "median": 201.522,
+            "range": [
+              197.72900000000027,
+              208.7349999999999
+            ]
+          },
+          "backupCalls": 0,
+          "copiedPages": []
+        },
+        "seed": {
+          "engineStatements": 127,
+          "sqliteInternalExecutions": 10892,
+          "phases": {
+            "setup": 82,
+            "publication": 41,
+            "verification": 4
+          },
+          "workCpuMs": {
+            "median": 63.24200000000013,
+            "range": [
+              60.11599999999984,
+              64.93200000000022
+            ]
+          },
+          "totalCpuMs": {
+            "median": 191.28100000000003,
+            "range": [
+              189.44699999999992,
+              194.2950000000001
+            ]
+          },
+          "backupCalls": 4,
+          "copiedPages": [
+            31,
+            31,
+            31,
+            31
+          ]
+        }
+      },
+      "path": ".rerail/profiles/post-c-spikes-20261024/storage-stress-final.json",
+      "sha256": "5a7a4f9b4aa0b572ad626ce448741ac5c3f2a1cbf81a19cd0d9158cdda6555ab",
+      "memoryLimitation": "Configured SQLite page-cache limits are reported; this component does not measure comparable fresh-process peak RSS for each mode. All modes load the same frozen fact inputs."
+    }
+  },
+  "policyRewrite": {
+    "data-layer-serverplan-state-tripwires.json": [
+      {
+        "name": "string_values",
+        "indexes": [
+          [
+            "__path",
+            "__start",
+            "__end"
+          ]
+        ]
+      },
+      {
+        "name": "expression_edges",
+        "indexes": [
+          [
+            "__path",
+            "src",
+            "dst"
+          ]
+        ]
+      },
+      {
+        "name": "direct_events",
+        "indexes": [
+          [
+            "__path",
+            "fn",
+            "kind"
+          ]
+        ]
+      },
+      {
+        "name": "signed_exceptions",
+        "indexes": [
+          [
+            "key"
+          ]
+        ]
+      }
+    ]
+  },
+  "validation": {
+    "selected-native": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 28.57102387503255,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/selected-native/profile.json",
+      "stdoutSha256": "1a91941b36f356e22cab372cb41c0a092797cfa455702873772241c7b3d9075a"
+    },
+    "required-cut-full-unit": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 84.27593699999852,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/required-cut-full-unit/profile.json",
+      "stdoutSha256": "1e94a10a2880bd456a8ee293c602a7766ed9e6d99aa97f0d8d799b2b4cf6d817"
+    },
+    "required-cut-focused": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 13.223881040990818,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/required-cut-focused/profile.json",
+      "stdoutSha256": "542220f5f683e373f4e7add2e25df430eb596ada88405e2c28eafeba845ad576"
+    },
+    "selected-state": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 24.156961833999958,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/selected-state/profile.json",
+      "stdoutSha256": "9e579db455cc89cd1fa4b436aa9447d0d9412c70b66e8ce89ed5078e08344d98",
+      "parity": {
+        "replayedCalls": 77,
+        "positiveCalls": 64,
+        "cleanCalls": 13,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0
+      }
+    },
+    "selected-source": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 26.96778008301044,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/selected-source/profile.json",
+      "stdoutSha256": "50230106ed95b3e94f99f6ecd93ea2584874bdcb1235707132c4daededf4e6e8",
+      "parity": {
+        "replayedCalls": 120,
+        "positiveCalls": 60,
+        "cleanCalls": 60,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0
+      }
+    },
+    "host-memory-tests": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 14.460050708963536,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/host-memory-tests/profile.json",
+      "stdoutSha256": "4bfc7b1eaf37c8d4d0345bd78dbc2802685dc207ab03775af826ebec1bd64533"
+    },
+    "host-final-checks": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 6.376585541991517,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/host-final-checks/profile.json",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tooling-tests": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 10.026241832994856,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/tooling-tests/profile.json",
+      "stdoutSha256": "4e9634cc7d107dad49db68a3301ff20a5f67e55140785cd38730c518449ffbc0"
+    },
+    "static-checks": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 62.819959624961484,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/static-checks/profile.json",
+      "stdoutSha256": "a877d0aa331d677ea57c6680a20172d6c4b6dca114182535423fa9794fde9725"
+    },
+    "structure-final": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 16.801768957986496,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/structure-final/profile.json",
+      "stdoutSha256": "3ff4e8a65bd2a387837a591d7847b88e0c380373f787e862ea8075a2263ef027"
+    },
+    "selected-lib-clippy": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 48.712470084021334,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/selected-lib-clippy/profile.json",
+      "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "counts": {
+      "nativeRustPassed": 1604,
+      "nativeRustIgnored": 23,
+      "nativeFacingPassed": 324,
+      "nativeFacingFiles": 19,
+      "preparationHostPassed": 60,
+      "newPythonSemanticTestsPassed": 6
+    },
+    "intermediateFailures": [
+      {
+        "artifact": ".rerail/profiles/post-c-spikes-20261024/empty-domain-red",
+        "result": "The first native-binding prototype did not register empty runtime domains."
+      },
+      {
+        "artifact": ".rerail/profiles/post-c-spikes-20261024/native-unit",
+        "result": "1601 passed, 3 failed, 23 ignored. Candidate cut pruning removed required interval/posting indexes and explicitly owned tables."
+      },
+      {
+        "artifact": ".rerail/profiles/post-c-spikes-20261024/selected-clippy",
+        "result": "Initial all-target Clippy compilation reached the 115-second deadline. The library check was then split out and passed; see final all-target result."
+      }
+    ],
+    "selected-all-clippy": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 103.43524441699265,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/selected-all-clippy/profile.json",
+      "stderrSha256": "f76fb92b19891217438343b35f3d5dc979c863798ff47fdc114a8d6869205e45"
+    },
+    "selected-nonprofile-clippy": {
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 67.58594787499169,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/selected-nonprofile-clippy/profile.json",
+      "stderrSha256": "e7b20f100756cd0c8e197f620be35359e670b6cd843edb73c339487aacfb1cfe"
+    },
+    "final-static": {
+      "stdoutSha256": "959c4f891cf3808966a4f8b78fed199ba8c9fe2b2127a9872a9e86b1747a54a3",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 63.46938229101943,
+      "profile": ".rerail/profiles/post-c-spikes-20261024/final-static/profile.json"
+    }
+  },
+  "limitations": [
+    "Aggregate CPU and RSS ranges overlap; no demonstrated aggregate CPU or memory gain.",
+    "Runtime, policy, storage, compiler and frozen candidate comparisons have different measurement boundaries.",
+    "The private frozen candidate rewrite has no required-index metadata and is not selected for production. The folded/private component stepping heap peaks exceed baseline.",
+    "Storage uses Python SQLite; runtime and compiler replay use the project Rust SQLite build.",
+    "No full-repository recovery or <=100 submission acceptance follows from these spikes.",
+    "No other local builds/tests ran during final performance controls; other host workloads were uncontrolled."
+  ],
+  "artifactsRoot": ".rerail/profiles/post-c-spikes-20261024",
+  "design": "docs/sql-post-c-spikes.md",
+  "policyHashes": {
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-admin-async-purity.json": "7c77aef231725a946398a941b9b1a9d2adac72f1506073b5881dd84796bfeb2a",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-async-executor.json": "0e64fd634326c0bb3676f2cf8ed817f4508cde8a5dbc33ea8934afae6b88751b",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-async-patterns.json": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-async-sync-boundary.json": "f342876eef567090dd1493a0a8411a057fb14915dca5d5184e023322f18a483a",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-async-sync-delegation.json": "fec7c4bd3e7d6ea27e522f2da3aa18436599d6cc6cbdc170af8d1102ef6c96f8",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-backend-coupling.json": "54a16169fbba1e0d4372fa9e85a3d2b0b6e05a342620e30cb34c2fa8d3d20d0d",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-backend-type-strings.json": "0ecc6dab424746bfd6007dfd0684f460851d26361ea3a5c0b1a2734d8f9d190c",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-classvar-check.json": "9056ad18066c1d44a2d9c8d6ae676f25a4aada9c2130cd698976d64c48857eda",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-conn-or-txn-union.json": "8d783578a716e46d038ed1f28d288355f48f5f40338123e13a38a4f6f0901daa",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-connection-caches.json": "d3e65fbd29b0cc1de9e23085ef4cb2ce7b5e3a6b92d19e3bc60f4c0d9ad96225",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-data-layer-compat-aliases.json": "821e77b0f992fe9397f7820a5e8391c4be607c0a0cd9326233793295f5d24eb4",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-data-layer-facade-purity.json": "f08348732dcf1827030a1059efb3e6b85e7d92bf3193fd171ae93f9098fdced5",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-dynamic-module-loading.json": "60a9cff5845cb22edfd90b365ba5ac41e948b605115c0233af66a81ab68d6478",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-error-handling.json": "3bbdc70fb1ffb9552218b98d02ff5663c28b57c99d09c34fa2742dc6f80dbe33",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-execution-authority-bypass.json": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-forwardref.json": "9bccddea5856ae1e41d834d68d7da4d96fdebe512c93c03bcef605a818f35333",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-grammar-allowlist-burndown.json": "0596978d51eeddec03b1db10fcf33f1792ac5c7b9cd16d881bb5c0ce374c813f",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-grammar-callable-constructors.json": "a0b5a1ad409632caf581b11c809622946119b351460482fa689aa5027a06569a",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-grammar-fragment-usage.json": "6072ae2c92cde1d7b570ede8a0f48b8e24c771b399c6bfb40b66db63be4a28e3",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-grammar-render-methods.json": "a2b24d816be228ad74cfdb5e48ee6076720df931800803cd72f76d15e0c379c5",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-grammar-str-params.json": "7a8a088b745e9b5abd434e56c38dcdad832bd7ad5b2533144554c3d82aabd446",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-hasattr-async.json": "ca10f10fb53277ead5302d5b08e70696bd89d0c454ea8c328006c9148a461208",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-imperative-private-functions.json": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-impl-direct-execution.json": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-internal-dead-code.json": "939faa74d24c6054b47cd250e45d33882ec7814a06a542d9fbe403759444b074",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-layer-violations.json": "7e6429288e52ee44640555298374c589b7a66cc777f9bceb4416320ef1302f32",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-lazy-result-usage.json": "c221f7bbf5c4c5f9c8fcfa55a10ed4fd72f4ffbff4986eb72985aaba8dc623df",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-legacy-execution-surfaces.json": "eae2fb755bd7c922e77b1d7546598320a8906d9b06ece3e254172958c110ce65",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-missing-async-pairs.json": "5d2bdf11502aa39982bfc6ea19a4e6cd91e7ddf1f6d63b75fdcaaa392c290bee",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-module-level-caches.json": "2ba31a57f2ff59881cb6f7dd472ea0cdc10546264dcc80c812943032c0370019",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-no-api-root-imports.json": "48b8a8762bec65d2ac3a648893e8e745094ff84ef5906d6a1b5cd73f8034b377",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-no-blanket-grammar-bypass.json": "700460f3a9868afe3abd8254af2b39324ee22cc13ba4132867b8870a2d4d96da",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-no-source-inspection.json": "89f2000f352654e02459f7e7bef1609b0e846a46c64bb1d6606169ef7872185f",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-permission-error.json": "f95c0bc0626da3c96900d5bbe3aa72fd9709a3aad7557c0930e4d00db34de3f1",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-plan-scope-ownership.json": "a51c7f0406a0cc42984dcea94914f0613e48f1c420b91e49a1e6f42a49dfc1ab",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-plan-scope-side-effects.json": "2716f11ec3592689333631110eb74d3ec513d0ee82ca1701023621072347f12d",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-public-api-triples.json": "523e2fe8cf563b7f86c5476b9085902fc6ce7aaf10830ef9f0d9885878d7fefc",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-raw-execute-regression.json": "a6f3834fc9a74b85e5df4706b13efb0943b6bb0ae82e5e0f59a80f048df53c04",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-regex-sql-parsing.json": "4f1d38624a792094896568b970af80d55fab32eb5ef431dec84b9ce1f84067c9",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-removed-compat-surfaces.json": "4c8214eb6c3e30bc6afd0f3d02d25cc2a522e0af1f0343e1e1c64242ead43d6e",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-render-fstrings.json": "acf31f86d4de43c251c67d570f09c69b3eb645b24fa4948e45734775db69561c",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-render-raw-strings.json": "bf6911d01528b8e06342a6a0094ade70ff3d6cd94bacba7d3958bb2d4a3c883b",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-rust-sql-grammar-boundary.json": "80d7fab57e7782b6b7c49316084305fdaf5899389f1c2fa8a7f4d48c8cdfef65",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-serverplan-bypass.json": "1dc17f26cd4f28f2405ecf0b51067aa45864416fb1933385dcf1e57f54e12cdb",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-serverplan-dispatch-architecture.json": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-serverplan-grammar-surface.json": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-serverplan-name-inference.json": "c1326f54d9381d1efad6d898b9bb0c7d61cd801243d4cf7a9b5132499cef351c",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-serverplan-quality.json": "8c297f5a5f49ee294c261bec5b049d267a88d1599a5e49dfd89ec408ae43a323",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-serverplan-state-tripwires.json": "cf293e0f63041b0fde1262513d6ef1587c5ce7ffda8caec3a0ee04719aa52a4c",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-serverplan-steps.json": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-serverplan-target-architecture.json": "f8ca589ed2cda0828a22e4abaf4316bfbfd2f8dc3cb25f46596851770cbd6b4a",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-sql-grammar-escape-hatches.json": "9fe021819a3cbd3410f74b99ec1e33758d4eb680fd7e744e73c4cc8c186fbd1c",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-swallowed-exceptions.json": "df25e1c35068c80e36a14a244feda3958b04a4fcc812ec0a7d8b25e8a292f1b5",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-sync-async-signatures.json": "ef99509b0a370a866cf85e124284c7bf90ce2e8d3e34f1decf10fae408c8a3c7",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-transaction-callback-wrappers.json": "ccfa86dd6d1f393a80e969d148af343376bafa36d36358a18d4834e7d5561205",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-transaction-closures.json": "83f35c1e002c5f11945b0fdf18a02ecae99f2a976a0124b87ffcdb84f0e8da56",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-transaction-patterns.json": "8fcc8c1a6690883cf3816ff28e59efbe255baf37de3bff1efb49fd8da857b1ae",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-type-safety-patterns.json": "311eda52dff8cfc9108b52fcb2971412c59f1ea97c1784d6b4e47173ac8e61ca",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-unresolved-forward-refs.json": "084da92045c5621c0305bfaeee185abc331c46a6e1ad45de61e89ee3c382d231",
+    ".rerail/profiles/post-c-spikes-20261024/policies/data-layer-versioned-lifecycle-legacy-surfaces.json": "931b8c73be253bff264bf63ea46bd145f8d01fc7bc66290e367841b881465b97"
+  }
+}
