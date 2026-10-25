@@ -2,6 +2,32 @@ use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 
 #[test]
+fn source_confirmation_receives_the_complete_demand_frame() {
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    let dialect = GrammarDialect::TypeScript;
+    let compiled = compiled(serde_json::json!({"language":"typescript","rule":{
+        "kind":"call_expression","regex":"^target\\("
+    }}));
+    let plan = &grammar_matchers(&compiled)[0].anchors;
+    let store = store::Store::temporary().unwrap();
+    let doc = tests::document("target(value); other(value);", dialect);
+    let fid = store.put("selected.ts", &doc).unwrap();
+    let language = u32::from(crate::code_rule_dsl::language::tape_tag(dialect).unwrap());
+    let statement = tests::planned_batch(&store, &[plan], language, &[fid]);
+    assert!(
+        statement
+            .stages
+            .iter()
+            .any(|s| s.sql.contains("nera_source_batch")),
+        "source predicates must use the typed demand frame"
+    );
+    let mut rows = Vec::new();
+    execute::rows(&store, &statement, |_, f, p| rows.push((f, p))).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(doc.transducer_text_str(rows[0].1 as u32), "target(value)");
+}
+
+#[test]
 fn scoped_kind_refinement_never_opens_unrequested_kind_postings() {
     use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
     let dialect = GrammarDialect::TypeScript;
