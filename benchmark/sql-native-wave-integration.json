@@ -1,0 +1,531 @@
+{
+  "accepted": true,
+  "failures": [],
+  "ceilings": {
+    "matchingExecutions": 100,
+    "coldCpuRatio": 1.3,
+    "medianEditCpuRatio": 1.5,
+    "coldSqlPeakRssBytes": 1610612736,
+    "scalarNativeRoots": 53109000,
+    "minimumMeanKernelWidth": 4
+  },
+  "configuration": {
+    "profile": "loop",
+    "optLevel": 1,
+    "allocator": "real jemalloc",
+    "localTestLto": false,
+    "features": [
+      "unbounded-work"
+    ],
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)"
+  },
+  "provenance": {
+    "baseCommit": "92b1978ebf4d361341bb4c8f623c2af040373311",
+    "corpusCommit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
+    "corpusInventorySha256": "4525032ac7cf058a9134aad9250fd3a400eb4df78c69bfdd89d608057e1b9773",
+    "changedRustSources": {
+      "native/src/code_rule_dsl/budget.rs": "835ca399a7e065310614448d60c13b8e784666513cdbb28937a52a16854e834f",
+      "native/src/code_rule_dsl/matcher/mod.rs": "bee2955f8b28a262c05a457807fee8bf6c6ac1b02788aee1cb8c2996d71caed5",
+      "native/src/code_rule_dsl/matcher/relation.rs": "51bd3ee019e35fc9b124769c5fb33b5f384e8c4816bd755eb7ac848870c528bf",
+      "native/src/code_rule_dsl/matcher/wave.rs": "47728ac390186be25dfe2e3b52eac507c1547becae992584aa7b43f01758087b",
+      "native/src/code_rule_dsl/sql/engine.rs": "440d8b67a041ecda22ccfc6efcd96ca29328606e1e13eae8e819c58d28198018",
+      "native/src/code_rule_dsl/sql/engine/batch_tests.rs": "ab3dd611e43d4482bb5522a7a60f18bb847f98f718711cb337af2db932317767",
+      "native/src/code_rule_dsl/sql/fragments/batch.rs": "0c87f01dc9f1badf28b858ab10b14a8847247364b928162c686e5aee02ca0220",
+      "native/src/code_rule_dsl/sql/fragments/mod.rs": "7fdcd99d19c6c227cae029214acf178c96a40d52150cf83b2e094b8a9f5775ca",
+      "native/src/code_rule_dsl/tape.rs": "7e8c0df6ba52fa891a4386a4e6c27fb6a674d1955764dfe335a34c16bd260a81"
+    },
+    "binarySha256": "0c467c39a17be87891b37d51b3da5644ba1c72a0f3bb884d0f09a2777a4c811e",
+    "rawReportsSha256": {
+      "catalog": "acc6b124c4fbf690d32408a64039fa0ca4671ac8cf4ee026e4b26d999f96307b",
+      "native": "9becd74f012399481cd421efcea883bebdc351f39754834e50ecabb801d34ad7",
+      "sql": "1c823ae6d1585883704beccacd08ff74d8af38cb1c758a841e35b843541797ec"
+    }
+  },
+  "workload": {
+    "files": 5725,
+    "sourceBytes": 95697853,
+    "policies": 138,
+    "policySource": "shipped Python catalog, not the unavailable original twelve policies"
+  },
+  "native": {
+    "compile": {
+      "cpuNs": 123017000,
+      "wallNs": 149397500
+    },
+    "cold": {
+      "cpuNs": 113851220000,
+      "peakRssBytes": 847101952,
+      "wallNs": 66796542542
+    },
+    "findings": 97798,
+    "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
+    "failures": [],
+    "edits": [
+      {
+        "time": {
+          "cpuNs": 195797000,
+          "peakRssBytes": 941178880,
+          "wallNs": 676579458
+        },
+        "findings": 97799,
+        "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
+        "failures": []
+      },
+      {
+        "time": {
+          "cpuNs": 205393000,
+          "peakRssBytes": 954843136,
+          "wallNs": 642245166
+        },
+        "findings": 97801,
+        "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
+        "failures": []
+      },
+      {
+        "time": {
+          "cpuNs": 202819000,
+          "peakRssBytes": 968359936,
+          "wallNs": 608082125
+        },
+        "findings": 97798,
+        "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
+        "failures": []
+      }
+    ]
+  },
+  "sql": {
+    "compile": {
+      "cpuNs": 136537000,
+      "wallNs": 156506917
+    },
+    "cold": {
+      "cpuNs": 111716342000,
+      "peakRssBytes": 1184333824,
+      "wallNs": 69670029500
+    },
+    "findings": 97798,
+    "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
+    "failures": [],
+    "edits": [
+      {
+        "time": {
+          "cpuNs": 213174000,
+          "peakRssBytes": 1184333824,
+          "wallNs": 289519959
+        },
+        "findings": 97799,
+        "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
+        "failures": []
+      },
+      {
+        "time": {
+          "cpuNs": 210161000,
+          "peakRssBytes": 1184333824,
+          "wallNs": 273103417
+        },
+        "findings": 97801,
+        "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
+        "failures": []
+      },
+      {
+        "time": {
+          "cpuNs": 214205000,
+          "peakRssBytes": 1184333824,
+          "wallNs": 242183708
+        },
+        "findings": 97798,
+        "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
+        "failures": []
+      }
+    ]
+  },
+  "coldCpuRatio": 0.9812485276837614,
+  "medianEditCpuRatio": 1.0510553744964721,
+  "matchingStatements": 23,
+  "sqlCompilePhases": {
+    "emitCpuMilliseconds": 0.0,
+    "emitMilliseconds": 0.0,
+    "finishCpuMilliseconds": 1.815083,
+    "finishMilliseconds": 2.020041,
+    "lowerCpuMilliseconds": 1.224371,
+    "lowerMilliseconds": 1.259875,
+    "planCpuMilliseconds": 0.0,
+    "planMilliseconds": 0.0
+  },
+  "sqlSessions": {
+    "count": 4,
+    "prepared": 4,
+    "setupCpuMilliseconds": 8.542583,
+    "setupMilliseconds": 8.886876,
+    "tables": 0,
+    "texts": 4
+  },
+  "sqlProgram": {
+    "btrees": 0,
+    "bytes": 5373,
+    "frames": 0,
+    "shapes": 146,
+    "skeletons": 0,
+    "steps": 1,
+    "storedBytes": 5373,
+    "texts": 1
+  },
+  "vmInstructions": 25216565,
+  "matchingCpuNs": 82637000833,
+  "nativeBoundaryCpuNs": 77592186035,
+  "nativeResidualCpuNs": 64487447496,
+  "nativePrefixCpuNs": 13104738539,
+  "sqlAndBoundaryOverheadCpuNs": 5044814798,
+  "largestNativeFragments": [
+    {
+      "rule": "ruff-b023-function-uses-loop-variable:function-uses-loop-variable",
+      "cpuNs": 4925505166,
+      "roots": 480327,
+      "rows": 122,
+      "filters": 0
+    },
+    {
+      "rule": "ruff-f405-undefined-local-with-import-star-usage:undefined-local-with-import-star-usage",
+      "cpuNs": 4215415234,
+      "roots": 4543604,
+      "rows": 74,
+      "filters": 0
+    },
+    {
+      "rule": "ruff-b007-unused-loop-control-variable:unused-loop-control-variable",
+      "cpuNs": 3510746414,
+      "roots": 3713119,
+      "rows": 37,
+      "filters": 0
+    },
+    {
+      "rule": "bandit-b615-huggingface-unsafe-download:b615",
+      "cpuNs": 3492194534,
+      "roots": 690248,
+      "rows": 24,
+      "filters": 0
+    },
+    {
+      "rule": "bandit-b102-exec-used:exec-call",
+      "cpuNs": 2156531723,
+      "roots": 421910,
+      "rows": 8,
+      "filters": 0
+    },
+    {
+      "rule": "ruff-b028-no-explicit-stacklevel:no-explicit-stacklevel",
+      "cpuNs": 2124685152,
+      "roots": 2391574,
+      "rows": 1,
+      "filters": 0
+    },
+    {
+      "rule": "bandit-b507-ssh-no-host-key-verification:b507",
+      "cpuNs": 1994440116,
+      "roots": 516170,
+      "rows": 0,
+      "filters": 0
+    },
+    {
+      "rule": "bandit-b505-weak-cryptographic-key:weak-cryptographic-key",
+      "cpuNs": 1933768461,
+      "roots": 690248,
+      "rows": 0,
+      "filters": 0
+    },
+    {
+      "rule": "ruff-f823-undefined-local:undefined-local",
+      "cpuNs": 1714557778,
+      "roots": 3992157,
+      "rows": 1,
+      "filters": 0
+    },
+    {
+      "rule": "ruff-b007-unused-loop-control-variable:unused-loop-control-variable-uncertain",
+      "cpuNs": 1673340856,
+      "roots": 2821343,
+      "rows": 0,
+      "filters": 0
+    }
+  ],
+  "nativeFilters": 23,
+  "nativeRoots": 81448968,
+  "nativeWave": {
+    "closure_hits": 9360,
+    "closure_nodes": 619608,
+    "family_dispatches": [
+      0,
+      1742350,
+      961387,
+      809909,
+      864484,
+      132431,
+      537149,
+      678323
+    ],
+    "family_lanes": [
+      0,
+      44204995,
+      14898254,
+      58426271,
+      39744720,
+      6736053,
+      40496820,
+      38125726
+    ],
+    "kernel_dispatches": 5726033,
+    "kernel_lanes": 242632839,
+    "lanes": 30044209,
+    "literal_evaluations": 10681676,
+    "max_documents": 19,
+    "max_kernel_width": 2048,
+    "max_memo_entries": 32768,
+    "max_programs": 19,
+    "max_text_entries": 30066,
+    "multi_document_submissions": 14614,
+    "multi_program_submissions": 14749,
+    "posting_builds": 346,
+    "posting_nodes": 5419,
+    "posting_seeks": 404,
+    "submissions": 14759,
+    "subtree_hits": 0,
+    "subtree_materializations": 0,
+    "subtree_nodes": 0,
+    "text_evaluations": 449615,
+    "text_hits": 3766963,
+    "unique_lanes": 28339968,
+    "utility_hits": 13286475,
+    "walk_advances": 48536031
+  },
+  "kernelFamilies": {
+    "never": {
+      "dispatches": 0,
+      "lanes": 0,
+      "meanWidth": 0
+    },
+    "kind": {
+      "dispatches": 1742350,
+      "lanes": 44204995,
+      "meanWidth": 25.370904238528425
+    },
+    "text": {
+      "dispatches": 961387,
+      "lanes": 14898254,
+      "meanWidth": 15.496625188399676
+    },
+    "all": {
+      "dispatches": 809909,
+      "lanes": 58426271,
+      "meanWidth": 72.13930330444532
+    },
+    "any": {
+      "dispatches": 864484,
+      "lanes": 39744720,
+      "meanWidth": 45.97507877531568
+    },
+    "not": {
+      "dispatches": 132431,
+      "lanes": 6736053,
+      "meanWidth": 50.86462384184972
+    },
+    "utility": {
+      "dispatches": 537149,
+      "lanes": 40496820,
+      "meanWidth": 75.3921537599437
+    },
+    "walk": {
+      "dispatches": 678323,
+      "lanes": 38125726,
+      "meanWidth": 56.205857681370084
+    }
+  },
+  "scalarNativeRoots": 53109000,
+  "waveEmittedRows": 164,
+  "waveGuardRoots": 25424539,
+  "waveGuardRejections": 16693510,
+  "waveResourceReplays": 0,
+  "nativePrefixRoots": 28339968,
+  "nativeCandidateRoots": 73199829,
+  "nativeGroupingRoots": 0,
+  "memoHits": 4989311,
+  "memoMisses": 46505686,
+  "sharedProducers": [],
+  "peakRequestRows": 29546,
+  "compiler": {
+    "cacheHits": 0,
+    "clauses": 146,
+    "compiler": "typed-matcher-fragments",
+    "compilerVersion": 3,
+    "descendantAnchors": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "maxMatchingStatementsPerPartition": 1,
+    "nativeComposition": true,
+    "sqlBytes": 5373,
+    "sqlStatements": 1,
+    "statistics": {},
+    "statisticsError": null
+  },
+  "catalog": {
+    "grammars": 146,
+    "files": 597,
+    "runs": [
+      {
+        "compared": 87162,
+        "matches": 2477,
+        "mismatches": [],
+        "nativeCpuNs": 1086092375,
+        "nativeWallNs": 1390080917,
+        "sqlCpuNs": 1155751833,
+        "sqlWallNs": 1447120833,
+        "unknownNative": 0,
+        "unknownSql": 0
+      }
+    ]
+  }
+}

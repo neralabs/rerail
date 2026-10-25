@@ -816,6 +816,9 @@ pub(crate) struct WalkFilter {
 }
 
 impl WalkFilter {
+    pub(super) fn for_batch(rule: &AstMatcher) -> Option<Arc<Self>> {
+        Self::of(rule, &OnceLock::new())
+    }
     fn of(rule: &AstMatcher, cell: &OnceLock<Option<Arc<Self>>>) -> Option<Arc<Self>> {
         cell.get_or_init(|| {
             let kinds = node_kinds(rule, &mut BTreeMap::new())?;

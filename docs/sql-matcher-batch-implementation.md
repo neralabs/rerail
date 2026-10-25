@@ -1,144 +1,153 @@
-# Reusable matcher batches and prefix sharing
+# Native operation batches and shared matcher work
 
-The SQL engine now calls one native batch per resident partition for the shipped Python catalog.
-The batch visits each file once and retains its matcher memo across rules.
-Compatible rules share closed predicate prefixes before they execute their private residual matchers.
-SQL supplies selective input domains and publishes typed results.
+The engine batches native operations across programs and documents.
+A lane identifies a program, document, and preorder node. SQL transports demands and completed typed results.
+The CPU executor groups lanes by operation, advances active lanes, and scatters results into the original request order.
+Its kernels do not call `AstMatcher` or install thread-local matcher state.
 
-This implements the measured changes from the [joint optimization audit](sql-matcher-batch-optimization.md).
-The [transition journal](sql-matcher-fragment-transition.md) records experiments, corrections, and qualification results.
+The [journal](sql-matcher-fragment-transition.md) records measurements, rejected assumptions, review findings, and corrections.
+The [preceding qualification](../benchmark/sql-matcher-batch-integration.json) measures the earlier file-first implementation at commit `92b1978e`.
+That implementation still called the native matcher once per residual root.
+Its SQL submission count did not measure native execution granularity.
 
-The final 5,725-file qualification preserves all 97,798 finding identities and three edit results.
-It uses 23 matching statements, 25.2 million VM instructions, and 64.2 million native root evaluations.
-Whole-job CPU remains close to native: 110.41 seconds versus 112.56 seconds in the final paired run.
-Wall time worsens in that run. The [evidence](../benchmark/sql-matcher-batch-integration.json) records both, with unchanged acceptance ceilings.
+## Ownership and reuse
 
-## Reuse and compatibility
-
-The implementation follows the sibling `Pulling-it-all-together` worktree's current architecture and producer contracts.
-The sibling worktree remains unchanged.
-
-| Layer | Current owner | Reuse boundary |
+| Layer | Owner | Responsibility |
 | --- | --- | --- |
-| Prefix transformation | `producers/prefix.rs` | Generic ordered semantic keys; no matcher or SQLite dependency |
-| Matcher safety and identity | `matcher/factor.rs` | Closed predicate proof, complete keys, residual construction |
-| Contract catalog | `producers/mod.rs` | Existing registry; separate from execution |
-| Native batch transport | `sql/fragments/batch.rs` | Typed requests, file scheduling, producer execution, outcomes |
-| SQL planning and publication | `sql/engine/planning.rs` | Candidate access paths, demand aggregation, final projection |
+| Generic prefix planning | `producers/prefix.rs` | Ordered semantic keys and reusable producer stages |
+| Predicate identity | `matcher/factor.rs` | Closed predicate proof, complete utility definitions, residual construction |
+| Operation lowering and execution | `matcher/wave.rs` | Program interning, numeric lanes, operation cohorts, shared navigation, bounded caches |
+| Typed transport | `sql/fragments/batch.rs` | Consumer domains, two-axis tiles, file allowances, residual execution, result publication |
+| SQL generation | `sql/engine/planning.rs` | Candidate access paths, demand aggregation, final projection |
+| Tape navigation | `tape.rs` | Native node links and sibling starting-position semantics |
 
-The sibling architecture maps these SQL modules to `engine/vtab`, `engine/plan`, and `engine/compose`.
-The generic transformation can remain under `producers` when the transport moves.
-Other backends can supply their own keys and execute the returned stages without importing SQLite.
+The sibling `Pulling-it-all-together` specification separates local transducers, relational facts, and native fact producers.
+This implementation preserves that separation. The sibling worktree remains unchanged.
+Its document-table and `(program group, document, root)` task model guide the lane interface.
 
-`Plan<K>::new` accepts `(consumer_id, ordered_terms)` pairs.
-Each stage names its parent, shared terms, and consumers.
-Each tail names its consumer, parent stage, and consumed prefix length.
-The transformation recurses after divergence. It does not stop after the first common prefix.
-Singleton paths remain private residuals.
+The generic prefix planner remains available to other producer backends.
+The production matcher now interns closed operation graphs and shares completed keyed facts within its executor.
+It does not execute the old generic prefix trie in its hot path.
+The wave module has no dependency on SQLite or catalog rule names.
+An index-provider function supplies existing kind postings without coupling the executor to SQL.
 
-The caller must prove equal semantic domains and certify that each term can be shared.
-The planner compares complete keys. A hash or a matching display name does not establish identity.
-The matcher adapter retains complete transitive utility definitions for this comparison.
-The versioned `matcher.closed_predicate.v1` contract declares typed outputs and domain completion.
-The registry describes the operation; it does not execute the prefix plan.
+## Native execution
 
-## Sharing rules and lifetime
+Each submission contains at most 2,048 lanes. The driver tiles both the file and program axes.
+Operation cohorts can contain several programs and documents.
+Active masks preserve ordered short-circuit behavior while removing completed lanes.
+The result records truth, logical utility work, maximum utility depth, and incomplete execution.
 
-The native batch groups consumers by file, dialect, resource options, and the complete ordered root domain.
-Different domains remain separate. The batch does not create a larger union domain to increase apparent reuse.
-Capture-bearing requests, enumeration, semantic operations, and parameterized calls remain private.
-They still benefit from the existing file memo where its native keys permit reuse.
+The supported exact operations are kinds, regexes, booleans, tree relations, stop predicates, counts without exports, and closed recursive utilities.
+Literal regex forms become byte predicates after syntax-tree analysis. Other regex forms use the existing regex engine.
+Complete closed programs can publish results without scalar matcher calls.
 
-Only closed syntactic predicates enter shared prefixes.
-These include suitable kind, regex, relation, boolean, and unbound count predicates, including closed utilities.
-Unknown-producing terms remain residuals. Resource failures remain explicit outcomes, never negative cache entries.
-An empty completed prefix domain prevents all dependent residual work.
-Each consumer receives the remaining allowance after its shared stages.
-This does not establish equivalence of every historical cache-fill or instruction-charge observation.
-That semantic question remains separate from finding, capture, and incomplete-coverage parity.
+Navigation has several physical forms:
 
-Compiled stage matchers retain stable addresses for the file memo's lifetime.
-Some existing native caches use matcher addresses as keys.
-Constructing and discarding temporary matchers inside that lifetime can produce incorrect cache reuse.
-The batch caches prepared stage plans by consumer set and releases file caches after the file's consumers finish.
-No producer result survives an edit. Existing workspace dependency invalidation remains authoritative.
+- Neighbor and stop-rule walks advance one cursor per active lane.
+- Ancestor and sibling end-walks share a demanded suffix graph. Each suffix is evaluated once.
+- Filtered descendant end-walks seek preorder postings within each requested subtree interval.
+- Repeated unfiltered descendant walks can materialize a zero-cost local predicate over the demanded subtree union.
 
-Direct kind tests already guaranteed by admission are removed before prefix extraction.
-Materializing their successful rows would copy the entire domain without filtering any work.
-The first integrated experiment exposed this problem; the journal records its correction.
+The last form starts after seven failed probes.
+It requires sixteen active requests and at least four times as much remaining traversal as unique nodes.
+This condition retains short-circuit execution for early matches and avoids unconditional whole-file materialization.
+Completion intervals distinguish a proven negative from an uncovered node.
+Utilities, exported counts, navigation inside the child predicate, and semantic operations do not use this materialization.
 
-## SQL shape and virtual-table affordances
+Sibling walks use the native byte-positioned initial anchor, including document roots and zero-width nodes.
+After that initial position, suffix continuation follows structural sibling links.
+Internal suffix keys cannot collide with user-root keys.
 
-The generated statement has one native batch arm and direct SQL arms for pure structural clauses.
-Mixed clauses supply collected, filtered domains through one demand aggregate:
+## Mixed programs and captures
 
-```sql
-SELECT clause, file, node, truth, ordinal, c0, c1
-FROM matcher_batch_0(
-  (SELECT batch_demands(clause, handle)
-   FROM (
-     SELECT 7 AS clause,
-            (SELECT demand_7(request, file, node) FROM ...) AS handle
-     UNION ALL
-     SELECT 12,
-            (SELECT demand_12(request, file, node) FROM ...)
-   ))
-)
-UNION ALL
-SELECT ...; -- pure structural result arms
-```
+The compiler also builds negative admission proofs inside mixed alternatives and utility definitions.
+A false result proves that native execution stops before reaching an opaque operation.
+A possible match admits the original program; it does not publish a finding or suppress native evaluation.
 
-The numbers and capture width above illustrate the shape.
-The qualification artifact retains the actual generated SQL and its EXPLAIN plan.
-Native-only clauses use their registered root domains directly, without SQL enumeration of every request.
-An empty mixed demand remains empty; it cannot become an unrestricted scan.
-Large catalogs split at 256 clauses per statement and retain the whole-job execution budget.
+Conjunction proofs stop at the first opaque term. Every disjunction branch must have a proof.
+Partial proofs cannot pass through negation or move across capture and semantic operations.
+Rejected paths charge their proven utility work. Admitted paths retain the original program's work charges.
 
-Candidate tables now support file enumeration and `(file, node)` membership lookup.
-Membership uses sorted domain roots and a file index retained for the active fragment.
-This permits a selective seed to drive the join and intersect the actual requested domain:
+Capture-dependent matching, semantic predicates, and enumeration retain their native implementation.
+Their scalar root calls remain visible in the report.
+This is a CPU operation executor, not a complete GPU backend or a GPU implementation of those residual operations.
+A device backend still needs packed operation tables, device text predicates, capture storage, and queue execution.
+The current host executor uses recursive cohort calls where a device backend would use explicit queues.
 
-```sql
-WITH qualifying_parent AS MATERIALIZED (
-  SELECT p.file, p.id
-  FROM candidate_files_i f
-  CROSS JOIN node p ON p.file = f.file
-  WHERE <selective parent predicate>
-)
-SELECT c.request, c.file, c.node
-FROM qualifying_parent p
-CROSS JOIN node n ON n.file = p.file AND n.parent = p.id
-CROSS JOIN candidates_i c ON c.file = n.file AND c.node = n.id;
-```
+## Scope, resources, and cache lifetime
 
-F707 can use the handler-first shape above.
-Materializing qualifying parents prevents SQLite from moving their sibling checks after child expansion.
-A parent predicate containing only a kind test needs no such materialization.
-Rare descendant plans likewise start from indexed kind postings and intersect candidate membership.
-Root-driven plans remain available when the stored counts favor them.
-Anchor-implied structural predicates disappear, and unbound counts stop at their decisive threshold.
+Each consumer retains its selected roots, file context, and allowance.
+Sharing a closed `(program, document, node)` fact does not expand a consumer's domain.
+Program identity includes complete predicate definitions. Utility names or hashes alone do not establish equality.
+Walk admission mode remains part of the lane identity.
 
-The planner reads counts from the content store's SQL kind vocabulary.
-It does not recount a batch in Rust.
-Each batch profile reports the counts actually used, their source, selected shapes, and lookup CPU.
-Prepared SQL changes only when those counts change a planning decision.
-Compilation and preparation remain separately reported and cached.
-These counts cover indexed tapes in the store, across dialects and retained versions.
-They are cost estimates, not candidate-domain sizes or admission proofs.
-Search indexes are populated by maintenance. Attaching an empty store alone does not supply useful statistics.
+Utility and short-text caches each retain at most 32,768 entries.
+Posting caches retain at most 131,072 node IDs; larger postings remain shared within a dispatch.
+Subtree facts record their completed intervals and have bounded retained entries and node IDs.
+All caches belong to immutable document revisions held by one executor. Disposal invalidates those revisions.
 
-## Measurement and remaining scope
+Incomplete computation never becomes a negative fact.
+Resource exhaustion causes native replay for the affected file and clause.
+Cancellation is checked during navigation even when every candidate fails its kind filter.
+Demand nodes are checked before tape access.
 
-Batch profiles include candidate roots, shared-prefix roots and outputs, producer consumers, memo hits and misses, and prefix CPU.
-The compiler first identifies prefixes with possible reuse, so unique prefixes do not incur runtime domain-grouping costs.
-The `grouping_roots` counter records the inputs that still need a domain-equality comparison.
-Residual CPU remains attributed to its clause. Shared prefix CPU appears separately and is included in the qualification total.
-The whole-job report records CPU, wall time, and peak memory.
-Its gate enforces CPU and memory ceilings, finding and edit parity, complete coverage, and the 100-statement limit.
-VM instructions remain a diagnostic.
+Residual matcher objects remain stable for the whole batch.
+This preserves the native memo's address-based ownership keys.
+File-local semantic caches remain available across residual rules and are released after the file completes.
 
-The existing four-worker pool executes bounded resident partitions. This change adds no nested worker pool.
-Partition sizing still uses source bytes. A new cost-balancing policy needs measured per-file costs before adoption.
-The batch does not yet expose generic call-site or lexical-scope relations for SQL-side async admission.
-It shares the corresponding closed matcher prefixes instead.
-Capture-dependent factoring and cross-edit producer caching require additional contracts and are not inferred by this transformation.
+## SQL and measurement
+
+The SQL shape remains a small set of partition plans with typed native batch boundaries.
+Selective parent relations materialize before child expansion where that avoids repeated qualification.
+Production planning reads available SQL kind statistics. Compiled output and prepared statements retain their existing caches.
+No program counter or matcher state machine is emitted into SQL.
+
+The profile separates SQL statements, VM instructions, operation lanes, kernel dispatches, navigation work, and scalar residual roots.
+It also reports shared closure nodes, posting seeks, subtree materializations, partial-proof rejections, cache reuse, and resource replay.
+These counters prevent a small SQL count or wide dispatch from concealing repeated native work.
+
+Qualification checks native verdicts, work charges, captures, catalog coverage, whole-job findings, and three edits.
+A deep-tree test bounds navigation operations for suffix closure and both descendant shapes.
+Whole-job gates retain 100 matching statements, a 1.30 CPU ratio, a 1.50 edit CPU ratio, and 1.5 GiB peak RSS.
+
+## Qualified result
+
+The [qualification report](../benchmark/sql-native-wave-integration.json) passes all existing ceilings and the new native-batching checks.
+The workload contains 5,725 Python files, 95.7 MB of source, 138 policies, and 146 AST clauses.
+All 97,798 finding identities and three edit results match native.
+The catalog also preserves raw matches and captures across 87,162 rule/file pairs.
+
+| Measure | Native | SQL with native waves |
+| --- | ---: | ---: |
+| Whole-job CPU | 113.85 s | 111.72 s |
+| Whole-job wall time | 66.80 s | 69.67 s |
+| Median edit CPU | 202.82 ms | 213.17 ms |
+| Peak RSS | 0.79 GiB | 1.10 GiB |
+
+This paired run does not establish a material CPU improvement over the previous SQL implementation, which used 110.41 seconds.
+The previous and current runs have different host load. CPU and wall measurements are both retained.
+
+The job uses 23 matching SQL statements and 25,216,565 VM instructions.
+Native waves process 30,044,209 input lanes in 14,759 submissions.
+A submission includes up to nineteen programs and nineteen documents. Maximum kernel width is 2,048 lanes.
+The executor performs 242,632,839 operation lanes in 5,726,033 kernel dispatches: 42.37 lanes per dispatch.
+There are no resource-triggered native replays.
+
+Scalar matcher roots fall from 62,364,147 to 53,109,000, a 14.8% reduction.
+Residual CPU falls from 73.24 to 64.49 seconds. Wave preparation and execution rise from 2.64 to 13.10 seconds.
+Total matching CPU remains approximately unchanged: 82.24 versus 82.64 seconds.
+The batch execution model is real, but these numbers do not demonstrate a whole-job speedup.
+
+The remaining scalar work is substantial. Binding, scope, capture, and mixed semantic rules account for most residual CPU.
+The largest residuals include B023, F405, B007, and B615.
+Replacing those residuals with batches of typed semantic facts and capture operations remains necessary for broader device execution.
+The zero-cost subtree materialization does not activate on this full workload; its benefit is established by the amplification gate only.
+
+Raw evidence is retained as compressed [catalog](../benchmark/sql-native-wave-catalog.json.gz),
+[native](../benchmark/sql-native-wave-native.json.gz), and [SQL](../benchmark/sql-native-wave-sql.json.gz) reports.
+The summary records source hashes, executable identity, corpus identity, query plans, and acceptance ceilings.
+
+The checker requires wave evidence and both batching axes.
+It ratchets scalar root calls at 53,109,000 and rejects a mean kernel width of four lanes or less.
+These are regression ceilings for this workload, not claims that the remaining scalar work is acceptable as the final architecture.

@@ -68,7 +68,9 @@ fn fragment_batch_never_unions_distinct_candidate_domains() {
     let found = session.run(doc, &demands).unwrap();
     assert_eq!(found[0][0].len(), 2);
     assert_eq!(found[1][0].len(), 1);
-    assert_eq!(session.last_profile["nativeBatches"][0]["prefix_stages"], 0);
+    let waves = &session.last_profile["nativeBatches"][0]["wave"];
+    // Share completed (program, file, node) facts, never broaden a consumer's domain.
+    assert!(waves["lanes"].as_u64().unwrap() > waves["unique_lanes"].as_u64().unwrap());
 }
 #[test]
 fn fragment_batch_different_definitions_and_unknowns_remain_private() {
@@ -94,8 +96,10 @@ fn fragment_batch_different_definitions_and_unknowns_remain_private() {
             assert_eq!(found[id][0].matches, expected[0][0].matches);
             assert_eq!(found[id][0].unknown, expected[0][0].unknown);
         }
-        assert_eq!(session.last_profile["nativeBatches"][0]["prefix_stages"], 0);
-        assert_eq!(session.last_profile["nativeBatches"][0]["grouping_roots"], 0);
+        let profile = &session.last_profile["nativeBatches"][0];
+        let expected = if b.three_valued { 1 } else { 2 };
+        assert_eq!(profile["wave"]["max_programs"], expected);
+        assert_eq!(profile["wave_resource_replays"], 0);
     }
 }
 #[test]
@@ -209,4 +213,44 @@ fn fragment_batch_qualifies_parents_before_child_expansion() {
             .unwrap()
             .contains("MATERIALIZE qualifying_parent")
     );
+}
+
+#[test]
+fn fragment_batch_executes_closed_programs_across_files_without_scalar_roots() {
+    let grammars = ["number", "identifier"].map(|kind| {
+        let source = json!({"format":"rerail.policy/v1","id":format!("wave-{kind}"),"revision":1,"mode":"steer","clauses":[{"id":"c","forbid":{"ast":{"language":"javascript","rule":{"matches":"gate"},"utils":{"gate":{"kind":"call_expression","has":{"stopBy":"end","kind":kind}}}}},"violation":{"code":"W","message":"wave","anchor":"witness.span"}}]});
+        let p = CodeRuleDslRuntime::compile(source.to_string(), "json".into(), CAPABILITIES.into()).unwrap();
+        grammar_matchers(&p)[0].clone()
+    });
+    let compiled = compile_enumerating(&grammars.iter().collect::<Vec<_>>(), None).unwrap();
+    let mut session = compiled.session().unwrap();
+    let found = session
+        .run(
+            docs(&grammars[0], &["f(1);g(x);", "f(2);g(y);"]),
+            &runs(2, 2),
+        )
+        .unwrap();
+    assert_eq!(found[0].iter().map(|f| f.len()).sum::<usize>(), 2);
+    assert_eq!(found[1].iter().map(|f| f.len()).sum::<usize>(), 4);
+    let metrics = &session.last_profile["nativeBatches"][0];
+    assert_eq!(metrics["wave_emitted_rows"], 6);
+    assert_eq!(metrics["wave_resource_replays"], 0);
+    assert!(
+        metrics["wave"]["multi_document_submissions"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(
+        metrics["wave"]["multi_program_submissions"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    for boundary in session.last_profile["boundaries"].as_array().unwrap() {
+        assert_eq!(
+            boundary["roots"], 0,
+            "closed program returned to scalar matching"
+        );
+    }
 }

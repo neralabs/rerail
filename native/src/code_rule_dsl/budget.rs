@@ -332,6 +332,10 @@ impl MatchBudget {
 pub(super) struct SuspendedBudget(MatchDeadline);
 
 impl SuspendedBudget {
+    /// Wave executors poll explicit document contexts without installing thread-local state.
+    pub(super) fn poll(&self) -> bool {
+        self.0.exhausted()
+    }
     /// Installs the budget on this thread again.
     pub(super) fn resume(self) -> MatchBudget {
         MatchBudget::install(self.0)

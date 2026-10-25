@@ -23,6 +23,7 @@ mod memo;
 mod nth_child;
 mod parse;
 mod relation;
+pub(in crate::code_rule_dsl) mod wave;
 #[cfg(test)]
 pub(crate) use relation::{candidates_tested, walk_candidate_filter};
 mod resolve;

@@ -1,7 +1,7 @@
 //! SQL transport for a file-first native batch. Factoring lives in matcher/factor and
 //! producers/prefix, independent of SQLite, rule names, and catalog grammars.
 use super::*;
-use crate::code_rule_dsl::{matcher::factor::Prefix, producers::prefix::Plan};
+use crate::code_rule_dsl::matcher::{factor::Prefix, wave};
 
 #[derive(Default, serde::Serialize)]
 pub(in crate::code_rule_dsl::sql) struct Metrics {
@@ -20,6 +20,11 @@ pub(in crate::code_rule_dsl::sql) struct Metrics {
     pub memo_files: u64,
     pub memo_metrics_enabled: bool,
     pub producers: Vec<serde_json::Value>,
+    pub wave: wave::Metrics,
+    pub wave_resource_replays: usize,
+    pub wave_emitted_rows: usize,
+    pub wave_guard_roots: usize,
+    pub wave_guard_rejections: usize,
 }
 #[derive(Clone)]
 pub(in crate::code_rule_dsl::sql) struct Member {
@@ -27,10 +32,16 @@ pub(in crate::code_rule_dsl::sql) struct Member {
     pub active: Active,
     pub prefix: Arc<Prefix>,
 }
+#[derive(Clone, Copy)]
+struct Entry {
+    program: u32,
+    exact: bool,
+}
 #[derive(Clone)]
 struct Aux {
     members: Vec<Member>,
-    eligible: std::collections::BTreeSet<usize>,
+    programs: Arc<wave::Programs>,
+    entries: BTreeMap<usize, Entry>,
     demands: Arc<DemandStore>,
     metrics: Arc<Mutex<Metrics>>,
     width: usize,
@@ -44,25 +55,46 @@ pub(in crate::code_rule_dsl::sql) fn register(
     width: usize,
 ) -> Result<()> {
     const MODULE: Module<'static, Table> = Module::eponymous_only_module();
-    // Static eligibility avoids building domain keys for predicates with no possible consumer.
-    // This does not authorize sharing: execution still compares the actual domains and options.
-    let potential = Plan::new(
-        &members
-            .iter()
-            .map(|m| (m.id, m.prefix.keys.as_slice()))
-            .collect::<Vec<_>>(),
-    );
-    let eligible = potential
-        .stages
+    let mut programs = wave::Programs::default();
+    let entries = members
         .iter()
-        .flat_map(|s| s.consumers.iter().copied())
+        .filter_map(|m| {
+            let rest = matcher::AstMatcher::All(m.prefix.rest.clone());
+            if !m.prefix.rest.is_empty() && programs.admission(&rest).is_some() {
+                programs.admission(&m.prefix.residual(0)).map(|program| {
+                    (
+                        m.id,
+                        Entry {
+                            program,
+                            exact: false,
+                        },
+                    )
+                })
+            } else if !m.prefix.terms.is_empty() {
+                programs
+                    .lower(&matcher::AstMatcher::All(m.prefix.terms.clone()))
+                    .map(|program| {
+                        (
+                            m.id,
+                            Entry {
+                                program,
+                                exact: true,
+                            },
+                        )
+                    })
+            } else {
+                None
+            }
+        })
         .collect();
+    let programs = Arc::new(programs);
     db.create_module(
         name,
         &MODULE,
         Some(Aux {
             members,
-            eligible,
+            programs,
+            entries,
             demands,
             metrics,
             width,
@@ -162,20 +194,6 @@ unsafe impl VTabCursor for Cursor<'_> {
         Ok(self.at as i64)
     }
 }
-struct Input {
-    member: Member,
-    fragment: Arc<Fragment>,
-    requests: Arc<[Request]>,
-}
-fn run(
-    f: &Fragment,
-    batch: &Batch,
-    file: u32,
-    requests: &[Request],
-    remaining: Option<usize>,
-) -> Result<Vec<Row>> {
-    f.evaluate_file(batch, requests, file, 0..requests.len(), remaining)
-}
 fn execute(
     aux: &Aux,
     mut demands: BTreeMap<usize, Arc<super::demand::Demand>>,
@@ -223,251 +241,283 @@ fn execute(
     let Some(batch) = batch else {
         return Ok(vec![]);
     };
+    // Stable matcher addresses are part of the existing native memo's ownership keys.
+    let residuals = members
+        .iter()
+        .map(|(member, f)| {
+            let mut grammar = f.grammar.clone();
+            grammar.matcher = member.prefix.residual(member.prefix.terms.len());
+            Fragment {
+                grammar,
+                names: f.names.clone(),
+                requests: vec![],
+                work: f.work,
+                each: f.each.clone(),
+                metrics: f.metrics.clone(),
+                scope: None,
+                allowance: f.allowance,
+            }
+        })
+        .collect::<Vec<_>>();
+    let (mut admitted, wave_metrics) = prepare_waves(aux, &batch, &members, &by_file, &supplied)?;
     let mut output = vec![];
-    let mut plans = BTreeMap::new();
     for (file, scopes) in by_file {
         let entry = &batch.files[file];
         matcher::with_file_memo(&entry.root, || -> Result<()> {
-            // Equality is the complete ordered root domain plus resource options and dialect.
-            // Capture-bearing requests and enumeration remain private, but still share file memo.
-            let mut groups =
-                BTreeMap::<(String, usize, Option<(usize, usize)>, Vec<u32>), Vec<Input>>::new();
             for (index, selected) in scopes {
                 let (member, f) = &members[index];
-                let mut requests = match supplied.remove(&(member.id, file as u32)) {
-                    Some(r) => r,
-                    None => f.requests_for(&batch, &[(file, selected)])?,
-                };
-                requests.sort_by_key(|r| r.node);
-                aux.metrics.lock().unwrap().candidate_roots += requests.len();
-                if requests.is_empty() {
-                    continue;
-                }
-                if f.each.is_some()
-                    || requests.iter().any(|r| !r.inputs.is_empty())
-                    || !aux.eligible.contains(&member.id)
+                let gate = admitted.remove(&(member.id, file as u32));
+                let had_admission = gate.is_some();
+                let (requests, remaining, fragment) = if let Some(gate) = gate.filter(|g| !g.replay)
                 {
-                    output.extend(
-                        run(f, &batch, file as u32, &requests, None)?
+                    if gate.exact && member.prefix.rest.is_empty() && f.names.is_empty() {
+                        let count = gate.nodes.len();
+                        output.extend(gate.nodes.into_iter().enumerate().map(|(request, node)| {
+                            (
+                                member.id,
+                                Row {
+                                    request: request as i64,
+                                    file: file as u32,
+                                    node,
+                                    truth: 1,
+                                    ordinal: 0,
+                                    values: vec![],
+                                },
+                            )
+                        }));
+                        aux.metrics.lock().unwrap().wave_emitted_rows += count;
+                        f.metrics.lock().unwrap().rows += count;
+                        continue;
+                    }
+                    (
+                        gate.nodes
                             .into_iter()
-                            .map(|r| (member.id, r)),
-                    );
-                    continue;
-                }
-                aux.metrics.lock().unwrap().grouping_roots += requests.len();
-                let key = (
-                    f.grammar.language.to_string(),
-                    f.work,
-                    f.allowance,
-                    requests.iter().map(|r| r.node).collect(),
+                            .map(|node| Request {
+                                file: file as u32,
+                                node,
+                                inputs: vec![],
+                            })
+                            .collect::<Vec<_>>(),
+                        Some(gate.remaining),
+                        if gate.exact {
+                            Some(&residuals[index])
+                        } else {
+                            Some(f.as_ref())
+                        },
+                    )
+                } else {
+                    let requests = match supplied.remove(&(member.id, file as u32)) {
+                        Some(r) => r,
+                        None => f.requests_for(&batch, &[(file, selected)])?,
+                    };
+                    if !had_admission {
+                        aux.metrics.lock().unwrap().candidate_roots += requests.len();
+                    }
+                    (requests, None, None)
+                };
+                let mut requests = requests;
+                requests.sort_by_key(|r| r.node);
+                let runner = fragment.unwrap_or(f);
+                output.extend(
+                    runner
+                        .evaluate_file(
+                            &batch,
+                            &requests,
+                            file as u32,
+                            0..requests.len(),
+                            remaining,
+                        )?
+                        .into_iter()
+                        .map(|r| (member.id, r)),
                 );
-                groups.entry(key).or_default().push(Input {
-                    member: member.clone(),
-                    fragment: f.clone(),
-                    requests: requests.into(),
-                });
-            }
-            for inputs in groups.into_values() {
-                let ids = inputs.iter().map(|i| i.member.id).collect::<Vec<_>>();
-                if inputs.len() == 1 {
-                    let i = &inputs[0];
-                    output.extend(
-                        run(&i.fragment, &batch, file as u32, &i.requests, None)?
-                            .into_iter()
-                            .map(|r| (i.member.id, r)),
-                    );
-                    continue;
-                }
-                let plan = plans.entry(ids).or_insert_with(|| Prepared::new(&inputs));
-                evaluate_group(aux, &batch, file as u32, &inputs, plan, &mut output)?;
             }
             Ok(())
         })?;
-        // All consumers of this file in the batch are complete; release parked semantic caches.
         crate::code_rule_dsl::sql::terminals::BatchScopes::release(file);
     }
     let memo_after = matcher::memo_metrics();
-    {
-        let mut m = aux.metrics.lock().unwrap();
-        m.memo_hits += memo_after.hits - memo_before.hits;
-        m.memo_misses += memo_after.misses - memo_before.misses;
-        m.memo_files += memo_after.files - memo_before.files;
-        m.memo_metrics_enabled = cfg!(any(test, feature = "code-rule-profile"));
-        m.producers = plans.values().flat_map(Prepared::profile).collect();
-    }
+    let mut m = aux.metrics.lock().unwrap();
+    m.memo_hits += memo_after.hits - memo_before.hits;
+    m.memo_misses += memo_after.misses - memo_before.misses;
+    m.memo_files += memo_after.files - memo_before.files;
+    m.memo_metrics_enabled = cfg!(any(test, feature = "code-rule-profile"));
+    m.wave = wave_metrics;
     Ok(output)
 }
-struct Completed {
-    requests: Arc<[Request]>,
-    remaining: Option<usize>,
-    failure: Option<Row>,
+
+struct Admission {
+    exact: bool,
+    nodes: Vec<u32>,
+    remaining: usize,
+    replay: bool,
 }
-// Keep compiled matcher objects alive and at stable addresses for the entire memo lifetime.
-// Native semantic and relation caches can key their entries by those object addresses.
-struct Prepared {
-    plan: Plan<matcher::factor::Key>,
-    stages: Vec<Arc<Fragment>>,
-    tails: Vec<Arc<Fragment>>,
+struct Pending {
+    member: usize,
+    file: u32,
+    program: u32,
+    flags: u32,
+    nodes: Vec<u32>,
+    at: usize,
 }
-impl Prepared {
-    fn profile(&self) -> Vec<serde_json::Value> {
-        self.plan.stages.iter().zip(&self.stages).map(|(stage,f)| {
-            let m=f.metrics.lock().unwrap();
-            let terms=stage.terms.iter().map(|key|match key {
-                matcher::factor::Key::Utility(body)=>serde_json::from_slice::<serde_json::Value>(body).ok().and_then(|v|v[1].as_str().map(str::to_owned)).unwrap_or_else(||"utility".into()),
-                matcher::factor::Key::Kinds(k)=>format!("kinds {k:?}"),
-                matcher::factor::Key::Regex(r)=>format!("regex {r}"),
-                _=>"closed structural predicate".into(),
-            }).collect::<Vec<_>>();
-            serde_json::json!({"contract":"matcher.closed_predicate.v1","consumers":stage.consumers,"terms":terms,"roots":m.roots,"rows":m.rows,"cpuNs":m.native_cpu_ns,"wallNs":m.native_wall_ns,"filesWithWork":m.remaining_work.len()})
-        }).collect()
-    }
-    fn new(inputs: &[Input]) -> Self {
-        let plan = Plan::new(
-            &inputs
-                .iter()
-                .map(|i| (i.member.id, i.member.prefix.keys.as_slice()))
-                .collect::<Vec<_>>(),
-        );
-        let input = |id| {
-            inputs
-                .iter()
-                .find(|i| i.member.id == id)
-                .expect("planned consumer")
-        };
-        let stages = plan
-            .stages
-            .iter()
-            .map(|stage| {
-                let prototype = input(stage.consumers[0]);
-                let mut grammar = prototype.fragment.grammar.clone();
-                let depth = stage.parent.map_or(0, |mut p| {
-                    let mut n = 0;
-                    loop {
-                        n += plan.stages[p].terms.len();
-                        match plan.stages[p].parent {
-                            Some(parent) => p = parent,
-                            None => break,
-                        }
-                    }
-                    n
-                });
-                debug_assert_eq!(
-                    &prototype.member.prefix.keys[depth..depth + stage.terms.len()],
-                    &stage.terms
-                );
-                grammar.matcher = matcher::AstMatcher::All(
-                    prototype.member.prefix.terms[depth..depth + stage.terms.len()].to_vec(),
-                );
-                grammar.three_valued = false;
-                grammar.transform = None;
-                Arc::new(Fragment {
-                    grammar,
-                    names: vec![],
-                    requests: vec![],
-                    work: prototype.fragment.work,
-                    each: None,
-                    metrics: Arc::default(),
-                    scope: None,
-                    allowance: prototype.fragment.allowance,
-                })
-            })
-            .collect();
-        let tails = plan
-            .tails
-            .iter()
-            .map(|tail| {
-                let i = input(tail.consumer);
-                if tail.consumed == 0 {
-                    return i.fragment.clone();
-                }
-                let mut grammar = i.fragment.grammar.clone();
-                grammar.matcher = i.member.prefix.residual(tail.consumed);
-                Arc::new(Fragment {
-                    grammar,
-                    names: i.fragment.names.clone(),
-                    requests: vec![],
-                    work: i.fragment.work,
-                    each: i.fragment.each.clone(),
-                    metrics: i.fragment.metrics.clone(),
-                    scope: None,
-                    allowance: i.fragment.allowance,
-                })
-            })
-            .collect();
-        Self {
-            plan,
-            stages,
-            tails,
-        }
-    }
-}
-fn evaluate_group(
+fn prepare_waves(
     aux: &Aux,
     batch: &Batch,
-    file: u32,
-    inputs: &[Input],
-    prepared: &Prepared,
-    output: &mut Vec<(usize, Row)>,
-) -> Result<()> {
-    let original = &inputs[0].requests;
-    let mut completed: Vec<Completed> = vec![];
-    let plan = &prepared.plan;
-    for (stage, f) in plan.stages.iter().zip(&prepared.stages) {
-        let source = stage.parent.map(|p| &completed[p]);
-        if let Some(failure) = source.and_then(|s| s.failure.clone()) {
-            completed.push(Completed {
-                requests: Arc::from([]),
-                remaining: None,
-                failure: Some(failure),
+    members: &[(Member, Arc<Fragment>)],
+    files: &BTreeMap<usize, Vec<(usize, Option<Arc<[u32]>>)>>,
+    supplied: &BTreeMap<(usize, u32), Vec<Request>>,
+) -> Result<(BTreeMap<(usize, u32), Admission>, wave::Metrics)> {
+    let started = Started::now();
+    let mut tasks = files
+        .iter()
+        .flat_map(|(&file, scopes)| {
+            scopes.iter().filter_map(move |(index, selected)| {
+                aux.entries
+                    .get(&members[*index].0.id)
+                    .map(|&program| (file, *index, program, selected.clone()))
+            })
+        })
+        .collect::<Vec<_>>();
+    // Tile both axes: files remain resident; a dispatch contains several programs and files.
+    tasks.sort_by_key(|(file, index, _, _)| (file / 8, index / 4, file % 8, index % 4));
+    let mut tasks = tasks.into_iter();
+    let mut ready = std::collections::VecDeque::new();
+    let mut admitted = BTreeMap::new();
+    let docs = batch
+        .files
+        .iter()
+        .map(|f| f.root.root().get_doc())
+        .collect();
+    let cancel = |file: u32| {
+        batch.files[file as usize]
+            .context
+            .budget
+            .as_ref()
+            .is_some_and(|b| b.poll())
+    };
+    let mut executor = wave::Executor::new(&aux.programs, docs);
+    executor.cancellation(&cancel);
+    let kind_index = |file: u32, kinds: &[u16]| batch.files[file as usize].facts.kind_ids(kinds);
+    executor.kind_index(&kind_index);
+    let mut candidate_roots = 0;
+    let mut stages = 0;
+    let mut replays = 0;
+    let mut guard_roots = 0;
+    let mut guard_rejections = 0;
+    loop {
+        while ready.len() < 32 {
+            let Some((file, index, program, selected)) = tasks.next() else {
+                break;
+            };
+            let (member, f) = &members[index];
+            if f.each.is_some() {
+                continue;
+            }
+            let nodes = if let Some(requests) = supplied.get(&(member.id, file as u32)) {
+                if requests.iter().any(|r| !r.inputs.is_empty()) {
+                    continue;
+                }
+                if requests
+                    .iter()
+                    .any(|r| r.node >= batch.files[file].facts.len())
+                {
+                    return Err(invalid("scope root outside document"));
+                }
+                requests.iter().map(|r| r.node).collect()
+            } else {
+                f.roots_for(batch, file, selected.as_deref())?
+            };
+            candidate_roots += nodes.len();
+            stages += usize::from(!nodes.is_empty());
+            let remaining = f.allowance.map_or(f.work, |(base, per)| {
+                base.max(per.saturating_mul(batch.files[file].facts.len() as usize))
             });
-            continue;
+            admitted.insert(
+                (member.id, file as u32),
+                Admission {
+                    nodes: vec![],
+                    exact: program.exact,
+                    remaining,
+                    replay: false,
+                },
+            );
+            if !nodes.is_empty() {
+                ready.push_back(Pending {
+                    member: member.id,
+                    file: file as u32,
+                    program: program.program,
+                    flags: u32::from(f.grammar.three_valued),
+                    nodes,
+                    at: 0,
+                });
+            }
         }
-        let requests = source.map_or(original, |s| &s.requests);
-        let before = {
-            let m = f.metrics.lock().unwrap();
-            (m.roots, m.native_cpu_ns, m.native_wall_ns)
-        };
-        let rows = run(f, batch, file, requests, source.and_then(|s| s.remaining))?;
-        let m = f.metrics.lock().unwrap();
-        {
-            let mut metrics = aux.metrics.lock().unwrap();
-            metrics.prefix_stages += 1;
-            metrics.prefix_roots += m.roots - before.0;
-            metrics.prefix_rows += rows.len();
-            metrics.prefix_cpu_ns += m.native_cpu_ns - before.1;
-            metrics.prefix_wall_ns += m.native_wall_ns - before.2;
-            metrics.shared_consumers += stage.consumers.len();
-            metrics.peak_domain_rows = metrics.peak_domain_rows.max(requests.len());
+        if ready.is_empty() {
+            break;
         }
-        let failure = rows.iter().find(|r| r.truth < 0).cloned();
-        if rows.iter().any(|r| r.truth == 2) {
-            return Err(invalid("closed prefix produced logical unknown"));
+        let mut lanes = vec![];
+        let mut owners = vec![];
+        while lanes.len() < wave::TILE && !ready.is_empty() {
+            let mut task = ready.pop_front().unwrap();
+            let gate = admitted.get(&(task.member, task.file)).unwrap();
+            if gate.replay {
+                continue;
+            }
+            let end = (task.at + 32)
+                .min(task.nodes.len())
+                .min(task.at + wave::TILE - lanes.len());
+            for &node in &task.nodes[task.at..end] {
+                lanes.push(wave::Lane {
+                    program: task.program,
+                    document: task.file,
+                    node,
+                    flags: task.flags,
+                });
+                owners.push((task.member, task.file));
+            }
+            task.at = end;
+            if task.at < task.nodes.len() {
+                ready.push_back(task);
+            }
         }
-        let selected = rows
-            .iter()
-            .filter(|r| r.truth == 1)
-            .map(|r| requests[r.request as usize].clone())
-            .collect::<Vec<_>>();
-        completed.push(Completed {
-            requests: selected.into(),
-            remaining: m.remaining_work.get(&file).copied(),
-            failure,
-        });
+        let answers = executor.execute(&lanes);
+        for ((lane, key), answer) in lanes.into_iter().zip(owners).zip(answers) {
+            let gate = admitted.get_mut(&key).unwrap();
+            if gate.replay {
+                continue;
+            }
+            if !gate.exact {
+                guard_roots += 1;
+            }
+            let charge = if gate.exact || !answer.matched {
+                answer.steps
+            } else {
+                0
+            };
+            if answer.incomplete || charge > gate.remaining {
+                gate.replay = true;
+                gate.nodes.clear();
+                replays += 1;
+                continue;
+            }
+            gate.remaining -= charge;
+            if !gate.exact && !answer.matched {
+                guard_rejections += 1;
+            }
+            if answer.matched {
+                gate.nodes.push(lane.node)
+            }
+        }
     }
-    for (tail, f) in plan.tails.iter().zip(&prepared.tails) {
-        let source = tail.parent.map(|p| &completed[p]);
-        if let Some(mut failure) = source.and_then(|s| s.failure.clone()) {
-            failure.values = vec![Cell::Null; f.names.len()];
-            output.push((tail.consumer, failure));
-            continue;
-        }
-        let requests = source.map_or(original, |s| &s.requests);
-        output.extend(
-            run(f, batch, file, requests, source.and_then(|s| s.remaining))?
-                .into_iter()
-                .map(|r| (tail.consumer, r)),
-        );
-    }
-    Ok(())
+    let elapsed = started.elapsed();
+    let mut m = aux.metrics.lock().unwrap();
+    m.candidate_roots += candidate_roots;
+    m.prefix_stages += stages;
+    m.prefix_roots += executor.metrics.unique_lanes as usize;
+    m.prefix_rows += admitted.values().map(|g| g.nodes.len()).sum::<usize>();
+    m.prefix_cpu_ns += elapsed.cpu;
+    m.prefix_wall_ns += elapsed.wall;
+    m.wave_resource_replays += replays;
+    m.wave_guard_roots += guard_roots;
+    m.wave_guard_rejections += guard_rejections;
+    Ok((admitted, executor.metrics))
 }

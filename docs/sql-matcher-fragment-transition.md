@@ -583,3 +583,141 @@ The [final qualification summary](../benchmark/sql-matcher-batch-integration.jso
 The linked catalog and workspace traces above now contain this final run.
 The separate attached-store trace qualifies statistics refresh and stored-result paging on 512 files.
 It is not a substitute for the full 5,725-file performance run.
+
+## Native operation batching: moving below the fragment boundary
+
+The next request requires batching at the transducer operation level, across both files and programs.
+The preceding implementation still calls `fragment_at` once per residual root.
+Its SQL submission count does not describe that native dispatch granularity.
+
+The new implementation introduces `matcher/wave.rs` as a SQL-independent CPU executor.
+Its input lanes contain numeric program, document, and preorder IDs.
+Immutable program tables contain closed structural operations and utility references.
+Operation cohorts process many lanes together, including lanes from different programs and documents.
+Kernels contain no scalar `AstMatcher` calls and use no thread-local matcher context.
+
+The lowered operations cover kind and regex tests, booleans, tree navigation, stop predicates, counts without exports, and closed recursive utilities.
+Navigation advances one cursor per active lane. It does not materialize a Cartesian relation of all descendants.
+Short text predicates cache results by complete text and predicate identity within a submission.
+Utility results carry truth, work, and depth. Incomplete results cannot enter that cache.
+The executor compacts active lanes after decisive predicates and scatters outputs back to the original request order.
+
+The native batch now tiles both file and program axes before executing closed prefixes.
+Root demand stays explicit; different consumer domains are not replaced by an unrestricted scan.
+Per-key sharing is legal here because a closed syntactic predicate has no capture or semantic inputs.
+Each consumer retains its own roots and allowance. Exhausted or incomplete computations request native replay for that file and clause.
+This is a keyed fact contract, distinct from the earlier domain-complete producer contract.
+
+Complete closed programs can publish their typed outputs without a scalar fragment call.
+Capturing and semantic residuals retain their native implementation and separate instrumentation.
+This CPU executor is not a Metal backend. Its lane interface and operation cohorts establish the dispatch boundary such a backend needs.
+The sibling transducer specification's document table and `(group, document, root)` task model guide this interface.
+
+Qualification is in progress. Required evidence includes cross-program and cross-document cohorts, native verdict and work parity, catalog parity, and whole-job CPU.
+
+### First operation-wave measurements and deeper admission
+
+The first full run preserves 97,798 findings and all three edits over 5,725 files.
+Native cold CPU is 109.88 seconds; SQL cold CPU is 109.34 seconds.
+SQL uses 23 matching statements. Peak RSS is 1.07 GiB.
+This is a diagnostic run, not the final qualification of subsequent changes.
+Raw evidence is `/tmp/rerail-wave-full-v3/{native,sql,comparison}.json`.
+
+There are 16.67 million submitted lanes and 12.22 million distinct root lanes within submissions.
+The executor performs 184.43 million operation lanes through 4.30 million kernel dispatches.
+Submissions mix up to 24 documents and 13 programs; maximum kernel width is 2,048.
+Scalar residual roots fall from 62.36 million to 58.08 million. That reduction is insufficient.
+The largest residual costs remain binding, scope, and mixed syntactic/semantic rules.
+The 10-second process sample is `/tmp/rerail-wave-sql-v3.sample`.
+
+The initial catalog wave run regresses despite batching. Dispatch and cache overhead require attention.
+Changes remove repeated document-set construction, redundant single-child composites, and per-lane filter reference clones.
+Literal regex forms use byte predicates after checking the regex syntax tree. Other regex forms retain the regex engine.
+Bounded utility and text caches now survive submissions over the executor's immutable document revision.
+Each cache has a fixed 32,768-entry ceiling. Executor disposal invalidates the revision.
+
+The next pushdown handles negative admission proofs inside mixed alternatives and utility definitions.
+A false proof means native execution would stop before reaching a capture or semantic operation.
+A possible match still executes the original native program. It cannot publish a finding directly.
+Conjunction proofs stop at the first opaque term. A disjunction needs a proof for every branch.
+Partial proofs cannot pass through negation. They cannot reorder capture reads, writes, or unknown-producing operations.
+Only rejected paths charge their proven work; admitted paths retain the original program's charges.
+This extends batching below the top-level prefix without treating uncertain results as false.
+
+A focused operation test compares both verdicts and work charges, including recursion and both walk-admission policies.
+Cancellation tests ensure that a cancelled document does not cancel other documents in its cohort.
+A separate negative-proof test checks that rejected mixed branches preserve native work charges.
+Production tests require mixed document/program submissions and zero scalar calls for fully closed native programs.
+The full-workload checker now reports scalar roots separately and rejects effectively scalar kernel dispatch.
+
+### Review corrections and navigation amplification gates
+
+A constrained, read-only GPT-6.1 Sol review found repeated relation walks, a cancellation gap, and missing demand-node validation.
+All three findings led to implementation changes.
+Ancestor and sibling end-walks now build a shared suffix graph. Each demanded suffix is evaluated once and then scattered.
+Filtered descendant end-walks use preorder postings from the existing native kind index.
+Large postings remain shared within a dispatch even when they exceed the cross-dispatch retention ceiling.
+Filtered walks poll cancellation even when no candidate reaches a child kernel.
+Supplied node IDs are validated before tape access.
+
+Repeated unfiltered descendant walks need a separate physical shape.
+After seven failed probes, the executor can materialize a zero-cost local predicate over the demanded subtree union.
+It requires at least sixteen active requests and more than four times as much remaining traversal as unique nodes.
+Early matches therefore retain short-circuit execution. Completion ranges prevent uncovered nodes from becoming negative results.
+This path excludes utilities, exported counts, navigation in the child predicate, and semantic operations.
+The deep-tree gate covers shared suffixes, filtered postings, and unfiltered predicate materialization.
+It checks navigation operations, not wall time or dispatch width alone.
+
+The expanded work-charge parity test then caught a sibling-anchor discrepancy.
+Native sibling iterators normalize the initial position by source bytes, even at the document root.
+Structural links alone miss that behavior and zero-width token handling.
+The tape now exposes the native initial-position operation. Suffix continuation still follows structural links.
+The graph's internal suffix keys distinguish an inclusive structural cursor from a user root.
+The regression test includes malformed source and both three-valued admission modes.
+
+### Final native-wave qualification
+
+The final paired run uses the unbounded-work test feature, loop profile, optimization level one, and the real jemalloc archive.
+The local test executable omits LTO, as in the preceding qualification.
+The corpus remains `/tmp/nera-data-layer-fce` at `fce4dc7208c0b892c11a549c8be43fc285580d6b`.
+
+All four focused operation tests pass, including native work charges, malformed-source sibling anchors, and the navigation amplification gate.
+All fourteen active compiler integration tests pass; two diagnostic/repository tests remain intentionally ignored in that namespace.
+The separate complete workspace test passes. A normal library check also passes.
+The constrained reviewer checked the suffix graph, sibling normalization, completion domains, and cache identities after the fixes.
+
+The full job preserves 97,798 findings over 5,725 files, with matching failures and three matching edits.
+The 597-fixture catalog preserves raw matches and captures across all 87,162 rule/file pairs.
+There are no unknown catalog outcomes and no resource-triggered native replays in the full workload.
+The existing ceilings remain unchanged. All pass, including the 100-statement ceiling; the job executes 23 matching statements.
+VM instructions remain 25,216,565 because this work changes native execution, not the published SQL result shape.
+
+Native cold CPU is 113.851 seconds; SQL cold CPU is 111.716 seconds.
+Native wall time is 66.797 seconds; SQL wall time is 69.670 seconds.
+SQL peak RSS is 1,184,333,824 bytes. Median edit CPU is 213.174 ms, versus native's 202.819 ms.
+These are single paired measurements on a shared host, not a claim of a repeatable wall-time speedup.
+
+The executor processes 30,044,209 lanes through 14,759 submissions.
+Of those submissions, 14,614 mix documents and 14,749 mix programs.
+There are 242,632,839 operation lanes and 5,726,033 kernel dispatches, averaging 42.37 lanes per dispatch.
+These are operation counts, not native root calls or SQL VM instructions.
+Partial admission proofs reject 16,693,510 of 25,424,539 tested roots.
+Some of that work replaces earlier exact-prefix filtering, so it is not an equivalent reduction in scalar root calls.
+
+Scalar roots fall from 62,364,147 to 53,109,000: 14.8% fewer calls.
+Residual CPU falls by 8.75 seconds, but wave preparation and execution add 10.47 seconds relative to the previous prefix implementation.
+Total matching CPU changes from 82.244 to 82.637 seconds. Whole-job CPU remains near the previous SQL result of 110.415 seconds.
+This is a qualified change in native execution granularity, not a demonstrated whole-job performance win.
+The trace still exposes 53.11 million scalar roots. Capturing and semantic residuals have not become device-ready transducers.
+
+The suffix graph processes 619,608 closure nodes. Filtered descendant execution performs 404 posting seeks.
+Adaptive unfiltered subtree materialization is covered by the deep-tree gate but does not activate on this workload.
+Its structural guarantee must not be presented as a measured contributor to these timings.
+
+The [qualification summary](../benchmark/sql-native-wave-integration.json) records the complete measurements and gate results.
+Compressed raw catalog, native workspace, and SQL workspace reports are published beside it.
+The [implementation document](sql-matcher-batch-implementation.md) describes the current APIs, physical choices, and remaining scalar boundary.
+
+The checker now requires wave evidence, cross-document and cross-program submissions, and more than four operation lanes per kernel dispatch.
+It also ratchets scalar native root calls at 53,109,000 for this fixed workload.
+Removing batching or restoring the old scalar call count therefore fails qualification, even if SQL execution counts remain low.

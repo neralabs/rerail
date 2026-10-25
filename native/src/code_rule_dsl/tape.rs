@@ -1525,6 +1525,28 @@ impl TapeDoc {
         [rec.parent, rec.first, rec.next, rec.prev]
     }
 
+    /// The native sibling iterator's first position; continuation uses structural links.
+    /// Roots, zero-width tokens, and embedded overlapping nodes can have a different anchor.
+    pub(super) fn transducer_sibling_start(
+        &self,
+        ordinal: u32,
+        forward: bool,
+        neighbor: bool,
+    ) -> Option<u32> {
+        let node = self.node(ordinal);
+        let next = if neighbor {
+            if forward { node.next() } else { node.prev() }
+        } else {
+            let anchor = node.walk_anchor()?;
+            if forward {
+                anchor.next_sibling()
+            } else {
+                anchor.prev_sibling()
+            }
+        };
+        next.map(|n| n.index)
+    }
+
     /// Whether node `node` is extra, an ERROR node, and a MISSING token.
     #[inline]
     pub(super) fn transducer_marks(&self, node: u32) -> [bool; 3] {

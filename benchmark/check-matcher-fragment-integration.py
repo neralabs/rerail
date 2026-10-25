@@ -90,9 +90,34 @@ def main():
     prefix_cpu = sum(b["prefix_cpu_ns"] for b in batches)
     boundary_cpu = residual_cpu + prefix_cpu
 
+    waves = [b["wave"] for b in batches if "wave" in b]
+    wave_metrics = {}
+    require(bool(waves), "native operation-wave evidence is missing")
+    scalar_roots = sum(b["roots"] for p in profiles for b in p["boundaries"])
+    require(scalar_roots <= 53_109_000, "scalar native root calls exceed the qualified ceiling")
+    if waves:
+        maximums = {"max_kernel_width", "max_documents", "max_programs", "max_memo_entries", "max_text_entries"}
+        for key in waves[0]:
+            values = [w[key] for w in waves]
+            if isinstance(values[0], list):
+                wave_metrics[key] = [sum(v[i] for v in values) for i in range(len(values[0]))]
+            else:
+                wave_metrics[key] = (max if key in maximums else sum)(values)
+        require(wave_metrics["multi_document_submissions"] > 0, "no cross-document native waves")
+        require(wave_metrics["multi_program_submissions"] > 0, "no cross-program native waves")
+        require(wave_metrics["kernel_lanes"] > 4 * wave_metrics["kernel_dispatches"], "native kernel execution remains scalar")
+        require(sum(b.get("wave_resource_replays", 0) for b in batches) == 0, "unbounded workload fell back from native waves")
+
+    kernel_families = {}
+    if waves:
+        for i, name in enumerate(("never", "kind", "text", "all", "any", "not", "utility", "walk")):
+            dispatches = wave_metrics["family_dispatches"][i]
+            lanes = wave_metrics["family_lanes"][i]
+            kernel_families[name] = {"dispatches": dispatches, "lanes": lanes, "meanWidth": lanes / dispatches if dispatches else 0}
+
     result = {
         "accepted": not failures, "failures": failures,
-        "ceilings": {"matchingExecutions": 100, "coldCpuRatio": 1.30, "medianEditCpuRatio": 1.50, "coldSqlPeakRssBytes": 1_610_612_736},
+        "ceilings": {"matchingExecutions": 100, "coldCpuRatio": 1.30, "medianEditCpuRatio": 1.50, "coldSqlPeakRssBytes": 1_610_612_736, "scalarNativeRoots": 53_109_000, "minimumMeanKernelWidth": 4},
         "configuration": {"profile": "loop", "optLevel": 1, "allocator": "real jemalloc", "localTestLto": False, "features": ["unbounded-work"], "rustc": subprocess.check_output(["rustc", "--version"]).decode().strip()},
         "provenance": {"baseCommit": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(), "corpusCommit": subprocess.check_output(["git", "-C", str(args.corpus), "rev-parse", "HEAD"]).decode().strip(), "corpusInventorySha256": digest(json.dumps(corpus_inventory, separators=(",", ":")).encode()), "changedRustSources": source_inventory, "binarySha256": digest(args.binary.read_bytes()), "rawReportsSha256": {n: digest(p.read_bytes()) for n, p in (("catalog", args.catalog), ("native", args.native), ("sql", args.sql))}},
         "workload": {"files": sql["files"], "sourceBytes": sql["sourceBytes"], "policies": sql["policies"], "policySource": "shipped Python catalog, not the unavailable original twelve policies"},
@@ -111,6 +136,13 @@ def main():
         "largestNativeFragments": sorted(by_clause.values(), key=lambda v: v["cpuNs"], reverse=True)[:10],
         "nativeFilters": sum(b["filters"] for p in profiles for b in p["boundaries"]) + sum(b["filters"] for b in batches),
         "nativeRoots": sum(b["roots"] for p in profiles for b in p["boundaries"]) + sum(b["prefix_roots"] for b in batches),
+        "nativeWave": wave_metrics,
+        "kernelFamilies": kernel_families,
+        "scalarNativeRoots": scalar_roots,
+        "waveEmittedRows": sum(b.get("wave_emitted_rows", 0) for b in batches),
+        "waveGuardRoots": sum(b.get("wave_guard_roots", 0) for b in batches),
+        "waveGuardRejections": sum(b.get("wave_guard_rejections", 0) for b in batches),
+        "waveResourceReplays": sum(b.get("wave_resource_replays", 0) for b in batches),
         "nativePrefixRoots": sum(b["prefix_roots"] for b in batches),
         "nativeCandidateRoots": sum(b["candidate_roots"] for b in batches),
         "nativeGroupingRoots": sum(b.get("grouping_roots", 0) for b in batches),

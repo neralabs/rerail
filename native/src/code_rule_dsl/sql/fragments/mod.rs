@@ -114,9 +114,29 @@ impl Fragment {
     ) -> Result<Vec<Request>> {
         let mut requests = vec![];
         for (file, selected) in scope {
+            requests.extend(
+                self.roots_for(batch, *file, selected.as_deref())?
+                    .into_iter()
+                    .map(|node| Request {
+                        file: *file as u32,
+                        node,
+                        inputs: vec![],
+                    }),
+            );
+        }
+        Ok(requests)
+    }
+    pub(super) fn roots_for(
+        &self,
+        batch: &Batch,
+        file: usize,
+        selected: Option<&[u32]>,
+    ) -> Result<Vec<u32>> {
+        let mut requests = vec![];
+        {
             let entry = batch
                 .files
-                .get(*file)
+                .get(file)
                 .ok_or_else(|| invalid("invalid scope file"))?;
             if entry.dialect != self.grammar.language
                 || !self.grammar.applies
@@ -128,7 +148,7 @@ impl Fragment {
                         .is_none_or(|p| !c.holds(p, entry.context.module.as_deref()))
                 })
             {
-                continue;
+                return Ok(requests);
             }
             let kinds = self.grammar.anchors.root_kinds();
             let roots = match selected {
@@ -143,11 +163,7 @@ impl Fragment {
                     return Err(invalid("scope root outside document"));
                 }
                 if kinds.is_none_or(|k| k.contains(&entry.facts.kind(node))) {
-                    requests.push(Request {
-                        file: *file as u32,
-                        node,
-                        inputs: vec![],
-                    });
+                    requests.push(node);
                 }
             }
         }

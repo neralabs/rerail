@@ -30,7 +30,7 @@ mod structural;
 #[cfg(test)]
 mod tests;
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const ARMS: usize = 256;
 const CACHE_LIMIT: usize = 1024;
 type CacheKey = ([u8; 32], u32, Option<String>);
