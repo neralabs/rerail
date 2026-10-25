@@ -54,6 +54,9 @@ mod owner;
 #[cfg(test)]
 #[path = "corpus/owner_tests.rs"]
 mod owner_tests;
+#[cfg(test)]
+#[path = "corpus/planning_tests.rs"]
+mod planning_tests;
 
 impl Corpus {
     pub(in crate::code_rule_dsl) fn sql_backing(
