@@ -26,7 +26,7 @@ fn arguments(winner: Option<usize>) -> String {
 }
 
 #[test]
-fn recursive_searches_cross_phases_and_keep_the_first_capture_span() {
+fn recursive_searches_keep_first_captures_without_sql_phase_drivers() {
     let rule = compiled(json!({
         "rule": { "kind": "arguments", "has": { "stopBy": "end", "kind": "identifier", "matches": { "pick": { "P": "$Y" } } } },
         "utils": utility(),
@@ -58,24 +58,17 @@ fn recursive_searches_cross_phases_and_keep_the_first_capture_span() {
             .filter(|(sql, _)| sql.starts_with(crate::code_rule_dsl::sql::emit::FRONTIER))
             .map(|(_, (_, passes, _))| passes)
             .sum();
-        assert!(phase_passes > 0, "no production frontier ran");
-        if winner == Some(0) {
-            let demands: usize = statements
-                .iter()
-                .filter(|(sql, _)| sql.starts_with("INSERT INTO c") && sql.contains("(file, node"))
-                .map(|(_, (_, rows, _))| rows)
-                .sum();
-            assert!(
-                demands <= 64,
-                "early match demanded {demands} keys for 513 candidates"
-            );
-        }
-        if matches!(winner, Some(512) | None) {
-            assert!(
-                phase_passes >= 5,
-                "late/missing case did not grow: {phase_passes}"
-            );
-        }
+        assert_eq!(
+            phase_passes, 0,
+            "SQL must not schedule native matcher phases"
+        );
+        assert_eq!(
+            statements
+                .values()
+                .map(|(_, _, count)| count)
+                .sum::<usize>(),
+            1
+        );
     }
 }
 

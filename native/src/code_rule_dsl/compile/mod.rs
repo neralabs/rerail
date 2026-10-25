@@ -854,7 +854,22 @@ fn compile_query_as(
                     let text = (!three_valued)
                         .then(|| RequiredText::of(&matcher).map(Arc::new))
                         .flatten();
+                    use sha2::{Digest, Sha256};
+                    let source_digest = Sha256::digest(
+                        serde_json::to_vec(&(
+                            ast,
+                            language.to_string(),
+                            applies,
+                            utils
+                                .iter()
+                                .map(|(id, u)| (id, &u.params, u.rule))
+                                .collect::<Vec<_>>(),
+                        ))
+                        .map_err(|e| invalid(e.to_string()))?,
+                    )
+                    .into();
                     matchers.push(GrammarMatcher {
+                        source_digest,
                         language: *language,
                         sound_under_errors: sound_under_errors(&matcher),
                         three_valued,

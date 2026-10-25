@@ -16,12 +16,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(in crate::code_rule_dsl::sql::relational) struct Fixture {
-    pub(in crate::code_rule_dsl::sql::relational) path: String,
-    pub(in crate::code_rule_dsl::sql::relational) source: String,
+pub(in crate::code_rule_dsl::sql) struct Fixture {
+    pub(in crate::code_rule_dsl::sql) path: String,
+    pub(in crate::code_rule_dsl::sql) source: String,
 }
 
-pub(in crate::code_rule_dsl::sql::relational) fn fixtures(root: &Path) -> Vec<Fixture> {
+pub(in crate::code_rule_dsl::sql) fn fixtures(root: &Path) -> Vec<Fixture> {
     fn collect(path: &Path, paths: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(path).unwrap() {
             let entry = entry.unwrap();
@@ -62,7 +62,10 @@ pub(super) fn inventory(fixtures: &[Fixture]) -> Value {
     })
 }
 
-pub(in crate::code_rule_dsl::sql::relational) fn captures(env: &MetaVarEnv<'_, TapeDoc>, names: &[String]) -> Result<Value, String> {
+pub(in crate::code_rule_dsl::sql) fn captures(
+    env: &MetaVarEnv<'_, TapeDoc>,
+    names: &[String],
+) -> Result<Value, String> {
     let mut list_names = BTreeSet::new();
     for variable in env.get_matched_variables() {
         let name = match variable {
@@ -138,7 +141,7 @@ fn schema(compiled: &Compiled, grammar: &GrammarMatcher) -> Result<Vec<String>, 
     Ok(names)
 }
 
-pub(in crate::code_rule_dsl::sql::relational) fn check(
+pub(in crate::code_rule_dsl::sql) fn check(
     grammar: &GrammarMatcher,
     compiled: Compiled,
     fixtures: &[Fixture],

@@ -11,15 +11,15 @@ use crate::code_rule_dsl::eval::Engine;
 use crate::code_rule_dsl::matcher::GrammarMatcher;
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
 use crate::code_rule_dsl::sql::{
-    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError, SqlMatch,
-    Stats, Timing,
+    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError, Stats,
+    Timing,
 };
 #[cfg(feature = "unbounded-work")]
 use crate::code_rule_dsl::sql::{StatementProfile, profiled};
 use crate::code_rule_dsl::tape::TapeDoc;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// The failure of a clause the SQL engine refuses, on each file it reads.
@@ -96,7 +96,10 @@ pub(super) fn engine_of(state: &mut WorkspaceState) -> Option<Arc<SqlEngine>> {
     }
     if let SqlState::Compiling(program) = &mut state.sql {
         let program = std::mem::take(program);
-        state.sql = SqlState::Finished(Arc::new(program.finish(state.engine.batch_size)));
+        state.sql = SqlState::Finished(Arc::new(program.finish(
+            state.engine.batch_size,
+            state.storage.as_ref().map(|s| s.store.clone()),
+        )));
     }
     match &state.sql {
         SqlState::Finished(engine) => Some(Arc::clone(engine)),
@@ -133,9 +136,11 @@ impl SqlProgram {
                 continue;
             };
             for (index, grammar) in matchers.iter().enumerate() {
-                let outcome = self
-                    .compiler
-                    .clause(grammar, compiled.violation.each.as_deref());
+                let outcome = self.compiler.clause_with_limits(
+                    grammar,
+                    compiled.violation.each.as_deref(),
+                    &code_rule.capabilities.limits,
+                );
                 let statement = match outcome {
                     Ok(statement) => {
                         self.names.push((code_rule.id.clone(), compiled.id.clone()));
@@ -162,7 +167,16 @@ impl SqlProgram {
     }
 
     /// The engine of the program as compiled, running `batch_size` files per batch.
-    fn finish(self, batch_size: usize) -> SqlEngine {
+    fn finish(
+        mut self,
+        batch_size: usize,
+        store: Option<Arc<crate::content_store::ContentStore>>,
+    ) -> SqlEngine {
+        if let Some(store) = store {
+            if let Err(error) = self.compiler.read_statistics(store) {
+                self.compiler.statistics_unavailable(error.to_string());
+            }
+        }
         let Self {
             compiler,
             clauses,
@@ -180,6 +194,8 @@ impl SqlProgram {
             sessions: Mutex::default(),
             stats: Mutex::default(),
             pipeline: Mutex::default(),
+            remaining_executions: AtomicUsize::new(100),
+            batch_profiles: Mutex::default(),
             #[cfg(feature = "unbounded-work")]
             profile: Mutex::default(),
             names,
@@ -190,6 +206,8 @@ impl SqlProgram {
 /// The workspace's code rules compiled for the SQL engine.
 pub(super) struct SqlEngine {
     compiled: Compiled,
+    remaining_executions: AtomicUsize,
+    batch_profiles: Mutex<Vec<Value>>,
     /// Where the program's compile went.
     phases: CompilePhases,
     /// Per code rule, clause and grammar matcher (its index in the clause's matchers): the
@@ -236,6 +254,23 @@ struct Profile {
 }
 
 impl SqlEngine {
+    /// An apply owns one budget across its producer and consumer passes.
+    pub(super) fn begin_job(&self) {
+        self.remaining_executions.store(100, Ordering::Relaxed);
+        self.batch_profiles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+    pub(super) fn partition_budget(&self, reserve_consumers: bool) -> usize {
+        let remaining = self.remaining_executions.load(Ordering::Relaxed);
+        let budget = if reserve_consumers {
+            remaining / 2
+        } else {
+            remaining
+        };
+        (budget / self.compiled.census().steps.max(1)).max(1)
+    }
     /// Adds a batch's native per-file steps (`Pipeline`).
     pub(super) fn add_pipeline(&self, batch: Pipeline) {
         let mut pipeline = self
@@ -273,7 +308,15 @@ impl SqlEngine {
         &self,
         docs: Vec<(TapeDoc, FileContext)>,
         runs: &[ClauseRun],
-    ) -> Result<Vec<Vec<Vec<SqlMatch>>>, SqlError> {
+    ) -> Result<Vec<Vec<crate::code_rule_dsl::sql::FileOutcome>>, SqlError> {
+        let executions = self.compiled.executions_for(runs);
+        self.remaining_executions
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                left.checked_sub(executions)
+            })
+            .map_err(|_| {
+                SqlError::Sql("job exceeds the hard budget of 100 matching SQL executions".into())
+            })?;
         let pooled = self
             .sessions
             .lock()
@@ -296,6 +339,10 @@ impl SqlEngine {
         let (found, statements, clause_times) = profiled(|| session.run(docs, runs));
         #[cfg(not(feature = "unbounded-work"))]
         let found = session.run(docs, runs);
+        self.batch_profiles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(session.last_profile.clone());
         let after = session.stats();
         {
             let mut stats = self.stats.lock().unwrap_or_else(|error| error.into_inner());
@@ -374,8 +421,11 @@ impl SqlEngine {
             "engine": "sql",
             "batchSize": self.batch_size,
             "compilerBatchHint": self.batch_size,
-            "filePartitioning": "whole job into at most four SQL partitions",
+            "filePartitioning": "4 MiB source target per resident partition, capped by remaining execution budget",
+            "jobMatchingExecutionBudget": 100,
+            "jobMatchingExecutionsReserved": 100 - self.remaining_executions.load(Ordering::Relaxed),
             "relational": self.compiled.relational_plan(),
+            "matcherFragments": *self.batch_profiles.lock().unwrap_or_else(|e| e.into_inner()),
             "clauses": self.clauses.len(),
             "compiledClauseNames": self.names.iter().enumerate().map(|(statement,(rule,clause))|json!({"statement":statement,"ruleId":rule,"clauseId":clause})).collect::<Vec<_>>(),
             "compiled": self.ran.len(),

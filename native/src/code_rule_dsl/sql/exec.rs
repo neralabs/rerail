@@ -70,6 +70,7 @@ struct SubFiles {
 /// which the input-set terminals' file scopes read (`FileScopeSlot::install`).
 #[derive(Clone, Default)]
 pub(in crate::code_rule_dsl) struct FileContext {
+    pub(in crate::code_rule_dsl) budget: Option<crate::code_rule_dsl::budget::SuspendedBudget>,
     pub(in crate::code_rule_dsl) path: Option<String>,
     pub(in crate::code_rule_dsl) module: Option<Arc<crate::code_rule_dsl::module_path::ModulePath>>,
     pub(in crate::code_rule_dsl) scopes: Vec<Arc<crate::code_rule_dsl::scope::ScopeTable>>,
@@ -210,7 +211,7 @@ impl Batch {
 /// Where a connection's virtual tables find the batch being evaluated.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct BatchSlot {
-    current: RwLock<Option<Arc<Batch>>>,
+    pub(super) current: RwLock<Option<Arc<Batch>>>,
     pub(super) frames: Arc<FrameStore>,
 }
 
@@ -3208,7 +3209,7 @@ pub(in crate::code_rule_dsl) type StatementProfile =
 
 /// Adds a statement's run to this thread's `STATEMENT_PROFILE`, where set.
 #[cfg(any(test, feature = "unbounded-work"))]
-fn record(sql: &str, nanos: u64, rows: usize) {
+pub(super) fn record(sql: &str, nanos: u64, rows: usize) {
     STATEMENT_PROFILE.with_borrow_mut(|profile| {
         if let Some(profile) = profile {
             // The texts repeat every batch: allocate a key only on a statement's first run.

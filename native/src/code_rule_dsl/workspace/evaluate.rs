@@ -32,7 +32,7 @@ use crate::code_rule_dsl::model::{
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
 use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading, UNREAD};
-use crate::code_rule_dsl::sql::{ClauseRun, FileContext, SqlMatch, timed};
+use crate::code_rule_dsl::sql::{ClauseRun, FileContext, timed};
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
 use crate::content_store::HashKey;
@@ -195,13 +195,36 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         Ok(metrics)
     };
     if let Some(sql) = context.sql {
-        // At most one whole-job partition per production worker. File count must not
-        // multiply matching-program executions through small file batches.
-        let size = jobs.len().div_ceil(WORKER_THREADS).max(1);
-        let mut jobs = jobs.into_iter().peekable();
+        // Retaining decoded tapes and semantic caches for the whole job multiplies memory.
+        // Reuse the same large plans over bounded resident domains, within one job budget.
+        const SOURCE_TARGET: usize = 4 * 1024 * 1024;
+        let weight = |job: &Job| {
+            if job.file.input.source.is_empty() && job.file.stored.is_some() {
+                64 * 1024 // A cost estimate for an evicted source, never an admission condition.
+            } else {
+                job.file.input.source.len()
+            }
+        };
+        let bytes = jobs.iter().map(weight).sum::<usize>();
+        let partitions = bytes
+            .div_ceil(SOURCE_TARGET)
+            .max(1)
+            .min(sql.partition_budget(context.summarize));
+        let target = bytes.div_ceil(partitions).max(1);
         let mut batches = Vec::new();
-        while jobs.peek().is_some() {
-            batches.push(jobs.by_ref().take(size).collect::<Vec<_>>());
+        let mut batch = Vec::new();
+        let mut resident = 0;
+        for job in jobs {
+            let bytes = weight(&job);
+            if !batch.is_empty() && resident + bytes > target && batches.len() + 1 < partitions {
+                batches.push(std::mem::take(&mut batch));
+                resident = 0;
+            }
+            resident += bytes;
+            batch.push(job);
+        }
+        if !batch.is_empty() {
+            batches.push(batch);
         }
         let run = |batch: Vec<Job>, grammars: &mut Grammars| {
             sql_batch(batch, context, sql, grammars, &read, &finish)
@@ -384,7 +407,12 @@ fn sql_batch(
     // Per clause run of a file: its job, slot, run and position in the run.
     let mut wanted = Vec::new();
     for (job, (_, file, _, crossfile, start)) in started.iter().enumerate() {
-        let Ok(Started { ast: Some(ast), .. }) = start else {
+        let Ok(Started {
+            ast: Some(ast),
+            budget,
+            ..
+        }) = start
+        else {
             continue;
         };
         let index = docs.len();
@@ -392,6 +420,7 @@ fn sql_batch(
         // cached tables of this revision, module and host path; and the call-graph closure a
         // consumer's evaluation installs (`CrossFileScheduler::install`).
         let context = FileContext {
+            budget: Some(budget.clone()),
             path: Some(file.input.path.clone()),
             module: file.input.module.clone(),
             scopes: file
@@ -1083,7 +1112,7 @@ struct SqlFile {
     doc: AstDoc,
     gate: Vec<bool>,
     runs: Vec<Option<PlannedRun>>,
-    matches: Vec<Vec<SqlMatch>>,
+    matches: Vec<crate::code_rule_dsl::sql::FileOutcome>,
 }
 
 impl SqlFile {
@@ -1123,7 +1152,7 @@ impl SqlFile {
             }
             runs
         };
-        let matches = runs.iter().map(|_| Vec::new()).collect();
+        let matches = runs.iter().map(|_| Default::default()).collect();
         Self {
             doc,
             gate,
@@ -1359,7 +1388,7 @@ fn evaluate_clauses(
     work: &mut ClauseWork,
     runs: &[bool],
     select: impl Fn(usize) -> Option<Arc<[u32]>>,
-    sql: Option<&[Vec<SqlMatch>]>,
+    sql: Option<&[crate::code_rule_dsl::sql::FileOutcome]>,
 ) -> Result<Vec<bool>> {
     use crate::code_rule_dsl::matcher::{Stopped, enumerate, node_at, run_clause, with_file_memo};
     let target = ast_grep_core::AstGrep::doc(doc.clone());
@@ -1372,6 +1401,16 @@ fn evaluate_clauses(
                 pass_deadline_at_test_phase("clause-done");
             }
             if file.failures.contains_key(&id) {
+                continue;
+            }
+            if let Some(unknown) = sql.and_then(|rows| rows[slot].unknown) {
+                let message = match unknown {
+                    crate::code_rule_dsl::sql::Unknown::Limit(limit) => limit.message(),
+                    crate::code_rule_dsl::sql::Unknown::Deadline => CLAUSE_WORK_BUDGET_EXCEEDED,
+                };
+                file.failures.insert(id, ("budget-exceeded", message));
+                file.unstored.insert(id);
+                settled[slot] = true;
                 continue;
             }
             // A clause whose required text the file lacks matches nothing, at no cost: it answers

@@ -13,7 +13,7 @@ mod classify;
 #[cfg(test)]
 mod compiler_shape_tests;
 mod continuation_store;
-mod cutover_tests;
+pub(super) mod cutover_tests;
 mod demand;
 mod emit;
 mod failure;

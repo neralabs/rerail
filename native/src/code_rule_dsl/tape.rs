@@ -1584,7 +1584,7 @@ impl TapeDoc {
         self.root_node().at(ordinal)
     }
 
-    #[cfg(feature = "code-rule-profile")]
+    #[cfg(any(test, feature = "code-rule-profile", feature = "unbounded-work"))]
     pub(super) fn navigation_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.data.capacity() * std::mem::size_of::<Rec>()

@@ -217,20 +217,17 @@ fn nth_child_and_calls_read_unknown_probes() {
     );
 }
 
-/// `value`, `compare` and `layout` evaluate natively behind the `fact` terminal, once per
-/// statement over the distinct keys of its frame.
+/// `value`, `compare` and `layout` retain native semantics inside a batched fragment.
+/// Boundary invocation counts are checked by the fragment integration tests.
 #[test]
-fn semantic_leaves_answer_through_the_fact_terminal() {
-    use crate::code_rule_dsl::sql::terminals::calls::FACT_FILTERS;
+fn semantic_leaves_preserve_native_verdicts_and_captures() {
     let source = "const n = 1;\nconst s = 'x';\nf(n, s, m, 2);\n";
-    FACT_FILTERS.set(0);
     let numbers = json!({
         "kind": "identifier",
         "inside": { "kind": "arguments" },
         "value": { "type": "number", "follow": true },
     });
     assert_eq!(agreed(numbers, source), ["n"]);
-    assert_eq!(FACT_FILTERS.get(), 1);
     // `m` has no binding: its type is unknown, so `not` does not hold there either.
     let others = json!({
         "kind": "identifier",

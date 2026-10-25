@@ -71,18 +71,16 @@ fn agreed(language: &str, ast: Value, each: Option<&str>, source: &str) -> Vec<S
     found
 }
 
-/// The SQL engine's refusal of `ast` over `source`.
-fn refused(language: &str, ast: Value, source: &str) -> String {
+/// A completed compilation whose execution reaches the native resource limit.
+fn resource_failure(language: &str, ast: Value, source: &str) -> String {
     let compiled = compile(language, ast, None);
     let input = snapshot(&[(language, &format!("a.{}", extension(language)), source)]);
-    compiled
-        .evaluate(
-            input.to_string(),
-            "report".to_owned(),
-            Some("sql".to_owned()),
-        )
-        .expect_err("the SQL engine refuses")
-        .reason
+    let result = same(&compiled, &input);
+    assert!(
+        !result["failures"].as_array().unwrap().is_empty(),
+        "{result}"
+    );
+    result["failures"].to_string()
 }
 
 #[test]
@@ -422,7 +420,7 @@ fn mutually_recursive_utilities_meet_at_the_same_node() {
 }
 
 #[test]
-fn a_recursion_whose_reads_loop_back_is_refused() {
+fn a_recursion_whose_reads_loop_back_reports_a_resource_failure() {
     // From a node to its parent and back to its children: the node itself again.
     let ast = json!({
         "rule": { "kind": "identifier", "matches": "loop" },
@@ -431,11 +429,8 @@ fn a_recursion_whose_reads_loop_back_is_refused() {
             { "inside": { "has": { "matches": "loop" } } },
         ] } },
     });
-    let reason = refused("typescript", ast, "f(a, 1);\n");
-    assert!(
-        reason.contains("Unsupported(recursion whose reads loop back)"),
-        "{reason}"
-    );
+    let reason = resource_failure("typescript", ast, "f(a, 1);\n");
+    assert!(reason.contains("budget-exceeded"), "{reason}");
 }
 
 /// `reach` walks from a call up to its function and down to the calls in it, its own among them,
@@ -470,13 +465,10 @@ fn a_self_call_past_the_first_match_reads_no_loop() {
 
 /// Where the self-call comes first, the matcher reads `f(x)`'s key evaluating it: a loop.
 #[test]
-fn a_self_call_before_the_first_match_is_refused() {
+fn a_self_call_before_the_first_match_reports_a_resource_failure() {
     let down = json!({ "stopBy": "end", "kind": "call", "matches": "reach" });
-    let reason = refused("python", reach(down), "def f(x):\n    f(x)\n    g(x)\n");
-    assert!(
-        reason.contains("Unsupported(recursion whose reads loop back)"),
-        "{reason}"
-    );
+    let reason = resource_failure("python", reach(down), "def f(x):\n    f(x)\n    g(x)\n");
+    assert!(reason.contains("budget-exceeded"), "{reason}");
 }
 
 /// A strict search (its rule binds `$C`) ends at its first unknown candidate, `u(x)`
@@ -505,22 +497,18 @@ fn a_strict_search_ending_unknown_before_a_self_call_reads_no_loop() {
         ),
         ["g(1)"]
     );
-    let reason = refused(
+    let reason = resource_failure(
         "python",
         reach(down),
         "def f(x):\n    f(x)\n    u(x)\ng(1)\n",
     );
-    assert!(
-        reason.contains("Unsupported(recursion whose reads loop back)"),
-        "{reason}"
-    );
+    assert!(reason.contains("budget-exceeded"), "{reason}");
 }
 
-/// A `count` tests every candidate, an `nthChild` probe every named sibling, and a `not` decides
-/// its row whole: past a candidate that matched, each still reads the self-call's key, as the
-/// matcher does, so the loop is refused (the `not`'s answer flips every pass: it never settles).
+/// Count thresholds can short-circuit before a self-call. Other recursive probes may hit
+/// a resource limit. Each form must preserve the native result and coverage outcome.
 #[test]
-fn count_nth_child_and_not_over_a_self_call_still_read_its_loop() {
+fn count_nth_child_and_not_preserve_native_short_circuit_and_limits() {
     let downs = [
         (
             json!({ "stopBy": "end", "kind": "block", "count": { "has": { "stopBy": "end", "kind": "call", "matches": "reach" }, "min": 1 } }),
@@ -535,13 +523,22 @@ fn count_nth_child_and_not_over_a_self_call_still_read_its_loop() {
             "def f(x):\n    g(x)\n    f(x)\n",
         ),
     ];
-    for (down, source) in downs {
-        let reason = refused("python", reach(down.clone()), source);
-        assert!(
-            reason.contains("Unsupported(recursion whose reads loop back)")
-                || reason.contains("Unsupported(recursion deeper than 256 levels)"),
-            "{down}: {reason}"
-        );
+    for (index, (down, source)) in downs.into_iter().enumerate() {
+        let compiled = compile("python", reach(down), None);
+        let input = snapshot(&[("python", "a.py", source)]);
+        let mut result = super::evaluate(&compiled, &input, "native");
+        let mut actual = super::evaluate(&compiled, &input, "sql");
+        // A failed file can have attempted witnesses before failure. That diagnostic count
+        // is not a finding. Both adapters must agree on coverage, failures, and final output.
+        result.as_object_mut().unwrap().remove("metrics");
+        actual.as_object_mut().unwrap().remove("metrics");
+        assert_eq!(result, actual);
+        if index == 0 {
+            // Native count stops once its lower bound is proved. The old SQL plan
+            // expanded the later self-call and refused a case that actually completes.
+            assert_eq!(result["failures"], json!([]));
+            assert_eq!(texts(&result, source), ["g(x)", "f(x)"]);
+        }
     }
 }
 
@@ -661,9 +658,9 @@ fn the_following_guard_decides_which_candidate_binds_first() {
 }
 
 /// A loop that passes no binding sub-rule keeps its following context: its keys repeat, and it
-/// is refused, as before, where a guarded loop in the same cycle is not.
+/// reaches a resource limit where a guarded loop in the same cycle completes.
 #[test]
-fn a_loop_outside_the_guarded_sub_rules_is_still_refused() {
+fn a_loop_outside_the_guarded_sub_rules_reports_a_resource_failure() {
     let ast = json!({
         "rule": { "kind": "call", "matches": "edge" },
         "utils": {
@@ -678,11 +675,8 @@ fn a_loop_outside_the_guarded_sub_rules_is_still_refused() {
             ] },
         },
     });
-    let reason = refused("python", ast, "def f():\n    g()\n");
-    assert!(
-        reason.contains("Unsupported(recursion whose reads loop back)"),
-        "{reason}"
-    );
+    let reason = resource_failure("python", ast, "def f():\n    g()\n");
+    assert!(reason.contains("budget-exceeded"), "{reason}");
 }
 
 /// A `matches` of a capture-free utility, recursive or not, kind-less or not, runs on the keys its
@@ -723,7 +717,6 @@ fn a_capture_free_utility_runs_on_the_keys_its_references_demand() {
 /// (units whose answers carry `unk`).
 #[test]
 fn a_three_valued_recursive_utility_returns_unknown_verdicts() {
-    use crate::code_rule_dsl::sql::terminals::calls::UNKNOWN_VERDICTS;
     use crate::code_rule_dsl::test_support::grammar_matchers;
     let source = "x.a();\nu.a();\ny.a();\nx.b.c();\nu.b.c();\n";
     for (leaf, held_found) in [
@@ -743,9 +736,7 @@ fn a_three_valued_recursive_utility_returns_unknown_verdicts() {
         ] } });
         let held = json!({ "rule": { "kind": "call_expression", "matches": "tail" }, "utils": utils.clone() });
         assert!(grammar_matchers(&compile("typescript", held.clone(), None))[0].three_valued);
-        UNKNOWN_VERDICTS.set(0);
         assert_eq!(agreed("typescript", held, None, source), held_found);
-        assert!(UNKNOWN_VERDICTS.get() > 0, "a terminal answered unknown");
         let negated = json!({
             "rule": { "kind": "call_expression", "not": { "matches": "tail" } },
             "utils": utils,
@@ -890,28 +881,19 @@ fn a_capture_free_rule_inside_an_excluded_candidate_passes_over_its_true_candida
     );
 }
 
-/// Under `each`, a three-valued `nthChild` whose binding `ofRule` may be unknown is refused by
-/// name: the matcher's excluding re-match of `ofRule` can leave `UNKNOWN` set on a true answer.
+/// An excluding rematch preserves the native three-valued commit and capture semantics.
+
 #[test]
-fn three_valued_nth_child_with_an_unknowable_commit_is_refused_under_each() {
+fn three_valued_nth_child_with_an_unknowable_commit_agrees_under_each() {
     let ast = json!({ "rule": {
         "kind": "identifier",
         "nthChild": { "position": 1, "ofRule": { "kind": "identifier", "pattern": "$A", "testUnknown": "^u" } },
     } });
     let compiled = compile("typescript", ast, Some("A"));
     let input = snapshot(&[("typescript", "a.ts", "f(a, u);\n")]);
-    let reason = compiled
-        .evaluate(
-            input.to_string(),
-            "report".to_owned(),
-            Some("sql".to_owned()),
-        )
-        .expect_err("the SQL engine refuses")
-        .reason;
-    assert!(
-        reason.contains("Unsupported(three-valued nthChild whose excluding commit may be unknown)"),
-        "{reason}"
-    );
+    let result = same(&compiled, &input);
+    assert_eq!(result["failures"], json!([]));
+    assert_eq!(texts(&result, "f(a, u);\n"), ["f A=f"]);
 }
 
 #[test]

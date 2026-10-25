@@ -90,7 +90,7 @@ pub(crate) use resolve::{
     file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs, file_phpstan,
     file_psalm, file_rerail_ignores, file_sqlfluff, file_vue_directives, table_reading,
 };
-pub(super) use run::{Stopped, enumerate, node_at, run_clause};
+pub(super) use run::{Stopped, enumerate, enumerate_bound, node_at, run_clause};
 #[cfg(test)]
 pub(crate) use run::{reset_roots_matched, roots_matched};
 pub(super) use semantic::Semantic;
@@ -116,6 +116,8 @@ pub(super) use value::{Bound, Reading, ValueTest};
 
 #[derive(Clone)]
 pub(super) struct GrammarMatcher {
+    /// Digest of the authored query, resolved utility definitions, dialect and gates.
+    pub(super) source_digest: [u8; 32],
     pub(super) language: GrammarDialect,
     pub(super) matcher: AstMatcher,
     pub(super) anchors: Arc<anchors::AnchorPlan>,
@@ -983,7 +985,6 @@ impl EachScope {
     }
 }
 
-#[cfg(test)]
 pub(in crate::code_rule_dsl) fn fragment_at<'t, D: Doc>(
     grammar: &GrammarMatcher,
     node: Node<'t, D>,

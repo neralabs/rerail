@@ -10,7 +10,7 @@ use crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE;
 use serde_json::json;
 
 #[test]
-fn sibling_candidates_read_the_anchor_before_the_candidate_postings() {
+fn sibling_candidates_preserve_captures_without_sql_frame_advances() {
     use crate::code_rule_dsl::sql::profiling::frame_counts;
 
     let blocks = 64;
@@ -33,12 +33,9 @@ fn sibling_candidates_read_the_anchor_before_the_candidate_postings() {
                 "decoy(a);"
             };
             assert_eq!(found, vec![format!("target(a); X={capture}"); blocks]);
-            // The file contains many candidates with other parents. Starting with global
-            // candidate postings would revisit the anchor frames for every such candidate.
-            assert!(
-                work[2] > 0 && work[2] < (blocks * 80) as u64,
-                "{axis}, three={three}: {} frame advances for {blocks} anchors",
-                work[2]
+            assert_eq!(
+                work[2], 0,
+                "{axis}, three={three}: SQL must not walk matcher frames"
             );
         }
     }
@@ -178,8 +175,7 @@ fn capture_demand_does_not_cross_binding_or_an_optional_branch() {
 
 #[cfg(feature = "unbounded-work")]
 #[test]
-fn capture_postings_bound_work_in_both_verdict_modes() {
-    use crate::code_rule_dsl::sql::terminals::scan::PROBES;
+fn capture_relations_batch_roots_in_both_verdict_modes() {
     let calls = 100;
     let source = format!("f({}f);\n", "a, ".repeat(128)).repeat(calls);
     for three in [false, true] {
@@ -191,22 +187,12 @@ fn capture_postings_bound_work_in_both_verdict_modes() {
             "stopBy": "end", "kind": "identifier", "pattern": "$F"
         } } }));
         let rule = compile("typescript", json!({ "rule": { "all": terms } }));
-        PROBES.set(0);
-        STATEMENT_PROFILE.set(Some(Default::default()));
         let result = same(&rule, &snapshot(&[("typescript", "a.ts", &source)]));
         assert_eq!(result["violations"].as_array().map(Vec::len), Some(calls));
-        let profile = STATEMENT_PROFILE.take().unwrap_or_default();
-        let narrowed: usize = profile
-            .iter()
-            .filter(|(sql, _)| sql.contains("needle.leaf"))
-            .map(|(_, (_, rows, _))| rows)
-            .sum();
-        let work = narrowed + PROBES.get();
-        assert!(
-            work > 0 && work <= calls * 3,
-            "three={three}: {narrowed} rows, {} packed probes",
-            PROBES.get()
-        );
+        let profile = super::fragment_boundary(&rule, &source);
+        assert_eq!(profile["filters"], 1);
+        assert_eq!(profile["roots"], calls);
+        assert_eq!(profile["rows"], calls);
     }
 }
 
@@ -229,7 +215,7 @@ fn recursive_search_preserves_capture_occurrences() {
 
 #[cfg(feature = "unbounded-work")]
 #[test]
-fn recursive_demand_insert_rejects_subtrees_without_a_capture_witness() {
+fn recursive_capture_search_keeps_only_confirmed_outputs_at_the_sql_boundary() {
     let pairs = 50;
     let prefix = "a + ".repeat(128);
     let source = format!("f({prefix}a);\nf({prefix}f);\n").repeat(pairs);
@@ -246,20 +232,11 @@ fn recursive_demand_insert_rejects_subtrees_without_a_capture_witness() {
             { "has": { "stopBy": "neighbor", "matches": "find" } }
         ] } } }),
         );
-        STATEMENT_PROFILE.set(Some(Default::default()));
         let result = same(&rule, &snapshot(&[("typescript", "a.ts", &source)]));
         assert_eq!(result["violations"].as_array().map(Vec::len), Some(pairs));
-        let profile = STATEMENT_PROFILE.take().unwrap_or_default();
-        let inserts: Vec<_> = profile
-            .iter()
-            .filter(|(sql, _)| sql.contains("node hit"))
-            .collect();
-        assert!(!inserts.is_empty(), "the support guard must execute");
-        let rows: usize = inserts.iter().map(|(_, (_, rows, _))| rows).sum();
-        assert!(
-            rows > 0 && rows < pairs * 10,
-            "three={three}: {rows} demands"
-        );
+        let profile = super::fragment_boundary(&rule, &source);
+        assert_eq!(profile["filters"], 1);
+        assert_eq!(profile["rows"], pairs);
     }
 }
 
@@ -317,8 +294,7 @@ fn value_only_demands_preserve_each_callers_capture_occurrence() {
 }
 
 #[test]
-fn progressive_pattern_terminals_stop_before_the_rest_of_a_large_candidate_domain() {
-    use crate::code_rule_dsl::sql::terminals::scan::PROBES;
+fn large_candidate_walks_stay_inside_one_native_batch() {
     let source = format!("f(a{});", ", b".repeat(2048));
     for count in [false, true] {
         let ast = if count {
@@ -326,14 +302,13 @@ fn progressive_pattern_terminals_stop_before_the_rest_of_a_large_candidate_domai
         } else {
             json!({"rule":{"pattern":"f($$$)","has":{"stopBy":"end","kind":"identifier","pattern":"$X"}}})
         };
-        PROBES.set(0);
+        let rule = super::hard_cases::compile("typescript", ast.clone());
         let got = agreed("typescript", ast, &source);
         assert_eq!(got.len(), 1);
-        assert!(
-            PROBES.get() > 0 && PROBES.get() <= 3,
-            "{} probes",
-            PROBES.get()
-        );
+        let profile = super::fragment_boundary(&rule, &source);
+        assert_eq!(profile["filters"], 1);
+        assert_eq!(profile["roots"], 1);
+        assert_eq!(profile["rows"], 1);
     }
 }
 

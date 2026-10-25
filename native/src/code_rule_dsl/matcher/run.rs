@@ -139,6 +139,30 @@ pub(in crate::code_rule_dsl) fn enumerate<'f>(
     first: MetaVarEnv<'f, TapeDoc>,
     work: &mut usize,
     name: &str,
+    visit: impl FnMut(MetaVarEnv<'f, TapeDoc>, &mut usize) -> Result<bool, Stopped>,
+) -> Result<bool, Stopped> {
+    enumerate_bound(
+        file,
+        matcher,
+        node,
+        first,
+        &MetaVarEnv::new(),
+        work,
+        name,
+        visit,
+    )
+}
+
+/// Rematches from the original input captures, never from the preceding output environment.
+/// Exclusions apply only to captures produced by this fragment. Inputs remain immutable.
+pub(in crate::code_rule_dsl) fn enumerate_bound<'f>(
+    file: &'f Root<TapeDoc>,
+    matcher: &GrammarMatcher,
+    node: u32,
+    first: MetaVarEnv<'f, TapeDoc>,
+    inputs: &MetaVarEnv<'f, TapeDoc>,
+    work: &mut usize,
+    name: &str,
     mut visit: impl FnMut(MetaVarEnv<'f, TapeDoc>, &mut usize) -> Result<bool, Stopped>,
 ) -> Result<bool, Stopped> {
     let scope = EachScope::start(name);
@@ -154,16 +178,15 @@ pub(in crate::code_rule_dsl) fn enumerate<'f>(
             return Ok(true);
         }
         begin_clause(matcher, *work);
-        let next = roots(file, matcher, Some(node), None)
-            .next()
-            .map(|root| match_root(file, matcher, root))
-            .transpose();
+        let mut env = std::borrow::Cow::Borrowed(inputs);
+        let next = super::fragment_at(matcher, node_at(file, node), &mut env)
+            .map(|truth| (truth == 1).then(|| env.into_owned()));
         let (left, limit) = end_clause();
         *work = left;
         if let Some(limit) = limit {
             return Err(Stopped::Limit(limit));
         }
-        let Some(next) = next?.flatten() else {
+        let Some(next) = next? else {
             return Ok(true);
         };
         matched = next;

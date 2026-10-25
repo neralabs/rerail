@@ -472,3 +472,6 @@ mod query_shape_workload;
 mod storage_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod fragment_integration;

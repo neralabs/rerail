@@ -128,14 +128,35 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
     );
 }
 
-/// Terminals run once per statement over their whole input set, never once per row: a fresh
-/// pattern, an env-input pattern and a regex over a file of many candidate nodes. The fresh
-/// pattern matches each of its 200 candidate roots once.
+/// Exercise the public native boundary and return its measured counters.
+pub(super) fn fragment_boundary(rule: &CompiledCodeRuleDsl, source: &str) -> Value {
+    use crate::code_rule_dsl::{
+        sql::{ClauseRun, FileContext, compile_enumerating},
+        test_support::grammar_matchers,
+    };
+    let grammars = grammar_matchers(rule);
+    let grammar = &grammars[0];
+    let compiled = compile_enumerating(&[grammar], None).unwrap();
+    let mut session = compiled.session().unwrap();
+    session
+        .run(
+            vec![(
+                differential::tape(grammar.language, source),
+                FileContext::default(),
+            )],
+            &[ClauseRun {
+                statement: 0,
+                files: vec![(0, None)],
+            }],
+        )
+        .unwrap();
+    assert_eq!(session.stats().statements, 1);
+    session.last_profile["boundaries"][0].clone()
+}
+
+/// One native boundary consumes all 200 roots; SQL does not dispatch individual leaves.
 #[test]
 fn terminals_run_once_per_statement_never_per_row() {
-    use crate::code_rule_dsl::sql::terminals::calls::{
-        FRESH_MATCHES, PATTERN_FILTERS, TEXT_FILTERS,
-    };
     use crate::code_rule_dsl::test_support::compiled;
     let rule = compiled(json!({ "rule": {
         "pattern": "$F($$$A)",
@@ -143,14 +164,12 @@ fn terminals_run_once_per_statement_never_per_row() {
         "has": { "stopBy": "end", "pattern": "$F" },
     } }));
     let source = "f(f, g);\n".repeat(200);
-    for counter in [&FRESH_MATCHES, &PATTERN_FILTERS, &TEXT_FILTERS] {
-        counter.set(0);
-    }
     let result = same(&rule, &snapshot(&[("typescript", "a.ts", &source)]));
     assert_eq!(result["violations"].as_array().map(Vec::len), Some(200));
-    assert_eq!(FRESH_MATCHES.get(), 200);
-    assert_eq!(PATTERN_FILTERS.get(), 2);
-    assert_eq!(TEXT_FILTERS.get(), 1);
+    let profile = fragment_boundary(&rule, &source);
+    assert_eq!(profile["filters"], 1);
+    assert_eq!(profile["roots"], 200);
+    assert_eq!(profile["rows"], 200);
 }
 
 /// A walk builds candidate rows only for the nodes of its sub-rule's root kinds (`not { not { R }

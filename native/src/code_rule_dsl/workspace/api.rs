@@ -878,6 +878,9 @@ impl WorkspaceApplyTask {
         let code_rules = state.code_rules.clone();
         let storage = state.storage.clone();
         let sql = super::sql::engine_of(&mut state);
+        if let Some(sql) = &sql {
+            sql.begin_job();
+        }
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
         let context = JobContext {

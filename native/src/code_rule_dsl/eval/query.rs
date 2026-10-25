@@ -320,6 +320,7 @@ pub(crate) fn evaluate_query(
             snapshot,
             scope,
             violation.and_then(|violation| violation.each.as_deref()),
+            limits,
         )?),
     };
     let leaf = Leaf {
@@ -394,6 +395,7 @@ pub(crate) fn evaluate_files(
             snapshot,
             scope,
             violation.and_then(|violation| violation.each.as_deref()),
+            limits,
         )?;
         let leaf = Leaf {
             snapshot,
@@ -492,7 +494,7 @@ struct SqlFiles {
 struct SqlFile {
     doc: crate::code_rule_dsl::tape::TapeDoc,
     lines: Arc<LineTable>,
-    matches: Vec<crate::code_rule_dsl::sql::SqlMatch>,
+    matches: crate::code_rule_dsl::sql::FileOutcome,
 }
 
 impl SqlFiles {
@@ -505,6 +507,7 @@ impl SqlFiles {
         snapshot: &Snapshot,
         scope: &CodeRuleScope,
         each: Option<&str>,
+        limits: &Limits,
     ) -> Result<Self> {
         let mut used: Vec<usize> = Vec::new();
         let mut inputs = Vec::new();
@@ -542,6 +545,7 @@ impl SqlFiles {
                         // As the stateless evaluator installs a file's scopes: nothing cached;
                         // and its call-graph closure (`FileCallsSlot::for_path`).
                         crate::code_rule_dsl::sql::FileContext {
+                            budget: None,
                             path: Some(file.path.clone()),
                             module: file.module.clone(),
                             scopes: Vec::new(),
@@ -556,8 +560,15 @@ impl SqlFiles {
             }));
         }
         let grammars: Vec<&GrammarMatcher> = used.iter().map(|&index| &matchers[index]).collect();
-        let compiled = crate::code_rule_dsl::sql::compile_enumerating(&grammars, each)
-            .map_err(|error| invalid(error.to_string()))?;
+        let mut compiler = crate::code_rule_dsl::sql::ProgramCompiler::default();
+        for grammar in grammars {
+            compiler
+                .clause_with_limits(grammar, each, limits)
+                .map_err(|error| invalid(error.to_string()))?;
+        }
+        let compiled = compiler
+            .finish_with_batch(crate::code_rule_dsl::sql::DEFAULT_BATCH_SIZE)
+            .0;
         let docs: Vec<_> = inputs.iter().map(|(doc, _, _)| doc.clone()).collect();
         let mut matches = compiled
             .run_batches(inputs, crate::code_rule_dsl::sql::DEFAULT_BATCH_SIZE)
@@ -731,6 +742,14 @@ impl<'a> Leaf<'a> {
                         (doc, lines, None)
                     }
                     Some(sql) => match &sql.files[index] {
+                        Some(Ok(read)) if read.matches.unknown.is_some() => {
+                            if let crate::code_rule_dsl::sql::Unknown::Limit(limit) =
+                                read.matches.unknown.unwrap()
+                            {
+                                *util_limit = Some((file.path.clone(), limit));
+                            }
+                            return Ok(FileStep::Failed(None));
+                        }
                         Some(Ok(read)) => (
                             read.doc.clone(),
                             Arc::clone(&read.lines),
@@ -903,7 +922,13 @@ impl Leaves for SnapshotLeaves<'_, '_> {
                     .violation
                     .filter(|_| spec.reported)
                     .and_then(|violation| violation.each.as_deref());
-                match SqlFiles::evaluate(matchers, self.leaf.snapshot, self.leaf.scope, each) {
+                match SqlFiles::evaluate(
+                    matchers,
+                    self.leaf.snapshot,
+                    self.leaf.scope,
+                    each,
+                    self.leaf.limits,
+                ) {
                     Ok(files) => {
                         let _ = self.sql[leaf].set(files);
                     }

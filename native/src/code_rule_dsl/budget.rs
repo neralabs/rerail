@@ -328,6 +328,7 @@ impl MatchBudget {
 }
 
 /// A file's budget taken off its thread (`MatchBudget::suspend`).
+#[derive(Clone)]
 pub(super) struct SuspendedBudget(MatchDeadline);
 
 impl SuspendedBudget {

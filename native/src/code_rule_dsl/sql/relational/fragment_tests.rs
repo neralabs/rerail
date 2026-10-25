@@ -417,3 +417,93 @@ fn fragment_spike_sql_interpreter_is_not_an_emission_option() {
     let result = super::super::outcomes::compile_job_finite(&refs, 100);
     assert!(result.is_err());
 }
+
+#[test]
+fn fragment_spike_sql_capture_demand_and_bound_enumeration() {
+    let p = policy(
+        json!({"kind":"call_expression","pattern":"$F($$$ARGS)","has":{"kind":"arguments","has":{"kind":"identifier","pattern":"$X"}}}),
+        json!({}),
+    );
+    let grammar = &grammar_matchers(&p)[0];
+    exec::with_terminals(
+        vec![(tape(grammar.language, "f(a,b,a);g(c);"), Default::default())],
+        vec![],
+        |db, batch, _| {
+            let mut fragment = Fragment::new(grammar, batch, usize::MAX);
+            fragment.each = Some("X".into());
+            let fragment = Arc::new(fragment);
+            let call = fragment.requests[0].node;
+            let f_node = (0..batch.files[0].facts.len())
+                .find(|&n| matcher::node_at(&batch.files[0].root, n).text() == "f")
+                .unwrap();
+            let demands = Arc::new(DemandStore::default());
+            demands
+                .register(db, "capture_demand", vec![("F".into(), SlotKind::Node)])
+                .unwrap();
+            let active = Arc::new(std::sync::RwLock::new(Some((
+                batch.clone(),
+                fragment.clone(),
+            ))));
+            register_slot(
+                db,
+                c"consumer",
+                active,
+                fragment.names.clone(),
+                demands.clone(),
+            )
+            .unwrap();
+            // Input binding F must survive every rematch. SQL decides the demand; one xFilter runs it.
+            let sql = "WITH selected(request,file,node,f) AS (SELECT 91,0,?1,?2), handle AS MATERIALIZED (SELECT capture_demand(request,file,node,f) h FROM selected) SELECT request,ordinal FROM consumer WHERE demand=(SELECT h FROM handle) AND truth=1 ORDER BY ordinal";
+            let rows = db
+                .prepare(sql)
+                .unwrap()
+                .query_map([call, f_node], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(rows, vec![(91, 0), (91, 1), (91, 2)]);
+            assert_eq!(fragment.metrics.lock().unwrap().filters, 1);
+            assert_eq!(fragment.metrics.lock().unwrap().roots, 1);
+            let empty=db.query_row("SELECT count(*) FROM consumer WHERE demand=(SELECT capture_demand(1,0,0,0) WHERE 0)",[],|r|r.get::<_,i64>(0)).unwrap();
+            assert_eq!(empty, 0);
+            let handle = db
+                .query_row("SELECT capture_demand(1,0,?1,?2)", [call, f_node], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap();
+            let count = db
+                .query_row(
+                    "SELECT count(*) FROM consumer WHERE demand=?1 AND truth=1",
+                    [handle],
+                    |r| r.get::<_, i64>(0),
+                )
+                .unwrap();
+            assert_eq!(count, 3);
+            // A request relation has one consumer invocation. It releases its storage then.
+            assert!(
+                db.query_row(
+                    "SELECT count(*) FROM consumer WHERE demand=?1",
+                    [handle],
+                    |r| r.get::<_, i64>(0),
+                )
+                .is_err()
+            );
+            let handle = db
+                .query_row("SELECT capture_demand(1,0,?1,?2)", [call, f_node], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap();
+            demands.clear();
+            assert!(
+                db.query_row(
+                    "SELECT count(*) FROM consumer WHERE demand=?1",
+                    [handle],
+                    |r| r.get::<_, i64>(0)
+                )
+                .is_err()
+            );
+        },
+    );
+}

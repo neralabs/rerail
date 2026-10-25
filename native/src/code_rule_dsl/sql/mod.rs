@@ -1,14 +1,15 @@
-//! The set-based SQL engine for code rules (`docs/sql-set-composition-design.md`): combinators
-//! lower to joins and set operations over frames in SQLite, and the leaves are native terminals
-//! behind virtual tables, each run once per batch over its whole input set. The native matcher is
-//! the production engine and the parity oracle; the evaluator selects this one at run time
-//! (`eval::Engine::Sql`).
+//! SQL composition over typed matcher relations. Structural predicates lower to SQL;
+//! sequential capture and utility semantics execute inside one native invocation per batch.
+//! The public compiler is `engine`. The older frame compiler stays for historical tests.
+//! See `docs/sql-matcher-fragment-transition.md` for the transition and qualification.
 
 pub(super) mod crossfile;
 #[cfg(feature = "unbounded-work")]
 mod diagnostics;
 mod emit;
+mod engine;
 mod exec;
+mod fragments;
 mod frames;
 mod fused;
 mod inputs;
@@ -35,9 +36,11 @@ mod tests;
 mod texts;
 mod timing;
 
+#[cfg(test)]
+pub(super) use engine::compile_enumerating;
+pub(super) use engine::{Compiled, FileOutcome, ProgramCompiler, Session, Unknown};
 pub(super) use exec::{
-    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError, SqlMatch,
-    Stats, compile_enumerating, environment,
+    ClauseRun, CompilePhases, FileContext, SqlError, SqlMatch, Stats, environment,
 };
 #[cfg(feature = "unbounded-work")]
 pub(super) use exec::{StatementProfile, profiled};

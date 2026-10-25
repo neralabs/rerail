@@ -2529,3 +2529,25 @@ fn publication_completes_a_tree_with_duplicate_entry_names() {
         "a stored tree with duplicate entry names never counts as complete"
     );
 }
+
+#[test]
+fn fragment_planner_statistics_read_fts_and_follow_republication() {
+    let (_, store) = store("fragment-kind-stats");
+    let source = store.put_source(b"kind counts", &[]).unwrap();
+    let tape = store.put_tape(source, 1, 1, 1, b"tape").unwrap();
+    for (tokens, expected) in [
+        ("k0001 k0001 k0002", vec![(1, 2), (2, 1), (3, 0)]),
+        ("k0002 k0002 k0002", vec![(1, 0), (2, 3), (3, 0)]),
+    ] {
+        store
+            .put_search_indexes_bulk(&[TapeSearchIndex {
+                tape_id: tape,
+                index_version: 3,
+                node_count: 3,
+                has_errors: false,
+                kind_tokens: tokens.into(),
+            }])
+            .unwrap();
+        assert_eq!(store.search_kind_counts(&[1, 2, 3]).unwrap(), expected);
+    }
+}

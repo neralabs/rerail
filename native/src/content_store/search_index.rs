@@ -256,3 +256,26 @@ impl ContentStore {
         Ok(selections)
     }
 }
+
+impl ContentStore {
+    /// Store-wide kind postings, from the existing FTS index. No tape decoding or batch recount.
+    /// Kinds share numeric tokens across dialects: these are global cost estimates, never admission proofs.
+    pub(crate) fn search_kind_counts(&self, kinds: &[u16]) -> StoreResult<Vec<(u16, u64)>> {
+        let db = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        db.execute_batch("CREATE VIRTUAL TABLE IF NOT EXISTS temp.planner_kind_vocab USING fts5vocab(main,search_kind_fts,'row')")?;
+        let requested = serde_json::to_string(
+            &kinds
+                .iter()
+                .map(|k| (*k, format!("k{k:04x}")))
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| StoreError::Corrupt(e.to_string()))?;
+        let mut query=db.prepare_cached("SELECT json_extract(r.value,'$[0]'),coalesce(v.cnt,0) FROM json_each(?1) r LEFT JOIN planner_kind_vocab v ON v.term=json_extract(r.value,'$[1]')")?;
+        Ok(query
+            .query_map([requested], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+}

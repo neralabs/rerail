@@ -303,43 +303,33 @@ fn list_captures_unify_over_their_named_nodes_only() {
 }
 
 #[test]
-fn every_out_of_scope_operator_is_refused_by_name() {
-    let refused = |ast: Value, operator: &str| {
-        let compiled = compile("typescript", ast);
-        let input = snapshot(&[("typescript", "a.ts", "f(a);\n")]);
-        let error = compiled
-            .evaluate(input.to_string(), "report".into(), Some("sql".into()))
-            .expect_err("the SQL engine refuses the clause");
-        assert!(
-            error.reason.contains(&format!("Unsupported({operator})")),
-            "{operator}: {}",
-            error.reason
-        );
-    };
-    // A stop rule is a per-batch stage over the batch's files: a parsed tree's nodes are none.
-    refused(
+fn formerly_refused_operators_use_native_fragment_semantics() {
+    let source = "// eslint-disable foo, bar\nf(a, b);\n";
+    for ast in [
         json!({ "rule": { "kind": "comment", "parse": {
             "grammar": "eslintDirective",
             "has": { "stopBy": { "kind": "item" }, "kind": "item" },
         } } }),
-        "stopBy rule inside parse",
-    );
-    // A recursion that reads its own answer at the node it started at (its parent's children
-    // include it) loops: the matcher recurses until its depth limit.
-    refused(
-        json!({
-            "rule": { "matches": "deep" },
-            "utils": { "deep": { "any": [{ "kind": "number" }, { "inside": { "has": { "matches": "deep" } } }] } },
-        }),
-        "recursion whose reads loop back",
-    );
-    // The matcher leaks `ofRule`'s bindings from a candidate whose position fails to the later
-    // candidates of the walk: refused, not approximated.
-    refused(
         json!({ "rule": {
             "kind": "arguments",
             "has": { "nthChild": { "position": 2, "ofRule": { "pattern": "$A" } } },
         } }),
-        "nthChild with a binding ofRule as a relation's rule",
+    ] {
+        // Both success and failure preserve the native binding semantics.
+        agreed("typescript", ast, source);
+    }
+    // This recursion revisits its caller. It must return a typed depth failure, never
+    // compile an SQL program counter or reject the grammar during compilation.
+    let compiled = compile(
+        "typescript",
+        json!({
+            "rule": { "matches": "deep" },
+            "utils": { "deep": { "any": [{ "kind": "number" }, { "inside": { "has": { "matches": "deep" } } }] } },
+        }),
+    );
+    let result = same(&compiled, &snapshot(&[("typescript", "a.ts", "f(a);\n")]));
+    assert!(
+        !result["failures"].as_array().unwrap().is_empty(),
+        "{result}"
     );
 }

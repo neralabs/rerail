@@ -1,0 +1,487 @@
+{
+  "accepted": true,
+  "failures": [],
+  "ceilings": {
+    "matchingExecutions": 100,
+    "coldCpuRatio": 1.3,
+    "medianEditCpuRatio": 1.5,
+    "coldSqlPeakRssBytes": 1610612736
+  },
+  "configuration": {
+    "profile": "loop",
+    "optLevel": 1,
+    "allocator": "real jemalloc",
+    "localTestLto": false,
+    "features": [
+      "unbounded-work"
+    ],
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)"
+  },
+  "provenance": {
+    "baseCommit": "e32b280b6c9b194d089974028f069d0780101562",
+    "corpusCommit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
+    "corpusInventorySha256": "4525032ac7cf058a9134aad9250fd3a400eb4df78c69bfdd89d608057e1b9773",
+    "changedRustSources": {
+      "native/src/code_rule_dsl/budget.rs": "1799e84e551cebbfc5c71d74e4e1555c272abdc345e33946dafd402455cd0441",
+      "native/src/code_rule_dsl/compile/mod.rs": "4e316765e6a174a266c33e278f4ce096055e8ad44306ba917eb660591897cfce",
+      "native/src/code_rule_dsl/eval/query.rs": "e7d6cd8505dc02548356bf1c519ba717b5b635cf17706ba7fc1b753c1f6320ac",
+      "native/src/code_rule_dsl/matcher/mod.rs": "be5ce8fc8a68e14a5c430292536f5d36e5d2cda6a9d0800612d98ef9d85f1b3c",
+      "native/src/code_rule_dsl/matcher/run.rs": "830c0794e3aac3753a60a13e0dfc14ce0066755ebcee913c2788c9b17e9eca6d",
+      "native/src/code_rule_dsl/mod.rs": "47325e4aca9f6a0b978a7b18ca8a661a692587b8ecaf1ee5ed6073dc6e55cce3",
+      "native/src/code_rule_dsl/producers/mod.rs": "416e6828d725a1a57a8e35ceb20af587c82a3804038316e11ae793a3f97691aa",
+      "native/src/code_rule_dsl/producers/tests.rs": "740fe9f8f6b3f0b76d38e76e49ee87936a7c8de49eedd5dd52e3a3023d7f85e0",
+      "native/src/code_rule_dsl/sql/engine.rs": "6397011b2d50105365e51e215a8e7f31408f244b6e83053570a418d60f77a9fc",
+      "native/src/code_rule_dsl/sql/engine/planning.rs": "f0f055db59e385bc99496858bbd496960e8ca6105cb123a16dd00bc792b2e1bd",
+      "native/src/code_rule_dsl/sql/engine/qualification.rs": "1fd8b09958035fe674964e5c647a762f8ff76d35e5ab1cfe6ca39ccc1b9425c0",
+      "native/src/code_rule_dsl/sql/engine/statistics.rs": "1b9a72f5485e61d37de6d542d36009b0193e61c015c2b9fa3bd7f32f0bd5a30a",
+      "native/src/code_rule_dsl/sql/engine/structural.rs": "fbf17846e81fe6dec33875ca6712b16e469c460acac75ded4f66b810ca441ea0",
+      "native/src/code_rule_dsl/sql/engine/tests.rs": "b286ad9123ab099542104ecaeab92be519c110c1e5da346d165518f515fbc406",
+      "native/src/code_rule_dsl/sql/exec.rs": "dfc68752fccad05d8327cf315d2a2926a53b4c755c6fd85027d94fdaa8a9790e",
+      "native/src/code_rule_dsl/sql/fragments/candidates.rs": "998f825f2de871993dd9964ba17310abf1e1c5492e27ad3ec90476d1da9ef0ee",
+      "native/src/code_rule_dsl/sql/fragments/capture_cell.rs": "4e81dcc6161a05c18bd6b93536077db1a26852b09f43d82952b229d9300c67ca",
+      "native/src/code_rule_dsl/sql/fragments/capture_env.rs": "231438724e8f9a9a1721dcc9227dc70dd4dcb1010da4ce96e9554ba4b3f20886",
+      "native/src/code_rule_dsl/sql/fragments/demand.rs": "cbafdf0798a8da88104acc8a738dfeb704370eca8bb3adf2a5b7b1032ff02308",
+      "native/src/code_rule_dsl/sql/fragments/failure.rs": "83e27a1f81f0180d27aa8a95fa79b1905cab4c864353f9f407ecdac9435f524c",
+      "native/src/code_rule_dsl/sql/fragments/mod.rs": "134451f3c3bff1c456af0cfb076cc2069e65e9a7d389df645b0f8720d41f9eab",
+      "native/src/code_rule_dsl/sql/fragments/span_capture.rs": "1c8157c04904eeab0235d3bcb38e328b88e69835ca188d32375a73ab341cbdcf",
+      "native/src/code_rule_dsl/sql/mod.rs": "03ddfe03aba91dc3d6c0f41603f67cb01deb819ff95706ecc8f4ef8cc004c583",
+      "native/src/code_rule_dsl/sql/relational/capture_cell.rs": "cdf8da1d2092b86e761bc9bbc1a857fd19dcf48adc1aeb3a5dd3c85b3634322e",
+      "native/src/code_rule_dsl/sql/relational/capture_env.rs": "00a858615c86d5309b8d4e78fca58ff05e00aa0fb2cdf9a968b651c0552381ba",
+      "native/src/code_rule_dsl/sql/relational/catalog_execution_tests.rs": "425926970529fd1c975da6d831accc664125df03469c641985c1f5710f0d8ca9",
+      "native/src/code_rule_dsl/sql/relational/cutover_tests.rs": "54b020586c74744fe97ddf420ca5e4cd4cd9f98ba53c301f462a007dad2669ea",
+      "native/src/code_rule_dsl/sql/relational/failure.rs": "1e0e9ed301a953e59e54cca7d58f206f7e500036e54753b5bfbf327c8afcb2f0",
+      "native/src/code_rule_dsl/sql/relational/fragment_tests.rs": "b666d423b280a8f942869573c881d042d6fa9aaa6769681dbe7820ab5c003f8f",
+      "native/src/code_rule_dsl/sql/relational/fragments.rs": "54cdaa6e7ea0b608d75a5f7df2b515483125378648fc9c644937136dbe36f323",
+      "native/src/code_rule_dsl/sql/relational/mod.rs": "d08b06548f5100adc78d1243eae290afd3f81dca6d6be46eb3c4965b3a1157a1",
+      "native/src/code_rule_dsl/sql/relational/span_capture.rs": "cff1281355df28e5b733b0f1a41e1620ddaef20011fb70f7e377e018805c0be1",
+      "native/src/code_rule_dsl/sql/terminals/mod.rs": "a61b7d6b68326cf89212932c3cf032164c19ee09c32caeb58f748cbbf1e83582",
+      "native/src/code_rule_dsl/sql/tests/hard_cases.rs": "a4faa525baecf8993818fdd30d3c904024263067b0750ef4f657aacbd07f03c0",
+      "native/src/code_rule_dsl/sql/tests/three_valued.rs": "8cf84d9486845343f105d586b2a0c0b9c3d8414e434eba36ddb7c81bee28c7b5",
+      "native/src/code_rule_dsl/tape.rs": "f6f301e4d67c12d0e21fbf76f72be09ac93ffe9daa1788df0f7c419f95b5ec90",
+      "native/src/code_rule_dsl/workspace/api.rs": "8bae028d9ab492408285e831d6c1cf2992676fc692799457d64021959ed91752",
+      "native/src/code_rule_dsl/workspace/evaluate.rs": "b5de577ce991c3fb7c4828d12e3dbc108e0d439ab55fc57dec575406583a1c0e",
+      "native/src/code_rule_dsl/workspace/fragment_integration.rs": "d4dbd8b77dfe1a9b8274942875b0093661a8c0b99e9c47998e7877db74f4aba4",
+      "native/src/code_rule_dsl/workspace/mod.rs": "7db4118b138436a75e69beea53e8ac9c53d87e08a854f2dca0b025bf3e7fc350",
+      "native/src/code_rule_dsl/workspace/sql.rs": "a9270dc482ebc7b183096ada1ccb13aefceb2176c0b47306744f6288b99f15ae",
+      "native/src/content_store/search_index.rs": "4a676acbbdef64f24e47baf7410f3a23f65e7d2a1a562600b9585b6fc7c589fe",
+      "native/src/content_store/tests.rs": "96443622844219ffff10dd517cf6924346e7a5558429e9a4d92569c456078cfe"
+    },
+    "binarySha256": "1210b72a6eb76d3879b38f969b4deb857bb6d3acf001529b6ab977799787d526",
+    "rawReportsSha256": {
+      "catalog": "1e9b8ee79a3b9afc81501910fad73d268fdb5564922890723b444abf0f9ae598",
+      "native": "45879c50cf3878992878472b6c2eebf786b39295bdb8e8abd34406496fd8f4f8",
+      "sql": "0a4b0ad99d94feae49bd42ffbefa2d242eb52817fdb5acd9924d62abacb7c72b"
+    }
+  },
+  "workload": {
+    "files": 5725,
+    "sourceBytes": 95697853,
+    "policies": 138,
+    "policySource": "shipped Python catalog, not the unavailable original twelve policies"
+  },
+  "native": {
+    "compile": {
+      "cpuNs": 129222000,
+      "wallNs": 589522167
+    },
+    "cold": {
+      "cpuNs": 109525408000,
+      "peakRssBytes": 684474368,
+      "wallNs": 107489978875
+    },
+    "findings": 97798,
+    "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
+    "failures": [],
+    "edits": [
+      {
+        "time": {
+          "cpuNs": 187096000,
+          "peakRssBytes": 860176384,
+          "wallNs": 372339666
+        },
+        "findings": 97799,
+        "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
+        "failures": []
+      },
+      {
+        "time": {
+          "cpuNs": 173698000,
+          "peakRssBytes": 873873408,
+          "wallNs": 483657083
+        },
+        "findings": 97801,
+        "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
+        "failures": []
+      },
+      {
+        "time": {
+          "cpuNs": 180099000,
+          "peakRssBytes": 887406592,
+          "wallNs": 306637292
+        },
+        "findings": 97798,
+        "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
+        "failures": []
+      }
+    ]
+  },
+  "sql": {
+    "compile": {
+      "cpuNs": 150779000,
+      "wallNs": 250518333
+    },
+    "cold": {
+      "cpuNs": 111790158000,
+      "peakRssBytes": 1233223680,
+      "wallNs": 60265892333
+    },
+    "findings": 97798,
+    "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
+    "failures": [],
+    "edits": [
+      {
+        "time": {
+          "cpuNs": 202616000,
+          "peakRssBytes": 1233223680,
+          "wallNs": 563692083
+        },
+        "findings": 97799,
+        "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
+        "failures": []
+      },
+      {
+        "time": {
+          "cpuNs": 194701000,
+          "peakRssBytes": 1233223680,
+          "wallNs": 362723750
+        },
+        "findings": 97801,
+        "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
+        "failures": []
+      },
+      {
+        "time": {
+          "cpuNs": 208908000,
+          "peakRssBytes": 1233223680,
+          "wallNs": 636673375
+        },
+        "findings": 97798,
+        "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
+        "failures": []
+      }
+    ]
+  },
+  "coldCpuRatio": 1.0206778503851819,
+  "medianEditCpuRatio": 1.1250256803202683,
+  "matchingStatements": 46,
+  "vmInstructions": 73275953,
+  "matchingCpuNs": 83556319877,
+  "nativeBoundaryCpuNs": 79499675356,
+  "sqlAndBoundaryOverheadCpuNs": 4056644521,
+  "largestNativeFragments": [
+    {
+      "rule": "ruff-async221-run-process-in-async-function:run-process",
+      "cpuNs": 5036895712,
+      "roots": 4560507,
+      "rows": 0,
+      "filters": 23
+    },
+    {
+      "rule": "ruff-b023-function-uses-loop-variable:function-uses-loop-variable",
+      "cpuNs": 4849006294,
+      "roots": 480327,
+      "rows": 122,
+      "filters": 23
+    },
+    {
+      "rule": "ruff-f405-undefined-local-with-import-star-usage:undefined-local-with-import-star-usage",
+      "cpuNs": 3339851549,
+      "roots": 4543604,
+      "rows": 74,
+      "filters": 23
+    },
+    {
+      "rule": "bandit-b615-huggingface-unsafe-download:b615",
+      "cpuNs": 3299305277,
+      "roots": 690248,
+      "rows": 24,
+      "filters": 23
+    },
+    {
+      "rule": "ruff-b007-unused-loop-control-variable:unused-loop-control-variable",
+      "cpuNs": 3294415112,
+      "roots": 3713119,
+      "rows": 37,
+      "filters": 23
+    },
+    {
+      "rule": "ruff-f633-invalid-print-syntax:invalid-print-syntax",
+      "cpuNs": 2680303381,
+      "roots": 4560507,
+      "rows": 0,
+      "filters": 23
+    },
+    {
+      "rule": "ruff-b007-unused-loop-control-variable:unused-loop-control-variable-uncertain",
+      "cpuNs": 2546639754,
+      "roots": 2821343,
+      "rows": 0,
+      "filters": 23
+    },
+    {
+      "rule": "bandit-b102-exec-used:exec-call",
+      "cpuNs": 2030447972,
+      "roots": 421910,
+      "rows": 8,
+      "filters": 23
+    },
+    {
+      "rule": "ruff-async230-blocking-open-call-in-async-function:blocking-open",
+      "cpuNs": 1957819749,
+      "roots": 1871239,
+      "rows": 0,
+      "filters": 23
+    },
+    {
+      "rule": "ruff-async222-wait-for-process-in-async-function:wait-for-process",
+      "cpuNs": 1929814429,
+      "roots": 1871239,
+      "rows": 0,
+      "filters": 23
+    }
+  ],
+  "nativeFilters": 3289,
+  "nativeRoots": 73199829,
+  "peakRequestRows": 133408,
+  "compiler": {
+    "cacheHits": 0,
+    "clauses": 146,
+    "compiler": "typed-matcher-fragments",
+    "compilerVersion": 1,
+    "descendantAnchors": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "maxMatchingStatementsPerPartition": 2,
+    "nativeComposition": true,
+    "sqlBytes": 26101,
+    "sqlStatements": 2,
+    "statistics": {},
+    "statisticsError": null
+  },
+  "catalog": {
+    "grammars": 146,
+    "files": 597,
+    "runs": [
+      {
+        "compared": 87162,
+        "matches": 2477,
+        "mismatches": [],
+        "nativeCpuNs": 1034480250,
+        "nativeWallNs": 4862501583,
+        "sqlCpuNs": 1116047041,
+        "sqlWallNs": 3734385208,
+        "unknownNative": 0,
+        "unknownSql": 0
+      }
+    ]
+  },
+  "sqlCompilePhases": {
+    "emitCpuMilliseconds": 0.0,
+    "emitMilliseconds": 0.0,
+    "finishCpuMilliseconds": 1.902083,
+    "finishMilliseconds": 2.009792,
+    "lowerCpuMilliseconds": 0.96955,
+    "lowerMilliseconds": 1.16604,
+    "planCpuMilliseconds": 0.0,
+    "planMilliseconds": 0.0
+  },
+  "sqlSessions": {
+    "count": 4,
+    "prepared": 8,
+    "setupCpuMilliseconds": 6.315165,
+    "setupMilliseconds": 6.314583,
+    "tables": 0,
+    "texts": 8
+  },
+  "sqlProgram": {
+    "btrees": 0,
+    "bytes": 26101,
+    "frames": 0,
+    "shapes": 146,
+    "skeletons": 0,
+    "steps": 2,
+    "storedBytes": 26101,
+    "texts": 2
+  },
+  "validation": {
+    "sqlSuite": {
+      "passed": 176,
+      "failed": 0,
+      "ignored": 23
+    },
+    "fragmentChecks": {
+      "passed": 16,
+      "failed": 0,
+      "ignored": 2
+    },
+    "registryChecks": {
+      "passed": 4,
+      "failed": 0
+    },
+    "productionLibraryCheck": "passed",
+    "formatCheck": "passed",
+    "finalTestBinarySha256": "dc592dd825b502ebe3d6616e31d1415691fb5d912b4bd2182650c706d18fd43d",
+    "testMigrationsAfterWorkloadMeasurement": {
+      "native/src/code_rule_dsl/sql/tests/compiler.rs": "b422b4ce82e3383a386ce619fc3bece43f91c964ad84e771a7f6b68e3a9a1aa3",
+      "native/src/code_rule_dsl/sql/tests/frontier.rs": "82a78261a8e42da98813f30e9c21338cd345cd3e8d69151cd32c66bc4eced4d6",
+      "native/src/code_rule_dsl/sql/tests/mod.rs": "189b2194525046be4daae611083a3c47910964f886e7c9edde80c2c76cc73736",
+      "native/src/code_rule_dsl/sql/tests/recursion.rs": "ebd59e6b8e647f150a2754ebb6cd153eb884536be7384358aad380db495d9ade"
+    },
+    "note": "Workload evidence retains its measured executable and source snapshot. Later changes affect only SQL test expectations and boundary assertions."
+  }
+}
