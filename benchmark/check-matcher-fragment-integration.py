@@ -62,6 +62,7 @@ def main():
     require(sum(len(p["statements"]) for p in profiles) == statements, "partition trace misses executions")
     require(all(not p["unknownFiles"] for p in profiles), "native boundaries report incomplete files")
     require(all(b["filters"] <= 1 for p in profiles for b in p["boundaries"]), "a native boundary runs more than once per partition")
+    require(all(b["filters"] <= 1 for p in profiles for b in p.get("nativeBatches", [])), "a native batch runs more than once per partition")
     corpus_files = subprocess.check_output(["git", "-C", str(args.corpus), "ls-files", "-z"]).decode().split("\0")
     corpus_inventory = [(p, digest((args.corpus / p).read_bytes())) for p in corpus_files if p.endswith(".py")]
     source_paths = subprocess.check_output(["git", "diff", "--name-only", "HEAD", "--", "native/src"]).decode().splitlines()
@@ -84,7 +85,10 @@ def main():
             for target, source in (("cpuNs", "native_cpu_ns"), ("roots", "roots"), ("rows", "rows"), ("filters", "filters")):
                 total[target] += boundary[source]
     matching_cpu = sum(s["cpuNs"] for p in profiles for s in p["statements"])
-    boundary_cpu = sum(v["cpuNs"] for v in by_clause.values())
+    residual_cpu = sum(v["cpuNs"] for v in by_clause.values())
+    batches = [b for p in profiles for b in p.get("nativeBatches", [])]
+    prefix_cpu = sum(b["prefix_cpu_ns"] for b in batches)
+    boundary_cpu = residual_cpu + prefix_cpu
 
     result = {
         "accepted": not failures, "failures": failures,
@@ -101,10 +105,18 @@ def main():
         "vmInstructions": sum(s["vm"] for p in profiles for s in p["statements"]),
         "matchingCpuNs": matching_cpu,
         "nativeBoundaryCpuNs": boundary_cpu,
+        "nativeResidualCpuNs": residual_cpu,
+        "nativePrefixCpuNs": prefix_cpu,
         "sqlAndBoundaryOverheadCpuNs": matching_cpu - boundary_cpu,
         "largestNativeFragments": sorted(by_clause.values(), key=lambda v: v["cpuNs"], reverse=True)[:10],
-        "nativeFilters": sum(b["filters"] for p in profiles for b in p["boundaries"]),
-        "nativeRoots": sum(b["roots"] for p in profiles for b in p["boundaries"]),
+        "nativeFilters": sum(b["filters"] for p in profiles for b in p["boundaries"]) + sum(b["filters"] for b in batches),
+        "nativeRoots": sum(b["roots"] for p in profiles for b in p["boundaries"]) + sum(b["prefix_roots"] for b in batches),
+        "nativePrefixRoots": sum(b["prefix_roots"] for b in batches),
+        "nativeCandidateRoots": sum(b["candidate_roots"] for b in batches),
+        "nativeGroupingRoots": sum(b.get("grouping_roots", 0) for b in batches),
+        "memoHits": sum(b.get("memo_hits", 0) for b in batches),
+        "memoMisses": sum(b.get("memo_misses", 0) for b in batches),
+        "sharedProducers": [p for b in batches for p in b.get("producers", [])],
         "peakRequestRows": max(b["peak_request_rows"] for p in profiles for b in p["boundaries"]),
         "compiler": {k: v for k, v in sql["report"]["relational"].items() if k != "registry"},
         "catalog": {"grammars": catalog["grammars"], "files": catalog["files"], "runs": [{k: v for k, v in r.items() if k != "detail"} for r in catalog["runs"]]},

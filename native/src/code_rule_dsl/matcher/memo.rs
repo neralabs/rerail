@@ -138,6 +138,25 @@ thread_local! {
     static MEMO: RefCell<FileMemo> = RefCell::new(FileMemo::default());
 }
 
+#[derive(Default, Clone, Copy, serde::Serialize)]
+pub(in crate::code_rule_dsl) struct Metrics {
+    pub hits: u64,
+    pub misses: u64,
+    pub files: u64,
+}
+#[cfg(any(test, feature = "code-rule-profile"))]
+thread_local! {static METRICS: std::cell::Cell<Metrics> = std::cell::Cell::new(Metrics::default());}
+pub(in crate::code_rule_dsl) fn metrics() -> Metrics {
+    #[cfg(any(test, feature = "code-rule-profile"))]
+    {
+        METRICS.get()
+    }
+    #[cfg(not(any(test, feature = "code-rule-profile")))]
+    {
+        Metrics::default()
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static REMEMBERED_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -168,12 +187,28 @@ impl Drop for Scoped {
 
 /// Runs `run` remembering utility verdicts at `root`'s nodes, forgotten when it returns.
 pub(in crate::code_rule_dsl) fn with_file<T>(root: &Root<TapeDoc>, run: impl FnOnce() -> T) -> T {
+    #[cfg(any(test, feature = "code-rule-profile"))]
+    METRICS.set({
+        let mut m = METRICS.get();
+        m.files += 1;
+        m
+    });
     let file = FileMemo {
         root: std::ptr::from_ref(root) as usize,
         ..FileMemo::default()
     };
     let _scoped = Scoped(Some(MEMO.replace(file)));
     run()
+}
+
+/// A batch owns the outer file lifetime; nested fragments reuse it. Nested different roots
+/// still get isolated memo state, restored when their evaluation finishes.
+pub(in crate::code_rule_dsl) fn reuse_file<T>(root: &Root<TapeDoc>, run: impl FnOnce() -> T) -> T {
+    if MEMO.with_borrow(|memo| memo.root == std::ptr::from_ref(root) as usize) {
+        run()
+    } else {
+        with_file(root, run)
+    }
 }
 
 /// `value` as `U`. SAFETY: callers prove `T` and `U` one type by their `TypeId`s first.
@@ -463,8 +498,20 @@ fn recall<'t>(
         }
     }
     let Some((verdict, steps, levels)) = hit else {
+        #[cfg(any(test, feature = "code-rule-profile"))]
+        METRICS.set({
+            let mut m = METRICS.get();
+            m.misses += 1;
+            m
+        });
         return Recalled::Missed(key);
     };
+    #[cfg(any(test, feature = "code-rule-profile"))]
+    METRICS.set({
+        let mut m = METRICS.get();
+        m.hits += 1;
+        m
+    });
     // What this verdict took counts toward the levels its callers' verdicts took.
     let reached = util_level() + levels;
     let peak = swap_util_peak(0);

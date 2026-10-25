@@ -95,9 +95,11 @@ pub(super) type Scope = Arc<[Arc<str>]>;
 /// What a utility compiles from: a digest of its language, its id and every utility it reaches
 /// (id, parameters, rule). Equal utilities of any query or document compile alike wherever nothing
 /// of the query shapes them (`context_free`): their verdicts are one (`UtilRef::memo_term`).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct UtilOrigin {
     pub(crate) digest: [u8; 32],
+    /// Complete language-qualified transitive definition. Hashes never establish factoring identity.
+    pub(crate) definition: Arc<[u8]>,
 }
 
 /// The `utils` of one ast query compiled for one grammar, indexed by `UtilRef::index`. Filled once,

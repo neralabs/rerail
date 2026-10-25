@@ -417,3 +417,169 @@ The [summary](../benchmark/sql-matcher-batch-audit.json) separates full-job evid
 The [compressed trace](../benchmark/sql-matcher-batch-audit.json.gz) retains measured plans, metrics, source hashes, and the diagnostic executable hash.
 Run `fragment_batch_optimization_audit` with `--ignored` and `RERAIL_FRAGMENT_BATCH_AUDIT` set to its output path.
 The diagnostic passes. The existing catalog integration check also compares all 87,162 rule/file pairs against native.
+
+## Reusable batch implementation: compatibility review
+
+The implementation follows the sibling `Pulling-it-all-together` worktree's producer contracts and fusion specification.
+That worktree contains substantial staged work. This change reads its current files and leaves them untouched.
+Its `architecture.md` assigns this branch's transport to `engine/vtab`, planning to `engine/plan`, and publication SQL to `engine/compose`.
+Its `spec-fusion.md` requires recursive prefix sharing within identical candidate scopes.
+Its shared-producer contract compares complete definitions and keeps the registry separate from execution.
+
+The reusable prefix transformation lives in `producers/prefix.rs` and accepts arbitrary ordered semantic keys.
+It constructs shared stages through nested divergences and retains each consumer's residual offset.
+The matcher adapter in `matcher/factor.rs` proves closed syntactic predicates and retains complete transitive utility definitions.
+It excludes capture inputs, capture outputs, semantic operations, parameterized calls, and enumeration from extraction.
+The SQL adapter owns demand handles, typed output columns, and batch invocation. It contains no catalog rule names.
+
+The native batch groups actual ordered root domains by complete equality, dialect, and resource options.
+It processes files individually, retaining one native memo across compatible clauses.
+Stable compiled matcher objects remain alive throughout that memo's lifetime, because native caches can use object addresses as keys.
+Shared-prefix work reduces each consumer's remaining allowance. Failures remain explicit and local to the affected file.
+Semantic caches are released after the batch's consumers finish that file.
+
+SQL generation now removes anchor-implied kind predicates and supports candidate-domain point lookup and file enumeration.
+Selective parent plans can therefore intersect their results with actual requested roots without materializing the entire candidate domain.
+Bounded count predicates stop at their decisive threshold.
+The compiler version changes so earlier templates cannot enter the new execution path.
+
+Qualification is in progress. The following journal entries will record measured results and any changes required by failures.
+
+### First batch measurement and correction
+
+The first integrated batch passes all 87,162 catalog comparisons and the full workload's finding and edit comparisons.
+It reduces matching statements from 46 to 23 and VM instructions from 73,275,953 to 25,216,404.
+Its whole-job SQL CPU is 109.49 seconds. This first run has no new paired native baseline.
+
+Instrumentation exposes 4,429,551 successful shared-prefix rows.
+Most come from direct kind predicates already guaranteed by candidate admission.
+This is unnecessary materialization, not useful reuse.
+The corrected matcher adapter removes those direct predicates before extracting prefixes.
+The corrected batch also stops cloning cumulative metric maps for every file.
+Candidate membership now indexes files and binary-searches sorted root domains instead of repeatedly scanning them.
+
+The revised trace records each shared producer's terms, consumers, roots, rows, CPU, and files with work.
+It also records native memo hits and misses.
+Per-rule CPU alone can misattribute shared setup: retaining a file cache moves its first construction cost between consumers.
+The qualification checker therefore adds shared-prefix CPU to residual CPU and reports both separately.
+
+### Qualified reusable batch result
+
+The revised implementation passes the unchanged full-workload gate.
+Both engines return 97,798 finding identities across 5,725 Python files and 146 AST grammars.
+Neither engine reports incomplete coverage. All three edit results agree.
+The catalog comparison also preserves all 2,477 raw matches and captures across 87,162 rule/file pairs.
+
+| Measurement | Fresh native run | Revised SQL batch |
+| --- | ---: | ---: |
+| Initial-job CPU | 115.63 s | 110.24 s |
+| Initial-job wall time | 79.50 s | 69.00 s |
+| Initial-job peak RSS | 903 MB | 1,261 MB |
+| Matching executions | — | 23 |
+| Prepared statement instances | — | 4 |
+
+SQL CPU is 0.9534 times native CPU; median edit CPU is 1.0644 times native.
+The host runs other development work. These are paired single-run measurements, not isolated speed estimates.
+The earlier SQL integration measured 111.79 seconds, so the end-to-end gain remains modest despite the larger VM reduction.
+No performance ceiling was relaxed.
+
+Matching consumes 82.17 seconds of CPU: 73.56 seconds in residual matchers, 2.47 seconds in shared prefixes, and 6.14 seconds outside those boundaries.
+The earlier integration's corresponding boundary overhead was 4.06 seconds.
+Batch construction and transport still cost CPU; reducing statements does not eliminate that work.
+The new trace records 8,277,372 memo hits and 64,472,240 misses.
+
+Actual native root evaluations fall from 73,199,829 to 64,235,386, including shared producers.
+The shared async prefix evaluates 1,871,239 roots and admits 65,292 rows.
+It shares only equal domains. ASYNC221 retains additional private work where its domain differs.
+The catalog's fivefold prefix reduction must not be projected onto the full workload.
+The largest remaining residual costs are B023, F405, ASYNC221, B007, and B615.
+
+The [first qualification summary](../benchmark/sql-matcher-batch-first-integration.json) records this run's gates, hashes, timings, and producer metrics.
+The following trace links contain the final qualification after the additional changes recorded below.
+The [catalog trace](../benchmark/sql-matcher-batch-integration-catalog.json.gz) retains captures, SQL, and EXPLAIN plans.
+The [workspace trace](../benchmark/sql-matcher-batch-integration-workspace.json.gz) retains both engines' complete job and edit reports.
+The [generated statement](../benchmark/sql-matcher-batch-integration.sql) shows the actual demand and publication shape.
+
+Focused validation passes six new batch tests, five producer tests, seven integration tests, eleven hard cases, and ten three-valued tests.
+The integration tests include cross-file dependency invalidation, prepared-plan reuse, statistics-driven shape changes, and rejection of execution 101.
+A broad SQL test filter also entered the retired interpreter test suite and was stopped.
+For example, its composition-choice test still requires three interpreter alternatives; the retired selector now visits one.
+Those historical tests do not qualify this engine, and this change does not reinstate their execution model.
+
+The [implementation design](sql-matcher-batch-implementation.md) defines reusable interfaces and remaining scope.
+The worker count and byte-bounded partition scheduler remain unchanged.
+Generic call-site/scope relations, capture-dependent factoring, and cross-edit producer caches remain separate contract work.
+
+### Storage-backed statistics qualification
+
+The first attached-store run fails an existing benchmark assumption in the native child.
+After an edit, the storage-backed API can return a delta rather than the complete finding set.
+Comparing that delta with the initial snapshot falsely reports that restoring the source removed all findings.
+The harness now reads the public result pages for attached stores, including evicted files and failures.
+It includes paging CPU in those measurements and records the SQL planning statistics after edits.
+This correction changes only qualification code. It does not change the measured production engine above.
+
+The corrected 512-file attached-store comparison passes finding and edit parity, but its kind counts remain zero.
+Inspection shows that search indexing runs on a 30-second maintenance timer, after tape publication.
+The diagnostic finishes before that work occurs. Merely attaching the store does not exercise data-driven planning.
+The harness now completes the existing stored-tape indexing operation before the edits and measures that preparation separately.
+It requires nonzero SQL-held counts in a subsequent SQL edit profile.
+The production compiler still reads the stored vocabulary; it does not count batch nodes in Rust.
+
+The completed 512-file statistics check passes 11,648 finding identities and all three edit comparisons, with no failures.
+The SQL edits read nonzero counts for 47 of 49 requested kinds, totalling 689,701 indexed occurrences across those kinds.
+The planner changes from one parent-driven arm to four after indexing.
+Index preparation consumes 347 ms of CPU in the SQL subprocess and is reported separately.
+These are store-wide cost estimates; they are not exact candidate cardinalities.
+The [statistics summary](../benchmark/sql-matcher-batch-statistics.json) and [raw trace](../benchmark/sql-matcher-batch-statistics.json.gz) retain the evidence.
+
+### Final physical-plan corrections
+
+EXPLAIN shows SQLite moving F707's parent-level sibling test after child expansion in the first parent-driven query.
+The compiler now materializes qualifying parents before expanding their children when the parent predicate contains more than a kind test.
+The focused 256-group test preserves findings and reduces VM instructions from 34,360 to 17,983.
+Its sampled statement CPU falls from 1.94 ms to 0.62 ms.
+The test requires both fewer VM instructions and the intended materialization in EXPLAIN.
+
+The batch also uses the generic prefix planner to identify potential shared consumers when a session is created.
+Unique prefixes bypass runtime domain-key construction.
+This preliminary filter does not authorize sharing; the batch still checks complete domains and options before execution.
+The new `grouping_roots` metric exposes the remaining equality-planning work.
+
+### Final publication qualification
+
+The final engine passes 13 active compiler checks, including the complete catalog comparison and seven batch tests.
+The ordinary library build also passes without test-only features.
+The full job passes every unchanged qualification ceiling, with 97,798 finding identities, no failures, and parity through all three edits.
+
+| Measurement | Native | Final SQL batch |
+| --- | ---: | ---: |
+| Initial-job CPU | 112.56 s | 110.41 s |
+| Initial-job wall time | 84.04 s | 129.93 s |
+| Initial-job peak RSS | 853 MB | 985 MB |
+| Median edit CPU | 190.20 ms | 211.92 ms |
+
+The final SQL plan executes 23 times and uses 25,216,565 VM instructions.
+The former clause-at-a-time integration used 46 executions and 73,275,953 VM instructions.
+Native root evaluations fall from 73,199,829 to 64,235,386, including the shared producer.
+Only 13,922,809 candidate roots now enter domain grouping.
+The earlier implementation did not record grouping separately; its total candidate count is not a measured grouping baseline.
+
+The CPU ratio is 0.9809 and the median edit CPU ratio is 1.1142.
+Wall time worsens in this final run, while CPU remains close to native.
+Other work runs on the development host. These observations do not establish a repeatable wall-time improvement.
+The end-to-end CPU improvement is modest; the larger structural counter reductions must not be presented as an equivalent speedup.
+
+Matching CPU is 82.24 seconds: 73.24 seconds in residuals, 2.64 seconds in shared prefixes, and 6.37 seconds elsewhere in the boundary.
+The final boundary has 398,868 timed residual spans and 1,494 timed producer spans.
+A separate clock-cost check measures approximately 0.11 seconds for their 800,724 CPU-clock reads.
+Clock instrumentation alone does not explain the remaining boundary overhead.
+
+The F707 materialization reduces catalog VM instructions but adds 161 VM instructions to this whole workload compared with the first batch query.
+Its benefit depends on candidate scope and parent fanout. The focused amplification test does not establish a whole-workload speedup.
+The materialization remains bounded to qualifying parents and protects the demonstrated repeated-parent case.
+
+The [final qualification summary](../benchmark/sql-matcher-batch-integration.json) records the exact source and executable hashes and all gate results.
+The linked catalog and workspace traces above now contain this final run.
+The separate attached-store trace qualifies statistics refresh and stored-result paging on 512 files.
+It is not a substitute for the full 5,725-file performance run.

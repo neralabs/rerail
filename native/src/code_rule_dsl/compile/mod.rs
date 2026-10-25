@@ -1402,6 +1402,7 @@ fn util_origins(utils: &BTreeMap<String, UtilDef>, language: &str) -> Result<Vec
             .map_err(|error| invalid(error.to_string()))?;
             Ok(UtilOrigin {
                 digest: Sha256::digest(&body).into(),
+                definition: body.into(),
             })
         })
         .collect()

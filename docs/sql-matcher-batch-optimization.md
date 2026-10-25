@@ -4,6 +4,9 @@ The integration is published on `jeremy/sql-capture-demand-spikes` at `c17d2e47`
 This audit adds diagnostic experiments. It does not change production execution.
 The main opportunity is less repeated matching, with SQL responsible for selective input relations.
 
+The subsequent [implementation](sql-matcher-batch-implementation.md) integrates the measured batch, prefix-sharing, and SQL access-path changes.
+The sections below retain the audit's original observations and proposals.
+
 ## What the current batch contains
 
 The compiler receives all 146 grammars together. Each `matcher_i` virtual table still owns one clause.

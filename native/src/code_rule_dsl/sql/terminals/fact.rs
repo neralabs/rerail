@@ -353,6 +353,13 @@ thread_local! {
 pub(in crate::code_rule_dsl::sql) struct BatchScopes;
 
 impl BatchScopes {
+    pub(in crate::code_rule_dsl::sql) fn release(index: usize) {
+        SCOPES.with_borrow_mut(|scopes| {
+            if let Some(slot) = scopes.get_mut(index) {
+                slot.take();
+            }
+        });
+    }
     pub(in crate::code_rule_dsl::sql) fn begin() -> Self {
         SCOPES.with_borrow_mut(Vec::clear);
         Self

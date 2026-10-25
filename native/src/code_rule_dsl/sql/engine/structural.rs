@@ -3,6 +3,7 @@ use crate::code_rule_dsl::matcher::{AstMatcher, StopBy};
 use ast_grep_core::matcher::Matcher;
 #[derive(Clone)]
 pub(super) enum Predicate {
+    True,
     False,
     Kinds(Vec<u16>),
     All(Vec<Self>),
@@ -66,6 +67,7 @@ impl Predicate {
     }
     pub fn sql(&self, n: &str, depth: usize) -> String {
         match self {
+            Self::True => "1".into(),
             Self::False => "0".into(),
             Self::Kinds(k) => format!(
                 "{n}.kind IN ({})",
@@ -94,9 +96,13 @@ impl Predicate {
             Self::Not(p) => format!("NOT ({})", p.sql(n, depth)),
             Self::Related { .. } => format!("EXISTS (SELECT 1 {})", self.walk(n, depth).unwrap()),
             Self::Count { relation, min, max } => {
+                if *min == 0 && max.is_none() {
+                    return "1".into();
+                }
+                let limit = max.map(|m| m.saturating_add(1)).unwrap_or(*min);
                 let count = format!(
-                    "(SELECT count(*) {})",
-                    relation.walk(n, depth).expect("count relation")
+                    "(SELECT count(*) FROM (SELECT 1 {} LIMIT {limit}))",
+                    relation.walk(n, depth).expect("count relation"),
                 );
                 format!(
                     "{count} BETWEEN {min} AND {}",
@@ -132,6 +138,68 @@ impl Predicate {
     }
 }
 impl Predicate {
+    pub fn implied_by(&self, kinds: &[u16]) -> bool {
+        kinds.iter().all(|k| self.at_kind(*k) == Some(true))
+    }
+    fn at_kind(&self, kind: u16) -> Option<bool> {
+        Some(match self {
+            Self::True => true,
+            Self::False => false,
+            Self::Kinds(k) => k.contains(&kind),
+            Self::All(v) => v
+                .iter()
+                .map(|p| p.at_kind(kind))
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .all(|b| b),
+            Self::Any(v) => v
+                .iter()
+                .map(|p| p.at_kind(kind))
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .any(|b| b),
+            Self::Not(p) => !p.at_kind(kind)?,
+            _ => return None,
+        })
+    }
+    pub fn simplify(self, kinds: &[u16]) -> Self {
+        if self.implied_by(kinds) {
+            return Self::True;
+        }
+        match self {
+            Self::All(v) => {
+                let terms = v
+                    .into_iter()
+                    .map(|p| p.simplify(kinds))
+                    .filter(|p| !matches!(p, Self::True))
+                    .collect::<Vec<_>>();
+                if terms.is_empty() {
+                    Self::True
+                } else {
+                    Self::All(terms)
+                }
+            }
+            p => p,
+        }
+    }
+    pub fn parent_seed(&self) -> Option<&Self> {
+        match self {
+            Self::Related {
+                direction: Direction::Up,
+                immediate: true,
+                child,
+            } if child.seed_kinds().is_some() => Some(child),
+            Self::All(v) if v.len() == 1 => v[0].parent_seed(),
+            _ => None,
+        }
+    }
+    pub fn seed_kinds(&self) -> Option<&[u16]> {
+        match self {
+            Self::Kinds(k) => Some(k),
+            Self::All(v) => v.iter().find_map(Self::seed_kinds),
+            _ => None,
+        }
+    }
     /// The alternate anchor is valid only for one conjunctive descendant predicate.
     pub fn rare_descendant(&self) -> Option<&[u16]> {
         match self {

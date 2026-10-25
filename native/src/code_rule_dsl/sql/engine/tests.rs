@@ -37,7 +37,7 @@ fn fragment_integration_prepares_once_and_replaces_batch() {
         assert_eq!(found[1][0].len(), count);
         assert!(found.iter().flatten().all(|f| f.unknown.is_none()));
         assert_eq!(session.prepared_statements(), 1);
-        assert_eq!(session.last_profile["boundaries"][0]["filters"], 1);
+        assert_eq!(session.last_profile["nativeBatches"][0]["filters"], 1);
     }
     assert_eq!(session.stats().statements, 3);
 }
@@ -130,7 +130,7 @@ fn fragment_integration_statistics_flip_shape_not_findings() {
         }
         assert_eq!(
             planning::decisions(&builder.clauses, &stats),
-            vec![want_leaf]
+            vec![u8::from(want_leaf)]
         );
         let queries = planning::queries(&builder.clauses, &stats);
         let compiled = Compiled {
@@ -206,6 +206,8 @@ fn fragment_integration_isolates_budget_failures_and_recovers() {
     assert_eq!(again[0][0].len(), 1);
 }
 
+#[path = "batch_tests.rs"]
+mod batch_tests;
 #[path = "qualification.rs"]
 mod qualification;
 

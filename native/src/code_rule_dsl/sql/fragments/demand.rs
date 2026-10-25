@@ -23,6 +23,7 @@ pub(super) struct Demand {
 pub(in crate::code_rule_dsl::sql) struct DemandStore {
     next: AtomicI64,
     values: Mutex<BTreeMap<i64, Arc<Demand>>>,
+    groups: Mutex<BTreeMap<i64, BTreeMap<usize, Arc<Demand>>>>,
 }
 impl DemandStore {
     pub(super) fn take(&self, handle: i64) -> Result<Arc<Demand>> {
@@ -34,6 +35,25 @@ impl DemandStore {
     }
     pub(in crate::code_rule_dsl::sql) fn clear(&self) {
         self.values.lock().unwrap().clear();
+        self.groups.lock().unwrap().clear();
+    }
+    pub(super) fn take_group(&self, handle: i64) -> Result<BTreeMap<usize, Arc<Demand>>> {
+        self.groups
+            .lock()
+            .unwrap()
+            .remove(&handle)
+            .ok_or_else(|| invalid("expired batch demand"))
+    }
+    pub(in crate::code_rule_dsl::sql) fn register_group(
+        self: &Arc<Self>,
+        db: &Connection,
+    ) -> Result<()> {
+        db.create_aggregate_function(
+            "batch_demands",
+            2,
+            FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DIRECTONLY,
+            Group(self.clone()),
+        )
     }
     pub(in crate::code_rule_dsl::sql) fn register(
         self: &Arc<Self>,
@@ -50,6 +70,38 @@ impl DemandStore {
                 inputs,
             },
         )
+    }
+}
+struct Group(Arc<DemandStore>);
+impl Aggregate<BTreeMap<usize, Arc<Demand>>, i64> for Group {
+    fn init(&self, _: &mut Context<'_>) -> Result<BTreeMap<usize, Arc<Demand>>> {
+        Ok(BTreeMap::new())
+    }
+    fn step(&self, ctx: &mut Context<'_>, values: &mut BTreeMap<usize, Arc<Demand>>) -> Result<()> {
+        let clause =
+            usize::try_from(ctx.get::<i64>(0)?).map_err(|_| invalid("invalid batch clause"))?;
+        if values.insert(clause, self.0.take(ctx.get(1)?)?).is_some() {
+            return Err(invalid("duplicate batch clause"));
+        }
+        Ok(())
+    }
+    fn finalize(
+        &self,
+        _: &mut Context<'_>,
+        values: Option<BTreeMap<usize, Arc<Demand>>>,
+    ) -> Result<i64> {
+        let handle = self
+            .0
+            .next
+            .fetch_add(1, Ordering::Relaxed)
+            .checked_add(1)
+            .ok_or_else(|| invalid("demand handle overflow"))?;
+        self.0
+            .groups
+            .lock()
+            .unwrap()
+            .insert(handle, values.unwrap_or_default());
+        Ok(handle)
     }
 }
 struct Collect {

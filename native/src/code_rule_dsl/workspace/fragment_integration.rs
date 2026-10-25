@@ -40,11 +40,36 @@ fn apply(w: &CodeRuleDslWorkspace, revision: u32, files: Vec<Value>) -> (Value, 
         request_direct: None,
     };
     let mut output: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
-    let evaluation = output["evaluation"].take();
+    let mut evaluation = output["evaluation"].take();
     assert!(
         evaluation["violations"].is_array(),
         "workspace response must contain evaluation.violations"
     );
+    // Storage-backed applies may return only a delta. Read the public result pages to compare
+    // complete snapshots, including evicted files. Include that publication cost in this run.
+    if w.state.lock().unwrap().storage.is_some() {
+        let mut cursor = 0;
+        let mut violations = vec![];
+        let mut failures = vec![];
+        loop {
+            let mut page: Value = serde_json::from_str(
+                &w.result_page_task(cursor, 4 * 1024 * 1024)
+                    .compute()
+                    .unwrap(),
+            )
+            .unwrap();
+            violations.append(page["violations"].as_array_mut().unwrap());
+            failures.append(page["failures"].as_array_mut().unwrap());
+            if page["done"] == true {
+                break;
+            }
+            let next = page["cursor"].as_u64().unwrap() as u32;
+            assert!(next > cursor, "result paging must advance");
+            cursor = next;
+        }
+        evaluation["violations"] = violations.into();
+        evaluation["failures"] = failures.into();
+    }
     (
         evaluation,
         json!({"cpuNs":cpu()-started,"wallNs":wall.elapsed().as_nanos() as u64,"peakRssBytes":rss()}),
@@ -81,6 +106,17 @@ fn child(engine: &str) -> Value {
         sql_batch_size: None,
     }))
     .unwrap();
+    // A separate qualification dimension, not an engine switch: exercise production SQL-held
+    // statistics with an explicitly chosen store. Keep native and SQL stores separate.
+    if let Ok(store) = std::env::var("RERAIL_FRAGMENT_E2E_STORE") {
+        let store = store.replace("{engine}", engine);
+        let attached = workspace
+            .storage_task(root.to_string_lossy().into_owned(), store)
+            .unwrap()
+            .compute()
+            .unwrap();
+        assert!(attached.attached);
+    }
     for path in &paths {
         let policy = CodeRuleDslRuntime::compile(
             std::fs::read_to_string(path).unwrap(),
@@ -143,6 +179,35 @@ fn child(engine: &str) -> Value {
     if let Ok(path) = std::env::var("RERAIL_FRAGMENT_E2E_OUTPUT") {
         std::fs::write(format!("{path}.cold.json"),serde_json::to_vec_pretty(&json!({"engine":engine,"files":count,"sourceBytes":bytes,"compile":compile,"cold":cold,"keys":keys(&output),"failures":output["failures"],"report":report})).unwrap()).unwrap();
     }
+    // Search indexing normally runs on a 30-second maintenance timer. Complete that existing
+    // maintenance work explicitly in this diagnostic, so subsequent edits exercise real stored
+    // statistics. This is one-off index preparation, measured separately from either engine.
+    let store = workspace
+        .state
+        .lock()
+        .unwrap()
+        .storage
+        .as_ref()
+        .map(|s| s.store.clone());
+    let statistics_preparation = if let Some(store) = store {
+        let started = cpu();
+        let wall = Instant::now();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut cursor = None;
+        loop {
+            super::storage::index_stored_tapes(&store, &stop, &mut cursor);
+            if cursor.is_none() {
+                break;
+            }
+            assert!(
+                wall.elapsed().as_secs() < 300,
+                "statistics index maintenance must finish"
+            );
+        }
+        json!({"cpuNs":cpu()-started,"wallNs":wall.elapsed().as_nanos() as u64,"source":"existing stored-tape search-index maintenance"})
+    } else {
+        Value::Null
+    };
     let original_source = edit["source"].as_str().unwrap().to_owned();
     let mut edits = vec![];
     for revision in 2..5 {
@@ -153,7 +218,18 @@ fn child(engine: &str) -> Value {
         };
         edit["source"] = format!("{original_source}{suffix}").into();
         let (out, time) = apply(&workspace, revision, vec![edit.clone()]);
-        edits.push(json!({"time":time,"keys":keys(&out),"failures":out["failures"]}));
+        let mut evidence = json!({"time":time,"keys":keys(&out),"failures":out["failures"]});
+        if std::env::var_os("RERAIL_FRAGMENT_E2E_STORE").is_some() && engine == "sql" {
+            let report: Value = serde_json::from_str(&workspace.engine_report().unwrap()).unwrap();
+            evidence["planning"] = report["matcherFragments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["planning"].clone())
+                .collect::<Vec<_>>()
+                .into();
+        }
+        edits.push(evidence);
     }
     assert_eq!(output["failures"], json!([]), "cold coverage");
     for edit in &edits {
@@ -174,8 +250,21 @@ fn child(engine: &str) -> Value {
         json!(keys(&output)),
         "restoring source must retract added findings"
     );
+    if !statistics_preparation.is_null() && engine == "sql" {
+        assert!(
+            edits
+                .iter()
+                .flat_map(|e| e["planning"].as_array().unwrap())
+                .any(|p| p["kindCounts"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .any(|v| v.as_u64().unwrap() > 0)),
+            "attached-store qualification must exercise nonzero SQL-held statistics"
+        );
+    }
     workspace.close();
-    json!({"engine":engine,"policies":paths.len(),"files":count,"sourceBytes":bytes,"compile":compile,"cold":cold,"keys":keys(&output),"failures":output["failures"],"edits":edits,"initial":initial,"report":report})
+    json!({"engine":engine,"policies":paths.len(),"files":count,"sourceBytes":bytes,"compile":compile,"cold":cold,"keys":keys(&output),"failures":output["failures"],"edits":edits,"initial":initial,"report":report,"statisticsPreparation":statistics_preparation})
 }
 #[test]
 #[ignore = "full repository qualification; explicit corpus path required"]

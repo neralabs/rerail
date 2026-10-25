@@ -30,8 +30,8 @@ mod structural;
 #[cfg(test)]
 mod tests;
 
-const VERSION: u32 = 1;
-const ARMS: usize = 128;
+const VERSION: u32 = 2;
+const ARMS: usize = 256;
 const CACHE_LIMIT: usize = 1024;
 type CacheKey = ([u8; 32], u32, Option<String>);
 static CACHE: LazyLock<Mutex<BTreeMap<CacheKey, Arc<planning::Template>>>> =
@@ -115,6 +115,14 @@ impl ProgramCompiler {
                         .flatten()
                         .copied(),
                 );
+            }
+            if let Some(parent) = c
+                .template
+                .predicate
+                .as_ref()
+                .and_then(structural::Predicate::parent_seed)
+            {
+                kinds.extend(parent.seed_kinds().unwrap().iter().copied());
             }
         }
         if !kinds.is_empty() {
@@ -268,6 +276,7 @@ pub(in crate::code_rule_dsl) struct Session {
     stats: Stats,
     statistics: statistics::PlannerStats,
     pub(in crate::code_rule_dsl) last_profile: serde_json::Value,
+    batch_metrics: Vec<Arc<Mutex<fragments::batch::Metrics>>>,
 }
 impl Session {
     fn new(compiled: &Compiled) -> Result<Self, SqlError> {
@@ -285,21 +294,10 @@ impl Session {
         const NODES: Module<'static, super::nodes::NodeTable> = Module::eponymous_only_module();
         db.create_module(c"node", &NODES, Some(slot.clone()))?;
         let demands = Arc::new(DemandStore::default());
+        demands.register_group(&db)?;
         let mut active = vec![];
         for (i, clause) in compiled.clauses.iter().enumerate() {
-            let state = Arc::default();
-            fragments::register_slot_estimated(
-                &db,
-                &CString::new(format!("matcher_{i}")).unwrap(),
-                Arc::clone(&state),
-                clause.template.names.clone(),
-                demands.clone(),
-                clause.grammar.anchors.root_kinds().and_then(|k| {
-                    compiled
-                        .statistics
-                        .rows(&k.iter().copied().collect::<Vec<_>>())
-                }),
-            )?;
+            let state: Active = Arc::default();
             if clause.template.predicate.is_some() {
                 fragments::candidates::register(
                     &db,
@@ -311,9 +309,44 @@ impl Session {
                             .rows(&k.iter().copied().collect::<Vec<_>>())
                     }),
                 )?;
+                fragments::candidates::register_files(
+                    &db,
+                    &CString::new(format!("candidate_files_{i}")).unwrap(),
+                    state.clone(),
+                )?;
                 demands.register(&db, &format!("demand_{i}"), vec![])?;
             }
             active.push(state);
+        }
+        let mut batch_metrics = vec![];
+        for (chunk, clauses) in compiled.clauses.chunks(ARMS).enumerate() {
+            let metrics = Arc::default();
+            let members = clauses
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.template.native.is_some())
+                .map(|(i, c)| {
+                    let id = chunk * ARMS + i;
+                    fragments::batch::Member {
+                        id,
+                        active: active[id].clone(),
+                        prefix: c.template.prefix.clone(),
+                    }
+                })
+                .collect();
+            fragments::batch::register(
+                &db,
+                &CString::new(format!("matcher_batch_{chunk}")).unwrap(),
+                members,
+                demands.clone(),
+                Arc::clone(&metrics),
+                clauses
+                    .iter()
+                    .map(|c| c.template.names.len())
+                    .max()
+                    .unwrap_or(0),
+            )?;
+            batch_metrics.push(metrics);
         }
         db.set_prepared_statement_cache_capacity(compiled.queries.len().max(1));
         for sql in compiled.queries.iter() {
@@ -337,6 +370,7 @@ impl Session {
             stats,
             statistics: compiled.statistics.clone(),
             last_profile: serde_json::Value::Null,
+            batch_metrics,
         })
     }
     pub(in crate::code_rule_dsl) fn stats(&self) -> Stats {
@@ -350,7 +384,12 @@ impl Session {
         docs: Vec<(TapeDoc, FileContext)>,
         runs: &[ClauseRun],
     ) -> Result<Vec<Vec<FileOutcome>>, SqlError> {
+        let statistics_start = Started::now();
         let fresh = self.statistics.refresh()?;
+        let statistics_cpu = statistics_start.elapsed().cpu;
+        for metrics in &self.batch_metrics {
+            *metrics.lock().unwrap() = Default::default();
+        }
         // Only a changed decision invalidates prepared SQL. Numeric drift alone does not.
         if planning::decisions(&self.clauses, &fresh)
             != planning::decisions(&self.clauses, &self.statistics)
@@ -512,7 +551,8 @@ impl Session {
             Ok(())
         })();
         self.stats.time.add(execution.elapsed());
-        self.last_profile = serde_json::json!({"statements":statements,"boundaries":boundaries.iter().map(|m|m.lock().unwrap().clone()).collect::<Vec<_>>(),"unknownFiles":output.iter().flatten().filter(|o|o.unknown.is_some()).count()});
+        self.last_profile = serde_json::json!({"statements":statements,"boundaries":boundaries.iter().map(|m|m.lock().unwrap().clone()).collect::<Vec<_>>(),"nativeBatches":self.batch_metrics.iter().map(|m|serde_json::to_value(&*m.lock().unwrap()).unwrap()).collect::<Vec<_>>(),"unknownFiles":output.iter().flatten().filter(|o|o.unknown.is_some()).count()});
+        self.last_profile["planning"] = serde_json::json!({"statisticsCpuNs":statistics_cpu,"source":if self.statistics.source.is_some(){"SQL kind vocabulary"}else{"unavailable"},"kindCounts":self.statistics.kinds,"anchorShapes":planning::decisions(&self.clauses,&self.statistics)});
         #[cfg(any(test, feature = "unbounded-work"))]
         {
             self.last_profile["memory"] = serde_json::json!({

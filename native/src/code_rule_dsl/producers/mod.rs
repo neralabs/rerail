@@ -2,6 +2,8 @@
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(crate) mod prefix;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Column {
     pub name: String,

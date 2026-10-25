@@ -16,6 +16,7 @@ mod compare;
 mod count;
 mod each;
 mod exported;
+pub(in crate::code_rule_dsl) mod factor;
 mod format_args;
 mod layout;
 mod memo;
@@ -72,6 +73,8 @@ pub(crate) use exported::{
 };
 pub(crate) use format_args::{FormatArgs, Prepared, Style, missing_fields};
 pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
+pub(super) use memo::metrics as memo_metrics;
+pub(super) use memo::reuse_file as reuse_file_memo;
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
