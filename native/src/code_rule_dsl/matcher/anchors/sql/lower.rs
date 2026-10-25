@@ -1118,7 +1118,7 @@ fn prepare_decoded(
     let mut child_scopes: std::collections::BTreeMap<usize, BTreeSet<(u16, String)>> =
         std::collections::BTreeMap::new();
     let mut stage_levels = HashMap::new();
-    let graph = ctes.clone();
+    let mut graph = Vec::with_capacity(ctes.len());
     let names: Vec<_> = ctes
         .iter()
         .map(|cte| cte.split_once('(').expect("CTE columns").0.to_owned())
@@ -1206,6 +1206,9 @@ fn prepare_decoded(
         } else {
             cte
         };
+        // Ownership renders this graph again. Keep the chosen boundaries in
+        // both renderers instead of restoring the original materializations.
+        graph.push(cte.clone());
         inline.push(cte);
         if shared {
             // CTAS otherwise inherits empty affinity from FTS columns and compound CTEs.
