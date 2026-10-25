@@ -41,12 +41,17 @@ struct State {
     batch_queries: usize,
     data_statements: usize,
     plans: HashMap<usize, Arc<AnchorPlan>>,
-    templates: HashMap<(u32, Vec<usize>), Arc<super::lower::Statement>>,
+    templates: HashMap<(u32, Vec<usize>), Template>,
     languages: HashSet<u32>,
     #[cfg(test)]
     connections: Vec<Store>,
     // Drops after query connections, so the database is closed before unlinking it.
     writer: Store,
+}
+
+struct Template {
+    decisions: Vec<usize>,
+    statement: Arc<super::lower::Statement>,
 }
 
 #[path = "corpus/owner.rs"]
@@ -192,6 +197,12 @@ impl Corpus {
         let Some(state) = guard.as_mut() else {
             return Ok(());
         };
+        let statistics = super::statistics::Statistics::read(
+            &state.writer.db,
+            plans
+                .iter()
+                .flat_map(|(&lang, plans)| plans.iter().map(move |p| (lang, p.as_ref()))),
+        )?;
         for (&lang, plans) in plans {
             let files = self
                 .members
@@ -199,7 +210,7 @@ impl Corpus {
                 .values()
                 .map(|(key, _)| key.clone())
                 .collect();
-            Self::prepare_group(state, lang, plans, Some(&files))?;
+            Self::prepare_group(state, lang, plans, Some(&files), &statistics)?;
             for (key, file) in self.members.lock().values_mut() {
                 *file = Arc::clone(&state.files[key]);
             }
@@ -238,8 +249,14 @@ impl Corpus {
                 .1
                 .insert(key.clone());
         }
+        let statistics = super::statistics::Statistics::read(
+            &state.writer.db,
+            groups
+                .iter()
+                .flat_map(|((lang, _), (plans, _))| plans.iter().map(move |p| (*lang, p.as_ref()))),
+        )?;
         for ((lang, _), (plans, paths)) in groups {
-            Self::prepare_group(state, lang, &plans, Some(&paths))?;
+            Self::prepare_group(state, lang, &plans, Some(&paths), &statistics)?;
             for key in &paths {
                 if let Some((_, prepared)) = members.get_mut(key.0.as_ref()) {
                     *prepared = Arc::clone(&state.files[key]);
@@ -254,6 +271,7 @@ impl Corpus {
         lang: u32,
         plans: &[Arc<AnchorPlan>],
         paths: Option<&HashSet<Key>>,
+        statistics: &super::statistics::Statistics,
     ) -> Result<()> {
         // Cached candidates bind the complete admitted file set, not the owner's contents.
         let mut fids = state
@@ -303,7 +321,7 @@ impl Corpus {
                 continue;
             }
             let refs: Vec<_> = group.iter().map(Arc::as_ref).collect();
-            if Self::template(state, lang, &ids, &refs).universal {
+            if Self::template(state, lang, &ids, &refs, statistics).universal {
                 covering.extend(missing);
             }
         }
@@ -319,7 +337,7 @@ impl Corpus {
         for plans in std::iter::once(plans) {
             let ids: Vec<_> = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect();
             let refs: Vec<_> = plans.iter().map(Arc::as_ref).collect();
-            let result = Self::select_group(state, lang, &ids, &refs, true, paths);
+            let result = Self::select_group(state, lang, &ids, &refs, true, paths, statistics);
             #[cfg(feature = "code-rule-profile")]
             if result.is_err() {
                 crate::code_rule_dsl::profile::record_anchor_batch_failure();
@@ -334,19 +352,38 @@ impl Corpus {
         lang: u32,
         ids: &[usize],
         plans: &[&AnchorPlan],
+        statistics: &super::statistics::Statistics,
     ) -> Arc<super::lower::Statement> {
+        #[cfg(feature = "code-rule-profile")]
+        let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
+            crate::code_rule_dsl::profile::Phase::Planning,
+        );
         let key = (lang, ids.to_vec());
-        if let Some(template) = state.templates.get(&key) {
-            return Arc::clone(template);
+        let decisions = statistics.decisions(lang, plans);
+        if let Some(template) = state.templates.get(&key)
+            && template.decisions == decisions
+        {
+            return Arc::clone(&template.statement);
         }
         #[cfg(feature = "code-rule-profile")]
         let mut lower =
             crate::code_rule_dsl::profile::trace::Span::start("anchor-lower", "template");
-        let statement = Arc::new(super::lower::batch_files(plans, lang, &[]));
+        let statement = Arc::new(super::lower::batch_files_planned(
+            plans,
+            lang,
+            &[],
+            statistics,
+        ));
         #[cfg(feature="code-rule-profile")]
         lower.detail(||serde_json::json!({"plans":plans.len(),"files":0,"template":true,"sqlBytes":statement.queries.iter().map(String::len).sum::<usize>()+statement.stages.iter().map(|s|s.sql.len()).sum::<usize>(),"materializations":statement.preparations(false),"resultQueries":statement.queries.len()}));
         if ids.iter().all(|id| state.plans.contains_key(id)) {
-            state.templates.insert(key, Arc::clone(&statement));
+            state.templates.insert(
+                key,
+                Template {
+                    decisions,
+                    statement: Arc::clone(&statement),
+                },
+            );
         }
         statement
     }
@@ -358,6 +395,7 @@ impl Corpus {
         plans: &[&AnchorPlan],
         covered: bool,
         paths: Option<&HashSet<Key>>,
+        statistics: &super::statistics::Statistics,
     ) -> Result<()> {
         let files: Vec<_> = state
             .files
@@ -378,7 +416,7 @@ impl Corpus {
         if !active.is_empty() && active.len() < ids.len() {
             let ids: Vec<_> = active.iter().map(|&i| ids[i]).collect();
             let plans: Vec<_> = active.iter().map(|&i| plans[i]).collect();
-            return Self::select_group(state, lang, &ids, &plans, covered, paths);
+            return Self::select_group(state, lang, &ids, &plans, covered, paths, statistics);
         }
         #[cfg(feature = "code-rule-profile")]
         if std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_some() {
@@ -395,7 +433,7 @@ impl Corpus {
                 .iter()
                 .map(|(_, file)| (file.fid, file.nodes))
                 .collect();
-            let statement = Self::template(state, lang, ids, plans);
+            let statement = Self::template(state, lang, ids, plans, statistics);
             let stages = statement.preparations(covered);
             let mut packed = HashMap::new();
             let mut current = None;
@@ -479,7 +517,11 @@ impl Corpus {
             .iter()
             .map(|&plan| plan as *const AnchorPlan as usize)
             .collect();
-        Self::select_group(state, lang, &ids, plans, false, None)?;
+        let statistics = super::statistics::Statistics::read(
+            &state.writer.db,
+            plans.iter().map(|p| (lang, *p)),
+        )?;
+        Self::select_group(state, lang, &ids, plans, false, None, &statistics)?;
         for (key, file) in self.members.lock().values_mut() {
             *file = Arc::clone(&state.files[key]);
         }

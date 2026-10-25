@@ -114,10 +114,16 @@ it.skipIf(!required)("a plan that exceeds its lowering bound preserves earlier s
     const trace = child.stderr.split("\n").filter(l => l.startsWith("RERAIL_TRACE ")).map(l => JSON.parse(l.slice(13)));
     const lower = trace.filter(t => t.phase === "anchor-lower" && t.name === "template");
     expect(lower).toHaveLength(1);
-    return lower[0].detail.materializations;
+    const materialized = trace.filter(t => t.phase === "anchor-materialize" && t.detail.relationId != null);
+    expect(materialized.length).toBeGreaterThan(0);
+    // A bounded conjunction can retain useful filters instead of falling back to
+    // root kinds. Count constructions per producer, not all retained filters.
+    expect(new Set(materialized.map(t => t.detail.relationId)).size,
+      "shared producers must materialize only once within this batch").toBe(materialized.length);
+    expect(materialized.every(t => t.detail.priorConstructions === 0)).toBe(true);
   }
-  const baseline = capture(false);
-  expect(capture(true), "failed-plan rollback must not rematerialize the earlier identical selector").toBe(baseline);
-  expect(capture(true, "^v[0-9]+$", 2), "consecutive failures must retain earlier shared producers").toBe(baseline);
+  capture(false);
+  capture(true);
+  capture(true, "^v[0-9]+$", 2);
   capture(true, "^.{0,10}$"); // A failed branch's former parameter value must receive a valid new binding.
 }, 60_000);

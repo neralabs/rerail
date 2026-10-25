@@ -3808,6 +3808,103 @@ I read the cited ast-index-spike source at `9449260`, including the correction f
 The sibling integration also proposes a new findings contract and freezing authored SQL.
 Those proposals remain separate from local recovery and cannot justify suppressing the current failures.
 
+## A1: SQL statistics and selected anchors (2026-10-25)
+
+Starting implementation: `983cb1db`, with the ownership checkpoint at `7222d7e8`.
+The frozen before addon is `0b748ebd271647396e229918bf1af0acbbfa4286c55f9c886e4f4c54b5ee281b`.
+Build settings remain engine opt-level 1, dependencies opt-level 3, LTO off, 256 codegen units, four workers, and the system-malloc shim.
+
+Red commit `4067a17f` proves two failures: runtime posting counts and a stale physical template after an anchor-choice flip.
+Red commit `e498b3a9` adds snapshot and workspace regressions for `sync-async-signatures`.
+The 1.15 MB generated-facades file reproduces the observed budget failure in isolation.
+A synthetic reduction with 1,000 synchronous functions also fails in both paths.
+Neither source has function names with the required async suffix.
+Both failures keep the original capabilities and allowances.
+
+The first implementation adds SQL-owned value cardinalities beside existing kind frequencies.
+`vlex.n` retains its segment-count meaning. Value estimates include uncovered nodes.
+One batched statistics query supplies the admitted frontier. Physical template reuse depends on the selected requirements.
+The compiler emits one anchor path and checks necessary root kinds after candidate selection.
+Unused-arm tests poison compact postings. They pass only when the compiler avoids both unused requirements and common-kind enumeration.
+SQL schema version 3 backfills older segment counts once and removes its migration callback.
+A separate exclusive `anchorPlanningNs` counter exposes statistics and physical planning inside cold execution.
+
+Initial verification passed 1,505 Rust DSL tests, including 93 SQL tests, and 120 recorded source observations.
+Those observations contain 60 positive and 60 clean cases, with no finding differences or engine failures.
+The generated-facades regression still failed. A profile proves that its plan exceeded the unchanged 256-node compiler allowance.
+The fallback then admitted all 1,000 function roots.
+This result is not a performance acceptance claim.
+
+The next TDD rung orders candidate conjunctions by bounded structural compile cost.
+It retains completed necessary filters when a later conjunct cannot fit, with explicit partial-admission metadata.
+The native matcher still evaluates the complete authored rule. The compiler and runtime allowances remain unchanged.
+A new test requires a cheap rejecting conjunct to survive a larger failed fragment.
+
+Static checks also exposed two flat-directory limits. The runner now lives at `scripts/profiling/workloads/full_repository.py`.
+The native regression lives under `test/engine/native/recovery/` and participates in the mandatory producer-shape suite.
+The old journal commands retain their original paths as historical evidence.
+
+Evidence and build/test logs are under `.rerail/profiles/anchor-planning-20261025/`.
+No A2 or A3 implementation and no full-repository recovery claim exists at this point.
+
+The bounded-conjunction change passes the snapshot and workspace regressions without larger allowances.
+The synthetic case selects zero roots instead of 1,000. The production-shape suite passes 40 tests across 15 files.
+Its old rollback check asserted a fixed total materialization count.
+That count includes legitimate retained partial filters, so the check now requires one construction per logical producer.
+This preserves its original sharing invariant.
+
+The 120 source observations still match all positive and clean results.
+A new positive pattern regression exposed duplicate parent roots when two rare leaves share a call.
+The frozen intermediate addon returned two findings instead of one.
+The fix makes each SQL parent climb distinct. A negative case also protects partial prefilters under negation.
+Partial compilation cannot restore exactness through a cached utility.
+Verification passed 1,506 Rust DSL tests and 42 production-shape tests.
+Clippy and the repository static checks passed.
+The final candidate addon hash is `ce93fc679e4ab6e3520a3bf39a0519d12a41c7862c3d8264e499c0d37dfcbfe9`.
+Source batches 1–3 pass all 786 executable observations through both evaluation paths.
+Batch six exceeded the 110-second command limit. Its replay remains incomplete.
+Unchanged observation shards preserve the original cases and positive/clean coverage; repeated coverage cases need separate accounting.
+
+### A1 bounded controls: performance regression, not acceptance
+
+Hypothesis: stored statistics and one selected arm reduce candidate selection CPU.
+The first controls reject that hypothesis for this implementation alone.
+They include the compiler-admission correction, which retains useful predicates instead of admitting every root.
+
+| Sample / rules | Before ingestion CPU | Candidate ingestion CPU | Change | Local failures before / candidate |
+| --- | ---: | ---: | ---: | ---: |
+| 32 / 50 | 9.588 s | 11.270 s | +17.5% | 1 / 0 |
+| 128 / 50 | 15.395 s | 17.937 s | +16.5% | 1 / 0 |
+
+These are single fresh-process, ingestion-only controls. They exclude repository analyses and do not establish findings parity or full-repository performance.
+The workload samples include the original generated-facades file.
+Both before runs retain its known signature budget failure; neither is a passing correctness reference.
+Compilation remains separate: 1.529/1.571 CPU seconds for 32 files, and 1.547/1.567 for 128 files, before/candidate respectively.
+Driver peak RSS changes from 1,256,488,960 to 1,224,261,632 bytes for 32 files.
+For 128 files, it changes from 1,354,547,200 to 1,327,202,304 bytes.
+OS resource files also retain whole-process CPU, wall, and peak RSS through cleanup.
+
+Exact commands, resource files, and invocation receipts are in `control-{before,after}-{32,128}-50/` under the A1 evidence directory.
+Each command uses `run-control.py VERSION FILES 50`, which invokes the tracked `anchor-ingestion.ts` workload under `/usr/bin/time -lp`.
+The recording hash is `5ede2971ed87b1e64bd7fd125281410e3c527f5d7f756934e82f93d0828c9585`.
+The selection hashes are `1ce275aa90a2b32619221296d812cc8205f581d9a72405e9a58d7fa1690508f2` and `43d012c4bff575ba4b35ecd2023e2d8931c64ce0b8a77c36f19f2305937802f2`.
+Before/candidate receipts contain the matching policy digests and frozen addon identities.
+
+For 128 files, matcher CPU falls from 2.771 to 0.637 seconds.
+Selection CPU rises from 8.472 to 12.161 seconds, and physical planning uses another 3.267 seconds.
+Index construction rises from 0.762 to 1.006 seconds.
+This result rejects a full-scale recovery claim and does not justify another long full-repository run yet.
+Keep the statistics, selected-arm correctness, and signature correction as implementation groundwork.
+The next delivery must correct the remaining SQL shape and demonstrate a CPU improvement.
+
+The separate `diagnostic-sample` run collects native spans and macOS bottom-up stacks.
+Its first sampler exceeded its budget and produced no usable stack report; three later samples completed.
+The workload itself completed successfully. This is diagnostic evidence, not a timing comparison.
+Four candidate materialization statements each execute about 206–213 million VM instructions and 22.8 million full-scan steps.
+They account for about 4.18 CPU seconds in that diagnostic run.
+The next investigation captures those exact statements and their query plans before changing materialization.
+
+
 ## Future entries
 
 Each new entry must identify the hypothesis, baseline commit, workload hashes, build configuration, and exact commands.

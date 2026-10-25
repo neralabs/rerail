@@ -38,6 +38,21 @@ it("multiple rare leaves produce one confirmed finding at their shared root", ()
   expect(result.violations).toHaveLength(1);
 });
 
+it("an incomplete negative prefilter cannot discard a confirmed finding", () => {
+  const conditions = [...Array.from({ length: 80 }, (_, i) => ({ regex: `^.{0,${i + 3}}$` })), { regex: "^absent$" }];
+  const rule = native.CodeRuleDslRuntime.compile(JSON.stringify({
+    format: "rerail.policy/v1", id: "partial-negation", revision: 1, mode: "log",
+    clauses: [{ id: "names", forbid: { ast: { language: "typescript", rule: {
+      all: [{ kind: "identifier" }, { not: { all: conditions } }],
+    } } }, violation: { code: "NAME", message: "Name", anchor: "witness.span" } }],
+  }), "json", capabilities);
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 1,
+    files: [{ path: "a.ts", language: "typescript", source: "v0;" }],
+  }), "report"));
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toHaveLength(1);
+});
+
 it("workspace planning rejects absent async names before utility work exhausts its allowance", async () => {
   const workspace = new native.CodeRuleDslWorkspace();
   try {

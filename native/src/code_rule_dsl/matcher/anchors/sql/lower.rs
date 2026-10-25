@@ -27,9 +27,11 @@ pub(super) struct Admission {
     pub consumer: usize,
     pub generated: usize,
     pub broadened: bool,
+    pub partial: bool,
 }
 pub(super) struct Statement {
     pub admissions: Vec<Admission>,
+    pub anchors: Vec<super::statistics::Decision>,
     #[cfg(feature = "code-rule-profile")]
     pub producers: crate::code_rule_dsl::producers::Registry<u32>,
     #[cfg(feature = "code-rule-profile")]
@@ -104,6 +106,10 @@ struct Lower {
     predicates: HashMap<String, (String, String)>,
     producers: crate::code_rule_dsl::producers::Registry<u32>,
     consumer: usize,
+    statistics: super::statistics::Statistics,
+    partial: bool,
+    costs: HashMap<usize, usize>,
+    anchors: Vec<super::statistics::Decision>,
     producer_bindings: HashMap<Property, usize>,
 }
 
@@ -136,6 +142,10 @@ impl Lower {
             predicates: HashMap::new(),
             producers: Default::default(),
             consumer: 0,
+            statistics: Default::default(),
+            partial: false,
+            costs: HashMap::new(),
+            anchors: Vec::new(),
             producer_bindings: HashMap::new(),
         }
     }
@@ -316,7 +326,50 @@ impl Lower {
             .insert(selected.name.clone(), kinds.clone());
         Ok(selected)
     }
+    // Bound admission ordering by the existing SQL-fragment allowance. This is a
+    // compiler complexity estimate, not a fitted execution or regex cost model.
+    fn compile_cost(&mut self, plan: &AnchorPlan) -> usize {
+        let key = plan as *const AnchorPlan as usize;
+        if let Some(cost) = self.costs.get(&key) {
+            return *cost;
+        }
+        let mut work = vec![plan];
+        let mut cost = 0;
+        while let Some(plan) = work.pop() {
+            cost += 1;
+            if cost >= self.limit {
+                break;
+            }
+            match &plan.condition {
+                Condition::All(plans) | Condition::Any(plans) => work.extend(plans),
+                Condition::Not(inner) | Condition::Relation { inner, .. } => work.push(inner),
+                Condition::Utility(inner) => work.push(inner),
+                _ => {}
+            }
+        }
+        self.costs.insert(key, cost);
+        cost
+    }
+
     fn plan(&mut self, plan: &AnchorPlan, scope: Set) -> Result<Set, ()> {
+        if let Condition::Pattern(required) = &plan.condition
+            && !required.is_empty()
+        {
+            let selected = self.pattern(required, scope)?;
+            let Some(kinds) = &plan.root_kinds else {
+                return Ok(selected);
+            };
+            let properties = self.decoded(&selected, Property::Node);
+            let kinds = kinds
+                .iter()
+                .map(|k| self.parameter(i64::from(*k)))
+                .collect::<Vec<_>>()
+                .join(",");
+            return self.relation(
+                format!("SELECT p.fid,p.pre FROM {properties} p WHERE p.kind IN ({kinds})"),
+                false,
+            );
+        }
         let scope = match &plan.root_kinds {
             Some(kinds) => {
                 let kinds = self.kinds(kinds)?;
@@ -331,8 +384,20 @@ impl Lower {
             Condition::Pattern(required) => self.pattern(required, scope),
             Condition::All(plans) => {
                 let mut selected = scope;
-                for plan in plans {
-                    selected = self.plan(plan, selected)?;
+                let mut ordered = plans.iter().collect::<Vec<_>>();
+                ordered.sort_by_cached_key(|plan| self.compile_cost(plan));
+                for plan in ordered {
+                    match self.plan(plan, selected.clone()) {
+                        Ok(next) => selected = next,
+                        Err(()) => {
+                            // A partial conjunction is a sound superset. Stop before
+                            // another fragment can use the failed child's caches; dead
+                            // definitions are removed when the completed root is rendered.
+                            self.partial = true;
+                            selected.exact = false;
+                            return Ok(selected);
+                        }
+                    }
                 }
                 Ok(selected)
             }
@@ -360,7 +425,7 @@ impl Lower {
                 let key = (std::sync::Arc::as_ptr(inner) as usize, scope.name.clone());
                 if let Some(selected) = self.utilities.get(&key) {
                     return Ok(Set {
-                        exact: selected.exact && plan.exact,
+                        exact: selected.exact && plan.exact && !self.partial,
                         ..selected.clone()
                     });
                 }
@@ -375,7 +440,7 @@ impl Lower {
                 field,
             } => self.related(scope, inner, *direction, *recursive, *field),
         }?;
-        selected.exact &= plan.exact;
+        selected.exact &= plan.exact && !self.partial;
         if let Some(kinds) = kinds {
             self.reuse.kinds.insert(selected.name.clone(), kinds);
         }
@@ -516,105 +581,103 @@ impl Lower {
         if required.is_empty() {
             return Ok(scope);
         }
-        let mut postings = Vec::new();
-        let mut choices = Vec::new();
-        for (number, requirement) in required.iter().enumerate() {
-            let (kind, literal) = match &requirement.value {
-                Required::Kind(kind) => (*kind, None),
-                Required::Terminal(kind, text) => (*kind, Some(text)),
-            };
-            let mut posting = self.kinds(&BTreeSet::from([kind]))?;
-            if let Some(text) = literal {
-                posting = self.text(&posting, text, true)?;
+        let (ordinal, estimate) = self.statistics.choose(self.lang, required);
+        let requirement = &required[ordinal];
+        let (kind, literal) = match &requirement.value {
+            Required::Kind(kind) => (*kind, None),
+            Required::Terminal(kind, text) => (*kind, Some(text.as_str())),
+        };
+        self.anchors.push(super::statistics::Decision {
+            consumer: self.consumer,
+            pattern: self.anchors.len(),
+            requirement: ordinal,
+            kind,
+            literal: literal.map(str::to_owned),
+            estimated_rows: estimate.map(|e| e.rows),
+            uncovered_rows: estimate.map(|e| e.uncovered),
+        });
+        // A literal seeds directly from value postings. Building its kind first would
+        // still enumerate the common arm that the planner just declined.
+        let mut current = if let Some(text) = literal {
+            let domain = self.all();
+            let previous = self
+                .reuse
+                .kinds
+                .insert(domain.name.clone(), BTreeSet::from([kind]));
+            let selected = self.text(&domain, text, true)?;
+            if let Some(previous) = previous {
+                self.reuse.kinds.insert(domain.name, previous);
+            } else {
+                self.reuse.kinds.remove(&domain.name);
             }
-            self.indexed.insert(posting.name.clone());
-            // Actual posting counts include literal selectivity, as the Rust selector does.
-            choices.push(format!(
-                "SELECT {number} AS id,(SELECT count(*) FROM {})*{} AS cost",
-                posting.name,
-                requirement.parents.len() + 1
-            ));
-            postings.push(posting);
-        }
-        let choice = format!("choice{}", self.ctes.len());
-        self.ctes.push(format!(
-            "{choice}(id,cost) AS MATERIALIZED (SELECT id,cost FROM ({}) ORDER BY cost,id LIMIT 1)",
-            choices.join(" UNION ALL ")
-        ));
-        let mut roots = Vec::new();
-        for (number, requirement) in required.iter().enumerate() {
-            let mut current = self.relation(
-                format!(
-                    "SELECT p.fid,p.pre FROM {} p JOIN {choice} c ON c.id={number}",
-                    postings[number].name
-                ),
+            selected
+        } else {
+            self.kinds(&BTreeSet::from([kind]))?
+        };
+        for parent_kind in &requirement.parents {
+            let properties = self.decoded(&current, Property::Node);
+            let hopped = self.relation(
+                format!("SELECT DISTINCT p.fid,p.parent FROM {properties} p"),
                 false,
             )?;
-            for kind in &requirement.parents {
+            current = self.relation(
+                format!("SELECT fid,pre FROM {} WHERE pre>=0", hopped.name),
+                false,
+            )?;
+            if let Some(kind) = parent_kind {
                 let properties = self.decoded(&current, Property::Node);
-                let hopped =
-                    self.relation(format!("SELECT p.fid,p.parent FROM {properties} p"), false)?;
                 current = self.relation(
-                    format!("SELECT fid,pre FROM {} WHERE pre>=0", hopped.name),
+                    format!("SELECT p.fid,p.pre FROM {properties} p WHERE p.kind={kind}"),
                     false,
                 )?;
-                if let Some(kind) = kind {
-                    let properties = self.decoded(&current, Property::Node);
-                    current = self.relation(
-                        format!("SELECT p.fid,p.pre FROM {properties} p WHERE p.kind={kind}"),
-                        false,
-                    )?;
-                }
             }
-            roots.push(format!("SELECT fid,pre FROM {}", current.name));
         }
-        let roots = self.relation(roots.join(" UNION "), false)?;
-        let selected = self.combine(&scope, &roots, "INTERSECT", false)?;
-        let properties = self.decoded(&selected, Property::Node);
-        let spans = format!("span{}", self.ctes.len());
-        self.ctes.push(format!(
-            "{spans}(fid,pre,end) AS MATERIALIZED (SELECT s.fid,s.pre,s.end FROM {properties} s)"
-        ));
-        let tests: Vec<_> = postings
-            .iter()
-            .map(|p| {
-                format!(
-                    "EXISTS(SELECT 1 FROM {} p WHERE p.fid=s.fid AND p.pre>=s.pre AND p.pre<s.end)",
-                    p.name
-                )
-            })
-            .collect();
-        self.relation(
-            format!(
-                "SELECT s.fid,s.pre FROM {spans} s WHERE {}",
-                tests.join(" AND ")
-            ),
-            false,
-        )
+        // All other requirements are checked by the existing matcher at these roots.
+        // Whole-scope postings just for a refinement recreate the discarded anchor work.
+        self.combine(&scope, &current, "INTERSECT", false)
     }
 }
 
 pub(super) fn batch_files(plans: &[&AnchorPlan], lang: u32, files: &[i64]) -> Statement {
-    batch_scope(plans, lang, Some(files), None)
+    batch_files_planned(plans, lang, files, &Default::default())
+}
+
+pub(super) fn batch_files_planned(
+    plans: &[&AnchorPlan],
+    lang: u32,
+    files: &[i64],
+    statistics: &super::statistics::Statistics,
+) -> Statement {
+    batch_scope(plans, lang, Some(files), None, statistics)
 }
 
 #[cfg(test)]
 pub(super) fn batch(
+    store: &super::store::Store,
     plans: &[&AnchorPlan],
     lang: u32,
     fid: Option<i64>,
     path_glob: Option<&str>,
 ) -> Statement {
+    let statistics =
+        super::statistics::Statistics::read(&store.db, plans.iter().map(|p| (lang, *p))).unwrap();
     batch_scope(
         plans,
         lang,
         fid.as_ref().map(std::slice::from_ref),
         path_glob,
+        &statistics,
     )
 }
 
-fn scope(lang: u32, fids: Option<&[i64]>, path_glob: Option<&str>) -> Lower {
+fn scope(
+    lang: u32,
+    fids: Option<&[i64]>,
+    path_glob: Option<&str>,
+    statistics: &super::statistics::Statistics,
+) -> Lower {
     let mut lower = Lower::new(lang);
+    lower.statistics = statistics.clone();
     let lang_parameter = lower.parameter(i64::from(lang));
     let mut files =
         format!("SELECT f.fid FROM file f JOIN fk k ON k.fid=f.fid WHERE k.lang={lang_parameter}");
@@ -639,6 +702,7 @@ fn batch_scope(
     lang: u32,
     fids: Option<&[i64]>,
     path_glob: Option<&str>,
+    statistics: &super::statistics::Statistics,
 ) -> Statement {
     use super::graph::program::Program;
     let mut program = Program::default();
@@ -650,27 +714,32 @@ fn batch_scope(
     > = std::collections::BTreeMap::new();
     let mut predicates = std::collections::BTreeMap::new();
     let mut admissions = Vec::new();
+    let mut anchors = Vec::new();
     for (qid, plan) in plans.iter().enumerate() {
         // Admission belongs to the individual plan. Another consumer's cached
         // producers cannot expand or shrink this plan's existing 256-node allowance.
-        let mut lower = scope(lang, fids, path_glob);
+        let mut lower = scope(lang, fids, path_glob, statistics);
         lower.consumer = qid;
         let checkpoint = lower.ctes.len();
         lower.limit = checkpoint + 256;
         let attempted = lower.plan(plan, lower.all());
+        anchors.extend(std::mem::take(&mut lower.anchors));
         admissions.push(Admission {
             consumer: qid,
             generated: lower.ctes.len() - checkpoint,
-            broadened: attempted.is_err(),
+            broadened: attempted.is_err() || lower.partial,
+            partial: lower.partial && attempted.is_ok(),
         });
+        #[cfg(feature = "code-rule-profile")]
+        if attempted.is_err() || lower.partial {
+            crate::code_rule_dsl::profile::record_anchor_plan_broadening();
+        }
         let selected = match attempted {
             Ok(selected) => selected,
             Err(()) => {
-                #[cfg(feature = "code-rule-profile")]
-                crate::code_rule_dsl::profile::record_anchor_plan_broadening();
                 // Discard the entire failed fragment, including predicates, parameters
                 // and reuse state. Earlier fragments already belong to the shared program.
-                lower = scope(lang, fids, path_glob);
+                lower = scope(lang, fids, path_glob, statistics);
                 lower.consumer = qid;
                 lower.limit = lower.ctes.len() + 256;
                 match &plan.root_kinds {
@@ -815,6 +884,7 @@ fn batch_scope(
             .map(|p| *p as *const AnchorPlan as usize)
             .collect();
     }
+    statement.anchors = anchors;
     statement.language = lang;
     statement.files = fids.unwrap_or_default().to_vec();
     statement.file_scope = fids.is_some();
@@ -1095,6 +1165,7 @@ fn prepare_decoded(
     };
     Statement {
         admissions: Vec::new(),
+        anchors: Vec::new(),
         #[cfg(feature = "code-rule-profile")]
         producers,
         #[cfg(feature = "code-rule-profile")]

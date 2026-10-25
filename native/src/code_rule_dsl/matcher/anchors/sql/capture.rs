@@ -129,7 +129,7 @@ pub(super) fn save(
         serde_json::to_vec_pretty(&manifest).expect("producer manifest"),
     )
     .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
-    let output = serde_json::json!({"format":"rerail.candidate-replay/v4","retirementRows":super::lower::ownership::RETIREMENT_ROWS,"variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"graph":statement.graph,"setup":statement.ownership.setup,"sharedStore":super::lower::ownership::STORE,"parameters":parameters,"admissions":statement.admissions,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
+    let output = serde_json::json!({"format":"rerail.candidate-replay/v4","retirementRows":super::lower::ownership::RETIREMENT_ROWS,"variant":variant,"database":path.file_name().unwrap().to_string_lossy(),"stages":stages,"queries":statement.queries,"schedule":statement.schedule.actions,"peakLiveRelations":statement.schedule.peak_relations,"graph":statement.graph,"setup":statement.ownership.setup,"sharedStore":super::lower::ownership::STORE,"parameters":parameters,"admissions":statement.admissions,"anchors":statement.anchors,"files":files,"fileScope":statement.file_scope,"fileVersions":versions});
     std::fs::write(
         directory.join(format!("{stem}.json")),
         serde_json::to_vec_pretty(&output).expect("serializable candidate capture"),

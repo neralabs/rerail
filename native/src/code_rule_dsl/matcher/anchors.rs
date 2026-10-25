@@ -258,7 +258,7 @@ impl AnchorPlan {
     fn compile_in(matcher: &AstMatcher, inlining: &mut Inlining) -> Self {
         let mut plan = match matcher {
             AstMatcher::Pattern(pattern) => {
-                let mut required = BTreeSet::new();
+                let mut required = Vec::new();
                 if matches!(pattern.strictness, MatchStrictness::Smart) {
                     collect_pattern(&pattern.node, &mut Vec::new(), &mut required);
                 }
@@ -269,7 +269,7 @@ impl AnchorPlan {
                     condition: if required.is_empty() {
                         Condition::Always
                     } else {
-                        Condition::Pattern(required.into_iter().collect())
+                        Condition::Pattern(required)
                     },
                     exact: false,
                 }
@@ -538,7 +538,7 @@ fn intersect_kinds(left: &mut Option<BTreeSet<u16>>, right: Option<&BTreeSet<u16
 fn collect_pattern(
     node: &PatternNode,
     parents: &mut Vec<Option<u16>>,
-    required: &mut BTreeSet<Requirement>,
+    required: &mut Vec<Requirement>,
 ) {
     let value = match node {
         PatternNode::Terminal {
@@ -554,10 +554,13 @@ fn collect_pattern(
         _ => None,
     };
     if let Some(value) = value {
-        required.insert(Requirement {
+        let requirement = Requirement {
             value,
             parents: parents.iter().rev().copied().collect(),
-        });
+        };
+        if !required.contains(&requirement) {
+            required.push(requirement);
+        }
     }
     if let PatternNode::Internal { kind_id, children } = node {
         parents.push((!kind_utils::is_error_kind(*kind_id)).then_some(*kind_id));

@@ -160,7 +160,7 @@ impl<'a> Image<'a> {
     pub fn put(&self, db: &Connection, fid: i64, lang: u32) -> Result<()> {
         super::store::publication::insert(
             db,
-            "INSERT INTO vidx",
+            "INSERT INTO vidx(lang,term,fid,kind,postings,n)",
             "",
             self.postings.iter().map(|(&(kind, term), pres)| {
                 let mut sorted = pres.clone();
@@ -171,6 +171,7 @@ impl<'a> Image<'a> {
                     fid.into(),
                     i64::from(kind).into(),
                     pack(&sorted).into(),
+                    (sorted.len() as i64).into(),
                 ]
             }),
         )?;

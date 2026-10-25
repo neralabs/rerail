@@ -26,7 +26,7 @@ CREATE TABLE sizeovf(fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE CASCADE
     pre INTEGER NOT NULL, val INTEGER NOT NULL, PRIMARY KEY(fid,pre)) WITHOUT ROWID;
 -- One delta-varint posting segment per term, file, and kind. Full term keys are case-exact.
 CREATE TABLE vidx(lang INTEGER NOT NULL,term TEXT NOT NULL,fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE CASCADE,
-    kind INTEGER NOT NULL,postings BLOB NOT NULL,PRIMARY KEY(lang,term,fid,kind)) WITHOUT ROWID;
+    kind INTEGER NOT NULL,postings BLOB NOT NULL,n INTEGER NOT NULL,PRIMARY KEY(lang,term,fid,kind)) WITHOUT ROWID;
 CREATE INDEX vidx_file ON vidx(fid);
 CREATE TABLE vlex(lang INTEGER NOT NULL,term TEXT NOT NULL,n INTEGER NOT NULL,PRIMARY KEY(lang,term)) WITHOUT ROWID;
 CREATE TABLE vcov(fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE CASCADE,kind INTEGER NOT NULL,
@@ -43,13 +43,28 @@ CREATE TABLE decoded_spans(fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE C
     start INTEGER NOT NULL,len INTEGER NOT NULL,PRIMARY KEY(fid,pre)) WITHOUT ROWID;
 CREATE TABLE decoded_children(fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE CASCADE,pre INTEGER NOT NULL,
     field INTEGER NOT NULL,child INTEGER,PRIMARY KEY(fid,pre,field)) WITHOUT ROWID;
+CREATE TRIGGER file_delete BEFORE DELETE ON file BEGIN
+    DELETE FROM ftsk WHERE rowid=OLD.fid;
+END;
+-- SQL-owned planner statistics.
+CREATE TABLE value_frequency(lang INTEGER NOT NULL,term TEXT NOT NULL,kind INTEGER NOT NULL,
+    n INTEGER NOT NULL CHECK(n>=0),PRIMARY KEY(lang,term,kind)) WITHOUT ROWID;
+CREATE TABLE value_kind_frequency(lang INTEGER NOT NULL,kind INTEGER NOT NULL,
+    n INTEGER NOT NULL CHECK(n>=0),PRIMARY KEY(lang,kind)) WITHOUT ROWID;
+DROP TRIGGER IF EXISTS value_insert;
+DROP TRIGGER IF EXISTS value_delete;
 CREATE TRIGGER value_insert AFTER INSERT ON vidx BEGIN
     INSERT INTO vlex VALUES(NEW.lang,NEW.term,1) ON CONFLICT(lang,term) DO UPDATE SET n=n+1;
+    INSERT INTO value_frequency VALUES(NEW.lang,NEW.term,NEW.kind,NEW.n)
+        ON CONFLICT(lang,term,kind) DO UPDATE SET n=n+excluded.n;
+    INSERT INTO value_kind_frequency VALUES(NEW.lang,NEW.kind,NEW.n)
+        ON CONFLICT(lang,kind) DO UPDATE SET n=n+excluded.n;
 END;
 CREATE TRIGGER value_delete AFTER DELETE ON vidx BEGIN
     UPDATE vlex SET n=n-1 WHERE lang=OLD.lang AND term=OLD.term;
     DELETE FROM vlex WHERE lang=OLD.lang AND term=OLD.term AND n=0;
-END;
-CREATE TRIGGER file_delete BEFORE DELETE ON file BEGIN
-    DELETE FROM ftsk WHERE rowid=OLD.fid;
+    UPDATE value_frequency SET n=n-OLD.n WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind;
+    DELETE FROM value_frequency WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind AND n=0;
+    UPDATE value_kind_frequency SET n=n-OLD.n WHERE lang=OLD.lang AND kind=OLD.kind;
+    DELETE FROM value_kind_frequency WHERE lang=OLD.lang AND kind=OLD.kind AND n=0;
 END;

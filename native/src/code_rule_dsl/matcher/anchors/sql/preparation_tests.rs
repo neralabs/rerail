@@ -215,7 +215,7 @@ fn file_scoped_kind_requests_do_not_walk_unrelated_postings() {
             exact: true,
         };
         let language = u32::from(language::tape_tag(dialect).unwrap());
-        let statement = lower::batch_files(&[&plan], language, &[fid]);
+        let statement = super::tests::planned_batch(&store, &[&plan], language, &[fid]);
         let ticks = std::sync::Arc::new(AtomicUsize::new(0));
         let counter = std::sync::Arc::clone(&ticks);
         store
@@ -301,7 +301,7 @@ fn file_scoped_kind_index_survives_edit_removal_and_legacy_upgrade() {
     // Reproduce the preceding internal format without a checked-in database fixture.
     let legacy = rusqlite::Connection::open(file.path()).unwrap();
     legacy
-        .execute_batch("ALTER TABLE file_kind_counts DROP COLUMN postings; PRAGMA user_version=1")
+        .execute_batch("DROP TRIGGER value_insert;DROP TRIGGER value_delete;DROP TABLE value_frequency;DROP TABLE value_kind_frequency;ALTER TABLE vidx DROP COLUMN n;ALTER TABLE file_kind_counts DROP COLUMN postings; PRAGMA user_version=1")
         .unwrap();
     drop(legacy);
     let store = store::Store::open(file.path()).unwrap();
@@ -311,7 +311,7 @@ fn file_scoped_kind_index_survives_edit_removal_and_legacy_upgrade() {
             .db
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
     drop(store);
     let store = store::Store::open(file.path()).unwrap();
@@ -336,7 +336,7 @@ fn failed_kind_index_upgrade_keeps_the_legacy_schema_atomic() {
         .unwrap();
     drop(store);
     let legacy = rusqlite::Connection::open(file.path()).unwrap();
-    legacy.execute_batch("ALTER TABLE file_kind_counts DROP COLUMN postings; PRAGMA user_version=1; UPDATE file SET rec=substr(rec,1,length(rec)-1)").unwrap();
+    legacy.execute_batch("DROP TRIGGER value_insert;DROP TRIGGER value_delete;DROP TABLE value_frequency;DROP TABLE value_kind_frequency;ALTER TABLE vidx DROP COLUMN n;ALTER TABLE file_kind_counts DROP COLUMN postings; PRAGMA user_version=1; UPDATE file SET rec=substr(rec,1,length(rec)-1)").unwrap();
     drop(legacy);
     assert!(store::Store::open(file.path()).is_err());
     let legacy = rusqlite::Connection::open(file.path()).unwrap();
@@ -392,7 +392,8 @@ fn kind_requests_preserve_mixed_coverage_error_and_missing_nodes() {
         })
         .collect::<Vec<_>>();
     let language = u32::from(language::tape_tag(dialect).unwrap());
-    let statement = lower::batch_files(&plans.iter().collect::<Vec<_>>(), language, &files);
+    let statement =
+        super::tests::planned_batch(&store, &plans.iter().collect::<Vec<_>>(), language, &files);
     let mut expected = Vec::new();
     for (qid, kinds) in kinds.iter().enumerate() {
         for (fid, doc) in files.iter().zip(&documents) {
@@ -443,7 +444,8 @@ fn file_scoped_values_do_not_scan_unrelated_files() {
         },
         exact: true,
     };
-    let statement = lower::batch_files(
+    let statement = super::tests::planned_batch(
+        &store,
         &[&plan],
         u32::from(language::tape_tag(dialect).unwrap()),
         &[fid],
@@ -504,7 +506,8 @@ fn file_scoped_structural_reads_do_not_scan_retained_corpus_rows() {
         },
         exact: true,
     };
-    let statement = lower::batch_files(
+    let statement = super::tests::planned_batch(
+        &store,
         &[&plan],
         u32::from(language::tape_tag(dialect).unwrap()),
         &[fid],

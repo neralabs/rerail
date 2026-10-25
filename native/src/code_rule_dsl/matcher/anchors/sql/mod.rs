@@ -24,6 +24,7 @@ mod reader;
 #[cfg(all(test, feature = "code-rule-profile"))]
 mod replay;
 mod session;
+mod statistics;
 mod store;
 mod values;
 

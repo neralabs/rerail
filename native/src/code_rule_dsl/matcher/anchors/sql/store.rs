@@ -66,10 +66,13 @@ impl Store {
         if version == 0 {
             let tx = db.unchecked_transaction()?;
             tx.execute_batch(include_str!("schema.sql"))?;
-            tx.pragma_update(None, "user_version", 2_i64)?;
+            tx.pragma_update(None, "user_version", 3_i64)?;
             tx.commit()?;
         } else if version == 1 {
             super::kind_postings::upgrade(&db)?;
+        }
+        if matches!(version, 1 | 2) {
+            super::statistics::upgrade(&db)?;
         }
         db.execute_batch(include_str!("vocabulary.sql"))?;
         let readers = super::functions::install(&db)?;
@@ -323,7 +326,7 @@ impl Store {
             let ids = std::iter::repeat_n("?", files.len())
                 .collect::<Vec<_>>()
                 .join(",");
-            tx.execute(&format!("WITH removed AS MATERIALIZED (SELECT f.lang,c.code,sum(c.n) AS n FROM file f JOIN file_kind_counts c USING(fid) WHERE f.fid IN ({ids}) GROUP BY f.lang,c.code) UPDATE kfreq SET n=n-r.n FROM removed r WHERE r.lang=kfreq.lang AND r.code=kfreq.code"), rusqlite::params_from_iter(files))?;
+            tx.execute(&format!("WITH removed AS MATERIALIZED (SELECT f.lang,c.code,sum(c.n) AS n FROM file f JOIN file_kind_counts c USING(fid) WHERE f.fid IN ({ids}) GROUP BY f.lang,c.code) UPDATE kfreq SET n=kfreq.n-r.n FROM removed r WHERE r.lang=kfreq.lang AND r.code=kfreq.code"), rusqlite::params_from_iter(files))?;
             tx.execute("DELETE FROM kfreq WHERE n=0", [])?;
             tx.execute(
                 &format!("DELETE FROM file WHERE fid IN ({ids})"),

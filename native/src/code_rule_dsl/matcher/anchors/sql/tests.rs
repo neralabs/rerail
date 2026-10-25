@@ -13,6 +13,17 @@ pub(super) fn document(source: &str, lang: GrammarDialect) -> TapeDoc {
     TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
 }
 
+pub(super) fn planned_batch(
+    store: &store::Store,
+    plans: &[&AnchorPlan],
+    lang: u32,
+    files: &[i64],
+) -> lower::Statement {
+    let statistics =
+        super::statistics::Statistics::read(&store.db, plans.iter().map(|p| (lang, *p))).unwrap();
+    lower::batch_files_planned(plans, lang, files, &statistics)
+}
+
 #[test]
 fn value_index_is_case_exact_grammar_agnostic_and_survives_edits_and_reopen() {
     let file = tempfile::NamedTempFile::new().unwrap();
@@ -169,6 +180,7 @@ fn vocabulary_paths_preserve_regex_literals_and_negation_without_source_reads() 
         .collect();
     let plans: Vec<_> = matchers.iter().map(AnchorPlan::compile).collect();
     let statement = lower::batch(
+        &store,
         &plans.iter().collect::<Vec<_>>(),
         u32::from(language::tape_tag(lang).unwrap()),
         None,
@@ -300,6 +312,7 @@ fn files(store: &store::Store, lang: GrammarDialect, kind: u16, glob: Option<&st
         exact: true,
     };
     let statement = lower::batch(
+        store,
         &[&plan],
         u32::from(language::tape_tag(lang).unwrap()),
         None,
@@ -602,7 +615,8 @@ fn pattern_range_probes_use_indexes_and_actual_literal_selectivity() {
             }),
         )
         .unwrap();
-    let statement = lower::batch_files(
+    let statement = planned_batch(
+        &store,
         &[plan],
         u32::from(language::tape_tag(GrammarDialect::TypeScript).unwrap()),
         &[fid],
@@ -657,7 +671,8 @@ fn descendant_relations_use_subtree_ranges_instead_of_ancestor_closures() {
                 }),
             )
             .unwrap();
-        let statement = lower::batch_files(
+        let statement = planned_batch(
+            &store,
             &[plan],
             u32::from(language::tape_tag(GrammarDialect::TypeScript).unwrap()),
             &[fid],

@@ -145,6 +145,7 @@ struct Profile {
     store_write_ns: u128,
     manifest_ns: u128,
     index_ns: u128,
+    planning_ns: u128,
     selection_ns: u128,
     dispatch_ns: u128,
     serialization_ns: u128,
@@ -214,6 +215,7 @@ pub(super) enum Phase {
     StoreWrite,
     Manifest,
     Index,
+    Planning,
     Selection,
     Dispatch,
     Serialization,
@@ -231,6 +233,7 @@ fn phase_total(profile: &mut Profile, phase: Phase) -> &mut u128 {
         Phase::StoreWrite => &mut profile.store_write_ns,
         Phase::Manifest => &mut profile.manifest_ns,
         Phase::Index => &mut profile.index_ns,
+        Phase::Planning => &mut profile.planning_ns,
         Phase::Selection => &mut profile.selection_ns,
         Phase::Dispatch => &mut profile.dispatch_ns,
         Phase::Serialization => &mut profile.serialization_ns,
@@ -518,6 +521,7 @@ impl Drop for ApplyProfile {
                 + profile.store_write_ns
                 + profile.manifest_ns
                 + profile.index_ns
+                + profile.planning_ns
                 + profile.selection_ns
                 + profile.dispatch_ns
                 + profile.serialization_ns
@@ -539,6 +543,7 @@ impl Drop for ApplyProfile {
                 "tapeEncodeNs": profile.tape_encode_ns,
                 "tapeDecodeRestoreNs": profile.tape_decode_ns,
                 "anchorIndexNs": profile.index_ns,
+                "anchorPlanningNs": profile.planning_ns,
                 "anchorSelectionNs": profile.selection_ns,
                 "astMatchNs": profile.dispatch_ns,
                 "serializationNs": profile.serialization_ns,
