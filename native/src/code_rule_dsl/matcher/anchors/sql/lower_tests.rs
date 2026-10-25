@@ -401,6 +401,56 @@ fn single_reader_projection_pipelines_stream_without_private_row_copies() {
 }
 
 #[test]
+fn physical_ownership_preserves_streaming_projection_boundaries() {
+    let store = super::super::store::Store::temporary().unwrap();
+    store.db.execute_batch("CREATE TABLE points(fid INTEGER,pre INTEGER); INSERT INTO points SELECT 1,value FROM generate_series(0,4095,1)").unwrap();
+    let measure = |layers: usize| {
+        let mut ctes = vec!["p0(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM points)".into()];
+        for i in 1..=layers {
+            ctes.push(format!(
+                "p{i}(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM p{})",
+                i - 1
+            ));
+        }
+        let mut statement = finish_decoded(
+            ctes,
+            vec![format!("SELECT 0,fid,pre FROM p{layers}")],
+            vec![],
+            BTreeSet::from([format!("p{layers}")]),
+            HashMap::new(),
+        );
+        // Production rebuilds physical statements from the dependency graph.
+        statement.own();
+        let mut rows = 0;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        };
+        let ticks = Arc::new(AtomicU64::new(0));
+        let observed = ticks.clone();
+        store
+            .db
+            .progress_handler(
+                100,
+                Some(move || {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                    false
+                }),
+            )
+            .unwrap();
+        super::super::execute::rows(&store, &statement, |_, _, _| rows += 1).unwrap();
+        assert_eq!(rows, 4096);
+        ticks.load(Ordering::Relaxed)
+    };
+    let direct = measure(0);
+    let pipeline = measure(16);
+    assert!(
+        pipeline <= direct * 2,
+        "physical ownership must retain streaming aliases: {direct} -> {pipeline}"
+    );
+}
+
+#[test]
 fn alternatives_do_not_repeatedly_materialize_a_growing_union() {
     use std::sync::{
         Arc,
