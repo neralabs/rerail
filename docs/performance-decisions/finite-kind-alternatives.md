@@ -1,6 +1,6 @@
 # Fold finite kind alternatives before SQL emission
 
-Status: implementation under test, 2026-10-25.
+Status: retained after regression tests and bounded CPU controls, 2026-10-25. Full-repository acceptance remains open.
 
 ## Evidence
 
@@ -37,3 +37,10 @@ It checks positive selection and negation against the tape, including repeated a
 The existing arbitrary-union test must still exercise union construction independently of kind folding.
 Run source parity, bounded unprofiled ingestion controls, and a separate SQL diagnostic after implementation.
 Keep full-repository acceptance open until complete findings and CPU, wall time, and RSS are available.
+
+## Result
+
+All 1,516 DSL tests, 42 production-shape tests, 2,350 original executable observations, and 120 supplemental controls pass.
+Three-run median ingestion CPU falls from 25.675 to 21.827 seconds on the 128-file, 60-rule control.
+Peak RSS remains effectively unchanged. Retain the fold; do not claim full-repository recovery.
+The performance journal records every control, capture, hash, and remaining coverage boundary.

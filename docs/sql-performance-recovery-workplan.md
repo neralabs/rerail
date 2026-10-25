@@ -5,9 +5,13 @@
 Status: A1 implementation is committed at `e771dc6c`; performance acceptance remains open.
 The first matched controls regress CPU by 16–18%. The journal records that result.
 Parent membership, scoped kind refinement, fused alternatives, and guarded projection streaming now pass their regression tests.
-The latest 128-file controls reduce CPU by 19.4% for 50 rules and 7.1% for 60 rules versus the failed before version.
+The guarded-stream 128-file controls reduce CPU by 19.4% for 50 rules and 7.1% for 60 rules versus the failed before version.
 The 60-rule memory control still regresses. These ingestion controls do not establish full-repository acceptance.
-The next measured frontier is expensive candidate relation execution; planning attribution is now available.
+Planning attribution now separates lowering, composition, rendering, and scheduling.
+Finite exact kind alternatives now fold to one scoped predicate; their regression and full DSL tests pass.
+The 128-file, 60-rule three-run median improves from 25.675 to 21.827 ingestion CPU seconds versus guarded streaming.
+RSS remains effectively unchanged. The journal records all six controls and the separate compile measurements.
+All 2,350 executable original observations and 120 supplemental controls pass through both evaluation paths. Full-repository acceptance remains open.
 The older R0–R7 plan is historical. This plan supersedes its statement-count acceptance gates.
 Statement counts remain diagnostic. Each delivery includes failing tests, implementation, passing tests, and measured evidence.
 No production switches select competing implementations. Linear issues require prior user approval.
@@ -130,7 +134,12 @@ Compare the same 32- and 128-file controls before selecting the next family.
 Commit `b07701d1` implements the indexed-parent correction.
 Commit `81ea9328` adds scoped kind refinement and fused alternatives.
 Guarded projection streaming retains predicate evaluation barriers; broad single-reader inlining is rejected by a fan-out test.
-The latest diagnostic attributes 6.244 CPU seconds to materialization and 2.020 seconds to physical planning.
+The guarded-stream diagnostic attributes 6.244 CPU seconds to materialization and 2.020 seconds to physical planning.
+Its largest real-file statement repeatedly partitions and reunites one scope by kind.
+Red commit `f2b52294` reproduces that shape. Exact finite alternatives now fold before SQL emission.
+The matched one-file capture reduces SQL CPU from 6.369 to 4.977 seconds.
+The next remaining family costs are candidate result reads, other materialized set operations, and span/predicate preparation.
+Native whole-batch bindings and exact structural demand pushdown remain open; do not declare A2 or A3 complete.
 These corrections do not complete the broader A2 scope.
 
 - Preserve exact `(consumer, source version, file, range)` membership in demand relations.

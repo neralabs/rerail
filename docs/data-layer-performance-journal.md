@@ -4106,6 +4106,95 @@ That statement repeatedly partitions one candidate scope into kind alternatives,
 This identifies a concrete next hypothesis: fold finite kind alternatives before SQL emission.
 Do not infer a full-workload gain from the statement cost alone.
 
+## Finite kind alternatives: eliminate repeated partitions (2026-10-25)
+
+The preceding captured Q224 identifies the actual relation shape for this change.
+The serverplan-quality syntax exclusion at `packs/data-layer/candidates/rules/data-layer-serverplan-quality.json:9331` contains nested finite kind alternatives.
+Related inputs occur in serverplan-dispatch-architecture and legacy-execution-surfaces.
+See `performance-decisions/finite-kind-alternatives.md` for the hypothesis and prior-work citations.
+
+Red commit `f2b52294` observes admission failure when finite alternatives have room for one decoder, one filter, and one subtraction.
+The test retains the original restricted scope and compares selected nodes against tape kinds under positive and negative execution.
+It includes repeated arms, nested alternatives, an enclosing restriction, and a shared utility.
+The implementation folds exact finite alternatives to one kind set before SQL emission.
+It memoizes utility definitions and retains the existing conservative path for approximate and non-kind predicates.
+The arbitrary-union regression now exercises union construction directly, independently of kind folding.
+
+All 104 SQL tests pass, with one ignored test.
+All 1,516 Rust DSL tests pass: 1,322 core tests and 194 workspace tests.
+There are 23 ignored DSL tests and 114 unrelated tests outside this filter.
+The matched addon build completes in 98 seconds; the test build completes in 142 seconds.
+Build duration remains separate from logical compilation and execution.
+The frozen addon is `18371d800490b5aca2b4bf2962fead322a27ab7218fd5026ed117b867883eebd` in `kind-addon/engine.node`.
+The evidence directory and build settings match the preceding guarded-stream entry.
+All 42 production-shape tests and the same 1,236 canonical source replays pass with this addon.
+Those replays preserve 1,116 original first-five observations and 120 supplemental controls, with zero mismatches or execution failures.
+Strict Clippy passes. The complete original batch-six replay follows below.
+
+The one-file diagnostic records SQL CPU of 6.369 seconds before folding and 4.977 seconds after folding.
+VM instructions fall from 301,856,025 to 259,876,714; full-scan steps fall from 8,450,565 to 4,280,207.
+Materialization spans fall from 4.625 to 3.246 CPU seconds; physical planning falls from 0.168 to 0.152 seconds.
+Statement grouping changes, so do not attribute the entire difference to one matching query identifier.
+Both diagnostic workloads finish with target exit zero. Report validation rejects absent parity, as expected for ingestion-only capture.
+These captures do not establish performance acceptance. Unprofiled controls follow below.
+Full-repository recovery remains unaccepted.
+
+The unprofiled 128-file, 60-rule comparison uses three fresh processes per frozen addon.
+All six runs use the same recording, selection hash, build configuration, allocator shim, and four workers.
+Each receipt records source and native hashes. Repeat addon paths resolve to the same frozen binary.
+
+| Metric | Guarded streaming, median | Finite kind folding, median | Change |
+| --- | ---: | ---: | ---: |
+| Ingestion CPU | 25.675 s | 21.827 s | −15.0% |
+| Ingestion wall | 33.310 s | 24.824 s | −25.5% |
+| Full-process OS peak RSS | 1,846,837,248 B | 1,838,448,640 B | −0.5% |
+| Logical compile CPU, separate | 2.513 s | 2.546 s | +1.3% |
+| Logical compile wall, separate | 3.288 s | 3.189 s | −3.0% |
+
+The individual ingestion CPU values are 26.152, 25.183, and 25.675 seconds before folding.
+They are 21.827, 21.948, and 21.615 seconds after folding.
+No control has a local execution failure. These are passing ingestion controls, unlike the older failed before reference.
+Host contention changes between runs. The CPU reduction is repeatable; the wall ratio is not an isolated scheduler effect measurement.
+RSS remains effectively unchanged. This change does not resolve the memory regression.
+The medians receipt is `kind-versus-stream-medians.json`.
+Run receipts are `control-{stream,kind}[-repeat-{2,3}]-128-60/invocation.json`.
+Each control uses the previously documented `anchor-ingestion.ts` command with a 115-second process-group deadline.
+
+The single 128-file, 50-rule control records 11.929 CPU seconds, 20.387 wall seconds, and 1,314,832,384 bytes OS peak RSS.
+Logical compilation uses 1.574 CPU seconds separately. The preceding guarded-stream control records 12.404 ingestion CPU seconds.
+This small single-run difference is diagnostic; no 50-rule median claim follows from it.
+The receipt is `control-kind-128-50/invocation.json`.
+
+The next one-file diagnostic frontier remains materialization at 3.246 CPU seconds and candidate result reads at 0.831 seconds.
+Span population alone uses 0.314 seconds; remaining fused set statements and source predicates account for other materialization work.
+Planning uses 0.152 seconds on that file. Compiler caching alone cannot remove the larger execution cost.
+The whole-batch native contracts, selective structural demand, and memory ownership work remain open.
+This delivery completes the finite-kind family correction, not A2, A3, or the full recovery plan.
+
+The complete original batch-six corpus now passes on the frozen kind-folding addon.
+The manifest partitions 1,234 executable original observations into 198 bounded shards.
+Each shard retains unchanged original events and includes positive/clean guards when needed.
+The guards cause 376 repeated observations; they do not increase original coverage.
+The aggregate verifies source and shard hashes, event equality, native identity, row identities, and exact primary-index coverage.
+It records 405 positive originals and 829 clean originals, with no missing or failed shards.
+All seven original retained observations keep their original status. No new skip or waiver is introduced.
+The four verification groups complete in 68.197, 80.994, 63.658, and 72.126 seconds.
+These verification durations are not runtime benchmark comparisons.
+
+Together with the first-five canonical replay, this validates all 2,350 executable original observations through stateless and workspace execution.
+There are 1,114 positive originals and 1,236 clean originals.
+The 120 supplemental controls separately cover positive and clean execution for all 60 rules.
+Six metadata-only checks still have no executable observations in the original recordings; the supplemental controls supply their native coverage.
+There are zero false positives, false negatives, engine failures, execution-path differences, or host-guard substitutions.
+Original observation coverage is now complete; full 9,021-file repository acceptance remains open.
+The remaining constructor-argument source-incompleteness and exported-family query interruption still require full-scale root-cause evidence.
+
+The complete manifest and aggregate are `corpus-06-kind/{manifest,aggregate}.json` under the evidence directory.
+The source recording SHA256 is `a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b`.
+Commands are preserved in the shard runner and the four `kind-corpus-group-*.log` receipts.
+A prior guarded-stream validation also passes the six original serverplan-bypass and four raw-execute observations.
+Those ten observations are included again in the complete kind-folding validation, not added to unique coverage.
+
 ## Future entries
 
 Each new entry must identify the hypothesis, baseline commit, workload hashes, build configuration, and exact commands.

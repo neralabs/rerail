@@ -7,6 +7,7 @@ mod access;
 #[path = "decode.rs"]
 mod decode;
 use decode::Property;
+mod kind_alternatives;
 #[path = "lower/render.rs"]
 mod render;
 use render::Definitions;
@@ -109,6 +110,7 @@ struct Lower {
     statistics: super::statistics::Statistics,
     partial: bool,
     costs: HashMap<usize, usize>,
+    kind_alternatives: HashMap<usize, Option<BTreeSet<u16>>>,
     anchors: Vec<super::statistics::Decision>,
     producer_bindings: HashMap<Property, usize>,
 }
@@ -145,6 +147,7 @@ impl Lower {
             statistics: Default::default(),
             partial: false,
             costs: HashMap::new(),
+            kind_alternatives: HashMap::new(),
             anchors: Vec::new(),
             producer_bindings: HashMap::new(),
         }
@@ -451,35 +454,39 @@ impl Lower {
                 Ok(selected)
             }
             Condition::Any(plans) => {
-                // Optional captures commonly have an unrestricted candidate arm.
-                // The authoritative matcher retains capture order; preparing the
-                // other candidate arms cannot narrow this union.
-                let unrestricted = plans.iter().find(|plan| {
-                    matches!(plan.condition, Condition::Always)
-                        && plan.root_kinds.as_ref().is_none_or(|required| {
-                            self.reuse
-                                .kinds
-                                .get(&scope.name)
-                                .is_some_and(|known| known.is_subset(required))
-                        })
-                });
-                if let Some(plan) = unrestricted {
-                    Ok(Set {
-                        exact: scope.exact && plan.exact,
-                        ..scope
-                    })
+                if let Some(kinds) = self.alternative_kinds(plans) {
+                    self.restrict_kinds(scope, &kinds)
                 } else {
-                    let mut branches = Vec::new();
-                    let mut covering = None;
-                    for plan in plans {
-                        let branch = self.plan(plan, scope.clone())?;
-                        if branch.name == scope.name {
-                            covering = Some(branch);
-                            break;
+                    // Optional captures commonly have an unrestricted candidate arm.
+                    // The authoritative matcher retains capture order; preparing the
+                    // other candidate arms cannot narrow this union.
+                    let unrestricted = plans.iter().find(|plan| {
+                        matches!(plan.condition, Condition::Always)
+                            && plan.root_kinds.as_ref().is_none_or(|required| {
+                                self.reuse
+                                    .kinds
+                                    .get(&scope.name)
+                                    .is_some_and(|known| known.is_subset(required))
+                            })
+                    });
+                    if let Some(plan) = unrestricted {
+                        Ok(Set {
+                            exact: scope.exact && plan.exact,
+                            ..scope
+                        })
+                    } else {
+                        let mut branches = Vec::new();
+                        let mut covering = None;
+                        for plan in plans {
+                            let branch = self.plan(plan, scope.clone())?;
+                            if branch.name == scope.name {
+                                covering = Some(branch);
+                                break;
+                            }
+                            branches.push(branch);
                         }
-                        branches.push(branch);
+                        covering.map_or_else(|| self.union(&branches), Ok)
                     }
-                    covering.map_or_else(|| self.union(&branches), Ok)
                 }
             }
             Condition::Not(inner) => {

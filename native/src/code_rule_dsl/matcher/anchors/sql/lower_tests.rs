@@ -427,21 +427,12 @@ fn alternatives_do_not_repeatedly_materialize_a_growing_union() {
                     true,
                 )
                 .unwrap();
-            lower.roots.insert(BTreeSet::from([bucket + 1]), selected);
-            alternatives.push(AnchorPlan {
-                root_kinds: Some([bucket + 1].into()),
-                condition: Condition::Always,
-                exact: true,
-            });
+            alternatives.push(selected);
         }
         // Repeated alternatives retain set semantics.
         alternatives.push(alternatives[0].clone());
-        let plan = AnchorPlan {
-            root_kinds: None,
-            condition: Condition::Any(alternatives),
-            exact: true,
-        };
-        let selected = lower.plan(&plan, lower.all()).unwrap();
+        // Exercise general set union independently of finite kind normalization.
+        let selected = lower.union(&alternatives).unwrap();
         let statement = finish_decoded(
             lower.ctes,
             vec![format!(
