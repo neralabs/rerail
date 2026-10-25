@@ -1,0 +1,1739 @@
+{
+  "inputs": {
+    "full": {
+      "path": "/tmp/rerail-fragment-e2e-full-v9/sql.json",
+      "sha256": "0a4b0ad99d94feae49bd42ffbefa2d242eb52817fdb5acd9924d62abacb7c72b"
+    },
+    "audit": {
+      "path": "benchmark/sql-matcher-batch-audit.json.gz",
+      "sha256": "247c586aeb6749abeb40f94119bbff7f6462a6db27f24e58c0ca2b6806479853"
+    },
+    "catalog": {
+      "path": "benchmark/sql-matcher-fragment-integration-catalog.json.gz",
+      "sha256": "d0d9871c885f890f5bca8b59b45d3df6af7965c3d5b0b47c1966b15ab31078d0"
+    }
+  },
+  "wholeJobExistingMeasurement": {
+    "files": 5725,
+    "cold": {
+      "cpuNs": 111790158000,
+      "peakRssBytes": 1233223680,
+      "wallNs": 60265892333
+    },
+    "matchingStatements": 46,
+    "matchingCpuNs": 83556319877,
+    "vm": 73275953,
+    "native": {
+      "roots": 73199829,
+      "rows": 2520,
+      "filters": 3289,
+      "native_cpu_ns": 79499675356,
+      "logical_unknown_roots": 719
+    },
+    "shapes": {
+      "sql": 3,
+      "native": 129,
+      "mixed": 14
+    },
+    "statistics": {},
+    "clausesByNativeCpu": [
+      {
+        "clauseId": "run-process",
+        "ruleId": "ruff-async221-run-process-in-async-function",
+        "statement": 47,
+        "roots": 4560507,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 5036895712,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "function-uses-loop-variable",
+        "ruleId": "ruff-b023-function-uses-loop-variable",
+        "statement": 68,
+        "roots": 480327,
+        "rows": 122,
+        "filters": 23,
+        "native_cpu_ns": 4849006294,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "undefined-local-with-import-star-usage",
+        "ruleId": "ruff-f405-undefined-local-with-import-star-usage",
+        "statement": 85,
+        "roots": 4543604,
+        "rows": 74,
+        "filters": 23,
+        "native_cpu_ns": 3339851549,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "b615",
+        "ruleId": "bandit-b615-huggingface-unsafe-download",
+        "statement": 39,
+        "roots": 690248,
+        "rows": 24,
+        "filters": 23,
+        "native_cpu_ns": 3299305277,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unused-loop-control-variable",
+        "ruleId": "ruff-b007-unused-loop-control-variable",
+        "statement": 57,
+        "roots": 3713119,
+        "rows": 37,
+        "filters": 23,
+        "native_cpu_ns": 3294415112,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "invalid-print-syntax",
+        "ruleId": "ruff-f633-invalid-print-syntax",
+        "statement": 107,
+        "roots": 4560507,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 2680303381,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unused-loop-control-variable-uncertain",
+        "ruleId": "ruff-b007-unused-loop-control-variable",
+        "statement": 58,
+        "roots": 2821343,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 2546639754,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "exec-call",
+        "ruleId": "bandit-b102-exec-used",
+        "statement": 1,
+        "roots": 421910,
+        "rows": 8,
+        "filters": 23,
+        "native_cpu_ns": 2030447972,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "blocking-open",
+        "ruleId": "ruff-async230-blocking-open-call-in-async-function",
+        "statement": 49,
+        "roots": 1871239,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1957819749,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "wait-for-process",
+        "ruleId": "ruff-async222-wait-for-process-in-async-function",
+        "statement": 48,
+        "roots": 1871239,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1929814429,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "blocking-http-call",
+        "ruleId": "ruff-async210-blocking-http-call-in-async-function",
+        "statement": 46,
+        "roots": 1871239,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1925284052,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "blocking-input",
+        "ruleId": "ruff-async250-blocking-input-in-async-function",
+        "statement": 50,
+        "roots": 1871239,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1924570780,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "blocking-sleep",
+        "ruleId": "ruff-async251-blocking-sleep-in-async-function",
+        "statement": 51,
+        "roots": 1871239,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 1910697049,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "weak-cryptographic-key",
+        "ruleId": "bandit-b505-weak-cryptographic-key",
+        "statement": 35,
+        "roots": 690248,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1894248939,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "b507",
+        "ruleId": "bandit-b507-ssh-no-host-key-verification",
+        "statement": 36,
+        "roots": 516170,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1806604080,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "no-explicit-stacklevel",
+        "ruleId": "ruff-b028-no-explicit-stacklevel",
+        "statement": 71,
+        "roots": 2391574,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 1718512500,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "undefined-local",
+        "ruleId": "ruff-f823-undefined-local",
+        "statement": 116,
+        "roots": 3992157,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 1647360871,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "trio-sync-call",
+        "ruleId": "ruff-async105-trio-sync-call",
+        "statement": 41,
+        "roots": 690248,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1480964441,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unused-annotation",
+        "ruleId": "ruff-f842-unused-annotation",
+        "statement": 117,
+        "roots": 3713119,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1470897829,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "trio-sleep",
+        "ruleId": "ruff-async115-async-zero-sleep",
+        "statement": 42,
+        "roots": 680236,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1379413052,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "anyio-sleep",
+        "ruleId": "ruff-async115-async-zero-sleep",
+        "statement": 43,
+        "roots": 680236,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1376221568,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "anyio-sleep",
+        "ruleId": "ruff-async116-long-sleep-not-forever",
+        "statement": 45,
+        "roots": 680236,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1364566324,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "trio-sleep",
+        "ruleId": "ruff-async116-long-sleep-not-forever",
+        "statement": 44,
+        "roots": 680236,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1354856199,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "uncapitalized-environment-variables",
+        "ruleId": "ruff-sim112-uncapitalized-environment-variables",
+        "statement": 135,
+        "roots": 537292,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1315416665,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "re-sub-positional-args",
+        "ruleId": "ruff-b034-re-sub-positional-args",
+        "statement": 75,
+        "roots": 680236,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1175602197,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "loop-variable-overrides-iterator",
+        "ruleId": "ruff-b020-loop-variable-overrides-iterator",
+        "statement": 65,
+        "roots": 272459,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1107020324,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "zip-without-explicit-strict",
+        "ruleId": "ruff-b905-zip-without-explicit-strict",
+        "statement": 78,
+        "roots": 680236,
+        "rows": 9,
+        "filters": 23,
+        "native_cpu_ns": 1015317472,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "request-without-timeout",
+        "ruleId": "bandit-b113-request-without-timeout",
+        "statement": 4,
+        "roots": 690248,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 915461971,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "is-literal",
+        "ruleId": "ruff-f632-is-literal",
+        "statement": 106,
+        "roots": 969740,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 873473104,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "duplicate-value",
+        "ruleId": "ruff-b033-duplicate-value",
+        "statement": 74,
+        "roots": 876461,
+        "rows": 28,
+        "filters": 23,
+        "native_cpu_ns": 830884485,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "raise-literal",
+        "ruleId": "ruff-b016-raise-literal",
+        "statement": 64,
+        "roots": 876461,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 770327610,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B502",
+        "ruleId": "bandit-b502-ssl-with-bad-version",
+        "statement": 34,
+        "roots": 687681,
+        "rows": 715,
+        "filters": 23,
+        "native_cpu_ns": 707557676,
+        "logical_unknown_roots": 715
+      },
+      {
+        "clauseId": "getattr-with-constant",
+        "ruleId": "ruff-b009-get-attr-with-constant",
+        "statement": 59,
+        "roots": 681316,
+        "rows": 591,
+        "filters": 23,
+        "native_cpu_ns": 699050052,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "debugger-call",
+        "ruleId": "ruff-t100-debugger",
+        "statement": 145,
+        "roots": 680236,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 680795064,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "yoda-conditions",
+        "ruleId": "ruff-sim300-yoda-conditions",
+        "statement": 141,
+        "roots": 148751,
+        "rows": 62,
+        "filters": 23,
+        "native_cpu_ns": 651702694,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unreliable-callable-check",
+        "ruleId": "ruff-b004-unreliable-callable-check",
+        "statement": 55,
+        "roots": 687681,
+        "rows": 3,
+        "filters": 23,
+        "native_cpu_ns": 637603093,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit-b606",
+        "ruleId": "bandit-b606-start-process-with-no-shell",
+        "statement": 37,
+        "roots": 687681,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 604385407,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B311",
+        "ruleId": "bandit-b311-random",
+        "statement": 13,
+        "roots": 687681,
+        "rows": 95,
+        "filters": 23,
+        "native_cpu_ns": 574479650,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unsafe-deserialization",
+        "ruleId": "bandit-b301-pickle",
+        "statement": 5,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 569046729,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "debugger-import",
+        "ruleId": "ruff-t100-debugger",
+        "statement": 144,
+        "roots": 76560,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 566675130,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B310",
+        "ruleId": "bandit-b310-urllib-urlopen",
+        "statement": 12,
+        "roots": 687681,
+        "rows": 7,
+        "filters": 23,
+        "native_cpu_ns": 561555290,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B306",
+        "ruleId": "bandit-b306-mktemp-q",
+        "statement": 9,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 538691412,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B313",
+        "ruleId": "bandit-b313-xml-bad-celementtree",
+        "statement": 15,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 538339989,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B314",
+        "ruleId": "bandit-b314-xml-bad-elementtree",
+        "statement": 16,
+        "roots": 687681,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 537322961,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B318",
+        "ruleId": "bandit-b318-xml-bad-minidom",
+        "statement": 20,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 528918464,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B316",
+        "ruleId": "bandit-b316-xml-bad-expatbuilder",
+        "statement": 18,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 528802165,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B302",
+        "ruleId": "bandit-b302-marshal",
+        "statement": 6,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 526334817,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B321",
+        "ruleId": "bandit-b321-ftplib",
+        "statement": 22,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 526006047,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B323",
+        "ruleId": "bandit-b323-unverified-context",
+        "statement": 23,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 524705013,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B305",
+        "ruleId": "bandit-b305-cipher-modes",
+        "statement": 8,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 524645854,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B315",
+        "ruleId": "bandit-b315-xml-bad-expatreader",
+        "statement": 17,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 521935094,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B319",
+        "ruleId": "bandit-b319-xml-bad-pulldom",
+        "statement": 21,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 520391701,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B308",
+        "ruleId": "bandit-b308-mark-safe",
+        "statement": 11,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 518356549,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B312",
+        "ruleId": "bandit-b312-telnetlib",
+        "statement": 14,
+        "roots": 687681,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 518147473,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "mutable-contextvar-default",
+        "ruleId": "ruff-b039-mutable-contextvar-default",
+        "statement": 76,
+        "roots": 789657,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 497942504,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "eval-call",
+        "ruleId": "bandit-b307-eval",
+        "statement": 10,
+        "roots": 421910,
+        "rows": 2,
+        "filters": 23,
+        "native_cpu_ns": 480597342,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "forward-annotation-await-outside-function",
+        "ruleId": "ruff-f722-forward-annotation-syntax-error",
+        "statement": 114,
+        "roots": 551447,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 423706314,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "forward-annotation-semantic-syntax-error",
+        "ruleId": "ruff-f722-forward-annotation-syntax-error",
+        "statement": 113,
+        "roots": 551447,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 416444887,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "duplicate-class-field-definition",
+        "ruleId": "ruff-pie794-duplicate-class-field-definition",
+        "statement": 119,
+        "roots": 31331,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 400750668,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "weak-hash",
+        "ruleId": "bandit-b303-md5",
+        "statement": 7,
+        "roots": 690248,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 395851815,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "forward-annotation-syntax-error",
+        "ruleId": "ruff-f722-forward-annotation-syntax-error",
+        "statement": 112,
+        "roots": 551447,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 364141760,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "type-comparison",
+        "ruleId": "ruff-e721-type-comparison",
+        "statement": 80,
+        "roots": 447377,
+        "rows": 4,
+        "filters": 23,
+        "native_cpu_ns": 360507524,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "set-attr-with-constant",
+        "ruleId": "ruff-b010-set-attr-with-constant",
+        "statement": 60,
+        "roots": 681316,
+        "rows": 400,
+        "filters": 23,
+        "native_cpu_ns": 352563458,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "useless-contextlib-suppress",
+        "ruleId": "ruff-b022-useless-contextlib-suppress",
+        "statement": 67,
+        "roots": 202806,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 308051823,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "future-feature-not-defined",
+        "ruleId": "ruff-f407-future-feature-not-defined",
+        "statement": 87,
+        "roots": 196881,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 265374893,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "multi-value-repeated-key-literal",
+        "ruleId": "ruff-f601-multi-value-repeated-key-literal",
+        "statement": 103,
+        "roots": 96848,
+        "rows": 2,
+        "filters": 23,
+        "native_cpu_ns": 236586252,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "compare-with-tuple",
+        "ruleId": "ruff-sim109-compare-with-tuple",
+        "statement": 134,
+        "roots": 16621,
+        "rows": 2,
+        "filters": 23,
+        "native_cpu_ns": 189465266,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "undefined-export",
+        "ruleId": "ruff-f822-undefined-export",
+        "statement": 115,
+        "roots": 545596,
+        "rows": 10,
+        "filters": 23,
+        "native_cpu_ns": 180834999,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "duplicate-isinstance-call",
+        "ruleId": "ruff-sim101-duplicate-isinstance-call",
+        "statement": 132,
+        "roots": 27376,
+        "rows": 17,
+        "filters": 23,
+        "native_cpu_ns": 166496617,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "none-comparison",
+        "ruleId": "ruff-e711-none-comparison",
+        "statement": 79,
+        "roots": 168954,
+        "rows": 58,
+        "filters": 23,
+        "native_cpu_ns": 156440066,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unnecessary-return-none",
+        "ruleId": "ruff-ret501-unnecessary-return-none",
+        "statement": 126,
+        "roots": 5716,
+        "rows": 28,
+        "filters": 23,
+        "native_cpu_ns": 119990645,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bandit:B317",
+        "ruleId": "bandit-b317-xml-bad-sax",
+        "statement": 19,
+        "roots": 91972,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 98762048,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "implicit-return-value",
+        "ruleId": "ruff-ret502-implicit-return-value",
+        "statement": 127,
+        "roots": 2979,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 92452915,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "return-outside-function",
+        "ruleId": "ruff-f706-return-outside-function",
+        "statement": 110,
+        "roots": 91682,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 62906235,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "multiple-starred-expressions",
+        "ruleId": "ruff-f622-multiple-starred-expressions",
+        "statement": 105,
+        "roots": 91901,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 57039106,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "cancel-scope-no-checkpoint",
+        "ruleId": "ruff-async100-cancel-scope-no-checkpoint",
+        "statement": 40,
+        "roots": 12780,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 56429965,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "redundant-tuple-in-exception-handler",
+        "ruleId": "ruff-b013-redundant-tuple-in-exception-handler",
+        "statement": 62,
+        "roots": 30570,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 52132550,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "non-unique-enums",
+        "ruleId": "ruff-pie796-non-unique-enums",
+        "statement": 120,
+        "roots": 18584,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 50448203,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "f-string-docstring",
+        "ruleId": "ruff-b021-f-string-docstring",
+        "statement": 66,
+        "roots": 63009,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 50366424,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "raise-without-from-inside-except",
+        "ruleId": "ruff-b904-raise-without-from-inside-except",
+        "statement": 77,
+        "roots": 13732,
+        "rows": 10,
+        "filters": 23,
+        "native_cpu_ns": 28965910,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "multiple-starts-ends-with",
+        "ruleId": "ruff-pie810-multiple-starts-ends-with",
+        "statement": 125,
+        "roots": 15105,
+        "rows": 29,
+        "filters": 23,
+        "native_cpu_ns": 28905432,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "f-string-missing-placeholders",
+        "ruleId": "ruff-f541-f-string-missing-placeholders",
+        "statement": 102,
+        "roots": 32361,
+        "rows": 14,
+        "filters": 23,
+        "native_cpu_ns": 21148909,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "percent-format-invalid-format",
+        "ruleId": "ruff-f501-percent-format-invalid-format",
+        "statement": 88,
+        "roots": 64760,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 20610919,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "percent-format-star-requires-sequence",
+        "ruleId": "ruff-f508-percent-format-star-requires-sequence",
+        "statement": 95,
+        "roots": 64760,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 19775800,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "percent-format-unsupported-format-character",
+        "ruleId": "ruff-f509-percent-format-unsupported-format-character",
+        "statement": 96,
+        "roots": 64760,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 19453115,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "percent-format-positional-count-mismatch",
+        "ruleId": "ruff-f507-percent-format-positional-count-mismatch",
+        "statement": 94,
+        "roots": 64760,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 19291220,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "percent-format-expected-mapping",
+        "ruleId": "ruff-f502-percent-format-expected-mapping",
+        "statement": 89,
+        "roots": 64760,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 19155603,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "percent-format-expected-sequence",
+        "ruleId": "ruff-f503-percent-format-expected-sequence",
+        "statement": 90,
+        "roots": 64760,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 19031848,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "percent-format-missing-argument",
+        "ruleId": "ruff-f505-percent-format-missing-argument",
+        "statement": 92,
+        "roots": 64760,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 18891259,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "percent-format-mixed-positional-and-named",
+        "ruleId": "ruff-f506-percent-format-mixed-positional-and-named",
+        "statement": 93,
+        "roots": 64760,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 18843592,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "percent-format-extra-named-arguments",
+        "ruleId": "ruff-f504-percent-format-extra-named-arguments",
+        "statement": 91,
+        "roots": 64760,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 18483781,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unnecessary-spread",
+        "ruleId": "ruff-pie800-unnecessary-spread",
+        "statement": 122,
+        "roots": 31937,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 17887726,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "assert-false",
+        "ruleId": "ruff-b011-assert-false",
+        "statement": 61,
+        "roots": 21894,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 13643390,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "enumerate-for-loop",
+        "ruleId": "ruff-sim113-enumerate-for-loop",
+        "statement": 136,
+        "roots": 201,
+        "rows": 3,
+        "filters": 23,
+        "native_cpu_ns": 12749124,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "duplicate-handler-exception",
+        "ruleId": "ruff-b014-duplicate-handler-exception",
+        "statement": 63,
+        "roots": 10789,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 10464080,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "duplicate-try-block-exception",
+        "ruleId": "ruff-b025-duplicate-try-block-exception",
+        "statement": 69,
+        "roots": 3331,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 7901161,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "continue-outside-loop",
+        "ruleId": "ruff-f702-continue-outside-loop",
+        "statement": 109,
+        "roots": 5346,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 5373679,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "multi-value-repeated-key-variable",
+        "ruleId": "ruff-f602-multi-value-repeated-key-variable",
+        "statement": 104,
+        "roots": 454,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 2493873,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "strip-with-multi-characters",
+        "ruleId": "ruff-b005-strip-with-multi-characters",
+        "statement": 56,
+        "roots": 196,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 2263417,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "break-outside-loop",
+        "ruleId": "ruff-f701-break-outside-loop",
+        "statement": 108,
+        "roots": 737,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 1403161,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "try-except-pass",
+        "ruleId": "bandit-b110-try-except-pass",
+        "statement": 2,
+        "roots": 383,
+        "rows": 85,
+        "filters": 23,
+        "native_cpu_ns": 1176342,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "superfluous-else-return",
+        "ruleId": "ruff-ret505-superfluous-else-return",
+        "statement": 128,
+        "roots": 21,
+        "rows": 20,
+        "filters": 23,
+        "native_cpu_ns": 1063503,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "django-extra-used",
+        "ruleId": "bandit-b610-django-extra-used",
+        "statement": 38,
+        "roots": 92,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 846829,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "assignment-to-os-environ",
+        "ruleId": "ruff-b003-assignment-to-os-environ",
+        "statement": 54,
+        "roots": 598,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 677627,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "double-negation",
+        "ruleId": "ruff-sim208-double-negation",
+        "statement": 137,
+        "roots": 256,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 521039,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "try-except-continue",
+        "ruleId": "bandit-b112-try-except-continue",
+        "statement": 3,
+        "roots": 213,
+        "rows": 16,
+        "filters": 23,
+        "native_cpu_ns": 497832,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "undefined-local-with-import-star",
+        "ruleId": "ruff-f403-undefined-local-with-import-star",
+        "statement": 84,
+        "roots": 25,
+        "rows": 25,
+        "filters": 23,
+        "native_cpu_ns": 482501,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unary-prefix-decrement",
+        "ruleId": "ruff-b002-unary-prefix-increment-decrement",
+        "statement": 53,
+        "roots": 25,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 476791,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unnecessary-dict-kwargs",
+        "ruleId": "ruff-pie804-unnecessary-dict-kwargs",
+        "statement": 123,
+        "roots": 48,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 377167,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "string-dot-format-invalid-format",
+        "ruleId": "ruff-f521-string-dot-format-invalid-format",
+        "statement": 97,
+        "roots": 88,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 349752,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "split-static-string",
+        "ruleId": "ruff-sim905-split-static-string",
+        "statement": 142,
+        "roots": 3,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 340791,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "superfluous-else-raise",
+        "ruleId": "ruff-ret506-superfluous-else-raise",
+        "statement": 129,
+        "roots": 2,
+        "rows": 2,
+        "filters": 23,
+        "native_cpu_ns": 310708,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "reimplemented-container-builtin",
+        "ruleId": "ruff-pie807-reimplemented-container-builtin",
+        "statement": 124,
+        "roots": 74,
+        "rows": 4,
+        "filters": 23,
+        "native_cpu_ns": 257958,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "raise-not-implemented",
+        "ruleId": "ruff-f901-raise-not-implemented",
+        "statement": 118,
+        "roots": 53,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 246541,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "dict-get-with-none-default",
+        "ruleId": "ruff-sim910-dict-get-with-none-default",
+        "statement": 143,
+        "roots": 4,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 220002,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "string-dot-format-mixing-automatic",
+        "ruleId": "ruff-f525-string-dot-format-mixing-automatic",
+        "statement": 101,
+        "roots": 88,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 188207,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "string-dot-format-extra-named-arguments",
+        "ruleId": "ruff-f522-string-dot-format-extra-named-arguments",
+        "statement": 98,
+        "roots": 88,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 170418,
+        "logical_unknown_roots": 1
+      },
+      {
+        "clauseId": "except-with-empty-tuple",
+        "ruleId": "ruff-b029-except-with-empty-tuple",
+        "statement": 72,
+        "roots": 10,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 164792,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unintentional-type-annotation",
+        "ruleId": "ruff-b032-unintentional-type-annotation",
+        "statement": 73,
+        "roots": 11,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 152083,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "string-dot-format-missing-arguments",
+        "ruleId": "ruff-f524-string-dot-format-missing-arguments",
+        "statement": 100,
+        "roots": 88,
+        "rows": 2,
+        "filters": 23,
+        "native_cpu_ns": 131458,
+        "logical_unknown_roots": 2
+      },
+      {
+        "clauseId": "string-dot-format-extra-positional-arguments",
+        "ruleId": "ruff-f523-string-dot-format-extra-positional-arguments",
+        "statement": 99,
+        "roots": 88,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 128629,
+        "logical_unknown_roots": 1
+      },
+      {
+        "clauseId": "if-expr-with-twisted-arms",
+        "ruleId": "ruff-sim212-if-expr-with-twisted-arms",
+        "statement": 140,
+        "roots": 33,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 123542,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "superfluous-else-break",
+        "ruleId": "ruff-ret508-superfluous-else-break",
+        "statement": 131,
+        "roots": 1,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 36125,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "if-expr-with-true-false",
+        "ruleId": "ruff-sim210-if-expr-with-true-false",
+        "statement": 138,
+        "roots": 2,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 20958,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "default-except-not-last",
+        "ruleId": "ruff-f707-default-except-not-last",
+        "statement": 111,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 11790,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B405",
+        "ruleId": "bandit-b405-import-xml-etree",
+        "statement": 26,
+        "roots": 1,
+        "rows": 1,
+        "filters": 23,
+        "native_cpu_ns": 9792,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "if-expr-with-false-true",
+        "ruleId": "ruff-sim211-if-expr-with-false-true",
+        "statement": 139,
+        "roots": 1,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 6500,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "undefined-local-with-nested-import-star-usage",
+        "ruleId": "ruff-f406-undefined-local-with-nested-import-star-usage",
+        "statement": 86,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 5585,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "ambiguous-class-name",
+        "ruleId": "ruff-e742-ambiguous-class-name",
+        "statement": 82,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 5335,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "ambiguous-function-name",
+        "ruleId": "ruff-e743-ambiguous-function-name",
+        "statement": 83,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 4416,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "assert-used",
+        "ruleId": "bandit-b101-assert-used",
+        "statement": 0,
+        "roots": 0,
+        "rows": 0,
+        "filters": 0,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B401",
+        "ruleId": "bandit-b401-import-telnetlib",
+        "statement": 24,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B402",
+        "ruleId": "bandit-b402-import-ftplib",
+        "statement": 25,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B406",
+        "ruleId": "bandit-b406-import-xml-sax",
+        "statement": 27,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B407",
+        "ruleId": "bandit-b407-import-xml-expat",
+        "statement": 28,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B408",
+        "ruleId": "bandit-b408-import-xml-minidom",
+        "statement": 29,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B409",
+        "ruleId": "bandit-b409-import-xml-pulldom",
+        "statement": 30,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B411",
+        "ruleId": "bandit-b411-import-xmlrpclib",
+        "statement": 31,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B413",
+        "ruleId": "bandit-b413-import-pycrypto",
+        "statement": 32,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "B415",
+        "ruleId": "bandit-b415-import-pyghmi",
+        "statement": 33,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "unary-prefix-increment",
+        "ruleId": "ruff-b002-unary-prefix-increment-decrement",
+        "statement": 52,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "star-arg-unpacking-after-keyword-arg",
+        "ruleId": "ruff-b026-star-arg-unpacking-after-keyword-arg",
+        "statement": 70,
+        "roots": 0,
+        "rows": 0,
+        "filters": 0,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "bare-except",
+        "ruleId": "ruff-e722-bare-except",
+        "statement": 81,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "non-unique-enums-stub",
+        "ruleId": "ruff-pie796-non-unique-enums",
+        "statement": 121,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "superfluous-else-continue",
+        "ruleId": "ruff-ret507-superfluous-else-continue",
+        "statement": 130,
+        "roots": 0,
+        "rows": 0,
+        "filters": 23,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      },
+      {
+        "clauseId": "return-in-try-except-finally",
+        "ruleId": "ruff-sim107-return-in-try-except-finally",
+        "statement": 133,
+        "roots": 0,
+        "rows": 0,
+        "filters": 0,
+        "native_cpu_ns": 0,
+        "logical_unknown_roots": 0
+      }
+    ],
+    "sixAsyncNativeCpuNs": 14685081771,
+    "sixAsyncRoots": 13916702
+  },
+  "catalogExperiment": {
+    "files": 597,
+    "rules": 146,
+    "scope": "597 catalog fixtures; matching diagnostics, not whole-job speedups",
+    "memo": {
+      "baselineMedianCpuNs": 1286605042,
+      "sharedMedianCpuNs": 1019490834,
+      "sharedOverBaseline": 0.7923883404150378
+    },
+    "timingScope": {
+      "memo": "Native file-first runner in both variants; includes parsing; only memo lifetime changes.",
+      "async": "Includes producer, consumer-demand construction, and consumers; excludes preparation and common input-domain construction.",
+      "sqlArms": "One execution per variant, with isolated output widths; CPU is a single sample, VM counts are deterministic.",
+      "wholeJobImpact": "Not measured for these diagnostic alternatives."
+    },
+    "isolatedArmsByVm": [
+      {
+        "id": 111,
+        "rule": "ruff-f707-default-except-not-last:default-except-not-last",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 1707968,
+        "baselineCpuNs": 25363625
+      },
+      {
+        "id": 68,
+        "rule": "ruff-b023-function-uses-loop-variable:function-uses-loop-variable",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 401215,
+        "baselineCpuNs": 19933167
+      },
+      {
+        "id": 71,
+        "rule": "ruff-b028-no-explicit-stacklevel:no-explicit-stacklevel",
+        "kindPredicateImpliedByAnchors": true,
+        "baselineVm": 362379,
+        "baselineCpuNs": 33203291,
+        "withoutRedundantFilterVm": 91,
+        "withoutRedundantFilterCpuNs": 32586583
+      },
+      {
+        "id": 83,
+        "rule": "ruff-e743-ambiguous-function-name:ambiguous-function-name",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 282424,
+        "baselineCpuNs": 6941583
+      },
+      {
+        "id": 82,
+        "rule": "ruff-e742-ambiguous-class-name:ambiguous-class-name",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 277009,
+        "baselineCpuNs": 6566166
+      },
+      {
+        "id": 104,
+        "rule": "ruff-f602-multi-value-repeated-key-variable:multi-value-repeated-key-variable",
+        "kindPredicateImpliedByAnchors": true,
+        "baselineVm": 275858,
+        "baselineCpuNs": 21553291,
+        "withoutRedundantFilterVm": 307,
+        "withoutRedundantFilterCpuNs": 16988041
+      },
+      {
+        "id": 103,
+        "rule": "ruff-f601-multi-value-repeated-key-literal:multi-value-repeated-key-literal",
+        "kindPredicateImpliedByAnchors": true,
+        "baselineVm": 113413,
+        "baselineCpuNs": 16591417,
+        "withoutRedundantFilterVm": 440,
+        "withoutRedundantFilterCpuNs": 14596042
+      },
+      {
+        "id": 119,
+        "rule": "ruff-pie794-duplicate-class-field-definition:duplicate-class-field-definition",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 106524,
+        "baselineCpuNs": 5174458
+      },
+      {
+        "id": 135,
+        "rule": "ruff-sim112-uncapitalized-environment-variables:uncapitalized-environment-variables",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 97067,
+        "baselineCpuNs": 14260292
+      },
+      {
+        "id": 115,
+        "rule": "ruff-f822-undefined-export:undefined-export",
+        "kindPredicateImpliedByAnchors": true,
+        "baselineVm": 54178,
+        "baselineCpuNs": 12410209,
+        "withoutRedundantFilterVm": 200,
+        "withoutRedundantFilterCpuNs": 11388250
+      },
+      {
+        "id": 73,
+        "rule": "ruff-b032-unintentional-type-annotation:unintentional-type-annotation",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 36672,
+        "baselineCpuNs": 3867666
+      },
+      {
+        "id": 133,
+        "rule": "ruff-sim107-return-in-try-except-finally:return-in-try-except-finally",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 25999,
+        "baselineCpuNs": 2298875
+      },
+      {
+        "id": 86,
+        "rule": "ruff-f406-undefined-local-with-nested-import-star-usage:undefined-local-with-nested-import-star-usage",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 8678,
+        "baselineCpuNs": 2359792
+      },
+      {
+        "id": 124,
+        "rule": "ruff-pie807-reimplemented-container-builtin:reimplemented-container-builtin",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 4634,
+        "baselineCpuNs": 2111333
+      },
+      {
+        "id": 70,
+        "rule": "ruff-b026-star-arg-unpacking-after-keyword-arg:star-arg-unpacking-after-keyword-arg",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 2254,
+        "baselineCpuNs": 2002958
+      },
+      {
+        "id": 123,
+        "rule": "ruff-pie804-unnecessary-dict-kwargs:unnecessary-dict-kwargs",
+        "kindPredicateImpliedByAnchors": false,
+        "baselineVm": 1589,
+        "baselineCpuNs": 2367375
+      },
+      {
+        "id": 0,
+        "rule": "bandit-b101-assert-used:assert-used",
+        "kindPredicateImpliedByAnchors": true,
+        "baselineVm": 975,
+        "baselineCpuNs": 2518333,
+        "withoutRedundantFilterVm": 491,
+        "withoutRedundantFilterCpuNs": 1938917
+      }
+    ],
+    "async": {
+      "baselineMedianCpuNs": 156688000,
+      "sharedMedianCpuNs": 29419958,
+      "sharedOverBaseline": 0.18776139844787093,
+      "rules": [
+        "ruff-async210-blocking-http-call-in-async-function",
+        "ruff-async221-run-process-in-async-function",
+        "ruff-async222-wait-for-process-in-async-function",
+        "ruff-async230-blocking-open-call-in-async-function",
+        "ruff-async250-blocking-input-in-async-function",
+        "ruff-async251-blocking-sleep-in-async-function"
+      ],
+      "inputRowsPerRule": [
+        24151,
+        24151,
+        24151,
+        24151,
+        24151,
+        24151
+      ],
+      "identicalDomainPairs": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          0,
+          5
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          4,
+          5
+        ]
+      ],
+      "unionRows": 24151,
+      "admitted": 492,
+      "baselineRoots": 144906,
+      "producerRoots": 24151,
+      "residualRoots": 2952
+    }
+  }
+}

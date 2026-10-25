@@ -371,3 +371,49 @@ Matching uses 83.56 seconds of CPU, including 79.50 seconds inside native bounda
 Final SQL-suite result: 176 passed, zero failed, and 23 explicitly ignored external or diagnostic cases.
 The focused fragment checks also pass all 16 cases. Formatting and the production library check pass.
 The evidence separates the workload executable from the final test executable and records the later test-only source changes.
+
+## Joint SQL and native batch audit
+
+The integration commit `c17d2e47` is published on `jeremy/sql-capture-demand-spikes` for review.
+The subsequent investigation examines repeated native work and SQL admission together.
+The [audit and implementation plan](sql-matcher-batch-optimization.md) records the findings, contracts, and remaining experiments.
+
+The full integration trace contains 73,199,829 native root evaluations across 3,289 fragment filters.
+The compiler batches statement publication, but each native virtual table still owns one clause.
+Of 146 clauses, 129 have no SQL prefilter; 14 combine SQL predicates with native matching.
+Matching CPU is 83.56 seconds, including 79.50 seconds within native boundaries.
+The trace's planner statistics are empty. It does not measure statistics-driven planning.
+
+A new ignored diagnostic compares memo lifetime, shared async prefixes, and individual SQL arms on the 597 catalog fixtures.
+It uses three alternating pairs for the memo and producer comparisons, with preparation outside the producer timers.
+Every comparison checks nodes, captures, order, and resource-failure outcomes.
+
+Keeping the native file memo across clauses reduces median catalog CPU from 1,286.61 ms to 1,019.49 ms.
+The native matcher already supports stable cross-rule utility identities. The SQL fragment's memo lifetime prevents that reuse.
+This experiment changes memo lifetime within the native file-first runner. It is not a production SQL speed measurement.
+
+Six async rules have the same capture-free prefix and exactly equal candidate domains on these fixtures.
+One shared prefix admits 492 of 24,151 nodes. Six residual matchers then process 2,952 roots.
+Total root evaluations fall from 144,906 to 27,103. Median CPU falls from 156.69 ms to 29.42 ms.
+The timer includes producer execution, demand construction, and consumer execution.
+Shared input-domain construction precedes the repetitions. Its production cost still needs a whole-job measurement.
+All results agree, with no resource failures. Full-workload domains differ, so this gain cannot be extrapolated directly.
+
+Five SQL predicates are provably implied by their anchor kind sets, including compound and negated kind expressions.
+Removing them in the diagnostic reduces their combined VM count from 806,803 to 1,529.
+B028 falls from 362,379 VM instructions to 91, but sampled CPU changes only from 33.20 ms to 32.59 ms.
+This result reinforces the need to measure CPU alongside VM instructions.
+
+F707 consumes the most VM instructions among isolated SQL arms on these fixtures: 1,707,968.
+A handler-first relation is the next shape to measure. Efficient candidate-domain intersection is a missing virtual-table capability.
+Existing ancestor and sibling joins already use native navigation paths.
+
+The recommended implementation combines a multi-rule native boundary, file-local memo reuse, shared selective producers, and SQL-owned planning statistics.
+It preserves typed outcomes and native sequential semantics. No SQL interpreter is needed.
+The diagnostic does not alter production execution or add runtime feature switches.
+The existing whole-job CPU, memory, parity, and 100-statement gates remain unchanged.
+
+The [summary](../benchmark/sql-matcher-batch-audit.json) separates full-job evidence from catalog experiments.
+The [compressed trace](../benchmark/sql-matcher-batch-audit.json.gz) retains measured plans, metrics, source hashes, and the diagnostic executable hash.
+Run `fragment_batch_optimization_audit` with `--ignored` and `RERAIL_FRAGMENT_BATCH_AUDIT` set to its output path.
+The diagnostic passes. The existing catalog integration check also compares all 87,162 rule/file pairs against native.

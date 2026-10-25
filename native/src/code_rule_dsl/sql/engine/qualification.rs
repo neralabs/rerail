@@ -4,6 +4,8 @@ use crate::code_rule_dsl::model::{ClauseKind, Query};
 use ast_grep_core::{meta_var::MetaVarEnv, source::Content};
 use std::path::{Path, PathBuf};
 type Fixture = crate::code_rule_dsl::sql::relational::cutover_tests::execution::Fixture;
+#[path = "batch_audit.rs"]
+mod batch_audit;
 struct Rule {
     name: String,
     grammar: GrammarMatcher,
@@ -68,6 +70,9 @@ fn env_match(node: u32, env: &MetaVarEnv<'_, TapeDoc>, template: &planning::Temp
     }
 }
 fn native(catalog: &[Rule], fixtures: &[Fixture]) -> Vec<Vec<FileOutcome>> {
+    native_memo(catalog, fixtures, true)
+}
+fn native_memo(catalog: &[Rule], fixtures: &[Fixture], share: bool) -> Vec<Vec<FileOutcome>> {
     let templates = catalog
         .iter()
         .map(|r| planning::Template::compile(&r.grammar, r.each.as_deref()))
@@ -95,32 +100,39 @@ fn native(catalog: &[Rule], fixtures: &[Fixture]) -> Vec<Vec<FileOutcome>> {
                 }
                 let out = &mut output[id][file];
                 let mut work = usize::MAX;
-                let result = matcher::run_clause(
-                    &tree,
-                    &r.grammar,
-                    None,
-                    tree.root().get_doc().transducer_len(),
-                    &mut work,
-                    |node, env, work| {
-                        if let Some(each) = &r.each {
-                            matcher::enumerate(
-                                &tree,
-                                &r.grammar,
-                                node,
-                                env,
-                                work,
-                                each,
-                                |env, _| {
-                                    out.matches.push(env_match(node, &env, &templates[id]));
-                                    Ok(true)
-                                },
-                            )
-                        } else {
-                            out.matches.push(env_match(node, &env, &templates[id]));
-                            Ok(true)
-                        }
-                    },
-                );
+                let mut execute = || {
+                    matcher::run_clause(
+                        &tree,
+                        &r.grammar,
+                        None,
+                        tree.root().get_doc().transducer_len(),
+                        &mut work,
+                        |node, env, work| {
+                            if let Some(each) = &r.each {
+                                matcher::enumerate(
+                                    &tree,
+                                    &r.grammar,
+                                    node,
+                                    env,
+                                    work,
+                                    each,
+                                    |env, _| {
+                                        out.matches.push(env_match(node, &env, &templates[id]));
+                                        Ok(true)
+                                    },
+                                )
+                            } else {
+                                out.matches.push(env_match(node, &env, &templates[id]));
+                                Ok(true)
+                            }
+                        },
+                    )
+                };
+                let result = if share {
+                    execute()
+                } else {
+                    matcher::with_file_memo(&tree, execute)
+                };
                 let stopped = match result {
                     Ok(Ok(())) => None,
                     Ok(Err(s)) | Err(s) => Some(s),
