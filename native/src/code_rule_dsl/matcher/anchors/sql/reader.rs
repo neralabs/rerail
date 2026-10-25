@@ -76,6 +76,9 @@ pub(super) struct Counters {
     pub decoded_nodes: u64,
     pub decoded_spans: u64,
     pub regex_compiles: u64,
+    pub source_batches: u64,
+    pub source_input_rows: u64,
+    pub source_output_rows: u64,
 }
 
 #[cfg(feature = "code-rule-profile")]
@@ -91,6 +94,9 @@ impl Counters {
             decoded_nodes: self.decoded_nodes - before.decoded_nodes,
             decoded_spans: self.decoded_spans - before.decoded_spans,
             regex_compiles: self.regex_compiles - before.regex_compiles,
+            source_batches: self.source_batches - before.source_batches,
+            source_input_rows: self.source_input_rows - before.source_input_rows,
+            source_output_rows: self.source_output_rows - before.source_output_rows,
         }
     }
 }
@@ -140,6 +146,11 @@ fn invalid(message: &str) -> rusqlite::Error {
 }
 
 impl Reader {
+    /// Borrow this connection for a whole typed frame read. The wrapper never closes it.
+    pub(super) fn connection(&self) -> Result<Connection> {
+        // SAFETY: the owning connection is executing this callback on the same thread.
+        unsafe { Connection::from_handle(self.database) }
+    }
     fn blob(&mut self, fid: i64, column: Column) -> Result<&Blob> {
         let key = (fid, column);
         if !self.handles.contains_key(&key) {

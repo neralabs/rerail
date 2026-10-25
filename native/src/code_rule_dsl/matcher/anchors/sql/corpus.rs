@@ -64,6 +64,41 @@ mod owner_tests;
 mod planning_tests;
 
 impl Corpus {
+    pub(in crate::code_rule_dsl) fn memory_profile(&self) -> serde_json::Value {
+        let guard = self.state.lock();
+        let Some(state) = guard.as_ref() else {
+            return serde_json::json!({"templates":0,"sqlBytes":0,"graphBytes":0,"candidateBytes":0});
+        };
+        let sql = state
+            .templates
+            .values()
+            .map(|t| {
+                t.statement
+                    .stages
+                    .iter()
+                    .map(|s| s.sql.capacity())
+                    .sum::<usize>()
+                    + t.statement
+                        .queries
+                        .iter()
+                        .map(String::capacity)
+                        .sum::<usize>()
+            })
+            .sum::<usize>();
+        let graph = state
+            .templates
+            .values()
+            .map(|t| {
+                t.statement
+                    .graph
+                    .iter()
+                    .map(String::capacity)
+                    .sum::<usize>()
+            })
+            .sum::<usize>();
+        serde_json::json!({"templates":state.templates.len(),"sqlBytes":sql,"graphBytes":graph,"candidateBytes":state.files.values().map(|f|f.bytes).sum::<usize>(),"files":state.files.len(),"plans":state.plans.len(),"idleBytesEstimate":state.idle_bytes})
+    }
+
     pub(in crate::code_rule_dsl) fn sql_backing(
         &self,
     ) -> crate::code_rule_dsl::relational::pool::Backing {

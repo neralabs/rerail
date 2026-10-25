@@ -8,6 +8,7 @@ import { capabilitiesJson } from "../../../conformance/engine.js";
 const { values } = parseArgs({ options: {
   recording: { type: "string" }, policies: { type: "string", default: "packs/data-layer/candidates/rules" },
   files: { type: "string", default: "128" }, rules: { type: "string", default: "50" }, output: { type: "string" },
+  "memory-census": { type: "boolean", default: false },
 } });
 if (!values.recording || !values.output) throw new Error("Required: --recording FILE --output FILE [--files N] [--rules 50|60]");
 const bytes = readFileSync(values.recording);
@@ -34,7 +35,17 @@ const phase = (name: string): void => {
 };
 const native = loadNativeBinding(), workspace = new native.CodeRuleDslWorkspace();
 const policies: Record<string, string> = {};
+const memoryCheckpoints: unknown[] = [];
+const memoryCheckpoint = (name: string): void => {
+  if (!values["memory-census"]) return;
+  const cpu = process.cpuUsage(), started = performance.now();
+  const owned: unknown = JSON.parse(workspace.memoryProfile());
+  const elapsed = process.cpuUsage(cpu);
+  memoryCheckpoints.push({ name, process: process.memoryUsage(), owned, native: JSON.parse(native.nativeMemoryProfile()),
+    wallMs: performance.now() - started, cpuMs: (elapsed.user + elapsed.system) / 1000 });
+};
 try {
+  memoryCheckpoint("empty");
   phase("compile");
   const compileCpu = process.cpuUsage(), compileStarted = performance.now();
   for (const { check } of recording.events.slice(0, rules)) {
@@ -44,6 +55,7 @@ try {
     policies[name] = rule.digest(); workspace.addCodeRule(rule);
   }
   const compilationMs = performance.now() - compileStarted, compilationCpu = process.cpuUsage(compileCpu);
+  memoryCheckpoint("compiled");
   phase("ingestion");
   const started = performance.now(), cpu = process.cpuUsage();
   let batch: typeof files = [], size = 0, revision = 0;
@@ -57,6 +69,7 @@ try {
   }
   if (batch.length) await send();
   const ingestionMs = performance.now() - started, ingestionCpu = process.cpuUsage(cpu);
+  memoryCheckpoint("ingested");
   phase("report");
   const failures: unknown[] = [];
   for (let cursor = 0; ;) {
@@ -75,6 +88,7 @@ try {
     compilationMs, compilationCpuMs: (compilationCpu.user + compilationCpu.system) / 1000,
     ingestionMs, ingestionCpuMs: (ingestionCpu.user + ingestionCpu.system) / 1000,
     driverPeakRssBytes: process.resourceUsage().maxRSS * 1024, localFailures: failures,
+    memoryCheckpoints,
   };
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, policyDigests: undefined, localFailures: failures.length }));

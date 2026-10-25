@@ -344,6 +344,12 @@ pub(super) fn rows_for(
             cleanup?;
         }
     }
+    if statement.source_batches {
+        let cleanup = store.db.execute_batch(super::source_batch::CLEAR);
+        if result.is_ok() {
+            cleanup?;
+        }
+    }
     #[cfg(feature = "code-rule-profile")]
     batch.detail(|| serde_json::json!({"files":files,"reader":store.readers.0.lock().counters.since(before),"readerColumns":["rec","parentOverflow","sizeOverflow","flags","spans","checkpoints","source"],"emittedRows":emitted,"peakLiveRelations":statement.schedule.peak_relations,"materializations":statement.preparations(covered),"failed":result.is_err()}));
     if let Some(transaction) = transaction {

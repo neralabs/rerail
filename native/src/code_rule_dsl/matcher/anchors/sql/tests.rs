@@ -579,7 +579,7 @@ fn shared_sql_dependencies_do_not_expand_into_exponential_table_references() {
         let tables: u32 = store
             .db
             .query_row(
-                "SELECT count(*) FROM sqlite_temp_schema WHERE type='table' AND name NOT IN ('request_file','structural_demand')",
+                "SELECT count(*) FROM sqlite_temp_schema WHERE type='table' AND name NOT IN ('request_file','structural_demand','source_batch_definition','source_batch_demand','source_batch_stats','source_batch_match')",
                 [],
                 |r| r.get(0),
             )

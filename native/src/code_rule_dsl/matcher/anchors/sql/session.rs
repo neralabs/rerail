@@ -11,6 +11,7 @@ pub(super) fn configure(db: &Connection) -> Result<()> {
     db.pragma_update(Some("temp"), "cache_size", -512_i64)?;
     db.execute_batch("CREATE TEMP TABLE request_file(fid INTEGER PRIMARY KEY) WITHOUT ROWID;
         CREATE TEMP TABLE structural_demand(fid INTEGER PRIMARY KEY,partial INTEGER NOT NULL) WITHOUT ROWID")?;
+    db.execute_batch(super::source_batch::SCHEMA)?;
     Ok(())
 }
 

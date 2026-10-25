@@ -63,6 +63,8 @@ impl Lower {
             format!("SELECT s.fid,s.pre FROM {spans} s WHERE {predicate}"),
             scope.exact,
         )?;
+        self.source_predicates
+            .insert(confirmed.name.clone(), (fallback.name, expression, literal));
         self.combine(&selected, &confirmed, "UNION", scope.exact)
     }
     fn value_kind_guard(

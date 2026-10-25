@@ -14,9 +14,23 @@ impl Drop for Scope {
     }
 }
 pub(super) fn compile(source: &str) -> Result<Regex, regex::Error> {
+    if let Some(regex) = PROGRAMS.with_borrow(|programs| {
+        programs
+            .as_ref()
+            .and_then(|cache| cache.get(source))
+            .cloned()
+    }) {
+        return Ok(regex);
+    }
     #[cfg(test)]
     COMPILES.set(COMPILES.get() + 1);
-    Regex::new(source)
+    let regex = Regex::new(source)?;
+    PROGRAMS.with_borrow_mut(|programs| {
+        if let Some(cache) = programs {
+            cache.insert(source.into(), regex.clone());
+        }
+    });
+    Ok(regex)
 }
 #[cfg(test)]
 thread_local! {static COMPILES:std::cell::Cell<usize>=const{std::cell::Cell::new(0)};}

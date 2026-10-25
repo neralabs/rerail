@@ -99,6 +99,13 @@ pub(super) fn save(
         });
     let origins = store.origins.lock();
     for binding in manifest["bindings"].as_array_mut().expect("binding array") {
+        if binding["contract"] == "syntax.source_confirmation.v1" {
+            binding["inputs"]["requests"]["external"]["name"] = format!(
+                "source-requests-{}",
+                binding["domain"].as_str().expect("source identity")
+            )
+            .into();
+        }
         let consumers = binding["consumers"]
             .as_array()
             .expect("consumer array")

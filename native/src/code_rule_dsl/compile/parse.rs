@@ -23,7 +23,6 @@ use crate::code_rule_dsl::model::Limits;
 use crate::code_rule_dsl::soundness::sound_under_errors;
 use ast_grep_core::matcher::KindMatcher;
 use napi::Result;
-use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;

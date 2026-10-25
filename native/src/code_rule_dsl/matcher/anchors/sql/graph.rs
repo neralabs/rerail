@@ -115,7 +115,11 @@ impl Graph {
                 }
                 // Global aggregate/choice results depend on the requested domain. Window
                 // frontiers remain scratch initially, even when partitioned by file.
-                if body.contains("count(") || body.contains(" OVER") || body.contains(" LIMIT ") {
+                if body.contains("count(")
+                    || body.contains(" OVER")
+                    || body.contains(" LIMIT ")
+                    || body.contains("source_batch_match")
+                {
                     class = Class::Request;
                 }
             }

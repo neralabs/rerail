@@ -23,6 +23,11 @@ pub(super) fn witness_payload_bytes(witness: &Witness) -> usize {
 
 pub(super) fn workspace_memory_profile(state: &WorkspaceState) -> Value {
     use std::mem::size_of;
+    #[cfg(feature = "code-rule-profile")]
+    let allocator = crate::code_rule_dsl::profile::memory::sample("anchor-working-set")
+        .and_then(|s| serde_json::to_value(s).ok());
+    #[cfg(not(feature = "code-rule-profile"))]
+    let allocator: Option<Value> = None;
     let file_state_bytes = state
         .files
         .iter()
@@ -121,6 +126,8 @@ pub(super) fn workspace_memory_profile(state: &WorkspaceState) -> Value {
     }
     producers.sort_by_key(|row| std::cmp::Reverse(row["rows"].as_u64().unwrap_or(0)));
     json!({
+        "anchorCorpus": state.anchor_corpus.memory_profile(),
+        "allocator": allocator,
         "ownership": ownership,
         "producers": producers,
         "accounting": "Explicit census; Arc projections counted once across files and evidence. Heap estimates exclude allocator overhead; legacy estimates can double-count shared payloads.",

@@ -12,6 +12,8 @@ pub(crate) struct Program {
     all: Option<usize>,
 }
 pub(crate) struct Layout {
+    #[cfg(feature = "code-rule-profile")]
+    pub identities: HashMap<usize, [u8; 32]>,
     pub ctes: Vec<String>,
     pub parameters: Vec<Value>,
     pub names: HashMap<usize, String>,
@@ -173,6 +175,35 @@ impl Program {
                 })
                 .collect::<String>()
         };
+        #[cfg(feature = "code-rule-profile")]
+        let mut identities = HashMap::<usize, [u8; 32]>::new();
+        #[cfg(feature = "code-rule-profile")]
+        for &id in &order {
+            use sha2::{Digest, Sha256};
+            let d = definitions[id].as_ref().expect("definition");
+            let mut hash = Sha256::new();
+            hash.update(format!(
+                "{}:{}:{:?}:{}",
+                d.version, d.language, d.class, d.columns
+            ));
+            let parts = if d.parts == [Part::FileDomain] {
+                &self.cf.as_ref().expect("file scope").1
+            } else {
+                &d.parts
+            };
+            for part in parts {
+                let (tag, bytes): (u8, &[u8]) = match part {
+                    Part::Sql(sql) => (0, sql.as_bytes()),
+                    Part::Parameter(value) => (1, value.as_slice()),
+                    Part::Reference(child) => (2, identities[child].as_slice()),
+                    Part::FileDomain => unreachable!("resolved file scope"),
+                };
+                hash.update([tag]);
+                hash.update((bytes.len() as u64).to_le_bytes());
+                hash.update(bytes);
+            }
+            identities.insert(id, hash.finalize().into());
+        }
         let ctes = order
             .into_iter()
             .map(|id| {
@@ -186,6 +217,8 @@ impl Program {
             })
             .collect();
         Layout {
+            #[cfg(feature = "code-rule-profile")]
+            identities,
             ctes,
             parameters,
             names,

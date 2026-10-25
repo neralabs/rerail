@@ -4195,6 +4195,62 @@ Commands are preserved in the shard runner and the four `kind-corpus-group-*.log
 A prior guarded-stream validation also passes the six original serverplan-bypass and four raw-execute observations.
 Those ten observations are included again in the complete kind-folding validation, not added to unique coverage.
 
+## Recovery continuation: ownership and whole-frame source confirmation (2026-10-25)
+
+The preceding small-control gains do not complete the recovery plan. Full-repository acceptance remains open.
+The new evidence directory is `.rerail/profiles/recovery-completion-20261025/`.
+
+Red commit `d8938239` shows that physical ownership discards streaming decisions from the earlier pass.
+Its sixteen-layer projection pipeline takes 503,800 versus 110,500 VM instructions after ownership.
+Commit `8d111677` retains the selected boundaries in the graph that ownership renders again.
+The regression passes. Earlier projection tests exercised the first renderer and missed this production handoff.
+The earlier guarded-stream gain must not be interpreted as proof that ownership retained all those decisions.
+
+Red commit `61fca9d0` requires whole-frame source confirmation.
+The implementation stages typed `(producer, file, node)` requests, with a separate predicate dictionary.
+Each dependency wave executes one native virtual-table filter. It returns typed matching keys only.
+The producer decodes spans and source text internally, without per-node SQL scalar callbacks.
+It reuses a point's source text within the wave while preserving each exact producer scope.
+Requests are not widened to a union applied to every predicate.
+SQL owns frame storage, candidate composition, and the published frame cardinality used by the native planner.
+The native output loop only advances completed matches. No alternative production algorithm or configuration switch is added.
+Both the registry and the tests are being updated to describe the fused contract accurately.
+The old test requiring a separately materialized SQL span table no longer describes this binding.
+Its replacement must preserve pinned source generations, identical-scope sharing, distinct-scope isolation, and one batch across result packets.
+
+The first frozen source addon is `fe987c5bcb3d3aa95b40a3cea34f7e4a684dd0a4f52aceb0c7a3edcd3797dd9b`.
+It passes 108 SQL tests, 1,326 core DSL tests, and 1,236 canonical replays.
+The replays retain 1,116 first-five original observations and 120 supplemental controls, with no mismatches or execution failures.
+Its first production-shape run passes 40 of 42 tests. The two failures assert the superseded separate-span shape, as described above.
+The replacement contract metadata is not present in this frozen addon and requires a new build and validation.
+
+The first 128-file, 60-rule source control records 21.263 ingestion CPU seconds and 50.387 wall seconds.
+Its driver peak RSS is 1,841,168,384 bytes. It overlaps core verification and is diagnostic, not a clean timing comparison.
+Do not infer a substantial speed gain from this control. Repeat timings after verification ends.
+The matched build settings, source and selection hashes, four workers, and allocator shim remain unchanged.
+The receipt is `control-source-128-60/invocation.json`.
+
+The separate `source-diagnostic` run completes in 36.960 seconds with two completed external samples.
+It reports 36 native source batches, 455,541 requested predicate/key pairs, 77,365 outputs, and 88,824 text reads.
+SQL selection uses 8.178 diagnostic CPU seconds; physical planning uses 1.997 seconds.
+This is diagnostic ingestion evidence, not full-repository parity or performance acceptance.
+
+The new census checkpoints separate the recording harness, compilation, and ingestion.
+The initial census records approximately 597 MiB resident before compilation, 957 MiB after compilation, and 1,427 MiB after ingestion.
+The original workspace estimate accounts for only 35.8 MiB after ingestion.
+The later source census records 19 physical templates containing 11,689,277 SQL bytes and 4,636,222 graph bytes.
+Those retained strings do not explain the remaining RSS. The allocator counters returned by the shim are unavailable zeros.
+The workspace census now exposes OS allocator accounting and retained anchor-cache sizes to separate live data from reserved pages.
+The full recording buffer contributes about 145 MiB of array buffers even in the 32-file control.
+Memory changes must preserve this measurement boundary and distinguish harness bytes from engine bytes.
+
+Authored policy inspection finds 4,808 regex occurrences and 881 distinct patterns across the policy directory.
+Validation and matcher construction currently compile identical default regexes separately.
+The next TDD rung tests a compilation-scoped program cache, which releases its dictionary after compilation.
+It must not introduce a persistent global regex cache.
+A separate rung folds exact kind negation into one predicate rather than constructing and subtracting another row set.
+Both changes remain unaccepted until their tests and matched CPU/RSS controls complete.
+
 ## Future entries
 
 Each new entry must identify the hypothesis, baseline commit, workload hashes, build configuration, and exact commands.
@@ -4202,3 +4258,34 @@ It must record every timing run, parity scope, explanatory counters, and the kee
 Diagnostic captures must remain separate from timing medians.
 A different binary, allocator, workload, or build configuration needs an explicit comparison boundary.
 New experiments must not add selectable execution paths to the engine.
+
+### Compiler normalization and current acceptance run
+
+The compiler now reuses regex programs within one logical compilation.
+The cache drops at scope exit. Tests require one construction per distinct expression and fresh construction in the next scope.
+Exact Boolean kind expressions now lower as finite sets or complements.
+Scoped negation reads the supplied keys and does not build a global subtraction.
+
+The frozen candidate is `ec6a287978eb3bfac6c03ce8c11925165c850a025c08af5cf15e73574043cb51`.
+Evidence is under `.rerail/profiles/recovery-completion-20261025`.
+The clean 128-file, 60-rule control takes 21.433 CPU seconds and 50.763 wall seconds.
+Logical compilation takes 1.764 CPU seconds and 4.142 wall seconds.
+The driver reports 1,480,523,776 peak RSS bytes. This is one run, not a median or an OS RSS comparison.
+The previous finite-kind control median is 21.827 CPU seconds. Execution CPU has barely improved.
+The previous compile measurement is 2.546 CPU seconds. Compiler reuse reduces this cost by about 31 percent.
+
+Validation passes 1,328 Rust core tests and 194 workspace tests.
+There are 23 ignored tests and 114 tests outside the DSL filter.
+The SQL subset passes 109 tests with one ignored test.
+Clippy with warnings denied, the repository static checks, and all 42 producer-shape tests pass.
+The candidate also passes 1,236 original batch 1–5 and supplemental observation replays on both evaluation paths.
+Batch 6 needs its own complete receipt. Eight jobs in the first 50-shard group exceeded the group deadline during the full-run overlap.
+Those timeout receipts remain failed diagnostic evidence; they are not parity passes.
+
+Full 9,021-file runs for 50 and 60 rules are in progress.
+The first run overlaps the bounded parity group and a five-second external sample.
+Its wall measurement needs this qualification. A clean acceptance run must have no such overlap.
+The external sample attributes 327 of 458 active native stack observations to index publication.
+It attributes 408 observations to SQLite overall. These are wall-time samples, not CPU percentages.
+At 4,641 files, phase CPU totals include 230.929 seconds for selection, 91.076 for indexing, and 87.468 for physical planning.
+This evidence does not establish aggregate recovery.

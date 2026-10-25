@@ -10,6 +10,7 @@ use decode::Property;
 mod kind_alternatives;
 #[path = "lower/render.rs"]
 mod render;
+mod source;
 use render::Definitions;
 mod children;
 pub(super) mod lifetime;
@@ -31,6 +32,7 @@ pub(super) struct Admission {
     pub partial: bool,
 }
 pub(super) struct Statement {
+    pub source_batches: bool,
     pub admissions: Vec<Admission>,
     pub anchors: Vec<super::statistics::Decision>,
     #[cfg(feature = "code-rule-profile")]
@@ -105,12 +107,13 @@ struct Lower {
     reuse: Reuse,
     decoding: HashMap<String, decode::Demand>,
     predicates: HashMap<String, (String, String)>,
+    source_predicates: HashMap<String, (String, String, bool)>,
     producers: crate::code_rule_dsl::producers::Registry<u32>,
     consumer: usize,
     statistics: super::statistics::Statistics,
     partial: bool,
     costs: HashMap<usize, usize>,
-    kind_alternatives: HashMap<usize, Option<BTreeSet<u16>>>,
+    kind_alternatives: HashMap<usize, Option<kind_alternatives::Domain>>,
     anchors: Vec<super::statistics::Decision>,
     producer_bindings: HashMap<Property, usize>,
 }
@@ -142,6 +145,7 @@ impl Lower {
             reuse: Reuse::default(),
             decoding: HashMap::new(),
             predicates: HashMap::new(),
+            source_predicates: HashMap::new(),
             producers: Default::default(),
             consumer: 0,
             statistics: Default::default(),
@@ -416,6 +420,17 @@ impl Lower {
     }
 
     fn plan(&mut self, plan: &AnchorPlan, scope: Set) -> Result<Set, ()> {
+        if let Some(domain) = self.kind_domain(plan) {
+            let exact = scope.exact && plan.exact && !self.partial;
+            let mut selected = if domain.positive {
+                self.restrict_kinds(scope, &domain.kinds)?
+            } else {
+                self.exclude_kinds(scope, &domain.kinds)?
+            };
+            selected.exact &= exact;
+            return Ok(selected);
+        }
+
         if let Condition::Pattern(required) = &plan.condition
             && !required.is_empty()
         {
@@ -791,6 +806,7 @@ fn batch_scope(
         (Option<usize>, Property, BTreeSet<usize>),
     > = std::collections::BTreeMap::new();
     let mut predicates = std::collections::BTreeMap::new();
+    let mut source_predicates = std::collections::BTreeMap::new();
     let mut admissions = Vec::new();
     let mut anchors = Vec::new();
     for (qid, plan) in plans.iter().enumerate() {
@@ -887,6 +903,27 @@ fn batch_scope(
                 .entry(node.id)
                 .or_insert_with(|| (value(&language), value(&expression)));
         }
+        for (name, (spans, expression, literal)) in lower.source_predicates {
+            if let Some(node) = nodes.get(&name) {
+                let at = expression
+                    .strip_prefix('?')
+                    .expect("bound expression")
+                    .parse::<usize>()
+                    .expect("parameter index");
+                source_predicates
+                    .entry(node.id)
+                    .or_insert_with(|| {
+                        (
+                            nodes[&spans].id,
+                            lower.parameters[at - 1].clone(),
+                            literal,
+                            BTreeSet::new(),
+                        )
+                    })
+                    .3
+                    .insert(qid);
+            }
+        }
     }
     #[cfg(feature = "code-rule-profile")]
     let mut ordering =
@@ -941,7 +978,35 @@ fn batch_scope(
     }
     #[cfg(feature = "code-rule-profile")]
     let _render = crate::code_rule_dsl::profile::trace::Span::start("anchor-render", "families");
-    let mut statement = prepare_decoded(layout.ctes, queries, layout.parameters, indexed, decoding);
+    let source_predicates = source_predicates
+        .into_iter()
+        .map(|(node, (spans, expression, literal, _consumers))| {
+            (
+                layout.names[&node].clone(),
+                source::Demand {
+                    keys: layout.names[&spans].clone(),
+                    expression: layout.bound(&expression),
+                    literal,
+                    producer: layout.ranks[&node],
+                    #[cfg(feature = "code-rule-profile")]
+                    consumers: _consumers,
+                    #[cfg(feature = "code-rule-profile")]
+                    identity: layout.identities[&node]
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect(),
+                },
+            )
+        })
+        .collect();
+    let mut statement = prepare_families(
+        layout.ctes,
+        queries,
+        layout.parameters,
+        indexed,
+        decoding,
+        source_predicates,
+    );
     #[cfg(feature = "code-rule-profile")]
     drop(_render);
     statement.admissions = admissions;
@@ -1030,12 +1095,24 @@ fn finish_decoded(
     statement
 }
 
+#[cfg(test)]
 fn prepare_decoded(
     ctes: Vec<String>,
     queries: Vec<String>,
     parameters: Vec<Value>,
-    mut indexed: BTreeSet<String>,
+    indexed: BTreeSet<String>,
     decoding: HashMap<String, decode::Demand>,
+) -> Statement {
+    prepare_families(ctes, queries, parameters, indexed, decoding, HashMap::new())
+}
+
+fn prepare_families(
+    ctes: Vec<String>,
+    queries: Vec<String>,
+    parameters: Vec<Value>,
+    mut indexed: BTreeSet<String>,
+    mut decoding: HashMap<String, decode::Demand>,
+    mut source_predicates: HashMap<String, source::Demand>,
 ) -> Statement {
     let query = queries.join("\n");
     // Candidate broadening and approximate negation can discard a whole dependency tree.
@@ -1045,6 +1122,40 @@ fn prepare_decoded(
         .into_iter()
         .cloned()
         .collect();
+    let live_names: BTreeSet<_> = ctes
+        .iter()
+        .map(|c| c.split_once('(').expect("CTE name").0)
+        .collect();
+    source_predicates.retain(|name, _| live_names.contains(name.as_str()));
+    if !source_predicates.is_empty() {
+        let span_names: BTreeSet<_> = decoding
+            .iter()
+            .filter(|(_, d)| d.property == Property::Span)
+            .map(|(name, _)| name.clone())
+            .collect();
+        ctes.retain(|cte| !span_names.contains(cte.split_once('(').expect("CTE name").0));
+        for cte in &mut ctes {
+            let name = cte.split_once('(').expect("CTE name").0;
+            if let Some(demand) = source_predicates.get(name) {
+                *cte = format!(
+                    "{name}(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM source_batch_match WHERE producer={})",
+                    demand.producer
+                );
+            }
+        }
+        decoding.retain(|_, d| d.property != Property::Span);
+        let extra = source_predicates
+            .values()
+            .map(|d| format!("SELECT fid,pre FROM {}", d.keys))
+            .collect::<Vec<_>>()
+            .join(" UNION ALL ");
+        ctes = Definitions::new(ctes)
+            .live(&format!("{query} UNION ALL {extra}"))
+            .into_iter()
+            .cloned()
+            .collect();
+    }
+
     // A live universal demand already requires every structural property in this file batch.
     // Hoist that one fill before consumers, instead of checking and filling each subset again.
     let universal = ctes
@@ -1081,6 +1192,8 @@ fn prepare_decoded(
     #[cfg(feature = "code-rule-profile")]
     let mut producers = crate::code_rule_dsl::producers::Registry::default();
     #[cfg(feature = "code-rule-profile")]
+    source::register(&source_predicates, &mut producers);
+    #[cfg(feature = "code-rule-profile")]
     for demand in ctes
         .iter()
         .filter_map(|cte| decoding.get(cte.split_once('(').expect("CTE columns").0))
@@ -1100,8 +1213,24 @@ fn prepare_decoded(
                 || (universal.is_none() && matches!(demand.property, Property::Child(_)))
         })
         .map(|(name, _)| name.clone())
+        .chain(source_predicates.keys().cloned())
         .collect();
-    let (levels, uses) = waves::analyze(&ctes, &barrier_names, &query);
+    let dependencies = ctes
+        .iter()
+        .map(|cte| {
+            let name = cte.split_once('(').expect("CTE name").0;
+            source_predicates.get(name).map_or_else(
+                || cte.clone(),
+                |d| {
+                    format!(
+                        "{name}(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM {})",
+                        d.keys
+                    )
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let (levels, uses) = waves::analyze(&dependencies, &barrier_names, &query);
     // Repeated output arms share one WITH scope. They are one SQL reader,
     // rather than a reason to cut a cheap selector into another physical table.
     let mut duplicate_output_uses = HashMap::<String, usize>::new();
@@ -1143,7 +1272,13 @@ fn prepare_decoded(
         });
     }
     let mut expansion: HashMap<&str, usize> = HashMap::new();
-    for (name, cte) in names.iter().zip(ctes) {
+    for (name, mut cte) in names.iter().zip(ctes) {
+        if let Some(demand) = source_predicates.get(name) {
+            cte = format!(
+                "{name}(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM source_batch_match WHERE producer={})",
+                demand.producer
+            );
+        }
         if let Some(demand) = decoding.get(name)
             && !(universal.is_some()
                 && matches!(demand.property, Property::Node | Property::Child(_)))
@@ -1265,6 +1400,12 @@ fn prepare_decoded(
             covering: false,
         });
     }
+    if !source_predicates.is_empty() {
+        for (level, stage) in source::stages(&source_predicates, &levels, &inline) {
+            stage_levels.insert(stage.name.clone(), (level, 0));
+            stages.push(stage);
+        }
+    }
     // Stable order preserves every unbatched dependency within a wave. A decoder fill
     // follows all its lower-wave selectors and precedes readers in its own wave.
     stages.sort_by_cached_key(|stage| stage_levels.get(&stage.name).copied().unwrap_or((0, 1)));
@@ -1274,6 +1415,7 @@ fn prepare_decoded(
         peak_relations: 0,
     };
     Statement {
+        source_batches: !source_predicates.is_empty(),
         admissions: Vec::new(),
         anchors: Vec::new(),
         #[cfg(feature = "code-rule-profile")]

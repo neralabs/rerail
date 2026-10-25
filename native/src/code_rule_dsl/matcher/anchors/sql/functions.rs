@@ -14,6 +14,7 @@ pub(super) fn install(db: &Connection) -> Result<super::reader::Readers> {
     use super::reader::{Column, Readers};
     let readers = Readers::new(db);
     super::nodes::install(db, readers.0.clone())?;
+    super::source_batch::install(db, readers.0.clone())?;
     super::postings::install(db)?;
     rusqlite::vtab::series::load_module(db)?;
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_INNOCUOUS;
