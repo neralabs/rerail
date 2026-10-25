@@ -226,6 +226,56 @@ fn compiler() -> Lower {
 }
 
 #[test]
+fn single_reader_projection_pipelines_stream_without_private_row_copies() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+    let store = super::super::store::Store::temporary().unwrap();
+    store.db.execute_batch("CREATE TABLE points(fid INTEGER,pre INTEGER); INSERT INTO points SELECT 1,value FROM generate_series(0,4095,1)").unwrap();
+    let measure = |layers: usize| {
+        let mut ctes = vec!["p0(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM points)".into()];
+        for i in 1..=layers {
+            ctes.push(format!(
+                "p{i}(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM p{})",
+                i - 1
+            ));
+        }
+        let statement = finish_decoded(
+            ctes,
+            vec![format!("SELECT 0,fid,pre FROM p{layers}")],
+            vec![],
+            BTreeSet::new(),
+            HashMap::new(),
+        );
+        let ticks = Arc::new(AtomicU64::new(0));
+        let observed = ticks.clone();
+        store
+            .db
+            .progress_handler(
+                100,
+                Some(move || {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                    false
+                }),
+            )
+            .unwrap();
+        let mut rows = Vec::new();
+        super::super::execute::rows(&store, &statement, |_, fid, pre| rows.push((fid, pre)))
+            .unwrap();
+        rows.sort_unstable();
+        assert_eq!(rows, (0..4096).map(|pre| (1, pre)).collect::<Vec<_>>());
+        ticks.load(Ordering::Relaxed)
+    };
+    let direct = measure(0);
+    let pipeline = measure(16);
+    assert!(
+        pipeline <= direct * 2,
+        "a projection pipeline must not copy its rows at every step: {direct} -> {pipeline}"
+    );
+}
+
+#[test]
 fn alternatives_do_not_repeatedly_materialize_a_growing_union() {
     use std::sync::{
         Arc,
