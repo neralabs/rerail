@@ -215,6 +215,34 @@ impl Lower {
         }
         Ok(selected)
     }
+    fn union(&mut self, sets: &[Set]) -> Result<Set, ()> {
+        if sets.is_empty() {
+            return self.relation("SELECT 0,0 WHERE 0".into(), true);
+        }
+        let exact = sets.iter().all(|set| set.exact);
+        let kinds = sets.iter().try_fold(BTreeSet::new(), |mut kinds, set| {
+            kinds.extend(self.reuse.kinds.get(&set.name)?.iter().copied());
+            Some(kinds)
+        });
+        let names: BTreeSet<_> = sets.iter().map(|set| &set.name).collect();
+        let arms = names
+            .into_iter()
+            .map(|name| format!("SELECT fid,pre FROM {name}"))
+            .collect();
+        // One deduplication boundary for the complete alternative family. A
+        // left-deep chain copies each growing prefix into another ephemeral set.
+        let selected = self.relation(
+            format!(
+                "SELECT DISTINCT fid,pre FROM ({})",
+                waves::compound("fid,pre", arms)
+            ),
+            exact,
+        )?;
+        if let Some(kinds) = kinds {
+            self.reuse.kinds.insert(selected.name.clone(), kinds);
+        }
+        Ok(selected)
+    }
     fn combine_rows(
         &mut self,
         left: &Set,
@@ -326,6 +354,39 @@ impl Lower {
             .insert(selected.name.clone(), kinds.clone());
         Ok(selected)
     }
+
+    /// Initial discovery uses postings. Refinement reads only the supplied keys;
+    /// even an empty scope must not construct the complete alternative kind set.
+    fn restrict_kinds(&mut self, scope: Set, kinds: &BTreeSet<u16>) -> Result<Set, ()> {
+        if scope.name == "all_nodes" {
+            return self.kinds(kinds);
+        }
+        if let Some(known) = self.reuse.kinds.get(&scope.name) {
+            if known.is_subset(kinds) {
+                return Ok(scope);
+            }
+            if known.is_disjoint(kinds) {
+                return self.relation("SELECT 0,0 WHERE 0".into(), scope.exact);
+            }
+        }
+        if kinds.is_empty() {
+            return self.relation("SELECT 0,0 WHERE 0".into(), scope.exact);
+        }
+        let properties = self.decoded(&scope, Property::Node);
+        let codes = kinds
+            .iter()
+            .map(|&kind| self.parameter(i64::from(kind)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let selected = self.relation(
+            format!("SELECT p.fid,p.pre FROM {properties} p WHERE p.kind IN ({codes})"),
+            scope.exact,
+        )?;
+        self.reuse
+            .kinds
+            .insert(selected.name.clone(), kinds.clone());
+        Ok(selected)
+    }
     // Bound admission ordering by the existing SQL-fragment allowance. This is a
     // compiler complexity estimate, not a fitted execution or regex cost model.
     fn compile_cost(&mut self, plan: &AnchorPlan) -> usize {
@@ -356,25 +417,13 @@ impl Lower {
             && !required.is_empty()
         {
             let selected = self.pattern(required, scope)?;
-            let Some(kinds) = &plan.root_kinds else {
-                return Ok(selected);
+            return match &plan.root_kinds {
+                Some(kinds) => self.restrict_kinds(selected, kinds),
+                None => Ok(selected),
             };
-            let properties = self.decoded(&selected, Property::Node);
-            let kinds = kinds
-                .iter()
-                .map(|k| self.parameter(i64::from(*k)))
-                .collect::<Vec<_>>()
-                .join(",");
-            return self.relation(
-                format!("SELECT p.fid,p.pre FROM {properties} p WHERE p.kind IN ({kinds})"),
-                false,
-            );
         }
         let scope = match &plan.root_kinds {
-            Some(kinds) => {
-                let kinds = self.kinds(kinds)?;
-                self.combine(&scope, &kinds, "INTERSECT", scope.exact)?
-            }
+            Some(kinds) => self.restrict_kinds(scope, kinds)?,
             None => scope,
         };
         let kinds = self.reuse.kinds.get(&scope.name).cloned();
@@ -402,13 +451,36 @@ impl Lower {
                 Ok(selected)
             }
             Condition::Any(plans) => {
-                let mut selected = self.relation("SELECT 0,0 WHERE 0".into(), true)?;
-                for plan in plans {
-                    let branch = self.plan(plan, scope.clone())?;
-                    selected =
-                        self.combine(&selected, &branch, "UNION", selected.exact && branch.exact)?;
+                // Optional captures commonly have an unrestricted candidate arm.
+                // The authoritative matcher retains capture order; preparing the
+                // other candidate arms cannot narrow this union.
+                let unrestricted = plans.iter().find(|plan| {
+                    matches!(plan.condition, Condition::Always)
+                        && plan.root_kinds.as_ref().is_none_or(|required| {
+                            self.reuse
+                                .kinds
+                                .get(&scope.name)
+                                .is_some_and(|known| known.is_subset(required))
+                        })
+                });
+                if let Some(plan) = unrestricted {
+                    Ok(Set {
+                        exact: scope.exact && plan.exact,
+                        ..scope
+                    })
+                } else {
+                    let mut branches = Vec::new();
+                    let mut covering = None;
+                    for plan in plans {
+                        let branch = self.plan(plan, scope.clone())?;
+                        if branch.name == scope.name {
+                            covering = Some(branch);
+                            break;
+                        }
+                        branches.push(branch);
+                    }
+                    covering.map_or_else(|| self.union(&branches), Ok)
                 }
-                Ok(selected)
             }
             Condition::Not(inner) => {
                 let inner = self.plan(inner, scope.clone())?;
@@ -603,13 +675,13 @@ impl Lower {
                 .reuse
                 .kinds
                 .insert(domain.name.clone(), BTreeSet::from([kind]));
-            let selected = self.text(&domain, text, true)?;
+            let selected = self.text(&domain, text, true);
             if let Some(previous) = previous {
                 self.reuse.kinds.insert(domain.name, previous);
             } else {
                 self.reuse.kinds.remove(&domain.name);
             }
-            selected
+            selected?
         } else {
             self.kinds(&BTreeSet::from([kind]))?
         };

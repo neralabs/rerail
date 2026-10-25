@@ -3977,6 +3977,70 @@ node --import tsx scripts/profiling/workloads/anchor-ingestion.ts \
 The recorded controller enforces a 115-second limit and terminates the whole process group on timeout.
 Detailed tracing, SQL capture, and memory census remain disabled in timing controls.
 
+## Scoped refinement and fused alternatives (2026-10-25)
+
+Hypothesis: refine existing candidate keys without constructing another complete kind posting.
+Red commit `94025468` poisons that unused posting and observes a truncated-posting failure.
+The new path passes positive and clean cases without opening it.
+It also uses known kind domains to remove redundant checks.
+This change alone remains unaccepted: `control-scope-128-60` reaches the 115-second deadline without completing ingestion.
+Its frozen addon hash is `42193cb37b85e9db850bc31ef42b03ca560aa01dbc9a8eea607310d064cd51ae`.
+
+The separate `scope-diagnostic-one` run isolates the original generated-facades source with all 60 rules.
+Its candidate batch completes in 11.050 diagnostic CPU seconds.
+It decodes no new structural nodes, so sparse structural decoding does not explain that run's cost.
+It decodes 60,507 spans and performs 370,224 source-text reads.
+One left-deep union statement performs 89,776,219 VM instructions, 6,482,321 full-scan steps, and 110 sorts.
+Two ingestion samples complete; their main leaf frames include SQLite execution, record comparison, and file writes.
+The first sampler times out during compilation. The SQL report requires unavailable parity and returns nonzero.
+The workload itself completes. These diagnostic observations do not establish performance or correctness acceptance.
+
+Red commit `d4c288c4` records two observed failures.
+Doubling alternative output increases work from about 243,100 to 878,400 VM instructions through repeated union materialization.
+Failed literal admission also leaks its temporary kind restriction into the global input domain.
+The implementation uses one deduplication boundary for each alternative family and restores the previous domain on failure.
+It preserves known kind domains and duplicate-free results.
+
+Optional capture fallbacks provide another proven source of unnecessary work.
+The [public-api rule](../packs/data-layer/candidates/rules/data-layer-public-api-triples.json#L237) includes an unrestricted candidate arm beside structural capture arms.
+The compiler now skips other candidate arms when one already covers the entire input scope.
+The authoritative matcher retains the authored capture order and complete predicate semantics.
+A test requires that gate to work before any additional producer can enter admission.
+These unions compose alternatives over the same input scope; they do not merge different consumers' scopes.
+
+The combined frozen addon is `6599af76a2980c20a1203484cf0d8dc3021de8fab01478a3277e30b9d1e56391`.
+Build settings, allocator, workers, recording, and selection hashes match the preceding controls.
+
+| 128-file control | Frozen before ingestion CPU | Combined CPU | Change |
+| --- | ---: | ---: | ---: |
+| 50 rules | 15.395 s | 12.457 s | −19.1% |
+| 60 rules | 28.149 s | 26.246 s | −6.8% |
+
+Both combined controls complete without local execution failures.
+Both before controls retain the known signature failure. None of these controls evaluates repository-wide findings.
+Logical compilation uses 1.603 and 2.528 CPU seconds for the combined 50/60 runs, separately from ingestion.
+For 60 rules, physical planning uses 5.963 CPU seconds and selection uses 15.828 seconds.
+Matcher CPU uses 2.262 seconds; index construction uses 1.284 seconds.
+The fixed-count diagnostics report 4,445 data submissions and 3,863 materializations. They do not establish acceptance.
+
+The combined 60-rule control uses 35.001 ingestion wall seconds; the before control uses 80.271 seconds.
+Host load differs substantially, so this wall-time comparison does not establish a proportional speed gain.
+Full-process OS peak RSS rises from 1,774,993,408 to 1,868,857,344 bytes.
+The combined 50-rule control uses 21.013 ingestion wall seconds and 1,313,030,144 bytes of OS peak RSS.
+Keep the correctness fixes and measured family improvements as recovery groundwork.
+The CPU gain is modest and the 60-rule memory result regresses. Full-repository recovery remains unaccepted.
+
+All 1,511 Rust DSL tests pass in two disjoint groups: 1,317 core tests and 194 workspace tests.
+The groups retain 23 ignored tests; 114 unrelated tests remain outside the DSL filter.
+An earlier combined attempt times out after 110 seconds and is incomplete evidence, not a pass.
+The new SQL subset passes 99 tests with one ignored test; those tests also appear in the core group.
+All 42 production-shape tests and all 120 positive/clean controls pass through both evaluation paths.
+The complete original batch-six recording remains unfinished.
+
+Commands and receipts remain under the A1 evidence directory, including `control-union-128-{50,60}` and `union-dsl-{core,workspace}.log`.
+The next TDD rung removes private row copies from single-reader projection pipelines.
+It preserves the source-span boundary that prevents repeated source predicates.
+
 ## Future entries
 
 Each new entry must identify the hypothesis, baseline commit, workload hashes, build configuration, and exact commands.
