@@ -20,6 +20,7 @@ mod failure;
 mod file_condition_tests;
 mod file_guard;
 mod format_facts;
+mod fragments;
 mod ir;
 mod job;
 pub(super) mod leaves;

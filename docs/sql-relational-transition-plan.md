@@ -1,5 +1,10 @@
 # Transition to direct relational SQL
 
+Current direction, 2026-10-25: [batched matcher fragments](sql-matcher-fragment-transition.md) supersede the generic SQL scheduler.
+The generic function, mixed-recursion, parsed-recursion, and pure instruction-loop emitters are removed.
+Historical coverage and performance results below describe their recorded executables, not the replacement spike.
+Pure-SQL cases that depended on those emitters now require an explicit fragment contract.
+
 Status: Test compiler qualified for 135 of 146 catalog grammars; production and complete-job gates remain closed, 2026-10-24.
 Baseline: `a0051ae8`, including the complete B023 reference query.
 This document changes no production behavior.

@@ -6,13 +6,9 @@ mod closed_demand;
 #[cfg(test)]
 #[path = "finite_emission_inventory_tests.rs"]
 mod finite_emission_inventory_tests;
-#[path = "finite_emit.rs"]
-mod finite_emit;
 #[cfg(test)]
 #[path = "finite_kind_depth_tests.rs"]
 mod finite_kind_depth_tests;
-#[path = "finite_kind_emit.rs"]
-mod finite_kind_emit;
 #[cfg(test)]
 #[path = "finite_recursive_depth_tests.rs"]
 mod finite_recursive_depth_tests;
@@ -21,10 +17,6 @@ mod format_emit;
 #[cfg(test)]
 #[path = "memo_recursive_depth_tests.rs"]
 mod memo_recursive_depth_tests;
-#[path = "mixed_capture_emit.rs"]
-mod mixed_capture_emit;
-#[path = "mixed_recursive_emit.rs"]
-mod mixed_recursive_emit;
 #[path = "peak_memo.rs"]
 mod peak_memo;
 #[cfg(test)]
@@ -39,8 +31,8 @@ mod projection_storage;
 mod recursive_projection_depth_tests;
 #[path = "recursive_projection_emit.rs"]
 mod recursive_projection_emit;
-#[path = "utility_projection_adapter.rs"]
-mod utility_projection_adapter;
+#[path = "retired_control.rs"]
+mod retired_control;
 use super::super::ir::Set;
 #[path = "binding_emit.rs"]
 mod binding_emit;
@@ -70,8 +62,6 @@ mod ordered;
 mod parse_emit;
 #[path = "parse_host_emit.rs"]
 mod parse_host_emit;
-#[path = "parse_recursive_emit.rs"]
-mod parse_recursive_emit;
 #[path = "parsed_frontier.rs"]
 pub(super) mod parsed_frontier;
 #[cfg(test)]

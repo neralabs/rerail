@@ -304,11 +304,8 @@ fn select_composition(
     let mut best: Option<((usize, usize), Compiled)> = None;
     let mut retain_first = false;
     let mut refusals = Vec::new();
-    for shape in [
-        Composition::Inline,
-        Composition::Functions,
-        Composition::RecursiveFunctions,
-    ] {
+    // Interpreter representations are retired. A refusal requires a fragment contract.
+    for shape in [Composition::Inline] {
         match compile(shape) {
             Ok(compiled) => {
                 let stage_bytes: usize = compiled.relations["physicalStages"]
@@ -485,7 +482,10 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
     }
     select_composition(|shape| compile_job_mode(grammars, work, shape))
 }
-fn compile_job_finite(grammars: &[&GrammarMatcher], work: i64) -> Result<Compiled, String> {
+pub(in crate::code_rule_dsl::sql::relational) fn compile_job_finite(
+    grammars: &[&GrammarMatcher],
+    work: i64,
+) -> Result<Compiled, String> {
     compile_job_mode(grammars, work, Composition::RecursiveFunctions)
 }
 fn compile_job_mode(

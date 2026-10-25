@@ -982,3 +982,26 @@ impl EachScope {
         self.0.record(each::binding_range(env, name))
     }
 }
+
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn fragment_at<'t, D: Doc>(
+    grammar: &GrammarMatcher,
+    node: Node<'t, D>,
+    env: &mut Cow<MetaVarEnv<'t, D>>,
+) -> Result<i64, run::Stopped> {
+    UNKNOWN.set(false);
+    let matched = grammar.matcher.match_node_with_env(node, env).is_some();
+    if let Some(limit) = UTIL_EXCEEDED.get() {
+        return Err(run::Stopped::Limit(limit));
+    }
+    if budget::matcher_budget_observed() {
+        return Err(run::Stopped::Deadline);
+    }
+    Ok(if matched {
+        1
+    } else if UNKNOWN.get() {
+        2
+    } else {
+        0
+    })
+}

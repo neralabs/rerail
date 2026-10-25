@@ -62,7 +62,7 @@ pub(super) fn inventory(fixtures: &[Fixture]) -> Value {
     })
 }
 
-fn captures(env: &MetaVarEnv<'_, TapeDoc>, names: &[String]) -> Result<Value, String> {
+pub(in crate::code_rule_dsl::sql::relational) fn captures(env: &MetaVarEnv<'_, TapeDoc>, names: &[String]) -> Result<Value, String> {
     let mut list_names = BTreeSet::new();
     for variable in env.get_matched_variables() {
         let name = match variable {
