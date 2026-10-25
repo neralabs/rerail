@@ -135,6 +135,12 @@ fn static_cfg_native_value_unknown_order_and_finite_work() {
                 if let Ok(path) = std::env::var("RERAIL_FINITE_CFG_DIAGNOSTIC") {
                     std::fs::write(format!("{path}.{work}.sql"), &compiled.sql).unwrap();
                 }
+                assert!(
+                    compiled
+                        .relations
+                        .to_string()
+                        .contains("direct predicate projection")
+                );
                 eprintln!("static CFG native gate work={work}");
                 Ok(compiled)
             },

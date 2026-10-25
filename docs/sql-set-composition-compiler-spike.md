@@ -6375,3 +6375,81 @@ The main unresolved boundary is in `utility_projection_lower::Builder::plan`. It
 The next compiler change needs a typed input for closed recursive answers. That input must carry truth, cost, peak, and an ordered utility-entry recipe. A caller must consume complete answers and failed prefixes through the same relational contract. A set of memo completions cannot replace the ordered recipe, as rejected build 28 demonstrates. The first transfer gate must compose an existing recursive helper inside an acyclic caller, then sweep work, incoming depth, and warm nested memos. The SIM905 reference budgets remain the end-to-end acceptance gates.
 
 Build 34 completes the broad suite with 2,194 passes, 54 ignored tests, and no failures. The one excluded test is the separately executed reference gate. SIM905 fails both reference limits. F632 passes both. The integration report and archive now identify build 34 and preserve the earlier controls. No production cutover is qualified.
+
+### Compose pure callers with recursive summaries
+
+Checkpoint `85b78bbf` remains the baseline: SIM905 uses 199,888,288 VM instructions and 179,233 total SQL bytes. The complete job uses 37 executions. Both SIM905 reference gates remain failed.
+
+The next compiler experiment exposes a typed closed recursive input with separate summary and ordered-entry relations. Pure Boolean caller regions consume those inputs directly. Their complete truth and reached flags are scalar expressions. Their work and depth failures come from one ordered entry prefix. This region emits no original Boolean fallback program.
+
+Admission excludes memo, capture, Value, cache-fill, and parsed-context boundaries. Adjacent pure terms can form one region inside a larger effectful caller. Source order and repeated logical occurrences remain explicit. Metadata-proved recursive answers retain their constant entry recipes. Structural inputs retain their existing restricted demand domains.
+
+The required transfer controls cover nested callers, repeated recursive calls, negation, both Boolean operators, cold and warm memos, and incoming logical depth near 256. Existing catalog ceilings, reference budgets, and total execution accounting remain unchanged. Build 35 is the first experiment, not a qualified integration.
+
+Build 35 passes the two existing recursive-prefix controls, all 49 finite controls, and both catalog regression probes. SIM905 native output agrees, but VM work increases to 216,925,358 and SQL grows to 182,700 bytes. The new region removes only 2,820 typed transfers and no continuation frames. This shape fails the baseline comparison.
+
+Its failure-prefix relation executes unconditionally. Build 36 uses completed cost and peak first. It reads the ordered entry relation only when work or depth cannot fit the completed answer. Two new controls exercise composed recursive callers: a cold/warm memo and depth sweep, and a Value/unknown/fault boundary sweep. No performance acceptance is inferred from the existing correctness passes.
+
+Build 36 passes all 146 catalog comparisons and their unchanged VM ceilings. SIM905 uses 199,808,879 instructions and 182,884 total SQL bytes. Conditional entry evaluation removes the runtime regression, but the SQL remains larger than the baseline. The new depth and memo sweep remains in progress.
+
+Build 37 tests direct reuse of the callee prefix for one recursive occurrence. Native output and the Value/unknown/fault control pass. SIM905 increases to 201,159,407 instructions and 183,911 bytes. This experiment is rejected as a performance improvement.
+
+Build 38 gives repeated recursive utilities one producer identity within a lowering context. Its key includes the utility table, utility index, namespace, parsed scope, and host scope. Refused programs are not cached. Logical occurrences remain separate. Existing closed-demand analysis must combine their domains before producer emission. A focused control checks identity reuse and separation across contexts.
+
+Build 38 exposes a selector defect. Producer sharing lets SIM905's inline form fit the resource caps. The selector accepts the first admissible form, so it stops before generating the shared form. Continuation frames fall from 127,598 to 10, but stage work grows from 20,152,128 to 71,289,336 instructions. Total work reaches 221,190,858 instructions and SQL reaches 250,340 bytes. Native parity and the context-identity control pass. Fewer frames do not establish less total work.
+
+The next selection experiment compares all three existing bounded forms before preparation. It counts driver SQL and every physical-stage statement. It selects the smallest admitted total and records each alternative or refusal. This is a static size criterion, not a runtime cost model. Unchanged catalog VM ceilings must reject cases where smaller SQL performs more work. No candidate executes during selection, and no resource limit changes.
+
+Build 39 passes both new caller controls. The depth sweep checks native truth, remaining work, peak, warm memos, and cleanup. The callback sweep checks Value, unknown, and injected failures. Build 39 still selects the large inline plan and fails the performance comparison. The unfinished build 36 and 38 depth runs were stopped after the replacement passed; neither is recorded as a passing control.
+
+A process sample places the long depth sweep in SQLite preparation. The test now binds work instead of regenerating SQL for each allowance. The next revision will also bind roots and cache its six distinct depth statements. Preparation remains separate from execution accounting.
+
+Build 40 rejects size-only selection on 41 unchanged catalog VM gates. All 146 native comparisons pass. B007 grows from 46,812,093 to 187,394,811 instructions. B102 grows from 4,018,878 to 18,821,693. B615 retains its published baseline of 237,968,660. The earlier 289,052,995 figure belongs to build 32. These counterexamples show that shorter generated control can perform much more scheduling work.
+
+The revised selection rule retains admitted inline plans when they carry captures or have no staged producers. A smaller shared plan cannot justify introducing that unpriced scheduling boundary. Capture-free staged producers can compare total SQL size. Plans that already require shared control can compare their bounded shared forms. This remains a conservative physical heuristic. It must pass every unchanged catalog VM gate before acceptance.
+
+Build 41 also preserves the two-valued fact for a closed recursive caller during CFG reduction. Failure outcomes remain explicit. An impossible unknown branch must not create extra static routes. Its test-harness parameter edit was incomplete; the corrected harness is deferred to build 42. No build 41 depth-control pass is claimed.
+
+Build 42 removes the rejected singleton adapter. All recursive caller regions use the same answer-and-entry contract. A single occurrence keeps the callee's ordinal; multiple occurrences merge their ordered recipes. The prepared depth harness binds the root and work allowance, caches six depth statements, and records preparation separately from executed VM work.
+
+Build 42 passes both caller controls. The depth harness executes 588 native comparisons with six prepared statements. It uses 4,072,574 VM instructions in total. Its largest statement has 20,603 bytes. Measured preparation takes 8.11 seconds; execution takes 0.76 seconds. These times describe the control harness, not a workload speedup.
+
+SIM905 preserves native output at 199,727,353 instructions and 182,635 SQL bytes. This is only 160,935 fewer instructions than the baseline, with 3,402 more SQL bytes. It does not close the structural reference gap. The catalog gate and whole-job check remain required. Build 43 changes only the depth control: it restores every identifier and parenthesized root, and requires one producer for three logical occurrences.
+
+Build 42 still fails two catalog ceilings: B020 and PIE810. Both regress when size-only comparison changes an already admitted shared frontier. The revised guard therefore applies to the first admitted form, including shared forms. Only closed capture-free producers compare sizes. All other admitted frontiers retain their prior scheduling representation.
+
+Build 43 passes the expanded caller sweep: 1,078 executions across every identifier and parenthesized root, using six prepared statements. The profile requires one shared producer and three logical occurrences. Total work is 8,733,889 VM instructions. The callback and fault control also passes.
+
+The next measured defect is inside each finite predicate handler. A total kind or regex predicate creates a region demand, reads capture snapshots, returns through a two-cell adapter, and then passes through another eight-cell route adapter. Those boundaries carry no observable work or effects.
+
+Build 44 emits these predicates as direct SQL scalar projections. A reached-row barrier remains. The handler retains work, depth, handle, capture environment, and scope. It evaluates the predicate once, applies its static Boolean route, and returns scheduler columns directly. Unsupported sets and effectful regions keep their existing handlers. The native CFG control must exercise this shape. All catalog, whole-job, and reference gates remain unchanged.
+
+Build 44 passes all 49 finite controls and both caller controls. SIM905 uses 196,415,763 instructions, 176,829 SQL bytes, and 885,308 typed transfers. B615 increases to 241,507,720 instructions, so fewer typed transfers alone still do not qualify the physical shape.
+
+Build 45 combines total predicates into one reached scalar CASE. SIM905 falls to 192,388,830 instructions and 172,652 SQL bytes. B615 falls to 232,799,013 instructions. Native parity and all 49 finite controls pass. Both figures now improve on the published baseline; the broader gates remain pending.
+
+Build 46 removes the materialized predicate answer. The indexed integer route key already contains its Boolean result in the low two bits. The handler reuses those bits after route lookup. Without static routes, it returns the scalar result directly. B615 uses 231,467,471 instructions. Both reference native comparisons and regression probes pass; SIM905 still fails the reference budgets.
+
+Build 47 removes the remaining predicate snapshot. The SELECT retains its reached-program-counter guard and keyed node lookup. Admission requires a total supported set, empty capture inputs and outputs, and an empty effect summary. Effectful handlers retain their barriers. This physical change is pending the full native, catalog, job, and loop-trace gates.
+
+Build 48 retains the build 47 SQL shape and adds a semantic-refusal control for physical selection. Alternative representations can address resource limits. They cannot bypass an initial missing effect contract.
+
+All 146 build 48 native comparisons and unchanged catalog VM ceilings pass. Six grammars improve relative to build 34; none regress. Their combined reduction is 17,383,532 instructions. SIM905 uses 191,111,314 instructions and 172,557 total SQL bytes. B615 uses 230,292,581 instructions. F632 remains at 18,957,323 instructions and 29,457 bytes. Both Clippy configurations and the six independent accounting controls pass. The complete job, broad suite, and instrumented trace remain pending.
+
+Build 48 completes the broad suite with 2,203 passes and no failures. The excluded reference gate remains red. The whole job preserves 2,477 rows across 597 files and 146 grammars. It uses 36 executions: 22 matching packs and 14 physical-stage executions. Total work is 2,135,949,897 instructions. The largest matching statement has 255,391 bytes.
+
+The instrumented build preserves native output but fails the exact SQL-hash check. Two demand-union CTE names swap because a pointer-keyed map determines emission order. Build 49 records first source encounter separately from pointer identity. Its control reverses identity addresses and requires unchanged demand order. This addresses reproducible generation and prepared-query identity; it is not a runtime speedup.
+
+Build 50 extends direct predicate emission to all already-proved total, effect-free predicate plans. It uses the same bounded condition emitter as the former region handler. This includes structural EXISTS conditions and retains their existing expansion limits. It does not admit new source operators or change their effects. Full validation runs again on the frozen candidate.
+
+Build 50 completes the broad suite with 2,204 passes, 54 ignored tests, and no failures. The separately executed reference test still fails for SIM905. Both Clippy configurations, formatting, and all six accounting controls pass. The caller controls pass 1,078 native comparisons with six prepared statements. The callback, unknown, and fault control also passes.
+
+All 146 catalog comparisons pass their unchanged VM ceilings. Six grammars improve relative to published build 34; none regress. Their combined reduction is 22,884,164 instructions. The complete job preserves all 2,477 rows across 597 files and 146 grammars. It uses 36 executions: 22 matching packs and 14 physical-stage executions. Total work decreases from 2,156,234,044 to 2,129,104,002 instructions, a 1.3% reduction. The largest matching statement contains 255,391 bytes.
+
+SIM905 decreases from 199,888,288 to 186,145,877 instructions, a 6.9% reduction. Total SQL decreases from 179,233 to 165,534 bytes, including every physical stage. Typed return rows decrease from 985,864 to 871,394. B615 decreases from 237,968,660 to 230,292,581 instructions. F632 remains at 18,957,323 instructions and 29,457 SQL bytes.
+
+The instrumented build preserves native output and exactly matches the normal driver's SQL hash and every physical-stage statement. One outer queue scan remains. SIM905 visits 303,190 scheduler states, versus 304,130 in build 34. All 277,098 route probes visit exactly one row. Direct predicates reduce the work within states, but most scheduler states remain.
+
+The saved integration report and trace archive now identify build 50. They include frozen sources, emitted SQL, scan evidence, rejected selection experiments, and the full validation logs. SIM905 still exceeds its limits of 44,832,610 instructions and 62,980 total SQL bytes. The common compiler remains test-only; production cutover remains unqualified.
+
+The next structural change must carry closed recursive inputs through searches and fields. `recursive_projection::append` still rejects those edges. Candidate demand relations must bind each recursive answer, then reduce truth, cost, and peak in native order. Ordered entry recipes must preserve partial work and depth failures. This transfer needs the same native and performance gates before larger caller regions can leave the scheduler.

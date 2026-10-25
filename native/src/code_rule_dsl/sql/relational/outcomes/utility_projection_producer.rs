@@ -229,6 +229,12 @@ fn compile_forest_mode(
     {
         return Err("projection prefix must be an SQL identifier".into());
     }
+    if p.expressions
+        .iter()
+        .any(|e| matches!(e, Expr::Recursive(_)))
+    {
+        return Err("recursive inputs require their closed answer and entry bindings".into());
+    }
     let mut owners = entries
         .iter()
         .map(|body| Owner {

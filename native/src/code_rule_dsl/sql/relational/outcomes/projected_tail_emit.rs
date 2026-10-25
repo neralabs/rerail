@@ -5,13 +5,17 @@ use super::super::{projected_tail::Projection, utility_projection_producer};
 use super::{Demand, Output, Sql};
 use crate::code_rule_dsl::sql::relational::emit::condition;
 use serde_json::json;
+pub(super) struct ClosedRecursive {
+    pub summary: String,
+    pub entries: String,
+}
 impl Sql {
-    pub(super) fn projected_tail(
+    pub(super) fn closed_projected_tail(
         &mut self,
         p: &Projection,
         input: &Demand,
         root_filter: &str,
-    ) -> Result<Option<Output>, String> {
+    ) -> Result<Option<ClosedRecursive>, String> {
         let roots = self.generation.components.borrow().roots.clone();
         if roots.is_empty()
             || self.generation.memo_bypass
@@ -172,19 +176,35 @@ impl Sql {
                 .insert(key, prefix.clone());
             prefix
         };
+        Ok(Some(ClosedRecursive {
+            summary: format!("{prefix}_summary"),
+            entries: format!("{prefix}_entries"),
+        }))
+    }
+    pub(super) fn projected_tail(
+        &mut self,
+        p: &Projection,
+        input: &Demand,
+        root_filter: &str,
+    ) -> Result<Option<Output>, String> {
+        let Some(closed) = self.closed_projected_tail(p, input, root_filter)? else {
+            return Ok(None);
+        };
+        let summary = closed.summary;
+        let entries = closed.entries;
         self.generation
             .operator_as("projected recursive invocation")?;
         let depth = self.generation.depth_expression();
-        let classified=self.relation("projected recursive invocation",format!("SELECT d.*,s.truth,s.cost,s.peak,CASE WHEN ({depth})+s.peak>256 THEN (SELECT MIN(e.ordinal) FROM {prefix}_entries e WHERE e.file=d.file AND e.root=d.node AND ({depth})+e.depth>=256) END breach FROM {} d JOIN {prefix}_summary s ON s.file=d.file AND s.node=d.node",input.name),true,"closed summary and first prohibited entry");
+        let classified=self.relation("projected recursive invocation",format!("SELECT d.*,s.truth,s.cost,s.peak,CASE WHEN ({depth})+s.peak>256 THEN (SELECT MIN(e.ordinal) FROM {entries} e WHERE e.file=d.file AND e.root=d.node AND ({depth})+e.depth>=256) END breach FROM {} d JOIN {summary} s ON s.file=d.file AND s.node=d.node",input.name),true,"closed summary and first prohibited entry");
         let measured=self.relation("pure utility prefix budget",format!("SELECT d.*,min(d.work,d.cost,coalesce(d.breach-1,d.cost)) spent,CASE WHEN d.breach IS NOT NULL AND d.breach-1<=d.work THEN -1 WHEN d.work<d.cost THEN -2 ELSE d.truth END result FROM {classified} d"),true,"depth check precedes work charge");
         let note = if self.generation.peak_tracking {
             format!(
-                " AND relation_peak_note(({depth})+CASE WHEN d.breach IS NULL AND d.work>=d.cost THEN d.peak ELSE coalesce((SELECT max(e.depth+1) FROM {prefix}_entries e WHERE e.file=d.file AND e.root=d.node AND e.ordinal-1<=d.work AND (d.breach IS NULL OR e.ordinal<d.breach)),0) END)=1"
+                " AND relation_peak_note(({depth})+CASE WHEN d.breach IS NULL AND d.work>=d.cost THEN d.peak ELSE coalesce((SELECT max(e.depth+1) FROM {entries} e WHERE e.file=d.file AND e.root=d.node AND e.ordinal-1<=d.work AND (d.breach IS NULL OR e.ordinal<d.breach)),0) END)=1"
             )
         } else {
             String::new()
         };
-        self.profile.push(json!({"operator":"projected pure self tail","summary":prefix,"booleanContinuations":0,"entryWork":1,"failure":"ordered entry prefix; native depth before charge"}));
+        self.profile.push(json!({"operator":"projected pure self tail","summary":summary,"booleanContinuations":0,"entryWork":1,"failure":"ordered entry prefix; native depth before charge"}));
         Ok(Some(Output {
             name: self.relation(
                 "projected recursive completion",

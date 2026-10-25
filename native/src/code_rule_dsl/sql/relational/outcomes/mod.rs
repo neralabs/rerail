@@ -270,12 +270,8 @@ impl CaptureKind {
     }
 }
 
-fn resource_refusal(error: &str) -> bool {
-    error.contains("operator count exceeds") || error.contains("SQL text exceeds")
-}
 /// Physical selection is automatic and happens before any SQL execution.
-/// Existing recursive kernels stay intact unless their repeated bodies exceed
-/// the compilation budget. Only then expose their functions to the shared IR.
+/// Compare inline and shared forms within the unchanged compilation budgets.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Composition {
     Inline,
@@ -299,9 +295,14 @@ fn record_composition(profile: &mut serde_json::Value, shape: Composition, plan:
         profile["finiteRegions"] = serde_json::json!(program.regions.len());
     }
 }
+/// Compare bounded physical alternatives before preparing or executing SQL.
+/// Include every physical stage: a small driver can hide a large producer plan.
 fn select_composition(
     mut compile: impl FnMut(Composition) -> Result<Compiled, String>,
 ) -> Result<Compiled, String> {
+    let mut choices = Vec::new();
+    let mut best: Option<((usize, usize), Compiled)> = None;
+    let mut retain_first = false;
     let mut refusals = Vec::new();
     for shape in [
         Composition::Inline,
@@ -309,15 +310,57 @@ fn select_composition(
         Composition::RecursiveFunctions,
     ] {
         match compile(shape) {
-            Ok(compiled) => return Ok(compiled),
-            Err(error) if resource_refusal(&error) => {
-                refusals.push(format!("{}: {error}", shape.name()))
+            Ok(compiled) => {
+                let stage_bytes: usize = compiled.relations["physicalStages"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| s.as_str())
+                    .map(str::len)
+                    .sum();
+                let bytes = compiled.sql.len() + stage_bytes;
+                if best.is_none() {
+                    let captures = compiled.relations["captures"]
+                        .as_array()
+                        .is_some_and(|slots| !slots.is_empty());
+                    retain_first = captures || stage_bytes == 0;
+                }
+                // SQL size cannot price a newly introduced effect scheduler.
+                // Retain the first admitted unstaged or capture-bearing plan.
+                // Only closed, capture-free producers compare bounded forms.
+                let introduces_unpriced_schedule = retain_first && best.is_some();
+                let score = (usize::from(introduces_unpriced_schedule), bytes);
+                choices.push(serde_json::json!({"shape":shape.name(),"sqlBytes":bytes,"stageSqlBytes":stage_bytes,"introducesUnpricedSchedule":introduces_unpriced_schedule}));
+                if best.as_ref().is_none_or(|(previous, _)| score < *previous) {
+                    best = Some((score, compiled));
+                }
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                // Alternative representations may address physical resource
+                // limits, but must not bypass an initial semantic refusal.
+                if best.is_none()
+                    && !error.contains("operator count exceeds")
+                    && !error.contains("SQL text exceeds")
+                {
+                    return Err(error);
+                }
+                choices.push(serde_json::json!({"shape":shape.name(),"refusal":error}));
+                refusals.push(format!("{}: {error}", shape.name()));
+            }
         }
     }
-    Err(refusals.join("; "))
+    if let Some((_, mut compiled)) = best {
+        compiled.relations["compositionChoice"] = serde_json::json!({
+            "criterion":"retain the first admitted unstaged or capture-bearing plan; compare total SQL only for closed capture-free producers",
+            "alternatives":choices,
+            "executionDuringPlanning":false
+        });
+        Ok(compiled)
+    } else {
+        Err(refusals.join("; "))
+    }
 }
+
 fn finite_plan(mut plan: Plan, share_recursion: bool) -> Result<Plan, String> {
     let program = finite_lower::lower_with_recursion(&plan, share_recursion)?;
     plan.node_writes = program.node_writes.clone();
@@ -532,3 +575,115 @@ mod field_stopped_tests;
 #[cfg(test)]
 #[path = "finite_guard.rs"]
 mod finite_guard;
+
+mod recursive_projection;
+
+#[cfg(test)]
+mod composition_choice_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn candidate(driver: usize, stage: usize) -> Compiled {
+        Compiled {
+            sql: "x".repeat(driver),
+            terminals: vec![],
+            relations: json!({"physicalStages":["x".repeat(stage)]}),
+        }
+    }
+
+    #[test]
+    fn physical_choice_counts_stages_and_compares_admitted_shapes() {
+        let mut visits = 0;
+        let chosen = select_composition(|shape| {
+            visits += 1;
+            Ok(match shape {
+                Composition::Inline => candidate(10, 200),
+                Composition::Functions => candidate(100, 0),
+                Composition::RecursiveFunctions => candidate(80, 40),
+            })
+        })
+        .unwrap();
+        assert_eq!(visits, 3);
+        assert_eq!(chosen.sql.len(), 100);
+        assert_eq!(
+            chosen.relations["compositionChoice"]["alternatives"][0]["sqlBytes"],
+            210
+        );
+    }
+
+    #[test]
+    fn physical_choice_keeps_admitted_plan_when_alternative_is_refused() {
+        let chosen = select_composition(|shape| match shape {
+            Composition::Inline => Ok(candidate(10, 0)),
+            _ => Err("unsupported alternate frontier".into()),
+        })
+        .unwrap();
+        assert_eq!(chosen.sql.len(), 10);
+        assert_eq!(
+            chosen.relations["compositionChoice"]["alternatives"][1]["refusal"],
+            "unsupported alternate frontier"
+        );
+        assert!(select_composition(|_| Err("resource cap".into())).is_err());
+    }
+    #[test]
+    fn physical_choice_does_not_trade_capture_columns_for_scheduler_size() {
+        let chosen = select_composition(|shape| {
+            let mut compiled = candidate(
+                if shape == Composition::Inline {
+                    200
+                } else {
+                    20
+                },
+                100,
+            );
+            compiled.relations["captures"] = json!(["NAME"]);
+            Ok(compiled)
+        })
+        .unwrap();
+        assert_eq!(chosen.sql.len(), 200);
+        assert_eq!(
+            chosen.relations["compositionChoice"]["alternatives"][1]["introducesUnpricedSchedule"],
+            true
+        );
+    }
+
+    #[test]
+    fn physical_choice_preserves_unstaged_inline_regions() {
+        let chosen = select_composition(|shape| {
+            Ok(candidate(
+                if shape == Composition::Inline {
+                    200
+                } else {
+                    20
+                },
+                0,
+            ))
+        })
+        .unwrap();
+        assert_eq!(chosen.sql.len(), 200);
+    }
+    #[test]
+    fn physical_choice_keeps_unstaged_shared_frontier_after_inline_refusal() {
+        let chosen = select_composition(|shape| match shape {
+            Composition::Inline => Err("operator count exceeds256".into()),
+            Composition::Functions => Ok(candidate(200, 0)),
+            Composition::RecursiveFunctions => Ok(candidate(20, 0)),
+        })
+        .unwrap();
+        assert_eq!(chosen.sql.len(), 200);
+    }
+    #[test]
+    fn physical_choice_does_not_bypass_semantic_refusals() {
+        let mut visits = 0;
+        let result = select_composition(|_| {
+            visits += 1;
+            if visits == 1 {
+                Err("missing observable effect contract".into())
+            } else {
+                Ok(candidate(10, 0))
+            }
+        });
+        assert!(matches!(result, Err(error) if error == "missing observable effect contract"));
+        assert_eq!(visits, 1);
+    }
+}

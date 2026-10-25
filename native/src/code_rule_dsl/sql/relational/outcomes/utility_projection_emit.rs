@@ -65,7 +65,7 @@ pub(super) fn render_mode(
             .ok_or("projection expression out of range")?;
         match expr {
             Expr::Atom(set) => Ok(Summary::atom(atom(set)?)),
-            Expr::Call(_) | Expr::Search { .. } => {
+            Expr::Call(_) | Expr::Search { .. } | Expr::Recursive(_) => {
                 reached.push(Reached {
                     expression: id,
                     guard: guard.into(),

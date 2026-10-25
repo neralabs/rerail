@@ -8,6 +8,8 @@ use super::{Demand, Output, Sql, fields, needed, value};
 use serde_json::json;
 #[path = "finite_binding.rs"]
 mod binding;
+#[path = "finite_predicate.rs"]
+mod predicate;
 #[path = "finite_search.rs"]
 mod search;
 #[path = "finite_shared_search.rs"]
@@ -454,6 +456,8 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
             ));
             profiles.push(json!({"physicalOperator":"shared search transition","instructionRows":search_count,"enterTemplates":1,"returnTemplates":1}));
         }
+        let mut direct_phases = vec![];
+        let mut predicate_tests = vec![];
         let mut emitted_regions = std::collections::BTreeSet::new();
         for (id, node) in p.code.iter().enumerate() {
             let pc = id + 10;
@@ -536,6 +540,12 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
                         format!("machine.pc IN ({})", pcs.join(","))
                     };
                     let plan = &p.regions[*region];
+                    if let Some(test) = predicate::test(plan)? {
+                        self.generation.operator_as("direct finite predicate")?;
+                        region_operators.push((*region, 1));
+                        predicate_tests.push((pcs, test));
+                        continue;
+                    }
                     let mut child_generation = generation.clone();
                     child_generation.return_cells = child_generation
                         .return_cells
@@ -596,6 +606,11 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
                 _ => {}
             }
         }
+        if !predicate_tests.is_empty() {
+            let (query, guard) = predicate::query(&predicate_tests, cfg_routes.as_deref());
+            profiles.push(json!({"physicalOperator":"direct predicate projection","compositionOperators":predicate_tests.len(),"sites":predicate_tests.iter().map(|(pcs,_)|pcs.len()).sum::<usize>(),"scalarTemplates":1,"sqlBytes":query.len(),"typedReturnColumns":0,"captureSnapshotReads":0}));
+            direct_phases.push((query, guard, false));
+        }
         let handler = finishes
             .into_iter()
             .map(|q| format!("SELECT * FROM ({q})"))
@@ -625,6 +640,7 @@ CASE WHEN again.handle IS NOT NULL THEN CASE WHEN p.c0=2 THEN p.current_env ELSE
         let mut phases = phases
             .into_iter()
             .map(|(q, g)| (q, g, true))
+            .chain(direct_phases)
             .chain(projections.phases().into_iter().map(|(q, g)| (q, g, false)))
             .collect::<Vec<_>>();
         // Guards partition program counters. Return processing is frequent and

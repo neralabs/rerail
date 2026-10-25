@@ -249,3 +249,15 @@ Immutable batch statistics select rare anchors, direct-edge join order, and stor
 The integration report is `benchmark/sql-relational-common-compiler-integration.json`. Its archive contains pinned sources and fixtures, emitted SQL, EXPLAIN output, loop traces, and native comparisons. The report identifies its measured checkpoint. The journal records subsequent experiments until their qualification completes.
 
 The common compiler remains test-only. SIM905 still fails the reference-relative VM and SQL-size gates. Existing catalog ceilings and the whole-job execution limit do not substitute for those gates. Production cutover remains unqualified.
+
+### Closed recursive inputs and direct predicates
+
+Pure callers can now compose closed recursive answers through `All`, `Any`, and `Not`. Each input supplies truth, cost, peak, and ordered logical entries. Repeated occurrences share the answer producer but retain separate logical entries. Failed work or depth checks consume the ordered prefix. They do not run a second Boolean program.
+
+Producer identity includes the utility table, utility index, namespace, parsed scope, and host scope. Admission excludes capture and memo boundaries, Value reads, and cache construction. The generic producer rejects recursive inputs without their closed bindings.
+
+The finite scheduler emits total predicates through one scalar CASE, including structural EXISTS conditions. It uses keyed node and integer route lookups. These predicates do not publish region results or read capture snapshots. Effectful regions retain their existing transactions.
+
+SQL size alone is not a cost model. The catalog rejected that selector on 41 VM ceilings. The selector now retains the first admitted unstaged or capture-bearing frontier. Only closed capture-free producers compare total SQL size, including physical stages. Alternative representations cannot bypass a semantic refusal.
+
+The next transfer boundary is concrete: `recursive_projection::append` still rejects structural searches and fields. Extend closed inputs through those edges before admitting larger caller regions. The producer must derive candidate demands, reduce answers in native order, and retain the complete ordered entry prefix. The existing callback, memo, depth, catalog, execution-count, and reference gates remain mandatory. A smaller generated query does not replace those gates.

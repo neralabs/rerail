@@ -1,24 +1,24 @@
 {
   "schemaVersion": 1,
-  "recordedUtc": "2026-10-25T02:18:28.350288+00:00",
+  "recordedUtc": "2026-10-25T03:53:51.615028+00:00",
   "scope": "Common relational compiler integration. The production SQL selector remains unchanged. Preparation is separate from execution.",
   "productionCutover": false,
   "qualified": false,
-  "checkpoint": 34,
-  "baseCommit": "4dcd60b2804282c4245d54605c988465b3936f1a",
+  "checkpoint": 50,
+  "baseCommit": "85b78bbf38cc16bef1d1a10a434f3215d6746ec2",
   "referenceGates": [
     {
       "policy": "ruff-sim905-split-static-string",
       "nativeParity": true,
       "referenceGatePassed": false,
-      "vm": 199888288,
+      "vm": 186145877,
       "vmLimit": 44832610,
-      "totalSqlBytes": 179233,
+      "totalSqlBytes": 165534,
       "sqlByteLimit": 62980,
       "executions": 15,
       "nativeRows": 77,
-      "typedReturnRows": 985864,
-      "typedReturnCells": 7388864,
+      "typedReturnRows": 871394,
+      "typedReturnCells": 6813694,
       "continuations": {
         "peekRequests": 0,
         "pops": 127598,
@@ -26,7 +26,7 @@
         "reservedCellsWritten": 1531176
       },
       "sorts": 28,
-      "sqlSha256": "113bef0177017fa8d8b93fbdce76e73f0f1427fa08ad4e475f1c7fa180821773"
+      "sqlSha256": "c9d64b19cb2b908d080385dd0d336c1e7e8414227c7e3a7600613ebc5cac4452"
     },
     {
       "policy": "ruff-f632-is-literal",
@@ -56,20 +56,64 @@
     "grammars": 146,
     "fixtureFiles": 597,
     "fixtureBytes": 385321,
-    "totalVm": 1770516493,
-    "executionSumIsNotWholeJob": true
+    "totalVm": 1747632329,
+    "executionSumIsNotWholeJob": true,
+    "changesFromBaseline": [
+      {
+        "policy": "packs/python/rules/bandit-b615-huggingface-unsafe-download.json",
+        "clause": "b615",
+        "grammar": 0,
+        "beforeVm": 237968660,
+        "afterVm": 230292581
+      },
+      {
+        "policy": "packs/python/rules/ruff-b020-loop-variable-overrides-iterator.json",
+        "clause": "loop-variable-overrides-iterator",
+        "grammar": 0,
+        "beforeVm": 124422816,
+        "afterVm": 123920107
+      },
+      {
+        "policy": "packs/python/rules/ruff-pie810-multiple-starts-ends-with.json",
+        "clause": "multiple-starts-ends-with",
+        "grammar": 0,
+        "beforeVm": 6718611,
+        "afterVm": 6605628
+      },
+      {
+        "policy": "packs/python/rules/ruff-sim101-duplicate-isinstance-call.json",
+        "clause": "duplicate-isinstance-call",
+        "grammar": 0,
+        "beforeVm": 19527320,
+        "afterVm": 19431357
+      },
+      {
+        "policy": "packs/python/rules/ruff-sim113-enumerate-for-loop.json",
+        "clause": "enumerate-for-loop",
+        "grammar": 0,
+        "beforeVm": 17868098,
+        "afterVm": 17114079
+      },
+      {
+        "policy": "packs/python/rules/ruff-sim905-split-static-string.json",
+        "clause": "split-static-string",
+        "grammar": 0,
+        "beforeVm": 199888288,
+        "afterVm": 186145877
+      }
+    ]
   },
   "wholeJob": {
     "nativeParity": true,
     "files": 597,
     "grammars": 146,
     "nativeRows": 2477,
-    "executions": 37,
+    "executions": 36,
     "executionLimit": 100,
-    "matchingPacks": 23,
+    "matchingPacks": 22,
     "physicalExecutions": 14,
-    "vm": 2156234044,
-    "maxMatchingSqlBytes": 255978
+    "vm": 2129104002,
+    "maxMatchingSqlBytes": 255391
   },
   "regressionControls": [
     {
@@ -81,17 +125,17 @@
     {
       "policy": "bandit-b615-huggingface-unsafe-download",
       "passed": true,
-      "vm": 237968660,
+      "vm": 230292581,
       "limit": 347286337
     }
   ],
   "remainingSim905Work": {
-    "driverVm": 179736160,
+    "driverVm": 165993749,
     "stageVm": 20152128,
-    "driverSqlBytes": 121217,
+    "driverSqlBytes": 107518,
     "stageSqlBytes": 58016,
-    "driverFractionOfVm": 0.8991830476831139,
-    "requiredChange": "Compose maximal pure regions with their recursive summaries before the effect scheduler; share helper producers across callers. Further stage lookup tuning cannot close this gap."
+    "driverFractionOfVm": 0.891740132390899,
+    "requiredChange": "Closed recursive caller composition is implemented but narrow. Extend closed answers through pure structural searches, preserve ordered entry recipes, and reduce the remaining effect scheduler states. Direct predicate projections remove adapters but do not change that remaining frontier."
   },
   "astIndexPriorArt": {
     "commit": "9449260fea46fa81358fc638bf95a1566d475e27",
@@ -105,7 +149,7 @@
   },
   "validation": {
     "broadRustSuite": {
-      "passed": 2194,
+      "passed": 2204,
       "failed": 0,
       "ignored": 54,
       "filteredOut": 1,
@@ -123,17 +167,589 @@
       "nativePeak": 4,
       "work": 8,
       "correction": "Different producer result types preserve ordered logical entries while deduplicating memo answers."
+    },
+    "sqlDeterminism": {
+      "driverAndPhysicalStagesMatchInstrumentedBuild": true,
+      "rejectedCheckpoint": 48,
+      "correction": "Record producer demands in source encounter order; use addresses only for identity."
+    },
+    "callerControls": {
+      "nativeDepthAndWarmMemos": true,
+      "callbackUnknownAndFaults": true,
+      "singleProducerRepeatedLogicalOccurrences": true,
+      "scopeIdentity": true,
+      "physicalSelectionControls": 6
     }
   },
   "measurement": {
-    "normalBinarySha256": "4d6bcc8c490b39fa0bbb530aec6b04bcb792b8330c48cc82c20b1aa54e45e1da",
-    "scanBinarySha256": "e972fe44ad94aa90bc839dd44ff2f6075d2d7ac4a641cfede4498ca1909225ff",
-    "sourceManifestSha256": "de52efd68f6356bd58f288093809d4e01de70eff3d67e0cce7aac1bb8021bee0",
+    "normalBinarySha256": "7d50743f3794707ec5e5d6c8012d5ee6864c748cb5734d59d78f601e19a9f682",
+    "scanBinarySha256": "c66ad89de51e5c78211125640879c09fcfaaf203b6a8eb27d100afe53971049f",
+    "sourceManifestSha256": "0f3e323c5a264aab4030ce3cbc74eb490b2f4eb28cc63cacb6b7e355e28cae5a",
     "instrumentedVmQualifiesBudgets": false,
     "scanCycleCaution": "Loop hardware cycles are inclusive and must not be summed as CPU time. Instrumentation adds VM instructions.",
     "scanPlanCaution": "Executed scan IDs and separately prepared post-execution EXPLAIN IDs differ for some nodes. Use the executed scan tree and its own descriptions; do not join the two plans blindly.",
     "allocator": "real jemalloc",
-    "profile": "loop, unbounded-work, local test executable LTO disabled"
+    "profile": "loop, unbounded-work, local test executable LTO disabled",
+    "executedLoopSummary": {
+      "checkpoint": 50,
+      "interpretation": "Use the executed scan tree. Cycle counts are inclusive and must not be summed. Instrumented VM does not qualify budgets.",
+      "references": [
+        {
+          "policy": "ruff-sim905-split-static-string",
+          "schedulerLoops": [
+            {
+              "actualRowsPerLoop": 1.0,
+              "detail": "SCAN machine",
+              "estimateErrorRatio": 1.0172526041666667e-06,
+              "estimatedRowsPerLoop": 983040.0,
+              "flags": [],
+              "hardwareCycles": 253850980,
+              "loops": 303190,
+              "name": "schedule",
+              "parent": 318,
+              "planId": 320,
+              "rowsVisited": 303190
+            }
+          ],
+          "routeProbeLoops": 277098,
+          "routeProbeRows": 277098,
+          "allRouteProbesVisitOneRow": true,
+          "topInclusiveCycles": [
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome96",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 7098000676,
+              "loops": -1,
+              "name": null,
+              "parent": 3,
+              "planId": 6,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome2",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 7097838959,
+              "loops": -1,
+              "name": null,
+              "parent": 6,
+              "planId": 9,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 270",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 7041942206,
+              "loops": 4460,
+              "name": null,
+              "parent": 212,
+              "planId": 245,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome1",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 7041526651,
+              "loops": -1,
+              "name": null,
+              "parent": 245,
+              "planId": 248,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 268",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 6878063530,
+              "loops": 4460,
+              "name": null,
+              "parent": 248,
+              "planId": 268,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE closed",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 6877570290,
+              "loops": -1,
+              "name": null,
+              "parent": 268,
+              "planId": 271,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE returned",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 6851246492,
+              "loops": -1,
+              "name": null,
+              "parent": 271,
+              "planId": 273,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": 67.9798206278027,
+              "detail": "SCAN schedule",
+              "estimateErrorRatio": 4.98696992051071e-06,
+              "estimatedRowsPerLoop": 13631488.0,
+              "flags": [
+                "repeated_scan"
+              ],
+              "hardwareCycles": 6840104376,
+              "loops": 4460,
+              "name": "schedule",
+              "parent": 273,
+              "planId": 20412,
+              "rowsVisited": 303190
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 264",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 6507577009,
+              "loops": 298730,
+              "name": null,
+              "parent": 318,
+              "planId": 325,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 40",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 3093031811,
+              "loops": 132048,
+              "name": null,
+              "parent": 328,
+              "planId": 405,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 38",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 1714676794,
+              "loops": 77455,
+              "name": null,
+              "parent": 2640,
+              "planId": 2655,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE chosen",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 1266509900,
+              "loops": -1,
+              "name": null,
+              "parent": 2655,
+              "planId": 2658,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE routing",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 1065877597,
+              "loops": -1,
+              "name": null,
+              "parent": 2658,
+              "planId": 2660,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE advancing",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 918147886,
+              "loops": -1,
+              "name": null,
+              "parent": 2660,
+              "planId": 2662,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 222",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 705164692,
+              "loops": 2172,
+              "name": null,
+              "parent": 13331,
+              "planId": 13348,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 221",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 701978314,
+              "loops": 2172,
+              "name": null,
+              "parent": 13348,
+              "planId": 13375,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome6",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 701715073,
+              "loops": -1,
+              "name": null,
+              "parent": 13375,
+              "planId": 13378,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome5",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 696477446,
+              "loops": -1,
+              "name": null,
+              "parent": 13606,
+              "planId": 13608,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome4",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 695503774,
+              "loops": -1,
+              "name": null,
+              "parent": 13608,
+              "planId": 13610,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome3",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 694854445,
+              "loops": -1,
+              "name": null,
+              "parent": 13610,
+              "planId": 13612,
+              "rowsVisited": -1
+            }
+          ]
+        },
+        {
+          "policy": "ruff-f632-is-literal",
+          "schedulerLoops": [],
+          "routeProbeLoops": 0,
+          "routeProbeRows": 0,
+          "allRouteProbesVisitOneRow": true,
+          "topInclusiveCycles": [
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome6",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 574059522,
+              "loops": -1,
+              "name": null,
+              "parent": 3,
+              "planId": 6,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome3",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 573882122,
+              "loops": -1,
+              "name": null,
+              "parent": 6,
+              "planId": 9,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome2",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 313697501,
+              "loops": -1,
+              "name": null,
+              "parent": 13,
+              "planId": 16,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": 4320.0,
+              "detail": "SCAN (subquery-206)",
+              "estimateErrorRatio": 9.363347833806819e-05,
+              "estimatedRowsPerLoop": 46137344.0,
+              "flags": [],
+              "hardwareCycles": 311424001,
+              "loops": 1,
+              "name": null,
+              "parent": 16,
+              "planId": 290,
+              "rowsVisited": 4320
+            },
+            {
+              "actualRowsPerLoop": 4320.0,
+              "detail": "SCAN events",
+              "estimateErrorRatio": 9.363347833806819e-05,
+              "estimatedRowsPerLoop": 46137344.0,
+              "flags": [],
+              "hardwareCycles": 310455346,
+              "loops": 1,
+              "name": "events",
+              "parent": 20,
+              "planId": 249,
+              "rowsVisited": 4320
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome1",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 232074947,
+              "loops": -1,
+              "name": null,
+              "parent": 24,
+              "planId": 27,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 127",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 196855352,
+              "loops": 4320,
+              "name": null,
+              "parent": 430,
+              "planId": 466,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 126",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 103962928,
+              "loops": 4320,
+              "name": null,
+              "parent": 466,
+              "planId": 2584,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 52",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 90634184,
+              "loops": 4320,
+              "name": null,
+              "parent": 466,
+              "planId": 482,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome6",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 90304506,
+              "loops": -1,
+              "name": null,
+              "parent": 482,
+              "planId": 485,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome5",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 89024262,
+              "loops": -1,
+              "name": null,
+              "parent": 485,
+              "planId": 487,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome4",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 87298767,
+              "loops": -1,
+              "name": null,
+              "parent": 487,
+              "planId": 489,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome3",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 82098431,
+              "loops": -1,
+              "name": null,
+              "parent": 489,
+              "planId": 491,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome2",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 74123443,
+              "loops": -1,
+              "name": null,
+              "parent": 491,
+              "planId": 493,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 125",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 71269554,
+              "loops": 3682,
+              "name": null,
+              "parent": 2584,
+              "planId": 2609,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 124",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 70449324,
+              "loops": 3597,
+              "name": null,
+              "parent": 2639,
+              "planId": 2654,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": 3.2760633861551294,
+              "detail": "SCAN s",
+              "estimateErrorRatio": 4.806611554300058e-07,
+              "estimatedRowsPerLoop": 6815744.0,
+              "flags": [],
+              "hardwareCycles": 70167024,
+              "loops": 3597,
+              "name": "scan",
+              "parent": 2654,
+              "planId": 5431,
+              "rowsVisited": 11784
+            },
+            {
+              "actualRowsPerLoop": 129889.0,
+              "detail": "SCAN (subquery-207)",
+              "estimateErrorRatio": 0.002815268256447532,
+              "estimatedRowsPerLoop": 46137344.0,
+              "flags": [],
+              "hardwareCycles": 69303735,
+              "loops": 1,
+              "name": null,
+              "parent": 27,
+              "planId": 124,
+              "rowsVisited": 129889
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "CORRELATED SCALAR SUBQUERY 34",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 67455906,
+              "loops": 3723,
+              "name": null,
+              "parent": 493,
+              "planId": 538,
+              "rowsVisited": -1
+            },
+            {
+              "actualRowsPerLoop": null,
+              "detail": "MATERIALIZE outcome2",
+              "estimateErrorRatio": null,
+              "estimatedRowsPerLoop": 1.0,
+              "flags": [],
+              "hardwareCycles": 67125809,
+              "loops": -1,
+              "name": null,
+              "parent": 538,
+              "planId": 541,
+              "rowsVisited": -1
+            }
+          ]
+        }
+      ]
+    }
   },
   "reproduction": {
     "ordinaryBuild": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=<real-jemalloc-archive> RUSTC_WRAPPER=<archived-wrapper> cargo test -p rerail-engine --lib --profile loop --features unbounded-work --no-run",
@@ -145,39 +761,165 @@
   },
   "checkpointProgress": [
     {
-      "checkpoint": 30,
-      "vm": 272744739,
-      "totalSqlBytes": 200238,
-      "nativeParity": true
-    },
-    {
-      "checkpoint": 31,
-      "vm": 252918999,
-      "totalSqlBytes": 199938,
-      "nativeParity": true
-    },
-    {
-      "checkpoint": 32,
-      "vm": 242559289,
-      "totalSqlBytes": 195518,
-      "nativeParity": true
-    },
-    {
-      "checkpoint": 33,
-      "vm": 239979113,
-      "totalSqlBytes": 177592,
-      "nativeParity": true
-    },
-    {
       "checkpoint": 34,
       "vm": 199888288,
       "totalSqlBytes": 179233,
       "nativeParity": true
+    },
+    {
+      "checkpoint": 35,
+      "vm": 216925358,
+      "totalSqlBytes": 182700,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 36,
+      "vm": 199808879,
+      "totalSqlBytes": 182884,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 37,
+      "vm": 201159407,
+      "totalSqlBytes": 183911,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 38,
+      "vm": 221190858,
+      "totalSqlBytes": 250340,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 39,
+      "vm": 220746932,
+      "totalSqlBytes": 250151,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 40,
+      "vm": 200853848,
+      "totalSqlBytes": 183437,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 41,
+      "vm": 200772322,
+      "totalSqlBytes": 183237,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 42,
+      "vm": 199727353,
+      "totalSqlBytes": 182635,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 44,
+      "vm": 196415763,
+      "totalSqlBytes": 176829,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 45,
+      "vm": 192388830,
+      "totalSqlBytes": 172652,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 46,
+      "vm": 191861506,
+      "totalSqlBytes": 172603,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 47,
+      "vm": 191111314,
+      "totalSqlBytes": 172557,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 48,
+      "vm": 191111314,
+      "totalSqlBytes": 172557,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 49,
+      "vm": 191111314,
+      "totalSqlBytes": 172557,
+      "nativeParity": true
+    },
+    {
+      "checkpoint": 50,
+      "vm": 186145877,
+      "totalSqlBytes": 165534,
+      "nativeParity": true
+    }
+  ],
+  "baselineComparison": {
+    "checkpoint": 34,
+    "baseCommit": "85b78bbf38cc16bef1d1a10a434f3215d6746ec2",
+    "references": [
+      {
+        "policy": "ruff-sim905-split-static-string",
+        "beforeVm": 199888288,
+        "afterVm": 186145877,
+        "beforeTotalSqlBytes": 179233,
+        "afterTotalSqlBytes": 165534,
+        "beforeTypedReturnRows": 985864,
+        "afterTypedReturnRows": 871394
+      },
+      {
+        "policy": "ruff-f632-is-literal",
+        "beforeVm": 18957323,
+        "afterVm": 18957323,
+        "beforeTotalSqlBytes": 29457,
+        "afterTotalSqlBytes": 29457,
+        "beforeTypedReturnRows": 41489,
+        "afterTypedReturnRows": 41489
+      }
+    ],
+    "wholeJob": {
+      "beforeVm": 2156234044,
+      "afterVm": 2129104002,
+      "beforeExecutions": 37,
+      "afterExecutions": 36
+    },
+    "regressionControls": [
+      {
+        "policy": "ruff-b033-duplicate-value",
+        "beforeVm": 13593912,
+        "afterVm": 13593912
+      },
+      {
+        "policy": "bandit-b615-huggingface-unsafe-download",
+        "beforeVm": 237968660,
+        "afterVm": 230292581
+      }
+    ]
+  },
+  "compilerChanges": [
+    "Compose pure callers over distinct closed recursive answer and ordered-entry relations.",
+    "Canonical recursive producer identity respects utility table, utility index, namespace, parsed scope, and host scope.",
+    "Retain semantic refusals and the first admitted unstaged or capture-bearing frontier; compare total SQL for closed capture-free producers.",
+    "Emit total finite predicates as one direct CASE with keyed node and integer route lookups; omit region returns and capture snapshots."
+  ],
+  "rejectedSelectionControls": [
+    {
+      "checkpoint": 40,
+      "reason": "Minimum SQL size alone introduced expensive effect scheduling.",
+      "failedCatalogBudgets": 41
+    },
+    {
+      "checkpoint": 42,
+      "reason": "Changing an already admitted shared frontier still regressed B020 and PIE810.",
+      "failedCatalogBudgets": 2
     }
   ],
   "evidence": {
     "archive": "benchmark/sql-relational-common-compiler-integration-trace.tar.gz",
-    "archiveSha256": "bad54396bfc69c242467bddc5681e55d6bb55aed147e571a5978a25949a9bdaa",
-    "files": 1579
+    "archiveSha256": "7a035f86fae376250529ba2095af615ce4898ffa5931a8953b4647eb19fdfa06",
+    "files": 894
   }
 }

@@ -182,13 +182,14 @@ pub(super) fn compile(program: &Program) -> Option<Cfg> {
         }
         let result = match &p.code[n].op {
             Instruction::Eval(r) => p.regions.get(*r).is_none_or(|r| {
-                !matches!(
-                    r.op,
-                    super::Op::Predicate(_)
-                        | super::Op::PureRecursive(_)
-                        | super::Op::Chain(..)
-                        | super::Op::Downward(..)
-                )
+                super::recursive_projection::lower(r).is_none()
+                    && !matches!(
+                        r.op,
+                        super::Op::Predicate(_)
+                            | super::Op::PureRecursive(_)
+                            | super::Op::Chain(..)
+                            | super::Op::Downward(..)
+                    )
             }),
             Instruction::Call(f) => may_unknown(p, p.functions[*f].entry, active),
             Instruction::Not(c) => may_unknown(p, *c, active),

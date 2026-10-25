@@ -1,7 +1,7 @@
 use super::{Axis, CaptureKind, Op, Plan, Slot, Slots};
 use crate::code_rule_dsl::{
     language::GrammarDialect,
-    matcher::{AstMatcher, Semantic, StopBy},
+    matcher::{AstMatcher, Semantic, StopBy, UtilRef},
 };
 use ast_grep_core::{matcher::PatternNode, meta_var::MetaVariable};
 use std::collections::{HashMap, HashSet};
@@ -81,6 +81,7 @@ pub(super) struct Lower {
     call_sites: HashMap<usize, usize>,
     mixed_components: HashMap<ScopedUtility, SharedPlan<mixed_recursive_lower::Program>>,
     mixed_functions: usize,
+    pure_components: HashMap<ScopedUtility, Rc<pure_recursive_lower::Program>>,
     chains: HashMap<(usize, usize), (usize, Rc<super::super::recursive_chain::Chain>)>,
     downward: HashMap<(usize, usize), (usize, Rc<super::super::recursive_downward::Downward>)>,
     recursive_searches: HashMap<ScopedUtility, SharedPlan<recursive_search_lower::RecursiveSearch>>,
@@ -127,6 +128,7 @@ impl Lower {
             call_sites: HashMap::new(),
             mixed_components: HashMap::new(),
             mixed_functions: 0,
+            pure_components: HashMap::new(),
             chains: HashMap::new(),
             downward: HashMap::new(),
             recursive_searches: HashMap::new(),
@@ -154,6 +156,32 @@ impl Lower {
             parsed_components: HashMap::new(),
             nths: HashMap::new(),
         }
+    }
+
+    /// A closed producer has one identity per utility and lowering context.
+    /// Keep parsed and host domains distinct even when they reference one table.
+    fn pure_recursive_program(
+        &mut self,
+        util: &UtilRef,
+    ) -> Result<Option<Rc<pure_recursive_lower::Program>>, String> {
+        let key = (
+            util.table.as_ptr() as usize,
+            util.index,
+            self.namespace.clone(),
+            self.parsed_depth > 0,
+            self.hosted_depth > 0,
+        );
+        if let Some(program) = self.pure_components.get(&key) {
+            return Ok(Some(program.clone()));
+        }
+        let Some(program) =
+            pure_recursive_lower::try_lower(util, &mut self.pure, self.three_valued)?
+        else {
+            return Ok(None);
+        };
+        let program = Rc::new(program);
+        self.pure_components.insert(key, program.clone());
+        Ok(Some(program))
     }
 
     pub fn new_finite(dialect: GrammarDialect, three_valued: bool) -> Self {
@@ -613,7 +641,7 @@ impl Lower {
                     ),
                 );
                 let parsed_pure = if self.parsed_depth > 0 {
-                    pure_recursive_lower::try_lower(util, &mut self.pure, self.three_valued)?
+                    self.pure_recursive_program(util)?
                 } else {
                     None
                 };
@@ -625,7 +653,7 @@ impl Lower {
                     }
                     op
                 } else if let Some(program) = parsed_pure {
-                    Op::PureRecursive(Rc::new(program))
+                    Op::PureRecursive(program)
                 } else if let Some((id, chain)) = self.chains.get(&key) {
                     Op::Chain(*id, Rc::clone(chain))
                 } else if let Some(chain) =
@@ -660,10 +688,8 @@ impl Lower {
                     let downward = Rc::new(downward);
                     self.downward.insert(key, (id, Rc::clone(&downward)));
                     Op::Downward(id, downward)
-                } else if let Some(program) =
-                    pure_recursive_lower::try_lower(util, &mut self.pure, self.three_valued)?
-                {
-                    Op::PureRecursive(Rc::new(program))
+                } else if let Some(program) = self.pure_recursive_program(util)? {
+                    Op::PureRecursive(program)
                 } else if let Some(op) = self.mixed_recursive(util)? {
                     if let Op::MixedRecursive { program, entry } = &op {
                         mentions = program.mentions.clone();
@@ -751,5 +777,50 @@ impl Lower {
             walk_filter: None,
         };
         Ok(plan)
+    }
+}
+
+#[cfg(test)]
+mod pure_identity_tests {
+    use super::*;
+    use crate::code_rule_dsl::test_support::grammar_matchers;
+    use serde_json::json;
+
+    #[test]
+    fn recursive_producer_identity_respects_lowering_domains() {
+        let policy = super::super::publication_tests::policy_utils(
+            &[json!({"matches":"outer"})],
+            json!({
+                "outer":{"any":[{"matches":"left"},{"matches":"right"},{"kind":"parenthesized_expression","has":{"stopBy":"neighbor","matches":"outer"}}]},
+                "left":{"kind":"identifier","regex":"^a$"},
+                "right":{"kind":"identifier","regex":"^b$"}
+            }),
+        );
+        let g = &grammar_matchers(&policy)[0];
+        let AstMatcher::Util(util) = &g.matcher else {
+            panic!("utility fixture")
+        };
+        let mut lower = Lower::new_finite(g.language, g.three_valued);
+        let first = lower.pure_recursive_program(util).unwrap().unwrap();
+        let terminals = lower.pure.program.terminals.len();
+        let second = lower.pure_recursive_program(util).unwrap().unwrap();
+        assert!(Rc::ptr_eq(&first, &second));
+        assert_eq!(lower.pure.program.terminals.len(), terminals);
+        lower.parsed_depth = 1;
+        let parsed = lower.pure_recursive_program(util).unwrap().unwrap();
+        assert!(!Rc::ptr_eq(&first, &parsed));
+        lower.namespace = "@parse1:".into();
+        let other_parse = lower.pure_recursive_program(util).unwrap().unwrap();
+        assert!(!Rc::ptr_eq(&parsed, &other_parse));
+        lower.namespace.clear();
+        lower.parsed_depth = 0;
+        lower.hosted_depth = 1;
+        let hosted = lower.pure_recursive_program(util).unwrap().unwrap();
+        assert!(!Rc::ptr_eq(&first, &hosted));
+        lower.hosted_depth = 0;
+        assert!(Rc::ptr_eq(
+            &first,
+            &lower.pure_recursive_program(util).unwrap().unwrap()
+        ));
     }
 }

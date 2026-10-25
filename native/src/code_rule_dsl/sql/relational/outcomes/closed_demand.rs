@@ -5,16 +5,37 @@ use super::super::{Axis, Op, Plan};
 use super::Sql;
 use crate::code_rule_dsl::sql::relational::emit::condition;
 use std::collections::{BTreeMap, BTreeSet};
+#[derive(Default)]
 struct Builder {
     prefix: String,
     definitions: Vec<String>,
     dependencies: BTreeMap<String, Vec<String>>,
     demands: BTreeMap<usize, Vec<String>>,
+    demand_order: Vec<usize>,
     blocked: BTreeSet<usize>,
     visits: usize,
     alias: usize,
 }
 impl Builder {
+    fn record_demand(&mut self, key: usize, input: &str) {
+        if !self.demands.contains_key(&key) {
+            self.demand_order.push(key);
+        }
+        self.demands.entry(key).or_default().push(input.into());
+    }
+    // Addresses identify producers but must not determine emitted SQL names.
+    fn take_demands(&mut self) -> Vec<(usize, Vec<String>)> {
+        std::mem::take(&mut self.demand_order)
+            .into_iter()
+            .map(|key| {
+                (
+                    key,
+                    self.demands.remove(&key).expect("recorded producer demand"),
+                )
+            })
+            .collect()
+    }
+
     fn relation(&mut self, query: String, dependencies: &[&str]) -> String {
         let name = format!("{}_{}", self.prefix, self.definitions.len());
         self.dependencies.insert(
@@ -114,7 +135,7 @@ impl Builder {
                     let key =
                         projection as *const super::super::projected_tail::Projection as usize;
                     if let Some(input) = input {
-                        self.demands.entry(key).or_default().push(input.into());
+                        self.record_demand(key, input);
                     } else {
                         self.blocked.insert(key);
                     }
@@ -266,6 +287,7 @@ impl Sql {
             definitions: vec![],
             dependencies: BTreeMap::new(),
             demands: BTreeMap::new(),
+            demand_order: vec![],
             blocked: BTreeSet::new(),
             visits: 0,
             alias: 0,
@@ -273,9 +295,8 @@ impl Sql {
         if b.walk(source, Some(&roots)).is_none() {
             return Ok(());
         }
-        let demands = std::mem::take(&mut b.demands);
         let mut closed = vec![];
-        for (key, inputs) in demands {
+        for (key, inputs) in b.take_demands() {
             if b.blocked.contains(&key) {
                 continue;
             }
@@ -345,5 +366,29 @@ impl Sql {
             .closed_demands
             .extend(closed);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod identity_order_tests {
+    use super::Builder;
+
+    #[test]
+    fn producer_demand_order_is_independent_of_addresses() {
+        for keys in [[9, 1], [1, 9]] {
+            let mut builder = Builder::default();
+            builder.record_demand(keys[0], "first");
+            builder.record_demand(keys[1], "second");
+            builder.record_demand(keys[0], "third");
+            let demands = builder.take_demands();
+            assert_eq!(
+                demands
+                    .iter()
+                    .map(|(_, inputs)| inputs.clone())
+                    .collect::<Vec<_>>(),
+                vec![vec!["first", "third"], vec!["second"]]
+            );
+            assert!(builder.take_demands().is_empty());
+        }
     }
 }

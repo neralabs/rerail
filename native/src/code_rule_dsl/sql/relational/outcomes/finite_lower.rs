@@ -233,6 +233,9 @@ impl Builder {
         {
             return self.recursive(*id, component, plan);
         }
+        if super::recursive_projection::lower(plan).is_some() {
+            return Ok(self.region(plan));
+        }
         if component(plan).is_some()
             || matches!(plan.op, Op::Predicate(_))
             || !boundary(plan, &self.uses)
@@ -246,7 +249,7 @@ impl Builder {
             Op::TransientCharge(body) => return self.call(plan, body, None),
             Op::All(items) | Op::Any(items) => Instruction::Boolean {
                 all: matches!(plan.op, Op::All(_)),
-                children: items
+                children: super::recursive_projection::group(items, matches!(plan.op, Op::All(_)))
                     .iter()
                     .map(|p| self.plan(p))
                     .collect::<Result<_, _>>()?,

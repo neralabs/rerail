@@ -51,13 +51,13 @@ fn truth(p: &Program, id: Id, kind: Option<u16>) -> u8 {
         Expr::Any(v) => v.iter().fold(FALSE, |a, c| or(a, truth(p, *c, kind))),
         Expr::Call(f) => truth(p, p.functions[*f].body, kind),
         Expr::Search { filter, .. } if filter.as_ref().is_some_and(|f| f.kinds.is_empty()) => FALSE,
-        Expr::Search { .. } => FALSE | TRUE,
+        Expr::Search { .. } | Expr::Recursive(_) => FALSE | TRUE,
     }
 }
 fn reach(p: &Program, id: Id, kind: Option<u16>, active: bool, out: &mut Vec<bool>) {
     match &p.expressions[id] {
         Expr::Atom(_) => {}
-        Expr::Call(_) | Expr::Search { .. } => out.push(active),
+        Expr::Call(_) | Expr::Search { .. } | Expr::Recursive(_) => out.push(active),
         Expr::Not(c) => reach(p, *c, kind, active, out),
         Expr::All(v) | Expr::Any(v) => {
             let all = matches!(p.expressions[id], Expr::All(_));

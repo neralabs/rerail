@@ -34,6 +34,11 @@ mod projected_tail_depth_tests;
 mod projected_tail_emit;
 #[path = "projection_storage.rs"]
 mod projection_storage;
+#[cfg(test)]
+#[path = "recursive_projection_depth_tests.rs"]
+mod recursive_projection_depth_tests;
+#[path = "recursive_projection_emit.rs"]
+mod recursive_projection_emit;
 #[path = "utility_projection_adapter.rs"]
 mod utility_projection_adapter;
 use super::super::ir::Set;
@@ -492,6 +497,11 @@ impl Sql {
             && memo::region(plan)?
         {
             return memo::shared(self, plan, input);
+        }
+        if let Some(program) = super::recursive_projection::lower(plan)
+            && let Some(output) = self.recursive_projection(&program, input)?
+        {
+            return Ok(output);
         }
         let operator = match &plan.op {
             Op::Predicate(_) => "total predicate",

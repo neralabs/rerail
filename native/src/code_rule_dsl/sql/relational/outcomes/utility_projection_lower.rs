@@ -15,6 +15,7 @@ pub(super) enum Expr {
     Any(Vec<Id>),
     Not(Id),
     Call(usize),
+    Recursive(Rc<super::lower::pure_recursive_lower::Program>),
     Search {
         axis: Axis,
         field: Option<u16>,
@@ -43,7 +44,7 @@ impl Program {
         self.has_calls()
     }
 }
-fn set_supported(s: &Set) -> bool {
+pub(super) fn set_supported(s: &Set) -> bool {
     match s {
         Set::AllNodes | Set::Empty | Set::Kinds(_) | Set::Regex(_) | Set::Nonempty => true,
         Set::Intersect(v) | Set::Union(v) => v.iter().all(set_supported),
