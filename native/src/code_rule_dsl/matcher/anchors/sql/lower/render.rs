@@ -12,6 +12,29 @@ fn tokens(sql: &str) -> impl Iterator<Item = &str> {
     IDENTIFIER.find_iter(sql).map(|token| token.as_str())
 }
 
+/// Stream key aliases without removing a computed producer's evaluation boundary.
+/// One syntactic reader can probe a predicate many times through a nested join.
+pub(super) fn stream_keys(sql: String) -> String {
+    let projection = sql
+        .split_once(") AS MATERIALIZED (")
+        .filter(|(header, _)| header.ends_with("(fid,pre"))
+        .and_then(|(_, body)| body.strip_suffix(')'))
+        .and_then(|body| body.strip_prefix("SELECT fid,pre FROM "));
+    let safe = projection.is_some_and(|projection| {
+        let (source, predicate) = projection.split_once(" WHERE ").unwrap_or((projection, ""));
+        !source.is_empty()
+            && source
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            && matches!(predicate, "" | "pre>=0" | "pre IS NOT NULL")
+    });
+    if safe {
+        sql.replacen(" AS MATERIALIZED ", " AS NOT MATERIALIZED ", 1)
+    } else {
+        sql
+    }
+}
+
 /// A private set's CTAS is already its physical boundary. Keep upstream shared CTEs
 /// materialized, but stream this final projection directly into its owner.
 pub(super) fn owned(mut sql: String, name: &str) -> String {

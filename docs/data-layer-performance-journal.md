@@ -4041,6 +4041,71 @@ Commands and receipts remain under the A1 evidence directory, including `control
 The next TDD rung removes private row copies from single-reader projection pipelines.
 It preserves the source-span boundary that prevents repeated source predicates.
 
+## Guarded projection streaming and planning attribution (2026-10-25)
+
+Hypothesis: stream private key projections without copying every intermediate into an ephemeral table.
+The red projection test in `0f3bce9e` measures approximately 45,000 versus 438,300 VM instructions across sixteen copies.
+A broad single-reader inliner passes that test but fails the next TDD rung, `0cc8a7cf`.
+One syntactic reader can perform many dynamic probes: the predicate runs 16,384 times instead of 1,024.
+Reject that general inliner. Stream only generated key aliases with no computation, join, or renamed column.
+Keep source-span barriers and computed predicates materialized before fan-out.
+This policy adds no execution switch.
+
+The rejected addon is `c987feb7fc390669a1ef06c2894909792a8fc1ddef059aea2305ed44a71781d7`.
+Its 128-file, 60-rule control exceeds 115 seconds with only two ingestion batches complete.
+Host load rises from 68 to 92. This timeout cannot establish which code change caused the delay.
+Its one-file SQL diagnostic completes with 6.254 candidate CPU seconds and 311,536 source-text reads.
+The preceding union diagnostic records 6.408 seconds and 311,530 reads.
+Thus the synthetic fan-out failure does not explain that real-file timeout.
+Keep this distinction explicit.
+
+The guarded addon is `a5bf2e1dfd0d7b0ad64c735fa91b1c5e8ccb9fbfe181f03d15ce71aeb919291f`.
+Build configuration, allocator shim, worker count, source hashes, and selections match the preceding controls.
+The build uses release mode, LTO disabled, 256 codegen units, engine optimization level 1, and `code-rule-profile`.
+Receipts and commands remain under `.rerail/profiles/anchor-planning-20261025/`.
+
+| Ingestion control | Before CPU | Guarded CPU | Guarded wall | Guarded OS peak RSS | Logical compile CPU |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 32 files, 50 rules | 9.588 s | 6.751 s | 9.206 s | 1,201,455,104 B | 1.567 s |
+| 128 files, 50 rules | 15.395 s | 12.404 s | 20.848 s | 1,308,999,680 B | 1.577 s |
+| 128 files, 60 rules | 28.149 s | 26.152 s | 39.037 s | 1,833,091,072 B | 2.521 s |
+
+All guarded controls complete without local execution failures. Before controls retain the known signature failure.
+These controls omit repository-wide analyses and findings parity. They do not establish aggregate acceptance.
+The 60-rule CPU improvement remains modest, at 7.1%. Its peak RSS still exceeds the before control by 3.3%.
+Guarded streaming adds little beyond fused alternatives, so do not present it as the main recovery gain.
+The receipts are `control-stream-{32-50,128-50,128-60}/invocation.json`.
+
+The new profiler separates fragment lowering, composition, canonical ordering, rendering, and ownership scheduling.
+Commit `11827b79` supplies the red reporting test. Reports retain the inclusive planning total without adding its children twice.
+External sampling records sampler duration and timeout status. Its processing allowance rises while the whole command remains bounded.
+The `stream-planning-diagnostic` run completes in 40.041 seconds; all three external samples complete.
+Physical planning uses 2.020 CPU seconds: fragments 0.801, composition 0.278, ordering 0.071, rendering 0.389, and ownership 0.385.
+SQL materialization uses 6.244 seconds; result reads use 1.017 seconds; SQL preparation uses 1.255 seconds.
+The diagnostic working-set snapshots add 1.950 seconds and must stay disabled in timing controls.
+The dominant SQLite sample contains record comparison, B-tree seeks, VM execution, and temporary-file reads and writes.
+These are wall-time stack observations, not CPU percentages.
+Planning is measurable, but execution remains the larger frontier. Target the expensive relation before further compiler caching.
+
+The guarded version passes 1,513 Rust DSL tests in disjoint core and workspace groups.
+There are 23 ignored tests; 114 tests outside the DSL filter remain untested by this run.
+All 26 Python profiler tests pass. Type checking and strict Clippy pass.
+All 42 production-shape tests pass with this frozen addon.
+The combined canonical replay passes 1,236 native calls through stateless and workspace execution.
+It contains 1,116 original executable observations from batches one through five, plus 120 supplemental controls across all 60 rules.
+The supplemental controls provide 60 positive and 60 clean observations. They are not additional unique original tests.
+The replay has zero false positives, false negatives, execution failures, path differences, or host-guard calls.
+Six metadata-only checks have no executable observations in the original first-five recordings; supplemental coverage does not change that fact.
+Original batch-six coverage remains unfinished.
+The replay receipt is `stream-originals-and-controls-receipt.json`; the complete report is `stream-originals-and-controls.json`.
+
+The separate `stream-sql-diagnostic-one` capture completes its workload, but report validation rejects unavailable parity.
+It records 6.369 SQL CPU seconds without incomplete operations.
+Its largest statement uses 1.247 seconds and 50,792,117 VM instructions.
+That statement repeatedly partitions one candidate scope into kind alternatives, reunites them, and subtracts the union.
+This identifies a concrete next hypothesis: fold finite kind alternatives before SQL emission.
+Do not infer a full-workload gain from the statement cost alone.
+
 ## Future entries
 
 Each new entry must identify the hypothesis, baseline commit, workload hashes, build configuration, and exact commands.

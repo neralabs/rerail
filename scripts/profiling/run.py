@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from report import LEAF_PHASES, aggregate, chrome_trace, summary, phase_overlap
+from report import aggregate, chrome_trace, summary, phase_overlap, sample_leaf_phases
 from sample import bottom_up
 from process import ProcessMonitor, memory_snapshot
 
@@ -107,12 +107,16 @@ def execute(args, command, output, deadline):
                 if args.external == "sample" and len(samples) < args.sample_count and time.monotonic() >= next_sample and remaining > args.sample_seconds + 8:
                     raw = output / f"sample-{len(samples) + 1}.txt"
                     started = time.time()
+                    sample_timed_out = False
                     with (output / "sampler.log").open("a") as log:
                         sampler = subprocess.Popen(["/usr/bin/sample", str(process.pid), str(args.sample_seconds), "1", "-file", str(raw)],
                                                    stdout=log, stderr=log, start_new_session=True)
                         try:
-                            sampler.wait(timeout=min(args.sample_seconds + 6, remaining - 3))
+                            # Collection and report processing share the command's
+                            # deadline. A cold sampler repeatedly exceeded six extra seconds.
+                            sampler.wait(timeout=min(args.sample_seconds + 15, remaining - 3))
                         except subprocess.TimeoutExpired:
+                            sample_timed_out = True
                             log.write("Sampler exceeded its budget; terminating it.\n")
                         finally:
                             kill_group(sampler)
@@ -122,6 +126,7 @@ def execute(args, command, output, deadline):
                         converted = {"parseError": str(error)}
                     samples.append({"file": raw.name, "startUnixUs": int(started * 1e6),
                                     "captureSeconds": args.sample_seconds,
+                                    "elapsedSeconds": time.time() - started, "timedOut": sample_timed_out,
                                     "exitCode": sampler.returncode, **converted})
                     next_sample = time.monotonic() + args.sample_every
                 time.sleep(min(0.05, max(0, remaining - 3)))
@@ -216,13 +221,14 @@ def main():
         source["nativeSha256"] = hashlib.sha256(Path(engine).read_bytes()).hexdigest()
     code, timed_out, samples, processes, memory = execute(args, command, output, started + args.deadline)
     native, events = aggregate((output / "stderr.log").read_text())
+    sampled_phases = sample_leaf_phases(events)
     for sample in samples:
         start = sample["startUnixUs"]
         end = start + sample["captureSeconds"] * 1e6
         sample["approximateDriverPhaseOverlap"] = phase_overlap(native["phaseMarkers"], start, end)
         overlaps = []
         for event in events:
-            if event["phase"] not in LEAF_PHASES:
+            if event["phase"] not in sampled_phases:
                 continue
             overlap = min(end, event["startUnixUs"] + event["wallNs"] / 1000) - max(start, event["startUnixUs"])
             if overlap > 0:

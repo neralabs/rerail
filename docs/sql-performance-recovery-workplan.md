@@ -4,7 +4,10 @@
 
 Status: A1 implementation is committed at `e771dc6c`; performance acceptance remains open.
 The first matched controls regress CPU by 16–18%. The journal records that result.
-The next implementation corrects quadratic parent membership exposed by those controls.
+Parent membership, scoped kind refinement, fused alternatives, and guarded projection streaming now pass their regression tests.
+The latest 128-file controls reduce CPU by 19.4% for 50 rules and 7.1% for 60 rules versus the failed before version.
+The 60-rule memory control still regresses. These ingestion controls do not establish full-repository acceptance.
+The next measured frontier is expensive candidate relation execution; planning attribution is now available.
 The older R0–R7 plan is historical. This plan supersedes its statement-count acceptance gates.
 Statement counts remain diagnostic. Each delivery includes failing tests, implementation, passing tests, and measured evidence.
 No production switches select competing implementations. Linear issues require prior user approval.
@@ -124,7 +127,11 @@ Use selected parent keys as the outer relation and seek `decoded_child_lookup(fi
 The final intersection must retain the original consumer scope and source version.
 Keep field and first-child predicates. This change adds no new materialized relation or native callback.
 Compare the same 32- and 128-file controls before selecting the next family.
-This first correction does not complete the broader A2 scope.
+Commit `b07701d1` implements the indexed-parent correction.
+Commit `81ea9328` adds scoped kind refinement and fused alternatives.
+Guarded projection streaming retains predicate evaluation barriers; broad single-reader inlining is rejected by a fan-out test.
+The latest diagnostic attributes 6.244 CPU seconds to materialization and 2.020 seconds to physical planning.
+These corrections do not complete the broader A2 scope.
 
 - Preserve exact `(consumer, source version, file, range)` membership in demand relations.
 - Batch distinct scopes with explicit scope IDs. Do not replace them with their union.

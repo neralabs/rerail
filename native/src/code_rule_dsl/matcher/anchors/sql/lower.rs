@@ -787,6 +787,9 @@ fn batch_scope(
     let mut admissions = Vec::new();
     let mut anchors = Vec::new();
     for (qid, plan) in plans.iter().enumerate() {
+        #[cfg(feature = "code-rule-profile")]
+        let mut fragment =
+            crate::code_rule_dsl::profile::trace::Span::start("anchor-fragment", "lower");
         // Admission belongs to the individual plan. Another consumer's cached
         // producers cannot expand or shrink this plan's existing 256-node allowance.
         let mut lower = scope(lang, fids, path_glob, statistics);
@@ -825,6 +828,14 @@ fn batch_scope(
             .into_iter()
             .cloned()
             .collect::<Vec<_>>();
+        #[cfg(feature = "code-rule-profile")]
+        {
+            fragment.detail(|| serde_json::json!({"consumer":qid,"generated":admissions[qid].generated,"liveCtes":live.len(),"partial":admissions[qid].partial}));
+            drop(fragment);
+        }
+        #[cfg(feature = "code-rule-profile")]
+        let _compose =
+            crate::code_rule_dsl::profile::trace::Span::start("anchor-compose", "intern");
         let nodes = program.add(&live, &lower.parameters, lang);
         roots.push((nodes[&selected.name].id, qid));
         for name in lower.indexed {
@@ -870,6 +881,9 @@ fn batch_scope(
                 .or_insert_with(|| (value(&language), value(&expression)));
         }
     }
+    #[cfg(feature = "code-rule-profile")]
+    let mut ordering =
+        crate::code_rule_dsl::profile::trace::Span::start("anchor-layout", "canonical-order");
     let layout = program.finish();
     // Group output arms by the canonical producer, while retaining caller identities.
     // Packet boundaries then depend on shared work rather than allocation order.
@@ -913,7 +927,16 @@ fn batch_scope(
             )
         })
         .collect();
+    #[cfg(feature = "code-rule-profile")]
+    {
+        ordering.detail(|| serde_json::json!({"ctes":layout.ctes.len(),"parameters":layout.parameters.len(),"consumers":plans.len()}));
+        drop(ordering);
+    }
+    #[cfg(feature = "code-rule-profile")]
+    let _render = crate::code_rule_dsl::profile::trace::Span::start("anchor-render", "families");
     let mut statement = prepare_decoded(layout.ctes, queries, layout.parameters, indexed, decoding);
+    #[cfg(feature = "code-rule-profile")]
+    drop(_render);
     statement.admissions = admissions;
     if !values.is_empty() {
         let stages = [
@@ -959,6 +982,9 @@ fn batch_scope(
     statement.language = lang;
     statement.files = fids.unwrap_or_default().to_vec();
     statement.file_scope = fids.is_some();
+    #[cfg(feature = "code-rule-profile")]
+    let _ownership =
+        crate::code_rule_dsl::profile::trace::Span::start("anchor-ownership", "schedule");
     statement.own();
     statement
 }
@@ -1167,6 +1193,9 @@ fn prepare_decoded(
         expansion.insert(name.as_str(), if shared { 1 } else { cost });
         let cte = if shared {
             render::owned(cte, name)
+        } else if uses[name] == 1 && !barrier_names.contains(name) {
+            // Keep computed predicates and decoder barriers before join fan-out.
+            render::stream_keys(cte)
         } else {
             cte
         };
