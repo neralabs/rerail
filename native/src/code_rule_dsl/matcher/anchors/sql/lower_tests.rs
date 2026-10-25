@@ -226,6 +226,156 @@ fn compiler() -> Lower {
 }
 
 #[test]
+fn alternatives_do_not_repeatedly_materialize_a_growing_union() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+    let measure = |count: u16| {
+        let store = super::super::store::Store::temporary().unwrap();
+        store
+            .db
+            .execute_batch(&format!(
+                "CREATE TABLE points(fid INTEGER,pre INTEGER,bucket INTEGER);
+            INSERT INTO points SELECT 1,value,value/64 FROM generate_series(0,{},1);
+            CREATE INDEX point_bucket ON points(bucket,fid,pre)",
+                u32::from(count) * 64 - 1
+            ))
+            .unwrap();
+        let mut lower = compiler();
+        let mut alternatives = Vec::new();
+        for bucket in 0..count {
+            // Bind a narrow kind relation to a deterministic indexed fixture.
+            let selected = lower
+                .relation(
+                    format!("SELECT fid,pre FROM points WHERE bucket={bucket}"),
+                    true,
+                )
+                .unwrap();
+            lower.roots.insert(BTreeSet::from([bucket + 1]), selected);
+            alternatives.push(AnchorPlan {
+                root_kinds: Some([bucket + 1].into()),
+                condition: Condition::Always,
+                exact: true,
+            });
+        }
+        // Repeated alternatives retain set semantics.
+        alternatives.push(alternatives[0].clone());
+        let plan = AnchorPlan {
+            root_kinds: None,
+            condition: Condition::Any(alternatives),
+            exact: true,
+        };
+        let selected = lower.plan(&plan, lower.all()).unwrap();
+        let statement = finish_decoded(
+            lower.ctes,
+            vec![format!(
+                "SELECT 0,fid,pre FROM {} ORDER BY fid,pre",
+                selected.name
+            )],
+            lower.parameters,
+            lower.indexed,
+            lower.decoding,
+        );
+        let ticks = Arc::new(AtomicU64::new(0));
+        let observed = ticks.clone();
+        store
+            .db
+            .progress_handler(
+                100,
+                Some(move || {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                    false
+                }),
+            )
+            .unwrap();
+        let mut rows = Vec::new();
+        super::super::execute::rows(&store, &statement, |_, fid, pre| rows.push((fid, pre)))
+            .unwrap();
+        assert_eq!(
+            rows,
+            (0..usize::from(count) * 64)
+                .map(|pre| (1, pre))
+                .collect::<Vec<_>>()
+        );
+        ticks.load(Ordering::Relaxed)
+    };
+    let small = measure(16);
+    let large = measure(32);
+    assert!(
+        large <= small * 3,
+        "doubling alternative output must not quadruple SQL work: {small} -> {large}"
+    );
+}
+
+#[test]
+fn failed_literal_admission_restores_the_previous_kind_domain() {
+    use super::super::super::{Required, Requirement};
+    for previous in [None, Some(BTreeSet::from([25]))] {
+        let mut lower = compiler();
+        if let Some(previous) = &previous {
+            lower
+                .reuse
+                .kinds
+                .insert("all_nodes".into(), previous.clone());
+        }
+        lower.limit = 0;
+        assert!(
+            lower
+                .pattern(
+                    &[Requirement {
+                        value: Required::Terminal(17, "target".into()),
+                        parents: vec![]
+                    }],
+                    lower.all()
+                )
+                .is_err()
+        );
+        assert_eq!(
+            lower.reuse.kinds.get("all_nodes"),
+            previous.as_ref(),
+            "failed admission must not restrict a later consumer"
+        );
+    }
+}
+
+#[test]
+fn an_unrestricted_alternative_gates_other_producers_before_admission() {
+    use super::super::super::{Required, Requirement};
+    let mut lower = compiler();
+    let scope = lower.relation("SELECT 1,2".into(), true).unwrap();
+    lower.reuse.kinds.insert(scope.name.clone(), [17].into());
+    // No additional producer can fit. The optional capture arm already covers
+    // this entire kind domain, so other arms must never enter preparation.
+    lower.limit = lower.ctes.len();
+    let plan = AnchorPlan {
+        root_kinds: None,
+        exact: false,
+        condition: Condition::Any(vec![
+            AnchorPlan {
+                root_kinds: None,
+                exact: false,
+                condition: Condition::Pattern(vec![Requirement {
+                    value: Required::Terminal(17, "unrequested".into()),
+                    parents: vec![None; 32],
+                }]),
+            },
+            AnchorPlan {
+                root_kinds: Some([17].into()),
+                condition: Condition::Always,
+                exact: false,
+            },
+        ]),
+    };
+    let selected = lower.plan(&plan, scope.clone()).unwrap();
+    assert_eq!(selected.name, scope.name);
+    assert!(
+        !selected.exact,
+        "a broad capture prefilter cannot justify subtraction"
+    );
+}
+
+#[test]
 fn demanded_span_keys_remain_a_boundary_before_source_predicates() {
     use rusqlite::functions::FunctionFlags;
     use std::sync::{
