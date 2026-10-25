@@ -17,10 +17,11 @@ This document creates no Linear issues.
 The [ranked execution opportunity plan](sql-execution-opportunities.md) supersedes small implementation slices as delivery milestones.
 Named-owner metadata and dependency work belong inside a chunk that removes its full expected count of complete-job engine submissions.
 R5-A removes 4,048 submissions against its full 3,474 target. R5-B removes 1,435 against its full 1,296 target.
-The complete fixed guard now has 2,250 submissions. CPU, memory, parity, and the final 100-submission gate remain mandatory.
+Delivered C leaves 975 complete-guard submissions. CPU, memory, parity, and the final 100-submission gate remain mandatory.
 The [bounded C specification](sql-execution-chunk-c.md) selects four state syntax frontends and explicit empty-domain admission.
-C requires 1,261 actual removals and at most 989 complete-guard submissions. The final 100 limit remains unchanged.
-General shared execution remains later work. Smaller TDD checkpoints do not complete C.
+C delivers 1,275 actual removals against its fixed 1,261 target. The final 100 limit remains unchanged.
+The [post-C survey](sql-execution-opportunities.md#post-c-survey-current-975-submissions) records the remaining opportunities.
+General shared execution remains later work. Smaller TDD checkpoints do not complete an implementation delivery.
 
 ## Existing foundation
 
