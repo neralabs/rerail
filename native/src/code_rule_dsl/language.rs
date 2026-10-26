@@ -833,6 +833,9 @@ pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
 /// `nodeVersion` reads eslint-plugin-n's default range there.
 #[derive(Debug)]
 pub(crate) struct PackageCondition {
+    /// Whether the file has a nearest `package.json` at all; the one condition that a file without
+    /// one can satisfy (`exists: false`).
+    pub(crate) exists: Option<bool>,
     /// Whether the file is one of the manifest's `bin` targets (`Manifest::is_bin`).
     pub(crate) bin: Option<bool>,
     /// The range the file's configured Node range must be a subset of.
@@ -847,8 +850,11 @@ pub(crate) struct PackageCondition {
 
 impl PackageCondition {
     fn holds(&self, path: &str, manifest: Option<&Manifest>) -> bool {
-        self.bin
-            .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
+        self.exists
+            .is_none_or(|exists| manifest.is_some() == exists)
+            && self
+                .bin
+                .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
             && self.node_version.as_ref().is_none_or(|range| {
                 manifest.map_or_else(
                     || DEFAULT_NODE_RANGE.is_subset_of(range),
@@ -891,6 +897,9 @@ pub(crate) struct FileCondition {
     /// TypeScript: the JSX runtimes the file's may be one of. Its text can decide it, so it is
     /// checked once the file is read (`run_clause`), not by `holds`.
     pub(crate) jsx_runtime: Option<Vec<JsxRuntime>>,
+    /// Whether the file's text opens with a byte order mark (U+FEFF), which every grammar reads as
+    /// whitespace before the program, so no node's text holds it.
+    pub(crate) byte_order_mark: Option<bool>,
 }
 
 /// A text condition: `regex` (unanchored, as ast-grep's) must match, `notRegex` must not.
@@ -911,14 +920,15 @@ impl TextCondition {
 }
 
 impl FileCondition {
-    /// Whether a file at `path` with this module path and nearest `package.json` satisfies the
-    /// condition, `jsx_runtime` aside. A module path's text condition needs a module path
-    /// (`package` one in a package), `notRegex` too.
+    /// Whether a file at `path` with this module path, nearest `package.json` and text (`source`)
+    /// satisfies the condition, `jsx_runtime` aside. A module path's text condition needs a module
+    /// path (`package` one in a package), `notRegex` too.
     pub(crate) fn holds(
         &self,
         path: &str,
         module: Option<&ModulePath>,
         manifest: Option<&Manifest>,
+        source: &str,
     ) -> bool {
         self.path
             .as_ref()
@@ -943,6 +953,9 @@ impl FileCondition {
                 .manifest
                 .as_ref()
                 .is_none_or(|condition| condition.holds(path, manifest))
+            && self
+                .byte_order_mark
+                .is_none_or(|mark| source.starts_with('\u{feff}') == mark)
     }
 }
 

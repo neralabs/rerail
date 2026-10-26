@@ -907,7 +907,12 @@ fn applies(grammar: &GrammarMatcher, file: &FileInput, source_type: Option<Sourc
     grammar.applies
         && grammar.may_apply_to(source_type)
         && grammar.file.as_ref().is_none_or(|condition| {
-            condition.holds(&file.path, file.module.as_deref(), file.package.as_deref())
+            condition.holds(
+                &file.path,
+                file.module.as_deref(),
+                file.package.as_deref(),
+                &file.source,
+            )
         })
 }
 

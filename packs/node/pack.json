@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "17 eslint-plugin-n rules ported to Rerail, 1 of them on and 16 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on the Node test set of real code.",
+  "covers": "20 eslint-plugin-n rules ported to Rerail, 4 of them on and 16 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on the Node test set of real code.",
   "reason": "matches Node.js",
   "match": {
     "any": [
@@ -79,11 +79,29 @@
       "on": false
     },
     {
+      "id": "n-hashbang",
+      "document": "rules/n-hashbang.json",
+      "title": "eslint-plugin-n hashbang: Require correct usage of hashbang",
+      "group": "eslint-plugin-n"
+    },
+    {
       "id": "n-no-callback-literal",
       "document": "rules/n-no-callback-literal.json",
       "title": "eslint-plugin-n no-callback-literal: Enforce Node.js-style error-first callback pattern is followed",
       "group": "eslint-plugin-n",
       "on": false
+    },
+    {
+      "id": "n-no-deprecated-api",
+      "document": "rules/n-no-deprecated-api.json",
+      "title": "eslint-plugin-n no-deprecated-api: Disallow deprecated APIs",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-exports-assign",
+      "document": "rules/n-no-exports-assign.json",
+      "title": "eslint-plugin-n no-exports-assign: Disallow the assignment to `exports`",
+      "group": "eslint-plugin-n"
     },
     {
       "id": "n-no-mixed-requires",

@@ -505,6 +505,7 @@ pub(super) fn compile_file_condition(
             "package",
             "inPackage",
             "jsxRuntime",
+            "byteOrderMark",
         ],
         &path,
     )?;
@@ -536,6 +537,7 @@ pub(super) fn compile_file_condition(
         if keys.jsx_runtimes {
             allowed.push("`jsxRuntime`");
         }
+        allowed.push("`byteOrderMark`");
         let last = allowed.pop().unwrap_or_default();
         return Err(invalid(format!(
             "{path} must set {} or {last}",
@@ -552,11 +554,18 @@ pub(super) fn compile_file_condition(
             .is_some_and(|package| names.iter().any(|name| package.contains_key(*name)))
     };
     let text_shaped = shaped(&["regex", "notRegex"]);
-    let manifest_shaped = shaped(&["bin", "nodeVersion", "dependsOn", "path", "serverGraph"]);
+    let manifest_shaped = shaped(&[
+        "exists",
+        "bin",
+        "nodeVersion",
+        "dependsOn",
+        "path",
+        "serverGraph",
+    ]);
     let (manifest, package) = match file.get("package") {
         Some(_) if keys.manifests && text_shaped => {
             return Err(invalid(format!(
-                "{path}/package: {language}'s package reads the nearest package.json: set bin, nodeVersion, dependsOn, path or serverGraph"
+                "{path}/package: {language}'s package reads the nearest package.json: set exists, bin, nodeVersion, dependsOn, path or serverGraph"
             )));
         }
         Some(value) if keys.manifests => (
@@ -586,6 +595,7 @@ pub(super) fn compile_file_condition(
             .get("jsxRuntime")
             .map(|value| jsx_runtimes(value, &format!("{path}/jsxRuntime")))
             .transpose()?,
+        byte_order_mark: flag("byteOrderMark")?,
     })
 }
 
@@ -636,12 +646,19 @@ fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<
     let package = object(value, at)?;
     reject_unknown(
         package,
-        &["bin", "nodeVersion", "dependsOn", "path", "serverGraph"],
+        &[
+            "exists",
+            "bin",
+            "nodeVersion",
+            "dependsOn",
+            "path",
+            "serverGraph",
+        ],
         at,
     )?;
     if package.is_empty() {
         return Err(invalid(format!(
-            "{at} must set `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`"
+            "{at} must set `exists`, `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`"
         )));
     }
     let node_version = package
@@ -681,6 +698,7 @@ fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<
         })
         .transpose()?;
     Ok(PackageCondition {
+        exists: flag_value(package.get("exists"), &format!("{at}/exists"))?,
         bin: flag_value(package.get("bin"), &format!("{at}/bin"))?,
         node_version,
         depends_on,

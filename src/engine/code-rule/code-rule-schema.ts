@@ -689,6 +689,7 @@ const moduleRegex = z
   .refine(condition => condition.regex !== undefined || condition.notRegex !== undefined, "Set regex, notRegex or both.");
 const packageConditionSchema = z
   .object({
+    exists: z.boolean().optional(),
     bin: z.boolean().optional(),
     nodeVersion: z.object({ subsetOf: nonEmptyString }).strict().optional(),
     dependsOn: z.array(nonEmptyString).min(1).optional(),
@@ -696,7 +697,7 @@ const packageConditionSchema = z
     serverGraph: z.boolean().optional(),
   })
   .strict()
-  .refine(condition => Object.values(condition).some(value => value !== undefined), "Set bin, nodeVersion, dependsOn, path or serverGraph.");
+  .refine(condition => Object.values(condition).some(value => value !== undefined), "Set exists, bin, nodeVersion, dependsOn, path or serverGraph.");
 export const codeRuleFileConditionSchema = z
   .object({
     path: moduleRegex.optional(),
@@ -706,11 +707,12 @@ export const codeRuleFileConditionSchema = z
     package: z.union([moduleRegex, packageConditionSchema]).optional(),
     inPackage: z.boolean().optional(),
     jsxRuntime: z.array(z.enum(["react", "other", "unknown"])).min(1).optional(),
+    byteOrderMark: z.boolean().optional(),
   })
   .strict()
   .refine(
     file => Object.values(file).some(value => value !== undefined),
-    "Set path, declaration, module, moduleName, package, inPackage or jsxRuntime.",
+    "Set path, declaration, module, moduleName, package, inPackage, jsxRuntime or byteOrderMark.",
   ) as unknown as z.ZodType<CodeRuleDslFileCondition>;
 export const codeRuleLanguageOptionsSchema = z
   .object({

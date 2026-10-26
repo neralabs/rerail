@@ -325,6 +325,12 @@ export interface CodeRuleDslFileCondition {
    * `@builder.io/qwik`, `inferno`, `mithril`), `other` for the reverse, `unknown` for both, neither or no manifest.
    */
   jsxRuntime?: Array<"react" | "other" | "unknown">;
+  /**
+   * Every language: whether the file's text opens with a byte order mark (U+FEFF). Grammars read the mark as whitespace
+   * before the program, so no node's text, the program's included, holds it (eslint-plugin-n's `hashbang` reports it in
+   * a `bin` file).
+   */
+  byteOrderMark?: boolean;
 }
 
 /**
@@ -332,6 +338,12 @@ export interface CodeRuleDslFileCondition {
  * root (a regular file of at most 1 MiB; one that cannot be read has no fields). Every key set must hold.
  */
 export interface CodeRuleDslPackageCondition {
+  /**
+   * Whether the file has a nearest `package.json` at all: the one key a file without a manifest can satisfy
+   * (`exists: false`). Node and eslint-plugin-n run such a `.js` file as CommonJS, where the engine reads it as an ES
+   * module (ESLint's default), so a Node rule pins `languageOptions.sourceType` for it.
+   */
+  exists?: boolean;
   /**
    * Whether the file is one of the manifest's `bin` targets (the string, or each string value of the object), as
    * eslint-plugin-n's `isBinFile` resolves them against the manifest's folder: the target is the file's path, or that

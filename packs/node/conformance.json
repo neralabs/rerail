@@ -331,7 +331,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-deprecated-api"
       },
-      "policy": "candidates/rules/n-no-deprecated-api.json",
+      "policy": "rules/n-no-deprecated-api.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -346,7 +346,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/hashbang"
       },
-      "policy": "candidates/rules/n-hashbang.json",
+      "policy": "rules/n-hashbang.json",
       "capabilities": [
         "syntax",
         "suppression"

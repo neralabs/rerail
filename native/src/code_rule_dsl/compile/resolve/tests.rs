@@ -1648,7 +1648,7 @@ fn a_file_condition_reads_the_files_module_path() {
         (
             "python",
             json!({}),
-            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `module`, `moduleName`, `package` or `inPackage`",
+            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `module`, `moduleName`, `package`, `inPackage` or `byteOrderMark`",
         ),
         (
             "python",
@@ -1752,7 +1752,7 @@ fn a_file_condition_reads_the_files_path_in_every_language() {
         (
             "typescript",
             json!({}),
-            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `package` or `jsxRuntime`",
+            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `package`, `jsxRuntime` or `byteOrderMark`",
         ),
         (
             "typescript",
@@ -3653,6 +3653,24 @@ fn file_package_bin_reads_the_manifests_bin_targets() {
 }
 
 #[test]
+fn file_package_exists_reads_whether_the_file_has_a_manifest_at_all() {
+    let exists = |value: bool| json!({ "package": { "exists": value } });
+    let files = [
+        ("app/package.json", "{}"),
+        ("app/server.js", ""),
+        ("app/lib/util.js", ""),
+        ("loose.js", ""),
+        ("tools/run.js", ""),
+    ];
+    assert_eq!(
+        matched(exists(true), &files),
+        ["app/lib/util.js", "app/server.js"]
+    );
+    // The one package key a file without a manifest satisfies.
+    assert_eq!(matched(exists(false), &files), ["loose.js", "tools/run.js"]);
+}
+
+#[test]
 fn file_package_depends_on_and_path_read_the_nearest_manifest() {
     let files = [
         ("package.json", r#"{ "dependencies": { "next": "15" } }"#),
@@ -4250,7 +4268,7 @@ fn malformed_package_and_jsx_runtime_conditions_are_rejected() {
         (
             "typescript",
             json!({ "package": {} }),
-            "must set `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`",
+            "must set `exists`, `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`",
         ),
         (
             "typescript",

@@ -13,15 +13,12 @@ today, on both sources: `n-prefer-promises-fs` does not report `fs.watch`), agai
   findings for that rule are expected, and the 222 copies with that rule's findings fixed by hand, where none is.
 
 The conformance check (`--check`, run in CI) scores the tests and the test set: it fails a port in `rules/` on any
-unexplained FP or FN on either, and reports the candidates without failing them. 17 ports ship, one of them on
-(`n-no-process-exit`, which the plugin's recommended configurations turn on) and the other 16 off until a repository
-turns them on. The 7 candidates, and what keeps each out:
+unexplained FP or FN on either, and reports the candidates without failing them. 20 ports ship, 4 of them on (the ones
+the plugin's recommended configurations turn on: `n-hashbang`, `n-no-deprecated-api`, `n-no-exports-assign`,
+`n-no-process-exit`) and the other 16 off until a repository turns them on. The 4 candidates, and what keeps each out:
 
 | Candidate | Why it is a candidate |
 |---|---|
-| `n-hashbang` | misses 4 of the plugin's test findings: string `bin` paths in package.json |
-| `n-no-deprecated-api` | misses `export * from 'node:fs'`, which the plugin reports for each deprecated member it re-exports |
-| `n-no-exports-assign` | misses `exports = …` in a file with no package.json, which Node and the plugin run as CommonJS and Rerail as an ES module |
 | `n-no-path-concat` | misses `__dirname + …` in TypeScript files with `import` syntax under a package.json with no `type`, which the plugin reads as CommonJS (compiled by tsc) and Rerail as an ES module |
 | `n-callback-return` | misses optional calls, `callback?.()` |
 | `n-prefer-global-buffer` | misses `const { Buffer } = require('buffer')` inside a property getter (Electron's sandboxed preload) |
@@ -40,11 +37,12 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `candidates/` | The ports that do not pass yet (`rules/`, listed in `conformance.json`) and the Node probes (`probes/`), scored, never shipped |
 | `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, listing every copied file |
 
-No rule in `rules/` or `candidates/rules/` pins `languageOptions.sourceType` (the probes do, to state Node facts): each
-file keeps its own module system (`.cjs`/`.cts` CommonJS; `.mjs`/`.mts`/`.tsx` an ES module; `.js`/`.jsx`/`.ts` by the
-nearest package.json's `type`, Node's syntax detection where that package.json sets no valid `type`, and an ES module
-where there is no package.json), as the plugin's `flat/mixed-esm-and-cjs` config picks `flat/recommended-script` or
-`flat/recommended-module` per file. Only a CommonJS file has `require`, `module`,
+No rule in `rules/` or `candidates/rules/` pins `languageOptions.sourceType` for a file with a package.json (the probes
+do, to state Node facts): each such file keeps its own module system (`.cjs`/`.cts` CommonJS; `.mjs`/`.mts`/`.tsx` an ES
+module; `.js`/`.jsx`/`.ts` by the nearest package.json's `type`, Node's syntax detection where that package.json sets
+no valid `type`), as the plugin's `flat/mixed-esm-and-cjs` config picks `flat/recommended-script` or
+`flat/recommended-module` per file. A file with no package.json is an ES module to the engine; only
+`n-no-exports-assign` reads it as CommonJS, as Node and the plugin do. Only a CommonJS file has `require`, `module`,
 `exports`, `__dirname` and `__filename`; an ES module has none (`flat/recommended-module` turns them off), so the rules
 that reach them through scope (exports-style, no-exports-assign, no-path-concat, prefer-global/\*, prefer-promises/\*,
 no-deprecated-api) report them in CommonJS files only. Rules upstream reads by name (global-require, no-new-require,
@@ -109,7 +107,7 @@ Matches calls of an identifier named `callback` or `cb` (name only, no scope) wh
 
 ### `n-no-exports-assign`
 
-`module.exports = exports = …` and `exports = module.exports = …` are allowed.
+`module.exports = exports = …` and `exports = module.exports = …` are allowed. A file with no package.json at or above it is read as CommonJS (`file.package.exists: false` with `sourceType: commonjs`), as Node runs it and the plugin's configs lint it, where the engine's default for such a file is an ES module; the other Node rules still read it as an ES module.
 
 ### `n-no-mixed-requires`
 
@@ -145,8 +143,8 @@ Callback API covered: access, copyFile, open, rename, truncate, rmdir, mkdir, re
 
 ### `n-hashbang`
 
-Candidate for eslint-plugin-n 18.4.1 n/hashbang (default options). Whether a file needs a shebang is read from the nearest package.json's `bin` (a path, or an object of paths, relative to the manifest's folder, `.js` and `/index` optional); without a package.json nothing is checked, as upstream. A file `bin` does not name reports a shebang (`#!` and at least one character opening the text, ended by a line break): "Remove the shebang line; package.json does not list this file as a bin executable.". A file it names reports a first line that is no node shebang (`#!/usr/bin/env`, env flags and variables as upstream's isNodeShebang strips them, then `node`): "Add #!/usr/bin/env node as the first line; package.json lists this file as a bin executable.". Not ported: the convertPath option and settings, ignoreUnpublished (.npmignore), additionalExecutables and executableMap (the expected executable is always node), and the BOM and CRLF reports on a bin file whose shebang is right ("This file must not have Unicode BOM.", "This file must have Unix linebreaks (LF).").
+eslint-plugin-n 18.4.1 n/hashbang (default options). Whether a file needs a shebang is read from the nearest package.json's `bin` (a path, or an object of paths, relative to the manifest's folder, `.js` and `/index` optional); without a package.json nothing is checked, as upstream. A file `bin` does not name reports a shebang (`#!` and at least one character opening the text, ended by a line break): "Remove the shebang line; package.json does not list this file as a bin executable.". A file it names reports a first line that is no node shebang (`#!/usr/bin/env`, env flags and variables as upstream's isNodeShebang strips them, then `node`): "Add #!/usr/bin/env node as the first line; package.json lists this file as a bin executable.". A file it names whose node shebang is right is reported, at the start of the file, once for a byte order mark before it (`file.byteOrderMark`, since no node's text holds the mark): "Remove the byte order mark before the shebang; …", and once for a shebang line ending in CR LF: "End the shebang line with LF, not CRLF; …", as upstream reports `unexpectedBOM` and `expectedLF`. Not ported: the convertPath option and settings, ignoreUnpublished (.npmignore), additionalExecutables and executableMap (the expected executable is always node).
 
 ### `n-no-deprecated-api`
 
-eslint-plugin-n 18.4.1 n/no-deprecated-api (default options; the configured version only words the message). Reports every read, call or construction its deprecation trace map marks (generated from lib/rules/no-deprecated-api.js rawModules and globals), as ReferenceTracker (legacy mode) reaches it: require/process.getBuiltinModule/ESM imports of the modules (with and without `node:`), global variables (declared by globals.node, the ES builtins or `/* global */` comments) and members of global/globalThis, through constant aliases, (nested) destructuring, defaults and member chains. No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, `__dirname` and `__filename` (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `require` and its members are reached only in a CommonJS file; Buffer, global and process in every file.
+eslint-plugin-n 18.4.1 n/no-deprecated-api (default options; the configured version only words the message). Reports every read, call or construction its deprecation trace map marks (generated from lib/rules/no-deprecated-api.js rawModules and globals), as ReferenceTracker (legacy mode) reaches it: require/process.getBuiltinModule/ESM imports of the modules (with and without `node:`), and `export * from` a module once for each deprecated member it re-exports (one clause per member, as ReferenceTracker reports it), global variables (declared by globals.node, the ES builtins or `/* global */` comments) and members of global/globalThis, through constant aliases, (nested) destructuring, defaults and member chains. No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, `__dirname` and `__filename` (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `require` and its members are reached only in a CommonJS file; Buffer, global and process in every file.

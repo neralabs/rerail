@@ -52,10 +52,11 @@ OXLINT_NODE_RULES = {"callback-return", "exports-style", "global-require", "hand
 # The ports that pass the pack's conformance check on eslint-plugin-n's tests and on the Node test set, written to
 # packs/node/rules/ (n-no-process-exit, hand-written, ships too); every other port is written to
 # packs/node/candidates/rules/. Each is removed from the other directory, so promoting a port moves its document.
-SHIPPED = {"n-exports-style", "n-global-require", "n-handle-callback-err", "n-no-callback-literal", "n-no-mixed-requires",
-           "n-no-new-require", "n-no-process-env", "n-no-sync", "n-prefer-global-console", "n-prefer-global-text-decoder",
-           "n-prefer-global-text-encoder", "n-prefer-global-url", "n-prefer-global-url-search-params",
-           "n-prefer-node-protocol", "n-prefer-promises-dns", "n-prefer-promises-fs"}
+SHIPPED = {"n-exports-style", "n-global-require", "n-handle-callback-err", "n-hashbang", "n-no-callback-literal",
+           "n-no-deprecated-api", "n-no-exports-assign", "n-no-mixed-requires", "n-no-new-require", "n-no-process-env",
+           "n-no-sync", "n-prefer-global-console", "n-prefer-global-text-decoder", "n-prefer-global-text-encoder",
+           "n-prefer-global-url", "n-prefer-global-url-search-params", "n-prefer-node-protocol", "n-prefer-promises-dns",
+           "n-prefer-promises-fs"}
 
 INCLUDE = ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
 
@@ -445,13 +446,17 @@ def syntax_docs():
                                                                                          "any": [{"inside": {"stopBy": "end", "not": {"any": [{"kind": k} for k in accept]}}}, chain]}}, "message": "Move this require() to the top level of the module."}]))
 
     module_exports = {"kind": "member_expression", "all": [{"has": {**ident("module"), "field": "object"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": "^exports$"}}]}
+    exports_assign = {"any": [{"kind": "assignment_expression"}, {"kind": "augmented_assignment_expression"}],
+                      "has": {**ident("exports"), "field": "left"},
+                      "not": {"any": [
+                          {"inside": {"kind": "assignment_expression", "all": [{"has": {"field": "left", **module_exports}}]}, "nthChild": {"position": 1, "reverse": True}},
+                          {"has": {"field": "right", "kind": "assignment_expression", "has": {"field": "left", **module_exports}}}]}}
+    exports_message = "Assign to module.exports instead of exports, which only rebinds a local variable."
+    # A file with no package.json is CommonJS to Node and to the plugin's configs (flat/mixed-esm-and-cjs gives it
+    # flat/recommended-script), where the engine's own default is an ES module: that file is read as CommonJS here.
     docs.append(policy("n-no-exports-assign", "n/no-exports-assign", DESCRIPTIONS["n-no-exports-assign"], [
-        {"id": "upstream", "ast": {"languageOptions": FILE_LO, "rule": {"any": [{"kind": "assignment_expression"}, {"kind": "augmented_assignment_expression"}],
-                                                                    "has": {**ident("exports"), "field": "left"},
-                                                                    "not": {"any": [
-                                                                        {"inside": {"kind": "assignment_expression", "all": [{"has": {"field": "left", **module_exports}}]}, "nthChild": {"position": 1, "reverse": True}},
-                                                                        {"has": {"field": "right", "kind": "assignment_expression", "has": {"field": "left", **module_exports}}}]}}},
-         "message": "Assign to module.exports instead of exports, which only rebinds a local variable."}]))
+        {"id": "upstream", "ast": {"languageOptions": FILE_LO, "file": {"package": {"exists": True}}, "rule": exports_assign}, "message": exports_message},
+        {"id": "no-manifest", "ast": {"languageOptions": {**FILE_LO, "sourceType": "commonjs"}, "file": {"package": {"exists": False}}, "rule": exports_assign}, "message": exports_message}]))
 
     sync_id = {"any": [{"kind": "identifier"}, {"kind": "property_identifier"}], "regex": "Sync$"}
     callee_member = {"kind": "member_expression", "inside": {"kind": "call_expression", "field": "function", **NOT_TAGGED}}
@@ -573,8 +578,12 @@ def tracker(modules, globals_):
             if module is not None and len(path) == 1:
                 src = {"matches": f"m:{module}:esm-source"}
                 out().extend([{"kind": "import_specifier", "has": {"field": "name", "regex": rrx}, "inside": {"stopBy": "end", "kind": "import_statement", "has": {"field": "source", **src}}},
-                              {"kind": "export_specifier", "has": {"field": "name", "regex": rrx}, "inside": {"stopBy": "end", "kind": "export_statement", "has": {"field": "source", **src}}},
-                              {"kind": "export_statement", "has": {"field": "source", **src}, "not": {"has": {"kind": "export_clause"}}}])
+                              {"kind": "export_specifier", "has": {"field": "name", "regex": rrx}, "inside": {"stopBy": "end", "kind": "export_statement", "has": {"field": "source", **src}}}])
+                # ReferenceTracker reports an `export * from` once per member of the module it marks READ, each with
+                # its own message: one clause per member, all on the same statement.
+                for k in reads:
+                    report.setdefault(f"{module} export-all {k}", []).append(
+                        {"kind": "export_statement", "has": {"field": "source", **src}, "not": {"has": {"kind": "export_clause"}}})
 
         def value_alts(cu, krx):
             alts = [member_property_first(u, krx)] + aliases(cu) + [
@@ -687,21 +696,29 @@ def no_deprecated_api_doc(trace):
     # `global` is Node's (globals.node) in both module systems; require only CommonJS's, as the file decides.
     lo = {"globals": {"Buffer": "readonly", "global": "readonly", "process": "readonly"}}
     checks = [{"id": "trace-map", "define": {"language": "typescript", "utils": utils}}]
+    ids = set()
     for root, alts in report.items():
-        checks.append({"id": re.sub(r"[^a-z0-9]+", "-", root.lower()).strip("-"),
+        cid = re.sub(r"[^a-z0-9]+", "-", root.lower()).strip("-")
+        assert cid not in ids, f"n-no-deprecated-api: two clauses are {cid}"
+        ids.add(cid)
+        module, _, member = root.partition(" export-all ")
+        message = DEPRECATED_API_MESSAGES[root] if not member else (
+            f"Re-export only the names you use from {module}: this export * also re-exports {module}.{member}, which is deprecated.")
+        checks.append({"id": cid,
                        "forbid": {"ast": {"language": "typescript", "languageOptions": lo, "rule": {"any": alts}}},
-                       "violation": {"anchor": "witness.span", "code": "n/no-deprecated-api", "message": DEPRECATED_API_MESSAGES[root],
+                       "violation": {"anchor": "witness.span", "code": "n/no-deprecated-api", "message": message,
                                     "suppress": suppress("n/no-deprecated-api")}})
     return {"format": "rerail.policy/v1", "id": "n-no-deprecated-api", "revision": 1, "mode": "steer", "description": DESCRIPTIONS["n-no-deprecated-api"],
             "scope": {"include": INCLUDE, "exclude": []}, "clauses": checks}
 
 
-def node_shebang_rx():
+def node_shebang_rx(crlf=False):
     """The text upstream's getShebangInfo reads as a shebang and isNodeShebang (default executableMap) accepts:
     `#!/usr/bin/env`, then what its loop strips (ENV_FLAGS `-(-.*?\\b|[ivS]+|[Pu](\\s+|=)\\S+)(?=\\s|$)`, ENV_VARS
     `\\w+=("…"|\\w+)`, each after JavaScript whitespace), then `node` before a space or the trimmed end, then the line
     break. Without lookaround: a flag also takes the whitespace its lookahead requires, and an unquoted variable is
-    followed by whitespace or a flag, as the greedy strip leaves it."""
+    followed by whitespace or a flag, as the greedy strip leaves it. `crlf`: only one whose line ends with CR LF
+    (getShebangInfo's `cr`)."""
     line = "\\r\\n\\x{2028}\\x{2029}"
     blank = "\\t\\x0B\\x0C \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}"
     ws, nonspace, word = f"[{blank}]", f"[^{blank}{line}]", "[A-Za-z0-9_]"
@@ -709,15 +726,20 @@ def node_shebang_rx():
     quoted = f"{word}+=\"(?:[^\"\\\\{line}]|\\\\[^{line}])*\""
     unquoted = f"{word}+={word}+"
     token = f"(?:{quoted}|(?:{unquoted})?{flag}|{unquoted}{ws})"
-    return f"\\A#!/usr/bin/env(?:{ws}*{token})*{ws}*node(?: [^{line}]*|{ws}*)\\r?\\n"
+    end = "\\r\\n" if crlf else "\\r?\\n"
+    return f"\\A#!/usr/bin/env(?:{ws}*{token})*{ws}*node(?: [^{line}]*|{ws}*){end}"
 
 
 def hashbang_doc():
-    # getShebangInfo: `#!` and at least one character at the start of the text, ended by a line break.
+    # getShebangInfo: `#!` and at least one character at the start of the text, ended by a line break. A bin file with
+    # the node shebang is also reported for a byte order mark before it (`unexpectedBOM`) and for a CR before its line
+    # feed (`expectedLF`), each once, at the start of the file; one with both gets both.
     shebang = {"kind": "program", "regex": "\\A#![^\\r\\n\\x{2028}\\x{2029}]+\\r?\\n"}
     return policy("n-hashbang", "n/hashbang", DESCRIPTIONS["n-hashbang"], [
         {"id": "needs-no-shebang", "ast": {"file": {"package": {"bin": False}}, "rule": {"kind": "hash_bang_line", "inside": shebang}}, "message": "Remove the shebang line; package.json does not list this file as a bin executable."},
-        {"id": "needs-shebang", "anchor": "file.start", "ast": {"file": {"package": {"bin": True}}, "rule": {"kind": "program", "not": {"regex": node_shebang_rx()}}}, "message": "Add #!/usr/bin/env node as the first line; package.json lists this file as a bin executable."}])
+        {"id": "needs-shebang", "anchor": "file.start", "ast": {"file": {"package": {"bin": True}}, "rule": {"kind": "program", "not": {"regex": node_shebang_rx()}}}, "message": "Add #!/usr/bin/env node as the first line; package.json lists this file as a bin executable."},
+        {"id": "byte-order-mark", "anchor": "file.start", "ast": {"file": {"package": {"bin": True}, "byteOrderMark": True}, "rule": {"kind": "program", "regex": node_shebang_rx()}}, "message": "Remove the byte order mark before the shebang; a bin executable's first bytes must be #!, or the system cannot run it."},
+        {"id": "crlf", "anchor": "file.start", "ast": {"file": {"package": {"bin": True}}, "rule": {"kind": "program", "regex": node_shebang_rx(crlf=True)}}, "message": "End the shebang line with LF, not CRLF; the system reads the carriage return as part of the interpreter's name and cannot run the file."}])
 
 
 # ---- probes ----------------------------------------------------------------------------------------------------------
