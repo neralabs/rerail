@@ -242,4 +242,32 @@ Full corpus (9,021 files), execution CPU in seconds, at `be03e110`:
 
 Anchor selection is still the largest execution cost; matching never exceeds 16 s.
 
-**Next: kind-less inner scopes.** The heaviest stage left in internal_dead_code (15 s of 49 s of stage CPU, traced) is linear, not quadratic. An inner plan with no kind is evaluated over every node: `all_nodes EXCEPT …`, followed by an inside walk that decodes the parent of nearly every node. Every top-level query in the rule has a kind. The kind-less plan is nested, where `related()` falls back to `self.all()` as the inner scope: `has` without a field, and recursive relations. Narrowing that scope to the outer scope's children needs a children lookup. `decoded_properties` has no parent index, so the lookup would either decode every node or use preorder intervals. That choice is still open.
+## 15. Tree neighbourhoods instead of every node's parent
+
+§14 ended on a question it called open: how a kind-less inner plan finds the outer scope's children without decoding every node. The spike settled it (design index topic 2; DH S037, S058, S064). Its record carries the parent delta and the subtree size, so a parent is one record read. Children come from a native walk over the tape (`nera_kids`: first child `pre + 1`, next sibling `pre + size`). A node table, or a parent for every node, was rejected. Commits `702ee406` and `813cc78b` apply that.
+
+- **`nera_tree(fid, node, axis)`** (`tree.rs`) reads a node's children (sibling skips) or its ancestors (parent deltas) from the tape, as `nera_kids` did.
+- **Unanchored inner plans take the neighbourhood.** A field-less `has` uses the scope's children. A recursive `has` uses the scope's subtree intervals. A recursive `inside` uses the scope's ancestors.
+- **Anchored inner plans keep their postings.** A plan is anchored when it selects from postings before reading its scope:
+  - a root kind or pattern;
+  - a conjunction with any anchored member;
+  - a disjunction of anchored branches;
+  - a non-recursive `inside`, or a field-less `has`, whose inner plan is anchored.
+
+  The first version climbed the ancestors of every node in a common posting set for an `any` of kinds. That cost more than the postings did (internal_dead_code +36% steps).
+- **Conjunctions evaluate anchored members first.** `all: [not …, inside {kind: module}]` used to start with `all_nodes EXCEPT …`. A conjunction commutes, so the postings go first.
+- **Over every node, a non-recursive `inside` reads its inner postings' children** instead of decoding every node's parent: this was the old 15 s stage.
+
+Measured with the anchor lab (`lab.rs`, `cargo test --profile lab`). It lowers a policy with the current code over captured batch databases and reports SQLite VM steps, which machine load doesn't change, plus rows per plan. Base `c42c8239` against `813cc78b`, 12 batches (1,984 Python files), rows identical for every plan:
+
+| Policy | VM steps before | after |
+|---|---:|---:|
+| legacy_execution_surfaces | 0.779G | 0.338G (−57%) |
+| serverplan_quality | 2.522G | 1.612G (−36%) |
+| internal_dead_code | 1.069G | 0.833G (−22%) |
+| serverplan_target_architecture | 0.470G | 0.396G (−16%) |
+| serverplan_state_tripwires | 0.851G | 0.727G (−15%) |
+| public_api_triples | 0.541G | 0.541G |
+| backend_type_strings | 0.054G | 0.054G |
+
+internal_dead_code no longer has a dominant stage: the largest is 1.2 s of 9.3 s of traced stage CPU.

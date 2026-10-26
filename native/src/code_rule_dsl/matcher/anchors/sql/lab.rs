@@ -2,7 +2,7 @@
 //! captured batch databases (`RERAIL_SQL_PROFILE_DIR`). Seconds per iteration, no addon build, no
 //! corpus parse. Reports SQLite VM steps (load-independent) and rows per plan (for parity).
 //!
-//! RERAIL_LAB_POLICY=<policy.json> RERAIL_LAB_CAPTURES=<dir> [RERAIL_LAB_LIMIT=n]
+//! RERAIL_LAB_POLICY=<policy.json>[:<policy.json>...] RERAIL_LAB_CAPTURES=<dir> [RERAIL_LAB_LIMIT=n]
 //!   cargo test --release --lib -- --ignored anchor_lab --nocapture
 use super::{execute, lower, store::Store};
 use std::sync::{
@@ -15,7 +15,13 @@ const STEP: i32 = 1000;
 #[test]
 #[ignore = "requires a policy and captured candidate databases"]
 fn anchor_lab() {
-    let policy = std::env::var("RERAIL_LAB_POLICY").expect("RERAIL_LAB_POLICY");
+    let policies = std::env::var("RERAIL_LAB_POLICY").expect("RERAIL_LAB_POLICY");
+    for policy in policies.split(':') {
+        run(policy);
+    }
+}
+
+fn run(policy: &str) {
     let captures = std::env::var("RERAIL_LAB_CAPTURES").expect("RERAIL_LAB_CAPTURES");
     let limit = std::env::var("RERAIL_LAB_LIMIT").map_or(usize::MAX, |n| n.parse().unwrap());
     let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
@@ -86,14 +92,16 @@ fn anchor_lab() {
         steps += counter.load(Ordering::Relaxed) * STEP as u64;
     }
     println!(
-        "LAB databases={} files={files} vmSteps={:.3}G executeCpu={:.2}s lowerCpu={:.2}s",
+        "LAB {} databases={} files={files} vmSteps={:.3}G executeCpu={:.2}s lowerCpu={:.2}s",
+        std::path::Path::new(policy).file_stem().unwrap().to_string_lossy(),
         databases.len(),
         steps as f64 / 1e9,
         cpu as f64 / 1e9,
         compile as f64 / 1e9
     );
     println!(
-        "LAB rows {}",
+        "LAB rows {} {}",
+        std::path::Path::new(policy).file_stem().unwrap().to_string_lossy(),
         rows.iter()
             .map(|((lang, qid), n)| format!("{lang}:{qid}={n}"))
             .collect::<Vec<_>>()
