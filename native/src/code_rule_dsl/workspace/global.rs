@@ -710,35 +710,13 @@ pub(super) fn evaluate_batched_relations(
                     keys.push((index, clause.id.clone(), Some((key, version, path))));
                 }
             } else {
-                let mut files = Vec::new();
+                // Queue metadata only. Source hydration belongs after complete-empty admission.
+                let mut files = snapshot.files.clone();
                 if plan.reads_source {
-                    let paths = state
-                        .files
-                        .keys()
-                        .chain(state.evicted_inputs.keys())
-                        .filter(|p| code_rule.scope.matches(p))
-                        .cloned()
-                        .collect::<BTreeSet<_>>();
-                    if paths.len() > code_rule.capabilities.limits.max_files {
-                        return Err(invalid("relational source snapshot exceeds maxFiles"));
+                    let empty = std::sync::Arc::new(String::new());
+                    for file in &mut files {
+                        file.source = std::sync::Arc::clone(&empty);
                     }
-                    for path in paths {
-                        let mut input = state
-                            .files
-                            .get(&path)
-                            .map(|f| f.input.clone())
-                            .or_else(|| state.evicted_inputs.get(&path).cloned())
-                            .ok_or_else(|| invalid("relational source removed"))?;
-                        input.source = super::documents::source(state, &path)?;
-                        if input.source.len() > code_rule.capabilities.limits.max_source_bytes {
-                            return Err(invalid(
-                                "relational source snapshot exceeds maxSourceBytes",
-                            ));
-                        }
-                        files.push(input);
-                    }
-                } else {
-                    files = snapshot.files.clone();
                 }
                 jobs.push(Job {
                     code_rule,
@@ -837,16 +815,47 @@ pub(super) fn evaluate_batched_relations(
             inputs.file_local = true;
         } else {
             let index = owners[&(std::ptr::from_ref(code_rule) as usize)];
-            let producers = &state.relation_plans[&(index, clause.id.clone())];
+            let producers = state.relation_plans[&(index, clause.id.clone())].clone();
             if phase == relational::Preparation::Gate {
                 let slot = plan.require_nonempty.expect("guarded preparation");
                 inputs.gate = Some(relation_rows(state, producers[slot], &plan.inputs[slot].1));
             } else {
+                if plan.reads_source {
+                    let paths = state
+                        .files
+                        .keys()
+                        .chain(state.evicted_inputs.keys())
+                        .filter(|path| code_rule.scope.matches(path))
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
+                    if paths.len() > code_rule.capabilities.limits.max_files {
+                        return Err(invalid("relational source snapshot exceeds maxFiles"));
+                    }
+                    let mut files = Vec::with_capacity(paths.len());
+                    let mut bytes = 0usize;
+                    for path in paths {
+                        let mut input = state
+                            .files
+                            .get(&path)
+                            .map(|f| f.input.clone())
+                            .or_else(|| state.evicted_inputs.get(&path).cloned())
+                            .ok_or_else(|| invalid("relational source removed"))?;
+                        input.source = super::documents::source(state, &path)?;
+                        bytes = bytes.saturating_add(input.source.len());
+                        if bytes > code_rule.capabilities.limits.max_source_bytes {
+                            return Err(invalid(
+                                "relational source snapshot exceeds maxSourceBytes",
+                            ));
+                        }
+                        files.push(input);
+                    }
+                    inputs.snapshot.files = files;
+                }
                 inputs.rows = Some(
                     plan.inputs
                         .iter()
                         .enumerate()
-                        .zip(producers)
+                        .zip(&producers)
                         .map(|((slot, (_, query)), id)| {
                             if inputs.gate.is_some() && plan.require_nonempty == Some(slot) {
                                 evidence::Rows::default()

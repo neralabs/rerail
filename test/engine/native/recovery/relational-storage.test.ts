@@ -110,11 +110,16 @@ it.skipIf(!required)("does not hydrate repository source for a complete empty ad
   const n=loadNativeBinding(),cap=JSON.parse(readFileSync(new URL(${JSON.stringify(caps)}),'utf8'));
   cap.limits.maxSourceBytes=32;
   const policy={format:'rerail.policy/v1',id:'empty-source-gate',revision:1,mode:'log',clauses:[{id:'gate',relational:{requireNonemptyInput:'gate',inputs:{gate:{evidence:{as:'e',query:{ast:{language:'python',rule:{all:[{kind:'module'},{regex:'\\\\b\\\\B'}]}}},project:{path:'file.path'}}}},query:'SELECT __path path,__start start_byte,__end end_byte FROM gate WHERE source_text(__path,__start,__end) IS NOT NULL'},violation:{code:'ROW',message:'Row',anchor:'witness.span'}}]};
-  const w=new n.CodeRuleDslWorkspace();w.addCodeRule(n.CodeRuleDslRuntime.compile(JSON.stringify(policy),'json',JSON.stringify(cap)));
-  try {console.log(await w.applyAsync(JSON.stringify({revision:1,files:Array.from({length:3},(_,i)=>({path:i+'.py',language:'python',source:'name = 1\\n'.repeat(3)})),removed:[]})));}finally{w.close();}
+  for(const admitted of [false,true]) {
+   if(admitted) policy.clauses[0].relational.inputs.gate.evidence.query.ast.rule={kind:'module'};
+   const w=new n.CodeRuleDslWorkspace();w.addCodeRule(n.CodeRuleDslRuntime.compile(JSON.stringify(policy),'json',JSON.stringify(cap)));
+   try {console.log(await w.applyAsync(JSON.stringify({revision:1,files:Array.from({length:3},(_,i)=>({path:i+'.py',language:'python',source:'name = 1\\n'.repeat(3)})),removed:[]})));}finally{w.close();}
+  }
  `;
  const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30_000});
  expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
- const result=JSON.parse(child.stdout.trim()).evaluation;
- expect(result.failures).toEqual([]);expect(result.violations).toEqual([]);
+ const [empty,admitted]=child.stdout.trim().split('\n').map(line=>JSON.parse(line).evaluation);
+ expect(empty.failures).toEqual([]);expect(empty.violations).toEqual([]);
+ expect(admitted.failures.some((f:{message:string})=>f.message.includes('maxSourceBytes'))).toBe(true);
+ expect(admitted.violations).toEqual([]);
 });

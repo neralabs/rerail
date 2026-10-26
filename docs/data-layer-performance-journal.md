@@ -4453,3 +4453,22 @@ The exported-class relation stays outside method expansion through an explicit S
 These changes preserve the authored rule semantics and existing budgets.
 The closed SQL ladder passes both tests. Its lookup bound also passes before the change on the host SQLite planner.
 That bounded test is therefore a guard, not a reproduced performance failure.
+
+### Public API full-repository correction
+
+The revised public-API rule completes all 9,021 inputs with zero findings and zero failures.
+The frozen addon hash is `2606c4821cc149d01dbe181fb627c5fe992b71611996ffc639fbab91c4b9f377`.
+The filtered capture is `.rerail/profiles/recovery-completion-20261025/public-api-fixed/`.
+Cold CPU is 116.406 seconds, including tracing and filtered SQL capture. This is not an acceptance control.
+The traits statement drops from 148,856,406 to 28,266,543 VM steps.
+The previous surfaces stage consumed 47,398,436 scan steps before interruption. The revised rule completes.
+The fifth-batch recording passes all 312 replays with the revised policy.
+All 40 relational unit tests pass, including independent partition and dependent-depth limits.
+The profiler tests pass 26 tests, and SQL profiling/accounting passes 29 tests.
+
+### Empty repository gate before source hydration
+
+A closed workspace regression sets a 32-byte source allowance and supplies three individually valid 27-byte files.
+Its complete empty gate must avoid source hydration; the old executor reports a repository input-budget failure.
+The correction queues source-free metadata and hydrates source only after admission.
+A nonempty clause must still enforce the unchanged cumulative source allowance.
