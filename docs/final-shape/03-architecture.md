@@ -180,11 +180,17 @@ matcher rule ──► datalog rules (relations to other facts)
      - append-only columnar runs per relation, using u32 atoms;
      - spill to a flat file when the overlay reaches its cap;
      - the writer merges the runs into SQLite in bulk.
-3. **Per-file lattices.** Re-asked in a concrete form; still open.
+3. **File-local recursion runs inside the GPU program.**
+   - A recursive rule that stays inside one file and is guaranteed to terminate resolves within the batch's dispatch. This holds for matchers and for generic rules alike, for example per-file type inference over a finite lattice.
+   - Waves (§7) are used for recursion that crosses files, and for any program that cannot be guaranteed to finish inside one file.
 4. **Cutoff granularity.**
    - Coarse is acceptable, as long as spurious invalidations do not greatly increase the work. This is a practical question and should be checked with a counter of re-runs against actual changes.
    - A recomputed fact (or partition) that is exactly the same as last time stops further evaluation.
-5. **Repository-fact cost.** Explained in detail; still open: is the 1–2 s target for a cold audit or a warm one?
+5. **Repository facts and targets.**
+   - **Targets.** A cold audit should take 1–2 s. A warm run after a small change should take milliseconds.
+   - **Caching.** Caching repository facts is central.
+   - **Demand-driven installation.** Only the facts needed by the programs being run are installed (computed and made resident). This keeps memory bounded and cuts the cold cost.
+   - **First measurement.** The cold cost of the cross-file call edges: 0.73–1.08 s on its own (M), within a 1.5–2.5 s total estimate (A). It is the first candidate for native vtab operators.
 6. **One interner.** Yes.
 
 ## 11. What changes from `02-shape.md`
