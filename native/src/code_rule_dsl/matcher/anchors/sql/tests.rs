@@ -672,6 +672,53 @@ fn descendant_relations_use_subtree_ranges_instead_of_ancestor_closures() {
     }
 }
 
+/// A kind-less inner plan is evaluated over the scope's tree neighbours, not over every node.
+#[test]
+fn kindless_inner_relations_read_only_tree_neighbours() {
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    let source = "f(g(target(x)));";
+    for (rule, expected) in [
+        (
+            serde_json::json!({"kind":"call_expression","has":{"regex":"^target$"}}),
+            1,
+        ),
+        (
+            serde_json::json!({"kind":"arguments","has":{"regex":"^x$"}}),
+            1,
+        ),
+        (
+            serde_json::json!({"kind":"call_expression","has":{"regex":"^target$","stopBy":"end"}}),
+            3,
+        ),
+        (
+            serde_json::json!({"kind":"identifier","inside":{"regex":"^g\\(","stopBy":"end"}}),
+            3,
+        ),
+        (
+            serde_json::json!({"kind":"identifier","inside":{"not":{"regex":"^f"},"stopBy":"end"}}),
+            3,
+        ),
+    ] {
+        let compiled = compiled(serde_json::json!({"rule":rule}));
+        let plan = &grammar_matchers(&compiled)[0].anchors;
+        let root = AstGrep::doc(document(source, GrammarDialect::TypeScript));
+        let store = store::Store::temporary().unwrap();
+        let fid = store.put("a.ts", root.root().get_doc()).unwrap();
+        let statement = lower::batch_files(
+            &[plan],
+            u32::from(language::tape_tag(GrammarDialect::TypeScript).unwrap()),
+            &[fid],
+        );
+        assert!(
+            statement.stages.iter().all(|s| s.name != "decode_all_nodes"),
+            "a kind-less inner plan must not decode every node: {rule}"
+        );
+        let mut roots = Vec::new();
+        execute::rows(&store, &statement, |_, _, pre| roots.push(pre)).unwrap();
+        assert_eq!(roots.len(), expected, "{rule}");
+    }
+}
+
 #[test]
 fn corpus_publishes_once_across_partitions_and_updates_only_changed_files() {
     let corpus = Arc::new(Corpus::default());

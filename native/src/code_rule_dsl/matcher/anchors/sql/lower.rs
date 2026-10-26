@@ -430,6 +430,7 @@ impl Lower {
                     scope.exact,
                 )?
             }
+            (Direction::Has, false, None) => self.neighbours(&scope, inner, super::tree::CHILDREN)?,
             _ => self.all(),
         };
         let inner = self.plan(inner, inner_scope)?;
@@ -468,27 +469,46 @@ impl Lower {
         direction: Direction,
         field: Option<u16>,
     ) -> Result<Set, ()> {
-        let inner = self.plan(inner, self.all())?;
-        let roots = if matches!(direction, Direction::Has) {
-            &scope
-        } else {
-            &inner
-        };
-        let ranges = self.intervals(roots, field)?;
-        match direction {
-            Direction::Has => {
-                self.indexed.insert(inner.name.clone());
-                self.relation(format!("SELECT r.fid,r.pre FROM {ranges} r WHERE r.lo<r.hi AND EXISTS(SELECT 1 FROM {} m WHERE m.fid=r.fid AND m.pre>=r.lo AND m.pre<r.hi)", inner.name), scope.exact && inner.exact)
-            }
-            Direction::Inside => {
-                self.indexed.insert(scope.name.clone());
-                // Subtree intervals are nested or disjoint. Keep the outer intervals once.
-                let frontier = format!("frontier{}", self.ctes.len());
-                self.ctes.push(format!("{frontier}(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM {ranges} WHERE lo<hi) WHERE previous IS NULL OR hi>previous)"));
-                self.relation(format!("SELECT DISTINCT s.fid,s.pre FROM {frontier} r CROSS JOIN {} s WHERE s.fid=r.fid AND s.pre>=r.lo AND s.pre<r.hi", scope.name), scope.exact && inner.exact)
-            }
-            _ => unreachable!("parent relation"),
+        if matches!(direction, Direction::Has) {
+            // The inner candidates of a kind-less plan are the scope's descendants.
+            let ranges = self.intervals(&scope, field)?;
+            let inner_scope = if inner.root_kinds.is_none() && scope.name != "all_nodes" {
+                let frontier = self.frontier(&ranges);
+                self.relation(format!("SELECT r.fid,d.value FROM {frontier} r CROSS JOIN generate_series(r.lo,r.hi-1,1) d"), scope.exact)?
+            } else {
+                self.all()
+            };
+            let inner = self.plan(inner, inner_scope)?;
+            self.indexed.insert(inner.name.clone());
+            return self.relation(format!("SELECT r.fid,r.pre FROM {ranges} r WHERE r.lo<r.hi AND EXISTS(SELECT 1 FROM {} m WHERE m.fid=r.fid AND m.pre>=r.lo AND m.pre<r.hi)", inner.name), scope.exact && inner.exact);
         }
+        let inner_scope = self.neighbours(&scope, inner, super::tree::ANCESTORS)?;
+        let inner = self.plan(inner, inner_scope)?;
+        let ranges = self.intervals(&inner, field)?;
+        self.indexed.insert(scope.name.clone());
+        let frontier = self.frontier(&ranges);
+        self.relation(format!("SELECT DISTINCT s.fid,s.pre FROM {frontier} r CROSS JOIN {} s WHERE s.fid=r.fid AND s.pre>=r.lo AND s.pre<r.hi", scope.name), scope.exact && inner.exact)
+    }
+
+    /// Subtree intervals are nested or disjoint. Keep the outer intervals once.
+    fn frontier(&mut self, ranges: &str) -> String {
+        let frontier = format!("frontier{}", self.ctes.len());
+        self.ctes.push(format!("{frontier}(fid,lo,hi) AS MATERIALIZED (SELECT fid,lo,hi FROM (SELECT fid,lo,hi,max(hi) OVER(PARTITION BY fid ORDER BY lo,hi DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) previous FROM {ranges} WHERE lo<hi) WHERE previous IS NULL OR hi>previous)"));
+        frontier
+    }
+
+    /// A kind-less inner plan would otherwise be evaluated over every node, and relating every
+    /// node decodes every node's parent. Its candidates are only the scope's tree neighbours, read
+    /// from the tape per scope node (spike `nera_kids`; design index topic 2). A kinded inner plan
+    /// keeps its postings: the rarest anchor is cheaper than the neighbourhood.
+    fn neighbours(&mut self, scope: &Set, inner: &AnchorPlan, axis: i64) -> Result<Set, ()> {
+        if inner.root_kinds.is_some() || scope.name == "all_nodes" {
+            return Ok(self.all());
+        }
+        self.relation(
+            format!("SELECT DISTINCT s.fid,t.pre FROM {} s CROSS JOIN nera_tree(s.fid,s.pre,{axis}) t", scope.name),
+            scope.exact,
+        )
     }
 
     fn intervals(&mut self, roots: &Set, field: Option<u16>) -> Result<String, ()> {

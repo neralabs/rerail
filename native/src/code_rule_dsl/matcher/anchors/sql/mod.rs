@@ -21,6 +21,7 @@ pub(in crate::code_rule_dsl) use plans::{
     for_file as anchor_plans_for_file, plans as anchor_plans,
 };
 mod reader;
+mod tree;
 #[cfg(all(test, feature = "code-rule-profile"))]
 mod replay;
 mod session;
