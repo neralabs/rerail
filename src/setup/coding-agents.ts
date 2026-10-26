@@ -1,11 +1,14 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import {
+  CODEX_TRUST_NOTE,
   detectHarnesses,
   HARNESSES,
   registerHarnesses,
+  UnreadableConfigError,
   unregisterHarnesses,
   type Harness,
   type RegistrationChange,
@@ -112,4 +115,70 @@ export async function refreshCodingAgents(root: string, home: string): Promise<R
     }
   }
   return result;
+}
+
+export interface ConnectProblem extends RefreshProblem {
+  /** The agent's config file when it is not plain JSON; `message` is then the parser's reason. */
+  file?: string;
+}
+
+export interface ConnectResult {
+  /** The coding agents named whose config this call changed: not connected, or not wholly, before. */
+  changed: Harness[];
+  /** Every coding agent on this computer that Rerail is connected to now, these included. */
+  all: Harness[];
+  /** The coding agents named that could not be connected, with the reason; their config is left as it was. */
+  failures: ConnectProblem[];
+  /** Codex's hooks were written: Codex runs them only once the person trusts them with `/hooks`. */
+  codexTrust: boolean;
+}
+
+/**
+ * Set-up's connection of `agents` to `root`, one coding agent at a time, as `refreshCodingAgents` does: a config that
+ * cannot be read (a comment or trailing comma in a JSON file) stops only its own agent, untouched, and the others are
+ * connected. `workspaceDir`: the repository the person said yes to, for Claude Code's project status line.
+ */
+export async function connectCodingAgents(root: string, home: string, agents: readonly Harness[], workspaceDir?: string): Promise<ConnectResult> {
+  const result: ConnectResult = { changed: [], all: [], failures: [], codexTrust: false };
+  for (const id of agents) {
+    try {
+      const report = await registerHarnesses({ root, home, harnesses: [id], ...(workspaceDir === undefined ? {} : { workspaceDir }) });
+      if (report.changes.some(change => change.harness === id && (change.action === "created" || change.action === "updated"))) result.changed.push(id);
+      if (report.notes.includes(CODEX_TRUST_NOTE)) result.codexTrust = true;
+    } catch (error) {
+      result.failures.push(error instanceof UnreadableConfigError
+        ? { agent: id, message: error.reason, file: error.path }
+        : { agent: id, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  for (const id of detectHarnesses(home)) {
+    if ((await connection(root, home, id)).connected) result.all.push(id);
+  }
+  return result;
+}
+
+/**
+ * In the Rerail home: `{ "seen": [<agent id>, …] }`, every coding agent set-up or `rerail install` found on this
+ * computer or was named. Set-up run again in a repository that is set up connects only the agents found since, so
+ * it never undoes `rerail install --remove --agents <id>` or an earlier `--agents` that left one out.
+ */
+const SEEN_AGENTS_FILE = "coding-agents.json";
+
+/** The coding agents recorded as seen; none when nothing is recorded yet (or the record cannot be read). */
+export function seenCodingAgents(rerailHome: string): Harness[] {
+  try {
+    const { seen } = JSON.parse(readFileSync(join(rerailHome, SEEN_AGENTS_FILE), "utf8")) as { seen?: unknown };
+    return Array.isArray(seen) ? HARNESSES.filter(id => seen.includes(id)) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Adds `agents` to the coding agents recorded as seen; writes nothing when each is recorded already. */
+export async function recordSeenCodingAgents(rerailHome: string, agents: readonly Harness[]): Promise<void> {
+  const before = seenCodingAgents(rerailHome);
+  const seen = new Set([...before, ...agents]);
+  if (seen.size === before.length) return;
+  await mkdir(rerailHome, { recursive: true, mode: 0o700 });
+  await writeFile(join(rerailHome, SEEN_AGENTS_FILE), `${JSON.stringify({ seen: HARNESSES.filter(id => seen.has(id)) }, null, 2)}\n`, { mode: 0o600 });
 }

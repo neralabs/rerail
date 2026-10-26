@@ -12,6 +12,7 @@ import {
   realpath,
   rename,
   rm,
+  rmdir,
   stat,
   symlink,
   unlink,
@@ -144,6 +145,26 @@ function isObject(value: unknown): value is JsonObject {
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+/**
+ * A coding agent's config file that is not plain JSON (a comment, a trailing comma). Registration never rewrites such
+ * a file: what it would write back is JSON, so whatever made it unreadable would be lost.
+ */
+export class UnreadableConfigError extends Error {
+  constructor(readonly path: string, readonly reason: string) {
+    super(`Cannot parse JSON in ${path}: ${reason}`);
+  }
+}
+
+/** Removes `directory` if it is empty: a folder registration made for files it has since taken out again. */
+async function removeIfEmpty(directory: string): Promise<void> {
+  try {
+    await rmdir(directory);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && ["ENOENT", "ENOTEMPTY", "EEXIST"].includes(String(error.code))) return;
+    throw error;
+  }
 }
 
 /** The path cannot exist: it, or a directory on the way to it, is missing or is not a directory. */
@@ -361,7 +382,7 @@ async function readJsonFile(path: string): Promise<JsonFile> {
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new Error(`Cannot parse JSON in ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new UnreadableConfigError(path, error instanceof Error ? error.message : String(error));
   }
   if (!isObject(parsed)) throw new Error(`Expected a JSON object at the top level of ${path}`);
   return { exists: true, value: parsed, mode };
@@ -826,7 +847,11 @@ async function planOmp(context: Context): Promise<Plan> {
   if (kind === "missing") return unchanged("no symlink: nothing to remove");
   if (kind === "other") return unchanged("not a symlink: left in place");
   if (target !== canonicalRoot) return unchanged(`symlink points at ${target}: left in place`);
-  return planMutation(context, "omp", path, "updated", `remove symlink to ${context.root}`, () => unlink(path));
+  // The extensions folder goes too once it is empty: registration made it for the link when OMP had none.
+  return planMutation(context, "omp", path, "updated", `remove symlink to ${context.root}`, async () => {
+    await unlink(path);
+    await removeIfEmpty(dirname(path));
+  });
 }
 
 /** The immutable stdio bridge selects the checkout-local MCP endpoint from its launch cwd. */
@@ -889,7 +914,13 @@ async function planCodexSkillRemoval(context: Context, name: string, path: strin
   if (!existing.text.includes(MANAGED_SKILL_MARKER) || !(await runsPackageCli(context, existing.text))) {
     return { change: { harness: "codex", path, action: "unchanged", detail: `no $${name} skill from this Rerail installation to remove` } };
   }
-  return planMutation(context, "codex", path, "updated", `remove the $${name} skill`, () => unlink(path));
+  // The skill's folder is named for it, so it goes with the skill once nothing else is in it, and so does
+  // `skills/` once Rerail's were all it held.
+  return planMutation(context, "codex", path, "updated", `remove the $${name} skill`, async () => {
+    await unlink(path);
+    await removeIfEmpty(dirname(path));
+    await removeIfEmpty(dirname(dirname(path)));
+  });
 }
 
 async function planCodexSkill(context: Context, name: RerailCommandName): Promise<Plan> {
@@ -1054,10 +1085,13 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
   // Codex asks to trust a hook again only when its command changes.
   const codexHooks = join(home, ".codex", "hooks.json");
   if (mode === "register" && changes.some(change => change.path === codexHooks && (change.action === "created" || change.action === "updated"))) {
-    notes.push("Codex only runs trusted hooks: open Codex and run /hooks to trust the rerail hook.");
+    notes.push(CODEX_TRUST_NOTE);
   }
   return { changes, notes };
 }
+
+/** The note a registration that wrote Codex's hooks carries: Codex runs no hook the person has not trusted. */
+export const CODEX_TRUST_NOTE = "Codex only runs trusted hooks: open Codex and run /hooks to trust the rerail hook.";
 
 export function registerHarnesses(options: RegistrationOptions): Promise<RegistrationReport> {
   return run(options, "register");
