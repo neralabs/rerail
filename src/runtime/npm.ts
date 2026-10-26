@@ -116,10 +116,13 @@ export type NpmRunner = (args: readonly string[], options?: NpmOptions) => Promi
 
 const NPM_UNAUTHORIZED = /\bE401\b|\b401 Unauthorized\b/u;
 
-/** npm's own error code when it could not reach a registry at all; a failed install script reports its exit code instead. */
-const NPM_UNREACHABLE = /\bnpm error code (ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ERR_SOCKET_TIMEOUT)$/mu;
+/**
+ * npm's own error code when it could not reach a registry at all; a failed install script reports its exit code instead.
+ * npm 10 and later write `npm error code X`, earlier ones `npm ERR! code X`, and on Windows the line ends in `\r\n`.
+ */
+const NPM_UNREACHABLE = /\bnpm (?:error|ERR!) code (ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ERR_SOCKET_TIMEOUT)\r?$/mu;
 /** A registry that accepts the connection and never answers: npm's code is then only `FETCH_ERROR`. */
-const NPM_TIMEOUT = /\bnpm error network timeout at: /u;
+const NPM_TIMEOUT = /\bnpm (?:error|ERR!) network timeout at: /u;
 /** The URL npm's fetch error names: `request to <url> failed, reason: …` or `network timeout at: <url>`. */
 const NPM_FETCH_URL = /(?:request to|network timeout at:) (https?:\/\/[^\s,]+)/u;
 

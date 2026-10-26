@@ -113,8 +113,9 @@ async function listen(server: Server, port: number, host: string): Promise<void>
 
 /**
  * An explicit port is bound or fails. Without one the daemon prefers the port it last listened on, then the default
- * port, and when another process holds those, takes a free port instead; clients find it through the state file,
- * never by the port number.
+ * port, and when those cannot be had, takes a free port instead; clients find it through the state file, never by the
+ * port number. Held (EADDRINUSE) or refused (EACCES: Windows reserves port ranges for Hyper-V and moves them across
+ * restarts) both move on; the remembered port moves on whatever its error, since only a deleted file would undo it.
  */
 async function listenPreferred(server: Server, port: number | undefined, remembered: number | undefined, host: string): Promise<void> {
   if (port !== undefined) return await listen(server, port, host);
@@ -122,7 +123,8 @@ async function listenPreferred(server: Server, port: number | undefined, remembe
     try {
       return await listen(server, preferred, host);
     } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) throw error;
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if (preferred !== remembered && code !== "EADDRINUSE" && code !== "EACCES") throw error;
     }
   }
   await listen(server, 0, host);

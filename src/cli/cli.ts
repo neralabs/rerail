@@ -26,6 +26,7 @@ import {
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
+import { gitExecutable, GitUnavailableError } from "../engine/git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
@@ -204,6 +205,17 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
   return 0;
 }
 
+/** Whether a Git Rerail can run is installed, and where it looked when none is. */
+function gitLookup(): { found: true } | { found: false; looked: readonly string[] } {
+  try {
+    gitExecutable();
+    return { found: true };
+  } catch (error) {
+    if (error instanceof GitUnavailableError) return { found: false, looked: error.looked };
+    throw error;
+  }
+}
+
 async function runStatusCommand(home: string): Promise<number> {
   const lookup = await lookupDaemon(home);
   // No managed install, no database and no daemon: Rerail was never set up here, so it is not merely stopped.
@@ -215,8 +227,13 @@ async function runStatusCommand(home: string): Promise<number> {
   const state = workspaceStartState(workspace);
   const location = repositoryIdentityLocation(workspace);
   const name = repositoryFolderName(location);
-  if (!location.git && state === "stopped") process.stdout.write(`No repo found here (${workspace}). Run rerail status inside your project.\n`);
-  else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
+  if (!location.git && state === "stopped") {
+    // Without a Git Rerail can run, every folder reads as no repo; say what is actually missing.
+    const git = gitLookup();
+    process.stdout.write(git.found
+      ? `No repo found here (${workspace}). Run rerail status inside your project.\n`
+      : `Rerail needs Git to tell whether this is a repo, and found none where it looks: ${git.looked.join(", ")}. Install Git, then run rerail status again.\n`);
+  } else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
   if (lookup.status === "absent") {

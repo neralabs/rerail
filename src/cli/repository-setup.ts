@@ -133,11 +133,14 @@ export type DashboardPage = "rules";
 export interface SetupEnvironment {
   /** Coding agents installed on this computer. */
   agentsFound(): readonly Harness[];
-  /** Coding agents an earlier set-up or `rerail install` found or was named (`seenCodingAgents`). */
-  agentsSeen(): readonly Harness[];
+  /**
+   * Coding agents an earlier set-up or `rerail install` found or was named (`seenCodingAgents`), or undefined when there
+   * is no record to go by.
+   */
+  agentsSeen(): readonly Harness[] | undefined;
   /**
    * Connect these coding agents, each on its own, and record every one found or named as seen, but one that could not
-   * be connected. `repoRoot` is the repository the person said yes to, if any.
+   * be connected, which leaves the record. `repoRoot` is the repository the person said yes to, if any.
    */
   connect(agents: readonly Harness[], repoRoot: string | undefined): Promise<ConnectResult>;
   /** Whether the person has let Rerail read their coding agent sessions on this computer (T2b, asked once). */
@@ -507,13 +510,15 @@ async function summary(run: Run, repository: Repository, open: boolean, agents: 
 /**
  * Coding agents first, each on its own: one whose config cannot be read is left as it is and named in the summary, and
  * the others are connected. `again`: set-up ran again where it was set up, so without `--agents` it connects only the
- * agents found since an earlier run saw any, never one the person removed or left out.
+ * agents found since an earlier run saw any, never one the person removed or left out. With no record to go by (an
+ * install from before there was one) it connects none: what is found now is recorded, and the next agent installed is
+ * the first new one.
  */
 async function connect(run: Run, repository: Repository | undefined, again = false): Promise<AgentsConnection> {
   const { environment, agents: named } = run.request;
   const found = environment.agentsFound();
-  const seen = new Set(environment.agentsSeen());
-  const agents = named ?? (again ? found.filter(id => !seen.has(id)) : found);
+  const seen = again ? environment.agentsSeen() : undefined;
+  const agents = named ?? (!again ? found : seen === undefined ? [] : found.filter(id => !seen.includes(id)));
   const result = await environment.connect(agents, repository?.root);
   return {
     connected: codingAgents(result.all),

@@ -329,6 +329,29 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
   });
 
+  it("connects no coding agent on a later plain run with no record of what an earlier one saw, and starts the record", async () => {
+    const setup = await fixture();
+    const first = fakeSetupEnvironment({ found: ["claude-code", "cursor"] });
+    await runSetup(agentIo(), request(setup, first, { answer: "start", repo: setup.repo, packs: TYPESCRIPT, agents: parseCodingAgents("claude-code") }));
+
+    // As after updating from a version that kept no record: Cursor, left out then, is found but must stay out.
+    const later = fakeSetupEnvironment({ found: ["claude-code", "cursor"] });
+    expect(await runSetup(agentIo(), request(setup, later))).toMatchObject({ status: "started" });
+    expect(later.connections).toEqual([]);
+    expect(later.agentsSeen()).toEqual(["claude-code", "cursor"]);
+  });
+
+  it("tries again on a later plain run an agent it could not connect, even one recorded as seen before", async () => {
+    const setup = await fixture();
+    const first = fakeSetupEnvironment({ found: ["claude-code", "codex"], seen: ["claude-code", "codex"], unreadable: ["codex"] });
+    await runSetup(agentIo(), request(setup, first, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
+    expect(first.agentsSeen()).toEqual(["claude-code"]);
+
+    const later = fakeSetupEnvironment({ found: ["claude-code", "codex"], seen: first.agentsSeen() });
+    await runSetup(agentIo(), request(setup, later));
+    expect(later.connections).toEqual([{ agents: ["codex"], repoRoot: setup.repo }]);
+  });
+
   it("starts Rerail and connects the other coding agents when one's config is not plain JSON, naming it", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment({ unreadable: ["claude-code"] });

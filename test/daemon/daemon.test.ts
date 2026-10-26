@@ -748,6 +748,22 @@ describe("Rerail daemon", () => {
     }
   });
 
+  // A port below 1024 is refused (EACCES) to an unprivileged process on most systems, as a port Windows reserved is.
+  it("moves on from a remembered port it is refused", async (context) => {
+    const probe = createServer();
+    const { promise: probed, resolve: refused } = Promise.withResolvers<boolean>();
+    probe.once("error", (error: NodeJS.ErrnoException) => refused(error.code === "EACCES"));
+    probe.listen(1, "127.0.0.1", () => probe.close(() => refused(false)));
+    if (!(await probed)) context.skip();
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    const portFile = join(root, "daemon-port.json");
+    await writeFile(portFile, `${JSON.stringify({ port: 1 })}\n`);
+    const daemon = await RerailDaemon.start({ version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile });
+    daemons.push(daemon);
+    expect(daemon.port).not.toBe(1);
+  });
+
   it("releases its engine socket when a rollback holds the database, so the next start succeeds", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const databasePath = join(root, "rerail.sqlite");

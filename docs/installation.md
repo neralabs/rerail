@@ -346,7 +346,7 @@ Code, Codex and Cursor relay the questions as text.
   `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`,
   `/home/linuxbrew/.linuxbrew/bin`, `/run/current-system/sw/bin` and
   `~/.nix-profile/bin`; on Windows `C:\Program Files\Git\cmd`,
-  `C:\Program Files (x86)\Git\cmd`, `%LOCALAPPDATA%\Programs\Git\cmd` (Git for
+  `C:\Program Files (x86)\Git\cmd`, `~\AppData\Local\Programs\Git\cmd` (Git for
   Windows installed for one user) and `~\scoop\apps\git\current\cmd`.
 - macOS, Linux with glibc 2.28 or newer (what Node 24 needs), or Windows MSVC on
   arm64/x64. The package carries prebuilt native kernels for those; nothing is
@@ -390,7 +390,7 @@ Supported:
   `rerail install --refresh` with Node 24 or newer first on `PATH`.
 - **Git** at `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, Linuxbrew's `/home/linuxbrew/.linuxbrew/bin`, or a
   Nix profile (`/run/current-system/sw/bin`, `~/.nix-profile/bin`); on Windows Git for Windows in
-  `C:\Program Files\Git`, `C:\Program Files (x86)\Git` or, installed for one user, `%LOCALAPPDATA%\Programs\Git`,
+  `C:\Program Files\Git`, `C:\Program Files (x86)\Git` or, installed for one user, `~\AppData\Local\Programs\Git`,
   and scoop's (`~\scoop\apps\git\current`). Rerail does not look for Git on `PATH`.
 - **Shells** set-up puts `rerail` on `PATH` for: zsh, bash and fish (interactive shells; `zsh -c` and ssh need the
   full path or `~/.zshenv`), any other shell through `~/.profile`, and on Windows PowerShell, Command Prompt and Git

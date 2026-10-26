@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { gitCandidates, readGitBlobs } from "../../src/engine/git.js";
 
 const roots: string[] = [];
@@ -46,20 +46,27 @@ describe("readGitBlobs", () => {
 });
 
 describe("gitCandidates", () => {
-  it("looks in the per-user installs too, never on PATH", () => {
-    expect(gitCandidates("win32", String.raw`C:\Users\me`, { LOCALAPPDATA: String.raw`D:\Local` })).toEqual([
-      String.raw`C:\Program Files\Git\cmd\git.exe`,
-      String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
-      String.raw`D:\Local\Programs\Git\cmd\git.exe`,
-      String.raw`C:\Users\me\scoop\apps\git\current\cmd\git.exe`,
-    ]);
-    expect(gitCandidates("linux", "/home/me", { PATH: "/home/me/bin" })).toEqual([
-      "/usr/bin/git",
-      "/usr/local/bin/git",
-      "/opt/homebrew/bin/git",
-      "/home/linuxbrew/.linuxbrew/bin/git",
-      "/run/current-system/sw/bin/git",
-      "/home/me/.nix-profile/bin/git",
-    ]);
+  it("looks in the per-user installs too, never on PATH or anywhere the environment points", () => {
+    // A repository's environment (direnv, a devcontainer) can set these as easily as PATH.
+    vi.stubEnv("LOCALAPPDATA", String.raw`C:\repo\evil`);
+    vi.stubEnv("PATH", "/home/me/repo/bin");
+    try {
+      expect(gitCandidates("win32", String.raw`C:\Users\me`)).toEqual([
+        String.raw`C:\Program Files\Git\cmd\git.exe`,
+        String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
+        String.raw`C:\Users\me\AppData\Local\Programs\Git\cmd\git.exe`,
+        String.raw`C:\Users\me\scoop\apps\git\current\cmd\git.exe`,
+      ]);
+      expect(gitCandidates("linux", "/home/me")).toEqual([
+        "/usr/bin/git",
+        "/usr/local/bin/git",
+        "/opt/homebrew/bin/git",
+        "/home/linuxbrew/.linuxbrew/bin/git",
+        "/run/current-system/sw/bin/git",
+        "/home/me/.nix-profile/bin/git",
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

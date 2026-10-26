@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connectCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents } from "../../src/setup/coding-agents.js";
+import { connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents } from "../../src/setup/coding-agents.js";
 import { CODEX_HOOK_EVENTS, registerHarnesses } from "../../src/setup/harness-registration.js";
 
 const temporaryDirectories: string[] = [];
@@ -125,12 +125,25 @@ describe("connectCodingAgents", () => {
 });
 
 describe("seen coding agents", () => {
-  it("is empty until recorded, and keeps every agent recorded since", async () => {
+  it("has no record until one is written, keeps every agent recorded since, and forgets one it could not connect", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-seen-"));
     temporaryDirectories.push(home);
+    expect(seenCodingAgents(home)).toBeUndefined();
+    await recordSeenCodingAgents(home, []);
     expect(seenCodingAgents(home)).toEqual([]);
     await recordSeenCodingAgents(home, ["cursor"]);
     await recordSeenCodingAgents(home, ["codex", "cursor"]);
     expect(seenCodingAgents(home)).toEqual(["codex", "cursor"]);
+    await forgetSeenCodingAgents(home, ["codex"]);
+    expect(seenCodingAgents(home)).toEqual(["cursor"]);
+  });
+
+  it("treats a record it cannot read as no record", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-seen-"));
+    temporaryDirectories.push(home);
+    await writeFile(join(home, "coding-agents.json"), "{ not json");
+    expect(seenCodingAgents(home)).toBeUndefined();
+    await recordSeenCodingAgents(home, ["claude-code"]);
+    expect(seenCodingAgents(home)).toEqual(["claude-code"]);
   });
 });

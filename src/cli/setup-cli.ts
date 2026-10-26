@@ -8,6 +8,7 @@ import {
   CODING_AGENT_NAMES,
   codingAgentHome,
   connectCodingAgents,
+  forgetSeenCodingAgents,
   recordSeenCodingAgents,
   refreshCodingAgents,
   registrationRoot as packageRegistrationRoot,
@@ -429,9 +430,11 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
       const home = codingAgentHome();
       // Claude Code's project status line lives in the repository: only one the person said yes to.
       const result = await connectCodingAgents(registrationRoot(context), home, agents, repoRoot);
-      // One that could not be connected stays unseen, so set-up run again connects it once its config is fixed.
-      const failed = new Set(result.failures.map(({ agent }) => agent));
-      await recordSeenCodingAgents(context.home, [...detectHarnesses(home), ...agents].filter(id => !failed.has(id)));
+      // One that could not be connected stays unseen, even if `rerail install` recorded it before, so set-up run again
+      // connects it once its config is fixed.
+      const failed = result.failures.map(({ agent }) => agent);
+      await recordSeenCodingAgents(context.home, [...detectHarnesses(home), ...agents].filter(id => !failed.includes(id)));
+      await forgetSeenCodingAgents(context.home, failed);
       return result;
     },
     sessionsApproved() {

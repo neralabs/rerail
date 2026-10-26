@@ -19,8 +19,8 @@ export interface FakeSetupEnvironment extends SetupEnvironment {
 /** Records what set-up asks of the machine instead of registering coding agents or starting a daemon. */
 export function fakeSetupEnvironment(options: {
   found?: readonly Harness[];
-  /** The coding agents an earlier set-up saw; none by default, as on a computer Rerail was never set up on. */
-  seen?: readonly Harness[];
+  /** The coding agents an earlier set-up recorded as seen; no record by default, as on a computer Rerail was never set up on. */
+  seen?: readonly Harness[] | undefined;
   /** Coding agents whose config is not plain JSON: `connect` names each and connects the others. */
   unreadable?: readonly Harness[];
   browser?: boolean;
@@ -35,20 +35,21 @@ export function fakeSetupEnvironment(options: {
   const connections: FakeSetupEnvironment["connections"] = [];
   const pages: FakeSetupEnvironment["pages"] = [];
   const found = options.found ?? ["claude-code", "cursor"];
-  const seen = new Set(options.seen ?? []);
+  let seen = options.seen === undefined ? undefined : new Set(options.seen);
   const connected = new Set<Harness>();
   return {
     connections,
     pages,
     packs: options.packs ?? directoryPackStore(undefined, ["typescript"]),
     agentsFound: () => found,
-    agentsSeen: () => [...seen],
+    agentsSeen: () => (seen === undefined ? undefined : [...seen]),
     async connect(agents, repoRoot) {
       if (agents.length > 0) connections.push({ agents, repoRoot });
       const unreadable = new Set(options.unreadable ?? []);
       const changed = agents.filter(id => !unreadable.has(id) && !connected.has(id));
       for (const id of changed) connected.add(id);
-      for (const id of [...found, ...agents]) if (!unreadable.has(id)) seen.add(id);
+      seen ??= new Set();
+      for (const id of [...found, ...agents]) seen[unreadable.has(id) ? "delete" : "add"](id);
       return {
         changed,
         all: [...connected],

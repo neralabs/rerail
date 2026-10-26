@@ -9,19 +9,15 @@ import { posix, win32 } from "node:path";
  * repository controls (a relative entry, `node_modules/.bin`, direnv's `PATH_add`) could put its own `git` first;
  * the same reason the calls below switch off fsmonitor and hooks. The fixed system locations come first, then the
  * per-user installs whose path only the person's account decides: Git for Windows installed for one user and scoop's
- * Git, Linuxbrew's, and a Nix profile's.
+ * Git, Linuxbrew's, and a Nix profile's. Every per-user path is built from the account's home, never from the
+ * environment: `LOCALAPPDATA` can be set by a repository as easily as PATH.
  */
-export function gitCandidates(
-  platform: NodeJS.Platform = process.platform,
-  home: string = accountHome(),
-  env: NodeJS.ProcessEnv = process.env,
-): string[] {
+export function gitCandidates(platform: NodeJS.Platform = process.platform, home: string = accountHome()): string[] {
   if (platform === "win32") {
-    const localAppData = env.LOCALAPPDATA || win32.join(home, "AppData", "Local");
     return [
       String.raw`C:\Program Files\Git\cmd\git.exe`,
       String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
-      win32.join(localAppData, "Programs", "Git", "cmd", "git.exe"),
+      win32.join(home, "AppData", "Local", "Programs", "Git", "cmd", "git.exe"),
       win32.join(home, "scoop", "apps", "git", "current", "cmd", "git.exe"),
     ];
   }

@@ -68,7 +68,7 @@ On a system or processor Rerail has no engine for (FreeBSD, 32-bit ARM), it read
 
 Rerail reads every repository through Git, and runs it only from the places listed, never from `PATH`, so a
 repository cannot put its own `git` first. On Windows those are `C:\Program Files\Git\cmd`,
-`C:\Program Files (x86)\Git\cmd`, `%LOCALAPPDATA%\Programs\Git\cmd` (Git for Windows installed for one user) and
+`C:\Program Files (x86)\Git\cmd`, `~\AppData\Local\Programs\Git\cmd` (Git for Windows installed for one user) and
 `~\scoop\apps\git\current\cmd`. The install command fits the system: `apt-get`, `dnf`, `pacman` or `zypper` (without
 `sudo` when you are root), `xcode-select --install` on macOS, `winget install --id Git.Git -e` on Windows; elsewhere
 it says to use your package manager or https://git-scm.com. A Git that lives anywhere else is not found: install it
@@ -292,17 +292,18 @@ A second daemon, from another `RERAIL_HOME` or one left behind, holds Rerail's m
 ### Containers: the dashboard does not open from the host
 
 The daemon listens on the container's loopback only, so a published port (`-p 4737:4737`) gets an empty reply, and
-set-up says `Couldn’t open your browser. Copy the link instead.` Use your editor's port forwarding (VS Code
-devcontainers forward loopback ports), or restart the daemon on every interface and publish the port on the host's
-loopback only:
+set-up says `Couldn’t open your browser. Copy the link instead.` Use your editor's port forwarding first (VS Code
+devcontainers forward loopback ports): the daemon stays on loopback. Only where that is not available, restart the
+daemon on every interface and publish the port on the host's loopback only:
 
 ```sh
 rerail daemon stop && rerail daemon start --host 0.0.0.0 --allow-remote   # in the container
 docker run -p 127.0.0.1:4737:4737 …                                       # on the host
 ```
 
-`--allow-remote` lets anything that reaches that port read and change your rules, which is why the port should be
-published on `127.0.0.1` only.
+`--allow-remote` lets anything that reaches that port read and change your rules. Publishing on `127.0.0.1` keeps it
+off the host's network, but inside the container the daemon now listens on every interface: any other container on
+the same Docker network (a Compose service, a sidecar) reaches it directly, without the published port.
 
 ## WSL
 

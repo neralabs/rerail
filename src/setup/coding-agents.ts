@@ -163,26 +163,45 @@ export async function connectCodingAgents(root: string, home: string, agents: re
 
 /**
  * In the Rerail home: `{ "seen": [<agent id>, …] }`, every coding agent set-up or `rerail install` found on this
- * computer or was named. Set-up run again in a repository that is set up connects only the agents found since, so
- * it never undoes `rerail install --remove --agents <id>` or an earlier `--agents` that left one out.
+ * computer or was named, but one it could not connect. Set-up run again in a repository that is set up connects only
+ * the agents found since, so it never undoes `rerail install --remove --agents <id>` or an earlier `--agents` that
+ * left one out, and does retry an agent whose config it could not read.
  */
 const SEEN_AGENTS_FILE = "coding-agents.json";
 
-/** The coding agents recorded as seen; none when nothing is recorded yet (or the record cannot be read). */
-export function seenCodingAgents(rerailHome: string): Harness[] {
+/**
+ * The coding agents recorded as seen, or undefined when there is no record to go by: none written yet (an install from
+ * before the record existed, whose removals and `--agents` choices it never saw) or one that cannot be read. Set-up run
+ * again then connects no agent rather than every one found, and the record starts from what is found now.
+ */
+export function seenCodingAgents(rerailHome: string): Harness[] | undefined {
   try {
     const { seen } = JSON.parse(readFileSync(join(rerailHome, SEEN_AGENTS_FILE), "utf8")) as { seen?: unknown };
-    return Array.isArray(seen) ? HARNESSES.filter(id => seen.includes(id)) : [];
+    return Array.isArray(seen) ? HARNESSES.filter(id => seen.includes(id)) : undefined;
   } catch {
-    return [];
+    return undefined;
   }
 }
 
-/** Adds `agents` to the coding agents recorded as seen; writes nothing when each is recorded already. */
-export async function recordSeenCodingAgents(rerailHome: string, agents: readonly Harness[]): Promise<void> {
-  const before = seenCodingAgents(rerailHome);
-  const seen = new Set([...before, ...agents]);
-  if (seen.size === before.length) return;
+async function writeSeenCodingAgents(rerailHome: string, seen: ReadonlySet<Harness>): Promise<void> {
   await mkdir(rerailHome, { recursive: true, mode: 0o700 });
   await writeFile(join(rerailHome, SEEN_AGENTS_FILE), `${JSON.stringify({ seen: HARNESSES.filter(id => seen.has(id)) }, null, 2)}\n`, { mode: 0o600 });
+}
+
+/** Adds `agents` to the coding agents recorded as seen, starting the record if there is none; writes nothing when each is recorded already. */
+export async function recordSeenCodingAgents(rerailHome: string, agents: readonly Harness[]): Promise<void> {
+  const before = seenCodingAgents(rerailHome);
+  const seen = new Set([...before ?? [], ...agents]);
+  if (before !== undefined && seen.size === before.length) return;
+  await writeSeenCodingAgents(rerailHome, seen);
+}
+
+/**
+ * Takes `agents` out of the record: set-up could not connect them, so set-up run again tries them once more, even one
+ * `rerail install` recorded earlier.
+ */
+export async function forgetSeenCodingAgents(rerailHome: string, agents: readonly Harness[]): Promise<void> {
+  const before = seenCodingAgents(rerailHome);
+  if (before === undefined || !agents.some(id => before.includes(id))) return;
+  await writeSeenCodingAgents(rerailHome, new Set(before.filter(id => !agents.includes(id))));
 }
