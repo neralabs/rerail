@@ -976,6 +976,7 @@ Branch targets valid; every opcode/mode/operand/table/grammar-id valid; unused f
 | Phase-3 completion convergence 1/128/4,096 tasks | 410/488/600 launches | M | cutover plan :429 |
 | Phase-4 5-file differential | 109,114 matches; 557 launches; 387,776,512 B; 37.85 s | M | P4:13-16, :101-102 |
 | Latest 5-file differential | 425 (409 forced) dispatches | M | handover :15 |
+| 5-file differential after capture-run component | 402 dispatches; 142,098,432 tracked bytes; owned memory peak 2,731,622,400 B | M | capture-run :168, :171 |
 | CPU full-corpus reference | 7,637.27 s; 37,975,107 matches; 43,428,341 captures | M | P5:661-662, :811-815 |
 | Raw output floor | 3,082,424,556 B | M | P5:842 |
 | Per-generation dispatches / generations | 20 / 19 (= 380) | M | P5:1674 |
