@@ -7,10 +7,13 @@
  *
  * Nothing is written when the running PATH has the directory already: the person manages it. `RERAIL_MODIFY_PATH=0`
  * turns the whole step off (dotfile managers; the test suite).
+ *
+ * Set-up records in the Rerail home that it handled PATH (`launcherPathMarker`). `rerail update` adds the entry only
+ * where no set-up ever did, so a block the person took out by hand stays out; `rerail setup` run again adds it back.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { delimiter, join, resolve, win32 } from "node:path";
 import { shellQuote } from "../harness/setup-screens.js";
@@ -26,6 +29,18 @@ const BLOCK_END = "# <<< rerail <<<";
 const BLOCK = /(?<![^\n])# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/u;
 /** The block with the blank line `addBlock` puts before it, when that line is still blank. */
 const BLOCK_AND_GAP = /(?:(?<![^\n])\r?\n)?(?<![^\n])# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/u;
+/** The record that a set-up handled PATH: written, found in place, or left to the person. */
+export function launcherPathMarker(rerailHome: string): string {
+  return join(rerailHome, "launcher-path.json");
+}
+
+/** Record `change` as PATH handled, unless it failed (the next run tries again) or the run was dry. */
+export async function recordLauncherPath(rerailHome: string, change: LauncherPathChange, dryRun = false): Promise<void> {
+  if (dryRun || change.status === "failed") return;
+  await mkdir(rerailHome, { recursive: true });
+  await writeFile(launcherPathMarker(rerailHome), `${JSON.stringify({ handledAt: new Date().toISOString() })}\n`);
+}
+
 /** Where `Path` lives on Windows, as reports name it. */
 export const WINDOWS_USER_PATH = String.raw`HKCU\Environment Path`;
 

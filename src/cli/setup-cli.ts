@@ -22,7 +22,7 @@ import {
   type RegistrationReport,
 } from "../setup/harness-registration.js";
 import { checkNodeVersion } from "../setup/node-version.js";
-import { addLauncherToPath, describeLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
+import { addLauncherToPath, describeLauncherPath, launcherPathMarker, recordLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
 import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
@@ -87,6 +87,7 @@ async function launcherOnPath(context: SetupContext, lane: SetupLane): Promise<s
   const binDir = dirname(launcherPath);
   const home = codingAgentHome();
   const change = await addLauncherToPath({ binDir, home });
+  await recordLauncherPath(context.home, change);
   if (change.status === "failed") return renderOnPath({ binDir, locations: [], failure: change.reason, home }, lane).replace(/\n$/u, "");
   if (change.status !== "changed") return undefined;
   return renderOnPath({ binDir, locations: change.locations, home }, lane).replace(/\n$/u, "");
@@ -196,7 +197,8 @@ async function runRefresh(context: SetupContext): Promise<number> {
     process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);
   }
   // An install made by a version whose set-up never wrote PATH keeps the launcher off it until something puts it
-  // on: the refresh every update ends with is that something.
+  // on: the refresh every update ends with is that something, once. A set-up that handled PATH leaves a record, and
+  // from then on PATH is the person's: a block they took out stays out.
   const pathLine = await repairLauncherPath(context);
   if (pathLine !== undefined) process.stdout.write(`${pathLine}\n`);
   for (const { agent, message } of result.failures) {
@@ -207,12 +209,17 @@ async function runRefresh(context: SetupContext): Promise<number> {
   return 1;
 }
 
-/** Put the launcher on PATH where it is missing; the line to print when that changed or failed, else undefined. */
+/**
+ * Put the launcher on PATH where no set-up ever handled it; the line to print when that changed or failed, else
+ * undefined. A run that wrote no launcher (an install that failed) has nothing to put on PATH yet.
+ */
 async function repairLauncherPath(context: SetupContext): Promise<string | undefined> {
   const { launcherPath } = context.updater;
-  if (!existsSync(launcherPath)) return undefined;
+  if (existsSync(launcherPathMarker(context.home)) || !existsSync(launcherPath)) return undefined;
   const binDir = dirname(launcherPath);
-  return describeLauncherPath(await addLauncherToPath({ binDir, home: codingAgentHome() }), binDir, "add");
+  const change = await addLauncherToPath({ binDir, home: codingAgentHome() });
+  await recordLauncherPath(context.home, change);
+  return describeLauncherPath(change, binDir, "add");
 }
 
 export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
@@ -245,10 +252,12 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
     const binDir = dirname(context.updater.launcherPath);
     const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
     if (removed !== undefined) process.stdout.write(`${removed}\n`);
+    if (!parsed.dryRun) await rm(launcherPathMarker(context.home), { force: true });
   }
   if (explicitRoot !== undefined && !remove) {
     const binDir = dirname(context.updater.launcherPath);
     const change = await addLauncherToPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun });
+    await recordLauncherPath(context.home, change, parsed.dryRun);
     const pathLine = describeLauncherPath(change, binDir, "add", parsed.dryRun);
     process.stdout.write(["", ...(pathLine === undefined ? [] : [pathLine]), "Next:", "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks", ""].join("\n"));
   }

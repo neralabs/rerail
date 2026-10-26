@@ -124,9 +124,12 @@ person says yes.
 
 Every set-up run also puts `~/.rerail/bin` (the Windows launcher is
 `rerail.cmd`) on `PATH`, so `rerail` runs from a new terminal. So does every
-`rerail update`, through the `rerail install --refresh` it ends with: an
-install whose set-up predates this step (0.1.0-next.2 or earlier) gets the
-entry on its next update. On macOS and
+`rerail update`, through the `rerail install --refresh` it ends with, for an
+install whose set-up predates this step (0.1.0-next.2 or earlier): it gets the
+entry on its next update, once. Set-up records that it handled `PATH` in
+`~/.rerail/launcher-path.json`, and from then on `PATH` is yours: a block you
+take out stays out of later updates, and only `rerail setup` run again adds
+it back. On macOS and
 Linux it appends a block between `# >>> rerail >>>` and `# <<< rerail <<<` to
 the startup file `$SHELL` (else the account's login shell) reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
 `~/.bashrc` and the first of `~/.bash_profile`, `~/.bash_login`,

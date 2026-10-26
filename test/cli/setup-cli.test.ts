@@ -17,7 +17,7 @@ import { mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, writeFile } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
-import { ManagedUpdater } from "../../src/setup/index.js";
+import { launcherPathMarker, ManagedUpdater } from "../../src/setup/index.js";
 
 const temporaryDirectories: string[] = [];
 const previousHome = process.env.HOME;
@@ -275,14 +275,35 @@ describe("rerail install --refresh", () => {
     const zshrc = join(hostConfigHome, ".zshrc");
     await writeFile(zshrc, "setopt autocd\n");
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
-    // A version from before set-up wrote PATH left the launcher in place and the startup file alone.
+    // A version from before set-up wrote PATH left the launcher in place, the startup file alone, and no record of it.
     await writeFile(zshrc, "setopt autocd\n");
+    await rm(launcherPathMarker(context.home));
     const output = captureOutput();
 
     expect(await runInstallCommand(["--refresh"], context)).toBe(0);
 
     expect(await readFile(zshrc, "utf8")).toContain(join(context.home, "bin"));
     expect(output.stdout()).toContain(`Added ${join(context.home, "bin")} to PATH in ${zshrc}`);
+    // Once, not every update: the next refresh finds the record and leaves PATH to the person.
+    expect(existsSync(launcherPathMarker(context.home))).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("leaves a block the person took out alone once a set-up has written it", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    expect(await readFile(zshrc, "utf8")).toContain(join(context.home, "bin"));
+    await writeFile(zshrc, "setopt autocd\n");
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(await readFile(zshrc, "utf8")).toBe("setopt autocd\n");
+    expect(output.stdout()).not.toContain("PATH");
   });
 
   it.skipIf(process.platform === "win32")("leaves PATH alone, and says nothing about it, when the launcher is on it already", async () => {
