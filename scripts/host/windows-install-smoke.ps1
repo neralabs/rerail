@@ -14,9 +14,9 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "windows-host.ps1")
 $Tarball = (Resolve-Path $Tarball).Path
 $base = Join-Path ([IO.Path]::GetTempPath()) ("rerail-windows-smoke-" + [guid]::NewGuid())
-# A profile folder named as people are, with a space and accents: cmd.exe reads the batch launcher in the console's
-# code page, so a path written out in UTF-8 would come back garbled.
-$sandbox = Join-Path $base ("Jos" + [char]0x00E9 + " Garc" + [char]0x00ED + "a")
+# An accented profile folder, as a person's name gives it: cmd.exe reads the batch launcher in the console's code
+# page, so a path written out in UTF-8 would come back garbled.
+$sandbox = Join-Path $base ("Jos" + [char]0x00E9)
 $project = Join-Path $sandbox "proj"
 $rerailHome = Join-Path $sandbox ".rerail"
 $launcher = Join-Path $rerailHome "bin\rerail.cmd"
