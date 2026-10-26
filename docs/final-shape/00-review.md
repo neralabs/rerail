@@ -260,70 +260,16 @@ PIAT's own M2 finding still holds: the packed IR lowers none of the M2/M7 rules,
 - No single-file latency has been measured.
 - The executor drives a host-side, generation-by-generation frontier sized by readback. It has no device-side enqueue and reads Tempo's own `TapeDoc`, not v7.
 
-**What it means:** the GPU requirement stands, and so does the rule that Metal executes every admitted program with no fallback. But the current architecture runs the whole corpus as one batch, about 18–20 dispatches per generation. That serves neither the live-edit target nor PIAT's device-side enqueue, and the handover says trimming allocations cannot replace dispatch work.
+**What it means (corrected).** Batching the whole corpus is right, and it is the only shape in which Metal pays. What fails is the program form Metal is asked to execute: a path-forking transducer whose frontier carries cursor and repeat frames. Its handover names "dynamic frontier continuation", successor generations dominate the launches, and ledger L1 records per-task tuples at 1.99 GB. That is the same continuation-state shape SSC's cohort scheduler lost with on CPU.
 
-**To take now:**
-- the IR spec and verifier;
-- the CPU interpreter and JIT as oracles;
-- kernel techniques: cooperative scan, tile sort, typed merge, sealed columns, workgroup NFAs, first-byte proofs;
-- capture ranges;
-- the budget harness.
+The fix is to lift unbounded relations into set operators: each node enters the frontier at most once per stratum, and the arena is bounded at plan time (`metal-enqueue.md` §3). Those operators then run as GPU-scheduled waves over the whole batch. The bounded remainder is a candidate kernel, which is Tempo's register class.
 
-The executor itself should be re-aimed at a per-file or small-batch request against the same contract before it is integrated.
+Tempo's kernels, IR encoding, verifier, oracles and budget harness carry over. See `01-design.md`.
+
+An earlier version of this section proposed re-aiming Metal at per-file requests. That was wrong: per-file execution removes the batching that makes the GPU viable.
 
 ---
 
 ## 3. What it means for the final shape
 
-### Convergence
-
-Without coordination, the streams have converged on one shape. Three parts were already in PIAT; Typing-support and Moti added the two it lacked.
-
-1. **Substrate.**
-   - Main's v7 tape and document model (embedded guests, `Origin`).
-   - The anchor index, always built.
-   - Statistics in SQL, built at ingestion and fingerprinted: kind and edge frequencies, postings, column moments.
-2. **Local programs.**
-   - Per-document compiled programs for structural patterns: transducer IR, with a CPU interpreter, JIT and Metal.
-   - Seeded by the planner from postings.
-   - Results come out through narrow typed vtabs with demand handles.
-   - No continuation interpreter in SQL or native (SSC, DLRE, N1562).
-3. **Relations and inference (new).**
-   - One Datalog fragment is the language for named derived facts, type inference packs, and the relational part of rules. It has `ast(...)` atoms, tape built-ins, lattices, stratified negation and aggregates.
-   - The fragment is planned from SQL statistics, and one plan has three evaluation modes:
-     - **pure SQL:** the fallback, and the outer-SQL target;
-     - **native strata behind a vtab, with SQL as the store:** the audit target;
-     - **incremental keyed maintenance with read-set memo and early cutoff:** the per-edit target (Moti's Y1 design, derived from the rules instead of hand-written).
-4. **Consolidation:** findings as a set, Complete/Unknown per (rule, file).
-
-### Where this departs from PIAT
-
-- **SQL is not the evaluator for relational work.** SQL holds state and statistics, composes the outer query, and is the fallback. Planned strata run natively behind vtabs. This is pushdown at stratum granularity, consistent with "no SQL-versus-Rust dichotomy"; Typing measured SQL-per-wave at 3–10× slower.
-- **Anchor selection becomes a planner step.** It reads postings by point lookup and seeds programs, as Typing's planner and the spike's rarest-anchor rule do. It is no longer a set-algebra program of SQL stages. The index is unchanged (0006).
-- **A language for 0005, and a resolution for 0002.** DLRE's authored relational SQL is re-expressed in the Datalog fragment, not in a new algebra.
-- **IR extensions are trimmed.** PIAT already withdrew keyed sets (E15) and bottom-up folds (E17), and the Datalog layer takes those over. The transducer stays small, as spec-transducer §0 asks.
-
-### Integration method: a proposal
-
-The PIAT experience argues against merging whole branches and then mutating them.
-
-- **Start from main.**
-- **Port components by interface,** in this order:
-  1. statistics;
-  2. typed vtabs;
-  3. the Datalog compiler (native, from `rdl`);
-  4. the native set/lattice engine;
-  5. local-program lowering and the executor;
-  6. the incremental mode.
-- **Run a differential test at each step** against the native matcher and the Typing goldens.
-- **Gate on the small exact corpora** in the inner loop (CPython `Lib/`, `native/src`, a data-layer sample). The full data-layer corpus runs once per phase.
-
----
-
-## 4. Questions for you before the design is written
-
-1. **Is the Typing-support Datalog fragment the language** for named derived facts and the relational part of rules, replacing both `rerail.facts/v1` and the DLRE `relational` clause?
-2. **Integration method:** port components onto main by interface, as above, or keep PIAT's "merge, then mutate"?
-3. **Anchor selection:** may it move from SQL stage programs into the planner, seeding local programs from postings? The index stays mandatory either way.
-4. **Gate:** small exact corpora in the loop, with the 60 data-layer rules re-expressed rather than ported with their authored SQL?
-5. **Metal:** take the IR, oracles and kernel techniques now, and re-aim the executor at per-file requests before integrating it?
+Superseded by `01-design.md`. The earlier text here listed abstract layers and open questions instead of one execution model.
