@@ -23,7 +23,7 @@
 //! function of the keys it reads, so a state outside that set has the same edges before and
 //! after. The same holds for a finding, plus its reads of the reached set, which `finish` adds
 //! from the states whose reached status toggled.
-use super::facts::{at, get, string, with, Change, Def, Facts, Kind, Tab, Val};
+use super::facts::{at, get, note, string, with, Change, Def, Facts, Kind, Tab, Val};
 use crate::lmap::LMap;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -165,6 +165,9 @@ pub struct Stats {
     pub pred_checks: usize,
     pub prepare_ms: f64,
     pub finish_ms: f64,
+    /// The findings that left (false) and came (true) in this step.
+    #[serde(skip)]
+    pub delta: Vec<(Finding, bool)>,
 }
 
 pub struct Prep {
@@ -226,6 +229,19 @@ impl Dc {
         }
         dc_maps!(b);
         (t, l, n)
+    }
+
+    /// Per map: (bytes, entries) of the top, or with `layer` of the top-most frozen layer.
+    pub fn by_map(&self, layer: bool) -> serde_json::Value {
+        let mut m = serde_json::Map::new();
+        macro_rules! b {
+            ($($f:ident),*) => { $(
+                let v = if layer { (self.$f.layer_bytes(0), self.$f.layers().first().map_or(0, |l| l.len())) } else { (self.$f.top_bytes(), self.$f.top_len()) };
+                m.insert(stringify!($f).into(), serde_json::json!(v));
+            )* };
+        }
+        dc_maps!(b);
+        serde_json::Value::Object(m)
     }
 
     /// Reached states.
@@ -759,6 +775,7 @@ impl Dc {
             let old = self.findings.remove(&id).unwrap_or_default();
             if old != new {
                 stats.findings_changed += 1;
+                note(&mut stats.delta, &old, &new);
             }
             if !new.is_empty() {
                 self.findings.insert(id, new);

@@ -153,6 +153,11 @@ impl<K: Hash + Eq + Copy, V: Clone + PartialEq> LMap<K, V> {
         self.top.len()
     }
 
+    /// The top's entries (`None`: a tombstone).
+    pub fn top_iter(&self) -> impl Iterator<Item = (&K, &Option<V>)> {
+        self.top.iter()
+    }
+
     pub fn layers(&self) -> &[Layer<K, V>] {
         &self.below
     }

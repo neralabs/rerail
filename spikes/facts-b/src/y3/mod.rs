@@ -1,11 +1,19 @@
 //! Y3: Y1's maintained graph and Y2's local rules wired into one cross-file path, with the
 //! symbol table maintained in Y1's style (`sym`) instead of the dataflow, and the three small
-//! plans through P3a's M2 recompute with the D1 skip. See docs/facts/reports/explore-y3-wire.md.
+//! plans through P3a's M2 recompute with the D1 skip (`m2`). `wire` is the per-edit path,
+//! `world` the model behind the daemon's `CrossFile` interface. See
+//! docs/facts/reports/explore-y3-wire.md.
 //!
-//! `facts-b y3 symcheck …`: the maintained symbol table against the dataflow's stages (a Y2
-//! stage dump: the oracle tree from scratch, the replay prefix per event).
+//! - `facts-b y3 symcheck …`: the maintained symbol table against the dataflow's stages (a Y2
+//!   stage dump: the oracle tree from scratch, the replay prefix per event).
+//! - `facts-b y3 replay …`: the wired path on S3's replay, measured and checked from scratch.
+//! - `facts-b y3 spec FILE`: the M2 spec of the three small plans.
 pub mod input;
+pub mod m2;
+pub mod replay;
 pub mod sym;
+pub mod wire;
+pub mod world;
 
 use crate::y2::facts::{show_row, string, sym, Change, Counts, Row, Tab, Val};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -26,8 +34,10 @@ fn arg(args: &[String], name: &str) -> Option<String> {
 pub fn main(args: Vec<String>) {
     match args.get(2).map(String::as_str) {
         Some("symcheck") => crate::ygraph::run_big(move || symcheck(&args)),
+        Some("replay") => crate::ygraph::run_big(move || replay::run(&args)),
+        Some("spec") => replay::write_spec(Path::new(args.get(3).expect("y3 spec FILE"))),
         _ => {
-            eprintln!("usage: facts-b y3 symcheck [...]");
+            eprintln!("usage: facts-b y3 symcheck|replay|spec [...]");
             std::process::exit(2);
         }
     }

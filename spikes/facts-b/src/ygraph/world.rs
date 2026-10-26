@@ -188,6 +188,13 @@ pub struct Step {
     pub edges_removed: Vec<(u32, u32)>,
     #[serde(skip)]
     pub def_paths: Vec<Sym>,
+    /// The re-read paths' records before the step (None: not a member before).
+    #[serde(skip)]
+    pub old_recs: FxHashMap<Sym, Option<PathRec>>,
+    /// Per path whose edges were recomputed: its (source def, target def) pairs before and
+    /// after (Y3 turns them into position rows for Y2).
+    #[serde(skip)]
+    pub out_pairs: Vec<(Sym, Vec<(u32, u32)>, Vec<(u32, u32)>)>,
 }
 
 impl Delta {
@@ -745,6 +752,7 @@ pub fn apply(sh: &mut Shared, below: &Below, d: &mut Delta, changes: &[Change]) 
         let after = pairs(cx.defs, rec, &o);
         step.edges_added.extend(after.iter().filter(|e| before.binary_search(e).is_err()));
         step.edges_removed.extend(before.iter().filter(|e| after.binary_search(e).is_err()));
+        step.out_pairs.push((p, before, after));
         let same_as_base = *below.out(p) == *o;
         if same_as_base {
             d.out.remove(&p);
@@ -753,6 +761,7 @@ pub fn apply(sh: &mut Shared, below: &Below, d: &mut Delta, changes: &[Change]) 
         }
     }
     step.def_paths = old_recs.keys().copied().collect();
+    step.old_recs = old_recs;
     step.work = cx.work;
     d.epoch += 1;
     step.incomplete_flip = was_incomplete != d.incomplete();

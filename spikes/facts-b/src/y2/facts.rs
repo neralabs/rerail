@@ -310,6 +310,12 @@ pub fn at<'a, K: std::hash::Hash + Eq + Copy, V: Ord + Clone>(m: &'a LMap<K, Vec
 }
 
 impl Heap for Def {}
+
+/// The elements of `old` not in `new` (false) and of `new` not in `old` (true).
+pub fn note<T: PartialEq + Clone>(delta: &mut Vec<(T, bool)>, old: &[T], new: &[T]) {
+    delta.extend(old.iter().filter(|x| !new.contains(x)).map(|x| (x.clone(), false)));
+    delta.extend(new.iter().filter(|x| !old.contains(x)).map(|x| (x.clone(), true)));
+}
 impl Heap for EfDef {}
 
 /// The row multisets of a dump (the dataflow's tables), for `classify`: Y3's symbol table emits
@@ -448,14 +454,17 @@ impl Facts {
         (t, l)
     }
 
-    /// Entries in the top (the worktree's difference), over every index.
-    pub fn top_entries(&self) -> usize {
-        let mut n = 0;
-        macro_rules! c {
-            ($($f:ident),*) => { $( n += self.$f.top_len(); )* };
+    /// Per index: (bytes, entries) of the top, or with `layer` of the top-most frozen layer.
+    pub fn by_index(&self, layer: bool) -> serde_json::Value {
+        let mut m = serde_json::Map::new();
+        macro_rules! b {
+            ($($f:ident),*) => { $(
+                let v = if layer { (self.$f.layer_bytes(0), self.$f.layers().first().map_or(0, |l| l.len())) } else { (self.$f.top_bytes(), self.$f.top_len()) };
+                m.insert(stringify!($f).into(), serde_json::json!(v));
+            )* };
         }
-        each_index!(c);
-        n
+        each_index!(b);
+        serde_json::Value::Object(m)
     }
 
     fn index(&mut self, t: Tab, r: &[Val], add: bool) {

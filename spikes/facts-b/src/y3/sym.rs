@@ -135,6 +135,10 @@ pub struct SymState {
     memos: LMap<QId, Box<[u32]>>,
     readers: Rev<u64>,
     parents: Rev<QId>,
+    /// Members whose content has no exports (the producer failed, or no retained source): they
+    /// contribute no rows, and while one is a member the plans reading the table hold a runtime
+    /// refusal.
+    pub refused: LMap<u32, u32>,
 }
 
 /// Counts of one maintenance step.
@@ -151,6 +155,8 @@ pub struct Work {
     pub probes: u64,
     pub registered: u64,
     pub out_changes: u64,
+    /// contents without exports added or removed
+    pub refused: u64,
     pub ms: f64,
 }
 
@@ -677,7 +683,7 @@ pub struct PathChange {
 impl SymState {
     /// A worktree (or overlay) over this frozen state.
     pub fn view(&self) -> SymState {
-        SymState { tables: self.tables.view(), memos: self.memos.view(), readers: self.readers.view(), parents: self.parents.view() }
+        SymState { tables: self.tables.view(), memos: self.memos.view(), readers: self.readers.view(), parents: self.parents.view(), refused: self.refused.view() }
     }
 
     pub fn freeze(&mut self) {
@@ -685,6 +691,7 @@ impl SymState {
         self.memos.freeze();
         self.readers.freeze();
         self.parents.freeze();
+        self.refused.freeze();
     }
 
     /// (tables, memos, readers, parents) bytes of the top and of the top-most frozen layer.
@@ -704,6 +711,40 @@ impl SymState {
         self.tables.layer_bytes(0) + self.memos.layer_bytes(0) + self.readers.layer_bytes(0) + self.parents.layer_bytes(0)
     }
 
+    /// Bytes and entries by table and by query kind, of the top or (`layer`) the top-most frozen
+    /// layer; the reverse indexes as one figure each.
+    pub fn by_kind(&self, qt: &QTable, layer: bool) -> serde_json::Value {
+        let mut tables = vec![(0usize, 0usize); TABLE_NAMES.len()];
+        let mut memos = vec![(0usize, 0usize); NK];
+        let tb = |(k, v): (&TKey, Option<&Vec<(TRow, u32)>>), out: &mut Vec<(usize, usize)>| {
+            let e = &mut out[k.0 as usize];
+            e.0 += std::mem::size_of::<(TKey, Option<Vec<(TRow, u32)>>)>() + v.map_or(0, |v| v.capacity() * 16);
+            e.1 += 1;
+        };
+        let mb = |(id, v): (&QId, Option<&Box<[u32]>>), out: &mut Vec<(usize, usize)>| {
+            let e = &mut out[qt.qs[*id as usize].kind as usize];
+            e.0 += std::mem::size_of::<(QId, Option<Box<[u32]>>)>() + v.map_or(0, |v| v.len() * 4);
+            e.1 += 1;
+        };
+        if layer {
+            if let Some(l) = self.tables.layers().first() {
+                l.iter().for_each(|(k, v)| tb((k, v.as_ref()), &mut tables));
+            }
+            if let Some(l) = self.memos.layers().first() {
+                l.iter().for_each(|(k, v)| mb((k, v.as_ref()), &mut memos));
+            }
+        } else {
+            self.tables.top_iter().for_each(|(k, v)| tb((k, v.as_ref()), &mut tables));
+            self.memos.top_iter().for_each(|(k, v)| mb((k, v.as_ref()), &mut memos));
+        }
+        let (r, p) = if layer { (self.readers.layer_bytes(0), self.parents.layer_bytes(0)) } else { (self.readers.top_bytes(), self.parents.top_bytes()) };
+        serde_json::json!({
+            "tables": TABLE_NAMES.iter().zip(tables).map(|(n, v)| (n.to_string(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
+            "memos": KIND_NAMES.iter().zip(memos).map(|(n, v)| (n.to_string(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
+            "readers": r, "parents": p,
+        })
+    }
+
     /// Maintain this state for one event's path changes; the presence changes of Y2's tables
     /// (every table but `Refs`), removals first.
     pub fn apply(&mut self, sh: &mut SymShared, changes: &[PathChange]) -> (Vec<Change>, Work) {
@@ -716,10 +757,19 @@ impl SymState {
         let mut direct_old = Vec::new();
         let mut direct_new = Vec::new();
         for ch in changes {
-            assert_eq!(self.tables.at(&(T_PATH, ch.path as u64)).first().map(|r| r.0[0]), ch.old, "{}: old content", string(ch.path));
+            let old = self.tables.at(&(T_PATH, ch.path as u64)).first().map(|r| r.0[0]).or_else(|| self.refused.get(&ch.path).copied());
+            assert_eq!(old, ch.old, "{}: old content", string(ch.path));
             for (c, by) in [(ch.old, -1), (ch.new, 1)] {
                 let Some(c) = c else { continue };
-                let b = blocks.get(ch.path, c).unwrap_or_else(|| panic!("no symbol block for {} @ {}", string(ch.path), string(c)));
+                let Some(b) = blocks.get(ch.path, c) else {
+                    work.refused += 1;
+                    if by < 0 {
+                        self.refused.remove(&ch.path);
+                    } else {
+                        self.refused.insert(ch.path, c);
+                    }
+                    continue;
+                };
                 content_rows(ch.path, b, if by < 0 { &mut direct_old } else { &mut direct_new });
                 let tables = &mut self.tables;
                 block_rows(ch.path, c, b, by, |t, k, row, by| {
@@ -819,6 +869,7 @@ impl SymState {
         work2.paths = work.paths;
         work2.rows_touched = work.rows_touched;
         work2.keys_changed = work.keys_changed;
+        work2.refused = work.refused;
         work2.out_changes = out.len() as u64;
         work2.ms = t0.elapsed().as_secs_f64() * 1e3;
         (out, work2)

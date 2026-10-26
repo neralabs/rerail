@@ -125,23 +125,27 @@ impl Block {
 }
 
 #[derive(Default)]
-struct Exports {
+pub(crate) struct Exports {
     /// Global export ids some plan reads.
-    read: BTreeSet<u32>,
+    pub(crate) read: BTreeSet<u32>,
     /// (export, path, content) → block; absent: no rows.
     at: FxHashMap<(u32, Sym, Cid), u32>,
     blocks: Vec<Option<Block>>,
     free: Vec<u32>,
     by_hash: FxHashMap<u64, Vec<u32>>,
     /// Worktrees holding each (path, content).
-    held: FxHashMap<(Sym, Cid), u32>,
+    pub(crate) held: FxHashMap<(Sym, Cid), u32>,
     /// Contents without exports (the producer failed, or no retained source): no rows, counted
     /// as a runtime refusal when acquired.
-    missing: FxHashMap<(Sym, Cid), String>,
-    rows_resident: u64,
+    pub(crate) missing: FxHashMap<(Sym, Cid), String>,
+    pub(crate) rows_resident: u64,
 }
 
 impl Exports {
+    pub(crate) fn new(read: BTreeSet<u32>) -> Exports {
+        Exports { read, ..Default::default() }
+    }
+
     fn intern(&mut self, b: Block) -> u32 {
         let h = b.hash();
         if let Some(ids) = self.by_hash.get(&h) {
@@ -185,7 +189,7 @@ impl Exports {
         }
     }
 
-    fn acquire(&mut self, real: &Real, p: Sym, c: Cid, path: &str, hash: &str) {
+    pub(crate) fn acquire(&mut self, real: &Real, p: Sym, c: Cid, path: &str, hash: &str) {
         let h = self.held.entry((p, c)).or_default();
         *h += 1;
         if *h > 1 {
@@ -209,7 +213,7 @@ impl Exports {
         }
     }
 
-    fn release(&mut self, p: Sym, c: Cid) {
+    pub(crate) fn release(&mut self, p: Sym, c: Cid) {
         let h = self.held.get_mut(&(p, c)).expect("release of a content not held");
         *h -= 1;
         if *h > 0 {
@@ -224,11 +228,11 @@ impl Exports {
         }
     }
 
-    fn block(&self, e: u32, p: Sym, c: Cid) -> Option<u32> {
+    pub(crate) fn block(&self, e: u32, p: Sym, c: Cid) -> Option<u32> {
         self.at.get(&(e, p, c)).copied()
     }
 
-    fn rows(&self, e: u32, p: Sym, c: Cid) -> Rc<[Row]> {
+    pub(crate) fn rows(&self, e: u32, p: Sym, c: Cid) -> Rc<[Row]> {
         match self.at.get(&(e, p, c)) {
             Some(i) => self.blocks[*i as usize].as_ref().unwrap().rows().into(),
             None => Rc::from(Vec::new()),
@@ -236,7 +240,7 @@ impl Exports {
     }
 
     /// (blocks, block bytes, narrow blocks, `at` entries).
-    fn footprint(&self) -> (usize, usize, usize, usize) {
+    pub(crate) fn footprint(&self) -> (usize, usize, usize, usize) {
         let live = self.blocks.iter().flatten();
         let (mut n, mut bytes, mut narrow) = (0, 0, 0);
         for b in live {
@@ -254,21 +258,21 @@ impl Exports {
 /// A plan's result in one worktree: per output its findings, and its refusals (findings withheld
 /// while any is live).
 #[derive(Clone, PartialEq)]
-struct Res {
-    outputs: Vec<(String, BTreeMap<Row, R>)>,
-    refusals: Vec<Row>,
+pub(crate) struct Res {
+    pub(crate) outputs: Vec<(String, BTreeMap<Row, R>)>,
+    pub(crate) refusals: Vec<Row>,
 }
 
 impl Res {
-    fn rows(&self) -> usize {
+    pub(crate) fn rows(&self) -> usize {
         self.outputs.iter().map(|(_, m)| m.len()).sum::<usize>() + self.refusals.len()
     }
-    fn bytes(&self) -> usize {
+    pub(crate) fn bytes(&self) -> usize {
         self.outputs.iter().flat_map(|(_, m)| m.keys()).chain(self.refusals.iter()).map(|r| std::mem::size_of::<(Row, R)>() + 32 + r.heap_bytes()).sum()
     }
 }
 
-fn show(r: &Row) -> String {
+pub(crate) fn show(r: &Row) -> String {
     let parts: Vec<String> = r.iter().map(|v| format!("{:?}", val::to_v(*v))).collect();
     format!("({})", parts.join(", "))
 }
@@ -342,7 +346,7 @@ fn get_row(j: &serde_json::Value) -> Row {
 }
 
 /// Each evaluated plan's result, in the order the plans were passed to `batch::eval`.
-fn res_of(o: &Outcome) -> Vec<Res> {
+pub(crate) fn res_of(o: &Outcome) -> Vec<Res> {
     o.plans.iter().map(|(_, outputs, refusals)| Res { outputs: outputs.clone(), refusals: refusals.clone() }).collect()
 }
 
@@ -423,7 +427,7 @@ fn collect(c: Child) -> (Vec<u8>, u64) {
 /// changed path, some export the plan reads has a different block before and after it (no
 /// content or no rows: no block). Blocks are hash-consed on their rows (`Exports::intern`), so
 /// equal blocks are equal row lists.
-fn d1_affected(reads: &[u32], changed: &[(Sym, Option<Cid>, Option<Cid>)], block: &dyn Fn(u32, Sym, Cid) -> Option<u32>) -> bool {
+pub(crate) fn d1_affected(reads: &[u32], changed: &[(Sym, Option<Cid>, Option<Cid>)], block: &dyn Fn(u32, Sym, Cid) -> Option<u32>) -> bool {
     changed.iter().any(|(p, o, n)| {
         reads.iter().any(|e| {
             let (a, b) = (o.and_then(|c| block(*e, *p, c)), n.and_then(|c| block(*e, *p, c)));
@@ -451,10 +455,33 @@ struct EvAcc {
     ran: Vec<usize>,
 }
 
-struct Plan {
-    name: String,
-    graph: Rc<Graph>,
-    reads: Vec<u32>,
+pub(crate) struct Plan {
+    pub(crate) name: String,
+    pub(crate) graph: Rc<Graph>,
+    pub(crate) reads: Vec<u32>,
+}
+
+/// Every plan of `real` with the exports its own outputs read (a graph shared by several plans
+/// holds every plan's leaves; D1 looks at this plan's only).
+pub(crate) fn plans(real: &Real) -> Vec<Plan> {
+    real.graphs
+        .iter()
+        .map(|(n, g)| {
+            let mut seen = vec![false; g.nodes.len()];
+            let mut stack: Vec<usize> = g.outputs.iter().enumerate().filter(|(i, _)| g.owners.is_empty() || g.owners[*i] == *n).map(|(_, o)| o.1).collect();
+            let mut reads = BTreeSet::new();
+            while let Some(x) = stack.pop() {
+                if std::mem::replace(&mut seen[x], true) {
+                    continue;
+                }
+                if let Op::Exported(e) = &g.nodes[x] {
+                    reads.insert(*e);
+                }
+                stack.extend(lower::op_inputs(&g.nodes[x]));
+            }
+            Plan { name: n.clone(), graph: g.clone(), reads: reads.into_iter().collect() }
+        })
+        .collect()
 }
 
 /// `k` worktrees evenly spaced over `ws` (all when `k` is `None` or covers them).
@@ -497,28 +524,8 @@ pub fn run(run_dir: &Path, opts: Opts) {
         if !real.refused.is_empty() {
             eprintln!("refused at compile time: {}", serde_json::to_string(&real.refused).unwrap());
         }
-        let plans: Vec<Plan> = real
-            .graphs
-            .iter()
-            .map(|(n, g)| {
-                // The exports the plan's own outputs read (a graph shared by several plans holds
-                // every plan's leaves; D1 looks at this plan's only).
-                let mut seen = vec![false; g.nodes.len()];
-                let mut stack: Vec<usize> = g.outputs.iter().enumerate().filter(|(i, _)| g.owners.is_empty() || g.owners[*i] == *n).map(|(_, o)| o.1).collect();
-                let mut reads = BTreeSet::new();
-                while let Some(x) = stack.pop() {
-                    if std::mem::replace(&mut seen[x], true) {
-                        continue;
-                    }
-                    if let Op::Exported(e) = &g.nodes[x] {
-                        reads.insert(*e);
-                    }
-                    stack.extend(lower::op_inputs(&g.nodes[x]));
-                }
-                Plan { name: n.clone(), graph: g.clone(), reads: reads.into_iter().collect() }
-            })
-            .collect();
-        let exports = Rc::new(RefCell::new(Exports { read: plans.iter().flat_map(|p| p.reads.iter().copied()).collect(), ..Default::default() }));
+        let plans: Vec<Plan> = plans(&real);
+        let exports = Rc::new(RefCell::new(Exports::new(plans.iter().flat_map(|p| p.reads.iter().copied()).collect())));
         let ex = exports.clone();
         let src: Source = Rc::new(move |e, p, c| ex.borrow().rows(e, p, c));
         let rss_plans = resident();

@@ -10,7 +10,7 @@
 //! eligibility names the family partitions; and only those partitions' violations are
 //! recomputed. Each step reads only rows at the keys it is given, so the scoping is exact by the
 //! same read-set argument as dead code's (`dc.rs`).
-use super::facts::{at, string, sym, with, Change, Facts, Kind, Tab, Val};
+use super::facts::{at, note, string, sym, with, Change, Facts, Kind, Tab, Val};
 use crate::lmap::{Heap, LMap};
 use regex::Regex;
 use rustc_hash::FxHashSet;
@@ -83,6 +83,9 @@ pub struct Stats {
     pub findings_changed: usize,
     pub prepare_ms: f64,
     pub finish_ms: f64,
+    /// The findings that left (false) and came (true) in this step.
+    #[serde(skip)]
+    pub delta: Vec<(Finding, bool)>,
 }
 
 pub struct Prep {
@@ -291,6 +294,7 @@ impl Ef {
                 let old = self.find_by_src.remove(&r).unwrap_or_default();
                 if old != fm {
                     stats.findings_changed += 1;
+                    note(&mut stats.delta, &old, &fm);
                 }
                 if !fm.is_empty() {
                     self.find_by_src.insert(r, fm);
@@ -331,6 +335,7 @@ impl Ef {
             let old = self.find_by_f.remove(&fk).unwrap_or_default();
             if old != new {
                 stats.findings_changed += 1;
+                note(&mut stats.delta, &old, &new);
             }
             if !new.is_empty() {
                 self.find_by_f.insert(fk, new);
