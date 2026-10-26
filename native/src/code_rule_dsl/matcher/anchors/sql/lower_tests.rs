@@ -838,3 +838,88 @@ fn shared_candidate_owner_cleans_up_after_a_query_error_and_retries_with_fresh_c
         );
     }
 }
+
+#[test]
+fn impossible_kind_branch_does_not_prepare_its_structural_or_source_producers() {
+    let mut lower = compiler();
+    let scope = lower.kinds(&BTreeSet::from([1])).unwrap();
+    let before = lower.ctes.len();
+    let branch = AnchorPlan {
+        root_kinds: Some(BTreeSet::from([2])),
+        exact: false,
+        condition: Condition::Relation {
+            inner: Box::new(AnchorPlan {
+                root_kinds: Some(BTreeSet::from([3])),
+                exact: true,
+                condition: Condition::Text {
+                    regex: regex::Regex::new("expensive_source_predicate").unwrap(),
+                    probe: crate::code_rule_dsl::matcher::anchors::text::TextProbe::compile(
+                        "expensive_source_predicate",
+                    ),
+                },
+            }),
+            direction: Direction::Has,
+            recursive: true,
+            field: None,
+        },
+    };
+    let selected = lower.plan(&branch, scope).unwrap();
+    assert!(
+        lower.ctes.len() <= before + 1,
+        "an impossible kind branch constructs {} extra relations",
+        lower.ctes.len() - before
+    );
+    assert!(
+        lower.decoding.is_empty(),
+        "an empty branch still requests decoded properties"
+    );
+    assert!(
+        lower.source_predicates.is_empty(),
+        "an empty branch still requests source confirmation"
+    );
+    let statement = finish_decoded(
+        lower.ctes,
+        vec![format!("SELECT 0,fid,pre FROM {}", selected.name)],
+        lower.parameters,
+        lower.indexed,
+        lower.decoding,
+    );
+    assert!(
+        statement
+            .stages
+            .iter()
+            .all(|s| !s.sql.contains("nera_nodes"))
+    );
+}
+
+#[test]
+fn candidate_transport_does_not_sort_each_sql_union_arm() {
+    use crate::code_rule_dsl::language::{self, GrammarDialect};
+    let store = super::super::store::Store::temporary().unwrap();
+    let lang = GrammarDialect::TypeScript;
+    let fid = store
+        .put(
+            "a.ts",
+            &super::super::tests::document(&"target(value);\n".repeat(2000), lang),
+        )
+        .unwrap();
+    let plans = ["identifier", "call_expression"].map(|kind| AnchorPlan {
+        root_kinds: Some(BTreeSet::from([lang.kinds().kind_id(kind)])),
+        exact: true,
+        condition: Condition::Always,
+    });
+    let statement = batch(
+        &store,
+        &plans.iter().collect::<Vec<_>>(),
+        u32::from(language::tape_tag(lang).unwrap()),
+        Some(fid),
+        None,
+    );
+    assert!(
+        statement
+            .queries
+            .iter()
+            .all(|q| !q.ends_with("ORDER BY qid,fid,pre")),
+        "candidate transport forces a sorting contract on every result arm"
+    );
+}
