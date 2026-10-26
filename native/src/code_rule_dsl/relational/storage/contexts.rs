@@ -117,6 +117,8 @@ impl Contexts {
                     [key.1 as i64],
                 )?;
                 self.data.get_mut(&key).unwrap().dirty = false;
+                let layout = self.layouts.get_mut(name).unwrap();
+                layout.statistics_dirty |= layout.outer_gate || !layout.indexes.is_empty();
             }
             return Ok(());
         }
@@ -268,6 +270,11 @@ impl Contexts {
     }
     pub fn populated(&mut self, name: &str, rows: usize) {
         self.written(name, rows != 0);
+        if let Some(layout) = self.layouts.get_mut(name) {
+            // Inputs now have a source-span index too. Their distribution must
+            // be published at the same cohort boundary as indexed stage cuts.
+            layout.statistics_dirty |= layout.outer_gate && rows != 0;
+        }
         #[cfg(feature = "code-rule-profile")]
         if let Some(key) = self.key(name) {
             self.data.entry(key).or_default().rows = rows;
@@ -299,7 +306,8 @@ impl Contexts {
         Ok(self.contains(name))
     }
     fn remove(&mut self, db: &Connection, key: &(String, usize)) -> Result<()> {
-        if self.data.get(key).is_some_and(|d| d.dirty) {
+        let changed = self.data.get(key).is_some_and(|d| d.dirty);
+        if changed {
             self.lifecycle.rowset_deletions += 1;
             db.execute(
                 &format!(
@@ -310,8 +318,8 @@ impl Contexts {
                 [key.1 as i64],
             )?;
         }
-        if let Some(layout) = self.layouts.get_mut(&key.0) {
-            layout.statistics_dirty |= !layout.indexes.is_empty();
+        if changed && let Some(layout) = self.layouts.get_mut(&key.0) {
+            layout.statistics_dirty |= layout.outer_gate || !layout.indexes.is_empty();
         }
         self.data.remove(key);
         Ok(())

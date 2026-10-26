@@ -5309,3 +5309,25 @@ The repeat was declared before the 60-rule result and will retain both earlier c
 It uses the complete original repository and 50-rule set, without sharding or reduced policies.
 The measurement controller now accepts an explicit complete rule-set selection for this purpose.
 The corrected 60-rule measurement continues first, without overlapping worktree builds or tests.
+
+
+### Stop the next timing candidate for incomplete input statistics (2026-10-26)
+
+The corrected 60-rule run is stopped during input processing, after about 440 process CPU seconds.
+It has no complete parity or resource result and cannot serve as an acceptance measurement.
+The complete 50-rule failure remains recorded unchanged.
+
+Review identifies a concrete SC3 omission after adding imported span indexes.
+`populated` marks imported data but does not mark those indexes for analysis.
+Targeted stage maintenance therefore stops refreshing the input statistics that the preceding whole-TEMP analysis supplied.
+SQLite prepares readers with default input estimates even after a complete input publication.
+This is a planning defect, not a proven explanation for the unchanged ingestion slowdown.
+
+Red commit `dde47582` requires input statistics after publication, removal, and an equal-size distribution replacement.
+The first input publication fails because no statistics relation is created at all.
+The correction marks imported indexes dirty on publication and retirement.
+Incomplete-binding cleanup also invalidates its statistics.
+Refresh stays at the existing coherent owner boundary and targets only changed relations.
+All ten focused production storage tests pass in the lightweight laboratory host.
+The original input row and query work allowances remain unchanged.
+The fresh frozen-control repeat and final candidate measurements follow after broad validation of this correction.
