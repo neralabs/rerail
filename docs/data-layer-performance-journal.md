@@ -4712,3 +4712,19 @@ The external vmmap sample records 10.7 GiB allocated across approximately 25.45 
 The 128-file census separately records 93,716,350 bytes of typed projections in 1,749 immutable batches.
 Those batches contain 49,185 rows, averaging 28 rows per batch against a reserved capacity of 256.
 The next memory regression tests whether sealed partial batches retain unused column capacity.
+
+
+### Release unused projection capacity (2026-10-26)
+
+Red commit `e3bcba1e` proves that six published rows retain storage for 256 rows in each column.
+Published projection columns now use boxed slices. Builders retain their growable vectors until publication.
+The change preserves typed cells, shared source storage, schemas, and row identities.
+The native DSL suite passes 1,539 tests, with 23 explicit ignores. All 50 production-shape tests pass.
+All-target Clippy passes with warnings denied.
+
+The 128-file census retains the same 49,185 unique rows, 680,573 fields, and 1,749 projection batches.
+Typed projection storage decreases from 93,716,350 to 11,696,974 bytes, an 87.5% reduction.
+Driver peak RSS changes only from 1,655,357,440 to 1,649,115,136 bytes.
+Census CPU changes from 20.336 to 18.423 seconds, but concurrent work prevents a timing acceptance claim.
+This addresses retained column padding. It does not prove full-repository RSS recovery.
+The [checked census](../fixtures/host/data-layer-port/profiling/projection-capacity-recovery-20261026.json) preserves scope and identities.

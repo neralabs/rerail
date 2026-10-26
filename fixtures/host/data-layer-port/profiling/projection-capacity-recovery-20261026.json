@@ -1,0 +1,70 @@
+{
+  "format": "rerail.projection-capacity-recovery/v1",
+  "acceptance": false,
+  "scope": "128-file ingestion census; no full-repository RSS or end-to-end performance claim",
+  "concurrency": "Diagnostic work overlaps; census instrumentation enabled",
+  "comparison": {
+    "before": {
+      "nativeSha256": "6b86cf2df791208845a6ac469cd7c9b33674f52c6079e29d1646b2eff7c85d85",
+      "files": 128,
+      "rules": 60,
+      "recordingSha256": "5ede2971ed87b1e64bd7fd125281410e3c527f5d7f756934e82f93d0828c9585",
+      "selectionSha256": "43d012c4bff575ba4b35ecd2023e2d8931c64ce0b8a77c36f19f2305937802f2",
+      "ingestionCpuMs": 20336.457,
+      "driverPeakRssBytes": 1655357440,
+      "localFailures": [],
+      "ownership": {
+        "ownedBytesEstimate": 23539990,
+        "projection": {
+          "heapBytesEstimate": 0,
+          "keyBytes": 0,
+          "objectEntries": 0,
+          "stringBytes": 0,
+          "values": 0
+        },
+        "projectionReferences": 98370,
+        "sharedSourceBytesReferenced": 148179654,
+        "typedProjectionBatches": 1749,
+        "typedProjectionBytes": 93716350,
+        "typedProjectionFields": 680573,
+        "uniqueProjections": 49185,
+        "witnesses": 99663
+      }
+    },
+    "after": {
+      "nativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+      "files": 128,
+      "rules": 60,
+      "recordingSha256": "5ede2971ed87b1e64bd7fd125281410e3c527f5d7f756934e82f93d0828c9585",
+      "selectionSha256": "43d012c4bff575ba4b35ecd2023e2d8931c64ce0b8a77c36f19f2305937802f2",
+      "ingestionCpuMs": 18422.764,
+      "driverPeakRssBytes": 1649115136,
+      "localFailures": [],
+      "ownership": {
+        "ownedBytesEstimate": 23539990,
+        "projection": {
+          "heapBytesEstimate": 0,
+          "keyBytes": 0,
+          "objectEntries": 0,
+          "stringBytes": 0,
+          "values": 0
+        },
+        "projectionReferences": 98370,
+        "sharedSourceBytesReferenced": 148179654,
+        "typedProjectionBatches": 1749,
+        "typedProjectionBytes": 11696974,
+        "typedProjectionFields": 680573,
+        "uniqueProjections": 49185,
+        "witnesses": 99663
+      }
+    }
+  },
+  "regression": "small_projection_batches_retain_space_for_live_rows_only",
+  "redCommit": "e3bcba1e",
+  "checks": {
+    "nativeDslPassed": 1539,
+    "nativeDslIgnored": 23,
+    "productionShapePassed": 50,
+    "clippy": "all targets, warnings denied"
+  }
+}

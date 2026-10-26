@@ -24,7 +24,10 @@ fn small_projection_batches_retain_space_for_live_rows_only() {
     assert_eq!(rows[5].sql(31), ValueRef::Integer(191));
     let (retained, live_rows, columns, _) = rows[0].memory();
     assert_eq!((live_rows, columns), (6, 32));
-    assert!(retained < 8192, "six rows retain {retained} bytes after publication");
+    assert!(
+        retained < 8192,
+        "six rows retain {retained} bytes after publication"
+    );
 }
 use serde_json::json;
 
