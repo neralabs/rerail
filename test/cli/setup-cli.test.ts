@@ -15,8 +15,8 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
+import { basename, dirname, join } from "node:path";
+import { cleanupCommand, runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
 import { launcherPathMarker, ManagedUpdater } from "../../src/setup/index.js";
 
 const temporaryDirectories: string[] = [];
@@ -182,12 +182,17 @@ describe("rerail install --root", () => {
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     const { updater } = context;
     const bin = dirname(updater.launcherPath);
-    // As with RERAIL_HOME=$HOME: the person's own ~/bin script, ~/versions notes and ~/packs file sit beside Rerail's.
+    // As with RERAIL_HOME=$HOME: the person's own ~/bin script, ~/versions notes, ~/packs file and home files sit
+    // beside Rerail's, which include what a launcher write and a pack change cut short leave behind.
     await writeFile(join(bin, "deploy"), "#!/bin/sh\n");
+    const launcherWrite = join(bin, `${basename(updater.launcherPath)}.4242.0b8f6a3e-6d1c-4c55-9a2e-2f1f0c6b7d10.tmp`);
+    await writeFile(launcherWrite, "");
     await mkdir(join(updater.versionsRoot, "1.0.0", "node_modules", "@neralabs", "rerail"), { recursive: true });
     await mkdir(join(updater.versionsRoot, "notes"), { recursive: true });
     await mkdir(join(context.home, "packs", "node_modules"), { recursive: true });
+    await mkdir(join(context.home, "packs", ".lock"), { recursive: true });
     await writeFile(join(context.home, "packs", "list.txt"), "mine");
+    await writeFile(join(context.home, ".bashrc"), "");
     // Another Rerail home's daemon (alive: this test's parent process) holds the cache.
     const cache = join(hostConfigHome, ".cache", "rerail");
     await mkdir(cache, { recursive: true });
@@ -204,13 +209,23 @@ describe("rerail install --root", () => {
     for (const path of [join(bin, "deploy"), join(updater.versionsRoot, "notes"), join(context.home, "packs", "list.txt"), cache]) {
       expect(existsSync(path), path).toBe(true);
     }
-    for (const path of [updater.launcherPath, join(updater.versionsRoot, "1.0.0"), join(context.home, "packs", "node_modules")]) {
+    for (const path of [updater.launcherPath, launcherWrite, join(updater.versionsRoot, "1.0.0"), join(context.home, "packs", "node_modules"), join(context.home, "packs", ".lock")]) {
       expect(existsSync(path), path).toBe(false);
     }
     const text = output.mock.calls.join("");
     expect(text).toContain(`Removed ${updater.launcherPath} (the rerail command).`);
     expect(text).toContain(`Kept ${bin} (the rerail command): it holds files that are not Rerail's: deploy.`);
     expect(text).toContain(`Kept ${updater.versionsRoot} (the installed versions): it holds files that are not Rerail's: notes.`);
+    // Never "delete it" for a home that holds the person's own files.
+    expect(text).toContain(`Kept ${context.home}, which also holds files that are not Rerail's. Rerail's settings, logs and records in it: coding-agents.json; delete those if you will not install Rerail again.`);
+    expect(text).not.toContain("delete it if you will not install Rerail again");
+  });
+
+  it("names a cleanup command that removes exactly the path, in PowerShell never expanding it, and never follows the current link", () => {
+    const path = String.raw`C:\Users\O'Neil [work] $x & y\.rerail\versions`;
+    expect(cleanupCommand(path, false, "win32")).toBe(String.raw`Remove-Item -LiteralPath 'C:\Users\O''Neil [work] $x & y\.rerail\versions' -Recurse -Force`);
+    expect(cleanupCommand(String.raw`C:\Users\a&b\.rerail\current`, true, "win32")).toBe(String.raw`cmd /c 'rmdir "C:\Users\a&b\.rerail\current"'`);
+    expect(cleanupCommand("/home/o'neil/.rerail/versions", false, "linux")).toBe(String.raw`rm -rf '/home/o'\''neil/.rerail/versions'`);
   });
 
   it("keeps rules and history when another checkout registered with --root is removed", async () => {

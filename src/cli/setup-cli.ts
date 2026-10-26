@@ -191,11 +191,17 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
  */
 function installedFiles(context: SetupContext): Array<{ path: string; what: string; ours?: (name: string, path: string) => boolean }> {
   const { updater } = context;
-  // `rerail.cmd` and, on Windows, Git Bash's `rerail` beside it; each carries the header Rerail writes.
+  // `rerail.cmd` and, on Windows, Git Bash's `rerail` beside it; each carries the header Rerail writes. A launcher
+  // write cut short leaves `<launcher>.<pid>.<uuid>.tmp`, possibly before the header was written.
   const launchers = new Set([basename(updater.launcherPath), "rerail"]);
+  const launcherWrite = (name: string) => /^(.+)\.\d+\.[0-9a-f-]+\.tmp$/u.exec(name)?.[1];
   return [
     { path: updater.currentLink, what: "the active version's link" },
-    { path: dirname(updater.launcherPath), what: "the rerail command", ours: (name, path) => launchers.has(name) && isRerailLauncher(path) },
+    {
+      path: dirname(updater.launcherPath),
+      what: "the rerail command",
+      ours: (name, path) => (launchers.has(name) && isRerailLauncher(path)) || launchers.has(launcherWrite(name) ?? ""),
+    },
     {
       path: updater.versionsRoot,
       what: "the installed versions",
@@ -207,8 +213,24 @@ function installedFiles(context: SetupContext): Array<{ path: string; what: stri
   ];
 }
 
-/** What npm and the rule pack store put in the packs prefix. */
-const RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set(["node_modules", "package.json", "package-lock.json", "staging"]);
+/** What npm and the rule pack store put in the packs prefix, with the lock a pack change holds. */
+const RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set(["node_modules", "package.json", "package-lock.json", "staging", ".lock"]);
+
+/** What Rerail itself writes in its home: settings, records, logs, locks, its databases and the installation. */
+const RERAIL_HOME_ENTRY =
+  /^(?:(?:activation|previous-activation|coding-agents|consent|daemon|daemon-port|launcher-path|update-state)\.json|daemon\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs)$/u;
+
+/**
+ * The command that finishes removing `path` by hand. PowerShell: single quotes expand nothing, and `-LiteralPath` reads
+ * `[` and `]` as themselves. A link (`current`, a junction on Windows) is removed by cmd's `rmdir`, which never follows
+ * it as Windows PowerShell's `Remove-Item -Recurse` does; the path goes to cmd in double quotes, which `&` and `^`
+ * cannot break out of.
+ */
+export function cleanupCommand(path: string, link: boolean, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== "win32") return `rm -rf ${shellQuote(path, platform)}`;
+  const powershell = path.replaceAll("'", "''");
+  return link ? `cmd /c 'rmdir "${powershell}"'` : `Remove-Item -LiteralPath '${powershell}' -Recurse -Force`;
+}
 
 function isRerailLauncher(path: string): boolean {
   try {
@@ -297,17 +319,18 @@ async function removeInstallation(context: SetupContext, dryRun: boolean): Promi
   }
   for (const { path, what, why } of keep) process.stdout.write(`Kept ${path} (${what}): ${why}.\n`);
   for (const { path, reason } of failed) {
-    // PowerShell: single quotes expand nothing, and -LiteralPath reads `[` and `]` as themselves. `current` is a
-    // junction, which Remove-Item -Recurse in Windows PowerShell follows; cmd's rmdir removes the link alone.
-    const quoted = `'${path.replaceAll("'", "''")}'`;
-    const command = process.platform !== "win32"
-      ? `rm -rf ${shellQuote(path)}`
-      : path === context.updater.currentLink ? `cmd /c rmdir ${quoted}` : `Remove-Item -LiteralPath ${quoted} -Recurse -Force`;
+    const command = cleanupCommand(path, path === context.updater.currentLink);
     process.stdout.write(`Could not remove ${path} (${reason}). Close every coding agent and terminal still running Rerail, then run: ${command}\n`);
   }
-  const kept = await readdir(context.home).catch(() => []);
-  if (kept.length > 0) {
-    process.stdout.write(`Kept ${context.home}: ${kept.sort().join(", ")} (Rerail's settings, logs and records; delete it if you will not install Rerail again).\n`);
+  const kept = (await readdir(context.home).catch(() => [])).sort();
+  // A folder kept for the files in it that are not Rerail's (`bin`, `versions`, `packs`) is not Rerail's to delete.
+  const keptForOthers = new Set(keep.map(({ path }) => path));
+  const ours = kept.filter(name => RERAIL_HOME_ENTRY.test(name) && !keptForOthers.has(join(context.home, name)));
+  // A Rerail home shared with other files (`RERAIL_HOME=$HOME`) is never offered for deletion as a whole.
+  if (ours.length < kept.length) {
+    process.stdout.write(`Kept ${context.home}, which also holds files that are not Rerail's.${ours.length === 0 ? "" : ` Rerail's settings, logs and records in it: ${ours.join(", ")}; delete those if you will not install Rerail again.`}\n`);
+  } else if (kept.length > 0) {
+    process.stdout.write(`Kept ${context.home}: ${kept.join(", ")} (Rerail's settings, logs and records; delete it if you will not install Rerail again).\n`);
   }
 }
 

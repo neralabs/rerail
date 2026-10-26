@@ -644,11 +644,13 @@ it deletes only what Rerail put there: a folder that also holds other files
 (a Rerail home shared with them, as with `RERAIL_HOME=$HOME`) is kept with
 those files, and named. It prints each path it removed,
 and what it kept in the Rerail home (settings such as `consent.json`, logs,
-records), which you can delete if you will not install Rerail again. A file it
+records), which you can delete if you will not install Rerail again; a home
+that also holds other files is never offered for deletion as a whole, only
+Rerail's files in it are named. A file it
 cannot remove, such as one Windows keeps locked while a session still runs
 Rerail, is named with the command that finishes the job once that session is
 closed (`Remove-Item -LiteralPath '<path>' -Recurse -Force` in PowerShell, and
-`cmd /c rmdir '<path>'` for the `current` link, which removes the link and not
+`cmd /c 'rmdir "<path>"'` for the `current` link, which removes the link and not
 what it points at; `rm -rf <path>` elsewhere); the rest of the uninstall has
 happened, so it still exits 0.
 
