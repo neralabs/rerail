@@ -23,8 +23,11 @@
  * --tb: the top bar's height, measured by frame/topbar.js; --sat / --sab: the host's safe-area insets.
  * --gutter: the page's side margin; --sheet-width: the sheet column beside the content.
  * --scrim / --sheet-float: the veil and shadow when the sheet floats over the content (under 1100px).
- * --pill-rest: the repository pill's resting fill, a faint step off the bar in either theme. */
+ * --pill-rest: the repository pill's resting fill, a faint step off the bar in either theme.
+ * --header-primary: section headings, over Nera's alias of the foreground: an indigo in light (design, Oct 26) and
+ * the brand's light indigo in dark. */
 :root {
+  --header-primary: #434E96;
   --canvas-glow: #F1EDF4;
   --canvas: radial-gradient(farthest-corner at 100% 100%, var(--canvas-glow) 0%, var(--background) 40%);
   --switch-thumb: var(--card);
@@ -62,6 +65,7 @@
     --resume-bg: #34302C;
     --sheet-bg: #262320;
     --switch-thumb: var(--foreground);
+    --header-primary: var(--brand-foreground);
   }
 }
 :root[data-theme="dark"] {
@@ -76,6 +80,7 @@
   --resume-bg: #34302C;
   --sheet-bg: #262320;
   --switch-thumb: var(--foreground);
+  --header-primary: var(--brand-foreground);
 }
 .dark {
   --canvas-glow: #27243A;
@@ -90,6 +95,7 @@
   --sheet-bg: #262320;
   --canvas: radial-gradient(farthest-corner at 100% 100%, var(--canvas-glow) 0%, var(--background) 40%);
   --switch-thumb: var(--foreground);
+  --header-primary: var(--brand-foreground);
 }
 /* ---- end page-local tokens ------------------------------------------------------------ */
 
