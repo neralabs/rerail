@@ -6,6 +6,7 @@ import {
   readRepoQuestion,
   renderCannotInstall,
   renderBanner,
+  renderGitMissing,
   renderInstalled,
   renderOnPath,
   renderAnswerHint,
@@ -25,6 +26,8 @@ import {
   renderSkipped,
   renderSummary,
   renderTips,
+  renderUnsupportedPlatform,
+  renderWslNote,
   shellQuote,
   type CodingAgent,
   type DashboardLink,
@@ -82,6 +85,9 @@ function everyScreen(lane: SetupLane): Record<string, string> {
     E3: renderNoRepoQuestion({}, lane),
     E5: renderSkipped(lane),
     E6: renderSummary({ ...SUMMARY, dashboard: NOT_OPENED }, lane),
+    E7: renderUnsupportedPlatform({ problem: { kind: "musl" }, minGlibc: "2.39" }, lane),
+    E8: renderGitMissing({ looked: ["/usr/bin/git"], installCommand: "sudo apt-get install git" }, lane),
+    T2w: renderWslNote({ folder: "/mnt/c/code/acme-web" }, lane),
   };
 }
 

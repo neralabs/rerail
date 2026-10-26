@@ -4,7 +4,7 @@ import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
 
 /**
  * The text of every install and set-up screen (T2–T6, C3–C6b, WR,
- * E1–E6), as pure functions of plain data.
+ * E1–E8), as pure functions of plain data.
  *
  * Three lanes. `terminal` is a person at a TTY: brand colour, dimmed hints, a
  * cursor on the first answer. `agent` is set-up run by a coding agent (no
@@ -690,6 +690,8 @@ export function renderCannotInstall(input: CannotInstallInput, lane: SetupLane):
 export interface NodeTooOldInput {
   readonly found: string;
   readonly requiredMajor: number;
+  /** The command that upgrades Node the way it was installed here (`brew upgrade node`); undefined when that is unclear. */
+  readonly upgradeCommand?: string;
 }
 
 /** E2: stop before changing anything, name both versions, and say how to fix it. */
@@ -698,8 +700,85 @@ export function renderNodeTooOld(input: NodeTooOldInput, lane: SetupLane): strin
   return lines([
     `${style.red("✕")} Rerail needs Node ${input.requiredMajor} or newer. You have Node ${clean(input.found)}.`,
     "  Nothing was changed on this machine.",
-    `  Upgrade Node, for example:  nvm install ${input.requiredMajor}`,
+    input.upgradeCommand === undefined
+      ? `  Install Node ${input.requiredMajor} or newer from https://nodejs.org or your package manager.`
+      : `  Upgrade Node:  ${clean(input.upgradeCommand)}`,
     "  Then run the same command again.",
+  ]);
+}
+
+// ── E7 · This computer can't run Rerail ────────────────────────────────────
+
+/** Why Rerail's engine has no build for this computer. */
+export type UnsupportedPlatform =
+  | { readonly kind: "musl" }
+  | { readonly kind: "glibc"; readonly found: string }
+  | { readonly kind: "system"; readonly platform: string; readonly arch: string };
+
+export interface UnsupportedPlatformInput {
+  readonly problem: UnsupportedPlatform;
+  /** The oldest glibc the Linux engines load on. */
+  readonly minGlibc: string;
+}
+
+/** E7: stop before installing an engine that cannot load here; say what runs Rerail and what to do. */
+export function renderUnsupportedPlatform(input: UnsupportedPlatformInput, lane: SetupLane): string {
+  const style = styleFor(lane);
+  const { problem, minGlibc } = input;
+  const reason = problem.kind === "musl"
+    ? "this Linux uses musl (Alpine, for example), and Rerail needs glibc"
+    : problem.kind === "glibc"
+      ? `this Linux has glibc ${clean(problem.found)}, and Rerail needs glibc ${minGlibc} or newer`
+      : `Rerail has no engine for ${clean(problem.platform)} on ${clean(problem.arch)}`;
+  const fix = problem.kind === "system"
+    ? "  Run it on one of those."
+    : `  Use a Linux with glibc ${minGlibc} or newer (\`ldd --version\` shows yours), such as a newer release or container image.`;
+  return lines([
+    `${style.red("✕")} Rerail can’t run on this computer: ${reason}.`,
+    "  Nothing was changed on this machine.",
+    `  Rerail runs on macOS and Windows, and on Linux with glibc ${minGlibc} or newer, each on arm64 or x64.`,
+    fix,
+    "  Then run the same command again.",
+  ]);
+}
+
+// ── E8 · Git is missing ────────────────────────────────────────────────────
+
+export interface GitMissingInput {
+  /** Every place set-up looked for Git. */
+  readonly looked: readonly string[];
+  /** The command that installs Git here, e.g. `sudo apt-get install git`; undefined when set-up can't tell. */
+  readonly installCommand?: string;
+}
+
+/** E8: Rerail reads every repository through Git; stop before installing and say how to get it. */
+export function renderGitMissing(input: GitMissingInput, lane: SetupLane): string {
+  const style = styleFor(lane);
+  return lines([
+    `${style.red("✕")} Rerail needs Git, and found none where it looks:`,
+    ...input.looked.map(path => `    ${clean(path)}`),
+    "  Nothing was changed on this machine.",
+    input.installCommand === undefined
+      ? "  Install Git with your package manager, or from https://git-scm.com."
+      : `  Install Git:  ${clean(input.installCommand)}`,
+    "  Then run the same command again.",
+  ]);
+}
+
+// ── T2w · Inside WSL, on a Windows drive ───────────────────────────────────
+
+export interface WslNoteInput {
+  /** The folder set-up runs for, under `/mnt/<drive>/`. */
+  readonly folder: string;
+}
+
+/** T2w: set-up runs inside WSL for a repo on the Windows drive; a note, set-up goes on. */
+export function renderWslNote(input: WslNoteInput, lane: SetupLane): string {
+  const style = styleFor(lane);
+  return lines([
+    `${style.yellow("△")} This is WSL, and ${clean(input.folder)} is on the Windows drive.`,
+    "  Rerail and your coding agent have to be installed on the same side: both in WSL, or both on Windows.",
+    "  Repos on the Windows drive are slow from WSL; a clone in the Linux file system (under ~) is faster.",
   ]);
 }
 

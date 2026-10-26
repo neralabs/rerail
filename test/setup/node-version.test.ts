@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { checkNodeVersion, REQUIRED_NODE_MAJOR } from "../../src/setup/node-version.js";
+import { checkNodeVersion, nodeUpgradeCommand, REQUIRED_NODE_MAJOR } from "../../src/setup/node-version.js";
+
+const NVM = { execPath: "/home/me/.nvm/versions/node/v20.11.1/bin/node", env: { NVM_DIR: "/home/me/.nvm" } };
 
 const ANSI = /\u001b\[/;
 
@@ -24,22 +26,37 @@ describe("checkNodeVersion", () => {
   });
 
   it("names both versions, says nothing changed, gives an upgrade hint, and says to run the same command again", () => {
-    const check = checkNodeVersion("v20.11.1", "agent");
+    const check = checkNodeVersion("v20.11.1", "agent", REQUIRED_NODE_MAJOR, NVM);
     if (check.ok) throw new Error("expected Node 20 to fail");
     expect(check.found).toBe("20.11.1");
     expect(check.requiredMajor).toBe(24);
     expect(check.message).toContain("Rerail needs Node 24 or newer. You have Node 20.11.1.");
     expect(check.message).toContain("Nothing was changed on this machine.");
-    expect(check.message).toContain("Upgrade Node, for example:  nvm install 24");
+    expect(check.message).toContain("Upgrade Node:  nvm install 24");
     expect(check.message).toContain("Then run the same command again.");
   });
 
   it("uses the required major it is given", () => {
-    const check = checkNodeVersion("25.9.0", "agent", 26);
+    const check = checkNodeVersion("25.9.0", "agent", 26, NVM);
     if (check.ok) throw new Error("expected Node 25 to fail a Node 26 requirement");
     expect(check.message).toContain("Rerail needs Node 26 or newer. You have Node 25.9.0.");
     expect(check.message).toContain("nvm install 26");
     expect(checkNodeVersion("26.0.0", "agent", 26).ok).toBe(true);
+  });
+
+  it("upgrades Node the way it was installed, and points to nodejs.org when nothing says how", () => {
+    const upgrade = (execPath: string, env: NodeJS.ProcessEnv = {}) => nodeUpgradeCommand({ execPath, env }, 24);
+    expect(upgrade("/opt/homebrew/Cellar/node/22.1.0/bin/node")).toBe("brew upgrade node");
+    expect(upgrade("/usr/local/Cellar/node@22/22.9.0/bin/node")).toBe("brew install node");
+    expect(upgrade("/home/me/.volta/tools/image/node/20.0.0/bin/node")).toBe("volta install node@24");
+    expect(upgrade("/home/me/.local/share/fnm/node-versions/v20.0.0/installation/bin/node")).toBe("fnm install 24 && fnm use 24");
+    expect(upgrade(String.raw`C:\Users\me\AppData\Local\nvm\v20.0.0\node.exe`, { NVM_HOME: String.raw`C:\Users\me\AppData\Local\nvm` })).toBe("nvm install 24");
+    // A system Node first on PATH while nvm is installed: nvm still upgrades it for this shell.
+    expect(upgrade("/usr/bin/node", { NVM_DIR: "/home/me/.nvm" })).toBe("nvm install 24");
+    expect(upgrade("/usr/bin/node")).toBeUndefined();
+    const check = checkNodeVersion("18.19.1", "agent", 24, { execPath: "/usr/bin/node", env: {} });
+    if (check.ok) throw new Error("expected Node 18 to fail");
+    expect(check.message).toContain("Install Node 24 or newer from https://nodejs.org or your package manager.");
   });
 
   it("says unknown when no version was found", () => {

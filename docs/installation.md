@@ -293,9 +293,24 @@ Code, Codex and Cursor relay the questions as text.
 
 - Node.js 24 or newer on `PATH`. The launcher remembers the Node that ran setup
   and falls back to `PATH`, so version-manager switches do not break hooks.
-- macOS, Linux glibc, or Windows MSVC on arm64/x64. The package carries
-  prebuilt native kernels for those; nothing is compiled on the user's machine.
+- Git. Rerail reads every repository through it, and runs it only from fixed
+  locations, never from `PATH`, so a repository cannot put its own `git` first:
+  `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`,
+  `/home/linuxbrew/.linuxbrew/bin`, `/run/current-system/sw/bin` and
+  `~/.nix-profile/bin`; on Windows `C:\Program Files\Git\cmd`,
+  `C:\Program Files (x86)\Git\cmd`, `%LOCALAPPDATA%\Programs\Git\cmd` (Git for
+  Windows installed for one user) and `~\scoop\apps\git\current\cmd`.
+- macOS, Linux with glibc 2.39 or newer, or Windows MSVC, on arm64/x64. The
+  package carries prebuilt native kernels for those; nothing is compiled on the
+  user's machine. Alpine and other musl Linux are not supported.
+- Under WSL, install Rerail on the same side as the coding agent (both in WSL,
+  or both on Windows). A repository on the Windows drive (`/mnt/c/…`) works but
+  is slow from WSL; set-up says so.
 - Read access to `@neralabs/rerail` on npmjs (see "Registry access").
+
+Set-up checks Node, the platform and Git before it installs anything. When one
+is missing it stops, says what to do, and changes nothing; an install that
+fails later removes the empty folders it made.
 
 ## Registry access
 
