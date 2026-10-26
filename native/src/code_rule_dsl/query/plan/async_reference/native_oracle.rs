@@ -30,6 +30,7 @@ pub(super) struct Native<'a> {
     corpus: Arc<Corpus>,
     /// CPU time publishing the input tapes into one reusable production index.
     pub index_ns: u64,
+    pub index_wall_ns: u64,
 }
 
 pub(super) struct NativeRun {
@@ -74,6 +75,7 @@ impl<'a> Native<'a> {
             );
         }
         let started = super::cpu_ns();
+        let wall = Instant::now();
         let corpus = Arc::new(Corpus::default());
         for (root, path) in parsed.iter().zip(paths) {
             corpus
@@ -81,6 +83,7 @@ impl<'a> Native<'a> {
                 .expect("publish native oracle tape");
         }
         let index_ns = super::cpu_ns().saturating_sub(started);
+        let index_wall_ns = wall.elapsed().as_nanos() as u64;
         Self {
             parsed,
             compiled,
@@ -88,6 +91,7 @@ impl<'a> Native<'a> {
             modules,
             corpus,
             index_ns,
+            index_wall_ns,
         }
     }
 

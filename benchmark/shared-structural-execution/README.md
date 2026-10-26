@@ -57,7 +57,9 @@ Native candidate selection is fresh only in the first run; later runs reuse its 
 Use `native_match_cpu_ns` for the conservative cached-candidate comparison.
 Do not average fresh selection and cached selection into one speedup claim.
 
-Job CPU totals add common parse/tape and mandatory index construction.
+Job CPU and wall-time totals sum the measured execution and common parse/tape and index-construction phases.
+Initial program compilation is charged to iteration zero; later runs reuse that compiled plan.
+The report reuses common construction measurements rather than rebuilding the same index for every sample.
 They exclude filesystem loading, suppression, presentation payloads, and incremental edits.
 They are a family qualification measurement, not the final whole-apply gate.
 

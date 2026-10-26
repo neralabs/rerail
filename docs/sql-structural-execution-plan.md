@@ -1,8 +1,11 @@
 # Plan for shared structural execution
 
-Status: proposed transition plan, 2026-10-26. This document changes no engine behavior.
+Status: implementation underway, 2026-10-26. See [the implementation journal](shared-structural-execution-journal.md).
+The full async-family reference and generated SQL prototype pass their execution gates.
+Generic grammar lowering and production cutover remain pending.
 Baseline: `c6ff8110`, with the retained build-49 measurements.
-Integration reference: `Pulling-it-all-together` at `0b941fb4`.
+Design integration reference: `Pulling-it-all-together` at `0b941fb4`.
+Implementation branch: `jeremy/shared-structural-execution`, based on integration commit `85098ee3`.
 
 The target compiler emits a graph of local pattern groups, shared facts, and relational operators.
 The unit of execution is a producer or a compiled group over a bounded document batch.

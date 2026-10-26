@@ -118,6 +118,8 @@ fn named(node: &Node<'_, TapeDoc>, kinds: &Kinds) -> bool {
 /// Reads every tape row once for kind/context dispatch. Only definitions and calls
 /// in `wanted` create AST Nodes for the observer. Import declarations are decoded
 /// only for documents with selected calls, and sent to a separate batch observer.
+/// Calls have empty argument ranges by contract; collect_arguments is a separate
+/// producer for the calls selected by relational target composition.
 /// Each root must be a document (or subtree) of a Python TapeDoc.
 pub(crate) fn collect<'t>(
     roots: &[(u32, Node<'t, TapeDoc>)],
@@ -213,8 +215,6 @@ pub(crate) fn collect<'t>(
                 || report.kind_id() == kinds.attribute)
                 .then(|| NodeRef::of(*doc_id, &report));
             out.counters.semantic_callees += usize::from(reference.is_some());
-            let index = out.calls.len();
-            let start = out.arguments.len();
             emit(*doc_id, &call, &mut observed, &mut observe);
             emit(*doc_id, &callee, &mut observed, &mut observe);
             emit(*doc_id, &report, &mut observed, &mut observe);
@@ -235,90 +235,14 @@ pub(crate) fn collect<'t>(
                     });
                 }
             }
-            if let Some(arguments) = call.field("arguments") {
-                if arguments.kind_id() == kinds.generator {
-                    emit(*doc_id, &arguments, &mut observed, &mut observe);
-                    out.arguments.push(Argument {
-                        call: index,
-                        node: NodeRef::of(*doc_id, &arguments),
-                        value: NodeRef::of(*doc_id, &arguments),
-                        ordinal: 0,
-                        keyword: None,
-                        spread: Spread::None,
-                        positional_index: Some(0),
-                        after_positional_spread: false,
-                    });
-                } else {
-                    let mut positional = 0;
-                    let mut starred = false;
-                    for (ordinal, argument) in arguments
-                        .children()
-                        .filter(|node| named(node, &kinds))
-                        .enumerate()
-                    {
-                        let kind = argument.kind_id();
-                        let spread =
-                            if kind == kinds.list_splat || kind == kinds.parenthesized_splat {
-                                Spread::Positional
-                            } else if kind == kinds.dictionary_splat {
-                                Spread::Keywords
-                            } else {
-                                Spread::None
-                            };
-                        let keyword = if kind == kinds.keyword {
-                            argument.field("name")
-                        } else {
-                            None
-                        };
-                        let value = if kind == kinds.keyword {
-                            argument.field("value").unwrap_or_else(|| argument.clone())
-                        } else if spread != Spread::None {
-                            argument
-                                .children()
-                                .find(|child| named(child, &kinds))
-                                .unwrap_or_else(|| argument.clone())
-                        } else {
-                            argument.clone()
-                        };
-                        let position =
-                            if kind != kinds.keyword && spread == Spread::None && !starred {
-                                let at = positional;
-                                positional += 1;
-                                Some(at)
-                            } else {
-                                None
-                            };
-                        emit(*doc_id, &argument, &mut observed, &mut observe);
-                        emit(*doc_id, &value, &mut observed, &mut observe);
-                        let bare_value = unparen(value.clone(), &kinds);
-                        emit(*doc_id, &bare_value, &mut observed, &mut observe);
-                        if let Some(name) = &keyword {
-                            emit(*doc_id, name, &mut observed, &mut observe);
-                        }
-                        out.arguments.push(Argument {
-                            call: index,
-                            node: NodeRef::of(*doc_id, &argument),
-                            value: NodeRef::of(*doc_id, &value),
-                            ordinal,
-                            keyword: keyword.map(|name| {
-                                crate::code_rule_dsl::identifier::python_identifier(&name)
-                                    .into_owned()
-                            }),
-                            spread,
-                            positional_index: position,
-                            after_positional_spread: starred,
-                        });
-                        starred |= spread == Spread::Positional;
-                    }
-                }
-            }
             out.calls.push(CallSite {
                 call: NodeRef::of(*doc_id, &call),
                 callee: NodeRef::of(*doc_id, &callee),
                 report_node: NodeRef::of(*doc_id, &report),
                 ref_node: reference,
                 context,
-                arguments: start..out.arguments.len(),
+                // Arguments are a separate demanded producer after target selection.
+                arguments: 0..0,
             });
         }
         if out.calls.len() != first_call {
@@ -327,6 +251,130 @@ pub(crate) fn collect<'t>(
             }
         }
     }
+    out
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct ArgumentCounters {
+    pub requested_calls: usize,
+    pub distinct_calls: usize,
+    pub argument_rows: usize,
+}
+#[derive(Debug)]
+pub(crate) struct CallArguments {
+    pub call: NodeRef,
+    pub arguments: std::ops::Range<usize>,
+}
+#[derive(Default, Debug)]
+pub(crate) struct ArgumentBatch {
+    pub calls: Vec<CallArguments>,
+    /// Argument.call is an index into this batch's calls, not collect().calls.
+    pub arguments: Vec<Argument>,
+    pub counters: ArgumentCounters,
+}
+/// Produces argument facts only for the explicitly requested call nodes. Repeated
+/// (document, node ID) demands execute once; no demand performs no AST work.
+pub(crate) fn collect_arguments<'t>(calls: &[(u32, Node<'t, TapeDoc>)]) -> ArgumentBatch {
+    let mut out = ArgumentBatch::default();
+    out.counters.requested_calls = calls.len();
+    let mut seen = FxHashSet::default();
+    let mut by_doc = std::collections::BTreeMap::new();
+    for (doc_id, call) in calls {
+        let identity = call.root() as *const _ as usize;
+        let (prior, kinds) = by_doc
+            .entry(*doc_id)
+            .or_insert_with(|| (identity, Kinds::new(call.get_doc())));
+        assert_eq!(
+            *prior, identity,
+            "argument demands reused a document ID for different roots"
+        );
+        // Identity validation precedes deduplication: different tapes can assign
+        // the same ordinal to unrelated nodes.
+        if !seen.insert((*doc_id, call.node_id())) {
+            continue;
+        }
+        let kinds: &Kinds = kinds;
+        assert_eq!(
+            call.kind_id(),
+            kinds.call,
+            "argument demand must name a call"
+        );
+        out.counters.distinct_calls += 1;
+        let index = out.calls.len();
+        let start = out.arguments.len();
+        if let Some(arguments) = call.field("arguments") {
+            if arguments.kind_id() == kinds.generator {
+                out.arguments.push(Argument {
+                    call: index,
+                    node: NodeRef::of(*doc_id, &arguments),
+                    value: NodeRef::of(*doc_id, &arguments),
+                    ordinal: 0,
+                    keyword: None,
+                    spread: Spread::None,
+                    positional_index: Some(0),
+                    after_positional_spread: false,
+                });
+            } else {
+                let mut positional = 0;
+                let mut starred = false;
+                for (ordinal, argument) in arguments
+                    .children()
+                    .filter(|node| named(node, &kinds))
+                    .enumerate()
+                {
+                    let kind = argument.kind_id();
+                    let spread = if kind == kinds.list_splat || kind == kinds.parenthesized_splat {
+                        Spread::Positional
+                    } else if kind == kinds.dictionary_splat {
+                        Spread::Keywords
+                    } else {
+                        Spread::None
+                    };
+                    let keyword = if kind == kinds.keyword {
+                        argument.field("name")
+                    } else {
+                        None
+                    };
+                    let value = if kind == kinds.keyword {
+                        argument.field("value").unwrap_or_else(|| argument.clone())
+                    } else if spread != Spread::None {
+                        argument
+                            .children()
+                            .find(|child| named(child, &kinds))
+                            .unwrap_or_else(|| argument.clone())
+                    } else {
+                        argument.clone()
+                    };
+                    let position = if kind != kinds.keyword && spread == Spread::None && !starred {
+                        let at = positional;
+                        positional += 1;
+                        Some(at)
+                    } else {
+                        None
+                    };
+                    out.arguments.push(Argument {
+                        call: index,
+                        node: NodeRef::of(*doc_id, &argument),
+                        value: NodeRef::of(*doc_id, &value),
+                        ordinal,
+                        keyword: keyword.map(|name| {
+                            crate::code_rule_dsl::identifier::python_identifier(&name).into_owned()
+                        }),
+                        spread,
+                        positional_index: position,
+                        after_positional_spread: starred,
+                    });
+                    starred |= spread == Spread::Positional;
+                }
+            }
+        }
+
+        out.calls.push(CallArguments {
+            call: NodeRef::of(*doc_id, call),
+            arguments: start..out.arguments.len(),
+        });
+    }
+    out.counters.argument_rows = out.arguments.len();
     out
 }
 
@@ -413,7 +461,7 @@ mod tests {
             ContextKind::Lambda,
         ] {
             let mut seen = FxHashSet::default();
-            let actual = collect(
+            let mut actual = collect(
                 &roots,
                 wanted,
                 |doc, node| {
@@ -422,6 +470,20 @@ mod tests {
                 },
                 |_, _| {},
             );
+            assert!(actual.arguments.is_empty());
+            assert!(actual.calls.iter().all(|call| call.arguments.is_empty()));
+            let demand: Vec<_> = actual
+                .calls
+                .iter()
+                .map(|call| (call.call.doc, at(&roots[0].1, call.call.node_id as u32)))
+                .collect();
+            let batch = collect_arguments(&demand);
+            assert_eq!(batch.counters.distinct_calls, actual.calls.len());
+            actual.arguments = batch.arguments;
+            for (call, rows) in actual.calls.iter_mut().zip(batch.calls) {
+                assert_eq!(call.call, rows.call);
+                call.arguments = rows.arguments;
+            }
             assert_eq!(
                 call_rows(&actual, wanted),
                 call_rows(&generic, wanted),
@@ -450,8 +512,6 @@ mod tests {
                 }
                 for arg in &actual.arguments[call.arguments.clone()] {
                     assert_eq!(arg.call, index);
-                    assert!(seen.contains(&arg.node.node_id));
-                    assert!(seen.contains(&arg.value.node_id));
                 }
             }
             let reports: FxHashSet<_> = actual.calls.iter().map(|c| c.report_node).collect();
@@ -535,9 +595,91 @@ mod tests {
             .iter()
             .find(|call| &source[call.report_node.start..call.report_node.end] == "consume")
             .unwrap();
-        let args = &facts.arguments[generator.arguments.clone()];
+        assert!(facts.arguments.is_empty());
+        assert!(generator.arguments.is_empty());
+        let batch = collect_arguments(&[(2, at(&root.root(), generator.call.node_id as u32))]);
+        let args = &batch.arguments[batch.calls[0].arguments.clone()];
         assert_eq!(args.len(), 1);
         assert_eq!(args[0].positional_index, Some(0));
-        assert_eq!(projected[&args[0].value].kind(), "generator_expression");
+        assert_eq!(
+            at(&root.root(), args[0].value.node_id as u32).kind(),
+            "generator_expression"
+        );
+    }
+    #[test]
+    fn argument_demands_are_empty_or_deduplicated_without_eager_observation() {
+        let empty = collect_arguments(&[]);
+        assert!(empty.calls.is_empty() && empty.arguments.is_empty());
+        assert_eq!(
+            (
+                empty.counters.requested_calls,
+                empty.counters.distinct_calls,
+                empty.counters.argument_rows
+            ),
+            (0, 0, 0)
+        );
+        let root = tape("async def f():\n target(123, mode=(value), *xs)\n");
+        let mut observed = FxHashSet::default();
+        let facts = collect(
+            &[(0, root.root())],
+            ContextKind::AsyncFunction,
+            |_, node| {
+                observed.insert(node.node_id());
+            },
+            |_, _| {},
+        );
+        assert_eq!(facts.calls.len(), 1);
+        assert!(facts.arguments.is_empty() && facts.calls[0].arguments.is_empty());
+        let call = at(&root.root(), facts.calls[0].call.node_id as u32);
+        let batch = collect_arguments(&[(0, call.clone()), (0, call.clone()), (1, call)]);
+        assert_eq!(
+            (
+                batch.counters.requested_calls,
+                batch.counters.distinct_calls,
+                batch.counters.argument_rows
+            ),
+            (3, 2, 6)
+        );
+        assert_eq!(
+            batch
+                .calls
+                .iter()
+                .map(|call| call.call.doc)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert!(
+            !observed.contains(&batch.arguments[0].node.node_id),
+            "call collection must not observe argument literals"
+        );
+        for (index, call) in batch.calls.iter().enumerate() {
+            let args = &batch.arguments[call.arguments.clone()];
+            assert_eq!(args.len(), 3);
+            assert!(
+                args.iter()
+                    .all(|arg| arg.call == index && arg.node.doc == call.call.doc)
+            );
+            assert_eq!(args[0].positional_index, Some(0));
+            assert_eq!(args[1].keyword.as_deref(), Some("mode"));
+            assert_eq!(args[2].spread, Spread::Positional);
+        }
+    }
+    #[test]
+    #[should_panic(expected = "argument demands reused a document ID for different roots")]
+    fn argument_demand_identity_is_checked_before_duplicate_ordinals() {
+        let first = tape("f()\n");
+        let second = tape("f()\n");
+        let first_call = first
+            .root()
+            .dfs()
+            .find(|node| node.kind() == "call")
+            .unwrap();
+        let second_call = second
+            .root()
+            .dfs()
+            .find(|node| node.kind() == "call")
+            .unwrap();
+        assert_eq!(first_call.node_id(), second_call.node_id());
+        collect_arguments(&[(7, first_call), (7, second_call)]);
     }
 }

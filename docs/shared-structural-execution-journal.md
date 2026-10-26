@@ -179,3 +179,16 @@ The next exposed producer-shape error is eager argument projection for all async
 Only surviving spawn candidates need argument facts, but the structural collector currently builds them before SQL selection.
 The next change separates that producer and invokes it once for the distinct surviving call demand.
 Generic grammar lowering, selective-anchor integration, catalog coverage, incremental caches, and production cutover remain pending.
+
+### Argument production follows SQL demand
+
+Structural collection now emits calls and context without reading argument fields or visiting argument children.
+After the first SQL stage, one argument batch receives only surviving mode-dependent call IDs.
+It deduplicates requests across labels and preserves keyword, positional, spread, and generator semantics.
+Document identity is checked before deduplication, so reused node ordinals cannot hide a mismatched tree.
+The later stage no longer builds a map of every call merely to look up a few surviving arguments.
+
+The positive 24-document gate requires exactly 24 argument calls and 48 rows.
+Sixteen label copies must retain the same argument-call and argument-row counts.
+The receiver-only and irrelevant-input gates require zero argument calls.
+Full-corpus measurements follow after the changed producer passes these checks.

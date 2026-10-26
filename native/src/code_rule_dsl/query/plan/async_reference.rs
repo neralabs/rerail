@@ -100,6 +100,9 @@ struct Metrics {
     binding_lookups: usize,
     candidates: usize,
     origin_rows: usize,
+    argument_calls: usize,
+    argument_rows: usize,
+    arguments_ns: u64,
     sql_executions: usize,
     vm_steps: i32,
     fullscan_steps: i32,
@@ -549,17 +552,32 @@ fn execute_sql<'t>(
     metrics.candidates = candidates.len();
     let mut requests: BTreeSet<(NodeRef, i64)> = BTreeSet::new();
     let mut slots = Relation::new(&["doc", "call", "value"]);
-    let calls: BTreeMap<_, _> = structure
+    let argument_start = cpu_ns();
+    let argument_demand: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| candidate[4] == 1)
+        .map(|candidate| {
+            (
+                candidate[1] as u32,
+                node(candidate[1] as u32, candidate[3] as usize),
+            )
+        })
+        .collect();
+    let arguments = call_batch::collect_arguments(&argument_demand);
+    metrics.argument_calls = arguments.counters.distinct_calls;
+    metrics.argument_rows = arguments.counters.argument_rows;
+    metrics.arguments_ns = cpu_ns() - argument_start;
+    let calls: BTreeMap<_, _> = arguments
         .calls
         .iter()
-        .map(|c| ((c.call.doc, id(c.call)), c))
+        .map(|call| ((call.call.doc, id(call.call)), call))
         .collect();
     let mut seen_slots = BTreeSet::new();
     for c in &candidates {
         let doc = c[1] as u32;
         if c[4] == 1 && seen_slots.insert((doc, c[3])) {
             let call = calls[&(doc, c[3])];
-            let args = &structure.arguments[call.arguments.clone()];
+            let args = &arguments.arguments[call.arguments.clone()];
             let value = args
                 .iter()
                 .find(|a| a.keyword.as_deref() == Some("mode"))

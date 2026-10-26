@@ -294,6 +294,8 @@ fn primary_screen_preserves_receiver_demands_and_skips_irrelevant_scopes() {
     assert_eq!(irrelevant.metrics.admitted_primary_refs, 0);
     assert_eq!(irrelevant.metrics.scope_builds, 0);
     assert_eq!(irrelevant.metrics.semantic_requests, 0);
+    assert_eq!(irrelevant.metrics.argument_calls, 0);
+    assert_eq!(irrelevant.metrics.argument_rows, 0);
     assert!(irrelevant.findings.keys.is_empty());
     let receiver = check(vec![
         "from pathlib import Path as P\nasync def f():\n P('x').open()\n p = P('x')\n p.open()\n"
@@ -302,6 +304,7 @@ fn primary_screen_preserves_receiver_demands_and_skips_irrelevant_scopes() {
     assert_eq!(receiver.metrics.admitted_primary_refs, 0);
     assert!(receiver.metrics.semantic_requests > 0);
     assert_eq!(receiver.findings.keys.len(), 2);
+    assert_eq!(receiver.metrics.argument_calls, 0);
 }
 #[test]
 fn batched_positive_documents_preserve_all_four_labels() {
@@ -311,6 +314,8 @@ fn batched_positive_documents_preserve_all_four_labels() {
     let run = check(sources);
     assert_eq!(run.findings.keys.len(), 120);
     assert_eq!(run.metrics.scope_builds, 24);
+    assert_eq!(run.metrics.argument_calls, 24);
+    assert_eq!(run.metrics.argument_rows, 48);
 }
 #[test]
 fn duplicate_labels_do_not_repeat_producer_work() {
@@ -335,6 +340,9 @@ fn duplicate_labels_do_not_repeat_producer_work() {
     assert_eq!(one.metrics.binding_lookups, many.metrics.binding_lookups);
     assert_eq!(one.metrics.scope_builds, many.metrics.scope_builds);
     assert_eq!(one.metrics.origin_rows, many.metrics.origin_rows);
+    assert_eq!(one.metrics.argument_calls, 1);
+    assert_eq!(one.metrics.argument_calls, many.metrics.argument_calls);
+    assert_eq!(one.metrics.argument_rows, many.metrics.argument_rows);
     assert_eq!(one.findings.keys.len() * 16, many.findings.keys.len());
 }
 #[test]
@@ -418,20 +426,26 @@ fn complete_async_family_corpus_profile() {
         })
         .collect();
     let start = cpu_ns();
+    let phase_wall = Instant::now();
     let parsed = parsed(&sources);
     let parse_cpu = cpu_ns() - start;
+    let parse_wall_ns = phase_wall.elapsed().as_nanos() as u64;
     let roots: Vec<_> = parsed
         .iter()
         .enumerate()
         .map(|(doc, tree)| (doc as u32, tree.root()))
         .collect();
     let compile = cpu_ns();
+    let phase_wall = Instant::now();
     let native = native_policy();
     let compile_cpu = cpu_ns() - compile;
+    let native_compile_wall_ns = phase_wall.elapsed().as_nanos() as u64;
     let indexed = Native::new(&parsed, &native, &paths, &modules);
     let compile = cpu_ns();
+    let phase_wall = Instant::now();
     let generated = generated_shape::queries();
     let generated_compile_cpu = cpu_ns() - compile;
+    let generated_compile_wall_ns = phase_wall.elapsed().as_nanos() as u64;
     let generated_queries = [&*generated[0].sql, &*generated[1].sql];
     let reference_queries = [SELECT_TARGETS, COMPOSE];
     let mut runs = Vec::new();
@@ -504,10 +518,13 @@ fn complete_async_family_corpus_profile() {
         assert!(run.metrics.sql_executions <= 100, "hard execution budget");
         runs.push(json!({"iteration":iteration,
             "reference_job_cpu_ns":run.metrics.execution_ns+run.metrics.preparation_ns+parse_cpu+indexed.index_ns,
-            "native_job_cpu_ns":oracle.cpu_ns+oracle.compile_ns+parse_cpu+indexed.index_ns,
+            "reference_job_wall_ns":run.metrics.wall_ns+parse_wall_ns+indexed.index_wall_ns,
+            "native_job_cpu_ns":oracle.cpu_ns+oracle.compile_ns+parse_cpu+indexed.index_ns+if iteration==0 { compile_cpu } else { 0 },
+            "native_job_wall_ns":oracle.wall_ns+parse_wall_ns+indexed.index_wall_ns+if iteration==0 { native_compile_wall_ns } else { 0 },
             "execution_cpu_ratio":run.metrics.execution_ns as f64/oracle.cpu_ns as f64,
             "generated_to_reference_cpu_ratio":generated_run.metrics.execution_ns as f64/run.metrics.execution_ns as f64,
-            "generated_job_cpu_ns":generated_run.metrics.execution_ns+generated_run.metrics.preparation_ns+parse_cpu+indexed.index_ns,
+            "generated_job_cpu_ns":generated_run.metrics.execution_ns+generated_run.metrics.preparation_ns+parse_cpu+indexed.index_ns+if iteration==0 { generated_compile_cpu } else { 0 },
+            "generated_job_wall_ns":generated_run.metrics.wall_ns+parse_wall_ns+indexed.index_wall_ns+if iteration==0 { generated_compile_wall_ns } else { 0 },
             "generated":generated_run.metrics,
             "reference":run.metrics,"findings":run.findings.keys.len(),
             "native_execution_cpu_ns":oracle.cpu_ns,"native_execution_wall_ns":oracle.wall_ns,
@@ -539,10 +556,12 @@ fn complete_async_family_corpus_profile() {
         "generated_compiler_qualified": false,
         "production_cutover": false
     });
-    let report = json!({"gates":gates,"scope":"complete four-rule async family; raw finding keys, no suppressions/payloads; indexed native shares scope/memo across clauses; job totals add common parse+tape and mandatory index construction; native candidate frontier is fresh only in iteration0, cached thereafter; compare match CPU separately",
+    let report = json!({"gates":gates,"scope":"complete four-rule async family; raw finding keys, no suppressions/payloads; indexed native shares scope/memo across clauses; job totals sum measured phases, reusing common parse+tape and mandatory index construction; initial program compilation is charged to iteration0; source loading/suppression/payloads excluded; native candidate frontier is fresh only in iteration0, cached thereafter; compare match CPU separately",
         "corpus":root,"files":sources.len(),"source_bytes":sources.iter().map(String::len).sum::<usize>(),
-        "parse_tape_cpu_ns":parse_cpu,"index_construction_cpu_ns":indexed.index_ns,
-        "native_compile_cpu_ns":compile_cpu,"generated_shape_compile_cpu_ns":generated_compile_cpu,
+        "parse_tape_cpu_ns":parse_cpu,"parse_tape_wall_ns":parse_wall_ns,
+        "index_construction_cpu_ns":indexed.index_ns,"index_construction_wall_ns":indexed.index_wall_ns,
+        "native_compile_cpu_ns":compile_cpu,"native_compile_wall_ns":native_compile_wall_ns,
+        "generated_shape_compile_cpu_ns":generated_compile_cpu,"generated_shape_compile_wall_ns":generated_compile_wall_ns,
         "sql":[SELECT_TARGETS,COMPOSE],"generated_sql":generated_queries,
         "sql_bytes":[SELECT_TARGETS.len(),COMPOSE.len()],"generated_sql_bytes":generated_queries.map(str::len),"runs":runs});
     eprintln!("{}", serde_json::to_string_pretty(&report).unwrap());
