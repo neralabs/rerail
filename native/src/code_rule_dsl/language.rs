@@ -524,6 +524,21 @@ impl SourceType {
     pub(crate) fn of_file(label: &str, path: &str, package: Option<PackageType>) -> Option<Self> {
         adapter::source_type(label, path, package)
     }
+
+    /// The module system a file has by its extension and its nearest `package.json`'s `type`
+    /// alone (`languageOptions.moduleSystem: "package-type"`), as eslint-plugin-n's configs give
+    /// each file one: `.mjs` and `.mts` modules, `.cjs` and `.cts` CommonJS, any other file a
+    /// module only where `type` is `module`, CommonJS where it is anything else and where there
+    /// is no manifest. No syntax is read.
+    pub(crate) fn by_package_type(path: &str, package: Option<PackageType>) -> Self {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        match name.rsplit_once('.').map(|(_, extension)| extension) {
+            Some("mjs" | "mts") => Self::Module,
+            Some("cjs" | "cts") => Self::CommonJs,
+            _ if package == Some(PackageType::Module) => Self::Module,
+            _ => Self::CommonJs,
+        }
+    }
 }
 
 /// The `type` of an ECMA file's nearest `package.json` (its `package`'s `type`).
@@ -833,9 +848,6 @@ pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
 /// `nodeVersion` reads eslint-plugin-n's default range there.
 #[derive(Debug)]
 pub(crate) struct PackageCondition {
-    /// Whether the file has a nearest `package.json` at all; the one condition that a file without
-    /// one can satisfy (`exists: false`).
-    pub(crate) exists: Option<bool>,
     /// Whether the file is one of the manifest's `bin` targets (`Manifest::is_bin`).
     pub(crate) bin: Option<bool>,
     /// The range the file's configured Node range must be a subset of.
@@ -850,11 +862,8 @@ pub(crate) struct PackageCondition {
 
 impl PackageCondition {
     fn holds(&self, path: &str, manifest: Option<&Manifest>) -> bool {
-        self.exists
-            .is_none_or(|exists| manifest.is_some() == exists)
-            && self
-                .bin
-                .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
+        self.bin
+            .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
             && self.node_version.as_ref().is_none_or(|range| {
                 manifest.map_or_else(
                     || DEFAULT_NODE_RANGE.is_subset_of(range),

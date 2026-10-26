@@ -3653,24 +3653,6 @@ fn file_package_bin_reads_the_manifests_bin_targets() {
 }
 
 #[test]
-fn file_package_exists_reads_whether_the_file_has_a_manifest_at_all() {
-    let exists = |value: bool| json!({ "package": { "exists": value } });
-    let files = [
-        ("app/package.json", "{}"),
-        ("app/server.js", ""),
-        ("app/lib/util.js", ""),
-        ("loose.js", ""),
-        ("tools/run.js", ""),
-    ];
-    assert_eq!(
-        matched(exists(true), &files),
-        ["app/lib/util.js", "app/server.js"]
-    );
-    // The one package key a file without a manifest satisfies.
-    assert_eq!(matched(exists(false), &files), ["loose.js", "tools/run.js"]);
-}
-
-#[test]
 fn file_package_depends_on_and_path_read_the_nearest_manifest() {
     let files = [
         ("package.json", r#"{ "dependencies": { "next": "15" } }"#),
@@ -4262,13 +4244,115 @@ fn a_snapshot_derives_package_facts_from_its_package_json_entries_unless_the_hos
 }
 
 #[test]
+fn module_system_package_type_reads_extension_and_package_type_alone() {
+    // `require` is a configured global only where the query reads the file as CommonJS.
+    let read = |module_system: &str, files: Value, path: &str| -> bool {
+        let rule = with_options(&["require"], json!({ "moduleSystem": module_system }));
+        let snapshot = json!({
+            "facts": [], "files": files, "format": "rerail.repository-snapshot/v1", "revision": 0,
+        });
+        let report: Value = serde_json::from_str(
+            &rule
+                .evaluate(snapshot.to_string(), "report".to_owned())
+                .expect("evaluation succeeds"),
+        )
+        .expect("evaluation is JSON");
+        report["violations"]
+            .as_array()
+            .is_some_and(|violations| violations.iter().any(|violation| violation["path"] == path))
+    };
+    let manifest =
+        |source: &str| json!({ "language": "json", "path": "package.json", "source": source });
+    let file = |path: &str, source: &str| {
+        let language = if path.ends_with("ts") {
+            "typescript"
+        } else {
+            "javascript"
+        };
+        json!({ "language": language, "path": path, "source": source })
+    };
+    // A `.ts` file with module syntax under a type-less manifest: Node's syntax detection makes it
+    // a module (the default), its package type CommonJS.
+    let esm = "import x from \"x\";\nrequire;\n";
+    let untyped = json!([manifest("{}"), file("src/a.ts", esm)]);
+    assert!(!read("file", untyped.clone(), "src/a.ts"));
+    assert!(read("package-type", untyped, "src/a.ts"));
+    // Without any manifest: a module by default, CommonJS by package type.
+    let bare = json!([file("legacy.js", "require;\n")]);
+    assert!(!read("file", bare.clone(), "legacy.js"));
+    assert!(read("package-type", bare, "legacy.js"));
+    // `type: module` and the extensions decide the same either way.
+    let typed = json!([
+        manifest("{ \"type\": \"module\" }"),
+        file("a.js", "require;\n"),
+        file("b.cjs", "require;\n"),
+        file("c.mts", "require;\n"),
+    ]);
+    for (path, commonjs) in [("a.js", false), ("b.cjs", true), ("c.mts", false)] {
+        assert_eq!(
+            read("package-type", typed.clone(), path),
+            commonjs,
+            "{path}"
+        );
+        assert_eq!(read("file", typed.clone(), path), commonjs, "{path}");
+    }
+    // `when.sourceType` gates on the module system the query reads.
+    let gated = |module_system: &str| {
+        let rule = typescript(json!({
+            "languageOptions": { "moduleSystem": module_system },
+            "when": { "sourceType": "commonjs" },
+            "rule": { "kind": "program" },
+        }));
+        let snapshot = json!({
+            "facts": [], "files": [manifest("{}"), file("src/a.ts", esm)],
+            "format": "rerail.repository-snapshot/v1", "revision": 0,
+        });
+        let report: Value = serde_json::from_str(
+            &rule
+                .evaluate(snapshot.to_string(), "report".to_owned())
+                .expect("evaluation succeeds"),
+        )
+        .expect("evaluation is JSON");
+        report["violations"].as_array().map_or(0, Vec::len)
+    };
+    assert_eq!(gated("file"), 0);
+    assert_eq!(gated("package-type"), 1);
+}
+
+#[test]
+fn module_system_is_refused_beside_a_source_type_and_for_other_values() {
+    for (options, expected) in [
+        (
+            json!({ "moduleSystem": "package-type", "sourceType": "commonjs" }),
+            "moduleSystem decides a file's module system only where sourceType does not",
+        ),
+        (
+            json!({ "moduleSystem": "node" }),
+            "moduleSystem must be \"file\" or \"package-type\"",
+        ),
+    ] {
+        let error = compile(
+            "typescript",
+            json!({ "languageOptions": options, "rule": { "kind": "identifier" } }),
+        )
+        .err()
+        .unwrap_or_else(|| panic!("{options} compiles"));
+        assert!(
+            error.reason.contains(expected),
+            "{options}: {}",
+            error.reason
+        );
+    }
+}
+
+#[test]
 fn malformed_package_and_jsx_runtime_conditions_are_rejected() {
     let rule = json!({ "kind": "program" });
     for (language, file, expected) in [
         (
             "typescript",
             json!({ "package": {} }),
-            "must set `exists`, `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`",
+            "must set `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`",
         ),
         (
             "typescript",

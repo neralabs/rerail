@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "21 eslint-plugin-n rules ported to Rerail, 4 of them on and 17 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on the Node test set of real code.",
+  "covers": "24 eslint-plugin-n rules ported to Rerail, 4 of them on and 20 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on the Node test set of real code.",
   "reason": "matches Node.js",
   "match": {
     "any": [
@@ -125,6 +125,13 @@
       "on": false
     },
     {
+      "id": "n-no-path-concat",
+      "document": "rules/n-no-path-concat.json",
+      "title": "eslint-plugin-n no-path-concat: Disallow string concatenation with `__dirname`, `__filename`, and `import.meta` paths",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
       "id": "n-no-process-env",
       "document": "rules/n-no-process-env.json",
       "title": "eslint-plugin-n no-process-env: Disallow the use of `process.env`",
@@ -145,9 +152,23 @@
       "on": false
     },
     {
+      "id": "n-prefer-global-buffer",
+      "document": "rules/n-prefer-global-buffer.json",
+      "title": "eslint-plugin-n prefer-global/buffer: Enforce either `Buffer` or `require(\"buffer\").Buffer`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
       "id": "n-prefer-global-console",
       "document": "rules/n-prefer-global-console.json",
       "title": "eslint-plugin-n prefer-global/console: Enforce either `console` or `require(\"console\")`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-process",
+      "document": "rules/n-prefer-global-process.json",
+      "title": "eslint-plugin-n prefer-global/process: Enforce either `process` or `require(\"process\")`",
       "group": "eslint-plugin-n",
       "on": false
     },

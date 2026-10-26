@@ -339,12 +339,6 @@ export interface CodeRuleDslFileCondition {
  */
 export interface CodeRuleDslPackageCondition {
   /**
-   * Whether the file has a nearest `package.json` at all: the one key a file without a manifest can satisfy
-   * (`exists: false`). Node and eslint-plugin-n run such a `.js` file as CommonJS, where the engine reads it as an ES
-   * module (ESLint's default), so a Node rule pins `languageOptions.sourceType` for it.
-   */
-  exists?: boolean;
-  /**
    * Whether the file is one of the manifest's `bin` targets (the string, or each string value of the object), as
    * eslint-plugin-n's `isBinFile` resolves them against the manifest's folder: the target is the file's path, or that
    * path without `.js`, or without `.js` and a last `/index`. Without a manifest neither `true` nor `false` holds.
@@ -417,6 +411,14 @@ export interface CodeRuleDslLanguageOptions {
    * module (ESLint's default).
    */
   sourceType?: "script" | "module" | "commonjs";
+  /**
+   * How a file decides its module system where `sourceType` is omitted (the two cannot both be set). `file` (default):
+   * as `sourceType` describes. `package-type`: by its extension and its nearest `package.json`'s `type` alone, as
+   * eslint-plugin-n's configs give each file one: `.mjs` and `.mts` are `module`, `.cjs` and `.cts` `commonjs`, any
+   * other file `module` only where `type` is `module`, and `commonjs` where it is anything else, unset, or where there is
+   * no `package.json`; no syntax is read. The query's `when.sourceType` reads the same.
+   */
+  moduleSystem?: "file" | "package-type";
   /** Identifiers to declare global (`readonly`, `writable`) or to remove (`off`). At most 16384. */
   globals?: Record<string, CodeRuleDslGlobalSetting>;
   /**

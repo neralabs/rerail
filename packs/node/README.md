@@ -14,15 +14,9 @@ scored through the engine's production workspace path, with every disagreement d
   findings for that rule are expected, and the 222 copies with that rule's findings fixed by hand, where none is.
 
 The conformance check (`--check`, run in CI) scores the tests and the test set: it fails a port in `rules/` on any
-unexplained FP or FN on either, and reports the candidates without failing them. 21 ports ship, 4 of them on (the ones
-the plugin's recommended configurations turn on: `n-hashbang`, `n-no-deprecated-api`, `n-no-exports-assign`,
-`n-no-process-exit`) and the other 17 off until a repository turns them on. The 3 candidates, and what keeps each out:
-
-| Candidate | Why it is a candidate |
-|---|---|
-| `n-no-path-concat` | misses `__dirname + …` in TypeScript files with `import` syntax under a package.json with no `type`, which the plugin reads as CommonJS (compiled by tsc) and Rerail as an ES module |
-| `n-prefer-global-buffer` | misses `const { Buffer } = require('buffer')` inside a property getter (Electron's sandboxed preload) |
-| `n-prefer-global-process` | misses `const process = require('process')`, a local that shadows the global (Jest) |
+unexplained FP or FN on either, and reports the candidates without failing them. All 24 ports ship, 4 of them on (the
+ones the plugin's recommended configurations turn on: `n-hashbang`, `n-no-deprecated-api`, `n-no-exports-assign`,
+`n-no-process-exit`) and the other 20 off until a repository turns them on.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.
@@ -34,15 +28,16 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin and the pinned corpora (fastify, prettier) |
 | `divergences.json` | Declared disagreements with the plugin |
 | `upstream/eslint-plugin-n/` | The plugin's copied rule tests (`tests/`), one file per test case (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`) and the recorder (`generate.mjs`, sharing `conformance/recorders/eslint-record.mjs`) |
-| `candidates/` | The ports that do not pass yet (`rules/`, listed in `conformance.json`) and the Node probes (`probes/`), scored, never shipped |
+| `candidates/` | The Node probes (`probes/`), scored, never shipped; a port that stops passing goes back to `candidates/rules/` |
 | `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, listing every copied file |
 
-No rule in `rules/` or `candidates/rules/` pins `languageOptions.sourceType` for a file with a package.json (the probes
-do, to state Node facts): each such file keeps its own module system (`.cjs`/`.cts` CommonJS; `.mjs`/`.mts`/`.tsx` an ES
-module; `.js`/`.jsx`/`.ts` by the nearest package.json's `type`, Node's syntax detection where that package.json sets
-no valid `type`), as the plugin's `flat/mixed-esm-and-cjs` config picks `flat/recommended-script` or
-`flat/recommended-module` per file. A file with no package.json is an ES module to the engine; only
-`n-no-exports-assign` reads it as CommonJS, as Node and the plugin do. Only a CommonJS file has `require`, `module`,
+No rule pins `languageOptions.sourceType` (the probes do, to state Node facts). The rules that reach CommonJS names
+through scope set `languageOptions.moduleSystem: "package-type"`, so each file has the module system the plugin's
+`flat/mixed-esm-and-cjs` config gives it, by extension and package.json `type` alone: `.mjs`/`.mts` an ES module,
+`.cjs`/`.cts` CommonJS, any other file an ES module only under `"type": "module"` and CommonJS otherwise (a `type`-less
+package.json and no package.json included, whatever the file's syntax: tsc compiles such TypeScript to CommonJS). The
+engine's own default, Node's syntax detection where `type` is unset and an ES module without a package.json, is left to
+the other packs. Only a CommonJS file has `require`, `module`,
 `exports`, `__dirname` and `__filename`; an ES module has none (`flat/recommended-module` turns them off), so the rules
 that reach them through scope (exports-style, no-exports-assign, no-path-concat, prefer-global/\*, prefer-promises/\*,
 no-deprecated-api) report them in CommonJS files only. Rules upstream reads by name (global-require, no-new-require,
@@ -87,7 +82,7 @@ What each rule matches beyond its one-line description: exact matching, edge cas
 
 ### Module system per file (shared by n-exports-style, n-global-require, n-no-exports-assign, n-no-path-concat, n-prefer-global-*, n-prefer-promises-*)
 
-All ports target eslint-plugin-n 18.4.1 with default options. No sourceType is pinned, so each file keeps its own module system: .cjs/.cts are CommonJS; .mjs/.mts/.tsx are ES modules; .js/.jsx/.ts follow the nearest package.json's `type`, fall back to Node's syntax detection when that package.json sets no valid type, and are ES modules when there is no package.json. Like the plugin's flat/mixed-esm-and-cjs config, a CommonJS file has the globals require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module has none (flat/recommended-module). Consequences: the global `exports` exists only in CommonJS files; `__dirname`/`__filename` path concatenation is caught only in CommonJS (the `-commonjs` clauses), while ES modules are checked for `import.meta` paths; for prefer-global and prefer-promises rules, `require(…)` is reached only in CommonJS files, and in ES modules only imports and `process.getBuiltinModule(…)` are.
+All ports target eslint-plugin-n 18.4.1 with default options. No sourceType is pinned; `moduleSystem: "package-type"` gives each file the plugin's module system: .mjs/.mts are ES modules, .cjs/.cts CommonJS, any other file (.tsx included) an ES module only under package.json `"type": "module"` and CommonJS otherwise, without a package.json too. Like the plugin's flat/mixed-esm-and-cjs config, a CommonJS file has the globals require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module has none (flat/recommended-module). Consequences: the global `exports` exists only in CommonJS files; `__dirname`/`__filename` path concatenation is caught only in CommonJS (the `-commonjs` clauses), while ES modules are checked for `import.meta` paths; for prefer-global and prefer-promises rules, `require(…)` is reached only in CommonJS files, and in ES modules only imports and `process.getBuiltinModule(…)` are.
 
 ### `n-callback-return`
 
@@ -107,7 +102,7 @@ Matches calls of an identifier named `callback` or `cb` (name only, no scope) wh
 
 ### `n-no-exports-assign`
 
-`module.exports = exports = …` and `exports = module.exports = …` are allowed. A file with no package.json at or above it is read as CommonJS (`file.package.exists: false` with `sourceType: commonjs`), as Node runs it and the plugin's configs lint it, where the engine's default for such a file is an ES module; the other Node rules still read it as an ES module.
+`module.exports = exports = …` and `exports = module.exports = …` are allowed.
 
 ### `n-no-mixed-requires`
 
@@ -147,4 +142,4 @@ eslint-plugin-n 18.4.1 n/hashbang (default options). Whether a file needs a sheb
 
 ### `n-no-deprecated-api`
 
-eslint-plugin-n 18.4.1 n/no-deprecated-api (default options; the configured version only words the message). Reports every read, call or construction its deprecation trace map marks (generated from lib/rules/no-deprecated-api.js rawModules and globals), as ReferenceTracker (legacy mode) reaches it: require/process.getBuiltinModule/ESM imports of the modules (with and without `node:`), and `export * from` a module once for each deprecated member it re-exports (one clause per member, as ReferenceTracker reports it), global variables (declared by globals.node, the ES builtins or `/* global */` comments) and members of global/globalThis, through constant aliases, (nested) destructuring, defaults and member chains. No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, `__dirname` and `__filename` (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `require` and its members are reached only in a CommonJS file; Buffer, global and process in every file.
+eslint-plugin-n 18.4.1 n/no-deprecated-api (default options; the configured version only words the message). Reports every read, call or construction its deprecation trace map marks (generated from lib/rules/no-deprecated-api.js rawModules and globals), as ReferenceTracker (legacy mode) reaches it: require/process.getBuiltinModule/ESM imports of the modules (with and without `node:`), and `export * from` a module once for each deprecated member it re-exports (one clause per member, as ReferenceTracker reports it), global variables (declared by globals.node, the ES builtins or `/* global */` comments) and members of global/globalThis, through constant aliases, (nested) destructuring, defaults and member chains. No sourceType is pinned; `moduleSystem: "package-type"` gives each file the plugin's module system (.mjs/.mts an ES module, .cjs/.cts CommonJS, any other file an ES module only under package.json `"type": "module"`). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, `__dirname` and `__filename` (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `require` and its members are reached only in a CommonJS file; Buffer, global and process in every file.

@@ -1001,6 +1001,9 @@ fn compile_query_as(
                         file: file.clone(),
                         applies,
                         source_types: source_types.clone(),
+                        package_type_gate: options
+                            .as_deref()
+                            .is_some_and(|options| options.package_type_module_system),
                         transform: transform.clone(),
                     });
                 }

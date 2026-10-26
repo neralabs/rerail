@@ -689,7 +689,6 @@ const moduleRegex = z
   .refine(condition => condition.regex !== undefined || condition.notRegex !== undefined, "Set regex, notRegex or both.");
 const packageConditionSchema = z
   .object({
-    exists: z.boolean().optional(),
     bin: z.boolean().optional(),
     nodeVersion: z.object({ subsetOf: nonEmptyString }).strict().optional(),
     dependsOn: z.array(nonEmptyString).min(1).optional(),
@@ -697,7 +696,7 @@ const packageConditionSchema = z
     serverGraph: z.boolean().optional(),
   })
   .strict()
-  .refine(condition => Object.values(condition).some(value => value !== undefined), "Set exists, bin, nodeVersion, dependsOn, path or serverGraph.");
+  .refine(condition => Object.values(condition).some(value => value !== undefined), "Set bin, nodeVersion, dependsOn, path or serverGraph.");
 export const codeRuleFileConditionSchema = z
   .object({
     path: moduleRegex.optional(),
@@ -720,6 +719,7 @@ export const codeRuleLanguageOptionsSchema = z
       .union([z.literal("latest"), z.number().int().refine(isEcmaVersion, `ecmaVersion must be "latest", 3, 5, 6 to ${CODE_RULE_LATEST_ECMA_VERSION - 2009}, or 2015 to ${CODE_RULE_LATEST_ECMA_VERSION}.`)])
       .optional(),
     sourceType: z.enum(CODE_RULE_SOURCE_TYPES).optional(),
+    moduleSystem: z.enum(["file", "package-type"]).optional(),
     globals: z
       .record(resolveIdentifier, z.union([z.enum(CODE_RULE_GLOBAL_SETTINGS), z.boolean(), z.null()]))
       .refine(globals => Object.keys(globals).length <= CODE_RULE_MAX_LANGUAGE_GLOBALS, `At most ${CODE_RULE_MAX_LANGUAGE_GLOBALS} globals.`)
@@ -740,6 +740,10 @@ export const codeRuleLanguageOptionsSchema = z
   .refine(
     options => (options.sourceType ?? "module") !== "module" || options.ecmaVersion === undefined || options.ecmaVersion === "latest" || options.ecmaVersion >= 6,
     'sourceType "module" (the default) needs ecmaVersion 2015 or later; ESLint refuses it.',
+  )
+  .refine(
+    options => options.sourceType === undefined || options.moduleSystem === undefined || options.moduleSystem === "file",
+    "moduleSystem decides a file's module system only where sourceType does not; set one of them.",
   ) as unknown as z.ZodType<CodeRuleDslLanguageOptions>;
 
 const lineCountValue = z.number().int().nonnegative();

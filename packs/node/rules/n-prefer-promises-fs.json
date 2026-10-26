@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-promises-fs",
-  "revision": 4,
+  "revision": 5,
   "mode": "steer",
   "description": "Use the promise-based fs API instead of callback-style fs functions such as readFile and writeFile, for cleaner async code.",
   "scope": {
@@ -24,6 +24,7 @@
         "ast": {
           "language": "typescript",
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }

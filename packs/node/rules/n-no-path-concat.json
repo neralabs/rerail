@@ -723,6 +723,7 @@
             ]
           },
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }
@@ -782,6 +783,7 @@
             ]
           },
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }
@@ -846,6 +848,7 @@
             "sourceType": "commonjs"
           },
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly",
               "__dirname": "readonly",
@@ -904,6 +907,7 @@
             "sourceType": "commonjs"
           },
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly",
               "__dirname": "readonly",

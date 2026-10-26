@@ -63,7 +63,7 @@ pub(super) use relation::{set_answers_off, set_same_key_off};
 pub(crate) use resolve::{
     FileGates, calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives,
     file_lines, file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,
-    file_phpstan, file_psalm, file_rerail_ignores, file_source_type, file_sqlfluff,
+    file_phpstan, file_psalm, file_rerail_ignores, file_source_type_for, file_sqlfluff,
     file_vue_directives, table_reading,
 };
 pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
@@ -126,6 +126,10 @@ pub(super) struct GrammarMatcher {
     /// The source types `when.sourceType` lets a file have where the query leaves `sourceType`
     /// to each file (`SourceType::of_file`); a file of another matches nothing (`run_clause`).
     pub(super) source_types: Option<Vec<SourceType>>,
+    /// Whether `when.sourceType` reads each file's module system by its extension and package
+    /// type (`languageOptions.moduleSystem: "package-type"`, `SourceType::by_package_type`), as the
+    /// query's scope does, rather than its own.
+    pub(super) package_type_gate: bool,
     /// Whether the matcher can reach an unknown verdict; see `reads_values`.
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.

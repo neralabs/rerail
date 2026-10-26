@@ -52,7 +52,7 @@ OXLINT_NODE_RULES = {"callback-return", "exports-style", "global-require", "hand
 # The ports that pass the pack's conformance check on eslint-plugin-n's tests and on the Node test set, written to
 # packs/node/rules/ (n-no-process-exit, hand-written, ships too); every other port is written to
 # packs/node/candidates/rules/. Each is removed from the other directory, so promoting a port moves its document.
-SHIPPED = {"n-callback-return", "n-exports-style", "n-global-require", "n-handle-callback-err", "n-hashbang", "n-no-callback-literal",
+SHIPPED = {"n-callback-return", "n-exports-style", "n-no-path-concat", "n-prefer-global-buffer", "n-prefer-global-process", "n-global-require", "n-handle-callback-err", "n-hashbang", "n-no-callback-literal",
            "n-no-deprecated-api", "n-no-exports-assign", "n-no-mixed-requires", "n-no-new-require", "n-no-process-env",
            "n-no-sync", "n-prefer-global-console", "n-prefer-global-text-decoder", "n-prefer-global-text-encoder",
            "n-prefer-global-url", "n-prefer-global-url-search-params", "n-prefer-node-protocol", "n-prefer-promises-dns",
@@ -150,8 +150,11 @@ FIRST = {"position": 1, "ofRule": NOT_COMMENT}
 LAST = {"position": 1, "reverse": True, "ofRule": NOT_COMMENT}
 SECOND_LAST = {"position": 2, "reverse": True, "ofRule": NOT_COMMENT}
 # No sourceType: each file keeps its own module system (the engine reads it from the extension and package.json).
-FILE_LO = {}
-NODE_LO = {"globals": {"process": "readonly"}}
+# eslint-plugin-n's configs give each file its module system by extension and package.json `type` alone
+# (flat/mixed-esm-and-cjs: .mjs/.mts modules, .cjs/.cts CommonJS, any other file a module only under `type: module`,
+# CommonJS otherwise and without a manifest), so the rules that reach CommonJS names through scope read it so too.
+FILE_LO = {"moduleSystem": "package-type"}
+NODE_LO = {**FILE_LO, "globals": {"process": "readonly"}}
 # Each port's description: the steer an agent reads.
 DESCRIPTIONS = {
     "n-callback-return": "Return right after calling a callback named callback, cb or next; otherwise the function keeps running and the callback can fire twice.",
@@ -385,7 +388,7 @@ def no_path_concat_doc():
         {"kind": "parenthesized_expression", "has": {"matches": "first-slash"}},
         {"kind": "template_string", "has": {"nthChild": 1, "any": [slash_text, {"kind": "template_substitution", "has": {"matches": "first-slash"}}]}}]}
     # __dirname/__filename are CommonJS wrapper bindings: declared only where the file is CommonJS.
-    commonjs = {"when": {"sourceType": "commonjs"}, "languageOptions": {"globals": {"process": "readonly", "__dirname": "readonly", "__filename": "readonly"}}}
+    commonjs = {"when": {"sourceType": "commonjs"}, "languageOptions": {**FILE_LO, "globals": {"process": "readonly", "__dirname": "readonly", "__filename": "readonly"}}}
     other = {"when": {"sourceType": ["script", "module"]}, "languageOptions": NODE_LO}
     checks = []
     for suffix, options in (("", other), ("-commonjs", commonjs)):
@@ -452,11 +455,8 @@ def syntax_docs():
                           {"inside": {"kind": "assignment_expression", "all": [{"has": {"field": "left", **module_exports}}]}, "nthChild": {"position": 1, "reverse": True}},
                           {"has": {"field": "right", "kind": "assignment_expression", "has": {"field": "left", **module_exports}}}]}}
     exports_message = "Assign to module.exports instead of exports, which only rebinds a local variable."
-    # A file with no package.json is CommonJS to Node and to the plugin's configs (flat/mixed-esm-and-cjs gives it
-    # flat/recommended-script), where the engine's own default is an ES module: that file is read as CommonJS here.
     docs.append(policy("n-no-exports-assign", "n/no-exports-assign", DESCRIPTIONS["n-no-exports-assign"], [
-        {"id": "upstream", "ast": {"languageOptions": FILE_LO, "file": {"package": {"exists": True}}, "rule": exports_assign}, "message": exports_message},
-        {"id": "no-manifest", "ast": {"languageOptions": {**FILE_LO, "sourceType": "commonjs"}, "file": {"package": {"exists": False}}, "rule": exports_assign}, "message": exports_message}]))
+        {"id": "upstream", "ast": {"languageOptions": FILE_LO, "rule": exports_assign}, "message": exports_message}]))
 
     sync_id = {"any": [{"kind": "identifier"}, {"kind": "property_identifier"}], "regex": "Sync$"}
     callee_member = {"kind": "member_expression", "inside": {"kind": "call_expression", "field": "function", **NOT_TAGGED}}
@@ -694,7 +694,7 @@ DEPRECATED_API_MESSAGES = {
 def no_deprecated_api_doc(trace):
     utils, report = tracker(trace["modules"], trace["globals"])
     # `global` is Node's (globals.node) in both module systems; require only CommonJS's, as the file decides.
-    lo = {"globals": {"Buffer": "readonly", "global": "readonly", "process": "readonly"}}
+    lo = {**FILE_LO, "globals": {"Buffer": "readonly", "global": "readonly", "process": "readonly"}}
     checks = [{"id": "trace-map", "define": {"language": "typescript", "utils": utils}}]
     ids = set()
     for root, alts in report.items():

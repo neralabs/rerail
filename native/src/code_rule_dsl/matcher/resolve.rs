@@ -186,7 +186,7 @@ fn is_strict<D: Doc>(options: &LanguageOptions, node: &Node<'_, D>) -> bool {
     if !options.strict_mode() {
         return false;
     }
-    if options.all_strict(file_source_type()) {
+    if options.all_strict(file_source_type_for(options)) {
         return true;
     }
     std::iter::once(node.clone())
@@ -256,7 +256,7 @@ impl Resolves {
             let text = node.text();
             return (self.global_any || self.globals.contains(text.as_ref()))
                 && self.options.as_ref().is_none_or(|options| {
-                    options.declares_in(&text, VALUE, None, file_source_type())
+                    options.declares_in(&text, VALUE, None, file_source_type_for(options))
                 });
         }
         if self.seen_before {
@@ -461,11 +461,9 @@ impl Resolves {
     /// strict; never in a module, where it is `undefined`. With `sloppyFunctions`, also in an
     /// ordinary function that is not strict.
     fn is_global_this<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        let Some(options) = self
-            .options
-            .as_ref()
-            .filter(|options| options.source_type(file_source_type()) != SourceType::Module)
-        else {
+        let Some(options) = self.options.as_ref().filter(|options| {
+            options.source_type(file_source_type_for(options)) != SourceType::Module
+        }) else {
             return false;
         };
         let mut child = node.clone();
@@ -499,7 +497,7 @@ impl Resolves {
         let Some(options) = self
             .options
             .as_ref()
-            .filter(|options| options.global_top_level(file_source_type()))
+            .filter(|options| options.global_top_level(file_source_type_for(options)))
         else {
             return false;
         };
@@ -548,7 +546,7 @@ impl Resolves {
             && self
                 .options
                 .as_ref()
-                .is_some_and(|options| options.global_top_level(file_source_type()))
+                .is_some_and(|options| options.global_top_level(file_source_type_for(options)))
             && let Some(reference) = table.reference(&node.range())
             && let Some((0, _)) = table.resolve_lexical_scope(reference, name)
         {
@@ -572,10 +570,14 @@ impl Resolves {
         if let Some(options) = &self.options {
             let directives = self.directives.then_some(&table.directives);
             return table.reference(&node.range()).is_some_and(|reference| {
-                options.declares_in(name, reference.spaces, directives, file_source_type())
-                    && table
-                        .resolve(reference, name)
-                        .is_none_or(|binding| !binding.shadows())
+                options.declares_in(
+                    name,
+                    reference.spaces,
+                    directives,
+                    file_source_type_for(options),
+                ) && table
+                    .resolve(reference, name)
+                    .is_none_or(|binding| !binding.shadows())
             });
         }
         let listed = if self.directives {
@@ -903,6 +905,9 @@ struct FileScopes {
     /// The ECMA file's module system for queries that leave `sourceType` to it
     /// (`SourceType::of_file`); `None` until its syntax decides it (`decide_file_source_type`).
     source_type: Option<SourceType>,
+    /// The ECMA file's module system by its extension and package type alone, for queries that
+    /// read it (`moduleSystem: "package-type"`, `SourceType::by_package_type`).
+    package_type_source_type: SourceType,
     /// The ECMA file's nearest `package.json`, which decides its JSX runtime where its text does
     /// not (`decide_file_jsx_runtime`).
     package: Option<Arc<Manifest>>,
@@ -981,6 +986,7 @@ impl FileScopeSlot {
             has_errors,
             stub: false,
             source_type: Some(SourceType::Module),
+            package_type_source_type: SourceType::Module,
             package: None,
             jsx_runtime: None,
             values: HashMap::new(),
@@ -1012,11 +1018,13 @@ impl FileScopeSlot {
     pub(crate) fn file(self, file: &FileInput) -> Self {
         let stub = is_stub_file(&file.path);
         let source_type = SourceType::of_file(&file.language, &file.path, file.package_type());
+        let package_type_source_type = SourceType::by_package_type(&file.path, file.package_type());
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
                 slot.stub = stub;
                 slot.path = Some(Arc::from(file.path.as_str()));
                 slot.source_type = source_type;
+                slot.package_type_source_type = package_type_source_type;
                 slot.package.clone_from(&file.package);
             }
         });
@@ -1114,6 +1122,9 @@ impl<'a, 'r, D: Doc> FileGates<'a, 'r, D> {
     pub(crate) fn admit(&self, matcher: &GrammarMatcher) -> bool {
         let file = self.file;
         let source_type = matcher.source_types.as_ref().map(|_| {
+            if matcher.package_type_gate {
+                return SourceType::by_package_type(&file.path, file.package_type());
+            }
             *self.source_type.get_or_init(|| {
                 SourceType::of_file(&file.language, &file.path, file.package_type())
                     .unwrap_or_else(|| syntax_source_type(&self.root))
@@ -1133,11 +1144,29 @@ impl<'a, 'r, D: Doc> FileGates<'a, 'r, D> {
     }
 }
 
-/// The module system `decide_file_source_type` gave the file being matched.
-pub(crate) fn file_source_type() -> SourceType {
+/// The module system the file being matched has by its extension and package type
+/// (`SourceType::by_package_type`); ESLint's `module` outside a file evaluation.
+pub(super) fn file_package_type_source_type() -> SourceType {
     FILE_SCOPES.with_borrow(|slot| {
         slot.as_ref()
-            .and_then(|slot| slot.source_type)
+            .map_or(SourceType::Module, |slot| slot.package_type_source_type)
+    })
+}
+
+/// The module system the file being matched has for a query with `options` that leaves
+/// `sourceType` to it: the one its extension and package type give it where the query reads that
+/// (`moduleSystem: "package-type"`), else the one `decide_file_source_type` gave it. ESLint's
+/// `module` outside a file evaluation.
+pub(crate) fn file_source_type_for(options: &LanguageOptions) -> SourceType {
+    FILE_SCOPES.with_borrow(|slot| {
+        slot.as_ref()
+            .and_then(|slot| {
+                if options.package_type_module_system {
+                    Some(slot.package_type_source_type)
+                } else {
+                    slot.source_type
+                }
+            })
             .unwrap_or(SourceType::Module)
     })
 }
@@ -1479,7 +1508,7 @@ pub(super) fn unshadowed_global<D: Doc>(
     }
     if python.is_some_and(|python| !python.declares(name))
         || options.is_some_and(|options| {
-            !options.declares_in(name, VALUE | TYPE, None, file_source_type())
+            !options.declares_in(name, VALUE | TYPE, None, file_source_type_for(options))
         })
     {
         return Some(false);

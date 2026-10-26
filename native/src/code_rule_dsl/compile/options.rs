@@ -17,6 +17,7 @@ use serde_json::{Map, Value};
 const LANGUAGE_OPTIONS_KEYS: &[&str] = &[
     "ecmaVersion",
     "sourceType",
+    "moduleSystem",
     "globals",
     "parserOptions",
     "jsxPragma",
@@ -188,6 +189,21 @@ pub(crate) fn compile_language_options(value: &Value, path: &str) -> Result<Lang
     );
     options.global_return = global_return;
     options.implied_strict = implied_strict;
+    options.package_type_module_system = match value.get("moduleSystem") {
+        None => false,
+        Some(Value::String(system)) if system == "file" => false,
+        Some(Value::String(system)) if system == "package-type" => true,
+        Some(_) => {
+            return Err(invalid(format!(
+                "{path}/moduleSystem must be \"file\" or \"package-type\""
+            )));
+        }
+    };
+    if options.package_type_module_system && options.source_type.is_some() {
+        return Err(invalid(format!(
+            "{path}: moduleSystem decides a file's module system only where sourceType does not; set one of them"
+        )));
+    }
     if let Some(pragma) = jsx_name(value.get("jsxPragma"), "jsxPragma", &path)? {
         options.jsx_pragma = pragma;
     }
@@ -554,18 +570,11 @@ pub(super) fn compile_file_condition(
             .is_some_and(|package| names.iter().any(|name| package.contains_key(*name)))
     };
     let text_shaped = shaped(&["regex", "notRegex"]);
-    let manifest_shaped = shaped(&[
-        "exists",
-        "bin",
-        "nodeVersion",
-        "dependsOn",
-        "path",
-        "serverGraph",
-    ]);
+    let manifest_shaped = shaped(&["bin", "nodeVersion", "dependsOn", "path", "serverGraph"]);
     let (manifest, package) = match file.get("package") {
         Some(_) if keys.manifests && text_shaped => {
             return Err(invalid(format!(
-                "{path}/package: {language}'s package reads the nearest package.json: set exists, bin, nodeVersion, dependsOn, path or serverGraph"
+                "{path}/package: {language}'s package reads the nearest package.json: set bin, nodeVersion, dependsOn, path or serverGraph"
             )));
         }
         Some(value) if keys.manifests => (
@@ -646,19 +655,12 @@ fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<
     let package = object(value, at)?;
     reject_unknown(
         package,
-        &[
-            "exists",
-            "bin",
-            "nodeVersion",
-            "dependsOn",
-            "path",
-            "serverGraph",
-        ],
+        &["bin", "nodeVersion", "dependsOn", "path", "serverGraph"],
         at,
     )?;
     if package.is_empty() {
         return Err(invalid(format!(
-            "{at} must set `exists`, `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`"
+            "{at} must set `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`"
         )));
     }
     let node_version = package
@@ -698,7 +700,6 @@ fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<
         })
         .transpose()?;
     Ok(PackageCondition {
-        exists: flag_value(package.get("exists"), &format!("{at}/exists"))?,
         bin: flag_value(package.get("bin"), &format!("{at}/bin"))?,
         node_version,
         depends_on,

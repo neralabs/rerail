@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-promises-dns",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Use the promise-based dns API instead of the callback-style dns functions and Resolver, for cleaner async code.",
   "scope": {
@@ -24,6 +24,7 @@
         "ast": {
           "language": "typescript",
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }
@@ -653,6 +654,7 @@
         "ast": {
           "language": "typescript",
           "languageOptions": {
+            "moduleSystem": "package-type",
             "globals": {
               "process": "readonly"
             }
