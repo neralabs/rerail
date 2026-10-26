@@ -18,6 +18,7 @@ pub(in crate::code_rule_dsl) struct Database {
     pub(super) storage: std::cell::RefCell<super::storage::Storage>,
     pub(super) bindings: std::cell::RefCell<super::shared::Bindings>,
     pub(super) program_bytes: std::cell::Cell<usize>,
+    pub(super) descriptor_bytes: std::cell::Cell<usize>,
     pub(super) programs: std::cell::RefCell<ProgramCache>,
     pub(super) record_relations: bool,
     pub(super) modules:
@@ -33,7 +34,13 @@ impl Database {
             let schema=(||->rusqlite::Result<std::collections::BTreeMap<String,i64>> {
                 self.prepare("SELECT type,count(*) FROM temp.sqlite_schema GROUP BY type")?.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect()
             })();
-            serde_json::json!({"schema":schema.ok(),"nativeModules":self.modules.borrow().len(),"physicalPrograms":self.programs.borrow().len(),
+            let mut prepared=0;
+            // SAFETY: the connection's statement list stays live on this worker.
+            unsafe {
+                let mut statement=rusqlite::ffi::sqlite3_next_stmt(self.handle(),std::ptr::null_mut());
+                while !statement.is_null() {prepared+=1;statement=rusqlite::ffi::sqlite3_next_stmt(self.handle(),statement);}
+            }
+            serde_json::json!({"schema":schema.ok(),"preparedStatements":prepared,"nativeModules":self.modules.borrow().len(),"physicalPrograms":self.programs.borrow().len(),
                 "programBytes":self.program_bytes.get(),"regexRegistrations":usize::from(self.regex_installed.get())*3,"sourceRegistrations":usize::from(self.source_installed.get()),
                 "scopedStorage":self.storage.borrow().inventory(),"residentSqlBytes":self.resident_bytes().ok()})
         });
@@ -94,7 +101,9 @@ impl Database {
             }
             total = total.saturating_add(usize::try_from(current.max(0)).unwrap_or(usize::MAX));
         }
-        Ok(total.saturating_add(self.program_bytes.get()))
+        Ok(total
+            .saturating_add(self.program_bytes.get())
+            .saturating_add(self.descriptor_bytes.get()))
     }
     pub(in crate::code_rule_dsl) fn open() -> rusqlite::Result<Self> {
         Self::from_connection(Connection::open_in_memory()?)
@@ -125,6 +134,7 @@ impl Database {
             record_relations: cfg!(feature = "code-rule-profile")
                 && std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_some(),
             program_bytes: std::cell::Cell::new(0),
+            descriptor_bytes: std::cell::Cell::new(0),
         })
     }
 

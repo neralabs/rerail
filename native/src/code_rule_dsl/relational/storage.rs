@@ -121,6 +121,13 @@ impl Storage {
         }
         Ok(())
     }
+    pub fn populated(&mut self, name: &str, rows: usize) {
+        if contexts::managed(name) {
+            self.contexts.populated(name, rows);
+        } else {
+            self.written(name, rows != 0);
+        }
+    }
     pub fn written(&mut self, name: &str, rows: bool) {
         if contexts::managed(name) {
             self.contexts.written(name, rows);

@@ -343,7 +343,10 @@ fn hundreds_of_suspended_consumers_reuse_one_layout_and_restore_exact_input_doma
         let mut metrics = Metrics::default();
         let mut session =
             Session::new(job.code_rule, job.clause, job.inputs, &mut metrics, &pool).unwrap();
-        assert!(session.advance().unwrap().is_some());
+        assert!(matches!(
+            session.advance().unwrap(),
+            super::super::Step::Native(_)
+        ));
         sessions.push(session);
     }
     for session in &sessions[1..] {

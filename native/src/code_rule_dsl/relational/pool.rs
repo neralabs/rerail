@@ -111,10 +111,13 @@ impl Pool {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-pool-trim", "admission");
         if let Some(db) = self.0.db.get() {
+            let _ = db.progress_handler(0, None::<fn() -> bool>);
             if db.bindings.borrow().data_bytes() > 4 * 1024 * 1024 {
                 db.bindings.borrow_mut().forget();
             }
-            let _ = db.storage.borrow_mut().evict(db, capacity);
+            if db.storage.borrow_mut().evict(db, capacity).is_err() {
+                db.healthy.set(false);
+            }
         }
     }
     pub fn take(&self, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Lease> {

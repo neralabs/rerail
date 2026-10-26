@@ -1,5 +1,5 @@
 //! Admit SQL consumers by resident capacity, then run broad structural waves.
-use super::{Evaluation, Inputs, Job, Preparation, Session, failure, producer, sql_error};
+use super::{Evaluation, Inputs, Job, Preparation, Session, Step, failure, producer, sql_error};
 use crate::code_rule_dsl::model::{CompiledCodeRule, Metrics};
 use crate::code_rule_dsl::{budget::Context, model::CompiledClause};
 use std::collections::VecDeque;
@@ -19,7 +19,6 @@ struct Ready<'a> {
     clause: &'a CompiledClause,
     session: Session<'a>,
     budget: Context,
-    demand: producer::Demand,
     sql_bytes: usize,
 }
 fn error(result: &mut Evaluation, clause: &CompiledClause, code: &str, message: &str) {
@@ -39,11 +38,7 @@ fn observe(result: &mut Evaluation, clause: &CompiledClause, budget: &Context) {
         );
     }
 }
-fn advance(
-    session: &mut Session<'_>,
-    context: &mut Context,
-    result: &mut Evaluation,
-) -> Option<producer::Demand> {
+fn advance(session: &mut Session<'_>, context: &mut Context, result: &mut Evaluation) -> Step {
     #[cfg(feature = "code-rule-profile")]
     let _context = crate::code_rule_dsl::profile::trace::Context::enter(
         &session.code_rule.id,
@@ -54,8 +49,9 @@ fn advance(
     let _execute =
         crate::code_rule_dsl::profile::trace::Span::start("consumer-execute", &session.clause.id);
     match context.run(|| session.advance()) {
-        Ok(Some(demand)) => Some(demand),
-        Ok(None) => {
+        Ok(Step::Native(demand)) => Step::Native(demand),
+        Ok(Step::Sql) => Step::Sql,
+        Ok(Step::Done) => {
             match context.run(|| session.finish()) {
                 Ok(findings) => {
                     result.metrics.witnesses = findings.len();
@@ -63,11 +59,11 @@ fn advance(
                 }
                 Err(e) => error(result, session.clause, "relational-failed", &e.reason),
             }
-            None
+            Step::Done
         }
         Err(e) => {
             error(result, session.clause, "relational-failed", &e.reason);
-            None
+            Step::Done
         }
     }
 }
@@ -196,7 +192,7 @@ fn run_prepared(
                     .map(Some)
                 });
                 results[index].metrics.merge(extraction);
-                let mut session = match session {
+                let session = match session {
                     Ok(Some(s)) => s,
                     Ok(None) => {
                         stats.skipped_empty += 1;
@@ -213,13 +209,6 @@ fn run_prepared(
                         observe(&mut results[index], job.clause, &job.budget);
                         continue;
                     }
-                };
-                let Some(demand) = advance(&mut session, &mut job.budget, &mut results[index])
-                else {
-                    observe(&mut results[index], job.clause, &job.budget);
-                    drop(session);
-                    pool.trim(sql_limit.saturating_sub(sql_bytes));
-                    continue;
                 };
                 let bytes = match session.db.resident_bytes() {
                     Ok(n) => n,
@@ -238,7 +227,6 @@ fn run_prepared(
                     clause: job.clause,
                     session,
                     budget: job.budget,
-                    demand,
                     sql_bytes: bytes,
                 }
             };
@@ -249,12 +237,13 @@ fn run_prepared(
             stats.peak_sql_bytes = stats.peak_sql_bytes.max(sql_bytes.max(ready.sql_bytes));
             if !cohort.is_empty()
                 && (sql_bytes.max(ready.sql_bytes) > sql_limit
-                    || !footprint.admit(&ready.demand, input_limit))
+                    || !footprint.admit_trees(&ready.session.syntax_trees, input_limit))
             {
                 deferred = Some(ready);
                 break;
             }
-            if cohort.is_empty() && !footprint.admit(&ready.demand, input_limit) {
+            if cohort.is_empty() && !footprint.admit_trees(&ready.session.syntax_trees, input_limit)
+            {
                 error(
                     &mut results[ready.index],
                     ready.clause,
@@ -290,7 +279,7 @@ fn run_prepared(
             .iter()
             .map(|r| (r.index, r.clause))
             .collect::<Vec<_>>();
-        execute(cohort, &mut results, &mut allowance, input_limit);
+        execute(cohort, &mut results, &mut allowance, input_limit, &pool);
         if let Err(maintenance) = pool.statistics_boundary() {
             pool.invalidate();
             for (index, clause) in cohort_ids {
@@ -331,31 +320,75 @@ fn execute(
     results: &mut [Evaluation],
     allowance: &mut producer::Allowance,
     input_limit: usize,
+    pool: &super::pool::Pool,
 ) {
     let mut sessions = Vec::new();
     let mut contexts = Vec::new();
     let mut stages = Vec::new();
     let mut identities = Vec::new();
-    let mut pending = VecDeque::new();
-    for (local, ready) in cohort.into_iter().enumerate() {
+    for ready in cohort {
         identities.push((ready.index, ready.clause));
         contexts.push(ready.budget);
         stages.push(producer::Stages::default());
         sessions.push(Some(ready.session));
-        pending.push_back((local, ready.demand));
     }
-    while !pending.is_empty() {
-        // Reject depth exhaustion before it can consume the wave's resident capacity.
+    let mut active = (0..sessions.len()).collect::<Vec<_>>();
+    let mut pending = VecDeque::new();
+    loop {
+        // Ordered family frontiers: populate all original scopes, refresh once,
+        // then prepare their readers. No arbitrary graph scheduler is needed.
+        while !active.is_empty() {
+            let mut next = Vec::new();
+            for local in active {
+                let (index, _) = identities[local];
+                let session = sessions[local].as_mut().unwrap();
+                match advance(session, &mut contexts[local], &mut results[index]) {
+                    Step::Sql => next.push(local),
+                    Step::Native(demand) => pending.push_back((local, demand)),
+                    Step::Done => {
+                        sessions[local] = None;
+                    }
+                }
+            }
+            if !next.is_empty() {
+                pool.trim(SQL_RESIDENT_BYTES);
+                if let Err(error) = pool.statistics_boundary() {
+                    for (local, session) in sessions.iter_mut().enumerate() {
+                        if session.take().is_some() {
+                            let (index, clause) = identities[local];
+                            self::error(
+                                &mut results[index],
+                                clause,
+                                "relational-failed",
+                                &error.reason,
+                            );
+                        }
+                    }
+                    pool.invalidate();
+                    pending.clear();
+                    next.clear();
+                }
+            }
+            active = next;
+        }
+        if pending.is_empty() {
+            break;
+        }
         pending.retain(|(local, _)| match stages[*local].reserve() {
             Ok(()) => true,
-            Err(e) => {
+            Err(error) => {
                 let (index, clause) = identities[*local];
-                error(&mut results[index], clause, "relational-failed", &e.reason);
+                self::error(
+                    &mut results[index],
+                    clause,
+                    "relational-failed",
+                    &error.reason,
+                );
                 sessions[*local] = None;
                 false
             }
         });
-        let mut next = VecDeque::new();
+        let mut next = Vec::new();
         while !pending.is_empty() {
             let mut footprint = producer::layout::Footprint::default();
             let mut group = Vec::new();
@@ -384,20 +417,21 @@ fn execute(
             for (local, output) in slots.into_iter().zip(outputs) {
                 let (index, clause) = identities[local];
                 let session = sessions[local].as_mut().unwrap();
-                let result = output.and_then(|out| contexts[local].run(|| session.publish(out)));
-                if let Err(e) = result {
-                    error(&mut results[index], clause, "relational-failed", &e.reason);
-                    sessions[local] = None;
-                    continue;
-                }
-                if let Some(demand) = advance(session, &mut contexts[local], &mut results[index]) {
-                    next.push_back((local, demand));
-                } else {
-                    sessions[local] = None;
+                match output.and_then(|out| contexts[local].run(|| session.publish(out))) {
+                    Ok(()) => next.push(local),
+                    Err(error) => {
+                        self::error(
+                            &mut results[index],
+                            clause,
+                            "relational-failed",
+                            &error.reason,
+                        );
+                        sessions[local] = None;
+                    }
                 }
             }
         }
-        pending = next;
+        active = next;
     }
     for (local, (index, clause)) in identities.into_iter().enumerate() {
         observe(&mut results[index], clause, &contexts[local]);

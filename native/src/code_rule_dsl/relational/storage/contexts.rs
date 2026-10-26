@@ -40,6 +40,8 @@ struct Layout {
 }
 #[derive(Default)]
 struct Data {
+    #[cfg(feature = "code-rule-profile")]
+    rows: usize,
     dirty: bool,
     ready: bool,
     pins: usize,
@@ -220,6 +222,13 @@ impl Contexts {
         }
         Ok(())
     }
+    pub fn populated(&mut self, name: &str, rows: usize) {
+        self.written(name, rows != 0);
+        #[cfg(feature = "code-rule-profile")]
+        if let Some(key) = self.key(name) {
+            self.data.entry(key).or_default().rows = rows;
+        }
+    }
     pub fn written(&mut self, name: &str, rows: bool) {
         if let Some(key) = self.key(name) {
             self.data.entry(key.clone()).or_default().dirty |= rows;
@@ -296,13 +305,19 @@ impl Contexts {
         Ok(())
     }
     pub fn evict(&mut self, db: &Connection, capacity: usize) -> Result<()> {
-        while self.completed.len() > 128 || self.bytes() > capacity.min(4 * 1024 * 1024) {
+        let mut retired = BTreeSet::new();
+        let mut retained_bytes = self.bytes();
+        while self.completed.len() > 128 || retained_bytes > capacity.min(4 * 1024 * 1024) {
             let Some(key) = self.completed.pop_front() else {
                 break;
             };
-            if self.data.get(&key).is_some_and(|d| d.pins == 0) {
-                self.remove(db, &key)?;
+            if self.data.get(&key).is_some_and(|d| d.pins == 0) && retired.insert(key) {
+                retained_bytes = retained_bytes.saturating_sub(128);
             }
+        }
+        if let Err(error) = self.remove_batch(db, &retired) {
+            self.completed.extend(retired);
+            return Err(error);
         }
         // Only idle layouts can be evicted. Never drop a suspended consumer's schema.
         let layout_bytes = self
@@ -339,6 +354,36 @@ impl Contexts {
         }
         Ok(())
     }
+    fn remove_batch(&mut self, db: &Connection, keys: &BTreeSet<(String, usize)>) -> Result<()> {
+        let mut groups = BTreeMap::<&str, Vec<usize>>::new();
+        for (slot, id) in keys {
+            if self.data.get(&(slot.clone(), *id)).is_some_and(|d| d.dirty) {
+                groups.entry(slot).or_default().push(*id);
+            } else {
+                self.data.remove(&(slot.clone(), *id));
+            }
+        }
+        for (slot, ids) in groups {
+            for batch in ids.chunks(256) {
+                let sql = format!(
+                    "DELETE FROM {} WHERE {} IN ({})",
+                    quote(&backing(slot)),
+                    quote(&self.layouts[slot].key_column),
+                    vec!["?"; batch.len()].join(",")
+                );
+                db.execute(
+                    &sql,
+                    rusqlite::params_from_iter(batch.iter().map(|&id| id as i64)),
+                )?;
+                self.lifecycle.rowset_deletions += batch.len();
+                self.layouts.get_mut(slot).unwrap().statistics_dirty = true;
+                for &id in batch {
+                    self.data.remove(&(slot.to_owned(), id));
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn discard(&mut self, db: &Connection, name: &str) -> Result<()> {
         db.execute_batch(&format!(
             "DROP VIEW IF EXISTS {}; DROP TABLE IF EXISTS {}",
@@ -353,7 +398,7 @@ impl Contexts {
     #[cfg(feature = "code-rule-profile")]
     pub fn inventory(&self) -> serde_json::Value {
         serde_json::json!({"layouts":self.layouts.len(),"dataBindings":self.data.len(),"pendingOwners":self.owners.len(),
-            "dataPins":self.data.values().map(|d|d.pins).sum::<usize>(),"idleCompletions":self.completed.len(),"lifecycle":self.lifecycle})
+            "dataPins":self.data.values().map(|d|d.pins).sum::<usize>(),"publishedSqlRows":self.data.values().map(|d|d.rows).sum::<usize>(),"idleCompletions":self.completed.len(),"lifecycle":self.lifecycle})
     }
     pub fn bytes(&self) -> usize {
         self.layouts

@@ -310,7 +310,7 @@ pub(super) fn create_stage(
     let inserted = executed?;
     drop(statement);
     if materialize {
-        db.storage.borrow_mut().written(&physical, inserted != 0);
+        db.storage.borrow_mut().populated(&physical, inserted);
     }
     if !materialize {
         for column in stage
@@ -410,12 +410,18 @@ pub(super) struct Inputs {
     pub snapshot: Snapshot,
     pub file_local: bool,
 }
+enum Step {
+    Sql,
+    Native(producer::Demand),
+    Done,
+}
 struct Session<'a> {
     code_rule: &'a CompiledCodeRule,
     clause: &'a CompiledClause,
     plan: &'a Plan,
     db: pool::Lease,
     finished: std::cell::Cell<bool>,
+    descriptor_bytes: usize,
     syntax_files: syntax::Files,
     syntax_trees: Vec<producer::Tree>,
     anchors: anchors::Anchors,
@@ -544,7 +550,7 @@ impl<'a> Session<'a> {
                         )?;
                         db.storage
                             .borrow_mut()
-                            .written(physical, db.total_changes() != before);
+                            .populated(physical, (db.total_changes() - before) as usize);
                         Ok(rows)
                     })
                     .collect::<Result<Vec<_>>>()?
@@ -739,7 +745,7 @@ impl<'a> Session<'a> {
             )?;
             db.storage
                 .borrow_mut()
-                .written(physical, db.total_changes() != before);
+                .populated(physical, (db.total_changes() - before) as usize);
             tables.insert(name.clone());
             // SQL owns the copied values; only compact anchors remain necessary.
         }
@@ -789,9 +795,10 @@ impl<'a> Session<'a> {
                 &work,
                 "native reference row budget exceeded",
             )?;
-            db.storage
-                .borrow_mut()
-                .written(&aliases["reference_edges"], db.total_changes() != before);
+            db.storage.borrow_mut().populated(
+                &aliases["reference_edges"],
+                (db.total_changes() - before) as usize,
+            );
             tables.insert("reference_edges".to_owned());
         }
         db.execute_batch("COMMIT").map_err(sql_error)?;
@@ -879,12 +886,32 @@ impl<'a> Session<'a> {
                 }
             }
         }
+        let descriptor_bytes = anchors
+            .values()
+            .map(|rows| {
+                rows.capacity()
+                    * (std::mem::size_of::<((usize, usize), (super::violations::Span, bool))>()
+                        + 16)
+            })
+            .sum::<usize>()
+            + aliases
+                .iter()
+                .map(|(a, b)| a.len() + b.len() + 112)
+                .sum::<usize>()
+            + scope_bindings.keys().map(|n| n.len() + 80).sum::<usize>()
+            + needed.iter().map(|n| n.len() + 64).sum::<usize>()
+            + native_sources.len() * 4096
+            + visible.files.len() * std::mem::size_of::<super::model::FileInput>()
+            + 512;
+        db.descriptor_bytes
+            .set(db.descriptor_bytes.get().saturating_add(descriptor_bytes));
         Ok(Self {
             code_rule,
             clause,
             plan,
             db,
             finished: std::cell::Cell::new(false),
+            descriptor_bytes,
             syntax_files,
             syntax_trees,
             anchors,
@@ -992,21 +1019,21 @@ impl<'a> Session<'a> {
         self.next += 1;
         Ok(())
     }
-    fn advance(&mut self) -> Result<Option<producer::Demand>> {
+    fn advance(&mut self) -> Result<Step> {
         self.activate()?;
         let _reader = producer::ReadOnly::enter();
-        while let Some(logical) = self.plan.stages.get(self.next) {
+        if let Some(logical) = self.plan.stages.get(self.next) {
             let stage = &self.physical_stages[self.next];
             if !self.needed.contains(&logical.name) || self.db.storage.borrow().ready(&stage.name) {
                 self.release()?;
-                continue;
+                return Ok(Step::Sql);
             }
             #[cfg(feature = "code-rule-profile")]
             self.db.stage(&logical.name);
             // The compiler validated the complete logical query. Stable native
             // bindings enforce its schema; prepare only the actual execution.
             if let Some(spec) = stage.reachability.as_ref().filter(|s| s.syntax.is_some()) {
-                return Ok(Some(syntax::demand(
+                return Ok(Step::Native(syntax::demand(
                     &self.db,
                     spec,
                     &self.syntax_trees,
@@ -1041,8 +1068,9 @@ impl<'a> Session<'a> {
             #[cfg(feature = "code-rule-profile")]
             operation.into_iter().for_each(|op| op.finish_unobserved());
             self.release()?;
+            return Ok(Step::Sql);
         }
-        Ok(None)
+        Ok(Step::Done)
     }
     fn publish(&mut self, output: producer::Completed) -> Result<()> {
         self.activate()?;
@@ -1236,6 +1264,12 @@ impl<'a> Session<'a> {
 }
 impl Drop for Session<'_> {
     fn drop(&mut self) {
+        self.db.descriptor_bytes.set(
+            self.db
+                .descriptor_bytes
+                .get()
+                .saturating_sub(self.descriptor_bytes),
+        );
         if !self.finished.get() {
             self.db.healthy.set(false);
         }

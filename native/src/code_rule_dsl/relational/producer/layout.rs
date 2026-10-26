@@ -21,10 +21,20 @@ impl Footprint {
         demand: &Demand,
         limit: usize,
     ) -> bool {
+        self.admit_parts(&demand.trees, demand.roots.len(), limit)
+    }
+    pub(in crate::code_rule_dsl::relational) fn admit_trees(
+        &mut self,
+        trees: &[super::Tree],
+        limit: usize,
+    ) -> bool {
+        self.admit_parts(trees, 0, limit)
+    }
+    fn admit_parts(&mut self, trees: &[super::Tree], roots: usize, limit: usize) -> bool {
         let mut documents = HashSet::new();
         let mut selectors = HashSet::new();
-        let mut extra = demand.roots.len().saturating_mul(24);
-        for tree in &demand.trees {
+        let mut extra = roots.saturating_mul(24);
+        for tree in trees {
             let document = Arc::as_ptr(&tree.facts) as usize;
             let selector = (document, Arc::as_ptr(&tree.visible) as usize);
             if !self.documents.contains(&document) && documents.insert(document) {

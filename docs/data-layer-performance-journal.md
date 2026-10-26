@@ -5135,3 +5135,40 @@ Index checks require the private scope key before the authored lookup column.
 All 77 laboratory tests and static and profiling checks pass at the preceding checkpoint.
 Final source checks and matching full-repository cold measurements follow.
 These checks do not establish a CPU or RSS improvement.
+
+
+### Correct the statistics boundary before full acceptance (2026-10-26)
+
+The first larger five-file quality control exposes four work-budget failures in the new executor.
+The frozen control passes the same source domain without a failure.
+These failures also occur without instrumentation, so capture overhead does not explain them.
+The initial implementation is not accepted.
+
+The affected `execution_calls` reader joins call paths to `calls.callee_id`.
+Its plan scans call paths first and probes calls through `(__execution_key,__path)`.
+The post-native call-path population has no statistics when this reader prepares.
+Three failing executions consume roughly 23–33 million VM steps and exhaust regex or SQL work.
+An ownership reader also exhausts its SQL allowance after roughly 125 million VM steps.
+Refreshing statistics after each consumer finishes is too late.
+
+Red commit `793b1aa4` requires a statistics boundary between a populated post-native family and its reader.
+The coordinator now advances the existing ordered stage program in family frontiers.
+It populates every admitted original scope for that family, trims retired data, and refreshes statistics before the next reader.
+It gathers complete native demands before the existing broad count, scan, and scatter passes.
+It does not add a generic graph scheduler, a domain union, or an SQL partition rewrite.
+
+Admission includes consumer descriptor storage and shared tree footprints.
+Actual native requests retain the original input and output capacity checks.
+SQL families preserve each consumer's remaining work allowance across every transition.
+Maintenance runs outside statement work accounting, as owner cleanup did before.
+Ready-row eviction groups binding keys by backing table and deletes them in bounded batches.
+Publication records existing inserted-row counts without additional counting queries.
+Context observations now include prepared-statement and published-row counts.
+
+The coherent-family addon passes the five-file quality domain with no failures or finding differences.
+This is a bounded semantic and planning control, not full resource acceptance.
+All 192 original quality observations also pass, including 130 positive and 62 clean observations.
+The complete native DSL passes 1,555 tests with 23 existing ignores.
+All 52 shape tests pass, including the new post-native statistics-readiness regression.
+Final all-target native Clippy passes with warnings denied.
+The cache-eviction and row-count instrumentation receive a final rebuild and verification before full timings.
