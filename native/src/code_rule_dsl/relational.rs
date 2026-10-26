@@ -948,7 +948,12 @@ impl<'a> Session<'a> {
             let operation = self
                 .db
                 .operation(&format!("/*RELATIONAL_STAGE*/ {}", logical.name), self.next);
-            create_stage(&self.db, stage, true, &self.work)
+            let created = create_stage(&self.db, stage, true, &self.work);
+            #[cfg(feature = "code-rule-profile")]
+            if created.is_err() {
+                self.db.explain_pending();
+            }
+            created
                 .map_err(|e| invalid(format!("relational stage {}: {}", logical.name, e.reason)))?;
             if stage.reachability.is_none() && stage.deferred.is_empty() {
                 self.db.storage.borrow_mut().publish(&stage.name);
@@ -979,6 +984,15 @@ impl<'a> Session<'a> {
         self.release()
     }
     fn finish(&self) -> Result<Vec<Value>> {
+        let result = self.finish_rows();
+        // Explain the result while its private inputs still exist, including on failure.
+        #[cfg(feature = "code-rule-profile")]
+        if let Err(error) = self.db.checkpoint() {
+            eprintln!("SQL result profile checkpoint failed: {error}");
+        }
+        result
+    }
+    fn finish_rows(&self) -> Result<Vec<Value>> {
         self.activate()?;
         #[cfg(feature = "code-rule-profile")]
         self.db.stage("result");

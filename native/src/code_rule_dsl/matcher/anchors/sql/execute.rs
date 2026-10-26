@@ -364,7 +364,9 @@ pub(super) fn rows_for(
 
 #[cfg(feature = "code-rule-profile")]
 fn working_set(store: &Store, name: &str, operation: usize, live: usize) -> Result<()> {
-    if crate::code_rule_dsl::profile::trace::enabled() {
+    static CENSUS: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("RERAIL_PROFILE_SQL_WORKING_SET").is_some());
+    if crate::code_rule_dsl::profile::trace::enabled() && *CENSUS {
         let mut span = Span::start("anchor-working-set", name);
         let mut sample = super::lower::working_set::snapshot(&store.db, live)?;
         sample["operation"] = operation.into();

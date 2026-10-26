@@ -47,6 +47,15 @@ Production builds exclude this instrumentation.
 
 The [SQL shape experiments](sql-shape-spikes.md) record isolated changes, CPU results, parity checks, and reproduction commands.
 
+## SQL page census
+
+Ordinary CPU tracing does not scan SQL pages.
+Use `--sql-working-set` with `scripts/profiling/run.py` to request per-stage object sizes and reserved-page counts.
+This option requires `--trace on` and can be expensive over a growing corpus.
+For a direct harness invocation, set `RERAIL_PROFILE_SQL_WORKING_SET=1` and `RERAIL_PROFILE=1`.
+Keep the census out of CPU and wall-time controls.
+The separate `--memory-census` option records workspace ownership at driver boundaries.
+
 ## Focus on one component
 
 Set `RERAIL_SQL_PROFILE_SCOPE=relational` to capture relational statements while excluding candidate-index publication.
