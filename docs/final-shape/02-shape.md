@@ -1,5 +1,7 @@
 # The final Rerail shape
 
+> Superseded where it differs by `03-architecture.md` (the user-set target architecture).
+
 Status: the overall shape, written from `notes/` (index: `notes/s0-synthesis.md`). Details are given only where they fix the shape. Numbers carry the source's M/D/A mark.
 
 Budgets: **500 MB RAM in total, 10 GB disk.** Targets: per-edit checks, a full-repository audit in 1–2 s, everything runnable inside outer SQL, Metal for every program with no CPU fallback.
