@@ -94,7 +94,7 @@ it.skipIf(!required)("executes one source batch across two rules and two result 
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 45_000);
 
-it.skipIf(!required)("a relational-only SQL trace does not copy candidate databases", () => {
+it.skipIf(!required).each(["relational", "ast-index"])("a %s statement-only SQL trace does not copy candidate databases", (scope) => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-filtered-sql-"));
   try {
     const program = `
@@ -109,7 +109,7 @@ it.skipIf(!required)("a relational-only SQL trace does not copy candidate databa
     `;
     const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
       encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, RERAIL_SQL_PROFILE_DIR: directory, RERAIL_SQL_PROFILE_SCOPE: "relational" },
+      env: { ...process.env, RERAIL_SQL_PROFILE_DIR: directory, RERAIL_SQL_PROFILE_SCOPE: scope, RERAIL_SQL_PROFILE_REPLAY: "0" },
     });
     expect(child.error).toBeUndefined(); expect(child.status, child.stderr).toBe(0);
     const result = JSON.parse(child.stdout.trim()).evaluation;
@@ -118,7 +118,7 @@ it.skipIf(!required)("a relational-only SQL trace does not copy candidate databa
     expect(files.filter(f => /^candidate-.*\.sqlite$/.test(f))).toEqual([]);
     const catalogues = files.filter(f => /^profile-.*\.json$/.test(f)).map(f => JSON.parse(readFileSync(join(directory, f), "utf8")));
     expect(catalogues.length).toBeGreaterThan(0);
-    expect(catalogues.every(c => c.executionCoverage.fromSessionStart === false && c.executionCoverage.contextFilter === "relational")).toBe(true);
+    expect(catalogues.every(c => c.executionCoverage.fromSessionStart === false && c.executionCoverage.contextFilter === scope)).toBe(true);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 35_000);
 
