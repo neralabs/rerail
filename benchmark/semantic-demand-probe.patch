@@ -1,0 +1,487 @@
+diff --git a/native/src/code_rule_dsl/matcher/cohort_host.rs b/native/src/code_rule_dsl/matcher/cohort_host.rs
+index 43f0b1bc..b6fca315 100644
+--- a/native/src/code_rule_dsl/matcher/cohort_host.rs
++++ b/native/src/code_rule_dsl/matcher/cohort_host.rs
+@@ -4,6 +4,7 @@ use super::cohort::{
+ };
+ use super::{Semantic, each, util};
+ use ast_grep_core::{Doc, meta_var::MetaVarEnv};
++use rustc_hash::FxHashMap;
+ use std::{
+     cell::{Cell, RefCell},
+     collections::{BTreeMap, HashSet},
+@@ -35,6 +36,38 @@ pub(in crate::code_rule_dsl) trait Context {
+ }
+ #[derive(Default, serde::Serialize)]
+ pub(in crate::code_rule_dsl) struct Metrics {
++    pub semantic_demands: BTreeMap<&'static str, u64>,
++    pub python_resolves_demands: u64,
++    pub python_resolves_projected: u64,
++    pub python_resolves_eligible: u64,
++    /// Index 0: conservative ordinary resolves; index 1: extended modes.
++    pub python_resolves_eligible_by_class: [u64; 2],
++    pub resolves_demand_clean_agreements_by_class: [u64; 2],
++    pub python_resolves_skipped_projection: u64,
++    pub python_resolves_skipped_hosted: u64,
++    pub python_resolves_skipped_parsed: u64,
++    pub python_resolves_skipped_each: u64,
++    pub python_resolves_skipped_foreign: u64,
++    pub resolves_demand_repeats: u64,
++    pub resolves_demand_agreements: u64,
++    pub resolves_demand_clean_repeats: u64,
++    pub resolves_demand_clean_agreements: u64,
++    pub resolves_demand_clause_state_mismatches: u64,
++    pub resolves_demand_clears: u64,
++    pub resolves_demand_evicted: u64,
++    pub max_resolves_demand_entries: usize,
++    pub resolves_unread_demands_by_class: [u64; 2],
++    pub resolves_unread_clean_by_class: [u64; 2],
++    /// Finite descriptor flags and grammar kinds only; no source text or identities.
++    pub resolves_unread_shapes: BTreeMap<String, u64>,
++    pub resolves_fact_demands_by_class: [u64; 2],
++    pub resolves_fact_repeats_by_class: [u64; 2],
++    pub resolves_fact_same_descriptor_by_class: [u64; 2],
++    pub resolves_fact_different_descriptor_by_class: [u64; 2],
++    pub resolves_fact_different_owner_by_class: [u64; 2],
++    pub resolves_fact_clears: u64,
++    pub resolves_fact_evicted: u64,
++    pub max_resolves_fact_entries: usize,
+     pub projection_batches: u64,
+     pub context_installs: u64,
+     pub exclusion_installs: u64,
+@@ -124,6 +157,226 @@ impl<F: FnMut(&Programs, Vec<ParentRequest>) -> Vec<ParentAnswer>> Parent for F
+         self(p, r)
+     }
+ }
++// Diagnostic demand overlap only: inputs not in this key (captures/following) and
++// native state can still make replay unsafe. No observation bypasses execution.
++const DEMAND_CAPACITY: usize = 32768;
++type DemandKey = (usize, usize, usize, u32, bool);
++struct ObservedDemand {
++    // Retain the descriptor so its address cannot be recycled while resident.
++    _descriptor: Arc<Semantic>,
++    matched: bool,
++    cost: Cost,
++}
++struct ObservedFactDemand {
++    descriptor: Arc<Semantic>,
++    context: u32,
++}
++#[derive(Default)]
++struct DemandObserver {
++    entries: FxHashMap<DemandKey, ObservedDemand>,
++    // Physical fact-demand overlap, not verdict reuse: descriptor/context are observations,
++    // and all calls still execute against the currently installed native tables.
++    facts: FxHashMap<(usize, usize), ObservedFactDemand>,
++}
++impl DemandObserver {
++    fn observe(
++        &mut self,
++        key: DemandKey,
++        descriptor: Arc<Semantic>,
++        matched: bool,
++        cost: Cost,
++        metrics: &mut Metrics,
++    ) {
++        let class = usize::from(!matches!(descriptor.as_ref(), Semantic::Resolves(test)
++            if test.language == crate::code_rule_dsl::language::GrammarDialect::Python
++                && !test.item && !test.seen_before && !test.before_local
++                && test.unresolved.is_none() && !test.this_global));
++        let clean = |c: Cost| {
++            c.work == 0 && c.replay_work == 0 && c.levels == 0 && c.failure.is_none() && !c.unknown
++        };
++        if !cost.clause_state_read {
++            metrics.resolves_unread_demands_by_class[class] += 1;
++            metrics.resolves_unread_clean_by_class[class] += u64::from(clean(cost));
++        } else if cost.failure.is_none() && !cost.unknown {
++            metrics.resolves_fact_demands_by_class[class] += 1;
++            let fact_key = (key.0, key.1);
++            if let Some(prior) = self.facts.get(&fact_key) {
++                metrics.resolves_fact_repeats_by_class[class] += 1;
++                let same = Arc::ptr_eq(&prior.descriptor, &descriptor);
++                metrics.resolves_fact_same_descriptor_by_class[class] += u64::from(same);
++                metrics.resolves_fact_different_descriptor_by_class[class] += u64::from(!same);
++                metrics.resolves_fact_different_owner_by_class[class] +=
++                    u64::from(prior.context != key.3);
++            } else if self.facts.len() >= DEMAND_CAPACITY {
++                metrics.resolves_fact_clears += 1;
++                metrics.resolves_fact_evicted += self.facts.len() as u64;
++                self.facts.clear();
++            }
++            self.facts.insert(
++                fact_key,
++                ObservedFactDemand {
++                    descriptor: descriptor.clone(),
++                    context: key.3,
++                },
++            );
++            metrics.max_resolves_fact_entries =
++                metrics.max_resolves_fact_entries.max(self.facts.len());
++        }
++        metrics.python_resolves_eligible_by_class[class] += 1;
++        if let Some(prior) = self.entries.get(&key) {
++            metrics.resolves_demand_repeats += 1;
++            let agrees = prior.matched == matched && prior.cost.unknown == cost.unknown;
++            metrics.resolves_demand_agreements += u64::from(agrees);
++            if clean(prior.cost) && clean(cost) {
++                metrics.resolves_demand_clean_repeats += 1;
++                metrics.resolves_demand_clean_agreements += u64::from(agrees);
++                metrics.resolves_demand_clean_agreements_by_class[class] += u64::from(agrees);
++            }
++            metrics.resolves_demand_clause_state_mismatches +=
++                u64::from(prior.cost.clause_state_read != cost.clause_state_read);
++        } else if self.entries.len() >= DEMAND_CAPACITY {
++            metrics.resolves_demand_clears += 1;
++            metrics.resolves_demand_evicted += self.entries.len() as u64;
++            self.entries.clear();
++        }
++        self.entries.insert(
++            key,
++            ObservedDemand {
++                _descriptor: descriptor,
++                matched,
++                cost,
++            },
++        );
++        metrics.max_resolves_demand_entries =
++            metrics.max_resolves_demand_entries.max(self.entries.len());
++    }
++}
++fn record_unread_shape<D: Doc>(
++    semantic: &Semantic,
++    raw: &ast_grep_core::Node<'_, D>,
++    matched: bool,
++    metrics: &mut Metrics,
++) {
++    let Semantic::Resolves(test) = semantic else {
++        return;
++    };
++    let ordinary = !test.item
++        && !test.seen_before
++        && !test.before_local
++        && test.unresolved.is_none()
++        && !test.this_global;
++    let node = super::resolve::unparenthesized(&test.paren_kinds, raw.clone());
++    let kind = node.kind_id();
++    let reference = test.reference_kinds.contains(&kind);
++    let attribute = test.attribute_kinds.contains(&kind);
++    let dotted = test.dotted_kinds.contains(&kind);
++    let string = test.string_kinds.contains(&kind);
++    let text = crate::code_rule_dsl::identifier::name_in(test.language, node.text());
++    let global_name = test.globals.contains(text.as_ref());
++    let terminal = if ordinary && attribute {
++        if let Some(last) = node.field("attribute") {
++            let last = crate::code_rule_dsl::identifier::name_in(test.language, last.text());
++            if test
++                .imports
++                .iter()
++                .any(|name| name.rsplit('.').next() == Some(last.as_ref()))
++            {
++                "listed"
++            } else {
++                "not-listed"
++            }
++        } else {
++            "missing"
++        }
++    } else {
++        "not-applicable"
++    };
++    // Prefix labels follow holds_in's order. "possible" labels deliberately do
++    // not claim a reason after a table lookup or reconstruct the full import chain.
++    let reason = if test.item {
++        "item"
++    } else if test.seen_before {
++        "seen-before"
++    } else if test.this_global && test.this_kinds.contains(&kind) {
++        "this"
++    } else if dotted {
++        "imported-dotted"
++    } else if test.before_local {
++        "before-local"
++    } else if test.unresolved.is_some() && string {
++        "unresolved-string"
++    } else if !reference {
++        "non-reference-kind"
++    } else if test.unresolved.is_some() {
++        if attribute {
++            "unresolved-attribute"
++        } else {
++            "unresolved-reference"
++        }
++    } else if ordinary && attribute && !test.prefix && !test.import_any && terminal == "not-listed"
++    {
++        "attribute-import-suffix-reject"
++    } else if test.imports.is_empty()
++        && !test.import_any
++        && !test.global_any
++        && !global_name
++        && !(test.directives && test.options.is_none())
++    {
++        "no-import-or-global-name"
++    } else {
++        "default-candidate-possible"
++    };
++    let flags = format!(
++        "i{}a{}p{}g{}G{}d{}D{}",
++        u8::from(!test.imports.is_empty()),
++        u8::from(test.import_any),
++        u8::from(test.prefix),
++        u8::from(!test.globals.is_empty()),
++        u8::from(test.global_any),
++        u8::from(!test.imported.is_empty()),
++        u8::from(test.directives)
++    );
++    let mode = format!(
++        "item{}seen{}before{}unresolved{}this{}",
++        u8::from(test.item),
++        u8::from(test.seen_before),
++        u8::from(test.before_local),
++        u8::from(test.unresolved.is_some()),
++        u8::from(test.this_global)
++    );
++    let shape = format!(
++        "class={}|matched={}|raw={}|node={}|reason={}|flags={}|mode={}|ref={}|attr={}|dotted={}|string={}|terminal={}|global-name={}",
++        if ordinary { "ordinary" } else { "extended" },
++        u8::from(matched),
++        raw.kind(),
++        node.kind(),
++        reason,
++        flags,
++        mode,
++        u8::from(reference),
++        u8::from(attribute),
++        u8::from(dotted),
++        u8::from(string),
++        terminal,
++        u8::from(global_name)
++    );
++    *metrics.resolves_unread_shapes.entry(shape).or_default() += 1;
++}
++fn semantic_family(semantic: &Semantic) -> &'static str {
++    match semantic {
++        Semantic::Resolves(_) => "resolves",
++        Semantic::Binding(_) => "binding",
++        Semantic::Binds(_) => "binds",
++        Semantic::Value(_) => "value",
++        Semantic::Arguments(_) => "arguments",
++        Semantic::Parse(_) => "parse",
++        Semantic::Host(_) => "host",
++        Semantic::Capture(_) => "capture",
++        Semantic::FormatArgs(_) => "formatArgs",
++        Semantic::Layout(_) => "layout",
++        Semantic::Calls(_) => "calls",
++    }
++}
+ pub(in crate::code_rule_dsl) struct NativeHost<'p, C: Context> {
+     pub(super) contexts: Rc<RefCell<C>>,
+     limits: Rc<RefCell<Vec<Limit>>>,
+@@ -132,6 +385,7 @@ pub(in crate::code_rule_dsl) struct NativeHost<'p, C: Context> {
+     pub(super) parsed: BTreeMap<u32, ParsedContext>,
+     pub(super) parent: Option<&'p mut dyn Parent>,
+     pub(super) metrics: Rc<RefCell<Metrics>>,
++    demand: Rc<RefCell<DemandObserver>>,
+ }
+ impl<C: Context> NativeHost<'_, C> {
+     pub fn new(contexts: C, allowances: BTreeMap<u32, usize>) -> Self {
+@@ -157,6 +411,7 @@ impl<C: Context> NativeHost<'_, C> {
+             parsed: BTreeMap::new(),
+             parent: None,
+             metrics: Rc::default(),
++            demand: Rc::default(),
+         }
+     }
+     pub fn report(&self) -> serde_json::Value {
+@@ -214,6 +469,7 @@ impl<C: Context> NativeHost<'_, C> {
+             parsed: BTreeMap::new(),
+             parent,
+             metrics: self.metrics.clone(),
++            demand: self.demand.clone(),
+         }
+     }
+     pub fn run<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>>(
+@@ -405,6 +661,17 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>, C: Con
+         let mut groups: BTreeMap<u8, Vec<(usize, SemanticRequest<'t, D>)>> = BTreeMap::new();
+         let len = leaves.len();
+         for (i, l) in leaves.into_iter().enumerate() {
++            {
++                let mut metrics = self.metrics.borrow_mut();
++                *metrics
++                    .semantic_demands
++                    .entry(semantic_family(&l.semantic))
++                    .or_default() += 1;
++                if matches!(l.semantic.as_ref(), Semantic::Resolves(test) if test.language == crate::code_rule_dsl::language::GrammarDialect::Python)
++                {
++                    metrics.python_resolves_demands += 1;
++                }
++            }
+             let family = match l.semantic.as_ref() {
+                 Semantic::Binding(_) => 1,
+                 Semantic::Binds(_) => 2,
+@@ -439,6 +706,30 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>, C: Con
+                     .into_iter()
+                     .zip(&requests)
+                     .map(|(r, q)| {
++                        if matches!(q.semantic.as_ref(), Semantic::Resolves(test) if test.language == crate::code_rule_dsl::language::GrammarDialect::Python) {
++                            let mut metrics = self.metrics.borrow_mut();
++                            if let Some((matched, _)) = &r.value {
++                                metrics.python_resolves_projected += 1;
++                                if self.hosted.get() != 0 {
++                                    metrics.python_resolves_skipped_hosted += 1;
++                                } else if self.parsed.contains_key(&q.request.context) {
++                                    metrics.python_resolves_skipped_parsed += 1;
++                                } else if q.request.each.is_some() {
++                                    metrics.python_resolves_skipped_each += 1;
++                                } else if self.contexts.borrow().file_root(q.request.context) != Some(q.request.node.root() as *const _ as usize) {
++                                    metrics.python_resolves_skipped_foreign += 1;
++                                } else {
++                                    metrics.python_resolves_eligible += 1;
++                                    let key = (q.request.node.root() as *const _ as usize, q.request.node.node_id(), Arc::as_ptr(&q.semantic) as usize, q.request.context, q.request.three);
++                                    if !r.cost.clause_state_read && r.cost.work == 0 && r.cost.replay_work == 0 && r.cost.levels == 0 && r.cost.failure.is_none() && !r.cost.unknown {
++                                        record_unread_shape(q.semantic.as_ref(), &q.request.node, *matched, &mut metrics);
++                                    }
++                                    self.demand.borrow_mut().observe(key, q.semantic.clone(), *matched, r.cost, &mut metrics);
++                                }
++                            } else {
++                                metrics.python_resolves_skipped_projection += 1;
++                            }
++                        }
+                         let (matched, env) = r.value.unwrap_or((false, q.request.env.clone()));
+                         r.cost.answer(
+                             if matched {
+@@ -553,6 +844,135 @@ mod tests {
+     use crate::code_rule_dsl::language::GrammarDialect;
+     use ast_grep_core::tree_sitter::LanguageExt;
+
++    #[test]
++    fn demand_observer_separates_context_and_descriptors_and_bounds_lifetimes() {
++        let a = Arc::new(Semantic::Capture("A".into()));
++        let b = Arc::new(Semantic::Capture("A".into()));
++        let b_weak = Arc::downgrade(&b);
++        let key = |node, descriptor: &Arc<Semantic>, context, three| {
++            (17, node, Arc::as_ptr(descriptor) as usize, context, three)
++        };
++        let mut observer = DemandObserver::default();
++        let mut metrics = Metrics::default();
++        observer.observe(
++            key(1, &a, 0, true),
++            a.clone(),
++            true,
++            Cost::default(),
++            &mut metrics,
++        );
++        observer.observe(
++            key(1, &a, 0, true),
++            a.clone(),
++            false,
++            Cost {
++                clause_state_read: true,
++                ..Cost::default()
++            },
++            &mut metrics,
++        );
++        assert_eq!(metrics.resolves_demand_repeats, 1);
++        assert_eq!(metrics.resolves_demand_agreements, 0);
++        assert_eq!(metrics.resolves_demand_clean_repeats, 1);
++        assert_eq!(metrics.resolves_demand_clean_agreements, 0);
++        assert_eq!(metrics.resolves_demand_clause_state_mismatches, 1);
++        observer.observe(
++            key(1, &a, 1, true),
++            a.clone(),
++            true,
++            Cost::default(),
++            &mut metrics,
++        );
++        observer.observe(
++            key(1, &a, 0, false),
++            a.clone(),
++            true,
++            Cost::default(),
++            &mut metrics,
++        );
++        observer.observe(
++            key(1, &b, 0, true),
++            b.clone(),
++            true,
++            Cost::default(),
++            &mut metrics,
++        );
++        assert_eq!(observer.entries.len(), 4);
++        assert_eq!(metrics.resolves_demand_repeats, 1);
++        drop(b);
++        assert!(
++            b_weak.upgrade().is_some(),
++            "resident identity retains descriptor"
++        );
++        for node in 100..100 + DEMAND_CAPACITY {
++            observer.observe(
++                key(node, &a, 0, true),
++                a.clone(),
++                true,
++                Cost::default(),
++                &mut metrics,
++            );
++        }
++        assert_eq!(metrics.resolves_demand_clears, 1);
++        assert_eq!(metrics.resolves_demand_evicted, DEMAND_CAPACITY as u64);
++        assert_eq!(metrics.max_resolves_demand_entries, DEMAND_CAPACITY);
++        assert_eq!(observer.entries.len(), 4);
++        assert!(
++            b_weak.upgrade().is_none(),
++            "clearing releases descriptor owners"
++        );
++    }
++
++    #[test]
++    fn fact_demand_overlap_counts_only_known_table_reads() {
++        let a = Arc::new(Semantic::Capture("A".into()));
++        let b = Arc::new(Semantic::Capture("B".into()));
++        let key = |descriptor: &Arc<Semantic>, context| {
++            (17, 3, Arc::as_ptr(descriptor) as usize, context, true)
++        };
++        let mut observer = DemandObserver::default();
++        let mut metrics = Metrics::default();
++        let read = Cost {
++            clause_state_read: true,
++            ..Cost::default()
++        };
++        observer.observe(key(&a, 0), a.clone(), false, Cost::default(), &mut metrics);
++        observer.observe(
++            key(&a, 0),
++            a.clone(),
++            false,
++            Cost {
++                unknown: true,
++                ..read
++            },
++            &mut metrics,
++        );
++        observer.observe(
++            key(&a, 0),
++            a.clone(),
++            false,
++            Cost {
++                failure: Some(Failure::Cancelled),
++                ..read
++            },
++            &mut metrics,
++        );
++        assert!(observer.facts.is_empty());
++        observer.observe(key(&a, 0), a.clone(), false, read, &mut metrics);
++        observer.observe(key(&a, 1), a.clone(), true, read, &mut metrics);
++        observer.observe(key(&b, 1), b.clone(), false, read, &mut metrics);
++        assert_eq!(metrics.resolves_unread_demands_by_class, [0, 1]);
++        assert_eq!(metrics.resolves_unread_clean_by_class, [0, 1]);
++        assert_eq!(metrics.resolves_fact_demands_by_class, [0, 3]);
++        assert_eq!(metrics.resolves_fact_repeats_by_class, [0, 2]);
++        assert_eq!(metrics.resolves_fact_same_descriptor_by_class, [0, 1]);
++        assert_eq!(metrics.resolves_fact_different_descriptor_by_class, [0, 1]);
++        assert_eq!(metrics.resolves_fact_different_owner_by_class, [0, 1]);
++        assert_eq!(observer.facts.len(), 1);
++        assert_eq!(observer.facts[&(17, 3)].context, 1);
++        assert!(Arc::ptr_eq(&observer.facts[&(17, 3)].descriptor, &b));
++    }
++
+     #[test]
+     fn exclusion_runs_preserve_per_lane_resources_and_restore_nested_state() {
+         struct Plain;

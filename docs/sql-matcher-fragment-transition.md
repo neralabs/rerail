@@ -1437,3 +1437,138 @@ The cold CPU ceiling is still unmet; this round does not complete performance qu
 The failed experiments argue against further changes justified only by fewer frame copies or simpler dispatch source.
 The next investigation should measure duplicate matcher demands: descriptor, node, document, and the semantic inputs that affect each result.
 It must distinguish repeated requests from reusable results before adding more caches or changing execution order.
+
+The next experiment measures repeated semantic demands before adding result reuse (build 42).
+It counts each semantic family at admission and observes Python resolution after the real callback executes.
+A bounded 32,768-entry map records descriptor/node/root/context/truth-mode repeats, matching verdicts, costs, and clause-state reads.
+Parsed, hosted, excluding, and foreign-root requests are counted separately and excluded from residency.
+The observer retains descriptors and shares its bounded state across nested hosts. It never bypasses execution.
+Measurements distinguish ordinary resolution from extended modes such as unresolved-name and before-local queries.
+These are overlap measurements, not proof that a result is safe to replay; diagnostic overhead is not a production timing result.
+
+The legality review identifies the central reuse constraint: file tables charge their construction separately to each clause.
+A replacement file-scope slot can reset those charges even when the root and table objects remain the same.
+Any eventual result cache must validate a scope epoch and clause identity inside the existing projection callback.
+Warm, known, successful zero-cost observations can then be considered without hiding first-use charges or owner failure checks.
+
+The 500-file demand probe rules out the proposed narrow result cache.
+Among 2,528,414 Python resolution demands, only 1,403 resident repeats have agreeing known zero-cost results.
+The exact descriptor/node/context observer clears 63 times at its 32,768-entry cap, so these are bounded-window counts.
+No result cache is implemented from this evidence.
+
+The physical-node observer (build 43) finds a different opportunity:
+
+| Resolution class | Eligible demands | Scope-reading demands | Repeated scope-reading nodes |
+| --- | ---: | ---: | ---: |
+| Ordinary | 1,861,901 | 958,212 | 796,916 |
+| Extended | 666,163 | 666,163 | 492,878 |
+
+Of 1,289,794 repeated scope-reading nodes, 1,288,634 use a different descriptor and 1,261,525 use a different owner than the previous resident demand.
+This observer has no evictions; its largest resident map has 20,064 nodes.
+Another 903,689 ordinary demands return without reading clause-owned scope state.
+The observer preserves all 11,611 slice findings and three edits; all 57 focused tests pass.
+Raw evidence, summary, and the reproducible diagnostic patch are under `benchmark/sql-semantic-demand-spike*` and `benchmark/semantic-demand-probe.patch`.
+The diagnostic patch is removed from production before performance measurements.
+
+The resulting spike shares default Python binding lookup facts inside immutable published ScopeTables.
+It preserves all scope-table and usage-index calls and per-clause charges.
+The cache must remain disabled during building and finishing, reject synthetic reference copies, and compare the exact lookup name.
+Special annotation, global-placeholder, and deletion behavior retains its existing implementation.
+This targets repeated scope walks across predicates and clauses, rather than assuming their final verdicts are interchangeable.
+
+The default lookup fact cache (build 44) passes 102 scope tests, including new slot/name/finalization checks.
+The full job preserves all 97,798 findings, three edits, and 87,162 raw catalog comparisons.
+Native cold instructions fall from 1,212,125,529,119 to 1,192,432,806,705 (1.62%).
+SQL cold instructions fall from 1,569,218,661,305 to 1,561,703,837,040 (0.48%).
+SQL CPU is 186.965 seconds versus native 110.961 seconds, a ratio of 1.685; peak SQL RSS is 1,398,996,992 bytes.
+The median edit CPU ratio is 1.124. All qualification gates except cold CPU pass.
+This reduces common lookup work but does not close the batch executor's CPU gap.
+
+A second fact-sharing change removes a duplicate import-chain traversal within a single predicate.
+The existing predicate computes and filters a chain before requesting scopes, then computes the same chain again after obtaining the table.
+The spike retains the first head/tail result and consumes it only in the existing non-path import branch.
+Import-path languages still skip this chain builder; global matches still short-circuit; all scope charges retain their original position.
+Build 45 combines this change with the measured default-lookup fact cache to measure its incremental effect.
+
+Build 45 preserves the full findings, three edits, and catalog parity.
+SQL cold instructions fall another 0.18%, from 1,561,703,837,040 to 1,558,935,661,645.
+Its paired cold CPU ratio is 1.670, and its median edit ratio is 1.228.
+Peak SQL RSS is 1,424,556,032 bytes. Cold CPU remains the only failed gate.
+Both lookup changes reduce common work; neither explains away the remaining batch executor overhead.
+
+The next experiment moves a necessary name test ahead of semantic batch transport.
+It covers only ordinary Python resolution with explicit global names and no import or extended resolution mode.
+The test uses the predicate's own parenthesis handling and identifier normalization.
+A negative result needs no scope state; a positive result still executes the original predicate.
+Compiler metadata stays separate from exact kind proofs, so lowering cannot remove the semantic term.
+An enclosing conjunction can inherit this test only across proven zero-work pattern, regex, or kind prefixes.
+Utility entry charges and depth checks remain in place, including on rejection.
+Separate counters measure coverage and early rejection before any performance claim.
+
+Review rejects the first utility shortcut before performance measurement (build 46).
+Although it preserves the entry charge, it also skips negative memo admission and changes eviction timing.
+Existing utility replay can omit incidental captures from a cold false result; therefore, cache residency is observable.
+A regression test records cold, cached, and post-eviction capture behavior using the existing capacity-clear path.
+The revised experiment keeps utility probes, admission, and eviction unchanged.
+Its target body uses the new entry guard only after the normal utility entry and child boundary.
+The existing kind shortcut is not evidence that further cache-admission changes are safe.
+That pre-existing shortcut and cold-false replay behavior need a separate semantic review.
+
+Build 47 rejects only 2,164 demands in 2,168 name checks on the 500-file slice.
+All 58 focused tests, 11,611 findings, and three edits pass.
+However, SQL instructions rise from 115,265,174,310 to 115,991,522,116 (0.63%); cycles rise 3.42%.
+The guard is removed rather than accepted on the strength of a cheaper individual rejection.
+Its patch, including the cache-observability regression, is retained under `benchmark/python-global-guard-spike.patch`.
+The production source returns to build 45.
+The original observer is extended to classify the other scope-free resolution shapes before another filter is designed.
+
+Build 48 conserves all earlier observer counts and all slice findings and edits.
+Its histogram accounts for all 903,689 clean, scope-free ordinary resolution demands:
+
+| Rejection shape | Demands |
+| --- | ---: |
+| Attribute terminal absent from requested import suffixes | 874,519 |
+| Imported dotted name | 23,927 |
+| Non-reference kind | 2,968 |
+| Unlisted global name | 2,164 |
+| Other attribute-chain rejection | 111 |
+
+The import suffix mismatch accounts for 96.8% of these demands.
+Of those, 807,851 request only imports; another 66,668 request imports or global names.
+Attributes cannot satisfy the global-name branch, so that extra alternative does not prevent early suffix rejection.
+The next guard targets this measured population, excluding prefix and import-any modes.
+It checks only the terminal attribute name; positive admission still performs the original chain and scope lookup.
+The updated probe patch, raw report, and full eight-shape histogram replace the earlier diagnostic evidence under `benchmark/sql-semantic-demand-spike*`.
+The observer is removed before production measurement.
+
+The import-suffix guard (build 49) passes 58 focused tests and all slice findings and edits.
+It performs 2,149,304 checks and rejects 874,516 demands, including 198,736 ordered-alternative skips.
+Owned semantic requests fall from 4,580,819 to 3,706,300; operation lanes fall from 19,677,081 to 18,773,680.
+SQL instructions fall 1.23%, from 115,265,174,310 to 113,850,298,738.
+However, cycles rise 4.43%, and raw CPU rises from 13.206 to 14.294 seconds.
+The paired native CPU also rises; the paired SQL/native CPU ratio falls from 1.657 to 1.631.
+This is mixed timing evidence, so the full workload and an adjacent unchanged control are required before retention.
+Structural fused control steps barely change: 27,839,897 becomes 27,841,400.
+Thus this guard reduces semantic transport but does not remove the dominant structural scheduling work.
+
+The full-job comparison supports retaining the import-suffix guard as a small improvement.
+An adjacent unchanged build-45 control uses 1,559,481,561,093 instructions and 593,340,334,923 cycles.
+Build 49 uses 1,552,004,285,139 instructions and 584,769,996,898 cycles: reductions of 0.48% and 1.44%.
+SQL CPU falls from 190.589 to 188.619 seconds in that comparison.
+Wall time rises from 56.891 to 79.411 seconds; these runs do not establish a wall-time improvement.
+The full guard rejects 8,259,709 demands in 26,890,671 checks and removes 8,259,641 owned semantic requests.
+However, structural fused control steps remain about 385.5 million.
+The data rejects the hypothesis that avoiding these leaf requests alone will close the main performance gap.
+
+The retained build passes all 97,798 findings, three edits, 87,162 raw catalog comparisons, and the default-feature build check.
+Native cold CPU is 119.023 seconds versus SQL 188.619 seconds; the paired ratio is 1.585 and still fails the 1.30 ceiling.
+Median edit CPU ratio is 1.235; SQL peak RSS is 1,405,534,208 bytes.
+Matching still uses 23 SQL executions and 25,216,565 VM instructions, with both scalar execution audits at zero.
+All gates except cold CPU pass. The engine remains unqualified.
+The accepted baseline is unchanged; `sql-native-capture-cohort-rejected*` records the retained build and its failed gate.
+`python-import-suffix-guard-spike*` records the adjacent control, slice, patch, and source hashes.
+
+This round retains immutable Python lookup facts, single-pass import-chain preparation, and the measured import-suffix guard.
+It rejects the explicit-global guard and the cache-bypassing utility shortcut.
+The runtime has one implementation path; diagnostic observers and rejected implementations remain only as reproducible benchmark patches.
+The next structural target is the remaining control work, rather than another per-leaf cache or allocation change.

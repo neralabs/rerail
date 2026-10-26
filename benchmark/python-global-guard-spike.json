@@ -1,0 +1,56 @@
+{
+  "accepted": false,
+  "reason": "Too little coverage; instructions increased 0.63% and cycles increased 3.42%.",
+  "files": 500,
+  "findings": 11611,
+  "findingAndThreeEditParity": true,
+  "baselineCold": {
+    "cpuNs": 13205538000,
+    "hardwareWork": {
+      "cycles": 42759869130,
+      "instructions": 115265174310,
+      "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+    },
+    "peakRssBytes": 374685696,
+    "wallNs": 10111367500
+  },
+  "candidateCold": {
+    "cpuNs": 13406621000,
+    "hardwareWork": {
+      "cycles": 44219933919,
+      "instructions": 115991522116,
+      "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+    },
+    "peakRssBytes": 370884608,
+    "wallNs": 7191392875
+  },
+  "coverage": {
+    "name_guard_alternative_skips": 2164,
+    "name_guard_checks": 2168,
+    "name_guard_rejects": 2164
+  },
+  "focusedTestsPassed": 58,
+  "baseProductionSource": {
+    "baseCommit": "92f874b83ecb44fad2d81413446de2a536a54f7c",
+    "sources": {
+      "native/src/code_rule_dsl/matcher/resolve.rs": "58744861b34a852950668b2d24c920be7719fd336f53c6d39afbd49a3df158d3",
+      "native/src/code_rule_dsl/scope/mod.rs": "0860be9e4e93b6cdcfe757b59916c4593cfe9ae2bc2b34713dc5641fb9a82e0b",
+      "native/src/code_rule_dsl/scope/tests.rs": "f4a09cf2b515f7bda9734a4de579746ba357a9a22830a301f421e66f7cce9d3e"
+    }
+  },
+  "candidateSource": {
+    "baseCommit": "92f874b83ecb44fad2d81413446de2a536a54f7c",
+    "changedRustSources": {
+      "native/src/code_rule_dsl/matcher/cohort.rs": "fedbed148c3104852c80b91230b50e31b4e043b23978c2a4d92f3922fc7436bf",
+      "native/src/code_rule_dsl/matcher/resolve.rs": "e758b2943e65d16d9c4de50db5a37e96097b9102ac79ded0842027aa7ed314a5",
+      "native/src/code_rule_dsl/scope/mod.rs": "0860be9e4e93b6cdcfe757b59916c4593cfe9ae2bc2b34713dc5641fb9a82e0b",
+      "native/src/code_rule_dsl/scope/tests.rs": "f4a09cf2b515f7bda9734a4de579746ba357a9a22830a301f421e66f7cce9d3e"
+    }
+  },
+  "rawReportsSha256": {
+    "baseline": "f7d73585bf7037040226f220da8325a108ab0eb6da600919d922b857487dca24",
+    "candidate": "fa140634305acc6049e6109a148c15851e3a36adeaf759a0e17d4d056c7f83ed"
+  },
+  "patchSha256": "075dd788c15f7b973a34c2b49d2efb3e80f3fdc9da030949eb9c5eed56614375",
+  "binarySha256": "bec1f1592e468ced8c8e07800c096c50ca944c97e937644a8013b062d66a6ef1"
+}

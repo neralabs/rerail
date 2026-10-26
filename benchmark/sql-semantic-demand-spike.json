@@ -1,0 +1,107 @@
+{
+  "counts": {
+    "arguments": 780991,
+    "binding": 221615,
+    "binds": 280492,
+    "formatArgs": 207,
+    "layout": 943,
+    "parse": 659549,
+    "resolves": 2528414,
+    "value": 77308,
+    "max_resolves_demand_entries": 32768,
+    "max_resolves_fact_entries": 20064,
+    "python_resolves_demands": 2528414,
+    "python_resolves_eligible": 2528064,
+    "python_resolves_projected": 2528414,
+    "python_resolves_skipped_each": 0,
+    "python_resolves_skipped_foreign": 0,
+    "python_resolves_skipped_hosted": 0,
+    "python_resolves_skipped_parsed": 350,
+    "python_resolves_skipped_projection": 0,
+    "resolves_demand_agreements": 1467,
+    "resolves_demand_clause_state_mismatches": 0,
+    "resolves_demand_clean_agreements": 1403,
+    "resolves_demand_clean_repeats": 1403,
+    "resolves_demand_clears": 63,
+    "resolves_demand_evicted": 2064384,
+    "resolves_demand_repeats": 1467,
+    "resolves_fact_clears": 0,
+    "resolves_fact_evicted": 0
+  },
+  "classes_ordinary_extended": {
+    "python_resolves_eligible_by_class": [
+      1861901,
+      666163
+    ],
+    "resolves_demand_clean_agreements_by_class": [
+      1403,
+      0
+    ],
+    "resolves_fact_demands_by_class": [
+      958212,
+      666163
+    ],
+    "resolves_fact_different_descriptor_by_class": [
+      795756,
+      492878
+    ],
+    "resolves_fact_different_owner_by_class": [
+      768647,
+      492878
+    ],
+    "resolves_fact_repeats_by_class": [
+      796916,
+      492878
+    ],
+    "resolves_fact_same_descriptor_by_class": [
+      1160,
+      0
+    ],
+    "resolves_unread_clean_by_class": [
+      903689,
+      0
+    ],
+    "resolves_unread_demands_by_class": [
+      903689,
+      0
+    ]
+  },
+  "purpose": "Diagnostic only: every request executes; observer overhead is excluded from production performance claims.",
+  "baseCommit": "92f874b83ecb44fad2d81413446de2a536a54f7c",
+  "corpusCommit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
+  "files": 500,
+  "sourceBytes": 6785917,
+  "findings": 11611,
+  "nativeFindingAndThreeEditParity": true,
+  "rawSqlReportSha256": "e2df5fee5bb294ccd4e7933dbe7fa9ce669cf4a5a4dd259b6d6ceef0add08bde",
+  "sourcePatchSha256": "c2df3ad4c040b07f8af54b569fde1e5dad9cc2a9fabe8486dfe30e8a8ad53c02",
+  "binarySha256": "23f11258856dcfe5f2f65bfb5bf644aba5670b0ce1214c9a75d5f75f2c67f713",
+  "observerCapacity": 32768,
+  "classOrder": [
+    "ordinary",
+    "extended"
+  ],
+  "interpretation": "Descriptor/owner results are not interchangeable. Node overlap does not prove identical scope reading or binding facts. Bounded maps count resident repeats, not global unique demands.",
+  "observerBuild": 48,
+  "productionSources": {
+    "baseCommit": "92f874b83ecb44fad2d81413446de2a536a54f7c",
+    "sources": {
+      "native/src/code_rule_dsl/matcher/cohort_host.rs": "1a2111c0ab5e2378f7d2a0859fd20695ef0806c4f8ae61ae048cdb55f7a9df6a",
+      "native/src/code_rule_dsl/matcher/resolve.rs": "58744861b34a852950668b2d24c920be7719fd336f53c6d39afbd49a3df158d3",
+      "native/src/code_rule_dsl/scope/mod.rs": "0860be9e4e93b6cdcfe757b59916c4593cfe9ae2bc2b34713dc5641fb9a82e0b",
+      "native/src/code_rule_dsl/scope/tests.rs": "f4a09cf2b515f7bda9734a4de579746ba357a9a22830a301f421e66f7cce9d3e"
+    }
+  },
+  "unreadShapes": {
+    "class=ordinary|matched=0|raw=attribute|node=attribute|reason=attribute-import-suffix-reject|flags=i1a0p0g0G0d0D0|mode=item0seen0before0unresolved0this0|ref=1|attr=1|dotted=0|string=0|terminal=not-listed|global-name=0": 807851,
+    "class=ordinary|matched=0|raw=attribute|node=attribute|reason=attribute-import-suffix-reject|flags=i1a0p0g1G0d0D0|mode=item0seen0before0unresolved0this0|ref=1|attr=1|dotted=0|string=0|terminal=not-listed|global-name=0": 66668,
+    "class=ordinary|matched=0|raw=attribute|node=attribute|reason=default-candidate-possible|flags=i1a0p0g0G0d0D0|mode=item0seen0before0unresolved0this0|ref=1|attr=1|dotted=0|string=0|terminal=listed|global-name=0": 111,
+    "class=ordinary|matched=0|raw=dotted_name|node=dotted_name|reason=imported-dotted|flags=i0a0p0g0G0d1D0|mode=item0seen0before0unresolved0this0|ref=0|attr=0|dotted=1|string=0|terminal=not-applicable|global-name=0": 23927,
+    "class=ordinary|matched=0|raw=identifier|node=identifier|reason=no-import-or-global-name|flags=i0a0p0g1G0d0D0|mode=item0seen0before0unresolved0this0|ref=1|attr=0|dotted=0|string=0|terminal=not-applicable|global-name=0": 2164,
+    "class=ordinary|matched=0|raw=subscript|node=subscript|reason=non-reference-kind|flags=i1a0p0g0G0d0D0|mode=item0seen0before0unresolved0this0|ref=0|attr=0|dotted=0|string=0|terminal=not-applicable|global-name=0": 2177,
+    "class=ordinary|matched=0|raw=call|node=call|reason=non-reference-kind|flags=i1a0p0g0G0d0D0|mode=item0seen0before0unresolved0this0|ref=0|attr=0|dotted=0|string=0|terminal=not-applicable|global-name=0": 786,
+    "class=ordinary|matched=0|raw=string|node=string|reason=non-reference-kind|flags=i1a0p0g0G0d0D0|mode=item0seen0before0unresolved0this0|ref=0|attr=0|dotted=0|string=0|terminal=not-applicable|global-name=0": 5
+  },
+  "unreadShapeFlags": "i=explicit imports, a=importAny, p=prefix, g=explicit globals, G=globalAny, d=imported, D=directives",
+  "reproduction": "Reverse python-import-suffix-guard-spike.patch from the retained production revision, then apply semantic-demand-probe.patch. This restores build48 source. Diagnostic timing is not production performance evidence."
+}

@@ -1,0 +1,69 @@
+{
+  "retained": true,
+  "qualified": false,
+  "decision": "Small work reduction, supported by adjacent full control instructions/cycles/CPU. Wall time did not improve. Whole-engine cold CPU ceiling still fails.",
+  "baseProductionSource": {
+    "baseCommit": "92f874b83ecb44fad2d81413446de2a536a54f7c",
+    "sources": {
+      "native/src/code_rule_dsl/matcher/resolve.rs": "58744861b34a852950668b2d24c920be7719fd336f53c6d39afbd49a3df158d3",
+      "native/src/code_rule_dsl/scope/mod.rs": "0860be9e4e93b6cdcfe757b59916c4593cfe9ae2bc2b34713dc5641fb9a82e0b",
+      "native/src/code_rule_dsl/scope/tests.rs": "f4a09cf2b515f7bda9734a4de579746ba357a9a22830a301f421e66f7cce9d3e"
+    }
+  },
+  "candidateSource": {
+    "baseCommit": "92f874b83ecb44fad2d81413446de2a536a54f7c",
+    "sources": {
+      "native/src/code_rule_dsl/matcher/cohort.rs": "3cdaf1dd96b5bde9134f8bce980a0e7d4d0b4adcdf7dddc14e4069154fe3ae28",
+      "native/src/code_rule_dsl/matcher/resolve.rs": "063fe9a268264c47b7b64e9152abc76ec0e764af6b5e676660f023a5c9bc7577",
+      "native/src/code_rule_dsl/scope/mod.rs": "0860be9e4e93b6cdcfe757b59916c4593cfe9ae2bc2b34713dc5641fb9a82e0b",
+      "native/src/code_rule_dsl/scope/tests.rs": "f4a09cf2b515f7bda9734a4de579746ba357a9a22830a301f421e66f7cce9d3e"
+    }
+  },
+  "fullControlCold": {
+    "cpuNs": 190589440000,
+    "hardwareWork": {
+      "cycles": 593340334923,
+      "instructions": 1559481561093,
+      "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+    },
+    "peakRssBytes": 1406107648,
+    "wallNs": 56891483875
+  },
+  "fullCandidateCold": {
+    "cpuNs": 188619255000,
+    "hardwareWork": {
+      "cycles": 584769996898,
+      "instructions": 1552004285139,
+      "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+    },
+    "peakRssBytes": 1405534208,
+    "wallNs": 79411154542
+  },
+  "sliceCandidateCold": {
+    "cpuNs": 14294173000,
+    "hardwareWork": {
+      "cycles": 44654761453,
+      "instructions": 113850298738,
+      "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+    },
+    "peakRssBytes": 387252224,
+    "wallNs": 7835945042
+  },
+  "fullCoverage": {
+    "fused_control_steps": 385507456,
+    "import_suffix_guard_alternative_skips": 1883492,
+    "import_suffix_guard_checks": 26890671,
+    "import_suffix_guard_rejects": 8259709,
+    "operation_lanes": 251599324,
+    "owned_leaf_requests": 50927990
+  },
+  "fullFindingAndThreeEditParity": true,
+  "focusedTestsPassed": 58,
+  "rawReportsSha256": {
+    "control": "71a4762e75e071c2a0b41f3d32a86aff677b2524db0daa9da25124358e59783f",
+    "candidate": "082230dd12d4d12c43f031ade3d7795f7b371b3bdd4c527875878fe83d0645f4",
+    "slice": "49360e3348305108c130f7c1b62c362c1a3bf61578c23d8396f79f82ff29d1ac"
+  },
+  "patchSha256": "f62dd658d63742726f9f7cc3862aa867b86bf402f9145f61713898b19b118ca8",
+  "candidateReport": "sql-native-capture-cohort-rejected-sql.json.gz"
+}

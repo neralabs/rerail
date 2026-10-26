@@ -432,6 +432,9 @@ struct Entry {
     pipeline: bool,
     rollback_nontrue: bool,
     guard: Option<KindGuard>,
+    // Necessary zero-work rejection only. The source must remain a Semantic::Resolves
+    // opcode; positive admission always executes the original semantic term.
+    import_suffix_guard: Option<u32>,
 }
 #[derive(Clone, Copy)]
 struct ProgramClass {
@@ -576,6 +579,9 @@ impl Programs {
         };
         if self.entries[program as usize].guard.is_some() {
             descriptor.insert_str(0, "Guard:");
+        }
+        if self.entries[program as usize].import_suffix_guard.is_some() {
+            descriptor.insert_str(0, "ImportSuffixGuard:");
         }
         if !children.is_empty() {
             descriptor.push('[');
@@ -725,6 +731,7 @@ impl Programs {
             pipeline: false,
             rollback_nontrue: false,
             guard: None,
+            import_suffix_guard: None,
         });
         self.unexcluded = Some(program);
         program
@@ -750,6 +757,7 @@ impl Programs {
             pipeline: false,
             rollback_nontrue: false,
             guard: None,
+            import_suffix_guard: None,
         });
         let mut op = match rule {
             AstMatcher::Pattern(p) => Op::Pattern(self.pattern_plans.compile(p.clone())),
@@ -784,8 +792,20 @@ impl Programs {
                     }
                     consumed += 1;
                 }
+                let prefix_len = children.len();
                 children.extend(rs[consumed..].iter().map(|r| self.lower(r)));
+                // Only directly proven zero-work source terms precede this semantic.
+                // Preserve the semantic term: its positive path can charge/read scopes.
+                if matches!(
+                    rs.get(consumed),
+                    Some(AstMatcher::Semantic(Semantic::Resolves(_)))
+                ) {
+                    self.entries[id as usize].import_suffix_guard =
+                        self.entries[children[prefix_len] as usize].import_suffix_guard;
+                }
                 if children.len() == 1 {
+                    self.entries[id as usize].import_suffix_guard =
+                        self.entries[children[0] as usize].import_suffix_guard;
                     self.entries[id as usize].rollback_nontrue = true;
                     if let Some(child_guard) = self.entries[children[0] as usize].guard.clone() {
                         if let Some(guard) = &mut guard {
@@ -925,6 +945,11 @@ impl Programs {
             #[cfg(test)]
             AstMatcher::TestUnknown(r) => Op::TestUnknown(r.clone()),
         };
+        if let Op::Semantic(semantic) = &op
+            && matches!(semantic.as_ref(), Semantic::Resolves(test) if test.has_import_suffix_guard())
+        {
+            self.entries[id as usize].import_suffix_guard = Some(id);
+        }
         if let Op::Util {
             scope, scope_id, ..
         } = &mut op
@@ -1010,6 +1035,9 @@ pub(in crate::code_rule_dsl) struct Metrics {
     pub control_family_lanes: [usize; 20],
     pub control_programs: BTreeMap<String, usize>,
     pub singleton_all_completions: usize,
+    pub import_suffix_guard_checks: usize,
+    pub import_suffix_guard_rejects: usize,
+    pub import_suffix_guard_alternative_skips: usize,
     pub kind_guard_checks: usize,
     pub kind_guard_rejects: usize,
     pub kind_guard_alternative_skips: usize,
@@ -1098,6 +1126,9 @@ impl Metrics {
         self.source_refills += other.source_refills;
         self.fused_control_steps += other.fused_control_steps;
         self.singleton_all_completions += other.singleton_all_completions;
+        self.import_suffix_guard_checks += other.import_suffix_guard_checks;
+        self.import_suffix_guard_rejects += other.import_suffix_guard_rejects;
+        self.import_suffix_guard_alternative_skips += other.import_suffix_guard_alternative_skips;
         self.kind_guard_checks += other.kind_guard_checks;
         self.kind_guard_rejects += other.kind_guard_rejects;
         self.kind_guard_alternative_skips += other.kind_guard_alternative_skips;
@@ -1901,7 +1932,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                 }
                 let guard_rejected = matches!(frame.state, State::Start)
                     && programs.atomic(frame.request.program).is_none()
-                    && self.reject_kind_guard(
+                    && self.reject_entry_guard(
                         programs,
                         frame.request.program,
                         frame.request.leaf(lane.meta.as_ref().unwrap(), frame.depth),
@@ -2162,6 +2193,36 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         self.metrics.region_posting_nodes += metrics.posting_nodes;
         merge_region_metrics(&mut self.metrics.region_kernel, metrics);
     }
+    fn reject_import_suffix_guard(
+        &mut self,
+        programs: &Programs,
+        program: u32,
+        node: &Node<'t, D>,
+    ) -> bool {
+        let Some(source) = programs.entries[program as usize].import_suffix_guard else {
+            return false;
+        };
+        let Op::Semantic(semantic) = &programs.entries[source as usize].op else {
+            unreachable!("import suffix guard source")
+        };
+        let Semantic::Resolves(test) = semantic.as_ref() else {
+            unreachable!("import suffix guard semantic")
+        };
+        self.metrics.import_suffix_guard_checks += 1;
+        let rejected = test.rejects_import_suffix(node);
+        self.metrics.import_suffix_guard_rejects += usize::from(rejected);
+        rejected
+    }
+    fn reject_entry_guard<H: Host<'t, D>>(
+        &mut self,
+        programs: &Programs,
+        program: u32,
+        request: LeafJob<'_, 't, D>,
+        host: &mut H,
+    ) -> bool {
+        self.reject_kind_guard(programs, program, request, host)
+            || self.reject_import_suffix_guard(programs, program, request.node)
+    }
     fn reject_kind_guard<H: Host<'t, D>>(
         &mut self,
         programs: &Programs,
@@ -2200,7 +2261,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
     ) {
         while *index < children.len() {
             let program = children[*index];
-            if !self.reject_kind_guard(
+            let suffix_rejects = self.metrics.import_suffix_guard_rejects;
+            if !self.reject_entry_guard(
                 programs,
                 program,
                 frame.request.leaf(meta, frame.depth),
@@ -2208,8 +2270,11 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             ) {
                 break;
             }
-            self.metrics.kind_guard_alternative_skips += 1;
-
+            if self.metrics.import_suffix_guard_rejects != suffix_rejects {
+                self.metrics.import_suffix_guard_alternative_skips += 1;
+            } else {
+                self.metrics.kind_guard_alternative_skips += 1;
+            }
             *index += 1;
         }
     }
@@ -2221,17 +2286,17 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         host: &mut H,
     ) -> Vec<Result<'t, D>> {
         self.metrics.borrowed_leaf_lanes += jobs.len();
-        if !jobs
-            .iter()
-            .any(|request| programs.entries[request.program as usize].guard.is_some())
-        {
+        if !jobs.iter().any(|request| {
+            let entry = &programs.entries[request.program as usize];
+            entry.guard.is_some() || entry.import_suffix_guard.is_some()
+        }) {
             return self.atomic_batch_unguarded(programs, family, jobs, host);
         }
         let mut output: Vec<_> = (0..jobs.len()).map(|_| None).collect();
         let mut accepted = Vec::new();
         let mut positions = Vec::new();
         for (position, request) in jobs.into_iter().enumerate() {
-            if self.reject_kind_guard(programs, request.program, request, host) {
+            if self.reject_entry_guard(programs, request.program, request, host) {
                 output[position] = Some(Result::new(0, request.env.clone()));
             } else {
                 positions.push(position);
@@ -2702,9 +2767,12 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             let frame = lane.stack.last_mut()?;
             if matches!(frame.state, State::Start)
                 && programs.atomic(frame.request.program).is_none()
-                && programs.entries[frame.request.program as usize]
+                && (programs.entries[frame.request.program as usize]
                     .guard
                     .is_some()
+                    || programs.entries[frame.request.program as usize]
+                        .import_suffix_guard
+                        .is_some())
             {
                 return None;
             }
@@ -3873,6 +3941,475 @@ mod tests {
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::{AstGrep as Root, language::Language, matcher::KindMatcher};
     use std::{borrow::Cow, collections::HashMap, sync::OnceLock};
+    fn explicit_python_import(name: &str) -> AstMatcher {
+        let kinds = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| {
+                    KindMatcher::new(name, GrammarDialect::Python)
+                        .potential_kinds()
+                        .unwrap()
+                        .iter()
+                        .next()
+                        .unwrap() as u16
+                })
+                .collect()
+        };
+        AstMatcher::Semantic(Semantic::Resolves(Box::new(super::super::Resolves {
+            globals: BTreeSet::new(),
+            imports: BTreeSet::from([format!("pkg.{name}")]),
+            attribute_kinds: kinds(&["attribute"]),
+            directives: false,
+            language: GrammarDialect::Python,
+            reference_kinds: kinds(&["identifier", "attribute"]),
+            paren_kinds: kinds(&["parenthesized_expression"]),
+            options: None,
+            python: None,
+            declared: false,
+            script_declarations: false,
+            this_global: false,
+            this_scope: false,
+            sloppy_functions: false,
+            this_kinds: BTreeSet::new(),
+            imported: BTreeSet::new(),
+            prefix: false,
+            relative_text: false,
+            dotted_kinds: kinds(&["dotted_name"]),
+            global_any: false,
+            import_any: false,
+            unresolved: None,
+            string_kinds: BTreeSet::new(),
+            before_local: false,
+            seen_before: false,
+            item: false,
+        })))
+    }
+    struct ImportSuffixGuardHost {
+        semantic_lanes: usize,
+        budget: usize,
+    }
+    impl<'t, D: Doc<Source: Content<Underlying = u8>>> Host<'t, D> for ImportSuffixGuardHost {
+        fn can_remember(&self, _: u32, _: &Node<'t, D>) -> bool {
+            true
+        }
+
+        fn evaluate(
+            &mut self,
+            _: &Programs,
+            jobs: Vec<SemanticRequest<'t, D>>,
+        ) -> Vec<Result<'t, D>> {
+            self.semantic_lanes += jobs.len();
+            jobs.into_iter()
+                .map(|job| {
+                    let mut answer = Result::new(2, job.request.env);
+                    answer.work = 7;
+                    answer.replay_work = 5;
+                    answer.levels = 2;
+                    answer
+                })
+                .collect()
+        }
+        fn compare(&mut self, _: &Programs, _: Vec<CompareRequest<'t, D>>) -> Vec<Result<'t, D>> {
+            panic!("compare")
+        }
+        fn spend(&mut self, _: u32, amount: usize) -> bool {
+            if amount > self.budget {
+                false
+            } else {
+                self.budget -= amount;
+                true
+            }
+        }
+    }
+    #[test]
+    fn utility_memo_eviction_changes_cold_false_capture_replay() {
+        let doc = Root::str("a;", GrammarDialect::JavaScript);
+        let node = doc.root().child(0).unwrap();
+        let nth = AstMatcher::NthChild(Box::new(super::super::NthChild {
+            position: super::super::NthPosition { step: 0, offset: 0 },
+            of_rule: Some(pattern("$LEAK")),
+            reverse: false,
+            capture_free: OnceLock::new(),
+        }));
+        let table = Arc::new(super::super::UtilTable::new(
+            vec!["leak".into(), "clear".into()],
+            vec![false, false],
+            vec![None, None],
+        ));
+        assert!(
+            table
+                .rules
+                .set(vec![
+                    nth,
+                    AstMatcher::Regex(regex::Regex::new("^never$").unwrap())
+                ])
+                .is_ok()
+        );
+        let utility = |index| {
+            AstMatcher::Util(super::super::UtilRef {
+                table: Arc::downgrade(&table),
+                index,
+            })
+        };
+        let leak_rule = utility(0);
+        let clear_rule = utility(1);
+        let mut programs = Programs::default();
+        let leak = programs.lower(&leak_rule);
+        let clear = programs.lower(&clear_rule);
+        let env = Arc::new(MetaVarEnv::new());
+        let request = |program| Request {
+            program,
+            context: 0,
+            node: node.clone(),
+            env: env.clone(),
+            three: true,
+            each: None,
+            following: Arc::new(Vec::new()),
+        };
+        let mut bank = Bank::default();
+        let cold = bank
+            .execute(&programs, vec![request(leak)], &mut SyntaxHost)
+            .pop()
+            .unwrap();
+        assert_eq!(cold.truth, 0);
+        assert!(cold.failure.is_none());
+        assert!(cold.env.get_match("LEAK").is_some());
+        let hot = bank
+            .execute(&programs, vec![request(leak)], &mut SyntaxHost)
+            .pop()
+            .unwrap();
+        assert_eq!(hot.truth, 0);
+        assert!(hot.failure.is_none());
+        assert!(hot.env.get_match("LEAK").is_none());
+        assert_eq!(bank.metrics.utility_hits, 1);
+        // Fill irrelevant distinct keys cheaply; one real utility return below
+        // exercises the existing capacity-clear branch, rather than clearing directly.
+        let (key, entry) = bank
+            .memo
+            .iter()
+            .next()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .unwrap();
+        for ordinal in 0..32768 {
+            if bank.memo.len() == 32768 {
+                break;
+            }
+            let mut filler = key.clone();
+            filler.node = usize::MAX - ordinal;
+            bank.memo.insert(filler, entry.clone());
+        }
+        assert_eq!(bank.memo.len(), 32768);
+        let cleared = bank
+            .execute(&programs, vec![request(clear)], &mut SyntaxHost)
+            .pop()
+            .unwrap();
+        assert_eq!(cleared.truth, 0);
+        assert!(cleared.failure.is_none());
+        assert_eq!(bank.metrics.utility_evictions, 32768);
+        let cold_again = bank
+            .execute(&programs, vec![request(leak)], &mut SyntaxHost)
+            .pop()
+            .unwrap();
+        assert_eq!(cold_again.truth, 0);
+        assert!(cold_again.failure.is_none());
+        assert!(cold_again.env.get_match("LEAK").is_some());
+        assert_eq!(bank.metrics.utility_hits, 1);
+    }
+    #[test]
+    fn python_import_suffix_guard_normalizes_unicode_parens_and_rolls_back_captures() {
+        let doc = Root::str("(pkg.K)\n(pkg.other)\n", GrammarDialect::Python);
+        let rule = explicit_python_import("K");
+        let AstMatcher::Semantic(Semantic::Resolves(test)) = &rule else {
+            panic!("resolves")
+        };
+        assert!(test.has_import_suffix_guard());
+        let nodes: Vec<_> = doc
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "parenthesized_expression")
+            .collect();
+        assert_eq!(nodes.len(), 2);
+        assert!(
+            !test.rejects_import_suffix(&nodes[0]),
+            "NFKC attribute K inside parentheses is admitted"
+        );
+        assert!(test.rejects_import_suffix(&nodes[1]));
+        let identifier = nodes[1]
+            .dfs()
+            .find(|node| node.kind() == "identifier")
+            .unwrap();
+        assert!(
+            !test.rejects_import_suffix(&identifier),
+            "nonattributes remain original predicate work"
+        );
+        let invalid_head = Root::str("(42).K\n", GrammarDialect::Python);
+        let invalid_head = invalid_head
+            .root()
+            .dfs()
+            .find(|node| node.kind() == "attribute")
+            .unwrap();
+        assert!(
+            !test.rejects_import_suffix(&invalid_head),
+            "a listed tail is admission only; the original predicate checks its head"
+        );
+        for mode in 0..4 {
+            let mut extended = (**test).clone();
+            match mode {
+                0 => extended.prefix = true,
+                1 => extended.import_any = true,
+                2 => extended.before_local = true,
+                _ => {
+                    extended.imported.insert("pkg.K".into());
+                }
+            }
+            assert!(!extended.has_import_suffix_guard());
+        }
+        let mut globals_too = (**test).clone();
+        globals_too.global_any = true;
+        globals_too.globals.insert("other".into());
+        assert!(globals_too.has_import_suffix_guard());
+        assert!(
+            globals_too.rejects_import_suffix(&nodes[1]),
+            "attributes cannot win the global branch"
+        );
+
+        let mut programs = Programs::default();
+        let program = programs.lower(&rule);
+        let request = |node| Request {
+            program,
+            context: 0,
+            node,
+            env: Arc::new(MetaVarEnv::new()),
+            three: true,
+            each: None,
+            following: Arc::new(Vec::new()),
+        };
+        let mut host = ImportSuffixGuardHost {
+            semantic_lanes: 0,
+            budget: usize::MAX,
+        };
+        let answers = Bank::default().execute(
+            &programs,
+            nodes.iter().cloned().map(request).collect(),
+            &mut host,
+        );
+        assert_eq!(
+            answers.iter().map(|r| r.truth).collect::<Vec<_>>(),
+            vec![2, 0]
+        );
+        assert_eq!(host.semantic_lanes, 1);
+        let pattern = AstMatcher::Pattern(Arc::new(ast_grep_core::Pattern::new(
+            "$X",
+            GrammarDialect::Python,
+        )));
+        let conjunction = AstMatcher::All(vec![pattern, explicit_python_import("absent")]);
+        let mut programs = Programs::default();
+        let program = programs.lower(&conjunction);
+        assert!(
+            programs.entries[program as usize]
+                .import_suffix_guard
+                .is_some()
+        );
+        let input = Arc::new(MetaVarEnv::new());
+        let request = Request {
+            program,
+            context: 0,
+            node: nodes[1].clone(),
+            env: input.clone(),
+            three: true,
+            each: None,
+            following: Arc::new(Vec::new()),
+        };
+        let mut bank = Bank::default();
+        let answer = bank
+            .execute(&programs, vec![request], &mut SyntaxHost)
+            .remove(0);
+        assert_eq!(answer.truth, 0);
+        assert!(Arc::ptr_eq(&answer.env, &input));
+        assert!(answer.env.get_match("X").is_none());
+        assert_eq!((answer.work, answer.replay_work, answer.levels), (0, 0, 0));
+        assert!(bank.metrics.import_suffix_guard_rejects > 0);
+        let alternatives = AstMatcher::Any(vec![
+            explicit_python_import("absent"),
+            AstMatcher::Semantic(Semantic::Capture("X".into())),
+        ]);
+        let mut programs = Programs::default();
+        let program = programs.lower(&alternatives);
+        let request = Request {
+            program,
+            context: 0,
+            node: nodes[1].clone(),
+            env: input,
+            three: true,
+            each: None,
+            following: Arc::new(Vec::new()),
+        };
+        let mut bank = Bank::default();
+        let answer = bank
+            .execute(&programs, vec![request], &mut SyntaxHost)
+            .remove(0);
+        assert_eq!(answer.truth, 2);
+        assert_eq!(
+            answer.env.get_match("X").unwrap().node_id(),
+            nodes[1].node_id()
+        );
+        assert_eq!(bank.metrics.import_suffix_guard_alternative_skips, 1);
+        assert_eq!(bank.metrics.kind_guard_alternative_skips, 0);
+    }
+    #[test]
+    fn python_import_suffix_guards_never_hoist_past_charged_semantics_or_utility_entries() {
+        let doc = Root::str("pkg.a\n", GrammarDialect::Python);
+        let node = doc
+            .root()
+            .dfs()
+            .find(|node| node.kind() == "attribute")
+            .unwrap();
+        let rule = AstMatcher::All(vec![
+            explicit_python_import("a"),
+            explicit_python_import("absent"),
+        ]);
+        let mut programs = Programs::default();
+        let program = programs.lower(&rule);
+        let request = |program, env| Request {
+            program,
+            context: 0,
+            node: node.clone(),
+            env,
+            three: true,
+            each: None,
+            following: Arc::new(Vec::new()),
+        };
+        let input = Arc::new(MetaVarEnv::new());
+        let mut host = ImportSuffixGuardHost {
+            semantic_lanes: 0,
+            budget: usize::MAX,
+        };
+        let answer = Bank::default()
+            .execute(&programs, vec![request(program, input.clone())], &mut host)
+            .remove(0);
+        assert_eq!(answer.truth, 0);
+        assert_eq!(host.semantic_lanes, 1);
+        assert_eq!((answer.work, answer.replay_work, answer.levels), (7, 5, 2));
+        let table = Arc::new(super::super::UtilTable::new(
+            vec!["u".into()],
+            vec![false],
+            vec![None],
+        ));
+        assert!(
+            table
+                .rules
+                .set(vec![explicit_python_import("absent")])
+                .is_ok()
+        );
+        let util = AstMatcher::Util(super::super::UtilRef {
+            table: Arc::downgrade(&table),
+            index: 0,
+        });
+        let mut programs = Programs::default();
+        let program = programs.lower(&util);
+        for (depth, budget, failure) in [
+            (0, 1, None),
+            (0, 0, Some(Failure::Utility(UtilLimit::Work))),
+            (
+                super::super::util::MAX_UTIL_DEPTH,
+                1,
+                Some(Failure::Utility(UtilLimit::Depth)),
+            ),
+        ] {
+            let mut host = ImportSuffixGuardHost {
+                semantic_lanes: 0,
+                budget,
+            };
+            let mut bank = Bank::default();
+            let answer = bank
+                .execute_at(
+                    &programs,
+                    vec![request(program, input.clone())],
+                    &mut host,
+                    depth,
+                )
+                .remove(0);
+            assert_eq!(answer.truth, 0);
+            assert_eq!(answer.failure, failure);
+            assert_eq!(host.semantic_lanes, 0);
+            assert!(Arc::ptr_eq(&answer.env, &input));
+            if failure.is_none() {
+                assert_eq!((answer.work, answer.replay_work, answer.levels), (1, 1, 1));
+                assert_eq!(bank.metrics.import_suffix_guard_rejects, 1);
+                assert_eq!(
+                    bank.memo.len(),
+                    1,
+                    "normal false utility admission is preserved"
+                );
+                assert_eq!(bank.metrics.utility_hits, 0);
+                host.budget = 1;
+                let hot = bank
+                    .execute_at(
+                        &programs,
+                        vec![request(program, input.clone())],
+                        &mut host,
+                        depth,
+                    )
+                    .remove(0);
+                assert_eq!(
+                    (hot.truth, hot.work, hot.replay_work, hot.levels),
+                    (0, 1, 1, 1)
+                );
+                assert!(hot.failure.is_none());
+                assert!(Arc::ptr_eq(&hot.env, &input));
+                assert_eq!(bank.memo.len(), 1);
+                assert_eq!(bank.metrics.utility_hits, 1);
+                assert_eq!(
+                    bank.metrics.import_suffix_guard_rejects, 1,
+                    "hot utility uses its original memo path"
+                );
+            } else {
+                assert!(
+                    bank.memo.is_empty(),
+                    "failed utilities never publish a memo entry"
+                );
+            }
+        }
+        // A utility before the rejecting semantic must retain its entry charge.
+        let table = Arc::new(super::super::UtilTable::new(
+            vec!["capture".into()],
+            vec![false],
+            vec![None],
+        ));
+        assert!(
+            table
+                .rules
+                .set(vec![AstMatcher::Semantic(Semantic::Capture("X".into()))])
+                .is_ok()
+        );
+        let charged = AstMatcher::All(vec![
+            AstMatcher::Util(super::super::UtilRef {
+                table: Arc::downgrade(&table),
+                index: 0,
+            }),
+            explicit_python_import("absent"),
+        ]);
+        let mut programs = Programs::default();
+        let program = programs.lower(&charged);
+        assert!(
+            programs.entries[program as usize]
+                .import_suffix_guard
+                .is_none()
+        );
+        let answer = Bank::default()
+            .execute(
+                &programs,
+                vec![request(program, input.clone())],
+                &mut SyntaxHost,
+            )
+            .remove(0);
+        assert_eq!(
+            (answer.truth, answer.work, answer.replay_work, answer.levels),
+            (0, 1, 1, 1)
+        );
+        assert!(Arc::ptr_eq(&answer.env, &input));
+    }
+
     #[test]
     fn lane_metadata_survives_foreign_constraints_and_source_refills() {
         struct Probe {

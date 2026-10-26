@@ -1420,3 +1420,100 @@ fn typescript_tables_agree_with_typescript_eslint_on_every_oracle_fixture() {
     }
     assert!(report.is_empty(), "{}", report.join("\n"));
 }
+
+#[test]
+fn python_load_facts_cache_only_actual_slots_and_the_first_exact_name() {
+    let source = "x = 1\ny = 2\nprint(x, missing)\n";
+    let table = table(GrammarDialect::Python, source);
+    assert!(table.python_load_facts_ready);
+    assert!(table.python_load_facts.get().is_none());
+    let reference = table.reference(&occurrence(source, "x", 1)).unwrap();
+    let copied = *reference;
+    assert_eq!(
+        table.resolve_load_index(&copied, "x"),
+        table.resolve_load_index_uncached(&copied, "x")
+    );
+    assert!(
+        table.python_load_facts.get().is_none(),
+        "copied references must bypass cache storage"
+    );
+    let mut synthetic = copied;
+    synthetic.at = 0;
+    synthetic.deferred = false;
+    assert_eq!(
+        table.resolve_load_index(&synthetic, "x"),
+        table.resolve_load_index_uncached(&synthetic, "x")
+    );
+    assert!(
+        table.python_load_facts.get().is_none(),
+        "synthetic same-range references must bypass storage"
+    );
+    let expected = table.resolve_load_index_uncached(reference, "x");
+    assert!(expected.is_some());
+    assert_eq!(table.resolve_load_index(reference, "x"), expected);
+    let index = table
+        .references
+        .iter()
+        .position(|r| std::ptr::eq(r, reference))
+        .unwrap();
+    let cell = &table.python_load_facts.get().unwrap()[index];
+    let first = cell.get().unwrap().as_ref();
+    assert_eq!(first.name.as_ref(), "x");
+    let other = table.resolve_load_index_uncached(reference, "missing");
+    assert_ne!(expected, other);
+    assert_eq!(table.resolve_load_index(reference, "missing"), other);
+    assert_eq!(
+        table.resolve_load_index(reference, "X"),
+        table.resolve_load_index_uncached(reference, "X")
+    );
+    assert_eq!(table.resolve_load_index(reference, "x"), expected);
+    assert!(std::ptr::eq(first, cell.get().unwrap().as_ref()));
+    assert_eq!(cell.get().unwrap().name.as_ref(), "x");
+    let missing = table.reference(&occurrence(source, "missing", 0)).unwrap();
+    assert_eq!(table.resolve_load_index(missing, "missing"), None);
+    let index = table
+        .references
+        .iter()
+        .position(|r| std::ptr::eq(r, missing))
+        .unwrap();
+    let first = table.python_load_facts.get().unwrap()[index]
+        .get()
+        .unwrap()
+        .as_ref();
+    assert_eq!(first.resolved, None);
+    assert_eq!(table.resolve_load_index(missing, "missing"), None);
+    assert!(std::ptr::eq(
+        first,
+        table.python_load_facts.get().unwrap()[index]
+            .get()
+            .unwrap()
+            .as_ref()
+    ));
+}
+
+#[test]
+fn python_load_facts_activate_after_finalization_and_keep_table_thread_safe() {
+    let source = "def outer():\n    x: int\n    def inner():\n        nonlocal x\n        x = 1\n    return x\n";
+    let table = table(GrammarDialect::Python, source);
+    assert!(table.python_load_facts_ready);
+    // Python finish ran mark_rebound, which itself walks synthetic/build-time inputs.
+    assert!(table.scopes.iter().any(|scope| {
+        scope
+            .bindings
+            .get("x")
+            .is_some_and(|bindings| bindings.iter().any(|b| b.rebound))
+    }));
+    assert!(table.python_load_facts.get().is_none());
+    let reference = table.reference(&occurrence(source, "x", 3)).unwrap();
+    assert_eq!(
+        table.resolve_load_index(reference, "x"),
+        table.resolve_load_index_uncached(reference, "x")
+    );
+    assert!(table.python_load_facts.get().is_some());
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<ScopeTable>();
+    assert!(
+        std::mem::size_of::<OnceLock<Box<PythonLoadFact>>>() <= 2 * std::mem::size_of::<usize>()
+    );
+    assert!(std::mem::size_of::<PythonLoadFact>() <= 5 * std::mem::size_of::<usize>());
+}

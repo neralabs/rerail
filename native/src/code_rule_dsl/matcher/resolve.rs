@@ -238,6 +238,36 @@ enum ThisBoundary {
 }
 
 impl Resolves {
+    /// A necessary, context-free rejection only; positive admission still runs holds.
+    pub(super) fn has_import_suffix_guard(&self) -> bool {
+        self.language == GrammarDialect::Python
+            && !self.item
+            && !self.seen_before
+            && !self.before_local
+            && self.unresolved.is_none()
+            && !self.this_global
+            && !self.imports.is_empty()
+            && !self.import_any
+            && !self.prefix
+            && self.imported.is_empty()
+    }
+    pub(super) fn rejects_import_suffix<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+        debug_assert!(self.has_import_suffix_guard());
+        let node = self.unparenthesized(node.clone());
+        let kind = node.kind_id();
+        if !self.attribute_kinds.contains(&kind) || self.dotted_kinds.contains(&kind) {
+            return false;
+        }
+        let Some(attribute) = node.field("attribute") else {
+            return true;
+        };
+        let name = name_in(self.language, attribute.text());
+        !self
+            .imports
+            .iter()
+            .any(|import| import.rsplit('.').next() == Some(name.as_ref()))
+    }
+
     pub(super) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         with_adapter!(Family::of(self.language), A => self.holds_in::<<A as Adapter>::Scope, D>(node))
     }
@@ -287,8 +317,13 @@ impl Resolves {
         if let Some(mode) = self.unresolved {
             return !self.attribute_kinds.contains(&kind) && self.is_unresolved::<S, D>(node, mode);
         }
-        let chain = (!self.imports.is_empty() || self.import_any)
-            && (S::IMPORT_PATHS || self.import_chain(node).is_some());
+        let imports = !self.imports.is_empty() || self.import_any;
+        let prepared_chain = if imports && !S::IMPORT_PATHS {
+            self.import_chain(node)
+        } else {
+            None
+        };
+        let chain = imports && (S::IMPORT_PATHS || prepared_chain.is_some());
         let text = name_in(self.language, node.text());
         // Without language options only a comment can make another name global; without the
         // opt-in no table is needed.
@@ -309,7 +344,9 @@ impl Resolves {
         };
         (global && self.is_global(&table, node, text.as_ref()))
             || (chain && S::IMPORT_PATHS && self.is_import_path::<S, D>(&table, node))
-            || (chain && !S::IMPORT_PATHS && self.is_import(&table, node))
+            || (chain
+                && !S::IMPORT_PATHS
+                && prepared_chain.is_some_and(|(head, tail)| self.is_import(&table, head, tail)))
     }
 
     /// Rust: the path the read at `node` names through the file's imports is listed (or with
@@ -618,10 +655,7 @@ impl Resolves {
         Some((head, tail))
     }
 
-    fn is_import<D: Doc>(&self, table: &ScopeTable, node: &Node<'_, D>) -> bool {
-        let Some((head, tail)) = self.import_chain(node) else {
-            return false;
-        };
+    fn is_import<D: Doc>(&self, table: &ScopeTable, head: Node<'_, D>, tail: Vec<String>) -> bool {
         let name = name_in(self.language, head.text());
         let Some(reference) = table.reference(&head.range()) else {
             return false;

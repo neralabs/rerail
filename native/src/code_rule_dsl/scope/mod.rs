@@ -386,6 +386,12 @@ pub(crate) struct Directives {
     pub(crate) off: BTreeSet<String>,
 }
 
+// The first exact name queried for one immutable reference slot. A negative lookup
+// is a cached fact too; other names use the original scope walk.
+struct PythonLoadFact {
+    name: Box<str>,
+    resolved: Option<(u32, usize)>,
+}
 pub(crate) struct ScopeTable {
     pub(crate) language: GrammarDialect,
     /// The family of `language`, whose `ScopeRules` read the table.
@@ -393,6 +399,9 @@ pub(crate) struct ScopeTable {
     pub(crate) scopes: Vec<Scope>,
     /// Sorted by start byte; at most one reference starts at a byte.
     pub(crate) references: Vec<Reference>,
+    // Disabled while finish/mark_rebound may still mutate scopes and references.
+    python_load_facts_ready: bool,
+    python_load_facts: OnceLock<Box<[OnceLock<Box<PythonLoadFact>>]>>,
     pub(crate) directives: Directives,
     /// Nodes the build visited: what a clause pays for the table (`maxVisitedNodes`).
     pub(crate) cost: usize,
@@ -534,6 +543,8 @@ impl ScopeTable {
                 family,
                 scopes: Vec::new(),
                 references: Vec::new(),
+                python_load_facts_ready: false,
+                python_load_facts: OnceLock::new(),
                 directives: Directives::default(),
                 cost: 0,
                 reading,
@@ -567,6 +578,7 @@ impl ScopeTable {
         let mut table = builder.table;
         table.sort_references();
         with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::finish(&mut table, &root));
+        table.python_load_facts_ready = family == Family::Python;
         Ok(table)
     }
 
@@ -898,6 +910,48 @@ impl ScopeTable {
     }
 
     fn resolve_load_index(&self, reference: &Reference, name: &str) -> Option<(u32, usize)> {
+        if !self.python_load_facts_ready {
+            return self.resolve_load_index_uncached(reference, name);
+        }
+        let bounds = self.references.as_ptr_range();
+        let address = reference as *const Reference as usize;
+        let start = bounds.start as usize;
+        if address < start || address >= bounds.end as usize {
+            return self.resolve_load_index_uncached(reference, name);
+        }
+        let offset = address - start;
+        let width = std::mem::size_of::<Reference>();
+        if offset % width != 0 {
+            return self.resolve_load_index_uncached(reference, name);
+        }
+        let index = offset / width;
+        if !std::ptr::eq(&self.references[index], reference) {
+            return self.resolve_load_index_uncached(reference, name);
+        }
+        let facts = self.python_load_facts.get_or_init(|| {
+            (0..self.references.len())
+                .map(|_| OnceLock::new())
+                .collect::<Vec<_>>()
+                .into_boxed_slice()
+        });
+        let fact = facts[index].get_or_init(|| {
+            Box::new(PythonLoadFact {
+                name: name.into(),
+                resolved: self.resolve_load_index_uncached(reference, name),
+            })
+        });
+        if fact.name.as_ref() == name {
+            fact.resolved
+        } else {
+            self.resolve_load_index_uncached(reference, name)
+        }
+    }
+
+    fn resolve_load_index_uncached(
+        &self,
+        reference: &Reference,
+        name: &str,
+    ) -> Option<(u32, usize)> {
         self.resolve_load_pair(reference, name)
             .map(|(found, module)| module.unwrap_or(found))
     }
