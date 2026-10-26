@@ -1,1 +1,0 @@
-function foo() { if (true) {} else { for(;;) {} } }

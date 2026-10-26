@@ -1,1 +1,0 @@
-switch ($0) { case $1: function $2(): void { } }

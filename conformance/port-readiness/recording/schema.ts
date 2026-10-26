@@ -13,7 +13,7 @@
  *
  * Each PackAdapter member and where its recorded answer is:
  *   identity → `identity`; packChecks → `packChecks`; licenseText → `licenseText` and its digest `licenseSha256` (the kept
- *   `licenses/<project>/LICENSE` is checked against the digest); rule(name) → `rules[name].facts`, undefined for a name
+ *   licence under `licenses/<project>/`, every LICENSE or LICENCE file, is checked against the digest); rule(name) → `rules[name].facts`, undefined for a name
  *   in `absent`; implementationNames / sharedImplementationNames / implementationRegexes → `rules[name].names` with
  *   `nameSets`; fixtureWords → `fixtureWords`; fixtureTexts → `fixtureTexts`: upstream's files fetched at the
  *   pinned commit (each checked against its sha256) and the inline texts, or, in a recording without it, the
@@ -294,8 +294,9 @@ export const gatesRecordingSchema = z.strictObject({
   }),
   /**
    * Every runtime the recorder ran (upstream's, an ESLint environment's, the independent parsers', the Python
-   * toolkit's), by its directory under conformance/recorders/port-readiness/runtimes/: each pin file's sha256 by file name
-   * (package.json; pyproject.toml and .python-version). The runtime-pins check compares them with the committed files.
+   * toolkit's, a Rust toolchain), by its directory under conformance/recorders/port-readiness/runtimes/: each pin file's
+   * sha256 by file name (package.json; pyproject.toml and .python-version; composer.json and .php-version, and
+   * runtimes/php's extensions.txt; rust-toolchain.toml). The runtime-pins check compares them with the committed files.
    */
   runtimes: z.record(z.string().regex(/^[a-z0-9._-]+$/u), z.record(z.string().regex(/^[A-Za-z0-9._-]+$/u), sha256)),
   /**
@@ -305,7 +306,7 @@ export const gatesRecordingSchema = z.strictObject({
   identity: z.record(nonEmpty, z.string()),
   /** packChecks: the tool-pack checks only the live adapter can make, as they stood when the recorder ran. */
   packChecks: z.array(checkSchema),
-  /** licenseText's sha256 (UTF-8): upstream's LICENSE at the pinned commit; the kept licenses/<project>/LICENSE must match it. */
+  /** licenseText's sha256 (UTF-8): upstream's licence at the pinned commit; the kept copy (recorded-adapter.ts's licenseBytes over keptLicenseDirectory) must match it. */
   licenseSha256: sha256,
   /**
    * licenseText itself: upstream's copyright and permission notice, which must accompany the excerpts of its tests this
@@ -317,8 +318,8 @@ export const gatesRecordingSchema = z.strictObject({
   inScopeSamples: z.array(relativePath).min(1),
   /** inCorpus as data: the file extensions upstream lints in a corpus, and whether they are matched case-sensitively. */
   corpus: z.strictObject({
-    /** Extensions with their dot (`.py`, `.pyi`), sorted. */
-    extensions: sortedStrings(z.string().regex(/^\.[A-Za-z0-9]+$/u)),
+    /** Extensions with their dot (`.py`, `.pyi`; a dialect's whole suffix, `.blade.php`, as engine.ts's fileTypeOf reads it), sorted. */
+    extensions: sortedStrings(z.string().regex(/^(?:\.[A-Za-z0-9]+)+$/u)),
     /** True when a path's extension must be written as listed (Ruff, Bandit); false when any letter case matches (ESLint). */
     caseSensitive: z.boolean(),
   }),

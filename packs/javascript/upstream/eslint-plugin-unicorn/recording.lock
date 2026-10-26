@@ -1,8 +1,6 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v1",
+  "format": "rerail.port-readiness-recording-lock/v2",
   "tool": "eslint-plugin-unicorn",
-  "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/sindresorhus/eslint-plugin-unicorn",
     "commit": "f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1",
@@ -21,14 +19,12 @@
     "recording.json": {
       "sha256": "571c43462ffed55b7f0e26b3131ce514965e13f2bdff293aad86873c4a85d7df",
       "size": 7838536,
-      "format": "rerail.port-readiness-recording/v2",
-      "asset": "javascript-eslint-plugin-unicorn-recording-571c43462ffed55b7f0e26b3131ce514965e13f2bdff293aad86873c4a85d7df.json.gz"
+      "format": "rerail.port-readiness-recording/v2"
     },
     "corpus.json": {
       "sha256": "58f3d9e9b7a813b10c921c110ead51ccb2443e8caa08b18b1d2f62c05d9b5267",
       "size": 557,
-      "format": "rerail.port-readiness-corpus/v2",
-      "asset": "javascript-eslint-plugin-unicorn-corpus-58f3d9e9b7a813b10c921c110ead51ccb2443e8caa08b18b1d2f62c05d9b5267.json.gz"
+      "format": "rerail.port-readiness-corpus/v2"
     }
   }
 }

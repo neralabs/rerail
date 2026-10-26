@@ -1,1 +1,0 @@
-Lead @endforelse($arg) Trail

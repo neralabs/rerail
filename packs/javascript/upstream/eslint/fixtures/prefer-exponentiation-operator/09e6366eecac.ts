@@ -1,1 +1,0 @@
-Math.pow(a as any, b)

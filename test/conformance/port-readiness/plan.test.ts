@@ -33,18 +33,27 @@ const workflow = (name: string): Record<string, any> => parse(readFileSync(join(
 // The legs port-readiness.yml listed by hand before the plan built them, in discovery order (packs, then tools,
 // sorted). The order only orders the jobs in the run's page; names, artifacts and cache keys come from the fields.
 const EVERY_LEG: Leg[] = [
+  { pack: "blade", tool: "blade-parser" },
+  { pack: "blade", tool: "bladestan" },
+  { pack: "blade", tool: "tlint" },
   { pack: "javascript", tool: "eslint", shard: 1, shards: 4 },
   { pack: "javascript", tool: "eslint", shard: 2, shards: 4 },
   { pack: "javascript", tool: "eslint", shard: 3, shards: 4 },
   { pack: "javascript", tool: "eslint", shard: 4, shards: 4 },
   { pack: "javascript", tool: "eslint-plugin-unicorn" },
   { pack: "next", tool: "eslint-plugin-next" },
+  { pack: "php", tool: "phpcs" },
+  { pack: "php", tool: "phpstan" },
+  { pack: "php", tool: "psalm" },
   { pack: "python", tool: "bandit" },
   { pack: "python", tool: "ruff" },
   { pack: "react", tool: "eslint-plugin-react" },
   { pack: "react", tool: "eslint-plugin-react-hooks" },
+  { pack: "rust", tool: "clippy" },
+  { pack: "sql", tool: "sqlfluff" },
   { pack: "typescript", tool: "eslint-plugin-vitest" },
   { pack: "typescript", tool: "typescript-eslint" },
+  { pack: "vue", tool: "eslint-plugin-vue" },
 ];
 
 const TOOL_PACKS = gatedToolPacks();
@@ -78,10 +87,7 @@ describe("every leg", () => {
     }
   });
 
-  it("is what the recorder and the nightly's drift check list by hand", () => {
-    const steps = Object.values(workflow("port-readiness-record.yml").jobs).flatMap((job: any) => job.steps ?? []);
-    const recorded = steps.find((step: any) => step.env?.TOOL_PACKS !== undefined).env.TOOL_PACKS;
-    assert.deepEqual(names(JSON.parse(recorded)), names(TOOL_PACKS));
+  it("is what the nightly's drift check lists by hand", () => {
     assert.deepEqual(names(workflow("port-readiness-nightly.yml").jobs["record-check"].strategy.matrix.include), names(TOOL_PACKS));
   });
 });

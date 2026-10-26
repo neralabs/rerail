@@ -1,5 +1,5 @@
 adapter: eslint
-# eslint-plugin-react-hooks' documents in rerail's react pack (NER-1740).
+# eslint-plugin-react-hooks' documents in rerail's react pack.
 rerail:
   pack: react
   project: react

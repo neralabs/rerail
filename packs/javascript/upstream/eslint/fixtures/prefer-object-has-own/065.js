@@ -1,1 +1,0 @@
-({}).hasOwnProperty.call(obj, 'foo')

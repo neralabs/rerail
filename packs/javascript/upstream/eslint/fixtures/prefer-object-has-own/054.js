@@ -1,1 +1,0 @@
-class C { #call; foo() { ({}.hasOwnProperty.#call(obj, prop)) } }

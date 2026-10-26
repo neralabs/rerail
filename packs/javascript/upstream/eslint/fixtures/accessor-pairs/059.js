@@ -1,1 +1,0 @@
-Reflect.defineProperty({ get() {} }, 'foo', { value: 1 });

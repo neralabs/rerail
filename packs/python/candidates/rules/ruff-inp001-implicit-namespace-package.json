@@ -3,7 +3,7 @@
   "id": "ruff-inp001-implicit-namespace-package",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's INP001 (implicit-namespace-package): a `.py` file outside any package (the host sent no module path), reported at byte 0 (`file.start`) as Ruff reports it. Files directly under the project root or `src/` (Ruff's default `src`), files whose first comment starts at byte 0 with `#!` (a shebang: M12a `layout` `start`) and PEP 723 scripts (a `# /// script` comment block closed by `# ///`) are exempt.",
+  "description": "Add an __init__.py to folders of Python modules below the project root or src; without one the folder is an implicit namespace package, which tools and test runners can miss.",
   "scope": {
     "include": [
       "**/*.py"
@@ -49,7 +49,7 @@
       "violation": {
         "anchor": "file.start",
         "code": "INP001",
-        "message": "File is part of an implicit namespace package. Add an `__init__.py`.",
+        "message": "Add an `__init__.py` to this file's folder so it is a regular package.",
         "suppress": {
           "noqa": {
             "codes": [

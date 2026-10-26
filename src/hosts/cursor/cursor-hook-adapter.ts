@@ -1,10 +1,11 @@
 import { rm } from "node:fs/promises";
 import { z } from "zod/v4";
-import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop } from "../../engine/adapter-contract.js";
+import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop, type SteerRule } from "../../engine/adapter-contract.js";
 import { missedSteerDigestEnabled } from "../../engine/experimental-features.js";
 import { ingestCursorTranscript } from "./cursor-transcript.js";
 import {
   deliveryRuleIds,
+  deliveryRules,
   deliveryText,
   pendingPath,
   persistPending,
@@ -135,10 +136,10 @@ export function cursorHookEvent(input: CursorHookInput): AdapterEvent {
  * Cursor shows the person nothing from a hook, so the model is asked to relay each steer's one line itself. Cursor's
  * chat renders markdown, so the `why?` link sits on the word.
  */
-function relayedSteer(content: string): string {
-  const lines = steerHeadlines(content).map(headline => headlineText(headline, "markdown"));
+function relayedSteer(content: string, rules: readonly SteerRule[]): string {
+  const lines = steerHeadlines(rules).map(headline => headlineText(headline, "markdown"));
   if (lines.length === 0) return content;
-  return `${content}\n\nCursor shows the person none of this. Begin your next reply with these lines, exactly as written:\n${lines.join("\n")}`;
+  return `${content}\n\nCursor shows the user none of this. Begin your next reply with these lines, exactly as written:\n${lines.join("\n")}`;
 }
 
 /** `note` is the session-start note, which only the model sees. */
@@ -148,12 +149,12 @@ export function cursorHookOutput(hook: string, deliveries: readonly AdapterDeliv
   const content = deliveryText(deliveries);
   const ruleIds = deliveryRuleIds(deliveries);
   if (hook === "sessionStart" || hook === "postToolUse") {
-    const context = [note, content === undefined ? undefined : relayedSteer(content)].filter(text => text !== undefined).join("\n\n");
+    const context = [note, content === undefined ? undefined : relayedSteer(content, deliveryRules(deliveries))].filter(text => text !== undefined).join("\n\n");
     if (context === "") return {};
     return content === undefined ? { additional_context: context } : prepareGuidanceOutput({ additional_context: context }, ruleIds);
   }
   // Cursor submits a stop hook's follow-up as the person's next message, so the agent acts on the steers before it yields.
-  if (hook === "stop" && content !== undefined) return prepareGuidanceOutput({ followup_message: relayedSteer(content) }, ruleIds);
+  if (hook === "stop" && content !== undefined) return prepareGuidanceOutput({ followup_message: relayedSteer(content, deliveryRules(deliveries)) }, ruleIds);
 
   return {};
 }
@@ -188,7 +189,7 @@ export async function handleCursorEvent(
     // the bound.
     ...(missedSteerDigestEnabled() && loopCountSchema.parse(input.loop_count) < CURSOR_FOLLOWUP_LOOP_LIMIT ? { stop: true } : {}),
   });
-  // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+  // The runtime records no links; the rules point at this checkout's dashboard only here.
   const note = hook === "sessionStart" ? sessionStartNote(await dashboardOrigin(descriptor.cwd), "cursor", descriptor.sessionId, await presentedSessionNoteRules(descriptor)) : undefined;
   return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd), note);
 }

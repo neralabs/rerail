@@ -1,1 +1,0 @@
-<template><my-component v-slot="{a, b, c, d}" >{{d}}</my-component></template>

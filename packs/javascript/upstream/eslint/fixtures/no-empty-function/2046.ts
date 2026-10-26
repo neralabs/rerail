@@ -1,1 +1,0 @@
-class A { @decorator() foo() {} } // allow: privateConstructors

@@ -1,8 +1,10 @@
  <accent>◆</accent> <mark>R E R A I L</mark><dim> · </dim>typescript-eslint-no-explicit-any  <accent>steered</accent><dim>  ·  </dim><link http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-explicit-any><mdLink>why?</mdLink></link>
-    <dim>From the TypeScript rule pack. Set to Steer: fix it, or tell the person in one line why you won't.</dim>
-    <dim>Use unknown or a real type in exported signatures. (web/src/features/orders/useOrders.ts:1:33)</dim>
+    <dim>From the TypeScript rule pack.</dim>
     <dim>why?</dim> <link http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-explicit-any><mdLink>http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-explicit-any</mdLink></link>
  <accent>◆</accent> <mark>R E R A I L</mark><dim> · </dim>typescript-eslint-no-floating-promises  <accent>steered</accent><dim>  ·  </dim><link http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-floating-promises><mdLink>why?</mdLink></link>
-    <dim>From the TypeScript rule pack. Set to Steer: fix it, or tell the person in one line why you won't.</dim>
-    <dim>Await the promise, return it, or mark it with void. (web/src/features/orders/useOrders.ts:12:5)</dim>
+    <dim>From the TypeScript rule pack.</dim>
     <dim>why?</dim> <link http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-floating-promises><mdLink>http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-floating-promises</mdLink></link>
+    <dim>Rerail found 2 problems in your last edit:</dim>
+    <dim>- web/src/features/orders/useOrders.ts:1:33 — Use unknown or a real type in exported signatures. [typescript-eslint-no-explicit-any]</dim>
+    <dim>- web/src/features/orders/useOrders.ts:12:5 — Await the promise, return it, or mark it with void. [typescript-eslint-no-floating-promises]</dim>
+    <dim>Fix these, or tell the user in one line why you won't.</dim>

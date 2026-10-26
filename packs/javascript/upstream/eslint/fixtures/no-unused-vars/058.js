@@ -1,1 +1,0 @@
-var x = 1; var {y = x} = {}; foo(y);

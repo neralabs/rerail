@@ -1,1 +1,0 @@
-Lead @csrf($arg) Trail

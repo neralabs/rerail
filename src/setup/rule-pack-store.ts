@@ -17,7 +17,7 @@ import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { runNpm, type NpmRunner } from "../runtime/npm.js";
 import { withPacksLock } from "./packs-lock.js";
 
-/** The dist-tag a pack is fetched under when core's update channel has no version of it: where packs publish first. */
+/** The dist-tag a pack is fetched under when core's update channel has no version of it: where a held pack publishes. */
 export const PACK_FALLBACK_TAG = "next";
 /** A staging folder older than this is left from a run that never finished, and is removed by the next fetch. */
 const STALE_STAGING_MS = 60 * 60 * 1000;

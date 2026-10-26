@@ -3,7 +3,7 @@
   "id": "ruff-ret505-superfluous-else-return",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's RET505 (superfluous-else-return): the first `elif`/`else` clause of an `if` statement inside a function whose `if` body has a direct `return` statement and no earlier direct raise/continue/break statement, reported on the `elif`/`else` keyword. As in Ruff, only the `if` body and the first clause are compared, nested functions and classes are separate, and generator functions and functions whose body is a lone `return` are skipped.",
+  "description": "Remove the else or elif after an if branch that returns, and dedent its code; the branch already leaves the function.",
   "scope": {
     "include": [
       "**/*"

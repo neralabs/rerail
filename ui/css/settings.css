@@ -1,0 +1,29 @@
+/* Settings (views/settings.js). */
+
+.settings{display:grid;gap:32px;margin-top:20px;max-width:880px;--measure:560px}
+/* The first heading is the page title; the sections below keep the section size. */
+.settings > section:first-of-type > .ghead h2{font-size:20px;letter-spacing:-.01em;line-height:28px}
+.settings .ghead p{max-width:var(--measure)}
+.srow2{display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;padding:14px 16px;border-top:1px solid var(--border)}
+.srow2:first-child{border-top:0}
+.srow2 .rt{flex:1;min-width:200px;font-size:14px}
+.srow2 .rt .sub{display:block;font-size:12.5px;color:var(--muted-foreground);margin-top:3px;max-width:var(--measure);line-height:1.5}
+.srow2 .rt .sub .mono{font-size:12px}
+.srow2 .rt .n{display:inline-flex;align-items:center;margin-left:8px;font-size:11.5px;font-weight:500;line-height:16px;color:var(--muted-foreground);background:var(--subtle);padding:1px 7px;border-radius:var(--radius-md)}
+.srow2 .val{font-size:12.5px;color:var(--muted-foreground)}
+.srow2 .confirm{color:var(--foreground)}
+.srow2 .btns{display:inline-flex;gap:8px;align-items:center}
+/* Clear history's second step: the one solid red button on the page. */
+.srow2 .btn.danger.solid{background:var(--danger);border-color:var(--danger);color:var(--primary-foreground)}
+.srow2 .btn.danger.solid:hover{background:var(--danger);filter:brightness(.95)}
+.swl{display:inline-flex;align-items:center;gap:10px;font-size:13px;color:var(--muted-foreground)}
+/* Coding agents: name over its state on the left, the one command on the right; agents not on this machine dimmed. */
+.agent{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--border);font-size:14px}
+.agent:first-child{border-top:0}
+.agent .rt2{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.agent .rt2 .st{font-size:12px;color:var(--muted-foreground)}
+.agent .rt2 .st.on{color:var(--success-foreground)}
+.agent .rt2 .st.warn{color:var(--warning-foreground)}
+.agent .rt2 .tip{font-size:12.5px;line-height:1.5;color:var(--muted-foreground);max-width:var(--measure)}
+.agent > .btn{margin-left:auto;flex:none}
+.agent.off{opacity:.55}

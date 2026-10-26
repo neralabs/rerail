@@ -1,1 +1,0 @@
-import {access} from 'fs'; access()

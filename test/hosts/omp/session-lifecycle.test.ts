@@ -7,14 +7,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createConversationRulesExtension } from "../../../src/hosts/omp/extension.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/index.js";
-import { CodeRuleBridge, type ConversationRule, defaultRerailDatabasePath, linkSteers, steerBlock, steerOrigin } from "../../../src/engine/index.js";
+import { CodeRuleBridge, type ConversationRule, defaultRerailDatabasePath, steerBlock } from "../../../src/engine/index.js";
 import { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, RerailRuntime, SqliteSessionReader, TURN_ENTRY_TYPE } from "../../../src/runtime/index.js";
-import { steerDashboard } from "../../../src/presentation/index.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 
-async function checkoutSteer(cwd: string): Promise<string> {
-  return linkSteers(steerBlock("checkout", "Check checkout requirements.", { mode: "steer", origin: steerOrigin("checkout") }), await steerDashboard(cwd));
+/** The checkout rule's steer for a step of the conversation. */
+function checkoutSteer(): string {
+  return steerBlock({ kind: "tool" }, [{ ruleId: "checkout", mode: "steer", message: "Check checkout requirements." }]);
 }
 type Context = OmpContext & PiContext;
 type Handler = (event: unknown, context: Context) => unknown;
@@ -125,7 +125,7 @@ describe.each(["omp", "pi"] as const)("%s transactional attachment", host => {
       await extension.emit("session_start", {});
       await extension.emit("message_update", delta("Guest checkout remains available. Next"));
       expect(extension.messages).toEqual([
-        expect.objectContaining({ content: await checkoutSteer(extension.context.cwd), details: expect.objectContaining({ sessionId: "original" }) }),
+        expect.objectContaining({ content: checkoutSteer(), details: expect.objectContaining({ sessionId: "original" }) }),
       ]);
     } finally {
       await extension.emit("session_shutdown", {});
@@ -144,7 +144,7 @@ describe.each(["omp", "pi"] as const)("%s transactional attachment", host => {
 
       await extension.emit("message_update", delta("remains available. Next"));
       expect(extension.messages).toEqual([
-        expect.objectContaining({ content: await checkoutSteer(extension.context.cwd), details: expect.objectContaining({ sessionId: "original" }) }),
+        expect.objectContaining({ content: checkoutSteer(), details: expect.objectContaining({ sessionId: "original" }) }),
       ]);
       expect(extension.entries.filter(entry => entry.customType === MATCH_ENTRY_TYPE)).toEqual([
         expect.objectContaining({ data: expect.objectContaining({ ruleId: "checkout", turn: 0 }) }),
@@ -181,7 +181,7 @@ describe.each(["omp", "pi"] as const)("%s transactional attachment", host => {
       release.reject(failure);
       await Promise.all([failedStart, switching, streaming]);
       expect(extension.messages).toEqual([
-        expect.objectContaining({ content: await checkoutSteer(extension.context.cwd), details: expect.objectContaining({ sessionId: "replacement" }) }),
+        expect.objectContaining({ content: checkoutSteer(), details: expect.objectContaining({ sessionId: "replacement" }) }),
       ]);
     } finally {
       await extension.emit("session_shutdown", {});
@@ -221,7 +221,7 @@ it("counts events that arrive while attach is failing and records them once atta
     // Attached, the session takes events again.
     await extension.emit("message_update", delta("Guest checkout remains available. Next", "after-attach"));
     expect(extension.messages).toEqual([
-      expect.objectContaining({ content: await checkoutSteer(extension.context.cwd), details: expect.objectContaining({ sessionId: "original" }) }),
+      expect.objectContaining({ content: checkoutSteer(), details: expect.objectContaining({ sessionId: "original" }) }),
     ]);
   } finally {
     reader.close();

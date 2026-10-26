@@ -1,1 +1,0 @@
-/*exported x, y*/ var { x, y } = z;

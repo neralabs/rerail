@@ -1,5 +1,5 @@
 /**
- * eslint-no-unused-vars (packs/javascript/candidates/) must apply ESLint's default `args: "after-used"` (NER-1839).
+ * eslint-no-unused-vars (packs/javascript/candidates/) must apply ESLint's default `args: "after-used"`.
  * With after-used, ESLint does not report a parameter that comes before the last parameter the function uses: removing
  * it would shift the next argument into its slot. The port reported those leading parameters, and an agent told to
  * remove one breaks every call site. Parameters after the last used one are still reported, as is the unused function.
@@ -29,7 +29,7 @@ async function compile(): Promise<NativeCompiledCodeRuleDsl> {
   return runtime.compile(await readFile(RULE_PATH, "utf8"), "json", capabilities);
 }
 
-/** The names the rule reports in `source`, in order of the messages' text. */
+/** The names the rule reports in `source` (each message quotes its name), sorted. */
 function reported(compiled: NativeCompiledCodeRuleDsl, source: string): string[] {
   const input = JSON.stringify({
     format: "rerail.repository-snapshot/v1",
@@ -39,7 +39,7 @@ function reported(compiled: NativeCompiledCodeRuleDsl, source: string): string[]
   });
   const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
   expect(result.failures).toEqual([]);
-  return result.violations.map(violation => /^'([^']+)'/.exec(violation.message)?.[1] ?? violation.message).sort();
+  return result.violations.map(violation => /'([^']+)'/.exec(violation.message)?.[1] ?? violation.message).sort();
 }
 
 const CASES: ReadonlyArray<[string, string, string[]]> = [
@@ -57,7 +57,7 @@ const CASES: ReadonlyArray<[string, string, string[]]> = [
   ["a parameter before a used rest parameter", "export function q(a, ...xs) { return xs; }\n", []],
 ];
 
-describe("eslint-no-unused-vars args after-used (NER-1839)", async () => {
+describe("eslint-no-unused-vars args after-used", async () => {
   const compiled = await compile();
   it.each(CASES)("%s", (_name, source, expected) => {
     expect(reported(compiled, source)).toEqual(expected);

@@ -1,1 +1,0 @@
-class A { *foo(param: string) {} } // allow: overrideMethods

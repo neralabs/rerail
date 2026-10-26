@@ -8,6 +8,7 @@ import type {
   AdapterEvent,
   AdapterSample,
   AdapterSession,
+  SteerRule,
 } from "../engine/adapter-contract.js";
 
 export interface HostRuntimeSessionState {
@@ -152,6 +153,7 @@ export class RerailHostRuntime {
     requested: RuleMode,
     content: string,
     ruleIds: readonly string[] = [],
+    rules: readonly SteerRule[] = [],
   ): Promise<void> {
     return this.#lanes.run(sessionId, async () => {
       if (!this.#sessions.has(sessionId)) throw new Error(`Inactive session: ${sessionId}`);
@@ -161,6 +163,7 @@ export class RerailHostRuntime {
         mechanism: this.profile.delivery[requested],
         content,
         ruleIds,
+        rules,
       };
       await this.#port.persistDelivery(delivery);
       if (steers(requested)) await this.#port.deliver(delivery);

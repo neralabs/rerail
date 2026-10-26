@@ -3,7 +3,7 @@
   "id": "n-no-process-exit",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/no-process-exit: a call whose callee is `process.exit` (non-computed member of an identifier named process; upstream's selector reads no scope).",
+  "description": "Avoid calling process.exit(); throw an error instead so pending work can finish and callers can handle the failure.",
   "scope": {
     "include": ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
     "exclude": []

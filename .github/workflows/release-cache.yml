@@ -1,13 +1,13 @@
 name: Release cache
 
-# Builds and saves the cargo cache release.yml restores. A tag's run can restore caches saved on main, never those
-# another tag's run saved, so without this every release compiled each native engine from scratch (40 minutes on
-# Windows x64).
+# Builds and saves the cargo cache package.yml restores (for release.yml and env-matrix.yml). A tag's run can restore
+# caches saved on main, never those another tag's run saved, so without this every release compiled each native
+# engine from scratch (40 minutes on Windows x64).
 #
 # On main, after a change to what the key hashes and nightly (GitHub evicts caches unused for a week), each target
 # looks its key up and, only when no cache holds it, builds from scratch and saves. A cold build means a saved
 # cache holds only what that build compiled from main, never artifacts carried forward. Targets, build command,
-# key, and paths match release.yml's native job; change them together. After such a change, let this finish
+# key, and paths match package.yml's native job; change them together. After such a change, let this finish
 # before pushing a release tag, or that release builds cold.
 
 on:
@@ -93,7 +93,7 @@ jobs:
 
       - name: Install pinned Rust toolchain
         if: steps.lookup.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           targets: ${{ matrix.target }}

@@ -37,6 +37,49 @@ export interface NotOverfitResult {
 /** A regex that touches more distinct unexplained test identifiers than this is a syntax pattern, not a list of names. */
 export const REGEX_NAME_LIMIT = 10;
 
+/**
+ * A test text this long holding fewer than one identifier per SPARSE_TEXT characters is a stress test of upstream's
+ * own engine, which Rerail does not run: not-overfit does not read it. Of every gated tool-pack's test texts, only
+ * ESLint's five qualify (100,000 to 1,000,011 characters with one or two identifiers, none of them unique to these
+ * texts apart from the 100,000- and 200,000-letter `aaaa…` ones); every other text over 20,000 characters holds at least
+ * one identifier per 16. A node regex such as `^[^\[]*[\w$]\[`, tried at every offset of a 1,000,000-backslash string,
+ * backtracks across all of it each time: reading them cost a cold javascript/eslint shard half an hour.
+ */
+const LONG_TEXT = 20_000;
+const SPARSE_TEXT = 1_000;
+
+interface Identifier { start: number; end: number; word: string }
+interface PreparedText { text: string; identifiers: Identifier[] }
+
+/**
+ * Upstream's test texts without its stress tests, each with its identifiers in order: computed once per list, since
+ * every regex of every rule reads the same texts (33,511 for ESLint) and scanning them again per regex cost more than
+ * the regexes did.
+ */
+const preparedTexts = new WeakMap<readonly string[], PreparedText[]>();
+function prepareTexts(texts: readonly string[]): PreparedText[] {
+  let prepared = preparedTexts.get(texts);
+  if (prepared === undefined) {
+    prepared = texts
+      .map((text) => ({ text, identifiers: [...text.matchAll(IDENTIFIER)].map((match) => ({ start: match.index, end: match.index + match[0].length, word: match[0] })) }))
+      .filter(({ text, identifiers }) => text.length <= LONG_TEXT || identifiers.length * SPARSE_TEXT >= text.length);
+    preparedTexts.set(texts, prepared);
+  }
+  return prepared;
+}
+
+/** The index of the first identifier ending after `offset`; a text's identifiers are in order and never overlap. */
+function firstEndingAfter(identifiers: readonly Identifier[], offset: number): number {
+  let low = 0;
+  let high = identifiers.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (identifiers[middle]!.end <= offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
 const POSIX_CLASSES: Record<string, string> = {
   alnum: "A-Za-z0-9", alpha: "A-Za-z", digit: "0-9", lower: "a-z", upper: "A-Z", space: "\\s", word: "\\w", xdigit: "0-9A-Fa-f", punct: "!-\\/:-@\\[-`{-~",
 };
@@ -100,25 +143,155 @@ export function javascriptRegex(pattern: string, extraFlags = ""): RegExp | unde
   const unescaped = body.replaceAll("\\\\", "");
   // JavaScript has scoped modifier groups for i, m and s, but no flag switches mid-pattern and no verbose mode.
   if (/\(\?[a-zA-Z-]+\)/u.test(unescaped) || [...unescaped.matchAll(/\(\?([a-zA-Z-]+):/gu)].some((group) => /[^ims-]/u.test(group[1]!))) return undefined;
-  const source = body
+  const translated = body
     .replaceAll("(?P<", "(?<")
     .replaceAll("\\A", "^")
     .replaceAll("\\z", "$")
-    .replace(/\\x\{([0-9A-Fa-f]+)\}/gu, "\\u{$1}")
+    .replace(/\\x\{([0-9A-Fa-f]+)\}/gu, "\\u{$1}");
+  // Rust's class intersection and difference (`[\s&&[^\xA0]]`) are JavaScript's in unicodeSets mode, which spells
+  // classes differently (unicodeSetsSource); Rust's symmetric difference (`~~`) JavaScript lacks.
+  const sets = unicodeSetsSource(translated);
+  if (sets === null) return undefined;
+  const source = sets ?? translated
     // Rust lets any punctuation be escaped; JavaScript's unicode mode accepts escapes only for syntax characters. Escapes
     // are read in pairs, so the quote after an escaped backslash (`\\'`) stays a quote.
-    .replace(/\\(.)/gsu, (whole, char: string) => (`!"#%&',:;<=>@_\`~ `.includes(char) ? char : whole))
+    .replace(/\\(.)/gsu, (whole, char: string) => (UNESCAPED_PUNCTUATION.includes(char) ? char : whole))
     .replace(/\[:(\^?)([a-z]+):\]/gu, (whole, negated: string, name: string) => (negated === "" && POSIX_CLASSES[name] !== undefined ? POSIX_CLASSES[name]! : whole));
-  // Rust's class intersection and difference (`[\s&&[^\xA0]]`) are JavaScript's in unicodeSets mode, which reads the
-  // rest of these patterns as unicode mode does and wants a range operand bracketed (`[[a-z]--[aeiou]]`); Rust's
-  // symmetric difference (`~~`) JavaScript lacks.
-  const setOperation = /(?:\[(?:\\.|[^\]\\])*|\])(&&|--|~~)/u.exec(source)?.[1];
-  if (setOperation === "~~") return undefined;
   try {
-    return new RegExp(source, `${[...new Set(`${flags}${extraFlags}`)].join("")}${setOperation === undefined ? "u" : "v"}`);
+    return new RegExp(source, `${[...new Set(`${flags}${extraFlags}`)].join("")}${sets === undefined ? "u" : "v"}`);
   } catch {
     return undefined;
   }
+}
+
+/** Punctuation Rust lets a pattern escape that JavaScript's unicode mode rejects escaped. */
+const UNESCAPED_PUNCTUATION = `!"#%&',:;<=>@_\`~ `;
+/** Characters unicodeSets mode reads as syntax inside a class: escaped when a class names them. */
+const SETS_SYNTAX = "()[]{}/-\\|&!#$%*+,.:;<=>?@^`~";
+/** Rust's one-letter escapes for a character, with JavaScript's spelling. */
+const CHARACTER_ESCAPES: Record<string, string> = { a: "\\x07", f: "\\f", n: "\\n", r: "\\r", t: "\\t", v: "\\v" };
+
+/** One member of a Rust class: a character (a range endpoint), a set of them, or a Rust set operator. */
+type ClassMember = { kind: "character" | "set" | "union"; text: string } | { kind: "operator"; text: "&&" | "--" };
+
+/**
+ * A Rust pattern whose classes use intersection or difference, spelled for JavaScript's unicodeSets mode: undefined when
+ * no class uses one (the pattern stays in unicode mode, as written), null when it cannot be spelled exactly.
+ *
+ * Rust binds a class's union tighter than its operators, which share one precedence and apply left to right
+ * (`[\p{L}_--\p{Lu}--\p{Lt}]` is `[[\p{L}_]--\p{Lu}--\p{Lt}]`, `[a-z--[aeiou]&&\p{Lower}]` is
+ * `[[[a-z]--[aeiou]]&&\p{Lower}]`). unicodeSets mode takes one operator kind per class and only single operands, so each
+ * union or range operand is bracketed and a change of operator nests what came before; it also reads more punctuation as
+ * syntax inside a class, so every literal one is escaped.
+ */
+function unicodeSetsSource(pattern: string): string | undefined | null {
+  let at = 0;
+  let operation = false;
+
+  const character = (): { kind: "character" | "set"; text: string } | null => {
+    if (pattern[at] !== "\\") {
+      const char = String.fromCodePoint(pattern.codePointAt(at)!);
+      at += char.length;
+      return { kind: "character", text: SETS_SYNTAX.includes(char) ? `\\${char}` : char };
+    }
+    const escape = /^\\(?:[pP]\{[^}]*\}|u\{[0-9A-Fa-f]+\}|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|[\s\S])/u.exec(pattern.slice(at))![0];
+    at += escape.length;
+    const letter = escape[1]!;
+    if (/^[pPdDwWsS]$/u.test(letter)) return { kind: "set", text: escape };
+    if (/^[ux]$/u.test(letter) && escape.length > 2) return { kind: "character", text: escape };
+    if (CHARACTER_ESCAPES[letter] !== undefined) return { kind: "character", text: CHARACTER_ESCAPES[letter]! };
+    if (/^[\p{L}\p{N}]$/u.test(letter)) return null;
+    return { kind: "character", text: SETS_SYNTAX.includes(letter) ? escape : letter };
+  };
+
+  const operand = (members: ClassMember[]): string | null => {
+    if (members.length === 0) return null;
+    const only = members.length === 1 ? members[0]! : undefined;
+    return only !== undefined && only.kind !== "union" ? only.text : `[${members.map((member) => member.text).join("")}]`;
+  };
+
+  const characterClass = (): string | null => {
+    at += 1;
+    const negated = pattern[at] === "^";
+    if (negated) at += 1;
+    const members: ClassMember[] = [];
+    for (let first = true; ; first = false) {
+      if (at >= pattern.length) return null;
+      const rest = pattern.slice(at);
+      if (rest.startsWith("]") && !first) {
+        at += 1;
+        break;
+      }
+      const posix = /^\[:(\^?)([a-z]+):\]/u.exec(rest);
+      if (posix !== null) {
+        // A POSIX class is the class of its expansion, read next as a nested one.
+        if (posix[1] !== "" || POSIX_CLASSES[posix[2]!] === undefined) return null;
+        pattern = `${pattern.slice(0, at)}[${POSIX_CLASSES[posix[2]!]!}]${pattern.slice(at + posix[0].length)}`;
+      } else if (rest.startsWith("[")) {
+        const nested = characterClass();
+        if (nested === null) return null;
+        members.push({ kind: "set", text: nested });
+      } else if (rest.startsWith("~~")) {
+        return null;
+      } else if (rest.startsWith("&&") || rest.startsWith("--")) {
+        operation = true;
+        members.push({ kind: "operator", text: rest.slice(0, 2) as "&&" | "--" });
+        at += 2;
+      } else {
+        const start = character();
+        if (start === null) return null;
+        if (start.kind === "character" && pattern[at] === "-" && pattern[at + 1] !== "-" && pattern[at + 1] !== "]" && at + 1 < pattern.length) {
+          at += 1;
+          const end = character();
+          if (end === null || end.kind !== "character") return null;
+          members.push({ kind: "union", text: `${start.text}-${end.text}` });
+        } else {
+          members.push(start);
+        }
+      }
+    }
+    const groups: ClassMember[][] = [[]];
+    const operators: string[] = [];
+    for (const member of members) {
+      if (member.kind === "operator") {
+        operators.push(member.text);
+        groups.push([]);
+      } else {
+        groups[groups.length - 1]!.push(member);
+      }
+    }
+    let expression: string | null;
+    if (operators.length === 0) {
+      expression = members.map((member) => member.text).join("");
+    } else {
+      expression = operand(groups[0]!);
+      for (const [index, operator] of operators.entries()) {
+        const right = operand(groups[index + 1]!);
+        if (expression === null || right === null) return null;
+        if (index > 0 && operator !== operators[index - 1]) expression = `[${expression}]`;
+        expression += `${operator}${right}`;
+      }
+    }
+    return expression === null ? null : `[${negated ? "^" : ""}${expression}]`;
+  };
+
+  let out = "";
+  while (at < pattern.length) {
+    const char = pattern[at]!;
+    if (char === "\\") {
+      const escape = /^\\(?:[pPxu]\{[^}]*\}|[\s\S])?/u.exec(pattern.slice(at))![0];
+      out += escape.length === 2 && UNESCAPED_PUNCTUATION.includes(escape[1]!) ? escape[1]! : escape;
+      at += escape.length;
+    } else if (char === "[") {
+      const text = characterClass();
+      if (text === null) return null;
+      out += text;
+    } else {
+      out += char;
+      at += 1;
+    }
+  }
+  return operation ? out : undefined;
 }
 
 /**
@@ -241,7 +414,7 @@ function oneEditVariants(word: string): string[] {
  * matches in its place: there the regex spells upstream's edit-distance check (Next.js's no-typos), not the test's typo.
  * Undefined when the gate cannot run the regex.
  */
-function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: string) => boolean, explainedNear: (word: string) => string[], limit: number): { selected: Set<string>; named: Set<string> } | undefined {
+function regexNames(regex: PolicyRegex, texts: readonly PreparedText[], unexplained: (word: string) => boolean, explainedNear: (word: string) => string[], limit: number): { selected: Set<string>; named: Set<string> } | undefined {
   const compiled = javascriptRegex(regex.wholeText ? regex.text : boundaryAnchored(regex.text), "g");
   if (compiled === undefined) return undefined;
   const overlaps = (text: string, from: number, to: number): boolean => {
@@ -257,11 +430,10 @@ function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: str
   const named = new Set<string>();
   // On a string node, letters at the node's start that run into a quote are its prefix (Python's `rb"`), not a name.
   const readsPrefix = !regex.wholeText && anchoredAtStart(regex.text);
-  for (const text of texts) {
+  for (const { text, identifiers } of texts) {
     // An occurrence is tested once per text: the same word at the same offset of another text has other surroundings,
     // so whether the regex depends on it there is a separate question.
     const tested = new Set<number>();
-    const identifiers = [...text.matchAll(IDENTIFIER)].map((match) => ({ start: match.index, end: match.index + match[0].length, word: match[0] }));
     compiled.lastIndex = 0;
     const matches: { start: number; end: number }[] = [];
     for (let match = compiled.exec(text); match !== null; match = compiled.exec(text)) {
@@ -269,8 +441,11 @@ function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: str
       else matches.push({ start: match.index, end: match.index + match[0].length });
     }
     for (const { start, end } of matches) {
-      for (const identifier of identifiers) {
-        if (identifier.start >= end || identifier.end <= start || selected.has(identifier.word) || !unexplained(identifier.word)) continue;
+      // Only the identifiers the match overlaps: walking every identifier of the text for each match was quadratic in
+      // the text, most of a cold python/ruff run.
+      for (let at = firstEndingAfter(identifiers, start); at < identifiers.length && identifiers[at]!.start < end; at += 1) {
+        const identifier = identifiers[at]!;
+        if (selected.has(identifier.word) || !unexplained(identifier.word)) continue;
         if (readsPrefix && identifier.start === start && identifier.end < end && (text[identifier.end] === "'" || text[identifier.end] === '"')) continue;
         if (tested.has(identifier.start)) continue;
         tested.add(identifier.start);
@@ -367,12 +542,13 @@ export function notOverfitGate(document: { clauses?: unknown }, inputs: NotOverf
   const unchecked: string[] = [];
   const lowerExplained = new Set([...inputs.keywords, ...inputs.implementation, ...inputs.sharedImplementation].map((word) => word.toLowerCase()));
   const lowerComment = new Set([...inputs.commentVocabulary].map((word) => word.toLowerCase()));
+  const fixtureTexts = prepareTexts(inputs.fixtureTexts);
   for (const regex of policyRegexes(document)) {
     // A case-insensitive regex matches upstream's own names in any case, so explain them in any case.
     const caseless = /\(\?[ims]*i[ims]*[:)]/u.test(regex.text);
     const isUnexplained = (word: string) => explained(word, regex.commentText) === undefined
       && !(caseless && (lowerExplained.has(word.toLowerCase()) || (regex.commentText && lowerComment.has(word.toLowerCase()))));
-    const found = regexNames(regex, inputs.fixtureTexts, isUnexplained, explainedNear, REGEX_NAME_LIMIT);
+    const found = regexNames(regex, fixtureTexts, isUnexplained, explainedNear, REGEX_NAME_LIMIT);
     if (found === undefined) {
       unchecked.push(`${regex.pointer}: ${regex.text}`);
       continue;

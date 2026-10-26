@@ -1,5 +1,5 @@
 /**
- * Three Python ports (B406 and B610 on by default, F722 off) must not steer an agent into rewriting idiomatic code (NER-1827). Each reports what
+ * Three Python ports (B406 and B610 on by default, F722 off) must not steer an agent into rewriting idiomatic code. Each reports what
  * its upstream reports, but on these idioms the finding is wrong and the steer harmful:
  *
  * - bandit-b406-import-xml-sax: Bandit reports any import under xml.sax, including the xml.sax.saxutils writing and
@@ -71,7 +71,7 @@ const B406: readonly Case[] = [
 ];
 
 const B610: readonly Case[] = [
-  ["a non-QuerySet receiver (NER-1827)", py("parser.extra(data)"), []],
+  ["a non-QuerySet receiver", py("parser.extra(data)"), []],
   ["a bare function named extra", py("extra(where=w)"), []],
   ["self in a class that is not a QuerySet", py("class Options(Base):", "    def f(self, w):", "        return self.extra(where=w)"), []],
   ["a receiver whose arguments merely mention objects", py("build(objects).extra(where=w)"), []],
@@ -97,7 +97,7 @@ const B610: readonly Case[] = [
 ];
 
 const F722: readonly Case[] = [
-  ["a jaxtyping shape (NER-1827)", py("from jaxtyping import Array, Float", "def f(x: Float[Array, 'b n']): ..."), []],
+  ["a jaxtyping shape", py("from jaxtyping import Array, Float", "def f(x: Float[Array, 'b n']): ..."), []],
   ["a jaxtyping shape through the module", py("import jaxtyping", "def f(x: jaxtyping.Float[Array, 'batch channels']): ..."), []],
   ["a jaxtyping shape through an alias", py("import jaxtyping as jt", "def f(x: jt.Shaped[Array, '*batch n']): ..."), []],
   ["a jaxtyping shape on a variable and in a return", py("from jaxtyping import Array, Float, Int", "y: Float[Array, 'b n'] = 1", "def f() -> Int[Array, 'b n']: ..."), []],

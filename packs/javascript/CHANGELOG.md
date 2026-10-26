@@ -1,5 +1,15 @@
 # @neralabs/rerail-pack-javascript
 
+## 0.1.4
+
+### Patch Changes
+
+- e06db22: JavaScript pack: `eslint-accessor-pairs` drops a clause that could never match and only carried the message "Rule disabled by its options."
+- e06db22: JavaScript pack: messages whose rewrite only changed the voice are back to their original wording; in an eval with a coding agent, the original and rewritten messages steered it equally well. Messages where the original steered the agent better in that eval are back to their original wording too.
+- e06db22: JavaScript pack: `eslint-no-unused-vars` replaces the placeholder text "unused" in its option-chosen messages with the sentence each one means.
+- e06db22: JavaScript pack: every rule description now says in one plain sentence what the rule wants; the exact matching detail moved to the pack README.
+- e06db22: JavaScript pack: every violation message now says in one sentence what to change in the flagged code, without tool names or rule codes.
+
 ## 0.1.3
 
 ### Patch Changes

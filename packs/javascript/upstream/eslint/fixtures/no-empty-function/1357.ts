@@ -1,1 +1,0 @@
-class B extends C { @decorator() override foo() {} } // allow: constructors

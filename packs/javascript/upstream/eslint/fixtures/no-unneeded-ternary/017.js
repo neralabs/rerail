@@ -1,1 +1,0 @@
-var a = x === 1 ? false : true;

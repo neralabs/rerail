@@ -1,0 +1,106 @@
+/* History, by rule (views/history.js): the rules with violations in range, and the chosen rule's violations by day.
+ * Every layout rule is History's own (class names `h…`), so History by session (sessions.css) can change apart. */
+
+/* A fixed-height page under the top bar, so the rule list and the violations scroll on their own. */
+body[data-page="history"] .shell{display:flex;flex-direction:column;height:calc(100vh - var(--tb) - var(--sat) - var(--sab));padding-bottom:12px;overflow:hidden}
+body[data-page="history"] .cwrap{flex:1;min-height:0}
+body[data-page="history"] .cmain{display:flex;flex-direction:column;min-height:0;height:100%}
+body[data-page="history"] #sidenav{position:static;align-self:stretch;height:100%;max-height:none}
+body[data-page="history"] #content,body[data-page="history"] #content > .history{flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* Heading over both columns, the range at its right; Hide / Show list on a line of its own. */
+.hh{margin:16px 0 0;flex:none}
+.hh h2{font-size:20px;letter-spacing:-.01em;line-height:28px}
+.hh p{margin-top:2px}
+.hh .act{align-self:end}
+.history .rangectl[hidden]{display:none}
+.hempty{margin-top:14px}
+.hempty[hidden]{display:none}
+.hltrow{display:flex;flex:none;margin:14px 0 0 -10px}
+.hltrow[hidden]{display:none}
+.hltoggle{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;color:var(--muted-foreground);font-size:12px;white-space:nowrap}
+.hltoggle:hover{background:var(--subtle);color:var(--foreground)}
+
+/* Two columns: the rule list, the chosen rule. */
+.hist{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px 32px;align-items:stretch;margin-top:8px;flex:1;min-height:0}
+.hist[hidden]{display:none}
+.hist.nolist{grid-template-columns:minmax(0,1fr)}
+.hist.nolist > aside{display:none}
+.hist > aside,.hist > section{display:flex;flex-direction:column;min-height:0;min-width:0}
+.hist > aside .hlistbox{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.hist > section .list{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.hscroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+body[data-panel="open"] .hist{grid-template-columns:minmax(0,1fr)}
+body[data-panel="open"] .hist > aside{display:none}
+@media (max-width:900px){
+  body[data-page="history"] .shell{height:auto;overflow:visible}
+  body[data-page="history"] .cwrap{display:flex;flex-direction:column}
+  body[data-page="history"] #sidenav{height:auto}
+  .hist{grid-template-columns:minmax(0,1fr)}
+  .hist > aside .hlistbox{max-height:240px}
+}
+
+/* The list column: search, then the rules. */
+.hsearch{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);color:var(--muted-foreground)}
+.hsearch input{flex:1;min-width:0;border:0;background:transparent;font:inherit;font-size:13px;color:var(--foreground);outline:none}
+.hsearch input::placeholder{color:var(--muted-foreground)}
+.hsearch:focus-within{outline:2px solid var(--ring);outline-offset:1px}
+.hlhead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.hrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(36px,max-content);column-gap:14px;align-items:center;padding:10px 12px;border-top:1px solid var(--border);text-align:left;width:100%}
+.hrow:hover{background:var(--subtle)}
+.hrow[aria-current="true"]{background:var(--brand-subtle);box-shadow:inset 0 0 0 1px var(--brand)}
+.hrow[aria-current="true"] + .hrow{border-top-color:transparent}
+.hrow .l{display:flex;flex-direction:column;gap:2px;min-width:0}
+.hrow .t{font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hrow .m{font-size:12px;color:var(--muted-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hrow .c{display:flex;justify-content:flex-end;line-height:1.15;white-space:nowrap}
+.hrow .c b{font-size:16px;color:var(--foreground);font-weight:600}
+.hnomatch{padding:20px}
+.hnomatch[hidden]{display:none}
+
+/* The chosen rule's heading: its title, or with the list hidden a picker sized to the title. */
+.hdetail{position:sticky;top:0;z-index:2;background:var(--card);padding:16px 18px 8px}
+.hdetail .l1{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px}
+.hdetail .l1 h2{margin:0;font-size:16px;line-height:1.35;font-weight:600;min-width:0;color:var(--header-primary)}
+.hdetail .l1 h2[hidden]{display:none}
+.hdetail .l3{display:flex;flex-wrap:wrap;align-items:center;gap:4px 0;margin-top:8px;font-size:12.5px;color:var(--muted-foreground)}
+.hdetail .l3 > span + span::before{content:"·";margin:0 8px;opacity:.6}
+.hdetail .l3 .acts{margin-left:auto;display:inline-flex;gap:8px;padding-left:12px}
+.hdetail .l3 .acts::before{content:none}
+.hdetail .hpick{display:flex;max-width:100%}
+.hdetail .hpick .sel{position:relative;display:inline-grid;grid-template-columns:minmax(0,auto);min-width:0;max-width:100%;margin:-3px 0 -3px -9px;border-radius:999px}
+.hdetail .hpick .sel:hover,.hdetail .hpick .sel:focus-within{background:var(--subtle)}
+.hdetail .hpick .m{grid-area:1/1;visibility:hidden;white-space:nowrap;overflow:hidden;min-width:0;padding:3px 34px 3px 9px;font:inherit}
+.hdetail .hpick select{grid-area:1/1;width:100%;min-width:0;appearance:none;-webkit-appearance:none;border:0;background:transparent;font:inherit;color:var(--header-primary);padding:3px 34px 3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hdetail .hpick select:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
+.hdetail .hpick .sel svg{position:absolute;right:11px;top:50%;margin-top:-6px;opacity:.7;pointer-events:none}
+/* Under the meta line: the mode, and what the coding agent is told in a quoted box (two lines at most). */
+.hkv{display:grid;grid-template-columns:104px minmax(0,1fr);gap:8px 14px;margin:10px 0 0;font-size:13px;align-items:center}
+.hkv[hidden]{display:none}
+.hkv dt,.hkv dd{min-height:28px;display:flex;align-items:center}
+.hkv dt{color:var(--muted-foreground);font-size:12.5px}
+.hkv dd{margin:0;min-width:0}
+.hkv .oc{gap:4px;margin-right:0;font-size:12.5px;font-weight:500;vertical-align:0}
+.hkv .oc-blocked{color:var(--danger-foreground)}
+.hkv .said2{display:block;flex:1;min-width:0;padding:4px 10px;box-sizing:border-box;border-left:2px solid var(--brand);background:var(--brand-subtle);border-radius:0 var(--radius-md) var(--radius-md) 0;font-size:13px;line-height:1.45}
+.hkv .said2 > span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.hsum{display:flex;align-items:center;padding:4px 18px 8px}
+.hsum .tsum{font-size:13px;color:var(--muted-foreground);white-space:nowrap}
+.hsum .tsum b{color:var(--foreground);font-weight:600}
+
+/* One violation: when, where (and its message only when it differs from the header's), its session. */
+.hrows{padding:0 18px 6px}
+.hist .ev{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:2px 16px;padding:9px 0;font-size:13px;align-items:baseline}
+.hist .ev + .ev{border-top:1px solid var(--border)}
+.hist .ev .when{color:var(--muted-foreground);font-size:12px;white-space:nowrap}
+.hist .ev .what{min-width:0}
+.hist .ev .loc{font-family:var(--font-mono);font-size:12.5px;color:var(--foreground);word-break:break-all}
+.hist .ev .loc.muted{font-family:inherit;font-style:italic;color:var(--muted-foreground)}
+.hist .ev .diff{display:block;margin-top:2px;font-size:12px;color:var(--muted-foreground);overflow-wrap:anywhere}
+.hist .ev .diff[hidden]{display:none}
+.hist .ev .open{font-size:12px;color:var(--brand-foreground);white-space:nowrap}
+.hist .day{padding:10px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground);display:flex;align-items:center;gap:8px}
+.hist .day::after{content:"";flex:1;height:1px;background:var(--border)}
+.hist .day + .ev{border-top:0}
+.hist .more{display:flex;justify-content:center;padding:10px 0 4px}
+.hist .more[hidden],.hist .empty[hidden]{display:none}

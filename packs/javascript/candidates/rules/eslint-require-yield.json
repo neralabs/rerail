@@ -3,7 +3,7 @@
   "id": "eslint-require-yield",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of ESLint's `require-yield` (https://eslint.org/docs/latest/rules/require-yield). Flags generator functions with a non-empty body and no `yield` outside nested functions.",
+  "description": "Add a yield to generator functions with a non-empty body, or make them plain functions.",
   "scope": {
     "include": [
       "**/*"

@@ -2,23 +2,24 @@
  * Fetch orchestration: one conditional GET per resource every 5 s (`If-None-Match`; 304 means
  * nothing changed), backing off to 30 s while the daemon is unreachable, and paused while the tab is hidden.
  * Data lands in the store; the caller re-renders and reconciles in place. Every poll reads the repository
- * list and the daemon's health, and with a repository in scope its context; beyond that only what the open
- * view (and an open panel) shows. Long lists are paged with a cursor: a poll refreshes their first page and
- * keeps the further pages the person loaded.
+ * list and the daemon's health, and with a repository in scope its context; beyond that only the needs the
+ * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
+ * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
  */
 import { get, send } from "./api.js";
-import { data, ui, sinceFor, setScope, activityView, pagedList, panelRuleId } from "./state.js";
+import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
+import { historyRuleId } from "./history-model.js";
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
-/** Page sizes: Activity's violations, a rule panel's, the sessions list, the selected session's violations, its transcript. */
-const FINDINGS_PAGE = 200;
+/** Page sizes: History's selected rule's violations, a rule sheet's, the sessions list, the selected session's violations, its transcript. */
+const FINDINGS_PAGE = 25;
+/** Overview's Recent sessions. */
+const RECENT_SESSIONS = 5;
 const RULE_FINDINGS_PAGE = 50;
 const SESSIONS_PAGE = 50;
 const SESSION_FINDINGS_PAGE = 200;
 const EVENTS_PAGE = 500;
-/** Views that show rules and their activity. */
-const RULES_VIEWS = { rules: true, packs: true, review: true };
 
 /**
  * ETag per data slot, not per URL: range-scoped resources fetch a different URL for every range,
@@ -54,7 +55,7 @@ async function fetchFresh(path, slot = path, wanted = () => true) {
 export const refetch = slot => { etags.delete(slot); };
 
 /** `repository=…&checkout=…` from the page's scope: the target every repository read and write names. */
-export function scopeTarget() {
+function scopeTarget() {
   const target = {};
   const repository = data.repository?.repositoryKey ?? ui.scope?.repository;
   if (repository !== undefined) target.repository = repository;
@@ -173,6 +174,8 @@ export function toStoredRules(entries) {
         known.enabled = known.enabled && entry.on;
         known.configError ??= entry.configError ?? null;
         known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
+        known.addedAt = earliest(known.addedAt, entry.addedAt ?? null);
+        known.updatedAt = latest(known.updatedAt, entry.updatedAt ?? null);
       }
       continue;
     }
@@ -193,10 +196,17 @@ export function toStoredRules(entries) {
       configSource: entry.configSource,
       configError: entry.configError ?? null,
       revision: entry.revision,
+      addedAt: entry.addedAt ?? null,
+      updatedAt: entry.updatedAt ?? null,
     });
   }
   return rules;
 }
+
+/** When a rule present in several folders was first added: the earliest folder's; `null` where none says. */
+const earliest = (a, b) => (a === null ? b : b === null ? a : Math.min(a, b));
+/** When its settings last changed: the latest folder's. */
+const latest = (a, b) => (a === null ? b : b === null ? a : Math.max(a, b));
 
 /** One folder's own on, mode and suppressions of a rule, what decided its suppressions, and what added it there. */
 const folderState = entry => ({
@@ -223,7 +233,6 @@ async function loadRules() {
   const body = await fetchFresh(`/api/repository/rules?${scopeQuery()}`, "rules");
   if (body === undefined) return false;
   data.rules = toStoredRules(body.rules);
-  data.unavailable = body.unavailable;
   data.attachedPacks = attachedPacksOf(body.rules, body.unavailable);
   return true;
 }
@@ -301,11 +310,11 @@ async function loadActivity(since, target) {
   return true;
 }
 
-/** The newest session, for the welcome banner: one row, not the list. */
-async function loadNewestSession() {
-  const body = await fetchFresh(`/api/sessions?limit=1${repositoryFilter()}`, "newestSession");
+/** Overview's Recent sessions: the range's newest few, and how many started in it. */
+async function loadRecentSessions(since) {
+  const body = await fetchFresh(`/api/sessions?since=${since}&limit=${RECENT_SESSIONS}${repositoryFilter()}`, "recentSessions");
   if (body === undefined) return false;
-  data.newestSession = body.sessions[0] ?? null;
+  data.recentSessions = { rows: body.sessions, total: body.total };
   return true;
 }
 
@@ -360,17 +369,8 @@ async function loadNextPage(name, field) {
   return true;
 }
 
-/** Activity: the next page of the range's violations. */
+/** History: the next page of the shown rule's violations. */
 export const loadMoreFindings = () => loadNextPage("findings", "violations");
-
-/**
- * Activity's "Show more": 50 more rows of what the filters let through, fetching further pages until
- * that many matches are loaded or the range runs out (a filter's matches may all lie further back).
- */
-export async function showMoreActivity() {
-  ui.recentShown += 50;
-  while (activityView().list.length < ui.recentShown && await loadMoreFindings()) { /* next page */ }
-}
 
 /** Sessions view: the next page of the list. */
 export const loadMoreSessions = () => loadNextPage("sessions", "sessions");
@@ -531,35 +531,58 @@ function pumpTitles() {
 }
 
 /**
- * What the open view shows, and an open panel: Rules (and its rule pack pages) the rules, packs and activity;
- * Activity the first page of the range's violations, with rules and packs for titles and its pack filter;
- * Sessions the first page of the list and the selected session only; Settings nothing beyond the shared reads.
+ * What a page can ask a poll for, by name; each loads with the range's `since`. A view declares the names it shows
+ * (`needs` in its module) and the poll loads each name once, whoever else asked for it.
+ * - `rules`: the repository's rules (`data.rules`, `attachedPacks`).
+ * - `packs`: every rule pack that comes with Rerail (`data.packs`).
+ * - `activity`: each rule's activity in the range and since install (`data.activity`, `activityAll`, their sessions).
+ * - `recentSessions`: the range's five newest sessions and how many started in it (`data.recentSessions`).
+ * - `findings`: History's shown rule's violations in the range (`data.findings`, owner = rule id); nothing without one.
+ * - `ruleFindings`: the open rule sheet's violations in the range (`data.ruleFindings`); nothing without one.
+ * - `sessions`: the first page of the sessions list (`data.sessions`).
+ * - `selectedSession`: the selected session's head, new transcript events and violations; nothing without one.
  */
-function viewJobs(since) {
-  const rulesView = RULES_VIEWS[ui.view] === true || ui.panel !== null;
+const NEEDS = {
+  rules: () => loadRules(),
+  packs: () => loadPacks(),
+  activity: since => [loadActivity(since, "activity"), since === 0 ? false : loadActivity(0, "activityAll")],
+  recentSessions: since => loadRecentSessions(since),
+  findings: since => {
+    const ruleId = historyRuleId();
+    return ruleId === null ? [] : loadFirstPage("findings", "violations",
+      `/api/violations?since=${since}&ruleId=${encodeURIComponent(ruleId)}&limit=${FINDINGS_PAGE}${repositoryFilter()}`, ruleId);
+  },
+  ruleFindings: since => {
+    const ruleId = panelRuleId();
+    return ruleId === null ? [] : loadFirstPage("ruleFindings", "violations",
+      `/api/violations?since=${since}&ruleId=${encodeURIComponent(ruleId)}&limit=${RULE_FINDINGS_PAGE}${repositoryFilter()}`, ruleId);
+  },
+  sessions: () => loadFirstPage("sessions", "sessions", `/api/sessions?limit=${SESSIONS_PAGE}${repositoryFilter()}`),
+  selectedSession: () => (ui.selectedSession ? [loadSession(ui.selectedSession), loadSessionFindings(ui.selectedSession)] : []),
+};
+
+/** The names of what the page needs now, beyond the shared reads; set once by the page (`setNeeds`). */
+let pageNeeds = () => [];
+
+/** Name what each poll loads for a repository in scope: `needs()` returns names from `NEEDS`, in any order, repeats allowed. */
+export function setNeeds(needs) {
+  pageNeeds = needs;
+}
+
+function neededJobs(since) {
   const jobs = [];
-  if (rulesView || ui.view === "activity" || ui.view === "sessions") jobs.push(loadRules());
-  if (rulesView || ui.view === "activity") jobs.push(loadPacks());
-  if (rulesView) jobs.push(loadActivity(since, "activity"), since === 0 ? false : loadActivity(0, "activityAll"));
-  if (ui.view === "rules") jobs.push(loadNewestSession());
-  const ruleId = panelRuleId(), repository = repositoryFilter();
-  // The open rule panel: that rule's violations in the range.
-  if (ruleId !== null) {
-    jobs.push(loadFirstPage("ruleFindings", "violations",
-      `/api/violations?since=${since}&ruleId=${encodeURIComponent(ruleId)}&limit=${RULE_FINDINGS_PAGE}${repository}`, ruleId));
-  }
-  if (ui.view === "activity") jobs.push(loadFirstPage("findings", "violations", `/api/violations?since=${since}&limit=${FINDINGS_PAGE}${repository}`));
-  if (ui.view === "sessions") {
-    jobs.push(loadFirstPage("sessions", "sessions", `/api/sessions?limit=${SESSIONS_PAGE}${repository}`));
-    if (ui.selectedSession) jobs.push(loadSession(ui.selectedSession), loadSessionFindings(ui.selectedSession));
+  for (const name of new Set(pageNeeds())) {
+    const load = NEEDS[name];
+    if (load === undefined) throw new Error(`No poll need is called "${name}"`);
+    jobs.push(...[load(since)].flat());
   }
   return jobs;
 }
 
-/** The scoped repository's context (first, when its key is not known yet), then what the open view needs. */
+/** The scoped repository's context (first, when its key is not known yet), then what the page needs. */
 async function scopedJobs(since) {
   const context = data.repository === null ? [await loadContext()] : [loadContext()];
-  return [...context, ...viewJobs(since)];
+  return [...context, ...neededJobs(since)];
 }
 
 async function poll() {
@@ -622,7 +645,7 @@ export async function refreshNow() {
 }
 
 /**
- * Show another repository (`scope` from `readScope`, or `null` for the picker): drop everything fetched for the
+ * Show another repository (`scope` from `readScope`, or `null` for the page that asks for one): drop everything fetched for the
  * previous one, and poll now. A response still in flight for the previous scope is discarded.
  */
 export function changeScope(scope) {
@@ -634,9 +657,9 @@ export function changeScope(scope) {
   ui.removeAsk = null;
   ui.selectedSession = null;
   Object.assign(data, {
-    repository: null, checkout: null, unavailable: [], rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
+    repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
-    sessionFindings: pagedList(), newestSession: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
+    sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
   });
   data.sessionDetail.clear();
   refreshNow();

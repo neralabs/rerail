@@ -1,6 +1,0 @@
-
-function f() {
-  var a = [];
-  return a.map(function g() {});
-}
-      

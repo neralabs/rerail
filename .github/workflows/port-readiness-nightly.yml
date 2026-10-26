@@ -2,7 +2,18 @@ name: Port readiness (nightly)
 
 # Once a day, and on demand: re-records every gated tool-pack's upstream answers and fails when a committed recording
 # no longer matches the pinned upstream (port-readiness:record --check), then judges every rule again and saves the fresh
-# results for pull requests to read. Pull requests judge rules against the committed recordings (port-readiness.yml); this
+# results for pull requests to read, and fails when an upstream tool has published a stable release that breaks the one
+# its tool-pack pins: a major release ahead of the pin, or a minor one when the pinned major is 0
+# (port-readiness:upstream-releases). Every tool-pack behind, breaking or not, goes into the night's one bump pull
+# request (port-readiness:bump), and nothing more happens here: it points the work branch auto/bump-run/upstream at
+# this commit and dispatches port-readiness-bump.yml there once, with the list, which in a leg per tool-pack moves the
+# pins and, holding no credential, derives, records and packs on Linux every tool-pack the bump made stale;
+# port-readiness-bump-publish.yml, on main, then checks each leg's result, composes the verified ones into a commit per
+# tool-pack, uploads their archives and recordings to S3 in the test-data-upload environment, and proposes the commits
+# in one pull request on auto/bump-upstream, which a maintainer reviews and merges like any other. Upstream code at a
+# release nobody has reviewed never runs here, in main's cache scope, or next to a credential.
+# Pull request CI runs on the archives the locks name, deriving a tool-pack only to check that a changed lock's archive is
+# what its pins make, and judges rules against the recordings the recording.lock files name (port-readiness.yml); this
 # job keeps them honest.
 
 on:
@@ -57,7 +68,7 @@ jobs:
 
       - name: Install pinned Rust toolchain
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
@@ -94,28 +105,24 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The drift check runs the recorder as port-readiness-record.yml does, with --check: upstream on its own tests and on
-  # the corpus files the goldens name, never the rest of the corpus. It reports when upstream moved and uploads nothing,
-  # so the night tells main without quietly re-recording main behind the maintainers. It is its own job rather than a
-  # call to that workflow because a called workflow's jobs may not ask for more than the caller grants, and the
-  # recorder's authorize and publish jobs ask for write: GitHub would refuse the whole nightly run at startup, and
-  # granting write here would hand the scheduled run a write token while upstream linters run.
-  record-check:
-    name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
-    needs: build
+  # The drift check's test data and recordings: each gated tool-pack's archive (.github/actions/pack-test-data) and the
+  # two recordings its recording.lock names, into this run's cache before record-check starts. This job holds the OIDC
+  # token and runs only this commit's scripts/s3/pack-fixtures.mjs (the pull and the recordings), never upstream's;
+  # id-token: on a cache miss it reads them from S3, and only the steps that download them hold the credentials.
+  record-check-test-data:
+    name: Test data for the drift check (${{ matrix.pack }} · ${{ matrix.tool }})
     # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
     if: github.repository_owner == 'neralabs'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    # attestations: read is for the fetch, which checks each recording's attestation (recording/fetch.ts).
+    timeout-minutes: 15
     permissions:
       contents: read
-      attestations: read
+      id-token: write
     strategy:
       fail-fast: false
-      # port-readiness-record.yml's matrix: every gated tool-pack.
+      # Every gated tool-pack; record-check reuses the list.
       matrix:
-        include:
+        include: &record-check-tool-packs
           - pack: python
             tool: ruff
           - pack: python
@@ -134,6 +141,130 @@ jobs:
             tool: eslint-plugin-vitest
           - pack: next
             tool: eslint-plugin-next
+          - pack: php
+            tool: phpcs
+          - pack: php
+            tool: phpstan
+          - pack: php
+            tool: psalm
+          - pack: blade
+            tool: tlint
+          - pack: blade
+            tool: blade-parser
+          - pack: blade
+            tool: bladestan
+          - pack: sql
+            tool: sqlfluff
+          - pack: rust
+            tool: clippy
+          - pack: vue
+            tool: eslint-plugin-vue
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: ${{ matrix.pack }}
+          tool: ${{ matrix.tool }}
+
+      # As port-readiness.yml's test-data job warms them, under the key record-check restores.
+      - id: recording-lock
+        name: Key the recordings the lock names
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          [ -f "$lock" ] || exit 0
+          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          {
+            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
+            echo "paths<<EOF"
+            echo ".rerail/port-readiness/recordings/$recording.json"
+            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: recordings
+        name: Look up the recordings the lock names
+        if: steps.recording-lock.outputs.key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.recording-lock.outputs.paths }}
+          key: ${{ steps.recording-lock.outputs.key }}
+          lookup-only: true
+
+      - id: recordings-credentials
+        name: Assume the test data read role for the recordings
+        if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
+          aws-region: us-east-2
+          output-credentials: true
+          output-env-credentials: false
+
+      - name: Set up Node.js v24 for the recordings
+        if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - id: recordings-download
+        name: Download the recordings from S3
+        if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          PATHS: ${{ steps.recording-lock.outputs.paths }}
+          AWS_ACCESS_KEY_ID: ${{ steps.recordings-credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.recordings-credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.recordings-credentials.outputs.aws-session-token }}
+          AWS_REGION: us-east-2
+        run: |
+          set -euo pipefail
+          node scripts/s3/pack-fixtures.mjs recordings --pack "$PACK" --tool "$TOOL"
+          while read -r path; do
+            [ -f "$path" ] || exit 0
+          done <<< "$PATHS"
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+
+      - name: Save the recordings
+        if: steps.recordings-download.outputs.complete == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.recording-lock.outputs.paths }}
+          key: ${{ steps.recording-lock.outputs.key }}
+
+  # The drift check runs the recorder with --check: upstream on its own tests and on the corpus files the goldens name,
+  # never the rest of the corpus. It reports when upstream moved and writes nothing, so the night tells main without
+  # quietly re-recording main behind the maintainers. Read-only, and saving no cache once upstream has run: the
+  # recorder runs upstream's code and unlocked Composer packages, and a save after that would hand main's scope
+  # whatever that code wrote. For the same reason it holds no OIDC token, which any of its steps could use to assume the
+  # test data read role: --check compares upstream's case sources with the derived ones the tool-pack's archive holds,
+  # restored from the cache record-check-test-data saved (`fetch: "false"`). A leg whose test data job failed fails at
+  # that restore; the others still run.
+  record-check:
+    name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
+    needs: [build, record-check-test-data]
+    # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
+    if: ${{ !cancelled() && github.repository_owner == 'neralabs' && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      # Every gated tool-pack, as record-check-test-data lists them.
+      matrix:
+        include: *record-check-tool-packs
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -143,6 +274,12 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: ${{ matrix.pack }}
+          tool: ${{ matrix.tool }}
+          fetch: "false"
+
       - uses: ./.github/actions/node-deps
 
       - name: Build the package
@@ -151,29 +288,61 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
 
-      # The recorder's own cache, so a run on main warms what the next maintainer recording reads. The paths are
-      # port-readiness-record.yml's exactly, which GitHub requires for one to restore what the other saved. `recordings/*`
-      # rather than `recordings`, so the negation drops upload/: the cache archives each path the glob lists, recursively.
-      - name: Restore the upstream runtimes, checkouts, corpus and recordings
-        uses: actions/cache@v6
-        with:
-          path: |
-            .rerail/port-readiness/runtimes
-            .rerail/port-readiness/upstream
-            .rerail/port-readiness/corpus
-            .rerail/port-readiness/recordings/*
-            !.rerail/port-readiness/recordings/upload
-          key: port-readiness-record-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles('conformance/recorders/port-readiness/runtimes/**', format('packs/{0}/upstream/{1}/gates.yaml', matrix.pack, matrix.tool), 'conformance/port-readiness/corpus-tasks.json') }}
-          restore-keys: |
-            port-readiness-record-${{ matrix.pack }}-${{ matrix.tool }}-
+      # The php and blade tool-packs run their upstream under the exact PHP their runtime pins, and Composer installs it.
+      - name: Set up the pinned PHP and Composer
+        if: matrix.pack == 'php' || matrix.pack == 'blade'
+        uses: ./.github/actions/php
 
-      - name: Fetch the recording the manifest names
-        continue-on-error: true
+      # Clippy's recorder runs the rustup toolchain its runtime pins (runtimes/<runtime>/rust-toolchain.toml: an exact
+      # release with clippy), and refuses any other build; no other leg needs Rust.
+      - id: clippy-toolchain
+        name: Read the Rust toolchain Clippy's runtime pins
+        if: matrix.tool == 'clippy'
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL"
+        run: |
+          set -euo pipefail
+          runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
+          [ -n "$runtime" ] || { echo "::error::packs/$PACK/upstream/$TOOL/gates.yaml has no upstream.runtime line this step reads"; exit 1; }
+          toolchain="conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml"
+          channel="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$toolchain")"
+          [ -n "$channel" ] || { echo "::error::$toolchain has no channel line this step reads"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain with clippy
+        if: matrix.tool == 'clippy'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
+          components: clippy
+
+      # The recordings the lock names, from the cache record-check-test-data and port-readiness.yml's test-data job save
+      # into (the same key): when a fresh corpus.json differs from the locked one, --check compares the two, and without
+      # it says it could not.
+      - id: lock
+        name: Read the recordings the lock names
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          {
+            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
+            echo "paths<<EOF"
+            echo ".rerail/port-readiness/recordings/$recording.json"
+            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore the recordings the lock names
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.lock.outputs.paths }}
+          key: ${{ steps.lock.outputs.key }}
 
       - name: Report drift against the committed manifest
         env:
@@ -186,13 +355,128 @@ jobs:
     needs: build
     # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
     if: github.repository_owner == 'neralabs'
-    # The called report job asks for these to post on pull requests; a scheduled run posts nothing. The called gates
-    # job reads the recordings' attestations.
+    # The called report job asks for issues and pull-requests to post on pull requests; a scheduled run posts nothing.
+    # id-token: the called test-data job pulls each planned tool-pack's archive (.github/actions/pack-test-data), from S3
+    # on a cache miss.
     permissions:
       contents: read
+      id-token: write
       issues: write
       pull-requests: write
-      attestations: read
     uses: ./.github/workflows/port-readiness.yml
     with:
       no-cache: true
+
+  # Red only when an upstream tool has published a stable release that breaks its tool-pack's pin (a major release ahead
+  # of it, or a minor one when the pinned major is 0), when the pins disagree, or when a registry cannot be read:
+  # gates.yaml's version and the runtime's pin under conformance/recorders/port-readiness/runtimes/, against npm, PyPI,
+  # Packagist and the Rust channel (Clippy, pinned by packs/rust/upstream/common.py, compared on major.minor: a Rust
+  # patch release is not behind). A minor or patch release ahead of the pin is reported, as a warning and in the job
+  # summary, which lists every tool-pack, without failing. Every tool-pack behind, breaking or not, goes to
+  # bump-dispatch: the night's bump pull request is the fix (docs/port-readiness.md, "Upstream releases").
+  upstream-releases:
+    name: No upstream release breaks the pins
+    # Main's pins; forks that turn scheduled workflows back on skip it.
+    if: github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      # Every tool-pack behind upstream, breaking or not, as JSON (upstream/releases.ts, behindToolPacks): bump-dispatch's
+      # list.
+      behind: ${{ steps.check.outputs.behind }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      # The list is written before the check's exit code fails the job, so bump-dispatch still reads it.
+      - id: check
+        name: Check the upstream releases
+        run: |
+          set +e
+          npm run port-readiness:upstream-releases -- --behind "$RUNNER_TEMP/behind.json"
+          status=$?
+          set -e
+          if [ -s "$RUNNER_TEMP/behind.json" ]; then
+            echo "behind=$(jq -c . "$RUNNER_TEMP/behind.json")" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
+
+  # One run for the night: points the work branch auto/bump-run/upstream at this run's commit, then starts
+  # port-readiness-bump.yml on it once, with every tool-pack behind upstream (JSON [{pack, tool, version}], sorted by pack
+  # then tool), which in a leg per tool-pack moves the pins and derives, records and packs every tool-pack the bump made
+  # stale; port-readiness-bump-publish.yml then composes the verified legs into one commit each, uploads the new archives
+  # and opens the pull request. The producer runs upstream's code at a release nobody has reviewed, so it runs on the
+  # work branch and never here, where its cache token would write main's cache scope, which every pull request and push
+  # to main reads. This job checks nothing out and installs nothing. A bump a maintainer closed without merging is left
+  # out until a newer release appears: each pull request's body starts with a marker per bump it carries,
+  # `<!-- bump: <pack>/<tool>@<version> -->`, and only the neralabs-ci app's own same-repository pull requests on
+  # auto/bump-upstream count; its token, read-only, lists them and names the app. A branch an earlier run left behind
+  # is deleted and created again rather than moved, since GitHub may refuse GITHUB_TOKEN a move across a change to a
+  # workflow file. A workflow_dispatch made with GITHUB_TOKEN starts a run; a branch it creates starts none.
+  bump-dispatch:
+    name: Start the bump of the tool-packs behind upstream
+    needs: upstream-releases
+    if: always() && github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main' && needs.upstream-releases.outputs.behind != '' && needs.upstream-releases.outputs.behind != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - id: app-token
+        name: Get the neralabs-ci app token, read-only
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-pull-requests: read
+
+      - name: Point the work branch at this commit and start the bump on it
+        env:
+          BEHIND: ${{ needs.upstream-releases.outputs.behind }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          behind="$(jq -c '[.[] | { pack, tool, version: .latest }] | sort_by(.pack, .tool)' <<< "$BEHIND")"
+          mapfile -t values < <(jq -r '.[] | .pack, .tool, .version' <<< "$behind")
+          for value in "${values[@]}"; do
+            if ! [[ "$value" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+              echo "::error::'$value' is not a pack, tool or version the bump takes"
+              exit 1
+            fi
+          done
+
+          # The bumps maintainers closed without merging: the markers each such pull request's body starts with.
+          mapfile -t closed < <(GH_TOKEN="$APP_TOKEN" gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?head=$GITHUB_REPOSITORY_OWNER:auto/bump-upstream&state=closed&per_page=100" \
+            | jq -s -r --arg repo "$GITHUB_REPOSITORY" --arg login "${APP_SLUG}[bot]" '
+              (add // [])[] | select(.head.repo.full_name == $repo and .user.type == "Bot" and .user.login == $login and .merged_at == null)
+              | (.body // "") | split("\n") | map(rtrimstr("\r")) as $lines
+              | ([$lines | to_entries[] | select(.value | test("^<!-- bump: [a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9._-]* -->$") | not) | .key][0] // ($lines | length)) as $end
+              | $lines[0:$end][] | capture("^<!-- bump: (?<entry>[^ ]+) -->$").entry
+            ')
+          tool_packs="$(jq -c '[.[] | select("\(.pack)/\(.tool)@\(.version)" as $entry | any($ARGS.positional[]; . == $entry) | not)]' --args "${closed[@]}" <<< "$behind")"
+          jq -r '.[] | "\(.pack)/\(.tool)@\(.version)"' <<< "$behind" | while read -r entry; do
+            if printf '%s\n' "${closed[@]}" | grep -q -x -F -- "$entry"; then
+              echo "not starting $entry: a maintainer closed its bump pull request without merging it"
+            fi
+          done
+          if [ "$(jq length <<< "$tool_packs")" -eq 0 ]; then
+            echo "::notice::every tool-pack behind upstream is at a release whose bump a maintainer closed; nothing to start"
+            exit 0
+          fi
+
+          branch="auto/bump-run/upstream"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" > /dev/null 2>&1; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch" > /dev/null
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$branch" -f sha="$GITHUB_SHA" > /dev/null
+          gh workflow run port-readiness-bump.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" -f tool-packs="$tool_packs"
+          echo "started the bump on $branch at $GITHUB_SHA of:"
+          jq -r '.[] | "- \(.pack)/\(.tool) to \(.version)"' <<< "$tool_packs"

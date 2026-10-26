@@ -3,7 +3,7 @@
   "id": "ruff-f506-percent-format-mixed-positional-and-named",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F506 (percent-format-mixed-positional-and-named): a valid `%`-format string with both a `%(key)` placeholder and a positional value (a placeholder without a key, or a `*` width or precision). The format string is a str literal (no f/t/b prefix; implicit concatenations joined, escapes decoded, parentheses transparent) left of `%`, read with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser).",
+  "description": "Don't mix %(key) placeholders and positional placeholders in one %-format string; Python cannot format it.",
   "scope": {
     "include": [
       "**/*"
@@ -100,7 +100,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F506",
-        "message": "`%`-format string has mixed positional and named placeholders",
+        "message": "Use only %(key) placeholders or only positional ones in this format string; Python cannot format a mix.",
         "suppress": {
           "noqa": {
             "codes": [

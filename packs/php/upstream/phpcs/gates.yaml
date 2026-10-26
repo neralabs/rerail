@@ -1,0 +1,50 @@
+adapter: phpcs
+# PHP_CodeSniffer's documents in rerail's php pack.
+rerail:
+  pack: php
+  project: php_codesniffer
+  # PHP_CodeSniffer checks .php and .inc files (Config's default extensions). Rerail routes `.php` to PHP and has no
+  # dialect for `.inc`, so the ports cover `.php` alone; upstream's own `.inc` unit test files are read as PHP at
+  # `<file>.inc.php`, as PHP_CodeSniffer reads them.
+  in_scope:
+    - .php
+upstream:
+  name: PHPCSStandards/PHP_CodeSniffer
+  repository: https://github.com/PHPCSStandards/PHP_CodeSniffer
+  # The release rerail's php pack records (packs/php/licenses/php_codesniffer/UPSTREAM.md: PHP_CodeSniffer 4.0.4, the
+  # conformance.json tools entry); tag 4.0.4.
+  commit: bbdc3d0532623e21838b7041a4364383a8126f96
+  version: 4.0.4
+  license: BSD-3-Clause
+  # The Composer package, run on PHP 8.5.11 (runtimes/phpcs-4.0.4/.php-version, the interpreter the pack's conformance
+  # recordings were made with): DeprecatedFunctions reads the running interpreter's deprecations, and the unit tests'
+  # expectations depend on its version.
+  runtime: phpcs-4.0.4
+  # PHP_CodeSniffer has no recommended configuration; it ships coding standards, and the one bare `phpcs` runs (no
+  # --standard, no config file) is PSR12 at the pin (src/Config.php's restoreDefaults; README: "The default coding
+  # standard used by PHP_CodeSniffer is the PSR12 coding standard"), the same reading as Bandit's and Ruff's `default`.
+  # The other standards are not recommendations: Generic "is not designed to be used to check code" (its ruleset's
+  # description) and is where most ported sniffs live, Squiz, PEAR and Zend are their authors' house styles (Zend's
+  # says it is out of date), and PSR1 and PSR2 are what PSR12 extends and replaces. Only Generic.PHP.LowerCaseConstant
+  # is in PSR12, with its default properties, so the other seven documents are not `recommended` and start off once
+  # shipped.
+  #
+  # How the adapter applies it (decisions for the team; they hold for every PHP_CodeSniffer pack):
+  # - Gate 5 runs each sniff as upstream's unit tests run it (tests/Standards/AbstractSniffTestCase.php: a ruleset of
+  #   the sniff alone with its default properties, the unit test's setCliValues, `phpcs:` directives honoured, errors
+  #   and warnings alike), or, for a sniff PSR12 turns on, with PSR12's configuration of it (`--standard=PSR12
+  #   --sniffs=<sniff>`). The unit tests assert counts per line, not columns: the `upstream-tests-agree` tool-pack check
+  #   holds PHP_CodeSniffer's output on each sniff's own files to those counts, and the output is the positional answer.
+  # - A sniff's cases are the unit test files of every sniff the pack ports (packs/php/upstream/phpcs/fixtures/), not
+  #   its own alone: they are PHP files any sniff reads, so another sniff's file is upstream's answer on code the rule
+  #   must stay silent on, as Bandit's examples are for every Bandit test.
+  # - Positions are PHP_CodeSniffer's line and column, columns in characters with its default tab width of 0, and no
+  #   end (span-units/phpcs.ts).
+  recommended_configs:
+    - PSR12
+popularity:
+  observed_on: 2026-10-20
+  evidence:
+    - "Packagist: 416,475,636 installs of squizlabs/php_codesniffer in total, 10,544,655 in the last 30 days (packagist.org/packages/squizlabs/php_codesniffer/stats.json)"
+    - "GitHub: PHPCSStandards/PHP_CodeSniffer has 1,562 stars and is not archived"
+known_gaps: []

@@ -65,24 +65,52 @@ describe("the engine sources a rule's key covers", () => {
       "native/src/code_rule_dsl/suppress/clippy.rs",
       "native/src/code_rule_dsl/value/rust.rs",
     ]);
+    assert.deepEqual(split.families.sql, [
+      "languages/sql.json",
+      "native/grammars/tree-sitter-sql/LICENSE",
+      "native/grammars/tree-sitter-sql/PATCHES.md",
+      "native/grammars/tree-sitter-sql/rerail.patch",
+      "native/grammars/tree-sitter-sql/src/grammar.json",
+      "native/grammars/tree-sitter-sql/src/parser.generated.c.gz",
+      "native/grammars/tree-sitter-sql/src/scanner.c",
+      "native/grammars/tree-sitter-sql/src/tree_sitter/alloc.h",
+      "native/grammars/tree-sitter-sql/src/tree_sitter/array.h",
+      "native/grammars/tree-sitter-sql/src/tree_sitter/parser.h",
+      "native/src/code_rule_dsl/language/adapter/sql.rs",
+      "native/src/code_rule_dsl/matcher/arguments_sql.rs",
+      "native/src/code_rule_dsl/scope/sql.rs",
+      "native/src/code_rule_dsl/suppress/sqlfluff.rs",
+      "native/src/code_rule_dsl/value/sql.rs",
+    ]);
     for (const path of ["languages/javascript.json", "languages/typescript.json", "native/src/code_rule_dsl/scope/ecma.rs", "native/src/code_rule_dsl/value/ecma/ops.rs"]) {
       assert.ok(split.families.ecma!.includes(path), `${path} is not ecma's`);
     }
+    for (const path of ["languages/php.json", "native/src/code_rule_dsl/scope/php.rs", "native/src/code_rule_dsl/scope/php/blade.rs", "native/src/code_rule_dsl/suppress/phpcs.rs", "native/src/code_rule_dsl/php_view.rs", "native/src/code_rule_dsl/blade/forte/scan.rs"]) {
+      assert.ok(split.families.php!.includes(path), `${path} is not php's`);
+    }
+    for (const path of ["languages/blade.json", "native/src/code_rule_dsl/blade.rs", "native/src/code_rule_dsl/blade/view.rs", "native/src/code_rule_dsl/blade/forte/parser/mod.rs", "native/src/code_rule_dsl/embed/compiled_view.rs"]) {
+      assert.ok(split.families.blade!.includes(path), `${path} is not blade's`);
+    }
   });
 
-  /** The only family files under the directories every language reads: Rust's adapter and two matchers only it calls. */
-  const RUST_UNDER_SHARED = new Set([
-    "native/src/code_rule_dsl/language/adapter/rust.rs",
-    "native/src/code_rule_dsl/matcher/arguments/rust.rs",
-    "native/src/code_rule_dsl/matcher/format_args/rust.rs",
-  ]);
+  /**
+   * The only family files under the directories every language reads: Rust's adapter and two matchers only it calls,
+   * and SQL's adapter and the call binding only it reads.
+   */
+  const FAMILY_UNDER_SHARED: Record<string, string> = {
+    "native/src/code_rule_dsl/language/adapter/rust.rs": "rust",
+    "native/src/code_rule_dsl/matcher/arguments/rust.rs": "rust",
+    "native/src/code_rule_dsl/matcher/format_args/rust.rs": "rust",
+    "native/src/code_rule_dsl/language/adapter/sql.rs": "sql",
+    "native/src/code_rule_dsl/matcher/arguments_sql.rs": "sql",
+  };
 
   // The engine code every language reads: a change to it can move any verdict, so it must re-judge every rule.
   test("the engine every language reads is shared", () => {
     const shared = new Set(split.shared);
-    for (const path of RUST_UNDER_SHARED) assert.ok(split.families.rust!.includes(path), `${path} is not rust's`);
+    for (const [path, family] of Object.entries(FAMILY_UNDER_SHARED)) assert.ok(split.families[family]!.includes(path), `${path} is not ${family}'s`);
     for (const prefix of ["native/src/code_rule_dsl/matcher/", "native/src/code_rule_dsl/compile/", "native/src/code_rule_dsl/workspace/", "native/src/code_rule_dsl/language/adapter/"]) {
-      const listed = [...keyed].filter((path) => path.startsWith(prefix) && !RUST_UNDER_SHARED.has(path));
+      const listed = [...keyed].filter((path) => path.startsWith(prefix) && FAMILY_UNDER_SHARED[path] === undefined);
       assert.ok(listed.length > 0, `no engine source under ${prefix}`);
       for (const path of listed) assert.ok(shared.has(path), `${path} is not shared`);
     }
@@ -222,6 +250,9 @@ describe("the language families a rule document names", () => {
     assert.deepEqual(policyFamilies(document([clause("python"), clause("typescript")])), ["ecma", "python"]);
     // Nested utils and sub-rules name languages too, and all of them count.
     assert.deepEqual(policyFamilies(JSON.stringify({ clauses: [{ forbid: { any: [{ ast: { language: "php" } }] } }] })), ["php"]);
+    // A Blade rule reads the PHP of a template's compiled view, so it is judged in PHP's family too; PHP embeds nothing.
+    assert.deepEqual(policyFamilies(document([clause("blade")])), ["blade", "php"]);
+    assert.deepEqual(policyFamilies(document([clause("php")])), ["php"]);
   });
 
   // Empty means "the gates cannot tell", which `engineKey` answers with the whole engine.

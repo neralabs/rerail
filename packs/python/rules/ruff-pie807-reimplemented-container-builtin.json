@@ -3,7 +3,7 @@
   "id": "ruff-pie807-reimplemented-container-builtin",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PIE807 (reimplemented-container-builtin): a parameterless `lambda` whose body is an empty list or dict display.",
+  "description": "Use list or dict directly instead of a lambda that returns an empty list or dict, such as for a default factory.",
   "scope": {
     "include": [
       "**/*"

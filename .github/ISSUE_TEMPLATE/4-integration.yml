@@ -1,0 +1,51 @@
+name: Coding agent, language or linter support
+description: Ask for Rerail to support a coding agent, a language, or a linter's rules.
+labels: [enhancement, integration, needs-triage]
+type: Feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We reply within 10 business days ([response times](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#response-times)).
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Support for
+      options:
+        - A coding agent
+        - A language
+        - A linter or framework's rules (a rule pack)
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Which one
+      placeholder: Go, eslint-plugin-jest, ...
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: How you'd use it
+      description: Your repositories, your team, and what you'd want Rerail to catch.
+    validations:
+      required: true
+  - type: textarea
+    id: pointers
+    attributes:
+      label: Pointers
+      description: For a coding agent, the docs of its hooks or extension API. For rules, the linter and the rules you'd want first.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Building it
+      options:
+        - label: I'd like to build this myself ([becoming a trusted contributor](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#becoming-a-trusted-contributor)).
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send it
+      options:
+        - label: I searched open and closed issues, including ones labelled `known-issue`, and this isn't one of them.
+          required: true

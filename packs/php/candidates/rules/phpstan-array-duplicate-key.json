@@ -3,7 +3,7 @@
   "id": "phpstan-array-duplicate-key",
   "revision": 2,
   "mode": "steer",
-  "description": "PHPStan 2.2.16 array.duplicateKey (DuplicateKeysInLiteralArraysRule): an array literal's first explicitly keyed element whose key PHP coerces to the same key as a later explicit key's (reported, as PHPStan does, at the first). Arrays spanning more than 256 lines are not checked: comparing every pair of keys of a larger literal (generated data tables) exceeds the per-file AST work budget, which would fail every policy on the file.",
+  "description": "Remove duplicate keys from PHP array literals, including keys PHP coerces to the same value such as 1 and '1'; the later entry silently overwrites the earlier one.",
   "scope": {
     "include": [
       "**/*.php"

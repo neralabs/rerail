@@ -3,7 +3,7 @@
  "id": "ruff-async116-long-sleep-not-forever",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC116 (long-sleep-not-forever): a call to `trio.sleep` or `anyio.sleep` with exactly one argument, an int or float literal (any spelling; not complex, not signed; parentheses allowed) whose value is greater than 86400 as `seconds=` (trio), `delay=` (anyio) or the first positional argument, in any context, reported on the call. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Use sleep_forever() instead of trio or anyio sleep calls longer than 24 hours; a sleep that long is almost always meant to never end.",
  "scope": {
   "include": [
    "**/*"

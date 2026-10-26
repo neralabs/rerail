@@ -1,1 +1,0 @@
-<template><div v-if="a === 1" /><div v-else-if="a === /* comment */ 1" /></template>

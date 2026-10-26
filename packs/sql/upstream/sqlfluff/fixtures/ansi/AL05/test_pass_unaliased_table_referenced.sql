@@ -1,1 +1,0 @@
-select ps.*, pandgs.blah from ps join pandgs using(moo)

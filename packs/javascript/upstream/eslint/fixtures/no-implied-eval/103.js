@@ -1,1 +1,0 @@
-execScript("x = 1;");

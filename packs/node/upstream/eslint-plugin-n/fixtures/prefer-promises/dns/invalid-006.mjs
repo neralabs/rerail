@@ -1,1 +1,0 @@
-import * as dns from 'dns'; dns.lookup()

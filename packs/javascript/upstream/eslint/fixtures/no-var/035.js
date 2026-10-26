@@ -1,1 +1,0 @@
-if (true) { var foo = 1 }

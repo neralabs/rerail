@@ -51,8 +51,8 @@ function errorFrame(line: string, error: unknown): RerailEventErrorFrame {
 }
 
 /**
- * Ingests one frame and returns its result. The runtime keeps steer links relative; this stream is the
- * harness's adapter, so it links them for the session's checkout (remembered from events that name it).
+ * Ingests one frame and returns its result. The runtime records no steer links; this stream is the
+ * harness's adapter, so it links each delivery's rules for the session's checkout (remembered from events that name it).
  */
 async function frameResult(line: string, eventLoop: RerailEventLoop, sessionCwds: Map<string, string>, workspaceRoot: string): Promise<string> {
   try {

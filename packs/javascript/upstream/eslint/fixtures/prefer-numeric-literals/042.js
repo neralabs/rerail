@@ -1,1 +1,0 @@
-Number.parseInt('1234.5', 8);

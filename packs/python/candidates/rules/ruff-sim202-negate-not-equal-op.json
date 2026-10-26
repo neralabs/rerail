@@ -3,7 +3,7 @@
   "id": "ruff-sim202-negate-not-equal-op",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM202 (negate-not-equal-op): `not` applied to a comparison (through any parentheses) whose only operator is `!=`, reported on the `not` expression. Exempt, as Ruff: when the enclosing statement is an `if` whose body is a single `raise` (Ruff's `is_exception_check` reads the `if` statement's own body, so an `elif` test counts with it), and when the nearest enclosing scope is a function named `__eq__`, `__ne__`, `__lt__`, `__le__`, `__gt__` or `__ge__` (lambdas, comprehensions and nested functions are their own scopes).",
+  "description": "Use == instead of negating a != comparison with not; comparison dunder methods and if-raise guards are exempt.",
   "scope": {
     "include": [
       "**/*"

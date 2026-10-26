@@ -1,7 +1,8 @@
 """Pins shared by the SQL pack's offline generators (fixtures/sql/). Run offline by a maintainer, never in CI.
 
 Tools live under the gitignored `<checkout>/.rerail/tools/sql/` and corpora under `<checkout>/.rerail/corpora/sql/`, where
-`<checkout>` is the nearest ancestor holding `.rerail/corpora/sql` (sub-worktrees under `.rerail/wt/` find it this way).
+`<checkout>` is the nearest ancestor holding `.rerail/corpora/sql` (sub-worktrees under `.rerail/wt/` find it this way),
+or under `$RERAIL_SQL_CORPORA` when it is set (`npm run fixtures:derive` provisions them there, by checkout name).
 Every generator calls `check_pins()` first and refuses to run against any other tool version.
 
 Setup (from `<checkout>/.rerail/tools/sql`):
@@ -19,6 +20,7 @@ from __future__ import annotations
 import ctypes
 import glob
 import hashlib
+import os
 import pathlib
 import sys
 import warnings
@@ -28,6 +30,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 
 def _checkout() -> pathlib.Path:
+    if os.environ.get("RERAIL_SQL_CORPORA"):
+        return HERE.parents[1]
     for parent in HERE.parents:
         if (parent / ".rerail/corpora/sql").is_dir():
             return parent
@@ -35,16 +39,18 @@ def _checkout() -> pathlib.Path:
 
 
 CHECKOUT = _checkout()
-CORPUS_ROOT = CHECKOUT / ".rerail/corpora/sql"
+CORPUS_ROOT = pathlib.Path(os.environ.get("RERAIL_SQL_CORPORA") or CHECKOUT / ".rerail/corpora/sql").resolve()
 TOOLS_ROOT = CHECKOUT / ".rerail/tools/sql"
 GRAMMAR_ROOT = TOOLS_ROOT / "grammars"
 
+# The build too: python-downloads.json pins uv's CPython 3.12.13 to python-build-standalone 20260408 (each download's
+# sha256), the build linking TOOLS["sqlite"]; a newer uv's 3.12.13 is a later build linking another SQLite.
 PYTHON = "3.12.13"
 TOOLS = {
     "sqlfluff": "4.4.0",
     "pglast": "8.5",  # libpg_query for PostgreSQL 18 (parser version 180006)
     "postgresql-parser": "180006",
-    "sqlite": "3.50.4",  # the SQLite CPython 3.12.13 (uv) links
+    "sqlite": "3.50.4",  # the SQLite CPython 3.12.13 build 20260408 links (python-downloads.json)
     "mysql": "8.4.11",  # docker mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242
     "tree-sitter": "0.26.0",  # py-tree-sitter; grammars built with tree-sitter CLI 0.27.0 (Rerail's runtime crate)
     "pyyaml": "6.0.3",

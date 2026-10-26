@@ -1,1 +1,0 @@
-type BannedVoid = Banned<void>;

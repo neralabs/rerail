@@ -3,7 +3,7 @@
   "id": "ruff-b034-re-sub-positional-args",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B034 (re-sub-positional-args): a call to `re.sub` or `re.subn` with more than three positional arguments, or to `re.split` with more than two (starred arguments count). The callee resolves with `resolves` (imports and shadowing as Ruff's semantic model sees them). Reported on the call.",
+  "description": "Pass count, maxsplit and flags as keyword arguments to re.sub(), re.subn() and re.split(); their positional order is easy to get wrong.",
   "scope": {
     "include": [
       "**/*"

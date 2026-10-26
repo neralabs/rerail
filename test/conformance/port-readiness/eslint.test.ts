@@ -9,13 +9,13 @@ import ts from "typescript";
 
 import {
   bareRuleName, declaredVersion, definingModule, directiveValuesFrom, helperPackage, implementationPath, importedModules, inHelperPackage,
-  packageName, resolveModule, rootFile, ruleDocumentation, testFixtureFiles,
-} from "../../../conformance/recorders/port-readiness/adapters/eslint.js";
+  packageName, resolveModule, ruleDocumentation, testFixtureFiles,
+} from "../../../conformance/recorders/port-readiness/adapters/eslint/eslint.js";
 import { eslintLineStarts, eslintPoint, messageSpan } from "../../../conformance/port-readiness/span-units/eslint.js";
 import {
   caseFixture, casePath, caseWords, configNamed, declaresEnvironment, deprecationText, fileType, firstApproved, frozenFileType, isOff, modulePackage, parsedAs, parserLanguage,
   withoutEnvironment, withSetting, writtenExpectation,
-} from "../../../conformance/recorders/port-readiness/adapters/eslint-upstream.js";
+} from "../../../conformance/recorders/port-readiness/adapters/eslint/eslint-upstream.js";
 import { babelErrors, literalNames, type BabelParser, type TypeScript } from "../../../conformance/recorders/port-readiness/languages/ecmascript.js";
 
 const bytes = (text: string) => Buffer.byteLength(text, "utf8");
@@ -559,18 +559,6 @@ test("a module belongs to the innermost helper package on its path", () => {
   assert.equal(helperPackage(nested, new Set(["is-builtin-module"])), "/x/node_modules/is-builtin-module/");
   assert.equal(helperPackage("/x/node_modules/@scope/utils/dist/a.js", new Set(["@scope/utils"])), "/x/node_modules/@scope/utils/");
   assert.equal(helperPackage("/x/lib/rules/a.js", new Set(["@scope/utils"])), undefined);
-});
-
-test("upstream's license is found at its root in any letter case", () => {
-  const root = mkdtempSync(join(tmpdir(), "eslint-license-"));
-  try {
-    writeFileSync(join(root, "license"), "MIT License\n");
-    writeFileSync(join(root, "package.json"), "{}\n");
-    assert.equal(rootFile(root, "LICENSE"), join(root, "license"));
-    assert.equal(rootFile(root, "NOTICE"), undefined);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test("a case tester's configuration takes the approved setting only where it sets the rule under test", () => {

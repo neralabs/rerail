@@ -1,1 +1,0 @@
-const foo = (a: number, b = 1, ...c) => {};

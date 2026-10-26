@@ -1,1 +1,0 @@
-using resource = getResource();

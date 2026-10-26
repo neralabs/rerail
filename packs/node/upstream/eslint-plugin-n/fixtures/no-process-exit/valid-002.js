@@ -1,1 +1,0 @@
-var exit = process.exit;

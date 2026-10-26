@@ -1,4 +1,0 @@
-
-/*exported toaster, poster*/ var toaster = 1;
-poster = 0;
-    

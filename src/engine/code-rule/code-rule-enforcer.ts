@@ -29,6 +29,7 @@ import {
   type AuditorCloseOptions,
   type SteerSourceOf,
 } from "./code-rule.js";
+import type { SteerTrigger } from "./rerail-steer.js";
 import {
   AUDIT_BLIND_REASONS,
   AUDIT_FAILURE_CODES,
@@ -48,6 +49,7 @@ import {
 } from "../audit/audit.js";
 import { defaultRerailDatabasePath } from "../storage/database.js";
 import { SqliteAuditStore } from "../audit/audit-store.js";
+import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
@@ -220,6 +222,8 @@ type PreparedWorkspace = {
   storage: Promise<boolean>;
 };
 type ByteRange = { start: number; end: number };
+/** The earlier source an ai-output edit's generated lines are measured from. */
+type ReportBase = Pick<CodeRuleEdit, "previousText" | "previousReadError">;
 /** The nested checkouts a walk skips (judged by their own rules), and the ones it reached. */
 type NestedCheckoutWalk = { readonly pruned: ReadonlySet<string>; readonly reached: string[] };
 /** One audit walk's budget and what it has read; `facts` holds each directory's nearest `package.json` and server graphs. */
@@ -532,6 +536,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * reported in its own slot: read only by `#steerAgain`, never compared with a source's own-line findings.
    */
   readonly #auditFindings = new Map<string, { revision: number; mode: AuditMode; violations: CodeRuleViolation[] }>();
+  /**
+   * Per source, in ai-output scope, the preimage of its oldest edit whose generated lines may not have reached the agent:
+   * an edit a later one superseded or left unreported (`published: false`), or one whose findings were published as a
+   * steer that a later revision may have dropped before delivery (`published: true`, confirmed by the runtime's
+   * `undelivered`). The source's next edit reports what it generated since then (`#reportBase`).
+   */
+  readonly #unreported = new Map<string, { base: ReportBase; published: boolean }>();
   #spoolDirectory: string | undefined;
   #spoolSequence = 0;
   readonly #spoolRemovals = new Set<Promise<void>>();
@@ -575,8 +586,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#catalog = catalog;
     this.#workspaceRoot = resolve(options.workspaceRoot);
     this.#steerDelivery = options.steerDelivery;
-    this.#scope = options.scope ?? "touched-files";
-    this.#mode = options.mode ?? "steer";
+    this.#scope = options.scope ?? DEFAULT_AUDIT_SETTINGS.scope;
+    this.#mode = options.mode ?? DEFAULT_AUDIT_SETTINGS.mode;
     this.#responseMode = this.#mode;
     this.#presentPath = options.presentPath ?? (path => path);
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
@@ -724,15 +735,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (batch.revision <= this.#revision) throw new Error("Executable policy revisions must increase");
     this.#revision = batch.revision;
     this.refreshCodeRules();
+    const mode = batch.mode ?? this.#mode;
     if (this.#scope === "repository") {
       if (batch.edits.length > 0) {
         for (const edit of batch.edits) this.#versions.set(edit.path, batch.revision);
-        this.#trackAudit(this.#runScopeAudit("repository", this.#mode, [], true), true);
+        this.#trackAudit(this.#runScopeAudit("repository", mode, [], true), true);
       }
       return this.#response(batch.revision);
     }
     const scope = this.#scope;
-    const mode = this.#mode;
     const accepted = batch.edits.filter(
       (edit) =>
         this.acceptsPath(edit.path) && withinCheckout(this.#workspaceRoot, resolve(this.#workspaceRoot, edit.path)),
@@ -771,9 +782,22 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
       const previous = this.#pending.get(edit.path);
       if (previous !== undefined) {
+        // Out of the queue before any await, so the pump never evaluates an edit whose audit ends here.
+        this.#pending.delete(edit.path);
         previous.auditId ??= this.#startAudit(previous.scope, previous.mode, previous.revision, [edit.path], null);
         this.#finishAudit(previous.auditId, "superseded", [], []);
-        this.#release(previous);
+        try {
+          // Its lines were never reported: the edit that supersedes it reports them with its own.
+          if (previous.scope === "ai-output")
+            this.#unreported.set(edit.path, { base: this.#reportBase(edit.path, await this.#preimageOf(previous)), published: false });
+        } finally {
+          this.#release(previous);
+        }
+        if (this.#closing) {
+          this.#startAudit(scope, mode, revision, [edit.path], null);
+          this.#release(stored);
+          return;
+        }
       }
       this.#pending.set(edit.path, stored);
     } catch (error) {
@@ -1066,8 +1090,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     unreported: () => void,
   ): Promise<void> {
     const failures = result.failures.map((item) => ({ ...item, stage: "evaluate" as const }));
-    const scopeFailure = this.#scopeFailureForEdit(stored.scope, path, edit);
-    if (scopeFailure !== undefined) this.#readFailures.set(path, scopeFailure);
     // Touched-files scope reports every source the edit gave another `package` (`#apply`). Any other scope reports each
     // edit's own generated lines, so such a source is reported again only where the findings in its own edit's
     // generated lines changed; the others keep their earlier findings and steers.
@@ -1080,16 +1102,17 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       )
         reported.set(source.path, findings);
     }
-    const own = scopeFailure === undefined ? this.#selectViolations(stored.scope, edit, result.violations) : [];
-    this.#finishAudit(
-      stored.auditId,
-      scopeFailure === undefined && result.status === "completed" ? "completed" : "failed",
-      [...own, ...[...reported.values()].flat()],
-      scopeFailure === undefined ? failures : [...failures, scopeFailure],
-    );
+    const base = stored.scope === "ai-output" ? this.#reportBase(path, edit) : edit;
+    const own = this.#selectViolations(stored.scope, edit, result.violations, base);
+    this.#finishAudit(stored.auditId, result.status === "completed" ? "completed" : "failed", [...own, ...[...reported.values()].flat()], failures);
     if (this.#versions.get(path) !== stored.revision || this.#replacement !== undefined) {
+      if (stored.scope === "ai-output") this.#unreported.set(path, { base, published: false });
       unreported();
       return;
+    }
+    if (stored.scope === "ai-output") {
+      if (edit.deleted || !own.some((violation) => steers(violation.mode))) this.#unreported.delete(path);
+      else this.#unreported.set(path, { base, published: true });
     }
     this.#evaluation = result;
     let readyViolations = this.#readyViolations.get(stored.revision);
@@ -1135,17 +1158,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       byRevision.set(findings.revision, group);
     }
     for (const [revision, group] of byRevision)
-      await this.#publish(revision, group.sources, group.violations, group.mode, true);
-  }
-
-  #scopeFailureForEdit(
-    scope: AuditScope,
-    path: string,
-    edit: CodeRuleEdit,
-  ): AuditFailure | undefined {
-    return scope === "ai-output" && edit.previousReadError !== undefined
-      ? failure("preimage", "source-incomplete", edit.previousReadError, path, "scope")
-      : undefined;
+      await this.#publish(revision, group.sources, group.violations, group.mode, { kind: "resteer" }, true);
   }
 
   async #recordPendingEvaluationError(path: string, stored: StoredEdit, error: unknown): Promise<void> {
@@ -1156,18 +1169,40 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#finishAudit(stored.auditId, "failed", [], [problem]);
   }
   /**
-   * An edit's violations: in touched-files scope its file's, otherwise those in the lines it generated (none where its
-   * file's earlier text was unreadable).
+   * Where the edit of `path` measures what it generated: from the preimage of the source's oldest edit whose lines may
+   * not have reached the agent (`#unreported`), else from its own preimage. A published edit counts only when the
+   * runtime says a newer revision dropped its steer before delivery. An earlier edit whose own preimage was unknown
+   * carries that forward, so the edit reports its whole file (`#selectViolations`) as the earlier one would have.
+   */
+  #reportBase(path: string, edit: ReportBase): ReportBase {
+    const dropped = this.#sessionId !== undefined && (this.#steerDelivery.undelivered?.(this.#sessionId, this.#presentPath(path)) ?? false);
+    const outstanding = this.#unreported.get(path);
+    if (outstanding === undefined) return edit;
+    return !outstanding.published || dropped ? outstanding.base : edit;
+  }
+  /** A superseded edit's preimage; one that cannot be read back is unknown, so it reports its whole file. */
+  async #preimageOf(stored: StoredEdit): Promise<ReportBase> {
+    try {
+      return await this.#load(stored);
+    } catch (error) {
+      return { previousReadError: `Superseded edit could not be read back: ${errorMessage(error)}` };
+    }
+  }
+  /**
+   * An edit's violations: in touched-files scope its file's, otherwise those in the lines it generated since `base`
+   * (its own preimage unless given). Where that earlier text is unknown (a shell write to a file the session never
+   * saw change and Git cannot supply), the generated lines are unknown too, so the edit reports its whole file.
    */
   #selectViolations(
     scope: AuditScope,
     edit: CodeRuleEdit,
     violations: readonly CodeRuleViolation[],
+    base: ReportBase = edit,
   ): CodeRuleViolation[] {
     const pathViolations = violations.filter((violation) => violation.path === edit.path);
-    if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined) return pathViolations;
-    if (edit.previousReadError !== undefined) return [];
-    const ranges = generatedRanges(edit.previousText ?? "", edit.generatedText);
+    if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined || base.previousReadError !== undefined)
+      return pathViolations;
+    const ranges = generatedRanges(base.previousText ?? "", edit.generatedText);
     return pathViolations.filter((violation) => intersectsGeneratedRange(violation, ranges));
   }
   /**
@@ -1419,7 +1454,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
             mode,
             violations: result.violations.filter((violation) => violation.path === path),
           });
-    await this.#publish(revision, scope === "repository" ? [] : sourcePaths, result.violations, mode, generatedEdit);
+    await this.#publish(
+      revision,
+      scope === "repository" ? [] : sourcePaths,
+      result.violations,
+      mode,
+      { kind: scope === "repository" ? "audit" : "edit" },
+      generatedEdit,
+    );
     return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
   }
 
@@ -1798,6 +1840,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         current.map(([path]) => path),
         violations,
         mode,
+        { kind: "edit" },
         true,
       );
     }
@@ -1808,6 +1851,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     sourceScope: readonly string[],
     violations: readonly CodeRuleViolation[],
     mode: AuditMode,
+    trigger: SteerTrigger,
     generatedEdit = false,
   ): Promise<void> {
     if (this.#sessionId === undefined || this.#closing || mode !== "steer") return;
@@ -1825,11 +1869,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const recorded = provenance.find(entry => entry.ruleId === ruleId);
       return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
     };
-    const steer = buildSteer(steerable, sourceOf);
+    const steer = buildSteer(steerable, trigger, sourceOf);
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,
       ruleIds: steer.ruleIds,
+      rules: steer.rules,
       background: true,
       ...(generatedEdit ? { generatedEdit: { violations: steerable, sourceOf } } : {}),
     });

@@ -1,5 +1,13 @@
 # @neralabs/rerail-pack-typescript
 
+## 0.1.3
+
+### Patch Changes
+
+- e06db22: TypeScript pack: messages whose rewrite only changed the voice are back to their original wording; in an eval with a coding agent, the original and rewritten messages steered it equally well. Messages where the original steered the agent better in that eval are back to their original wording too.
+- e06db22: TypeScript pack: every rule description now says in one plain sentence what the rule wants; the exact matching detail moved to the pack README.
+- e06db22: TypeScript pack: every violation message now says in one sentence what to change in the flagged code, without tool names or rule codes.
+
 ## 0.1.2
 
 ### Patch Changes
@@ -16,7 +24,7 @@
 - a0200c4: The package names the repository and directory it is published from, `neralabs/rerail` at `packs/<id>`.
 - 740cf08: One rule id style in every pack, before any pack is published: lowercase letters, digits and dashes, the same string as the rule's document file name and its port's id in `conformance.json`. JavaScript's `eslint:<rule>` and `unicorn:<rule>` ids become `eslint-<rule>` and `unicorn-<rule>`, with their documents renamed to match; TypeScript's `typescript-eslint:<rule>` become `typescript-eslint-<rule>`; Python's `python-conformance:<tool>-<rule>` become `<tool>-<rule>`; React's `react:no-array-index-key` becomes `react-no-array-index-key`; Next's probe documents are named for their ids; the complexity rules become `complexity-cyclomatic-<language>`. TypeScript's `no-explicit-any` candidate is converted from `tempo.policy/v1` to `rerail.policy/v1` and moves to `candidates/rules/`. The JavaScript and TypeScript packs say how many of their rules start on.
 - 2ce6ed7: TypeScript pack: `typescript-eslint-no-unused-expressions` no longer reports `as`/`satisfies` type tests whose type is a name with two or more dots (`z.email() satisfies z.core.$ZodStringFormatTypes;`), matching typescript-eslint. `x as A.B.C;` around a non-call is still reported, as upstream does.
-- d91a72b: `typescript-eslint-class-literal-property-style` now tells an agent to check for subclasses that override a getter as an accessor before turning it into a readonly field, since that change breaks the override with TS2611 (NER-1785).
+- d91a72b: `typescript-eslint-class-literal-property-style` now tells an agent to check for subclasses that override a getter as an accessor before turning it into a readonly field, since that change breaks the override with TS2611.
 - ea66164: TypeScript pack: `typescript-eslint-consistent-generic-constructors` (candidate) tells agents to keep a generic type annotation when the project compiles with `isolatedDeclarations` and the declaration is exported, where moving the type arguments to the constructor fails tsc with TS9010.
 - e36b7e0: typescript-eslint-no-namespace does not report `global { … }` inside `declare module 'x' { … }`, a global augmentation, as typescript-eslint does not; the engine now parses it, as an `internal_module` named `global`.
 - f3f92c2: TypeScript pack: the 14 ESLint core rules move to the JavaScript pack (11 shipped there, 3 as candidates), so the pack holds no ESLint core rule and ships its 22 typescript-eslint rules.

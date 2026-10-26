@@ -3,7 +3,7 @@
   "id": "bladestan-argument-sprintf",
   "revision": 1,
   "mode": "steer",
-  "description": "Bladestan 0.11.7 argument.sprintf (PHPStan 2.2.16 PrintfParametersRule over the compiled template): a sprintf() call whose known format asks for more or fewer values than it passes, or that PHP refuses.",
+  "description": "Pass sprintf() calls in Blade templates exactly as many values as the format string has placeholders, and use only valid placeholders.",
   "scope": {
     "include": [
       "**/*.blade.php"
@@ -65,7 +65,7 @@
       "violation": {
         "code": "argument.sprintf",
         "anchor": "witness.start",
-        "message": "Call to sprintf contains more placeholders than values given."
+        "message": "Pass this sprintf() call a value for every placeholder, or remove the extra placeholders from its format string."
       }
     },
     {
@@ -115,7 +115,7 @@
       "violation": {
         "code": "argument.sprintf",
         "anchor": "witness.start",
-        "message": "Call to sprintf contains fewer placeholders than values given."
+        "message": "Remove the extra arguments from this sprintf() call, or add placeholders for them to its format string."
       }
     },
     {
@@ -169,7 +169,7 @@
       "violation": {
         "code": "argument.sprintf",
         "anchor": "witness.start",
-        "message": "Call to sprintf contains an invalid placeholder."
+        "message": "Fix the invalid placeholder in this sprintf() format string, or write a literal percent sign as %%."
       }
     }
   ]

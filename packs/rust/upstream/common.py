@@ -8,7 +8,8 @@ Pins (each generator refuses anything else):
 - Clippy source: https://github.com/rust-lang/rust-clippy at tag `rust-1.99.0`,
   commit 49e2f89a2605a9a340e04955fdbefa9803e6027a.
 - Corpora (from conformance.json): ripgrep 3fce3b5bb0236da2df6d99672afb8a719642eca7,
-  tokio b2636752450484955e7ad334bac678424d51bc4a.
+  tokio b2636752450484955e7ad334bac678424d51bc4a. tokio commits no Cargo.lock: its lock is cargo's resolution of the
+  crates published by 2026-10-04T00:00:00Z (`CORPUS_LOCK_PUBLISH_TIMES`), which `run_corpus` writes before it runs.
 Python 3.9 standard library only."""
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 PACK = HERE.parent / "conformance.json"
+sys.path.insert(0, str(HERE.parents[2] / "scripts" / "s3"))
+import pack_fixtures  # noqa: E402
 
 TOOLCHAIN = "1.99.0"
 RUSTC_VERSION = "rustc 1.99.0 (b940084d7 2026-09-28)"
@@ -31,6 +34,12 @@ CLIPPY_ORIGIN = f"https://github.com/rust-lang/rust-clippy@{CLIPPY_COMMIT}"
 CORPUS_COMMITS = {
     "ripgrep": "3fce3b5bb0236da2df6d99672afb8a719642eca7",
     "tokio": "b2636752450484955e7ad334bac678424d51bc4a",
+}
+# Corpora that commit no Cargo.lock: `cargo +1.99.0 generate-lockfile --publish-time <time>` resolves their
+# dependencies to what crates.io held then (unstable in cargo 1.99, so RUSTC_BOOTSTRAP=1 and -Zunstable-options),
+# the lock the recordings were made with.
+CORPUS_LOCK_PUBLISH_TIMES = {
+    "tokio": "2026-10-04T00:00:00Z",
 }
 TOOL = "clippy"
 
@@ -120,13 +129,18 @@ def relative_path(file_name: str, root: pathlib.Path) -> str | None:
 def run_corpus(root: pathlib.Path, name: str, target_dir: pathlib.Path, level: str) -> dict:
     """`cargo +1.99.0 clippy --keep-going --locked --workspace --all-targets --all-features --message-format=json
     -- <level> clippy::<lint>...` over corpus `name` (RUSTFLAGS untouched, CARGO_TARGET_DIR outside the corpus), so
-    no tokio_unstable or other `--cfg`. Returns the pack lints' findings (deduplicated across the units that compile
-    a file twice, primary span inside the corpus), the corpus files no compiled unit read (from the units' dep-info),
+    no tokio_unstable or other `--cfg`. Returns the pack lints' findings (one per distinct primary span, start and end,
+    so the units that compile a file twice report it once; primary span inside the corpus), the corpus files no
+    compiled unit read (from the units' dep-info),
     the units that failed to compile, and the findings outside the corpus that were dropped."""
     declared = corpus(name)
     check_head(root, declared["commit"])
     if root.resolve() in target_dir.resolve().parents or root.resolve() == target_dir.resolve():
         raise SystemExit(f"{target_dir} is inside the corpus {root}")
+    publish_time = CORPUS_LOCK_PUBLISH_TIMES.get(name)
+    if publish_time is not None:
+        subprocess.run(["cargo", f"+{TOOLCHAIN}", "generate-lockfile", "-Zunstable-options", "--publish-time",
+                        publish_time], cwd=root, env=dict(os.environ, RUSTC_BOOTSTRAP="1"), check=True)
     wanted = lints()
     arguments = []
     for lint in wanted:
@@ -164,7 +178,7 @@ def run_corpus(root: pathlib.Path, name: str, target_dir: pathlib.Path, level: s
         rule = code[len("clippy::"):]
         primary = next(span for span in diagnostic["spans"] if span["is_primary"])
         path = relative_path(primary["file_name"], root)
-        key = (rule, path, primary["line_start"], primary["column_start"])
+        key = (rule, path, primary["line_start"], primary["column_start"], primary["line_end"], primary["column_end"])
         if path is None:
             outside.add((rule, primary["file_name"], primary["line_start"], primary["column_start"]))
             continue
@@ -348,3 +362,4 @@ def write(path: pathlib.Path, source: dict, findings: list[dict]) -> None:
                       key=lambda f: (f["rule"], f["path"], f["line"], f["column"]))
     path.write_text(json.dumps({"tool": TOOL, "version": tool_version(), "source": source, "findings": findings},
                                indent=1, ensure_ascii=False) + "\n")
+    pack_fixtures.recording_written(path, source)

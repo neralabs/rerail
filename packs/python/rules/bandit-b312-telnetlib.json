@@ -3,7 +3,7 @@
   "id": "bandit-b312-telnetlib",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect insecure telnetlib.Telnet calls",
+  "description": "Avoid opening telnetlib.Telnet connections; Telnet sends credentials and data unencrypted, so use SSH or another encrypted protocol.",
   "scope": {
     "include": [
       "**/*.py"

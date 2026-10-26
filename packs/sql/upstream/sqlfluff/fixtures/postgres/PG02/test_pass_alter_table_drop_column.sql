@@ -1,1 +1,0 @@
-ALTER TABLE foo DROP COLUMN bar;

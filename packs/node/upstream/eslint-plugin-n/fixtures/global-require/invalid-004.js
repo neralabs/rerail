@@ -1,1 +1,0 @@
-function x() { require('y') }

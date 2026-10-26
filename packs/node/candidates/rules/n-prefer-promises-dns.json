@@ -3,7 +3,7 @@
   "id": "n-prefer-promises-dns",
   "revision": 3,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/prefer-promises/dns: calls of the dns module's callback API (lookup, lookupService, getServers, resolve, resolve4, resolve6, resolveAny, resolveCname, resolveMx, resolveNaptr, resolveNs, resolvePtr, resolveSoa, resolveSrv, resolveTxt, reverse, setServers; construction of Resolver) as ReferenceTracker (legacy mode) finds them: members of `require('dns')`/`require('node:dns')` (global require), `process.getBuiltinModule(\u2026)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers. Unlike ReferenceTracker, it does not follow assignments to imported or `const` bindings, which throw when they run. No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `require(\u2026)` is reached only in a CommonJS file; in an ES module only imports and `process.getBuiltinModule(\u2026)` are.",
+  "description": "Use the promise-based dns API instead of the callback-style dns functions and Resolver, for cleaner async code.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -637,7 +637,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-promises/dns",
-        "message": "Use 'dns.promises.<name>()' instead.",
+        "message": "Use the dns.promises version of this function and await it instead of passing a callback.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1260,7 +1260,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-promises/dns",
-        "message": "Use 'new dns.promises.<name>()' instead.",
+        "message": "Construct dns.promises.Resolver instead of the callback-style dns.Resolver.",
         "suppress": {
           "eslint": {
             "rules": [

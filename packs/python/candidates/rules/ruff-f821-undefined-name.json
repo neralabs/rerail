@@ -3,7 +3,7 @@
   "id": "ruff-f821-undefined-name",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F821 (undefined-name), on the engine's name resolution (M10a `resolves.unresolved`): a reference with no binding in scope (or one an unconditional `del` unbound), no builtin of the target version or of Ruff's option `builtins` and no visible star import, outside a `try` body whose handler catches the builtin `NameError`; and such a name inside a string Ruff parses as a type definition (M11a `parse` with `annotation`: string annotations, `cast`/`TypeVar` arguments, typing generics' string slices, nested strings), reported on each such name inside the string. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F821.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Define or import every name before using it, including names in string type annotations; an undefined name raises NameError.",
   "scope": {
     "include": [
       "**/*"

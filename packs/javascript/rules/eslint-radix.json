@@ -3,7 +3,7 @@
   "id": "eslint-radix",
   "revision": 3,
   "mode": "steer",
-  "description": "ESLint 10.11.0 radix, default options. Port of ESLint's `radix` rule (https://eslint.org/docs/latest/rules/radix). Flags calls of the global `parseInt` / `Number.parseInt` (resolved with `resolves`) with no arguments, no radix, or a radix that is not an integer 2..36: any literal whose value is not such a Number, a signed Number literal likewise, or the global `undefined`. The 'always'/'as-needed' option is deprecated and changes nothing.",
+  "description": "Pass a radix between 2 and 36 to every parseInt() call; without one, some inputs are parsed in an unexpected base.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -134,7 +134,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "radix",
-        "message": "Missing parameters.",
+        "message": "Pass the string to parse and a radix to this call, like parseInt(value, 10).",
         "suppress": {
           "eslint": {
             "rules": [

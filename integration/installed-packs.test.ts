@@ -112,13 +112,13 @@ async function eqeqeq(): Promise<{ on: boolean | undefined; unavailable: string[
 describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS }, () => {
   it("`rerail setup --relay`: shows the published packs that fit an outside project, installs nothing before the answer, then exactly the versions the answer carries", async () => {
     const read = await rerail(["setup", "--relay"]);
-    expect(read.stdout).toContain("Can Rerail read it to pick the rule packs that look right?");
+    expect(read.stdout).toContain("Find rule packs for shop?");
     expect(existsSync(join(home, "packs"))).toBe(false);
 
     const confirm = await rerail(answerArgs(read.stdout, 1));
     // A TypeScript project: the TypeScript pack fits its dependency, complexity its *.ts source, and JavaScript its
     // source too, holding eslint-eqeqeq, which the lint config turns off. Every published pack loads.
-    for (const id of ["javascript", "typescript", "complexity"]) expect(confirm.stdout).toMatch(new RegExp(`@neralabs/rerail-pack-${id}@\\d+\\.\\d+\\.\\d+`, "u"));
+    for (const id of ["javascript", "typescript", "complexity"]) expect(confirm.stdout).toMatch(new RegExp(`--packs \\S*\\b${id}@\\d+\\.\\d+\\.\\d+`, "u"));
     expect(confirm.stdout).not.toContain("Rule packs set-up could not use");
     expect(confirm.stdout).toContain("eslint-eqeqeq starts off");
     expect(existsSync(join(home, "packs", "package.json"))).toBe(false);
@@ -128,7 +128,7 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     const packs = start.indexOf("--packs") + 1;
     start[packs] = start[packs]!.replace(/javascript@[^,]+/u, `javascript@${JAVASCRIPT_VERSIONS[0]}`);
     const started = await rerail(start);
-    expect(started.stdout).toContain("Rerail is on in shop.");
+    expect(started.stdout).toContain("Rerail is on in shop ·");
     // Every other pack is installed at the version the answer carried.
     const carried = Object.fromEntries(start[packs]!.split(",").map(spec => [`@neralabs/rerail-pack-${spec.slice(0, spec.lastIndexOf("@"))}`, spec.slice(spec.lastIndexOf("@") + 1)]));
     expect(installed()).toEqual(carried);

@@ -119,10 +119,14 @@ describe("source-scoped steers", () => {
     });
     try {
       await vi.waitFor(() => expect(ready).toBe(true));
-      expect(enforcer!.snapshotStatus().pending).toBe(true);
-      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
-        expect.objectContaining({ scope: "repository", status: "running" }),
-      ]);
+      // The session start sets off the repository audit without awaiting it, and the audit reaches the enforcer a few
+      // awaits later: on a loaded runner the start can return first. Discovery then stays pending on the gated opendir.
+      await vi.waitFor(() => {
+        expect(enforcer!.snapshotStatus().pending).toBe(true);
+        expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
+          expect.objectContaining({ scope: "repository", status: "running" }),
+        ]);
+      });
       await runtime.ingest({
         kind: "call", eventId: "call", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", input: { path: "edited.py" },
@@ -133,10 +137,10 @@ describe("source-scoped steers", () => {
         toolCallId: "write", toolName: "write", output: "written",
       });
       await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
-        expect.objectContaining({ scope: "touched-files", status: "completed" }),
+        expect.objectContaining({ scope: "ai-output", status: "completed" }),
         expect.objectContaining({ scope: "repository", status: "running" }),
       ])));
-      expect(editDeliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+      expect(editDeliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
       expect(await runtime.ingest({
         kind: "user-prompt", eventId: "poll", sessionId: session.sessionId, text: "continue",
       })).toEqual([]);
@@ -154,7 +158,7 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "done",
       })).toEqual([]);
-      expect(audits.list({ sessionId: session.sessionId }).audits.filter(audit => audit.scope === "touched-files").flatMap(audit => audit.paths).sort())
+      expect(audits.list({ sessionId: session.sessionId }).audits.filter(audit => audit.scope === "ai-output").flatMap(audit => audit.paths).sort())
         .toEqual(["edited.py", "shell.py"]);
     } finally {
       gate.resolve();
@@ -249,7 +253,7 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "result", eventId: "result", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", output: "written",
-      })).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+      })).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
       let ended = false;
       const turnEnd = runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "done" })
         .finally(() => { ended = true; });
@@ -257,7 +261,7 @@ describe("source-scoped steers", () => {
       await turnEnd;
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
         expect.objectContaining({ scope: "repository", status: "running" }),
-        expect.objectContaining({ scope: "touched-files", status: "completed", paths: ["edited.py"] }),
+        expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
       ]));
     } finally {
       for (const workspace of attachments.workspaces) workspace.release();
@@ -558,9 +562,9 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "result", eventId: "result", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", output: "written",
-      })).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+      })).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
-        expect.objectContaining({ scope: "touched-files", status: "completed", paths: ["edited.py"] }),
+        expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
       ]));
       expect(audits.list({ sessionId: session.sessionId }).audits.filter(audit => audit.status === "interrupted")).toEqual([]);
     } finally {
@@ -674,7 +678,8 @@ describe("source-scoped steers", () => {
         test.attachments.workspaces[0]!.release();
         // Opened: the call it answered is not begun or finished late. The evaluator's first walk still sees the file
         // changed while it ran, as it sees any change it did not watch being made, and checks it.
-        expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+        expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
+
       } finally { await test.close(); }
     });
 
@@ -689,6 +694,7 @@ describe("source-scoped steers", () => {
       } finally { await test.close(); }
     });
   });
+
 
   it("keeps a session whose evaluator cannot open, and records why its code rules are off", async () => {
     const root = await realpath(await temporaryDirectory());
