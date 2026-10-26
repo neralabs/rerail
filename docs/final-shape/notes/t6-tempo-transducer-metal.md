@@ -819,3 +819,213 @@ PIAT sources: `PIAT/research/transducer-ir.md` (308 lines), `PIAT/research/metal
 - The `tempo_matches(batch)` vtab design specifics (one `execute_batch` per `xFilter`, `OnceLock` caching, completion rows, `complete=0`), and the FTS5 contentless kind/value/text index whose token offset is the preorder ordinal.
 - That P5's direction change (P5:1576-1581) was itself driven by PIAT's README/lessons-ledger, i.e. Tempo's final "demand + six typed relations" target is downstream of PIAT, not independent evidence.
 - metal-recursion.md / metal-enqueue.md measurements are PIAT's own experiments on a Python-`ast` tape (5,396,512 nodes, not a tree-sitter CST); not Tempo measurements.
+
+---
+
+# Synthesis (restates only what the sources establish)
+
+## S1. The transducer IR
+
+### S1.1 Encoding and tables
+- One 32-bit little-endian word per instruction: `opcode:u8 | mode:u8 << 8 | operand:u16 << 16`; no extension words; positions count words; <=65,536 instructions and <=65,536 entries per table; checked 16-bit arithmetic; oversize = compile error (transducer-design.md:37-56). Tape positions and spans stay native width (:58-60).
+- Tables. transducer-design.md lists four (strings, predicates, labels, u64 longs) (:64-71). The v5+ Program actually carries seven: `words, strings, predicates (with dialect), capture_predicates, labels, longs, directives` (scm-program-extension-design.md:105-115); the value-program model adds `value_programs, output_programs, automata, constant_tables` (value-program-design :40-48), and native-jit-design lists structural words, string+integer constants, ValueProgram, CaptureProgram, one OutputProgram, stable labels, TS query behavior flags (:43-51). "Tables contain data, not hidden instruction sequences" (transducer-design.md:81).
+- Identity: canonical digest over format version, grammar identity, original pattern digest, all words and tables (scm-extension :329-341); marker `tempo-program-v6`, to increment for value programs (value-program-design :351); machine code never hashed (:365). JIT cache keys add backend kind, native IR version, packed ABI version, target identity, compiler options, ordered Program identities (native-jit-design :517-527); Metal adds GPU registry ID and batch Program order (batch-executor :655-661).
+
+### S1.2 Opcodes (source `transducer.rs:192-216`; semantics from transducer-design.md:89-126 unless noted)
+Tests: `STOP 00`, `KIND 01`, `FIELD 02` (0 = no field), `FLAGS 03` (mode = required mask, operand = forbidden mask; bits named/extra/missing/error = 0/1/2/3; production tape path `transducer.rs:2679-2682`), `TEXT 04` (operand -> value program), `SIZE 05` (modes eq/>=/<=, bit7 = long table), `ASSERT 06` (operand -> capture program), `FIRST 07` / `LAST 08` (mode named bit; first/last child), `ABSENT_FIELD 09` (no child in field), `SUPERTYPE 0a` (hidden supertype side table).
+Navigation: `CHILD 10`, `NEXT 11` (named mode skips anonymous), `PARENT 12`, `DESCEND 13` (preorder proper descendants), `FOLLOWING 14` (later siblings), `SAVE_CURSOR 15`, `RESTORE_CURSOR 16` (missing slot rejects; saving a lower slot truncates higher slots, capture-run :36).
+State: `CAPTURE 20` (append), `REPEAT_BEGIN 21`, `REPEAT_BUMP 22`, `REPEAT_END 23`.
+Control: `FORK 30` (policy 0 keep both; policy 1 greedy replacement of an equivalent deferred branch), `GOTO 31`, `EMIT 40` (label; later output-program id).
+transducer-design.md's table omits 06-09 (§1 note). metal-batch-executor-design.md:312-336 lists the same 25 under different names (`FAIL, TEXT_EVAL, ASSERT_EVAL, FIRST_CHILD, LAST_CHILD, NEGATED_FIELD, DESCENDANT, SAVE, RESTORE, REPEAT_PUSH, REPEAT_REQUIRE, REPEAT_POP, JUMP`).
+
+### S1.3 Machine model
+- Input: immutable tape + optional source + ordered starting nodes; node identity = ordinal, not span (transducer-design.md:17-19).
+- Path = (pc, current node, ordered capture sequence, active repetition counters) plus cursor slots (:21-23); scm-extension adds starting node and step count (:124-132); `MetalPath`/`PathRecord` = pc, node, match start, capture/cursor/repeat link heads, work/steps, following mode, three hashes (batch-executor :286-299; scheduler :54-68).
+- Paths fork at multi-result navigation and FORK; tests retain/reject; only EMIT outputs; repeated labels append; rejected paths output nothing (transducer-design.md:25-33).
+- Implementation representation: immutable links — cursor link (slot, node, prior), capture link (label, node, ordinal, prior), repeat link (id, count, prior); paths hold heads; capture text never copied (native-jit-design :302-323). Pending paths in a task-local LIFO; multi-target navigation pushes deferred targets in reverse to preserve DFS (:291-298); lazy FOLLOWING keeps one continuation (scheduler :282-297).
+- Work: every entered instruction increments the path's work; value programs charge the same counter (regex closure pop, range test, Lua dispatch, balanced byte = 1 step each) (native-regex-lua :292-306); exceeding = `WorkLimit`, never a negative.
+- Cycles: valid only with monotonic traversal progress (NEXT/FOLLOWING), parent/child oscillation invalid (transducer-design.md:167-173); later strengthened to reject cursor-restoring and bypass loops by proving net preorder progress on every returning edge (cutover plan :109-114; P3:224-238).
+
+### S1.4 Value, capture, output programs
+- Value programs (`ValueProgram`): Equal, Prefix, Regex (`ByteNfa`), Lua (`LuaProgram`) (batch-executor :378-383; native-regex-lua :16-19). Packed records `ValueRecord`, `NfaStateRecord` (bytes/look/split/capture/fail/match), `NfaRangeRecord`, `LuaInstructionRecord` (atom/frontier/balanced/capture start/end/position/backref), `LuaSetMemberRecord` (native-regex-lua :70-136). Outcomes `Keep/Reject/Invalid/WorkLimit/Capacity` (:205-216). Regex workspace 4n words; LIFO closure marked on pop, first visit wins, no sorting/hash sets (:312-366). Lua capture slots 3 words; alternatives `2 + 3s` words; greedy pushes min..max so max pops first (:416-490). Byte semantics, not Unicode, for Lua classes (:515-517); Unicode word boundaries from packed tables (:385-386).
+- Capture programs (`CaptureProgram`): Equal, Text, Any-of, Kind, Contains, Parent relation, Ancestor relation, Same-line; ALL/ANY, explicit empty policy; negative predicates use negative aggregate selection, not boolean negation (native-jit-design :433-448; value-program-design :181-185; batch-executor :453-470). Pinned corpus: 35 value programs (11 eq, 16 Lua, 8 regex), 51 capture programs (16 any-of, 35 text), 53 output instructions (51 match-property, 2 offsets) (unified-investigation :310).
+- Output programs (`OutputProgram`): match property, capture property, offset, strip, select adjacent, downcase, MIME language; source order; each can DROP; text ops read the current override; span ops keep overrides; property order preserves duplicates (value-program-design :301-332; batch-executor :520-558).
+- Phase order inside a task: structural execution -> raw EMIT candidates -> structural candidate reduction -> delayed capture predicates -> output programs -> final records (batch-executor :80-88). "Candidate reduction occurs before delayed predicates and directives." (callback-free :90)
+
+### S1.5 Verifier
+Branch targets valid; every opcode/mode/operand/table/grammar-id valid; unused fields zero; no reachable fallthrough; cycles progress (transducer-design.md:85-86, :236-237); typed subprogram signatures; Lua slots valid on all incoming paths; backrefs only to closed captures; value loops progress or have a work-limit transition; DFA totality (when DFA was planned); output capture refs valid; checked byte writes; checked workspace arithmetic; packed ranges inside buffers; non-overlapping task ranges (value-program-design :336-347; batch-executor :702-718). GREEDY region contract with `InvalidGreedyRegion` (greedy-contract :11-32). Computes max stack/slot counts for workspace allocation (value-program-design :347).
+
+### S1.6 Semantic constraints and the design choices they forced (as the authors state them)
+| Constraint | Source | Forced choice |
+|---|---|---|
+| TS quantifiers are backtracking through concurrent states, not a global greedy allocation; keep each viable transition until it fails or becomes redundant | quantifier :34-41, :96 | FORK-based path enumeration with deferred branches; executor may not pick one transition early |
+| Longest match = ordered capture containment over `(capture index, node)` within same pattern + root; repeat counters/IDs/uncaptured allocations NOT compared | quantifier :62-81 | Interned capture states; containment reduction; repeat history excluded from identity (transducer-design.md:148-149; native-jit :322-323) |
+| Early containment of in-progress states is unsafe (compiled counterexample `(module [(comment) @x @y (comment) @x]+ @z)`) | admission-spike :90-114 | Active states: exact full-state dedup only; containment only on completed candidates (cutover plan :94, :202-203) |
+| Deferred admission without pruning amplifies (256x on diamonds; >=82x on `_markupbase.py`) | admission-spike :159-188 | Bounded successor batches with bulk exact dedup each generation; no "generate all then dedup" (cutover plan :88-98) |
+| Historical admission had been the only thing terminating cursor-restoring loops | P3:196-218 | Upstream rejection of non-progressing cycles (net preorder progress proof) |
+| Greedy fallback replacement is only sound for terminal, capture-free repetition | transducer-design.md:124; GREEDY contract | FORK policy 1 restricted; 8-property region contract; construction-time `InvalidGreedyRegion` |
+| Immediate-sibling requirement is part of TS state | quantifier :28-31, :87-94 | Sibling requirement (NEXT/FIRST/LAST) in query-state key (scheduler :131-138); repetition loop-back must be the immediate sibling (P3:111-128) |
+| Liveness: unused last-child cursor would split equal states | quantifier :131 | Compiler omits dead cursor saves |
+| Output order = depth-first path order; finished matches by root then first capture; nested-root exception | transducer-design.md:134-141; quantifier :137-141 | Stable (batch/task ordinal, local emission ordinal); Rust/GPU sorts; "Atomic append order is not observable" (value-program-design :249-251); GPU semantic order separate from execution order (production-grid :205-213) |
+| Raw candidate ordinals are a public contract including gaps from filtered candidates | cutover plan :101-106 | Number unique complete candidates per root in logical order before filtering; exact terminal identity includes complete terminal state |
+| Repeated labels append; multiplicity matters; zero-width nodes distinct | transducer-design.md:32; scheduler :209 | Append-only capture links; identity by node, not span |
+| Exact negatives vs incomplete | transducer-design.md:238-239; sql-driven :118-120 | `complete`/status rows; failed task/evaluation publishes nothing; `Unknown`-like incomplete never negative |
+| Directive order observable; directives after reduction | value-program-design :322-332 | OutputProgram in source order, after reduction and delayed predicates |
+| Regex leftmost-first; Lua greed/backrefs/frontier/balanced | value-program-design :21-26 | Ordered NFA (not DFA), LIFO alternative order, shared work accounting |
+| `#is?`/`#is-not? local` depends on other patterns | scm-extension :388-395 | Not expressible inside one Program; must be catalog-level relations + SQL composition (ignored until NER-1690) |
+
+## S2. Execution classes and why each Metal design rose or fell
+
+### S2.1 CPU
+- **CPU interpreter** — direct `Program` interpreter; originally `ExecutionArena` with nested Vec/HashMap/HashSet/Arc (unified-investigation :41-47); planned port to bounded packed workspace (unified-plan :171-177; callback-free Phase 9). It was the only production path at investigation time (`Program::execute_roots`) (unified-investigation :33-38). Remains the semantic oracle (production-grid :15-16).
+- **Cranelift JIT v1 (callback dispatcher)** — each word a basic block but semantic ops call Rust; "`STOP` and `GOTO` are the only structural operations without semantic Rust callbacks" (unified-investigation :308). Measured 0.90 ms compile / 34.57 ms vs 37.60 ms interpreter on 128-comment stress (transducer-design.md:321-323). Declared "not a JIT for transducer semantics ... must be deleted" with its benchmark claims (native-jit-design :11-13, :546-558).
+- **Native IR JIT** — one ephemeral typed SSA native IR (`NativeModule`) emitted to Cranelift and MSL; no external calls representable; packed views only (native-jit-design :64-218; native-regex-lua). Callback-free plan claims Cranelift no longer uses callbacks (callback-free :27) [A]. Cranelift 0.125.4 ARM64 long-call relocation defect fixed by forcing long-range calls (JIT:77-80).
+- **CPU capture-run operator** — specialized CPU operator for a proved class (one normal sibling repetition with acyclic guarded body, kind-selected suffix): 20-byte capture-event records over a shared arena, admission by complete range identity, interval reduction; interpreter 3.478668333 s vs 0.019535750 s at 64 pairs (debug) (capture-run :19-65, :114-118). Explicitly a CPU reference with GPU-compatible shape; no production routing (:67-70, :209-210).
+
+### S2.2 Metal designs, chronologically
+| Design | Why proposed | Measured | Disposition / authors' reason |
+|---|---|---|---|
+| Four-opcode fixed-shape Metal kernel | early | — | Deleted (transducer-design.md:339) |
+| Per-root submission with TEXT/ASSERT/EMIT host events | transitional full-language Metal | — | "does not meet the production batch contract" (transducer-design.md:333-335); deleted (batch-executor :683-695) |
+| One-invocation batch executor: one thread per `MetalTask`, private pending/capture/cursor/repeat/query arenas sized conservatively (interpreter + JIT) | remove host events; parallel across roots/programs, DFS inside task (value-program-design :207-257; batch-executor) | 92 KB file: GPU active 6.1 ms, queue delay 213.3 ms, ~7.77 GB mutable resources; logical workspace 13.65 GB from one `states` estimate (throughput :63-124); corpus ~98 s with 64 persistent lanes (optimal-shape :59) | Superseded: "dispatches 64 threads in two SIMD groups ... most GPU cores receive no SIMD group" and per-lane max arenas (optimal-shape :29-33); unified-plan supersedes its host layout |
+| Shared-arena ABI v4 (24-byte `MetalTask`, global arenas, chunked/exact/lazy-block atomic reservations) | remove per-task arena ABI | 640-file profile: 52.48 s wall, 3.19 GB RSS from retained sparse pages (bottleneck-profile :16-71) | Kept as ABI; atomic durable-output reservations later rejected for broad kernels (production-grid :57-63) |
+| Root-streaming persistent lane pool + two-tier lanes | avoid 82.9M task records; scan each root once and run all its Programs | 4,096 lanes x 256 records: 97.79 -> 13.72 s; 2.69 GB -> 877 MB; 99.07% fast-tier (root-streaming :143-150) | Superseded by optimal shape; persistent lanes still the wrong shape ("uses memory to compensate", optimal-shape :32-33) |
+| Evaluation waves (one thread per evaluation over its roots) | remove atomic task cursor | 256 lanes: 25 partitions, 456 waves, 193.27 s; 1,024 lanes overflow 32-bit ABI offsets (production-grid :73-85) | Abandoned: "serialized roots inside each thread"; "More scratch lanes cannot correct serialized semantic work" |
+| Per-result atomic reservations in a broad direct kernel | first broad kernel | 25,618,909 direct tuples: 47.22 s vs count/scan/scatter 3.05 s (production-grid :57-63) | Abandoned for durable output |
+| Old grid scheduler (host phase loops, historical admission index) | first grid implementation | 1,978,757 kernel launches, 25,000 command buffers (cutover plan :26-28) | Deleted in phase 1 ("did not implement the agreed execution shape") |
+| **Optimal shape / production grid** (root universe, selectors, signature blocks <=256, five classes, compact SoA frontiers, count/scan/scatter, exact pages) | broad dispatch, no per-tuple records | Synthetic full-shape spike: 34 invocations, 40.04 ms; coverage kernel 106.91 ms; packed 358 MB vs 1.99 GB tasks (optimal-shape :64-89) | **Kept** as the authoritative architecture (production-grid :12-16); spike does not prove semantics, predicate cost, antichain semantics (:44-51) |
+| Admission spike (Early/Deferred/DeferredExact) | decide how to admit states without history | see §11 | Accepted: active-only + bulk exact dedup + separate final reduction |
+| Bulk closure (CPU then GPU) for capture-free GREEDY `NEXT` loops | one dispatch per header round costs 4,100 waves at 1,024 siblings | CPU 24 stages flat; GPU core 18 launches (P3:1044-1160) | Kept for proved region |
+| Closure composition (bind validation, combine passes) | standalone operators repeat validation/scans | 114/148/155 -> 100/138/145 launches (closure-composition :43-46) | Kept; insufficient alone |
+| Full-state reduction (complete frame references) | canonicalization 11 + reduction 12 + successors >=3 = >=26 per wave | estimate (full-state :11-29) | Approved; removes separate canonicalization pass |
+| Dynamic-generation composition / bounded query regions | 44 launches per generation because prefix compiler stops after each instruction | 56/100/144/188 cumulative (dyn-gen :32-37) | Implemented under blanket authorization (P3 repair); per-generation cost later 18-20 |
+| Shared predicate frontiers (Lua/NFA one code owner), typed output pages, ordered failures | phase 4 | 5-file differential 109,114 matches, 557 launches, 387,776,512 bytes (P4:101-102) | Kept |
+| Sealed lossless columns, producer-owned typed output, workgroup NFA, persistent value workers | phase 5 memory refusals | e.g. raw output floor 3,082,424,556 bytes > 2e9 (P5:842) | Kept; full corpus still refused at launch cap |
+
+### S2.3 Authors' root causes of dispatch growth
+1. Wrong shape and host-driven phase loops in the deleted scheduler (1,978,757 launches) (cutover plan :26-28).
+2. "Each standalone operator owns validation, initialization, scans, boundary checks, and publication. Composition repeats checks over the same immutable input." (closure-composition :25-26)
+3. "The query prefix compiler stops after each instruction whenever the Program requires repetition admission. Each generation then repeats prefix preparation, value checks, exact reduction, control resolution, and readiness." 44 launches per generation (dynamic-generation :49-51); "Ordinary prefixes stop after at most 64 instructions or eight value edits" (AUD:51-63).
+4. One dispatch per GREEDY header round: 1,024 siblings -> 4,100 waves (P3:893-902).
+5. Component costs per wave: reducer 11-17 launches per call (admission-spike :335); canonicalization 11 + reduction 12 + successor >=3 (full-state :17-25).
+6. Remaining (2026-10-26): number of generations for deep captured repetition — 19 generations x 20 dispatches = 380 (P5:1674); ~2.8M live rows while repeat arenas are empty (P5:1675; capture-run :10-12); "Allocation trimming cannot replace the dispatch work" (handover :54).
+
+### S2.4 Authors' root causes of memory growth
+1. One shared `states` estimate for every mutable arena -> 13.65 GB logical for a 92 KB file whose largest task used tens of records (throughput :63-79).
+2. Heuristic Metal capacity factors of 4 and 64; output bytes = state count x source length (unified-investigation :339-343).
+3. Worst-case per-task/per-lane arenas multiplied by resident lanes; limits lanes to 64 (root-streaming :143-144; optimal-shape :32-33, :260-271).
+4. Retained Metal buffers receiving different sparse task ranges per file; new dispatches fault new pages; generation reset releases nothing -> 3.19 GB RSS after 634 batches (bottleneck-profile :64-71); `MADV_DONTNEED` ineffective because Metal re-maps (:98).
+5. Mutable resource volume itself (7.77 GB) causing residency/resource-preparation delay before GPU execution (throughput :111-124).
+6. Dynamic seed capacity including direct tuples -> 9,758,228,480-byte request; successor preparation multiplying every state by the catalog's largest branch width -> 3,257,860,096 (P4:47-53); seeds sized for the full task universe (P5:445); finite frames sized to all variants, not survivors -> 4,843,356,160 (P5:1129-1133).
+7. Completed producers retaining raw typed arenas while later producers allocate (handover :25); raw match+capture records alone 3,082,424,556 bytes > 2e9 cap (P5:842) -> lossless encoded columns.
+8. Copying each capture prefix across many states in deep captured repetition (capture-run :12).
+
+## S3. The batch model
+
+- **Identity**: the semantic unit is the `(file, Program, root)` tuple throughout; it controls errors and deterministic order (throughput :426-430; root-streaming :64-70). Production CPython: 82,908,643 tuples, 9,632,501 distinct (file, root) pairs, 8.61 Programs per root, 2,079 files, 335 Programs, ~681,725 evaluations (production-grid :20-25, :174) [M]. (root-streaming :19 says 82,899,054 MetalTask records — unexplained difference.)
+- **Inputs**: `execute_batch(programs, tapes, optional per-(file,program) strictly increasing root-ordinal lists)`; empty list proves no candidates; missing coverage -> unanchored (transducer-design.md:295-307). `PackedBatch` immutable arrays: header, files, nodes, children, supertypes, line starts, source, Programs, structural/value/capture/output instructions, strings, tasks (unified-plan :82-100); node record = 11 x u32 (`MetalNode`) (batch-executor :153-165).
+- **State layout, v3**: per-task disjoint ranges for pending, captures, cursors, repeats, query states, value states, candidates, results, output bytes + error slot in `MetalTask` (batch-executor :222-249). **v4**: 24-byte `MetalTask`, evaluation ordinal per (file, Program), global arenas with chunked/exact/lazy-block reservations (packed-abi-v4 :5-100). **Grid (`tempo-metal-grid-v1`, ephemeral, executor-private)**: `RootRecord{file,node,semantic_root_ordinal}` universe; interned selectors (range, kind posting, run list, sparse bitset, explicit list); `EvaluationSpan`, `BlockSpan`, `ExecutionBlock` (<=256 tuple positions, one dispatch signature); ~324,000 blocks and ~760,000 block spans; `StructuralStage` descriptor per pc; `FrontierState{semantic_ordinal, program, pc, node, start, capture_head, cursor_head, repeat_head, local_ordinal}` in SoA compact frontiers (production-grid :111-340, :541-551).
+- **Two orders**: execution order by route + signature; semantic order by `semantic_start` for scans/pages (production-grid :205-213).
+- **Typed output arenas**: `TaskStatus, ResultRecord, FinalCaptureRecord, PropertyRecord, transformed text, ErrorRecord` with stable task + local ordinals (unified-plan :154-167); grid scatter writes results, final captures, properties, transformed bytes (production-grid :444-449). Count vector `[result, capture, property, output_byte]` per block span (~12.2 MB vs ~1.33 GB per-tuple) (:383-406). Exact page boundaries + `Continuation{semantic_span, block_lane, local_output_ordinal, frontier_generation}` (:410-431). Saved GPU pages drained by callbacks without semantic replay; ranks distinct from raw candidate ordinals (P4:21-36). Lossless encoded columns for completed output (P5:842-852; handover :28).
+- **Failures**: v3: first error per task, Rust returns lowest task ordinal and discards all outputs of the batch (batch-executor :612-618); grid / P4: `FailureRecord` per evaluation, smallest failing semantic ordinal, suppress only that evaluation (production-grid :366-379; P4:378-391).
+- **Publication**: <=64 files per SQLite transaction; "Publication boundaries do not define execution buffers" (optimal-shape :289-290; production-grid :465-467); six normalized relations (unified-plan :225-320); direct from packed views, no witnesses/JSON (unified-plan :336-353).
+- **Residency**: upload corpus once (files, nodes, children, supertypes, source, line starts, Programs, signature tables, root universe, selectors, spans, blocks) in private Metal storage with bounded staging; incremental builds the same structures for changed files (production-grid :453-476).
+- **Budgets**: one launch budget and one memory ledger per complete evaluation shared across commands, partitions, retries, pages (cutover plan :166-187); limits 600 launches (temporary; later <100; normal target <40), 2e9 tracked bytes, 4 GiB owned RSS, 1 GiB compiler RSS (handover :62-64).
+
+## S4. SQL-driven transducer execution (as designed in Tempo)
+- SQL selects eligible (file, program) pairs from persisted conservative facts and FTS5 contentless indexes (kind tokens at preorder offsets; bounded `(kind, value)` tokens; source words), with completion rows so unknown coverage widens to scanning and never proves absence (sql-driven :7-35, :63-86).
+- Rust converts eligibility to a per-file program bitset; one GPU anchor dispatch finds exact roots; exact-literal programs are fully proven by the anchor kernel and emit terminal rows directly (:55-59, :170-182).
+- `tempo_matches(batch)`: eponymous vtab, hidden `batch` column, one `execute_batch()` per `xFilter`, `OnceLock` row cache, flattened one-row-per-capture schema with `complete`/`error_code`; complete negatives as null-`match_index` status rows (:88-120).
+- SQL is the outer rule engine: cross-program capture joins, counts/thresholds, cross-file relations, priorities, templates, absence after completion join, incremental invalidation, explicit ordering; scalar functions only for pure per-value work ("must not run one matcher for each file or rule row") (:122-161). Backend swap must not change SQL (:163-166). Dispatch loops only for recorded hard device limits (:184-186).
+- Status: vtab exists for the fixed-word executor; production policy composition never used it (:3). Later docs narrow SQL to selection, postings, storage, paging (production-grid :217-225) and finally put SQL planning and vtabs outside the cutover scope (cutover plan :10; handover :9). P5's last direction (from PIAT): demand relation in, six typed output relations out, SQL consumes retained output through a batch boundary (P5:1579-1580).
+
+## S5. Consolidated key numbers (M = measured, D = design/limit/estimate, A = asserted)
+| Quantity | Value | Mark | Source |
+|---|---|---|---|
+| ast-grep on TS trees / on tapes / transducer (8 patterns, 5,725 files, 95.7 MB) | 12,608.58 / 817.68 / 359.22 ms median | M | transducer-design.md:274-286 |
+| TS parse / tape encode+restore | 8,653.04 / 4,574.91 ms | M | :284-285 |
+| 128-comment stress: interpreter / callback JIT exec / JIT compile | 37.60 / 34.57 / 0.90 ms | M (callback JIT later invalidated) | :321-323 |
+| One 92 KB file: root tasks / matches / captures | 46,765 / 20,684 / 22,985 | M | throughput :26-31 |
+| 92 KB file: exec+decode / normalization / SQLite | 2,353.7 / 4.2 / 300.4 ms | M | :53-59 |
+| 92 KB logical workspace (single `states` estimate) | 13.65 GB | M | :65 |
+| Metal System Trace: commit-to-complete / queue delay / GPU active | 221.1 / 213.3 / 6.1 ms | M | :113-117 |
+| Mutable resources; pending 2.07 GB, results 1.60, final captures 1.44 | ~7.77 GB | M | :120-122 |
+| Compact spike: host alloc+init / kernel / backend call | 93.5 / 26.7 / 164.7 ms | M | :87-91 |
+| Sparse demand-zero: max resident / alloc / kernel | 474 MB / 3.4 ms / 407.2 ms | M | :103-105 |
+| 640-file profile: wall / SQLite / RSS | 52.48 s / 29.34 s (55.9%) / 3,186,753,536 B | M | bottleneck :18-23 |
+| Rejected RSS mitigations (8-dispatch gen / MADV / 64-program / 4,096 cap) | 2.36 GB 74.83 s / 3.19 GB 84.94 s / 1.25 GB 224.00 s / 4.99 GB | M | :96-102 |
+| Capacity failures 640-file / partial full corpus | 395 / 3,122 | M | :138-139 |
+| Prepared typed rows / json_each / jsonb | 28.0 / 101.9 / 102.9 ms | M | throughput :389 |
+| String cache; cached 512-row stmt; dup ratio | -28.3%; 13.7% faster; 1.20x | M | :375, :397, :416 |
+| Schema 12 JSON raw / compressed | 13,130,218,219 / 806,063,608 B | M | unified-investigation :77-87 |
+| Full normalized DB: matches / captures / size | 24,182,612 / 30,467,065 / 2,187,788,288 B | M | :400-417 |
+| 335-program constructors CPU / Metal | 273.0 / 215.7 ms | M (single run) | :306 |
+| Hardware: M5 Max, 40 cores, SIMD 32, 1,024 TG, working set | 115,448,725,504 B | M | optimal-shape :21-27 |
+| Production interpreter with 64 lanes | ~98 s | M (approx) | :59 |
+| Full-shape spike: invocations / median / scratch | 34 / 40.04 ms / 323,859,045 B | M (no semantics) | :64-80 |
+| Coverage kernel: tuples / blocks / spans / time | 82,908,643 / 323,894 / 759,585 / 106.91 ms | M | :85-87 |
+| Packed vs MetalTask bytes | 358,085,256 vs 1,989,807,432 (-82.00%) | M | :88-89 |
+| Tuple classes direct / direct+pred / bounded / bounded+pred / dynamic | 25,618,909 / 27,659,506 / 19,122,092 / 4,766,624 / 5,741,512 | M | :91-100 |
+| Exact opcode signatures; singletons | 106; 61 | M | :209-211 |
+| Root-streaming two-tier: Metal time / workspace | 97.79 -> 13.72 s; 2.69 GB -> 877 MB | M | root-streaming :146-148 |
+| Atomic reservations vs count/scan/scatter | 47.22 s vs 3.05 s | M | production-grid :59-62 |
+| Evaluation waves | 456 waves, 193.27 s | M | :81 |
+| Deleted scheduler | 1,978,757 launches, 25,000 command buffers | M | cutover plan :27 |
+| Phase 2 register stages: 80 / 8,000 roots | 7 / 7 launches | M | P2:128-133 |
+| Generation pipeline (early phase 3) | 44 launches/generation | M | dyn-gen :51 |
+| Phase-3 completion convergence 1/128/4,096 tasks | 410/488/600 launches | M | cutover plan :429 |
+| Phase-4 5-file differential | 109,114 matches; 557 launches; 387,776,512 B; 37.85 s | M | P4:13-16, :101-102 |
+| Latest 5-file differential | 425 (409 forced) dispatches | M | handover :15 |
+| CPU full-corpus reference | 7,637.27 s; 37,975,107 matches; 43,428,341 captures | M | P5:661-662, :811-815 |
+| Raw output floor | 3,082,424,556 B | M | P5:842 |
+| Per-generation dispatches / generations | 20 / 19 (= 380) | M | P5:1674 |
+| Latest full run | 619 attempts / 600 encoded / 594 completed; 506.82 s; peak 1,982,038,016 B | M | handover :50-53 |
+| Capture-run vs interpreter at 64 pairs | 0.019535750 vs 3.478668333 s (debug) | M | capture-run :118 |
+| Release interpreter oracle at 350 interpolations | 163.242775 s; 2,324,545,536 B RSS | M | :98-101 |
+| Admission spike `_markupbase.py` Early vs Deferred | 281 vs >=23,225 candidates; 58,292 vs 9,239,276 B | M | admission-spike :180-183 |
+| Limits: launches / tracked bytes / RSS / compiler RSS | 600 (temp; <100 later; <40 normal) / 2e9 / 4 GiB / 1 GiB | D | handover :62-64 |
+| Grid acceptance: Metal exec / host prep | <5 s / <2 s | D | production-grid :635-636 |
+| Product limits: incremental p50/p95; steady/initial RSS; store; command | <100/<500 ms; <1 GiB/<500 MiB; <10 GB/100 ws; <5 min | D | callback-free :69-76 |
+| Block-span count metadata | ~12.2 MB vs ~1.33 GB per-tuple | D | production-grid :386-387 |
+| "Cranelift JIT does not use Rust callbacks" / one invocation per batch achieved | — | A | callback-free :27; batch-executor :13-15 |
+
+## S6. Authors' own stated lessons (quoted or closely paraphrased)
+- "The executor shape is the primary constraint. Input packing, Program lowering, continuation, and publication must conform to this shape." (optimal-shape :17)
+- "The measured difference is not query count or corpus size. The difference is execution shape." (optimal-shape :60)
+- "A larger persistent lane pool improves time only by replicating large per-lane arenas. This approach uses memory to compensate for the wrong execution shape." (optimal-shape :32-33)
+- "The failed prototypes ... changed the thread count but retained the old task-shaped data model." (production-grid :30-31)
+- "Evaluation waves are not a viable execution model. More scratch lanes cannot correct serialized semantic work." (production-grid :84-85)
+- "A broad kernel cannot use durable output reservation atomics." (production-grid :63)
+- "One divergent interpreter kernel is not the default execution path." (optimal-shape :151)
+- "A finite instruction sequence does not prove a bound on child fan-out. Do not run variable expansion inside a private root interpreter to avoid frontier states." (cutover plan :311-312)
+- "The component checks establish local correctness. They do not establish that their combined dispatch cost fits a complete evaluation." (dyn-gen :54)
+- "It disproves straightforward repetition of the current components as the complete production algorithm." (full-state :32)
+- "Final deduplication cannot recover the work or memory already spent on those 256 candidates." (admission-spike :165)
+- "It invalidates the assumption that reproducing CPU pruning always preserves native query meaning." (admission-spike :114)
+- "Sparse allocation fixes physical memory use. It does not fix sparse-table locality." (throughput :107)
+- "The dominant delay occurs before GPU execution. Shader arithmetic is not the primary wall-time cost on this workload." (throughput :118)
+- "Parsing uses less than 2% of wall time. Parser changes are not a useful next optimization." (bottleneck :40)
+- "Do not use one `states` value for every arena." (throughput :141)
+- "Constructor success must not be reported as complete CPU native lowering." (unified-investigation :312); "One evidence type does not prove another type." (callback-free :110)
+- "A scalar function must not run one matcher for each file or rule row. That design recreates the nested execution loop." (sql-driven :160-161)
+- "Allocation trimming cannot replace the dispatch work." (handover :54)
+- "Hash equality never proves semantic equality." (callback-free :89; repeated throughout)
+- "Missing metadata cannot mean an empty relation for an affected transducer." (handover :60)
+
+## S7. Contradictions recorded
+1. Opcode set: transducer-design.md table omits 0x06-0x09; native-jit-design and source include them; metal-batch-executor uses different names (incl. `REPEAT_REQUIRE` for BUMP).
+2. FLAGS: design doc bit order (missing=2, error=3; required/forbidden masks) vs generic interpreter path in source (error<<2, missing<<3; required bits effectively untested) vs PIAT spec (copied the generic path).
+3. Regex: value-program-design specifies `regex-automata` byte DFA; native-regex-lua / batch-executor implement ordered NFA; throughput explicitly rejects dense DFA.
+4. Invocation count: value-program-design, batch-executor, unified-plan, native-jit, callback-free require exactly one invocation per non-empty batch; optimal-shape/production-grid target <40 broad invocations; cutover runs 400-600 per evaluation; optimal-shape says "Production has no fixed invocation limit" (:310) while its own header imposes a 600 hard limit (:5).
+5. Containment admission: native-jit-scheduler plan rejects subset lists at admission ("matches the current exact CPU reference") (:217-232) vs admission spike (that rule deletes a native match) and cutover decision (exact active dedup only).
+6. Failure scope: batch-executor discards all outputs of a batch on any task error (:618) vs production grid / P4 per-evaluation invalidation.
+7. Tuple count: 82,899,054 (root-streaming :19) vs 82,908,643 (optimal-shape, production-grid).
+8. Directive-bearing Programs "remain interpreter-only" (scm-extension :301-302) vs later Metal output programs (P4).
+9. Repetition navigation: scm-extension lowers repetition to `FOLLOWING` when not anchored (:175); admission spike shows that crosses intervening statements vs native; phase 3 changed loop-back to the immediate sibling.
+10. Launch caps over time: 100 -> 200 -> 600 (with 400 proposed and superseded); P2 fixture 7 launches vs P4 9 for the same 80/8,000-root controls.
+11. Phase-3 completion claimed (312 tests, cutover plan :424-432) then reopened by AUD and re-closed at 358 tests.
+12. callback-free plan's "Non-negotiable: one kernel invocation" (:85) coexists with its pointer to the multi-dispatch optimal shape (:816-817).
+13. Root-task dispatch: throughput design "Do not fuse roots" and keep one task per tuple (:426-436) vs grid "must not expand into 82.9 million host records" (production-grid :27-28) — tuple remains identity but not a record.
+
+## S8. Open at the latest checkpoint (2026-10-26)
+Full-corpus GPU execution refuses at the 600-dispatch cap (594 completed) with 19 successor generations dominating; peak tracked memory 1,982,038,016 of 2e9; no full-corpus GPU parity, six-table parity, publication/reopen, throughput or single-file latency measured; v7 runtime binding lacks a contextual supertype table; <100 and <40 dispatch targets open; CPU capture-run not routed to GPU; historical JIT crash attribution deferred; recovery of the earlier "879 missing matches" not explicitly closed (handover :50-75; P4:974; P5). Not found: any user+sys CPU-time measurement in these sources (all timings are wall, GPU, or unspecified).
