@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { refreshCodingAgents } from "../../src/setup/coding-agents.js";
+import { connectCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents } from "../../src/setup/coding-agents.js";
 import { CODEX_HOOK_EVENTS, registerHarnesses } from "../../src/setup/harness-registration.js";
 
 const temporaryDirectories: string[] = [];
@@ -104,5 +104,33 @@ describe("refreshCodingAgents", () => {
     expect(result).toEqual({ agents: [], changes: [], notes: [], failures: [], unchecked: [] });
     expect((await readdir(home)).sort()).toEqual([".claude", ".cursor"]);
     expect(await readdir(join(home, ".cursor"))).toEqual([]);
+  });
+});
+
+describe("connectCodingAgents", () => {
+  it("connects the other agents when one's config is not plain JSON, and leaves that file as it is", async () => {
+    const { root, home } = await fixture();
+    const settings = join(home, ".claude", "settings.json");
+    const commented = "{\n  // mine\n  \"theme\": \"dark\",\n}\n";
+    await writeFile(settings, commented);
+    await mkdir(join(home, ".cursor"));
+    const result = await connectCodingAgents(root, home, ["claude-code", "cursor"]);
+    expect(result.failures).toEqual([{ agent: "claude-code", file: settings, message: expect.stringContaining("JSON") }]);
+    expect(result.changed).toEqual(["cursor"]);
+    expect(result.all).toEqual(["cursor"]);
+    expect(await readFile(settings, "utf8")).toBe(commented);
+    expect(await readdir(join(home, ".claude"))).toEqual(expect.not.arrayContaining([expect.stringMatching(/\.bak$/u)]));
+    expect(await readFile(join(home, ".cursor", "hooks.json"), "utf8")).toContain(join(root, "dist", "hosts", "cursor", "cursor-hook.js"));
+  });
+});
+
+describe("seen coding agents", () => {
+  it("is empty until recorded, and keeps every agent recorded since", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-seen-"));
+    temporaryDirectories.push(home);
+    expect(seenCodingAgents(home)).toEqual([]);
+    await recordSeenCodingAgents(home, ["cursor"]);
+    await recordSeenCodingAgents(home, ["codex", "cursor"]);
+    expect(seenCodingAgents(home)).toEqual(["codex", "cursor"]);
   });
 });
