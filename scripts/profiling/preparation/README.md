@@ -195,3 +195,23 @@ The fixed guard also records `chunk-a-budget.json`. This progress check requires
 Since 2026-10-25, the fixed 100-submission reference is diagnostic. Complete accounting and parity remain mandatory.
 Performance acceptance uses full-repository cold CPU, wall time and peak RSS, with compilation reported separately.
 SQL batch duration belongs to the batch. Use its captured logical membership when analyzing producer costs.
+
+## Failed relational queries
+
+Build the `failure_replay` binary with this package.
+It restores both SQL owners from a failure-only snapshot, then evaluates the saved SELECT query.
+It uses the same bundled SQLite version and backup boundary as the engine.
+Native virtual-table frames and external callbacks remain unavailable; queries that require them fail explicitly.
+
+```sh
+python3 scripts/profiling/run.py --trace off --deadline 115 \
+  --output .rerail/profiles/failure-replay/control -- \
+  scripts/profiling/preparation/target/release/failure_replay \
+  path/to/failure-manifest.json
+```
+
+Supply a SQL file as the second argument to evaluate a revised read-only query against the same captured data.
+The report separates restore wall time from query CPU, wall time, VM steps, scans, sorts, and automatic-index rows.
+Query time includes result hashing. Row count and a commutative typed-row digest help compare alternatives with the same replay binary.
+A digest match is diagnostic evidence, not a replacement for full rule parity.
+The host has no original rule allowance. The external controller enforces the command deadline.

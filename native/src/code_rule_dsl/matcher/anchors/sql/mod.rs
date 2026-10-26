@@ -26,6 +26,9 @@ mod replay;
 mod session;
 #[path = "functions/source_batch.rs"]
 mod source_batch;
+#[cfg(test)]
+#[path = "functions/source_batch_tests.rs"]
+mod source_batch_tests;
 mod statistics;
 mod store;
 mod values;

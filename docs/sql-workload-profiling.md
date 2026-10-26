@@ -310,3 +310,13 @@ Allocator totals cover macOS system-malloc zones. They do not measure exclusive 
 These totals do not cover allocations owned by a separate allocator, such as production jemalloc.
 The suite driver also records the RSS high-water mark after each apply operation.
 Use these boundaries to distinguish retained storage, temporary allocation, and allocator residency.
+
+## Failure-only relation snapshots
+
+Set `RERAIL_SQL_FAILURE_DIR` to a diagnostic directory before an engine run.
+A failed relational stage or result query copies its main and temporary SQLite databases before owner cleanup.
+Successful queries do no snapshot work and install no statement-tracing callback through this setting.
+The JSON manifest records the rule, clause, failed query, database filenames, and capture limits.
+Failed-run CPU includes snapshot work. Such a run fails acceptance regardless of its timing.
+SQLite backups do not serialize native virtual-table frames or external source callbacks.
+A query that requires those producers also requires their original inputs for replay.

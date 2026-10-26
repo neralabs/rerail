@@ -950,8 +950,17 @@ impl<'a> Session<'a> {
                 .operation(&format!("/*RELATIONAL_STAGE*/ {}", logical.name), self.next);
             let created = create_stage(&self.db, stage, true, &self.work);
             #[cfg(feature = "code-rule-profile")]
-            if created.is_err() {
+            if let Err(error) = &created {
                 self.db.explain_pending();
+                if let Err(snapshot_error) = super::profile::sql::snapshot::capture(
+                    &self.db,
+                    json!({
+                        "rule":self.code_rule.id,"clause":self.clause.id,"stage":logical.name,
+                        "query":stage.query,"error":error.reason,
+                    }),
+                ) {
+                    eprintln!("SQL failure snapshot failed: {snapshot_error}");
+                }
             }
             created
                 .map_err(|e| invalid(format!("relational stage {}: {}", logical.name, e.reason)))?;
@@ -985,6 +994,18 @@ impl<'a> Session<'a> {
     }
     fn finish(&self) -> Result<Vec<Value>> {
         let result = self.finish_rows();
+        #[cfg(feature = "code-rule-profile")]
+        if let Err(error) = &result {
+            let (query, _) = self.query(&self.plan.query, self.tables.iter().cloned());
+            if let Err(snapshot_error) = super::profile::sql::snapshot::capture(
+                &self.db,
+                json!({
+                    "rule":self.code_rule.id,"clause":self.clause.id,"stage":"result","query":query,"error":error.reason,
+                }),
+            ) {
+                eprintln!("SQL result failure snapshot failed: {snapshot_error}");
+            }
+        }
         // Explain the result while its private inputs still exist, including on failure.
         #[cfg(feature = "code-rule-profile")]
         if let Err(error) = self.db.checkpoint() {

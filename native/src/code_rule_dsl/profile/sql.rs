@@ -3,9 +3,9 @@
 
 #[path = "sql/coverage.rs"]
 mod coverage;
+pub(in crate::code_rule_dsl) mod snapshot;
 #[path = "sql/timing.rs"]
 mod timing;
-mod snapshot;
 use rusqlite::{Connection, ffi};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
