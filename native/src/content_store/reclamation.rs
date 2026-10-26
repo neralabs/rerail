@@ -318,6 +318,9 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.repository_string_id=s.string_id OR w.owner_string_id=s.string_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.owner_string_id=s.string_id) \
              AND NOT EXISTS (SELECT 1 FROM candidate_checks c WHERE c.check_string_id=s.string_id) \
+             AND NOT EXISTS (SELECT 1 FROM name_bindings b WHERE b.name_string_id=s.string_id) \
+             AND NOT EXISTS (SELECT 1 FROM derivations d WHERE d.output_string_id=s.string_id) \
+             AND NOT EXISTS (SELECT 1 FROM derivation_inputs i WHERE i.name_string_id=s.string_id) \
              ORDER BY s.string_id LIMIT ?1)",
             [limit],
         )?;
@@ -337,6 +340,16 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM completed_directory_reuse d WHERE d.tree_hash_id=h.hash_id OR d.package_hash_id=h.hash_id OR d.catalog_hash_id=h.hash_id) \
              AND NOT EXISTS (SELECT 1 FROM context_check_results r WHERE r.context_hash_id=h.hash_id) \
              ORDER BY h.hash_id LIMIT ?1)",
+            [limit],
+        )?;
+        // Facts memo rows cascade from their sources; a plan set no completion row names any
+        // more is dead (facts_memo.rs writes a set in the transaction that first names it).
+        execute_collect(
+            &transaction,
+            "DELETE FROM facts_plan_sets WHERE set_digest IN (\
+             SELECT DISTINCT p.set_digest FROM facts_plan_sets p \
+             WHERE NOT EXISTS (SELECT 1 FROM facts_completions c WHERE c.set_digest=p.set_digest) \
+             ORDER BY p.set_digest LIMIT ?1)",
             [limit],
         )?;
         execute_collect(

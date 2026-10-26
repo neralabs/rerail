@@ -255,6 +255,65 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_fts USING fts5(
 CREATE TRIGGER IF NOT EXISTS delete_tape_search_index BEFORE DELETE ON tape_objects BEGIN
     DELETE FROM search_kind_fts WHERE rowid=OLD.tape_id;
 END;
+
+-- The facts engine's memo (facts_memo.rs): per-file clause results keyed by content (a source),
+-- fact schema version, plan digest and, for a clause that reads the path, the path ('' for a
+-- content-pure one). Additive: every row cascades from its source and names no other shared row
+-- (hashes, strings, paths), so an older binary's collection can delete sources under it without
+-- orphaning or misreading a row, and the floor stays.
+CREATE TABLE IF NOT EXISTS facts_plan_sets (
+    set_digest BLOB NOT NULL CHECK(length(set_digest) = 32),
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    PRIMARY KEY (set_digest, ordinal)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS facts_results (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    fact_schema INTEGER NOT NULL CHECK(fact_schema >= 0),
+    path TEXT NOT NULL,
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    codec_id INTEGER NOT NULL,
+    raw_length INTEGER NOT NULL,
+    frame BLOB NOT NULL,
+    PRIMARY KEY (source_id, fact_schema, path, plan_digest)
+) STRICT, WITHOUT ROWID;
+-- Bit i of `words` (little-endian u64s): the set's clause i ran with nothing to report; its
+-- counts are in the `counts` frame. A clear bit is unknown, never absent.
+CREATE TABLE IF NOT EXISTS facts_completions (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    fact_schema INTEGER NOT NULL CHECK(fact_schema >= 0),
+    path TEXT NOT NULL,
+    set_digest BLOB NOT NULL CHECK(length(set_digest) = 32),
+    words BLOB NOT NULL,
+    codec_id INTEGER NOT NULL,
+    raw_length INTEGER NOT NULL,
+    counts BLOB NOT NULL,
+    PRIMARY KEY (source_id, fact_schema, path, set_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
+
+-- The derivation graph (derivation.rs): fact names bound to digests, and each derivation's inputs
+-- with the digest it read. A derivation's output is a name too, so an unchanged output rebinds
+-- nothing (early cutoff). Additive: older binaries never read these tables.
+CREATE TABLE IF NOT EXISTS name_bindings (
+    name_string_id INTEGER PRIMARY KEY REFERENCES strings(string_id),
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    revision INTEGER NOT NULL CHECK(revision >= 0)
+) STRICT;
+CREATE TABLE IF NOT EXISTS derivations (
+    output_string_id INTEGER PRIMARY KEY REFERENCES strings(string_id),
+    producer BLOB NOT NULL CHECK(length(producer) = 32),
+    status INTEGER NOT NULL,
+    cost INTEGER NOT NULL CHECK(cost >= 0)
+) STRICT;
+CREATE TABLE IF NOT EXISTS derivation_inputs (
+    output_string_id INTEGER NOT NULL REFERENCES derivations(output_string_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    name_string_id INTEGER REFERENCES strings(string_id),
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    PRIMARY KEY (output_string_id, ordinal)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS derivation_inputs_by_name ON derivation_inputs(name_string_id);
 "#;
 
 impl ContentStore {

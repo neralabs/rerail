@@ -8,6 +8,7 @@ mod build_identity;
 mod build_languages;
 mod code_rule_dsl;
 pub mod content_store;
+mod facts;
 pub mod git_ignore;
 pub mod git_workspace;
 mod main_instance;

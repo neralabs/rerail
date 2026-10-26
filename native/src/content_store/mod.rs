@@ -5,6 +5,8 @@
 
 mod compression;
 mod connection;
+mod derivation;
+mod facts_memo;
 mod objects;
 mod publication;
 mod read_cache;
@@ -22,6 +24,8 @@ mod workspaces;
 pub(crate) use compression::compress;
 pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
+pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord};
+pub use facts_memo::{FactsCompletion, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
 
 #[cfg(test)]
@@ -49,12 +53,16 @@ use std::time::Duration;
 const HASH_SHA256: i64 = 1;
 const HASH_GIT_SHA1: i64 = 2;
 const HASH_GIT_SHA256: i64 = 3;
+/// The facts engine's content key (blake3), stored only as a source alias.
+const HASH_BLAKE3: i64 = 4;
 const CODEC_ZSTD: i64 = 1;
 const STRING_PATH: i64 = 1;
 const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
 const STRING_CLAUSE_KEY: i64 = 5;
+/// Fact names (`derivation.rs`): bound names and derivation outputs.
+const STRING_FACT_NAME: i64 = 6;
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
@@ -531,6 +539,8 @@ pub struct ContentStore {
     compression_level: i32,
     decompressed_cache: Mutex<DecompressedReadCache>,
     local_result_cache: Mutex<LocalResultCache>,
+    /// Facts plan sets by digest (immutable once written: `facts_memo`).
+    facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
     #[cfg(test)]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(test)]
@@ -563,6 +573,7 @@ impl ContentStore {
                 DEFAULT_DECOMPRESSED_CACHE_TTL,
             )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
+            facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
             #[cfg(test)]
