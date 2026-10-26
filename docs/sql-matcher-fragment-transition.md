@@ -1225,3 +1225,28 @@ SQL wall time is 42.159 seconds; peak RSS is 1,393,819,648 bytes.
 The median edit CPU ratio is 1.173. Matching still uses 23 SQL executions and 25,216,565 VM instructions.
 Both scalar-call audits remain zero. The catalog preserves all 87,162 comparisons, and the default-feature library check passes.
 The updated rejected report retains these measurements and compressed inputs. The accepted baseline remains unchanged.
+
+The lane-metadata migration now builds and passes 53 focused tests.
+Internal inputs omit owner context and binding history. Each resident lane owns those fields once.
+Pure atomic jobs borrow their node, environment, exclusion state, and metadata.
+Semantic, comparison, and navigation boundaries construct owned requests only when required by their existing interfaces.
+New counters distinguish borrowed leaf lanes from those owned boundary requests.
+
+The source slot retains its original input separately from the mutable continuation.
+Completion moves the original input and lane metadata back into the public request.
+Tests verify original capture identity after rollback and root-slot reuse with different owners, truth modes, and binding histories.
+A foreign-document constraint test verifies that file-cache checks inspect the selected node, not the original root.
+The implementation received an independent semantic and lifetime review. Runtime acceptance still requires paired measurements.
+
+The full lane-metadata run preserves all 97,798 findings, three edits, and 87,162 catalog comparisons.
+SQL CPU is 123.338 seconds; native CPU is 82.797 seconds, a ratio of 1.490.
+The preceding compact-node run has a ratio of 1.641. Both runs use the same corpus and qualification configuration.
+SQL wall time is 34.482 seconds; peak RSS is 1,380,892,672 bytes.
+The median edit CPU ratio is 1.198. Only the cold CPU gate still fails.
+
+Frames are now 112 bytes and action payloads are 56 bytes.
+The job submits 115,083,024 borrowed atomic lanes and constructs 59,187,631 owned requests at semantic, comparison, and navigation boundaries.
+These counters have different populations: navigation requests are owned but do not enter the atomic-lane counter.
+Control steps, fingerprint builds, utility hits, SQL statements, and VM instructions remain identical to the preceding build.
+This improvement comes from cheaper execution of the same work, not reduced coverage or weakened resource accounting.
+Both scalar-call audits remain zero. The default-feature check passes; the updated rejected report retains the failing CPU gate.

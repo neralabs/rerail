@@ -76,6 +76,9 @@ Rejected paths charge their proven utility work. Admitted paths retain the origi
 
 Capture-dependent matching now runs through a second native operation stage.
 It handles ordered alternatives, capture frames, utility calls, constraints, counts, and enumeration.
+Each resident lane owns its immutable context, truth mode, and binding history.
+Continuations carry only their changing inputs. Pure leaf batches borrow those inputs instead of constructing owned requests.
+Semantic boundaries retain owned requests, and cache eligibility checks the actual selected node.
 Pattern matching dispatches kind, text, capture, and navigation operations across ready lanes.
 Binding and parsed-literal predicates project facts, then submit child demands to the same scheduler.
 Atomic semantic predicates read existing native facts. A runtime audit detects scalar matcher calls inside these projections.
@@ -161,7 +164,7 @@ The batch execution model is real, but these numbers do not demonstrate a whole-
 At that baseline, scalar work remained substantial. Binding, scope, capture, and mixed semantic rules accounted for most residual CPU.
 The largest residuals include B023, F405, B007, and B615.
 The current conversion replaces those residuals with typed semantic facts and capture operations.
-It remains unqualified: the latest full paired run uses 150.96 SQL CPU seconds versus 92.02 native CPU seconds.
+It remains unqualified: the latest full paired run uses 123.34 SQL CPU seconds versus 82.80 native CPU seconds, a ratio of 1.49.
 Findings and edits match, but the 1.30 CPU ceiling fails. The journal records subsequent changes and measurements.
 The [rejected qualification](../benchmark/sql-native-capture-cohort-rejected.json) records that failure and the passing gates.
 Its raw [catalog](../benchmark/sql-native-capture-cohort-rejected-catalog.json.gz),

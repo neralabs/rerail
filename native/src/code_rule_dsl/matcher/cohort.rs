@@ -42,6 +42,102 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Clone 
         }
     }
 }
+/// Immutable metadata belongs to one resident root, including nested-host roots.
+struct LaneMeta {
+    context: u32,
+    three: bool,
+    following: Arc<Vec<(usize, usize)>>,
+}
+/// Only fields that can change within a physical continuation are copied to children.
+struct Input<'t, D: Doc<Source: Content<Underlying = u8>>> {
+    program: u32,
+    node: Node<'t, D>,
+    env: Arc<MetaVarEnv<'t, D>>,
+    // Truth normalization stays local to the continuation without a metadata lookup.
+    three: bool,
+    each: Option<Arc<Exclusion>>,
+}
+impl<'t, D: Doc<Source: Content<Underlying = u8>>> Clone for Input<'t, D> {
+    fn clone(&self) -> Self {
+        Self {
+            program: self.program,
+            node: self.node.clone(),
+            env: self.env.clone(),
+            three: self.three,
+            each: self.each.clone(),
+        }
+    }
+}
+impl<'t, D: Doc<Source: Content<Underlying = u8>>> Request<'t, D> {
+    fn split(self) -> (Input<'t, D>, LaneMeta) {
+        (
+            Input {
+                program: self.program,
+                node: self.node,
+                env: self.env,
+                three: self.three,
+                each: self.each,
+            },
+            LaneMeta {
+                context: self.context,
+                three: self.three,
+                following: self.following,
+            },
+        )
+    }
+}
+impl<'t, D: Doc<Source: Content<Underlying = u8>>> Input<'t, D> {
+    fn into_request(self, meta: LaneMeta) -> Request<'t, D> {
+        debug_assert_eq!(self.three, meta.three);
+        Request {
+            program: self.program,
+            context: meta.context,
+            node: self.node,
+            env: self.env,
+            three: meta.three,
+            each: self.each,
+            following: meta.following,
+        }
+    }
+    fn leaf<'a>(&'a self, meta: &'a LaneMeta, depth: u32) -> LeafJob<'a, 't, D> {
+        LeafJob {
+            program: self.program,
+            node: &self.node,
+            env: &self.env,
+            each: self.each.as_ref(),
+            meta,
+            depth,
+        }
+    }
+}
+/// Borrowed jobs never own root metadata or clone input capture frames.
+struct LeafJob<'a, 't, D: Doc<Source: Content<Underlying = u8>>> {
+    program: u32,
+    node: &'a Node<'t, D>,
+    env: &'a Arc<MetaVarEnv<'t, D>>,
+    each: Option<&'a Arc<Exclusion>>,
+    meta: &'a LaneMeta,
+    depth: u32,
+}
+impl<D: Doc<Source: Content<Underlying = u8>>> Copy for LeafJob<'_, '_, D> {}
+impl<D: Doc<Source: Content<Underlying = u8>>> Clone for LeafJob<'_, '_, D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<'a, 't, D: Doc<Source: Content<Underlying = u8>>> LeafJob<'a, 't, D> {
+    fn to_request(&self) -> Request<'t, D> {
+        Request {
+            program: self.program,
+            context: self.meta.context,
+            node: self.node.clone(),
+            env: self.env.clone(),
+            three: self.meta.three,
+            each: self.each.cloned(),
+            following: self.meta.following.clone(),
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Failure {
     Cancelled,
@@ -157,11 +253,11 @@ pub(in crate::code_rule_dsl) trait Host<
     fn region_cancelled(&self, _context: u32) -> bool {
         false
     }
-    fn is_file(&self, _request: &Request<'t, D>) -> bool {
+    fn is_file(&self, _context: u32, _node: &Node<'t, D>) -> bool {
         false
     }
-    fn can_remember(&self, request: &Request<'t, D>) -> bool {
-        self.is_file(request)
+    fn can_remember(&self, context: u32, node: &Node<'t, D>) -> bool {
+        self.is_file(context, node)
     }
     fn failure(&mut self, _context: u32) -> Option<Failure> {
         None
@@ -876,6 +972,8 @@ struct MemoEntry<'t, D: Doc<Source: Content<Underlying = u8>>> {
 }
 #[derive(Default, serde::Serialize)]
 pub(in crate::code_rule_dsl) struct Metrics {
+    pub borrowed_leaf_lanes: usize,
+    pub owned_leaf_requests: usize,
     pub operation_dispatches: usize,
     pub operation_lanes: usize,
     pub operation_family_lanes: [usize; 20],
@@ -936,6 +1034,8 @@ pub(in crate::code_rule_dsl) struct Metrics {
 }
 impl Metrics {
     pub fn merge(&mut self, other: &Self) {
+        self.borrowed_leaf_lanes += other.borrowed_leaf_lanes;
+        self.owned_leaf_requests += other.owned_leaf_requests;
         self.operation_dispatches += other.operation_dispatches;
         self.operation_lanes += other.operation_lanes;
         for (ours, theirs) in self
@@ -1173,7 +1273,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Defaul
 type SiblingKey = (u64, usize, usize, usize);
 
 struct Frame<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> {
-    request: Request<'t, D>,
+    request: Input<'t, D>,
     depth: u32,
     state: State<'t, D>,
     work: usize,
@@ -1275,7 +1375,7 @@ struct Search<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>
     rollback_input: Option<Arc<MetaVarEnv<'t, D>>>,
 }
 impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Frame<'t, D> {
-    fn new(request: Request<'t, D>, depth: u32) -> Self {
+    fn new(request: Input<'t, D>, depth: u32) -> Self {
         Self {
             request,
             depth,
@@ -1319,16 +1419,15 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Frame<
             (self.request.program, &self.request.env)
         }
     }
-    fn leaf_request(&self, p: &Programs) -> Request<'t, D> {
+    fn leaf<'a>(&'a self, p: &Programs, meta: &'a LaneMeta) -> LeafJob<'a, 't, D> {
         let (program, env) = self.leaf_parts(p);
-        Request {
+        LeafJob {
             program,
-            context: self.request.context,
-            node: self.request.node.clone(),
-            env: env.clone(),
-            three: self.request.three,
-            each: self.request.each.clone(),
-            following: self.request.following.clone(),
+            node: &self.request.node,
+            env,
+            each: self.request.each.as_ref(),
+            meta,
+            depth: self.depth,
         }
     }
     fn rollback_env(&self) -> &Arc<MetaVarEnv<'t, D>> {
@@ -1379,9 +1478,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Frame<
         suspend: bool,
     ) -> PendingChild<'t, D> {
         PendingChild {
-            request: Request {
+            request: Input {
                 program,
-                context: self.request.context,
                 node,
                 env,
                 three: self.request.three,
@@ -1390,19 +1488,19 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Frame<
                 } else {
                     self.request.each.clone()
                 },
-                following: self.request.following.clone(),
             },
             depth: self.depth,
         }
     }
 }
 struct Lane<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> {
+    meta: Option<LaneMeta>,
     stack: Vec<Frame<'t, D>>,
     returned: Option<Result<'t, D>>,
     done: Option<Result<'t, D>>,
 }
 struct PendingChild<'t, D: Doc<Source: Content<Underlying = u8>>> {
-    request: Request<'t, D>,
+    request: Input<'t, D>,
     depth: u32,
 }
 enum Action<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> {
@@ -1414,14 +1512,15 @@ enum Action<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>>
     Finish(Result<'t, D>),
     Leaf,
 }
-fn excluded<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>, H: Host<'t, D>>(
+fn excluded<'t, D: Doc<Source: Content<Underlying = u8>>, H: Host<'t, D>>(
     host: &mut H,
-    r: &Request<'t, D>,
+    context: u32,
+    each: Option<&Exclusion>,
     env: &MetaVarEnv<'t, D>,
 ) -> bool {
-    r.each.as_ref().is_some_and(|e| {
-        host.binding_range(r.context, env, &e.name)
-            .is_some_and(|r| e.ranges.contains(&(r.start, r.end)))
+    each.is_some_and(|e| {
+        host.binding_range(context, env, &e.name)
+            .is_some_and(|range| e.ranges.contains(&(range.start, range.end)))
     })
 }
 fn walk_search<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>>(
@@ -1503,10 +1602,11 @@ fn work_failure<
     H: Host<'t, D>,
 >(
     f: &mut Frame<'t, D>,
+    context: u32,
     host: &mut H,
 ) -> Result<'t, D> {
     let failure = host
-        .failure(f.request.context)
+        .failure(context)
         .unwrap_or(Failure::Utility(UtilLimit::Work));
     let mut r = f.result(0, None);
     r.failure = Some(failure);
@@ -1631,9 +1731,10 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             .absorbed_kind_stages
             .max(programs.absorbed_kind_stages);
         self.metrics.submissions += 1;
-        let mut slots: Vec<Option<(S::Token, Request<'t, D>)>> = (0..width).map(|_| None).collect();
+        let mut slots: Vec<Option<(S::Token, Input<'t, D>)>> = (0..width).map(|_| None).collect();
         let mut lanes: Vec<Lane<'t, D>> = (0..width)
             .map(|_| Lane {
+                meta: None,
                 stack: Vec::new(),
                 returned: None,
                 done: None,
@@ -1667,7 +1768,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     };
                     free.pop();
                     let regions_enabled = request.each.is_none()
-                        && host.can_remember(&request)
+                        && host.can_remember(request.context, &request.node)
                         && (request.node.get_doc() as &dyn std::any::Any)
                             .is::<crate::code_rule_dsl::tape::TapeDoc>();
                     let ordered = if regions_enabled {
@@ -1690,10 +1791,12 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                         .entry(request.node.get_doc() as *const D as usize)
                         .or_default() += 1;
                     *programs_seen.entry(request.program).or_default() += 1;
+                    let (input, meta) = request.split();
+                    lanes[index].meta = Some(meta);
                     lanes[index]
                         .stack
-                        .push(Frame::new(request.clone(), utility_depth));
-                    slots[index] = Some((token, request));
+                        .push(Frame::new(input.clone(), utility_depth));
+                    slots[index] = Some((token, input));
                     self.metrics.source_refills += usize::from(admitted >= width);
                     admitted += 1;
                     self.metrics.submitted_roots += 1;
@@ -1729,8 +1832,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                 };
                 if lane.returned.as_ref().is_none_or(|r| r.failure.is_none()) {
                     let failure = *failures
-                        .entry(frame.request.context)
-                        .or_insert_with(|| host.failure(frame.request.context));
+                        .entry(lane.meta.as_ref().unwrap().context)
+                        .or_insert_with(|| host.failure(lane.meta.as_ref().unwrap().context));
                     if let Some(failure) = failure {
                         let frame = lane.stack.last_mut().unwrap();
                         if let Some(r) = lane.returned.take() {
@@ -1751,7 +1854,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     && self.reject_kind_guard(
                         programs,
                         frame.request.program,
-                        &frame.request,
+                        frame.request.leaf(lane.meta.as_ref().unwrap(), frame.depth),
                         host,
                     );
                 if guard_rejected {
@@ -1812,7 +1915,10 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                         {
                             positions.push(position);
                             jobs.push(NavigationRequest {
-                                request: f.request.clone(),
+                                request: f
+                                    .request
+                                    .leaf(lanes[i].meta.as_ref().unwrap(), f.depth)
+                                    .to_request(),
                                 utility_depth: f.depth,
                                 related: w.related.clone(),
                                 filter: w.filter.clone(),
@@ -1828,6 +1934,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     if !jobs.is_empty() {
                         self.metrics.navigation_batches += 1;
                         self.metrics.navigation_lanes += jobs.len();
+                        self.metrics.owned_leaf_requests += jobs.len();
                         let results = host.navigate(programs, jobs);
                         assert_eq!(
                             results.len(),
@@ -1901,7 +2008,14 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     let lane = &mut lanes[i];
                     let returned = lane.returned.take();
                     let frame = lane.stack.last_mut().unwrap();
-                    let action = self.advance(programs, frame, returned, operation, host);
+                    let action = self.advance(
+                        programs,
+                        frame,
+                        returned,
+                        operation,
+                        lane.meta.as_ref().unwrap(),
+                        host,
+                    );
                     if let Some(family) = self.chain_control(programs, lane, action, host) {
                         families[family].push(i);
                     }
@@ -1915,7 +2029,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     .iter()
                     .map(|&i| {
                         let frame = lanes[i].stack.last().unwrap();
-                        (frame.leaf_request(programs), frame.depth)
+                        frame.leaf(programs, lanes[i].meta.as_ref().unwrap())
                     })
                     .collect();
                 let results = self.atomic_batch(programs, atomic_family, jobs, host);
@@ -1936,7 +2050,14 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     }
                     let lane = &mut lanes[j];
                     let action = if composite {
-                        self.advance(programs, lane.stack.last_mut().unwrap(), Some(r), 8, host)
+                        self.advance(
+                            programs,
+                            lane.stack.last_mut().unwrap(),
+                            Some(r),
+                            8,
+                            lane.meta.as_ref().unwrap(),
+                            host,
+                        )
                     } else {
                         Action::Finish(r)
                     };
@@ -1968,7 +2089,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     programs_seen.remove(&request.program);
                 }
                 let answer = lanes[index].done.take().expect("completed lane");
-                source.completed(token, request, answer, host);
+                let meta = lanes[index].meta.take().expect("resident metadata");
+                source.completed(token, request.into_request(meta), answer, host);
                 free.push(index);
                 refill = true;
             }
@@ -1994,7 +2116,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         &mut self,
         programs: &Programs,
         program: u32,
-        request: &Request<'t, D>,
+        request: LeafJob<'_, 't, D>,
         host: &mut H,
     ) -> bool {
         let Some(guard) = &programs.entries[program as usize].guard else {
@@ -2004,7 +2126,13 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             .kinds
             .as_ref()
             .is_some_and(|kinds| kinds.binary_search(&request.node.kind_id()).is_err())
-            || (guard.requires_unexcluded && excluded(host, request, &request.env));
+            || (guard.requires_unexcluded
+                && excluded(
+                    host,
+                    request.meta.context,
+                    request.each.map(|e| e.as_ref()),
+                    request.env,
+                ));
         self.metrics.kind_guard_checks += 1;
         if rejected {
             self.metrics.kind_guard_rejects += 1;
@@ -2017,11 +2145,17 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         frame: &Frame<'t, D>,
         children: &[u32],
         index: &mut usize,
+        meta: &LaneMeta,
         host: &mut H,
     ) {
         while *index < children.len() {
             let program = children[*index];
-            if !self.reject_kind_guard(programs, program, &frame.request, host) {
+            if !self.reject_kind_guard(
+                programs,
+                program,
+                frame.request.leaf(meta, frame.depth),
+                host,
+            ) {
                 break;
             }
             self.metrics.kind_guard_alternative_skips += 1;
@@ -2033,24 +2167,25 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         &mut self,
         programs: &Programs,
         family: usize,
-        jobs: Vec<(Request<'t, D>, u32)>,
+        jobs: Vec<LeafJob<'_, 't, D>>,
         host: &mut H,
     ) -> Vec<Result<'t, D>> {
+        self.metrics.borrowed_leaf_lanes += jobs.len();
         if !jobs
             .iter()
-            .any(|(request, _)| programs.entries[request.program as usize].guard.is_some())
+            .any(|request| programs.entries[request.program as usize].guard.is_some())
         {
             return self.atomic_batch_unguarded(programs, family, jobs, host);
         }
         let mut output: Vec<_> = (0..jobs.len()).map(|_| None).collect();
         let mut accepted = Vec::new();
         let mut positions = Vec::new();
-        for (position, (request, depth)) in jobs.into_iter().enumerate() {
-            if self.reject_kind_guard(programs, request.program, &request, host) {
-                output[position] = Some(Result::new(0, request.env));
+        for (position, request) in jobs.into_iter().enumerate() {
+            if self.reject_kind_guard(programs, request.program, request, host) {
+                output[position] = Some(Result::new(0, request.env.clone()));
             } else {
                 positions.push(position);
-                accepted.push((request, depth));
+                accepted.push(request);
             }
         }
         for (position, answer) in positions
@@ -2065,7 +2200,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         &mut self,
         programs: &Programs,
         family: usize,
-        jobs: Vec<(Request<'t, D>, u32)>,
+        jobs: Vec<LeafJob<'_, 't, D>>,
         host: &mut H,
     ) -> Vec<Result<'t, D>> {
         if jobs.is_empty() {
@@ -2079,7 +2214,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         let results = if family == 0 {
             let requests = jobs
                 .iter()
-                .map(|(r, _)| {
+                .map(|r| {
                     let Op::Pattern(pattern) = &programs.entries[r.program as usize].op else {
                         unreachable!()
                     };
@@ -2097,7 +2232,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             )
             .into_iter()
             .zip(&jobs)
-            .map(|(env, (r, _))| {
+            .map(|(env, r)| {
                 Result::new(
                     if env.is_some() { 2 } else { 0 },
                     env.unwrap_or_else(|| r.env.clone()),
@@ -2105,42 +2240,44 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             })
             .collect()
         } else if family == 4 {
+            self.metrics.owned_leaf_requests += jobs.len();
             host.compare(
                 programs,
                 jobs.iter()
-                    .map(|(r, depth)| {
+                    .map(|r| {
                         let Op::Compare(comparison) = &programs.entries[r.program as usize].op
                         else {
                             unreachable!()
                         };
                         CompareRequest {
                             comparison: comparison.clone(),
-                            request: r.clone(),
-                            utility_depth: *depth,
+                            request: r.to_request(),
+                            utility_depth: r.depth,
                         }
                     })
                     .collect(),
             )
         } else if family == 5 {
+            self.metrics.owned_leaf_requests += jobs.len();
             host.evaluate(
                 programs,
                 jobs.iter()
-                    .map(|(r, depth)| {
+                    .map(|r| {
                         let Op::Semantic(semantic) = &programs.entries[r.program as usize].op
                         else {
                             unreachable!()
                         };
                         SemanticRequest {
                             semantic: semantic.clone(),
-                            request: r.clone(),
-                            utility_depth: *depth,
+                            request: r.to_request(),
+                            utility_depth: r.depth,
                         }
                     })
                     .collect(),
             )
         } else {
             jobs.iter()
-                .map(|(r, _)| {
+                .map(|r| {
                     let mut env = r.env.clone();
                     let truth = match &programs.entries[r.program as usize].op {
                         Op::Kind(kind) => {
@@ -2168,7 +2305,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                         }
                         Op::Pass => 2,
                         Op::Unexcluded => {
-                            if excluded(host, r, &env) {
+                            if excluded(host, r.meta.context, r.each.map(|e| e.as_ref()), &env) {
                                 0
                             } else {
                                 2
@@ -2197,12 +2334,12 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         results
             .into_iter()
             .zip(jobs)
-            .map(|(mut answer, (request, _))| {
-                if answer.failure.is_some() || (answer.truth == 1 && !request.three) {
+            .map(|(mut answer, request)| {
+                if answer.failure.is_some() || (answer.truth == 1 && !request.meta.three) {
                     answer.truth = 0;
                 }
                 if answer.truth != 2 {
-                    answer.env = request.env;
+                    answer.env = request.env.clone();
                 }
                 answer
             })
@@ -2216,15 +2353,15 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         families: &mut [Vec<usize>; 7],
         host: &mut H,
     ) {
-        let mut positions = Vec::new();
-        for &i in &ready[3] {
-            let frame = lanes[i].stack.last().unwrap();
-            if matches!(frame.state, State::Start)
-                && programs.entries[frame.request.program as usize].pipeline
-            {
-                positions.push(i);
-            }
-        }
+        let positions: Vec<_> = ready[3]
+            .iter()
+            .copied()
+            .filter(|&i| {
+                let frame = lanes[i].stack.last().unwrap();
+                matches!(frame.state, State::Start)
+                    && programs.entries[frame.request.program as usize].pipeline
+            })
+            .collect();
         if positions.is_empty() {
             return;
         }
@@ -2239,9 +2376,12 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                 else {
                     unreachable!()
                 };
-                let mut request = frame.request.clone();
-                request.program = rule;
-                (request, frame.depth)
+                LeafJob {
+                    program: rule,
+                    ..frame
+                        .request
+                        .leaf(lanes[i].meta.as_ref().unwrap(), frame.depth)
+                }
             })
             .collect();
         self.metrics.pipeline_eliminated_frames += positions.len();
@@ -2266,12 +2406,12 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             }
         }
         while !rows.is_empty() {
-            let mut jobs: [Vec<(Request<'t, D>, u32)>; 7] = std::array::from_fn(|_| Vec::new());
-            let mut destinations: [Vec<usize>; 7] = std::array::from_fn(|_| Vec::new());
             let mut keep = vec![false; rows.len()];
+            // Plan each row before borrowing captures and root metadata for kernels.
             for (position, (i, trial, index)) in rows.iter_mut().enumerate() {
+                let context = lanes[*i].meta.as_ref().unwrap().context;
                 let frame = lanes[*i].stack.last_mut().unwrap();
-                if let Some(failure) = host.failure(frame.request.context) {
+                if let Some(failure) = host.failure(context) {
                     let mut result = frame.result(0, None);
                     result.failure = Some(failure);
                     finished.push((*i, result));
@@ -2291,20 +2431,46 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     finished.push((*i, frame.result(2, Some(trial.clone()))));
                     continue;
                 }
-                let (name, program) = &constraints[*index];
-                let mut request = frame.request.clone();
-                request.program = *program;
-                request.node = trial.get_match(name).unwrap().clone();
-                request.env = trial.clone();
-                let family = programs.atomic(*program).unwrap();
-                jobs[family].push((request, frame.depth));
+                keep[position] = true;
+            }
+            let mut jobs: [Vec<LeafJob<'_, 't, D>>; 7] = std::array::from_fn(|_| Vec::new());
+            let mut destinations: [Vec<usize>; 7] = std::array::from_fn(|_| Vec::new());
+            for (position, (i, trial, index)) in rows.iter().enumerate() {
+                if !keep[position] {
+                    continue;
+                }
+                let frame = lanes[*i].stack.last().unwrap();
+                let Op::Constrained { constraints, .. } =
+                    &programs.entries[frame.request.program as usize].op
+                else {
+                    unreachable!()
+                };
+                let program = constraints[*index].1;
+                let family = programs.atomic(program).unwrap();
+                jobs[family].push(LeafJob {
+                    program,
+                    node: trial.get_match(&constraints[*index].0).unwrap(),
+                    env: trial,
+                    each: frame.request.each.as_ref(),
+                    meta: lanes[*i].meta.as_ref().unwrap(),
+                    depth: frame.depth,
+                });
                 destinations[family].push(position);
             }
+            keep.fill(false);
+            let mut answers: [Vec<Result<'t, D>>; 7] = std::array::from_fn(|_| Vec::new());
             for family in 0..7 {
                 self.metrics.pipeline_eliminated_frames += jobs[family].len();
-                let answers =
+                answers[family] =
                     self.atomic_batch(programs, family, std::mem::take(&mut jobs[family]), host);
-                for (position, answer) in destinations[family].drain(..).zip(answers) {
+            }
+            drop(jobs);
+            // No borrowed job survives when trial environments and frame costs change.
+            for family in 0..7 {
+                for (position, answer) in destinations[family]
+                    .drain(..)
+                    .zip(std::mem::take(&mut answers[family]))
+                {
                     let (i, trial, index) = &mut rows[position];
                     let frame = lanes[*i].stack.last_mut().unwrap();
                     frame.absorb(&answer);
@@ -2337,8 +2503,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         ready[3].retain(|i| !handled.contains(i));
         for (i, mut result) in finished {
             if result.failure.is_none() {
-                if let Some(failure) = host.failure(lanes[i].stack.last().unwrap().request.context)
-                {
+                if let Some(failure) = host.failure(lanes[i].meta.as_ref().unwrap().context) {
                     result.truth = 0;
                     result.failure = Some(failure);
                     result.env = lanes[i].stack.last().unwrap().request.env.clone();
@@ -2367,7 +2532,9 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         let mut positions = Vec::new();
         for group in ready.iter() {
             for &i in group {
-                let frame = lanes[i].stack.last_mut().unwrap();
+                let lane = &mut lanes[i];
+                let context = lane.meta.as_ref().unwrap().context;
+                let frame = lane.stack.last_mut().unwrap();
                 if !matches!(frame.state, State::Start) || frame.region_attempted {
                     continue;
                 }
@@ -2376,7 +2543,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                 };
                 frame.region_attempted = true;
                 if frame.request.each.is_none()
-                    && host.can_remember(&frame.request)
+                    && host.can_remember(context, &frame.request.node)
                     && (frame.request.node.get_doc() as &dyn Any).is::<TapeDoc>()
                 {
                     positions.push((i, closed));
@@ -2398,7 +2565,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                 .entry(doc as *const TapeDoc as usize)
                 .or_insert_with(|| {
                     let id = regions.executor.register_document(doc);
-                    regions.owners.push(frame.request.context);
+                    regions.owners.push(lanes[i].meta.as_ref().unwrap().context);
                     id
                 });
             requests.push(wave::Lane {
@@ -2415,8 +2582,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         }
         let mut accepted = rustc_hash::FxHashSet::default();
         for ((i, _), answer) in positions.into_iter().zip(answers) {
+            let context = lanes[i].meta.as_ref().unwrap().context;
             let frame = lanes[i].stack.last_mut().unwrap();
-            let context = frame.request.context;
             let failure = host.failure(context);
             if failure.is_none()
                 && (answer.incomplete
@@ -2517,7 +2684,14 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             self.metrics.fused_control_steps += 1;
             let family = frame.control_family(programs);
             self.metrics.fused_control_family_lanes[family] += 1;
-            action = self.advance(programs, frame, lane.returned.take(), family, host);
+            action = self.advance(
+                programs,
+                frame,
+                lane.returned.take(),
+                family,
+                lane.meta.as_ref().unwrap(),
+                host,
+            );
         }
         unreachable!("bounded control chain")
     }
@@ -2712,6 +2886,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         f: &mut Frame<'t, D>,
         returned: Option<Result<'t, D>>,
         family: usize,
+        meta: &LaneMeta,
         host: &mut H,
     ) -> Action<'t, D> {
         self.metrics.control_family_lanes[family] += 1;
@@ -2734,7 +2909,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     }
                     let mut index = 0;
                     if any {
-                        self.skip_guarded_alternatives(p, f, children, &mut index, host);
+                        self.skip_guarded_alternatives(p, f, children, &mut index, meta, host);
                     }
                     if index == children.len() {
                         return Action::Finish(f.result(0, None));
@@ -2782,12 +2957,12 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                         && f.request.each.is_none()
                         && (plan.axis != 1 || f.request.three || plan.filter.is_none())
                         && plan.related.as_ref().is_some_and(|r| r.closure_eligible())
-                        && host.can_remember(&f.request)
+                        && host.can_remember(meta.context, &f.request.node)
                     {
                         let key = ClosureKey {
                             owner: p.identity,
                             program: f.request.program,
-                            context: f.request.context,
+                            context: meta.context,
                             doc: f.request.node.get_doc() as *const D as usize,
                             node: f.request.node.node_id(),
                             three: f.request.three,
@@ -2853,14 +3028,16 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     let Some(parent) = f.request.node.parent() else {
                         return Action::Finish(f.result(0, None));
                     };
-                    let cache = cache_term.filter(|_| host.is_file(&f.request)).map(|term| {
-                        (
-                            p.identity,
-                            term,
-                            f.request.node.get_doc() as *const D as usize,
-                            parent.node_id(),
-                        )
-                    });
+                    let cache = cache_term
+                        .filter(|_| host.is_file(meta.context, &f.request.node))
+                        .map(|term| {
+                            (
+                                p.identity,
+                                term,
+                                f.request.node.get_doc() as *const D as usize,
+                                parent.node_id(),
+                            )
+                        });
                     if cache.is_some() && child.is_some() {
                         f.clause_state_read = true;
                     }
@@ -2914,8 +3091,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                             return Action::Finish(f.result(0, None));
                         }
                         let replay_before = f.replay;
-                        if !host.spend(f.request.context, 1) {
-                            return Action::Finish(work_failure(f, host));
+                        if !host.spend(meta.context, 1) {
+                            return Action::Finish(work_failure(f, meta.context, host));
                         }
                         f.work += 1;
                         if cache.is_none() {
@@ -2973,8 +3150,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                             // The target rejects before doing any work. Its
                             // caller still spends the native utility entry
                             // charge and observes the same depth limit.
-                            if !host.spend(f.request.context, 1) {
-                                return Action::Finish(work_failure(f, host));
+                            if !host.spend(meta.context, 1) {
+                                return Action::Finish(work_failure(f, meta.context, host));
                             }
                             f.work += 1;
                             f.replay += 1;
@@ -2984,7 +3161,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                         }
                     }
                     let mut key = memo_term
-                        .filter(|_| host.can_remember(&f.request))
+                        .filter(|_| host.can_remember(meta.context, &f.request.node))
                         .map(|term| {
                             Box::new(MemoKey {
                                 term,
@@ -3004,7 +3181,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                                     scope.as_deref(),
                                     f.request.each.as_ref().map(|e| e.name.as_str()),
                                 ),
-                                following: f.request.following.clone(),
+                                following: meta.following.clone(),
                                 owner: p.identity,
                             })
                         });
@@ -3016,15 +3193,15 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     if cached.is_none()
                         && let Some(key) = key.as_mut()
                     {
-                        key.context = Some(f.request.context);
+                        key.context = Some(meta.context);
                         cached = self.memo.get(key.as_ref()).filter(|c| {
                             f.depth.saturating_add(c.levels) <= super::util::MAX_UTIL_DEPTH
                         });
                     }
                     if let Some(cached) = cached {
                         let cached = cached.clone();
-                        if !host.spend(f.request.context, cached.replay_work) {
-                            return Action::Finish(work_failure(f, host));
+                        if !host.spend(meta.context, cached.replay_work) {
+                            return Action::Finish(work_failure(f, meta.context, host));
                         }
                         let env = if let Some(delta) = &cached.delta {
                             cohort_memo::apply(delta, f.request.env.clone())
@@ -3043,8 +3220,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                             failure: None,
                         });
                     }
-                    if !host.spend(f.request.context, 1) {
-                        return Action::Finish(work_failure(f, host));
+                    if !host.spend(meta.context, 1) {
+                        return Action::Finish(work_failure(f, meta.context, host));
                     }
                     f.work += 1;
                     f.replay += 1;
@@ -3114,7 +3291,9 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                 f.absorb(&r);
                 let entry = &p.entries[children[index] as usize];
                 if any {
-                    if r.truth == 2 && !excluded(host, &f.request, &r.env) {
+                    if r.truth == 2
+                        && !excluded(host, meta.context, f.request.each.as_deref(), &r.env)
+                    {
                         return Action::Finish(f.result(2, Some(r.env)));
                     }
                     if r.truth == 1 {
@@ -3140,7 +3319,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                 }
                 index += 1;
                 if any {
-                    self.skip_guarded_alternatives(p, f, children, &mut index, host);
+                    self.skip_guarded_alternatives(p, f, children, &mut index, meta, host);
                 }
                 if !any && let Some(withheld) = &mut withheld {
                     while index < children.len()
@@ -3252,8 +3431,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                 }
                 state.index += 1;
                 if state.index < state.nodes.len() {
-                    if !host.spend(f.request.context, 1) {
-                        return Action::Finish(work_failure(f, host));
+                    if !host.spend(meta.context, 1) {
+                        return Action::Finish(work_failure(f, meta.context, host));
                     }
                     f.work += 1;
                     if state.cache.is_none() {
@@ -3378,7 +3557,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             }
             State::Search(mut search) => {
                 let input = search.rollback_input.take();
-                let mut action = self.search(p, f, search, returned, host);
+                let mut action = self.search(p, f, search, returned, meta, host);
                 if let Action::Finish(answer) = &mut action {
                     if answer.truth != 2 || answer.failure.is_some() {
                         if let Some(input) = input {
@@ -3402,6 +3581,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         f: &mut Frame<'t, D>,
         mut s: Box<Search<'t, D>>,
         returned: Option<Result<'t, D>>,
+        meta: &LaneMeta,
         host: &mut H,
     ) -> Action<'t, D> {
         if let Some(r) = returned {
@@ -3432,7 +3612,9 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                             return Action::Finish(f.result(2, None));
                         }
                     } else {
-                        if r.truth == 2 && !excluded(host, &f.request, &r.env) {
+                        if r.truth == 2
+                            && !excluded(host, meta.context, f.request.each.as_deref(), &r.env)
+                        {
                             return Action::Finish(f.result(2, Some(r.env)));
                         }
                         if r.truth == 1 {
@@ -3544,8 +3726,8 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                         continue;
                     }
                     if s.counter.is_some() {
-                        if !host.spend(f.request.context, 1) {
-                            return Action::Finish(work_failure(f, host));
+                        if !host.spend(meta.context, 1) {
+                            return Action::Finish(work_failure(f, meta.context, host));
                         }
                         f.work += 1;
                         f.replay += 1;
@@ -3640,6 +3822,268 @@ mod tests {
     use ast_grep_core::{AstGrep as Root, language::Language, matcher::KindMatcher};
     use std::{borrow::Cow, collections::HashMap, sync::OnceLock};
     #[test]
+    fn lane_metadata_survives_foreign_constraints_and_source_refills() {
+        struct Probe {
+            root: usize,
+            foreign_queries: usize,
+            compared: Vec<u32>,
+        }
+        impl<'t, D: Doc<Source: Content<Underlying = u8>>> Host<'t, D> for Probe {
+            fn is_file(&self, _: u32, node: &Node<'t, D>) -> bool {
+                node.root() as *const _ as usize == self.root
+            }
+            fn can_remember(&self, context: u32, node: &Node<'t, D>) -> bool {
+                self.is_file(context, node)
+            }
+            fn evaluate(
+                &mut self,
+                _: &Programs,
+                _: Vec<SemanticRequest<'t, D>>,
+            ) -> Vec<Result<'t, D>> {
+                panic!("semantic")
+            }
+            fn compare(
+                &mut self,
+                _: &Programs,
+                jobs: Vec<CompareRequest<'t, D>>,
+            ) -> Vec<Result<'t, D>> {
+                jobs.into_iter()
+                    .map(|job| {
+                        let context = job.request.context;
+                        self.compared.push(context);
+                        assert_eq!(job.utility_depth, 3);
+                        assert_eq!(job.request.node.text(), "x");
+                        assert_eq!(job.request.following.as_ref(), &[(context as usize, 7)]);
+                        assert_eq!(job.request.three, context != 10);
+                        assert_eq!(job.request.each.is_some(), context == 10);
+                        let mut env = (*job.request.env).clone();
+                        env.insert("LEAK", job.request.node).unwrap();
+                        let mut answer = Result::new(1, Arc::new(env));
+                        answer.work = 2;
+                        answer.replay_work = 1;
+                        answer.levels = 2;
+                        answer.clause_state_read = true;
+                        answer
+                    })
+                    .collect()
+            }
+            fn spend(&mut self, _: u32, amount: usize) -> bool {
+                // Only the foreign nthChild sibling probe spends through this hook.
+                assert_eq!(amount, 1);
+                self.foreign_queries += 1;
+                true
+            }
+        }
+        struct Feeding<'t, D: Doc<Source: Content<Underlying = u8>>> {
+            pending: VecDeque<(usize, Request<'t, D>)>,
+            originals: Vec<Request<'t, D>>,
+            answers: Vec<(usize, u8)>,
+        }
+        impl<'t, D: Doc<Source: Content<Underlying = u8>>> Source<'t, D, Probe> for Feeding<'t, D> {
+            type Token = usize;
+            fn next(&mut self, _: &mut Probe) -> Option<(usize, Request<'t, D>)> {
+                self.pending.pop_front()
+            }
+            fn completed(
+                &mut self,
+                token: usize,
+                request: Request<'t, D>,
+                answer: Result<'t, D>,
+                _: &mut Probe,
+            ) {
+                let original = &self.originals[token];
+                assert_eq!(
+                    (request.program, request.context, request.three),
+                    (original.program, original.context, original.three)
+                );
+                assert_eq!(request.node.node_id(), original.node.node_id());
+                assert!(std::ptr::eq(request.node.root(), original.node.root()));
+                assert!(Arc::ptr_eq(&request.env, &original.env));
+                assert!(Arc::ptr_eq(&request.following, &original.following));
+                assert_eq!(
+                    request.each.as_ref().map(Arc::as_ptr),
+                    original.each.as_ref().map(Arc::as_ptr)
+                );
+                assert_eq!((answer.work, answer.replay_work, answer.levels), (3, 2, 2));
+                assert!(answer.clause_state_read && answer.failure.is_none());
+                assert!(answer.env.get_match("X").is_none());
+                assert!(answer.env.get_match("LEAK").is_none());
+                self.answers.push((token, answer.truth));
+                if token == 0 {
+                    self.pending.push_back((2, self.originals[2].clone()));
+                }
+            }
+        }
+        let local = Root::str("f(x);", GrammarDialect::JavaScript);
+        let foreign = Root::str("other;", GrammarDialect::JavaScript);
+        let node = local
+            .root()
+            .dfs()
+            .find(|node| node.kind() == "call_expression")
+            .unwrap();
+        let other = foreign
+            .root()
+            .dfs()
+            .find(|node| node.kind() == "identifier")
+            .unwrap();
+        let comparison = super::super::Comparison {
+            left: "X".into(),
+            right: "X".into(),
+            op: super::super::CompareOp::Eq,
+            collation: super::super::Collation::Ordinal,
+            text: super::super::CompareText::Source,
+            reading: None,
+            transform: None,
+            commute: Vec::new(),
+        };
+        let rule = AstMatcher::Constrained(Box::new(super::super::Constrained {
+            rule: pattern("f($X)"),
+            constraints: vec![
+                (
+                    "FOREIGN".into(),
+                    AstMatcher::NthChild(Box::new(super::super::NthChild {
+                        position: super::super::NthPosition { step: 0, offset: 1 },
+                        of_rule: Some(kind("identifier")),
+                        reverse: false,
+                        capture_free: OnceLock::new(),
+                    })),
+                ),
+                ("X".into(), AstMatcher::Compare(Box::new(comparison))),
+            ],
+        }));
+        let mut programs = Programs::default();
+        let program = programs.lower(&rule);
+        let originals: Vec<_> = [10, 20, 30]
+            .into_iter()
+            .map(|context| {
+                let mut env = MetaVarEnv::new();
+                env.insert("FOREIGN", other.clone()).unwrap();
+                Request {
+                    program,
+                    context,
+                    node: node.clone(),
+                    env: Arc::new(env),
+                    three: context != 10,
+                    each: (context == 10).then(|| {
+                        Arc::new(Exclusion {
+                            name: "X".into(),
+                            ranges: BTreeSet::new(),
+                        })
+                    }),
+                    following: Arc::new(vec![(context as usize, 7)]),
+                }
+            })
+            .collect();
+        let pending = originals
+            .iter()
+            .take(2)
+            .enumerate()
+            .map(|(i, request)| (i, request.clone()))
+            .collect();
+        let mut source = Feeding {
+            pending,
+            originals,
+            answers: Vec::new(),
+        };
+        let mut host = Probe {
+            root: local.root().root() as *const _ as usize,
+            foreign_queries: 0,
+            compared: Vec::new(),
+        };
+        let mut bank = Bank::default();
+        bank.execute_source(&programs, &mut source, &mut host, 2, 3);
+        source.answers.sort_unstable();
+        host.compared.sort_unstable();
+        assert_eq!(source.answers, vec![(0, 0), (1, 1), (2, 1)]);
+        assert_eq!(host.compared, vec![10, 20, 30]);
+        assert_eq!(
+            host.foreign_queries, 3,
+            "foreign nodes must never use the file sibling cache"
+        );
+    }
+
+    #[test]
+    fn borrowed_pure_leaves_preserve_transactions_without_owned_requests() {
+        let doc = Root::str("f(a); f(b);", GrammarDialect::JavaScript);
+        let nodes: Vec<_> = doc
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "call_expression")
+            .collect();
+        let rule = AstMatcher::All(vec![
+            AstMatcher::Regex(regex::Regex::new("^f").unwrap()),
+            AstMatcher::Constrained(Box::new(super::super::Constrained {
+                rule: pattern("$F($X)"),
+                constraints: vec![
+                    (
+                        "F".into(),
+                        AstMatcher::Regex(regex::Regex::new("^f$").unwrap()),
+                    ),
+                    ("X".into(), kind("identifier")),
+                ],
+            })),
+        ]);
+        let mut programs = Programs::default();
+        let program = programs.lower(&rule);
+        let mut conflict = MetaVarEnv::new();
+        let first_arg = nodes[0].dfs().find(|node| node.text() == "a").unwrap();
+        conflict.insert("F", first_arg).unwrap();
+        let inputs = [Arc::new(MetaVarEnv::new()), Arc::new(conflict)];
+        let following = Arc::new(vec![(11, 13)]);
+        let requests: Vec<_> = inputs
+            .iter()
+            .enumerate()
+            .map(|(i, env)| Request {
+                program,
+                context: i as u32,
+                node: nodes[i].clone(),
+                env: env.clone(),
+                three: true,
+                each: None,
+                following: following.clone(),
+            })
+            .collect();
+        let expected: Vec<_> = requests
+            .iter()
+            .map(|request| {
+                let mut env = Cow::Owned((*request.env).clone());
+                let truth = if rule
+                    .match_node_with_env(request.node.clone(), &mut env)
+                    .is_some()
+                {
+                    2
+                } else {
+                    0
+                };
+                (truth, HashMap::<String, String>::from(env.into_owned()))
+            })
+            .collect();
+        let mut bank = Bank::default();
+        let answers = bank.execute(&programs, requests, &mut SyntaxHost);
+        for (answer, expected) in answers.iter().zip(expected) {
+            assert_eq!(
+                (
+                    answer.truth,
+                    HashMap::<String, String>::from((*answer.env).clone())
+                ),
+                expected
+            );
+            assert_eq!((answer.work, answer.replay_work, answer.levels), (0, 0, 0));
+            assert!(answer.failure.is_none());
+        }
+        assert!(Arc::ptr_eq(&answers[1].env, &inputs[1]));
+        assert!(bank.metrics.borrowed_leaf_lanes >= 5);
+        assert_eq!(bank.metrics.owned_leaf_requests, 0);
+        assert_eq!(Arc::strong_count(&following), 1);
+        assert!(
+            std::mem::size_of::<Input<'_, ast_grep_core::tree_sitter::StrDoc<GrammarDialect>>>()
+                < std::mem::size_of::<
+                    Request<'_, ast_grep_core::tree_sitter::StrDoc<GrammarDialect>>,
+                >()
+        );
+    }
+
+    #[test]
     fn utility_frontier_failure_retains_completed_body_relative_peak() {
         let doc = Root::str("a;", GrammarDialect::JavaScript);
         let input = Arc::new(MetaVarEnv::new());
@@ -3652,7 +4096,9 @@ mod tests {
                 three: true,
                 each: None,
                 following: Arc::new(Vec::new()),
-            },
+            }
+            .split()
+            .0,
             0,
         );
         frame.state = State::Util { key: None };
@@ -3679,7 +4125,7 @@ mod tests {
     impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Host<'t, D>
         for SyntaxHost
     {
-        fn can_remember(&self, _: &Request<'t, D>) -> bool {
+        fn can_remember(&self, _: u32, _: &Node<'t, D>) -> bool {
             true
         }
         fn evaluate(&mut self, _: &Programs, _: Vec<SemanticRequest<'t, D>>) -> Vec<Result<'t, D>> {
@@ -4003,7 +4449,7 @@ mod tests {
     fn sibling_cache_excludes_fill_work_and_recounts_non_file_documents() {
         struct FileHost(bool);
         impl<'t, D: Doc<Source: Content<Underlying = u8>>> Host<'t, D> for FileHost {
-            fn is_file(&self, _: &Request<'t, D>) -> bool {
+            fn is_file(&self, _: u32, _: &Node<'t, D>) -> bool {
                 self.0
             }
             fn evaluate(
@@ -5498,7 +5944,7 @@ mod tests {
             ) -> Vec<Result<'t, D>> {
                 panic!("compare")
             }
-            fn can_remember(&self, _: &Request<'t, D>) -> bool {
+            fn can_remember(&self, _: u32, _: &Node<'t, D>) -> bool {
                 true
             }
             fn region_allowance(&self, _: u32) -> usize {
@@ -5904,7 +6350,7 @@ mod tests {
             ) -> Vec<Result<'t, D>> {
                 panic!("compare")
             }
-            fn can_remember(&self, _: &Request<'t, D>) -> bool {
+            fn can_remember(&self, _: u32, _: &Node<'t, D>) -> bool {
                 true
             }
             fn spend(&mut self, _: u32, amount: usize) -> bool {

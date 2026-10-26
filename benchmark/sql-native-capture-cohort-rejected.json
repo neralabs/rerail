@@ -23,18 +23,18 @@
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)"
   },
   "provenance": {
-    "baseCommit": "b2ebf9014b1a81df46e6ca09632b21bddf727b50",
+    "baseCommit": "a8900db88ece00846066a1f1c0340aa9c94c9dcd",
     "corpusCommit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
     "corpusInventorySha256": "4525032ac7cf058a9134aad9250fd3a400eb4df78c69bfdd89d608057e1b9773",
     "changedRustSources": {
-      "native/src/code_rule_dsl/matcher/cohort.rs": "cc7f7ff80e61f5469419094dda46d4cc3e6a9fe6a3195c8abf5c082a2fa94c56",
-      "native/src/code_rule_dsl/tape.rs": "971d83c2041cd5bd0a26d7f28e4fce2e1d2f82a16bff6d5aa8665f51163e0c57"
+      "native/src/code_rule_dsl/matcher/cohort.rs": "1aa363faf5bffe66e239c959cc4f1d445408dbbf89c880fc129a16a2d91f8ff3",
+      "native/src/code_rule_dsl/matcher/cohort_host.rs": "764e68580dbabd0d1c927e75339673bf06ed88f619631e34a9b7b2f83f8c5ff5"
     },
-    "binarySha256": "bd1da6dbc522efaabd26af3ed9c812a4168c33380e8373a96f793703494a2fbc",
+    "binarySha256": "99c963b087387d5655b146dce528f2464a3f980b7b50725286091a14e1344e2c",
     "rawReportsSha256": {
-      "catalog": "3bb3b98f5d1d0d6f75494acc3021e164d04c1892cc455f6cbdc97c1e2bd0bc6d",
-      "native": "1eb893b4e771a42914e1a2337b5cff687fd6d6e2c2f629c51a14b4d826557d7b",
-      "sql": "031bf55e5b1553d9fd1a2052b85e7666140966daab08df488764d4917651e55e"
+      "catalog": "a1ee77f8bda361737681a5d85c4da42c8817ff20815a4bd689f53cedacb918d8",
+      "native": "f612b3131e6e7ddf2af07eb18f8fa6bb914b7bd77508426f8f0cef5640d96b7a",
+      "sql": "04124d71f649c48e298c5e673eb4606b98ca172f5bccc7e0431135b6bb368920"
     }
   },
   "workload": {
@@ -45,13 +45,13 @@
   },
   "native": {
     "compile": {
-      "cpuNs": 71698000,
-      "wallNs": 71811167
+      "cpuNs": 76751000,
+      "wallNs": 90785584
     },
     "cold": {
-      "cpuNs": 92020902000,
-      "peakRssBytes": 904101888,
-      "wallNs": 24650845625
+      "cpuNs": 82797446000,
+      "peakRssBytes": 903315456,
+      "wallNs": 22060693167
     },
     "findings": 97798,
     "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -59,9 +59,9 @@
     "edits": [
       {
         "time": {
-          "cpuNs": 127675000,
-          "peakRssBytes": 968228864,
-          "wallNs": 127969875
+          "cpuNs": 135110000,
+          "peakRssBytes": 967327744,
+          "wallNs": 137045250
         },
         "findings": 97799,
         "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
@@ -69,9 +69,9 @@
       },
       {
         "time": {
-          "cpuNs": 130211000,
-          "peakRssBytes": 981893120,
-          "wallNs": 130378708
+          "cpuNs": 131469000,
+          "peakRssBytes": 981024768,
+          "wallNs": 133639125
         },
         "findings": 97801,
         "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
@@ -79,9 +79,9 @@
       },
       {
         "time": {
-          "cpuNs": 131728000,
-          "peakRssBytes": 995409920,
-          "wallNs": 132081125
+          "cpuNs": 127620000,
+          "peakRssBytes": 994525184,
+          "wallNs": 127725959
         },
         "findings": 97798,
         "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -91,13 +91,13 @@
   },
   "sql": {
     "compile": {
-      "cpuNs": 73373000,
-      "wallNs": 73460208
+      "cpuNs": 71253000,
+      "wallNs": 71431917
     },
     "cold": {
-      "cpuNs": 150963150000,
-      "peakRssBytes": 1393819648,
-      "wallNs": 42158947083
+      "cpuNs": 123337677000,
+      "peakRssBytes": 1380892672,
+      "wallNs": 34481808750
     },
     "findings": 97798,
     "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -105,9 +105,9 @@
     "edits": [
       {
         "time": {
-          "cpuNs": 157174000,
-          "peakRssBytes": 1393819648,
-          "wallNs": 157363250
+          "cpuNs": 157489000,
+          "peakRssBytes": 1380892672,
+          "wallNs": 158191000
         },
         "findings": 97799,
         "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
@@ -115,9 +115,9 @@
       },
       {
         "time": {
-          "cpuNs": 152788000,
-          "peakRssBytes": 1393819648,
-          "wallNs": 153279458
+          "cpuNs": 144465000,
+          "peakRssBytes": 1380892672,
+          "wallNs": 145087167
         },
         "findings": 97801,
         "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
@@ -125,9 +125,9 @@
       },
       {
         "time": {
-          "cpuNs": 149398000,
-          "peakRssBytes": 1393819648,
-          "wallNs": 149658083
+          "cpuNs": 180826000,
+          "peakRssBytes": 1380892672,
+          "wallNs": 195035834
         },
         "findings": 97798,
         "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -135,24 +135,24 @@
       }
     ]
   },
-  "coldCpuRatio": 1.6405310828185535,
-  "medianEditCpuRatio": 1.1733878090176713,
+  "coldCpuRatio": 1.4896314193073057,
+  "medianEditCpuRatio": 1.1979173797625295,
   "matchingStatements": 23,
   "sqlCompilePhases": {
     "emitCpuMilliseconds": 0.0,
     "emitMilliseconds": 0.0,
-    "finishCpuMilliseconds": 1.204375,
-    "finishMilliseconds": 1.206625,
-    "lowerCpuMilliseconds": 0.65837,
-    "lowerMilliseconds": 0.67325,
+    "finishCpuMilliseconds": 1.121542,
+    "finishMilliseconds": 1.121458,
+    "lowerCpuMilliseconds": 0.615624,
+    "lowerMilliseconds": 0.625882,
     "planCpuMilliseconds": 0.0,
     "planMilliseconds": 0.0
   },
   "sqlSessions": {
     "count": 4,
     "prepared": 4,
-    "setupCpuMilliseconds": 7.1885,
-    "setupMilliseconds": 7.318958,
+    "setupCpuMilliseconds": 6.607667,
+    "setupMilliseconds": 6.759501,
     "tables": 0,
     "texts": 4
   },
@@ -167,11 +167,11 @@
     "texts": 1
   },
   "vmInstructions": 25216565,
-  "matchingCpuNs": 128027273001,
-  "nativeBoundaryCpuNs": 124130030708,
-  "nativeResidualCpuNs": 112023721584,
-  "nativePrefixCpuNs": 12106309124,
-  "sqlAndBoundaryOverheadCpuNs": 3897242293,
+  "matchingCpuNs": 103406021210,
+  "nativeBoundaryCpuNs": 100145697084,
+  "nativeResidualCpuNs": 90072073791,
+  "nativePrefixCpuNs": 10073623293,
+  "sqlAndBoundaryOverheadCpuNs": 3260324126,
   "largestNativeFragments": [
     {
       "rule": "bandit-b101-assert-used:assert-used",
@@ -313,6 +313,7 @@
       58586188,
       4539318
     ],
+    "borrowed_leaf_lanes": 115083024,
     "closure_candidates": 24,
     "closure_hits": 0,
     "control_family_lanes": [
@@ -366,10 +367,10 @@
     "kind_guard_alternative_skips": 24416864,
     "kind_guard_checks": 136074370,
     "kind_guard_rejects": 49364276,
-    "max_action_bytes": 72,
+    "max_action_bytes": 56,
     "max_control_programs_touched": 638,
     "max_documents": 60,
-    "max_frame_bytes": 128,
+    "max_frame_bytes": 112,
     "max_memo_entries": 32768,
     "max_program_pool_entries": 7350,
     "max_programs": 84,
@@ -428,6 +429,7 @@
       332
     ],
     "operation_lanes": 260122342,
+    "owned_leaf_requests": 59187631,
     "peak_resident_roots": 2048,
     "pipeline_eliminated_frames": 21903952,
     "pipeline_rows": 11002896,
@@ -1044,10 +1046,10 @@
         "compared": 87162,
         "matches": 2477,
         "mismatches": [],
-        "nativeCpuNs": 778640792,
-        "nativeWallNs": 804942459,
-        "sqlCpuNs": 1372850958,
-        "sqlWallNs": 1429236416,
+        "nativeCpuNs": 741450500,
+        "nativeWallNs": 758344375,
+        "sqlCpuNs": 1388689917,
+        "sqlWallNs": 1469303334,
         "unknownNative": 0,
         "unknownSql": 0
       }

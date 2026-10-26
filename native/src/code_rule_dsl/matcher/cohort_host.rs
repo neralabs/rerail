@@ -466,13 +466,12 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>, C: Con
     ) -> Vec<cohort::NavigationResult<'t, D>> {
         navigation::evaluate(self, requests)
     }
-    fn is_file(&self, request: &Request<'t, D>) -> bool {
-        !self.parsed.contains_key(&request.context)
-            && self.contexts.borrow().file_root(request.context)
-                == Some(request.node.root() as *const _ as usize)
+    fn is_file(&self, context: u32, node: &ast_grep_core::Node<'t, D>) -> bool {
+        !self.parsed.contains_key(&context)
+            && self.contexts.borrow().file_root(context) == Some(node.root() as *const _ as usize)
     }
-    fn can_remember(&self, request: &Request<'t, D>) -> bool {
-        self.hosted.get() == 0 && <Self as cohort::Host<'t, D>>::is_file(self, request)
+    fn can_remember(&self, context: u32, node: &ast_grep_core::Node<'t, D>) -> bool {
+        self.hosted.get() == 0 && <Self as cohort::Host<'t, D>>::is_file(self, context, node)
     }
     fn compare(
         &mut self,
