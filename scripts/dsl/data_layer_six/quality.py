@@ -309,7 +309,7 @@ def quality_clauses(m):
  ratchets='_check_serverplan_cleanup_ratchets'
  legacy_names=['RelationshipInfo','relationship_type_from_contract'];legacy_files=nfp(r'(?:^|/)(?:schema_builder|__init__|graphql|relationship_compat)\.py$')
  forbid('relationship-info-names',ratchets,38,A(py_name(legacy_names),NOT_TESTS,legacy_files))
- forbid('relationship-info-imports',ratchets,38,A(K('import_from_statement'),F('module_name',RX(exact(['l9750_graphql.schema_builder','l9750_graphql.relationship_compat']))),F('name',import_named(legacy_names)),NOT_TESTS,legacy_files))
+ forbid('relationship-info-imports',ratchets,38,A(K('import_from_statement'),F('module_name',RX(exact(['l9750_graphql.schema_builder','l9750_graphql.relationship_compat']))),imported(import_named(legacy_names)),NOT_TESTS,legacy_files))
  forbid('prerequisite-members',ratchets,39,A(K('attribute'),O(F('attribute',names(['source_flush_context'])),A(F('attribute',names(['steps'])),F('object',names(['bundle'])))),NOT_TESTS))
  # One finding per keyword, as upstream reports each.
  for name in ('steps','source_flush_context'):forbid('prerequisite-bundles-'+name,ratchets,39,A(call(['PlanPrerequisiteBundle']),keyword([name]),NOT_TESTS))
@@ -352,7 +352,7 @@ def quality_clauses(m):
   H(A(K('identifier'),RX(exact(collections)),*PY_NAME),stop=SCOPE_STOP),H(semantic,stop=SCOPE_STOP)))
  compound=nfp(r'(?:^|/)stmt_compound_write\.py$')
  forbid('sqlcompoundwrite-names','_check_forbidden_sqlcompoundwrite_usage',45,A(py_name(['SqlCompoundWrite']),NOT_TESTS,compound))
- forbid('sqlcompoundwrite-imports','_check_forbidden_sqlcompoundwrite_usage',45,A(K('import_from_statement'),F('module_name',RX(exact(['impl.common.l2100_sql_grammar.domain.infra.stmt_compound_write']))),F('name',import_named(['SqlCompoundWrite'])),NOT_TESTS,compound))
+ forbid('sqlcompoundwrite-imports','_check_forbidden_sqlcompoundwrite_usage',45,A(K('import_from_statement'),F('module_name',RX(exact(['impl.common.l2100_sql_grammar.domain.infra.stmt_compound_write']))),imported(import_named(['SqlCompoundWrite'])),NOT_TESTS,compound))
  batch='_check_sql_statement_batch_requires_category';statement_batch=call(['SqlStatementBatch'])
  forbid('statement-batch-category',batch,46,A(statement_batch,N(keyword(['category']))))
  forbid('statement-batch-rowcounts',batch,46,A(statement_batch,N(keyword(['statement_kinds_per_stmt'])),keyword(['collect_results_per_stmt'],A(O(K('list'),K('tuple')),H(K('true')))),

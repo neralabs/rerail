@@ -14,7 +14,7 @@ def target_clauses(m):
  word=A(K('identifier'),N(I(K('attribute'),'neighbor',field='attribute')),N(I(K('keyword_argument'),'neighbor',field='name')))
  param=A(O(K('typed_parameter'),K('typed_default_parameter')),N(H(O(K('list_splat_pattern'),K('dictionary_splat_pattern')))))
  c('executor-parameters',A(K('function_definition'),exec_path,F('parameters',H(A(param,F('type',O(A(word,RX('^ServerPlanStep$')),H(A(word,RX('^ServerPlanStep$')),stop='end')))),stop='end'))),'SPTA006')
- c('executor-imports',A(K('import_from_statement'),exec_path,F('module_name',RX(r'(?:\.steps\.|\.steps$)')),F('name',A(O(A(K('dotted_name'),P('IMPORTED')),A(K('aliased_import'),F('name',P('IMPORTED')))),RX(r'^(?:[A-Za-z_]\w*)?(?:Step|Intent|Strategy)(?:\s+as\s+\w+)?$')))),'SPTA005')
+ c('executor-imports',A(K('import_from_statement'),exec_path,F('module_name',RX(r'(?:\.steps\.|\.steps$)')),imported(A(O(A(K('dotted_name'),P('IMPORTED')),A(K('aliased_import'),F('name',P('IMPORTED')))),RX(r'^(?:[A-Za-z_]\w*)?(?:Step|Intent|Strategy)(?:\s+as\s+\w+)?$')))),'SPTA005')
  # Each alias produces its own finding; repeated captures enumerate imports.
  clauses[-1]['violation']['each']='IMPORTED'
  tags=O(call(['step_tags']),H(call(['step_tags']),stop='end'))
@@ -27,7 +27,7 @@ def target_clauses(m):
  for path,prefixes in sorted(m._PROHIBITED_IMPORTS.items()):
   path_rule={'filePath':{'regex':'^'+re.escape(path)+'$'}}
   c('imports-'+path.replace('/','-')+'-from',A(K('import_from_statement'),path_rule,F('module_name',RX('^(?:'+'|'.join(re.escape(x) for x in prefixes)+')'))),'SPTA012')
-  c('imports-'+path.replace('/','-')+'-direct',A(K('import_statement'),path_rule,F('name',O(A(K('dotted_name'),P('IMPORT'),RX('^(?:'+'|'.join(re.escape(x) for x in prefixes)+')')),
+  c('imports-'+path.replace('/','-')+'-direct',A(K('import_statement'),path_rule,imported(O(A(K('dotted_name'),P('IMPORT'),RX('^(?:'+'|'.join(re.escape(x) for x in prefixes)+')')),
     A(K('aliased_import'),F('name',A(P('IMPORT'),RX('^(?:'+'|'.join(re.escape(x) for x in prefixes)+')'))))))),'SPTA012')
   clauses[-1]['violation']['each']='IMPORT'
  receipt=A(K('attribute'),F('object',names(['receipt','execution_receipt'])))

@@ -38,8 +38,8 @@ def conditional_clauses(m):
   'classes':row(A(K('class_definition'),F('name',P('NAME'))),{'name':'capture.NAME'}),
   # One row per class with bases; the base list is split in SQL (nested relations cost more than the split).
   'class_sups':row(A(K('class_definition'),F('superclasses',P('SUP'))),{'text':'capture.SUP'}),
-  'from_names':row(A(K('import_from_statement'),F('module_name',P('MODULE')),F('name',import_name)),{'module':'capture.MODULE',**import_project},each='IMPORTED',anchor='capture.IMPORTED'),
-  'direct_names':row(A(K('import_statement'),F('name',import_name)),import_project,each='IMPORTED',anchor='capture.IMPORTED'),
+  'from_names':row(A(K('import_from_statement'),F('module_name',P('MODULE')),imported(import_name)),{'module':'capture.MODULE',**import_project},each='IMPORTED',anchor='capture.IMPORTED'),
+  'direct_names':row(A(K('import_statement'),imported(import_name)),import_project,each='IMPORTED',anchor='capture.IMPORTED'),
   'fns':row(A(K('function_definition'),F('name',P('NAME'))),{'name':'capture.NAME'}),
   'backend_fns':row(A(relevant,O(H(A(K('identifier'),RX('^BackendType$')),stop='end'),A(H(attr(['backend_type','is_sql_backend','dialect']),stop='end'),
    H(O(K('if_statement'),K('elif_clause'),K('conditional_expression'),K('match_statement')),stop='end')))),{'name':'capture.NAME'}),

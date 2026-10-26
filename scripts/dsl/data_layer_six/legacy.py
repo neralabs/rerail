@@ -59,7 +59,7 @@ def legacy_clauses(m):
 
  # Relational checks: candidate rows joined by span containment within each file.
  def row(rule,project,each=None):return E(A(gate(entries),triggered,rule),project,each)
- import_rule=A(K('import_from_statement'),P('IMPORT'),F('module_name',P('MODULE')),F('name',O(A(K('dotted_name'),P('IMPORTED')),A(K('aliased_import'),F('name',P('IMPORTED')),F('alias',P('ALIAS'))))))
+ import_rule=A(K('import_from_statement'),P('IMPORT'),F('module_name',P('MODULE')),imported(O(A(K('dotted_name'),P('IMPORTED')),A(K('aliased_import'),F('name',P('IMPORTED')),F('alias',P('ALIAS'))))))
  inputs={
   'fns':row(A(K('function_definition'),F('name',P('NAME'))),{'name':'capture.NAME'}),
   'legacy_fns':row(A(legacy_fn,F('name',P('NAME'))),{'name':'capture.NAME'}),
@@ -69,7 +69,7 @@ def legacy_clauses(m):
   'attr_calls':row(A(K('call'),F('function',A(K('attribute'),P('FN'),F('attribute',P('ATTR')),F('object',P('OBJ'))))),{'callee':'capture.ATTR','full_callee':'capture.FN','object_text':'capture.OBJ'}),
   'other_calls':row(A(K('call'),F('function',A(P('FN'),N(O(K('identifier'),K('attribute')))))),{'full_callee':'capture.FN'}),
   'from_imports':row(import_rule,{'module':'capture.MODULE','name':'capture.IMPORTED','alias':'capture.ALIAS'},each='IMPORTED'),
-  'direct_imports':row(A(K('import_statement'),F('name',O(A(K('dotted_name'),P('IMPORTED')),A(K('aliased_import'),F('name',P('IMPORTED')))))),{'name':'capture.IMPORTED'},each='IMPORTED'),
+  'direct_imports':row(A(K('import_statement'),imported(O(A(K('dotted_name'),P('IMPORTED')),A(K('aliased_import'),F('name',P('IMPORTED')))))),{'name':'capture.IMPORTED'},each='IMPORTED'),
  }
  boundary_calls=literals(m.LEGACY_EXECUTION_BOUNDARY_CALLS)
  stages=[

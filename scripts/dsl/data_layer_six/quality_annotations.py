@@ -39,8 +39,8 @@ def annotation_clauses(m,forbid,relation):
   'quoted_atoms':(A(quoted,NOT_TESTS,tokens),{'ann_start':'capture.ANN.startByte','atom':'capture.ATOM.text'},{'each':'ATOM'}),
   'any_args':(A(K('type_parameter'),generic,annotation('ANN'),H(A(NAMED,P('ARG'))),NOT_TESTS,tokens),arg_project,{'each':'ARG','anchor':'capture.ARG'}),
   'later_args':(A(K('type_parameter'),generic,annotation('ANN'),H(A({'nthChild':'n+2'},P('ARG'))),NOT_TESTS,tokens),arg_project,{'each':'ARG','anchor':'capture.ARG'}),
-  'from_imports':(A(K('import_from_statement'),F('module_name',P('MODULE')),F('name',import_name),NOT_TESTS,tokens),{'module':'capture.MODULE','name':'capture.IMPORTED','alias':'capture.ALIAS'},{'each':'IMPORTED'}),
-  'direct_imports':(A(K('import_statement'),F('name',import_name),NOT_TESTS,tokens),{'name':'capture.IMPORTED','alias':'capture.ALIAS'},{'each':'IMPORTED'}),
+  'from_imports':(A(K('import_from_statement'),F('module_name',P('MODULE')),imported(import_name),NOT_TESTS,tokens),{'module':'capture.MODULE','name':'capture.IMPORTED','alias':'capture.ALIAS'},{'each':'IMPORTED'}),
+  'direct_imports':(A(K('import_statement'),imported(import_name),NOT_TESTS,tokens),{'name':'capture.IMPORTED','alias':'capture.ALIAS'},{'each':'IMPORTED'}),
   # Bindings: names in assignment, loop, walrus and del targets, parameters, globals and nonlocals.
   'bound_names':(A(K('identifier'),P('NAME'),*PY_NAME,O(I(K('assignment'),field='left'),I(K('augmented_assignment'),field='left'),I(K('for_statement'),field='left'),
    I(K('for_in_clause'),field='left'),I(K('named_expression'),field='name'),I(K('delete_statement'))),NOT_TESTS,tokens),{'name':'capture.NAME'}),

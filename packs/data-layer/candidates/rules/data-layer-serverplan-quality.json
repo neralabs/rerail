@@ -23477,34 +23477,46 @@
               },
               {
                 "has": {
-                  "any": [
+                  "all": [
                     {
-                      "all": [
+                      "any": [
                         {
-                          "kind": "dotted_name"
+                          "all": [
+                            {
+                              "kind": "dotted_name"
+                            },
+                            {
+                              "regex": "^(?:RelationshipInfo|relationship_type_from_contract)$"
+                            }
+                          ]
                         },
                         {
-                          "regex": "^(?:RelationshipInfo|relationship_type_from_contract)$"
+                          "all": [
+                            {
+                              "kind": "aliased_import"
+                            },
+                            {
+                              "has": {
+                                "regex": "^(?:RelationshipInfo|relationship_type_from_contract)$",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
                         }
                       ]
                     },
                     {
-                      "all": [
-                        {
-                          "kind": "aliased_import"
-                        },
-                        {
-                          "has": {
-                            "regex": "^(?:RelationshipInfo|relationship_type_from_contract)$",
-                            "stopBy": "neighbor",
-                            "field": "name"
-                          }
+                      "not": {
+                        "inside": {
+                          "kind": "import_from_statement",
+                          "stopBy": "neighbor",
+                          "field": "module_name"
                         }
-                      ]
+                      }
                     }
                   ],
-                  "stopBy": "neighbor",
-                  "field": "name"
+                  "stopBy": "neighbor"
                 }
               },
               {
@@ -26781,34 +26793,46 @@
               },
               {
                 "has": {
-                  "any": [
+                  "all": [
                     {
-                      "all": [
+                      "any": [
                         {
-                          "kind": "dotted_name"
+                          "all": [
+                            {
+                              "kind": "dotted_name"
+                            },
+                            {
+                              "regex": "^(?:SqlCompoundWrite)$"
+                            }
+                          ]
                         },
                         {
-                          "regex": "^(?:SqlCompoundWrite)$"
+                          "all": [
+                            {
+                              "kind": "aliased_import"
+                            },
+                            {
+                              "has": {
+                                "regex": "^(?:SqlCompoundWrite)$",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
                         }
                       ]
                     },
                     {
-                      "all": [
-                        {
-                          "kind": "aliased_import"
-                        },
-                        {
-                          "has": {
-                            "regex": "^(?:SqlCompoundWrite)$",
-                            "stopBy": "neighbor",
-                            "field": "name"
-                          }
+                      "not": {
+                        "inside": {
+                          "kind": "import_from_statement",
+                          "stopBy": "neighbor",
+                          "field": "module_name"
                         }
-                      ]
+                      }
                     }
                   ],
-                  "stopBy": "neighbor",
-                  "field": "name"
+                  "stopBy": "neighbor"
                 }
               },
               {
@@ -32105,41 +32129,53 @@
                       },
                       {
                         "has": {
-                          "any": [
+                          "all": [
                             {
-                              "all": [
+                              "any": [
                                 {
-                                  "kind": "dotted_name"
+                                  "all": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "pattern": "$IMPORTED"
+                                    }
+                                  ]
                                 },
                                 {
-                                  "pattern": "$IMPORTED"
+                                  "all": [
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "has": {
+                                        "pattern": "$IMPORTED",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "pattern": "$ALIAS",
+                                        "stopBy": "neighbor",
+                                        "field": "alias"
+                                      }
+                                    }
+                                  ]
                                 }
                               ]
                             },
                             {
-                              "all": [
-                                {
-                                  "kind": "aliased_import"
-                                },
-                                {
-                                  "has": {
-                                    "pattern": "$IMPORTED",
-                                    "stopBy": "neighbor",
-                                    "field": "name"
-                                  }
-                                },
-                                {
-                                  "has": {
-                                    "pattern": "$ALIAS",
-                                    "stopBy": "neighbor",
-                                    "field": "alias"
-                                  }
+                              "not": {
+                                "inside": {
+                                  "kind": "import_from_statement",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
-                              ]
+                              }
                             }
                           ],
-                          "stopBy": "neighbor",
-                          "field": "name"
+                          "stopBy": "neighbor"
                         }
                       },
                       {
@@ -32222,41 +32258,53 @@
                       },
                       {
                         "has": {
-                          "any": [
+                          "all": [
                             {
-                              "all": [
+                              "any": [
                                 {
-                                  "kind": "dotted_name"
+                                  "all": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "pattern": "$IMPORTED"
+                                    }
+                                  ]
                                 },
                                 {
-                                  "pattern": "$IMPORTED"
+                                  "all": [
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "has": {
+                                        "pattern": "$IMPORTED",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "pattern": "$ALIAS",
+                                        "stopBy": "neighbor",
+                                        "field": "alias"
+                                      }
+                                    }
+                                  ]
                                 }
                               ]
                             },
                             {
-                              "all": [
-                                {
-                                  "kind": "aliased_import"
-                                },
-                                {
-                                  "has": {
-                                    "pattern": "$IMPORTED",
-                                    "stopBy": "neighbor",
-                                    "field": "name"
-                                  }
-                                },
-                                {
-                                  "has": {
-                                    "pattern": "$ALIAS",
-                                    "stopBy": "neighbor",
-                                    "field": "alias"
-                                  }
+                              "not": {
+                                "inside": {
+                                  "kind": "import_from_statement",
+                                  "stopBy": "neighbor",
+                                  "field": "module_name"
                                 }
-                              ]
+                              }
                             }
                           ],
-                          "stopBy": "neighbor",
-                          "field": "name"
+                          "stopBy": "neighbor"
                         }
                       },
                       {
@@ -36195,44 +36243,56 @@
                           },
                           {
                             "has": {
-                              "any": [
+                              "all": [
                                 {
-                                  "all": [
+                                  "any": [
                                     {
-                                      "kind": "dotted_name"
+                                      "all": [
+                                        {
+                                          "kind": "dotted_name"
+                                        },
+                                        {
+                                          "pattern": "$IMPORTED"
+                                        }
+                                      ]
                                     },
                                     {
-                                      "pattern": "$IMPORTED"
+                                      "all": [
+                                        {
+                                          "kind": "aliased_import"
+                                        },
+                                        {
+                                          "pattern": "$IMPORTED"
+                                        },
+                                        {
+                                          "has": {
+                                            "pattern": "$INAME",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "pattern": "$ALIAS",
+                                            "stopBy": "neighbor",
+                                            "field": "alias"
+                                          }
+                                        }
+                                      ]
                                     }
                                   ]
                                 },
                                 {
-                                  "all": [
-                                    {
-                                      "kind": "aliased_import"
-                                    },
-                                    {
-                                      "pattern": "$IMPORTED"
-                                    },
-                                    {
-                                      "has": {
-                                        "pattern": "$INAME",
-                                        "stopBy": "neighbor",
-                                        "field": "name"
-                                      }
-                                    },
-                                    {
-                                      "has": {
-                                        "pattern": "$ALIAS",
-                                        "stopBy": "neighbor",
-                                        "field": "alias"
-                                      }
+                                  "not": {
+                                    "inside": {
+                                      "kind": "import_from_statement",
+                                      "stopBy": "neighbor",
+                                      "field": "module_name"
                                     }
-                                  ]
+                                  }
                                 }
                               ],
-                              "stopBy": "neighbor",
-                              "field": "name"
+                              "stopBy": "neighbor"
                             }
                           }
                         ]
@@ -36298,44 +36358,56 @@
                           },
                           {
                             "has": {
-                              "any": [
+                              "all": [
                                 {
-                                  "all": [
+                                  "any": [
                                     {
-                                      "kind": "dotted_name"
+                                      "all": [
+                                        {
+                                          "kind": "dotted_name"
+                                        },
+                                        {
+                                          "pattern": "$IMPORTED"
+                                        }
+                                      ]
                                     },
                                     {
-                                      "pattern": "$IMPORTED"
+                                      "all": [
+                                        {
+                                          "kind": "aliased_import"
+                                        },
+                                        {
+                                          "pattern": "$IMPORTED"
+                                        },
+                                        {
+                                          "has": {
+                                            "pattern": "$INAME",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "pattern": "$ALIAS",
+                                            "stopBy": "neighbor",
+                                            "field": "alias"
+                                          }
+                                        }
+                                      ]
                                     }
                                   ]
                                 },
                                 {
-                                  "all": [
-                                    {
-                                      "kind": "aliased_import"
-                                    },
-                                    {
-                                      "pattern": "$IMPORTED"
-                                    },
-                                    {
-                                      "has": {
-                                        "pattern": "$INAME",
-                                        "stopBy": "neighbor",
-                                        "field": "name"
-                                      }
-                                    },
-                                    {
-                                      "has": {
-                                        "pattern": "$ALIAS",
-                                        "stopBy": "neighbor",
-                                        "field": "alias"
-                                      }
+                                  "not": {
+                                    "inside": {
+                                      "kind": "import_from_statement",
+                                      "stopBy": "neighbor",
+                                      "field": "module_name"
                                     }
-                                  ]
+                                  }
                                 }
                               ],
-                              "stopBy": "neighbor",
-                              "field": "name"
+                              "stopBy": "neighbor"
                             }
                           }
                         ]

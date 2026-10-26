@@ -13,6 +13,10 @@ def H(rule,field=None,stop='neighbor'):return {'has':{**rule,'stopBy':stop,**({'
 def I(rule,stop='end',field=None):return {'inside':{**rule,'stopBy':stop,**({'field':field} if field else {})}}
 def F(field,rule):return H(rule,field)
 def optional(rule):return O(rule,P('_'))
+# An import statement's imported names, every one: a field relation reads only the field's first
+# child (as upstream ast-grep does), and all of an import's names share the `name` field. So the
+# relation runs over the statement's children and leaves out the `from` module.
+def imported(rule):return H(A(rule,N(I(K('import_from_statement'),'neighbor',field='module_name'))))
 def names(values):return A(K('identifier'),RX('^(?:'+'|'.join(re.escape(x) for x in sorted(values))+')$' if values else r'\b\B'))
 def term(values):return O(names(values),A(K('attribute'),F('attribute',names(values))))
 def call(values):return A(K('call'),F('function',term(values)))

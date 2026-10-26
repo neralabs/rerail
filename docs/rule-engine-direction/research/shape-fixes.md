@@ -202,3 +202,22 @@ Without the index, a clause picks its roots from per-file kind postings (the nod
   - SPQ-035 doesn't check "exactly one `through`".
   - SPQ-047 skips interpolating f-strings.
   - SPQ-021's `Sql…` callee test covers only name and attribute callees.
+
+## 13. Full-corpus check: two round-1 rewrites regressed
+
+The 300-file samples hide repository-wide cost. On the full corpus (9,021 files), two round-1 rewrites failed although they passed fixtures and the samples:
+
+| Rule | Pre-rewrite | Round-1 rewrite |
+|---|---|---|
+| internal-dead-code | 4,931/4,931 findings, 0 failures, 68 s CPU | 0 findings: `reach_edges` interrupted |
+| public-api-triples | 0 failures, 24 s CPU | `traits` interrupted |
+
+Splicing each rewritten piece into the pre-rewrite rule and running the full corpus isolates the cause:
+
+- **Narrower module-name and annotation inputs cause the interruption.** The relational session's SQL allowance is `max(maxVisitedNodes, input rows × maxVisitsPerNode)` (`relational.rs`). That scale assumed whole-tree inputs, where a row was a node. Narrow inputs shrink the allowance while the joins do the same work, so the engine penalizes exactly the shape the spec asks for.
+- **Two splits changed results.** Reading parameters only through annotations added 177 false positives to internal-dead-code. Splitting parameter forms into separate inputs added 23 to public-api-triples.
+- **Neutral changes.** Splitting base classes into two inputs, and the `direct_legacy` file gate, changed nothing.
+
+The splits existed to suit the positional index's candidate selection, which is now off by default (§11), so both rules are restored to their verified shapes. Every rewrite now needs a full-corpus check of each repository-wide clause, not only the sample.
+
+A third full-corpus finding: `serverplan_quality` reported a false positive on `SqlConditionalStep` (SPQ-029, physical contract). The class's base `ConditionalStep` never resolved, because the import rows held only the first name of each `from m import (a, b, …)`. A relation with `field` reads only that field's first child, as upstream ast-grep does, and every name of an import shares the `name` field. So `has: {field: name}` with `each` cannot enumerate an import, and neither can `inside` with a field. Ten import rules across `conditional`, `legacy`, `quality`, `quality_annotations` and `target` had the shape. They now use `imported(...)` (`common.py`): a `has` over the statement's children that leaves out the `from` module. Fixtures stay exact (80, 200 and 12 rows), and the full corpus is clean with no failures.
