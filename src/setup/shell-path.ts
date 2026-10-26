@@ -1,7 +1,7 @@
 /**
  * Puts the launcher directory (`~/.rerail/bin`) on the person's PATH, so `rerail` runs from a new terminal.
  *
- * POSIX: a marked block in the startup file the login shell (`$SHELL`) reads. The block prepends the directory only
+ * POSIX: a marked block in the startup file the login shell (`$SHELL`, else the account's) reads. The block prepends the directory only
  * when PATH lacks it, so a file sourced twice (`.bash_profile` sourcing `.bashrc`) adds it once. Windows: the user
  * `Path` in `HKCU\Environment`, keeping its registry value kind so `%VAR%` entries stay unexpanded.
  *
@@ -11,6 +11,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { delimiter, join, resolve, win32 } from "node:path";
 import { shellQuote } from "../harness/setup-screens.js";
 import { writeTextFile } from "./harness-registration.js";
@@ -34,6 +35,11 @@ export interface LauncherPathOptions {
   /** The person's home directory, where shell startup files live. */
   home: string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * The account's login shell, read when `SHELL` is unset (a coding agent's host need not pass it); the account
+   * record's by default, null where that is unknown.
+   */
+  loginShell?: string | null;
   platform?: NodeJS.Platform;
   dryRun?: boolean;
 }
@@ -79,7 +85,7 @@ export async function addLauncherToPath(options: LauncherPathOptions): Promise<L
   if (env.RERAIL_MODIFY_PATH === "0" || onRunningPath(options.binDir, env, platform)) return { status: "skipped" };
   try {
     if (platform === "win32") return windowsUserPath(options.binDir, options.dryRun === true ? "check" : "add", env, options.home);
-    const files = startupFiles(options.home, env);
+    const files = startupFiles(options.home, env, options.loginShell === undefined ? accountLoginShell() : options.loginShell);
     const changed: string[] = [];
     for (const file of files) {
       const existing = await readText(file.path);
@@ -166,12 +172,23 @@ function fishConfig(home: string, env: NodeJS.ProcessEnv): string {
   return join(env.XDG_CONFIG_HOME || join(home, ".config"), "fish", "conf.d", "rerail.fish");
 }
 
+/** The login shell in the account record, or null where there is none to read (a container without a passwd entry). */
+function accountLoginShell(): string | null {
+  try {
+    return userInfo().shell;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * The files `$SHELL` reads for a new terminal. Bash: `.bashrc` (interactive shells) and the login file bash reads
- * first of `.bash_profile`, `.bash_login`, `.profile`; creating `.bash_profile` would hide an existing `.profile`.
+ * The files the login shell (`$SHELL`, else `loginShell`) reads for a new terminal. Bash: `.bashrc` (interactive
+ * shells) and the login file bash reads first of `.bash_profile`, `.bash_login`, `.profile`; creating `.bash_profile`
+ * would hide an existing `.profile`. Zsh never reads `.profile`, so with no shell known at all the block goes there
+ * for every other login shell.
  */
-function startupFiles(home: string, env: NodeJS.ProcessEnv): StartupFile[] {
-  const shell = (env.SHELL ?? "").split("/").pop() ?? "";
+function startupFiles(home: string, env: NodeJS.ProcessEnv, loginShell: string | null): StartupFile[] {
+  const shell = (env.SHELL || loginShell || "").split("/").pop() ?? "";
   if (shell === "zsh") return [{ path: zshrc(home, env), block: posixBlock }];
   if (shell === "fish") return [{ path: fishConfig(home, env), block: fishBlock }];
   if (shell === "bash") {

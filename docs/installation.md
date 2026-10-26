@@ -128,7 +128,7 @@ Every set-up run also puts `~/.rerail/bin` (the Windows launcher is
 install whose set-up predates this step (0.1.0-next.2 or earlier) gets the
 entry on its next update. On macOS and
 Linux it appends a block between `# >>> rerail >>>` and `# <<< rerail <<<` to
-the startup file `$SHELL` reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
+the startup file `$SHELL` (else the account's login shell) reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
 `~/.bashrc` and the first of `~/.bash_profile`, `~/.bash_login`,
 `~/.profile` that exists (else `~/.profile`) for bash; its own
 `~/.config/fish/conf.d/rerail.fish` for fish; `~/.profile` otherwise. The block
