@@ -4670,3 +4670,45 @@ It therefore performs a vocabulary-term by requested-file product before each `v
 The global retained vocabulary can grow while a consumer requests only a few files.
 A new production-lowerer regression isolates this scaling shape with 20,000 unrelated terms and 32 admitted postings.
 This is the next experiment. No speed improvement or selected replacement follows from the source inspection alone.
+
+### Regex candidates: bound vocabulary work to admitted files (2026-10-26)
+
+Red commit `663df84e` reproduces 4,540,694 VM steps for 32 admitted postings and 20,000 unrelated matching terms.
+The corrected regex path scans `vidx_file` within the admitted files, then seeks cached predicate membership.
+Exact literals retain their direct term lookup. The positional FTS index and SQL-owned statistics remain unchanged.
+The native regression now stays below 20,000 VM steps. All 118 SQL tests and 50 production-shape tests pass.
+Native Clippy passes for all targets with warnings denied.
+All 2,350 executable original observations pass with this addon, plus supplemental controls and guard repeats.
+
+The 128-file, 60-rule ingestion control changes from 18.866 to 19.175 CPU seconds.
+That small control does not demonstrate a CPU improvement. Both processes overlap other diagnostic work.
+The retained full-repository index exposes a different scale: 294,614 cached terms for `(?s).*` during the survey.
+One read-only snapshot compares both SQL access paths over the same 32 admitted files.
+Both return 3,876 identical posting rows. CPU changes from 2.968 to 0.033 seconds.
+Approximate VM work changes from 81,708,000 to 84,000 steps.
+This probe uses host SQLite 3.54.1 and omits tape decoding. It is component evidence, not aggregate acceptance.
+The production regression uses bundled SQLite 3.53.2.
+The [checked experiment](../fixtures/host/data-layer-port/profiling/regex-file-scope-recovery-20261026.json) preserves these qualifications and full corpus coverage.
+Keep the bounded regex path. It removes work proportional to unrelated retained vocabulary without an execution switch.
+The first complete repository measurement of this replacement remains required.
+
+### Complete all-60 diagnostic: remaining failures
+
+The frozen older addon completes the repository with 2,714.768 cold CPU seconds and 3,914.650 cold wall seconds.
+Compilation takes 1.985 CPU seconds and 3.358 wall seconds.
+OS peak RSS is 12,607,602,688 bytes (11.742 GiB).
+The run overlaps development, replays, and external sampling. Its timing is diagnostic.
+The [checked receipt](../fixtures/host/data-layer-port/profiling/recovery-all-60-candidate-20261025.json) records the frozen identities.
+
+It reports 20,062 of 24,993 findings, zero false positives, and seven failures.
+All 4,931 missing findings belong to the older dead-code policy; its correction passes the separate full repository oracle.
+Other failures remain in conditional ownership, contract call paths, and two projection-recovery result evaluations.
+The producer-depth failures do not recur, but these SQL failures still reject recovery.
+Conditional ownership alone replays in 4.475 CPU seconds and 103,042,098 VM steps, with no sorts or automatic indexes.
+It returns 1,419,253 rows. Work before this stage remains part of the failure's cause.
+No allowance changes follow from this result.
+
+The external vmmap sample records 10.7 GiB allocated across approximately 25.45 million native allocations.
+The 128-file census separately records 93,716,350 bytes of typed projections in 1,749 immutable batches.
+Those batches contain 49,185 rows, averaging 28 rows per batch against a reserved capacity of 256.
+The next memory regression tests whether sealed partial batches retain unused column capacity.

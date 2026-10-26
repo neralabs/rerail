@@ -1,0 +1,130 @@
+{
+  "format": "rerail.regex-file-scope-recovery/v1",
+  "beforeNativeSha256": "2e533a51a816eb47cc8ea682707cff4b88b34d2aff8d786a71f368aeb2d60cd4",
+  "afterNativeSha256": "6b86cf2df791208845a6ac469cd7c9b33674f52c6079e29d1646b2eff7c85d85",
+  "scalingRegression": {
+    "admittedPostings": 32,
+    "unrelatedMatchingTerms": 20000,
+    "beforeVmSteps": 4540694,
+    "afterVmStepUpperBound": 20000
+  },
+  "liveCorpus": {
+    "format": "rerail.live-vocabulary-access-experiment/v1",
+    "sqliteVersion": "3.54.1",
+    "database": "/private/var/folders/hj/lnls5j015kxbb395l7cx5nvh0000gn/T/rerail-ast-index-MBLxqS.sqlite",
+    "fileIds": [
+      8703,
+      8702,
+      8701,
+      8700,
+      8699,
+      8698,
+      8697,
+      8696,
+      8695,
+      8694,
+      8693,
+      8692,
+      8691,
+      8690,
+      8689,
+      8688,
+      8687,
+      8686,
+      8685,
+      8684,
+      8683,
+      8682,
+      8681,
+      8680,
+      8679,
+      8678,
+      8677,
+      8676,
+      8675,
+      8674,
+      8673,
+      8672
+    ],
+    "expression": "(?s).*",
+    "matchingVocabularyTermsAtSurvey": 294614,
+    "results": {
+      "term-first": {
+        "cpuSeconds": 2.968149,
+        "wallSeconds": 3.1259917500428855,
+        "vmStepsApprox": 81708000,
+        "rows": 3876,
+        "bagDigest": "f15b0412828ff6ba0a988770961dbea2",
+        "error": null
+      },
+      "file-first": {
+        "cpuSeconds": 0.032884000000000135,
+        "wallSeconds": 0.039770792005583644,
+        "vmStepsApprox": 84000,
+        "rows": 3876,
+        "bagDigest": "f15b0412828ff6ba0a988770961dbea2",
+        "error": null
+      }
+    },
+    "note": "Host SQLite; live retained corpus read through one read-only transaction. Does not decode postings or run rules. Includes hashing. Diagnostic only, not an end-to-end benchmark."
+  },
+  "controls": {
+    "failure-tools": {
+      "files": 128,
+      "rules": 60,
+      "selectionSha256": "43d012c4bff575ba4b35ecd2023e2d8931c64ce0b8a77c36f19f2305937802f2",
+      "nativeSha256": "2e533a51a816eb47cc8ea682707cff4b88b34d2aff8d786a71f368aeb2d60cd4",
+      "compilationCpuMs": 1832.729,
+      "compilationMs": 2559.3436250000004,
+      "ingestionCpuMs": 18865.753,
+      "ingestionMs": 32966.69979100001,
+      "driverPeakRssBytes": 1685127168,
+      "localFailures": []
+    },
+    "value-demand": {
+      "files": 128,
+      "rules": 60,
+      "selectionSha256": "43d012c4bff575ba4b35ecd2023e2d8931c64ce0b8a77c36f19f2305937802f2",
+      "nativeSha256": "6b86cf2df791208845a6ac469cd7c9b33674f52c6079e29d1646b2eff7c85d85",
+      "compilationCpuMs": 1799.588,
+      "compilationMs": 3403.5763749999996,
+      "ingestionCpuMs": 19175.327,
+      "ingestionMs": 20942.826708,
+      "driverPeakRssBytes": 1735426048,
+      "localFailures": []
+    }
+  },
+  "correctness": {
+    "firstFive": {
+      "nativeSha256": "6b86cf2df791208845a6ac469cd7c9b33674f52c6079e29d1646b2eff7c85d85",
+      "replayedCalls": 1236,
+      "positiveCalls": 769,
+      "cleanCalls": 467,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0
+    },
+    "sixth": {
+      "complete": true,
+      "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b",
+      "nativeSha256": "6b86cf2df791208845a6ac469cd7c9b33674f52c6079e29d1646b2eff7c85d85",
+      "shards": 198,
+      "verifiedOriginals": 1234,
+      "expectedOriginals": 1234,
+      "guardRepeats": 376,
+      "originalRetained": 7,
+      "positiveOriginals": 405,
+      "cleanOriginals": 829,
+      "missing": [],
+      "failed": []
+    }
+  },
+  "acceptance": false,
+  "notes": [
+    "The 128-file CPU control does not establish an improvement: 18.866 to 19.175 seconds.",
+    "The live retained-corpus probe uses host SQLite 3.54.1 and excludes tape decoding. Both paths share one read-only snapshot.",
+    "The native closed regression and full original corpus use production SQLite 3.53.2.",
+    "Full repository performance acceptance remains open."
+  ]
+}
