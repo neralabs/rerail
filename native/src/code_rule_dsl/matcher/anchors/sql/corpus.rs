@@ -171,6 +171,7 @@ impl Corpus {
         phase_clock::timed(&phase_clock::ANCHOR_SELECT, || self.select(plans))
     }
 
+    #[cfg(test)]
     fn select(&self, plans: &BTreeMap<u32, Vec<Arc<AnchorPlan>>>) -> Result<()> {
         let mut guard = self.state.lock();
         let Some(state) = guard.as_mut() else {
@@ -182,8 +183,9 @@ impl Corpus {
         Ok(())
     }
 
-    /// Batch only admitted plan/file pairs. Plans demanded by the same files share one SQL
-    /// request: those groups follow rule scopes, so they are few and their templates stay cached.
+    /// Batch only admitted plan/file pairs. Equal frontiers share one SQL request, so each file
+    /// is selected once. (Grouping plans by their files instead caches more templates but runs a
+    /// file once per scope, and cost more execution on the full corpus.)
     pub(in crate::code_rule_dsl) fn prepare_files(
         &self,
         demands: &BTreeMap<String, Vec<Arc<AnchorPlan>>>,
@@ -197,30 +199,28 @@ impl Corpus {
         let Some(state) = guard.as_mut() else {
             return Ok(());
         };
-        // Addresses deduplicate live handles and key the template cache only. The compiler
-        // independently admits fragments and canonically composes physical work.
-        let mut demanded = BTreeMap::<(u32, usize), (Arc<AnchorPlan>, Vec<&String>)>::new();
+        type Domain = (Vec<Arc<AnchorPlan>>, HashSet<String>);
+        let mut groups = BTreeMap::<(u32, Vec<usize>), Domain>::new();
         for (path, plans) in demands {
             let Some(file) = state.files.get(path) else {
                 continue;
             };
-            for plan in plans {
-                let paths = &mut demanded
-                    .entry((file.lang, Arc::as_ptr(plan) as usize))
-                    .or_insert_with(|| (Arc::clone(plan), Vec::new()))
-                    .1;
-                // `demands` is ordered by path, so a repeated plan repeats the last path.
-                if paths.last() != Some(&path) {
-                    paths.push(path);
-                }
+            if plans.is_empty() {
+                continue;
             }
+            let mut plans = plans.clone();
+            // Addresses deduplicate live handles and key this cache only. The compiler
+            // independently admits fragments and canonically composes physical work.
+            plans.sort_unstable_by_key(|p| Arc::as_ptr(p) as usize);
+            plans.dedup_by_key(|p| Arc::as_ptr(p) as usize);
+            let ids = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect();
+            groups
+                .entry((file.lang, ids))
+                .or_insert_with(|| (plans, HashSet::new()))
+                .1
+                .insert(path.clone());
         }
-        let mut groups = BTreeMap::<(u32, Vec<&String>), Vec<Arc<AnchorPlan>>>::new();
-        for ((lang, _), (plan, paths)) in demanded {
-            groups.entry((lang, paths)).or_default().push(plan);
-        }
-        for ((lang, paths), plans) in groups {
-            let paths = paths.into_iter().cloned().collect();
+        for ((lang, _), (plans, paths)) in groups {
             Self::prepare_group(state, lang, &plans, Some(&paths))?;
         }
         Ok(())
