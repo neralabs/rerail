@@ -162,7 +162,7 @@ There is no CPU gain, for two reasons:
 
 The win arrives when `state-flow-project` also moves to narrow inputs and the tree copy disappears. An unconfirmed lead: the per-connection regex cache (64 entries, cleared when it fills) may churn on these many distinct patterns.
 
-## 11. The positional SQL index is a net loss: now opt-in
+## 11. The positional SQL index: why it loses, and opt-in
 
 Every file a syntax clause might match was published into a temporary SQLite positional index (`anchors::sql::Corpus::put`), and SQL then preselected candidate roots (§1). A spike switch skipped publication, so matching walked the tape instead. Runs were paired and concurrent on the same addon:
 
@@ -172,7 +172,18 @@ Every file a syntax clause might match was published into a temporary SQLite pos
 | type-safety-patterns alone, full corpus (9,021 files) | 55.4 s (wall 123 s) | 9.6 s (wall 14 s) | identical, 0 failures |
 | all 60 checks, 300 files | 29.2 s, 976 MB | 22.6 s, 871 MB | identical, 0 failures |
 
-Walking a tape with a kind test per node is cheap, at nanoseconds per node. Publishing every node into SQLite pages and the WAL, then running a SQL query per plan, costs more than it saves, even for the broad rules it was built for.
+SQL is not slow here; we use it wrong. A stack sample of type-safety on the full corpus with the index on (8 s at 1 ms intervals, four workers) shows four mistakes:
+
+1. **One writer for every worker.** `Corpus::put` holds the corpus-wide `state` mutex for the whole publication, and selection (`prepare_files`) runs on the same connection. The four napi workers are idle 73% of the time, waiting on the store. That is why wall time is 123 s against 55 s of CPU, while without the index it is 14 s against 9.6 s.
+2. **A file on disk.** `Store::temporary` opens a named temporary file in WAL mode, so every publication `pwrite`s pages and checkpoints the WAL, about 2,300 `pwrite` samples in 8 s, plus open and unlink churn. The store is discarded at the end of the run, yet it pays for persistence.
+3. **A whole-tree copy per file.** Publication writes the source, the packed tape (records, spans, checkpoints, parents, sizes), one positional FTS5 token per node, kind postings and counts, and a value-term index (`vidx`) whose trigger upserts `vlex` row by row. In the sample, the value-term index takes 68% of publication time and the commit 30%. This is the tree copy the spec forbids (§20), made for every file a syntax clause might match.
+4. **A write-once, read-once index.** The spike measured the index as a persistent store, built once and queried many times. In a run, each file is published once and queried once per plan, so the index never amortizes. Selection then computes roots the resident tape already has: the per-file kind postings, which cost one pass over the records in memory.
+
+So the index belongs to the opt-in path, not the default. Local rules select roots from resident tapes. If SQL candidate selection comes back, for relational inputs or a persistent workspace store, it needs these changes, in this order:
+
+- publish narrow candidate rows, not tapes;
+- keep the store in memory, sharded or per worker, rather than behind one mutex;
+- build the value-term index only for the terms plans ask for.
 
 The index is now opt-in (`RERAIL_AST_SQL_INDEX=1`, `Corpus::enabled`). It is gated at all three publication sites: workspace evaluation, the global relational preparation loop, and single-file evaluation. With all three gated, the 60 checks on the 300-file sample take 9.0 s of CPU (792 MB), against 28.2 s with the index opted in, with identical findings and no failures. The spike gated only the first site, which explains its smaller 23% gain. This matches spec §20: local rules run over resident tapes, and only facts and relational candidates reach SQL. The candidate-selection SQL (`anchors/sql`) remains for comparison until the transducer path replaces it.
 
