@@ -1,0 +1,555 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-prefer-global-crypto",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the global crypto object instead of reading webcrypto from the crypto module; Node.js provides it as a global.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "require-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^require$",
+                "resolves": {
+                  "global": [
+                    "require"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "require-callee"
+                }
+              }
+            ]
+          },
+          "builtin-callee": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^process$",
+                      "resolves": {
+                        "global": [
+                          "process"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^getBuiltinModule$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "builtin-callee"
+                }
+              }
+            ]
+          },
+          "module-call": {
+            "kind": "call_expression",
+            "not": {
+              "has": {
+                "field": "arguments",
+                "kind": "template_string"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "arguments",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "template_string",
+                        "not": {
+                          "has": {
+                            "kind": "template_substitution"
+                          }
+                        }
+                      }
+                    ],
+                    "value": {
+                      "regex": "^(?:node:)?crypto$"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "matches": "require-callee"
+                    },
+                    {
+                      "matches": "builtin-callee"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "module-value": {
+            "any": [
+              {
+                "matches": "module-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "module-value"
+                }
+              },
+              {
+                "kind": "assignment_expression",
+                "has": {
+                  "field": "right",
+                  "matches": "module-value"
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "destructuredValue": false,
+                    "value": {
+                      "matches": "module-value"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "inside": {
+                        "kind": "assignment_expression",
+                        "field": "left",
+                        "has": {
+                          "field": "right",
+                          "matches": "module-value"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "esm-ref"
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "esm-ref"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^default$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "esm-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?:node:)?crypto$"
+            }
+          },
+          "esm-whole-module": {
+            "any": [
+              {
+                "kind": "namespace_import"
+              },
+              {
+                "kind": "import_clause"
+              },
+              {
+                "kind": "identifier",
+                "inside": {
+                  "kind": "import_clause"
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": "end",
+              "kind": "import_statement",
+              "has": {
+                "field": "source",
+                "matches": "esm-source"
+              }
+            }
+          },
+          "esm-ref": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "matches": "esm-whole-module"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "member",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type",
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "module-value"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^webcrypto$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "module-value"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string",
+                          "not": {
+                            "has": {
+                              "kind": "template_substitution"
+                            }
+                          }
+                        }
+                      ],
+                      "value": {
+                        "regex": "^webcrypto$"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-global/crypto",
+        "message": "Use the global crypto instead of reading webcrypto from the crypto module.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-global/crypto"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "destructured",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type",
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "rule": {
+            "inside": {
+              "kind": "object_pattern",
+              "any": [
+                {
+                  "inside": {
+                    "kind": "variable_declarator",
+                    "field": "name",
+                    "has": {
+                      "field": "value",
+                      "matches": "module-value"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "assignment_expression",
+                    "field": "left",
+                    "has": {
+                      "field": "right",
+                      "matches": "module-value"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "assignment_pattern",
+                    "field": "left",
+                    "has": {
+                      "field": "right",
+                      "matches": "module-value"
+                    }
+                  }
+                }
+              ]
+            },
+            "any": [
+              {
+                "kind": "shorthand_property_identifier_pattern",
+                "regex": "^webcrypto$"
+              },
+              {
+                "kind": "pair_pattern",
+                "has": {
+                  "field": "key",
+                  "any": [
+                    {
+                      "kind": "property_identifier",
+                      "regex": "^webcrypto$"
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string",
+                          "not": {
+                            "has": {
+                              "kind": "template_substitution"
+                            }
+                          }
+                        }
+                      ],
+                      "value": {
+                        "regex": "^webcrypto$"
+                      }
+                    },
+                    {
+                      "kind": "computed_property_name",
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "template_string",
+                            "not": {
+                              "has": {
+                                "kind": "template_substitution"
+                              }
+                            }
+                          }
+                        ],
+                        "value": {
+                          "regex": "^webcrypto$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "object_assignment_pattern",
+                "has": {
+                  "field": "left",
+                  "kind": "shorthand_property_identifier_pattern",
+                  "regex": "^webcrypto$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-global/crypto",
+        "message": "Drop webcrypto from this destructuring and use the global crypto instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-global/crypto"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "esm-specifier",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type",
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "import_specifier",
+                "has": {
+                  "field": "name",
+                  "regex": "^webcrypto$"
+                },
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "import_statement",
+                  "has": {
+                    "field": "source",
+                    "matches": "esm-source"
+                  }
+                }
+              },
+              {
+                "kind": "export_specifier",
+                "has": {
+                  "field": "name",
+                  "regex": "^webcrypto$"
+                },
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "export_statement",
+                  "has": {
+                    "field": "source",
+                    "matches": "esm-source"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-global/crypto",
+        "message": "Remove webcrypto from this import or export and use the global crypto instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-global/crypto"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "esm-export-all",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type",
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "rule": {
+            "kind": "export_statement",
+            "has": {
+              "field": "source",
+              "matches": "esm-source"
+            },
+            "not": {
+              "has": {
+                "kind": "export_clause"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-global/crypto",
+        "message": "Re-export only the names you need from the crypto module; its webcrypto is the global crypto.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-global/crypto"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

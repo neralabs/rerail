@@ -352,6 +352,65 @@
         "suppression"
       ],
       "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-crypto",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/crypto"
+      },
+      "policy": "candidates/rules/n-prefer-global-crypto.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-timers",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/timers"
+      },
+      "policy": "candidates/rules/n-prefer-global-timers.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-import-assert-strict",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-import/assert-strict"
+      },
+      "policy": "candidates/rules/n-prefer-import-assert-strict.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-process-get-builtin-module",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-process-get-builtin-module"
+      },
+      "policy": "candidates/rules/n-prefer-process-get-builtin-module.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
     }
   ]
 }

@@ -1,6 +1,6 @@
 # Rerail rule pack: Node.js
 
-24 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
+28 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
 the pack's conformance check on both of its sources, and in `candidates/rules/` until then. eslint-plugin-n has no port
 readiness gates ([docs/port-readiness.md](../../docs/port-readiness.md)); a pinned test set judges the pack instead
 (`TEST_SETS` in `scripts/s3/pack-fixtures.mjs`, [conformance/README.md](../../conformance/README.md)). Each port is
@@ -14,9 +14,11 @@ scored through the engine's production workspace path, with every disagreement d
   findings for that rule are expected, and the 222 copies with that rule's findings fixed by hand, where none is.
 
 The conformance check (`--check`, run in CI) scores the tests and the test set: it fails a port in `rules/` on any
-unexplained FP or FN on either, and reports the candidates without failing them. All 24 ports ship, 4 of them on (the
-ones the plugin's recommended configurations turn on: `n-hashbang`, `n-no-deprecated-api`, `n-no-exports-assign`,
-`n-no-process-exit`) and the other 20 off until a repository turns them on.
+unexplained FP or FN on either, and reports the candidates without failing them. 24 ports ship, 4 of them on (the ones
+the plugin's recommended configurations turn on: `n-hashbang`, `n-no-deprecated-api`, `n-no-exports-assign`,
+`n-no-process-exit`) and the other 20 off until a repository turns them on. The 4 candidates (`n-prefer-global-crypto`,
+`n-prefer-global-timers`, `n-prefer-import-assert-strict`, `n-prefer-process-get-builtin-module`) pass the plugin's
+tests and have no test-set files yet.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.
@@ -28,7 +30,7 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin and the pinned corpora (fastify, prettier) |
 | `divergences.json` | Declared disagreements with the plugin |
 | `upstream/eslint-plugin-n/` | The plugin's copied rule tests (`tests/`), one file per test case (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`) and the recorder (`generate.mjs`, sharing `conformance/recorders/eslint-record.mjs`) |
-| `candidates/` | The Node probes (`probes/`), scored, never shipped; a port that stops passing goes back to `candidates/rules/` |
+| `candidates/` | The ports that are not judged on both sources yet (`rules/`, listed in `conformance.json`) and the Node probes (`probes/`), scored, never shipped |
 | `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, listing every copied file |
 
 No rule pins `languageOptions.sourceType` (the probes do, to state Node facts). The rules that reach CommonJS names

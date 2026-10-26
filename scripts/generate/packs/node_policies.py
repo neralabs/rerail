@@ -101,7 +101,9 @@ const { READ, CALL, CONSTRUCT } = await import(U);
 function conv(o) { const r = {}; for (const [k, v] of Object.entries(o)) r[k] = conv(v); if (o[READ]) r.$READ = 1; if (o[CALL]) r.$CALL = 1; if (o[CONSTRUCT]) r.$CONSTRUCT = 1; return r; }
 console.log(JSON.stringify({ modules: conv(rawModules), globals: conv(globals) }));
 ''', utils_module)
-    return builtins, globals_node, trace
+    # Node's isBuiltin, which n/prefer-process-get-builtin-module calls, reads the running Node's builtinModules.
+    node_builtins = node_json(tools, tools, 'import { builtinModules } from "node:module"; console.log(JSON.stringify(builtinModules))')
+    return builtins, globals_node, trace, node_builtins
 
 
 # ---- documents ---------------------------------------------------------------------------------------------------
@@ -149,7 +151,7 @@ NOT_COMMENT = {"not": {"kind": "comment"}}
 FIRST = {"position": 1, "ofRule": NOT_COMMENT}
 LAST = {"position": 1, "reverse": True, "ofRule": NOT_COMMENT}
 SECOND_LAST = {"position": 2, "reverse": True, "ofRule": NOT_COMMENT}
-# No sourceType: each file keeps its own module system (the engine reads it from the extension and package.json).
+# No sourceType is pinned.
 # eslint-plugin-n's configs give each file its module system by extension and package.json `type` alone
 # (flat/mixed-esm-and-cjs: .mjs/.mts modules, .cjs/.cts CommonJS, any other file a module only under `type: module`,
 # CommonJS otherwise and without a manifest), so the rules that reach CommonJS names through scope read it so too.
@@ -171,6 +173,10 @@ DESCRIPTIONS = {
     "n-no-process-env": "Avoid reading process.env directly; pass configuration in explicitly so dependencies on the environment stay visible and testable.",
     "n-no-sync": "Avoid calling methods whose name ends in Sync, such as readFileSync; they block the Node.js event loop.",
     "n-prefer-global-buffer": "Use the global Buffer instead of importing or requiring it from the buffer module; it is always available in Node.js.",
+    "n-prefer-global-crypto": "Use the global crypto object instead of reading webcrypto from the crypto module; Node.js provides it as a global.",
+    "n-prefer-global-timers": "Use the global timer functions, such as setTimeout, instead of reading them from the timers module.",
+    "n-prefer-import-assert-strict": "Import node:assert/strict instead of node:assert, so assertions use strict equality.",
+    "n-prefer-process-get-builtin-module": "Load Node.js built-in modules with process.getBuiltinModule() instead of require() or await import(), when the project's Node versions support it.",
     "n-prefer-global-console": "Use the global console instead of importing or requiring the console module; it is always available in Node.js.",
     "n-prefer-global-process": "Use the global process instead of importing or requiring the process module; it is always available in Node.js.",
     "n-prefer-global-text-decoder": "Use the global TextDecoder instead of importing or requiring it from the util module; it is always available in Node.js.",
@@ -277,12 +283,22 @@ def module_utils(rx, guarded=False):
     }
 
 
-def prefer_global_checks(rx, prop, mod):
+def prefer_global_checks(rx, prop, mod, messages=None):
+    """`prop`: the member the global is, a name or a tuple of names (one export-all clause each, as upstream reports
+    `export *` once per member it re-exports; its message formats `{name}`); `messages` overrides the member clauses'
+    messages, by clause id, where the global is not named `prop`."""
     utils = module_utils(rx)
     if prop is None:
         return [{"id": "module-call", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"matches": "module-call"}}, "message": f"Use the global {mod} instead of requiring the {mod} module."},
                 {"id": "esm-declaration", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"any": [{"kind": "import_statement"}, {"kind": "export_statement"}], "has": {"field": "source", "matches": "esm-source"}}}, "message": f"Use the global {mod} instead of importing or re-exporting the {mod} module."}]
-    prx = f"^{prop}$"
+    names = prop if isinstance(prop, tuple) else (prop,)
+    prx = f"^(?:{'|'.join(names)})$" if isinstance(prop, tuple) else f"^{prop}$"
+    messages = {
+        "member": f"Use the global {prop} instead of reading {prop} from the {mod} module.",
+        "destructured": f"Drop {prop} from this destructuring and use the global {prop} instead.",
+        "esm-specifier": f"Remove {prop} from this import or export and use the global {prop} instead.",
+        "esm-export-all": f"Re-export only the names you need from the {mod} module; {prop} is already a global.",
+        **(messages or {})}
     pattern = {"kind": "object_pattern", "any": [
         {"inside": {"kind": "variable_declarator", "field": "name", "has": {"field": "value", "matches": "module-value"}}},
         {"inside": {"kind": "assignment_expression", "field": "left", "has": {"field": "right", "matches": "module-value"}}},
@@ -290,18 +306,21 @@ def prefer_global_checks(rx, prop, mod):
     return [
         {"id": "member", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"any": [
             {"kind": "member_expression", "all": [{"has": {"field": "object", "matches": "module-value"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": prx}}]},
-            {"kind": "subscript_expression", "all": [{"has": {"field": "object", "matches": "module-value"}}, {"has": {"field": "index", **str_const(prx)}}]}]}}, "message": f"Use the global {prop} instead of reading {prop} from the {mod} module."},
+            {"kind": "subscript_expression", "all": [{"has": {"field": "object", "matches": "module-value"}}, {"has": {"field": "index", **str_const(prx)}}]}]}}, "message": messages["member"]},
         {"id": "destructured", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"inside": pattern, "any": [
             {"kind": "shorthand_property_identifier_pattern", "regex": prx},
             {"kind": "pair_pattern", "has": {"field": "key", "any": [{"kind": "property_identifier", "regex": prx}, str_const(prx), {"kind": "computed_property_name", "has": str_const(prx)}]}},
-            {"kind": "object_assignment_pattern", "has": {"field": "left", "kind": "shorthand_property_identifier_pattern", "regex": prx}}]}}, "message": f"Drop {prop} from this destructuring and use the global {prop} instead."},
+            {"kind": "object_assignment_pattern", "has": {"field": "left", "kind": "shorthand_property_identifier_pattern", "regex": prx}}]}}, "message": messages["destructured"]},
         {"id": "esm-specifier", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"any": [
             {"kind": "import_specifier", "has": {"field": "name", "regex": prx}, "inside": {"stopBy": "end", "kind": "import_statement", "has": {"field": "source", "matches": "esm-source"}}},
-            {"kind": "export_specifier", "has": {"field": "name", "regex": prx}, "inside": {"stopBy": "end", "kind": "export_statement", "has": {"field": "source", "matches": "esm-source"}}}]}}, "message": f"Remove {prop} from this import or export and use the global {prop} instead."},
-        {"id": "esm-export-all", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"kind": "export_statement", "has": {"field": "source", "matches": "esm-source"}, "not": {"has": {"kind": "export_clause"}}}}, "message": f"Re-export only the names you need from the {mod} module; {prop} is already a global."},
-    ]
+            {"kind": "export_specifier", "has": {"field": "name", "regex": prx}, "inside": {"stopBy": "end", "kind": "export_statement", "has": {"field": "source", "matches": "esm-source"}}}]}}, "message": messages["esm-specifier"]},
+    ] + [
+        {"id": "esm-export-all" if len(names) == 1 else f"esm-export-all-{name.lower()}",
+         "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"kind": "export_statement", "has": {"field": "source", "matches": "esm-source"}, "not": {"has": {"kind": "export_clause"}}}},
+         "message": messages["esm-export-all"].format(name=name)} for name in names]
 
 
+TIMERS = ("clearImmediate", "clearInterval", "clearTimeout", "setImmediate", "setInterval", "setTimeout")
 PREFER_GLOBAL = {
     "buffer": ("^(?:node:)?buffer$", "Buffer", "buffer"),
     "console": ("^(?:node:)?console$", None, "console"),
@@ -310,13 +329,23 @@ PREFER_GLOBAL = {
     "url-search-params": ("^(?:node:)?url$", "URLSearchParams", "url"),
     "text-decoder": ("^(?:node:)?util$", "TextDecoder", "util"),
     "text-encoder": ("^(?:node:)?util$", "TextEncoder", "util"),
+    "crypto": ("^(?:node:)?crypto$", "webcrypto", "crypto", {
+        "member": "Use the global crypto instead of reading webcrypto from the crypto module.",
+        "destructured": "Drop webcrypto from this destructuring and use the global crypto instead.",
+        "esm-specifier": "Remove webcrypto from this import or export and use the global crypto instead.",
+        "esm-export-all": "Re-export only the names you need from the crypto module; its webcrypto is the global crypto."}),
+    "timers": ("^(?:node:)?timers$", TIMERS, "timers", {
+        "member": "Use the global timer function instead of reading it from the timers module.",
+        "destructured": "Drop the timer functions from this destructuring and use the global ones instead.",
+        "esm-specifier": "Remove the timer functions from this import or export and use the global ones instead.",
+        "esm-export-all": "Re-export only the names you need from the timers module; this export * also re-exports {name}, which is a global."}),
 }
 
 
 def prefer_global_docs():
     docs = []
-    for name, (rx, prop, mod) in PREFER_GLOBAL.items():
-        docs.append(hoist(policy(f"n-prefer-global-{name}", f"n/prefer-global/{name}", DESCRIPTIONS[f"n-prefer-global-{name}"], prefer_global_checks(rx, prop, mod))))
+    for name, (rx, prop, mod, *messages) in PREFER_GLOBAL.items():
+        docs.append(hoist(policy(f"n-prefer-global-{name}", f"n/prefer-global/{name}", DESCRIPTIONS[f"n-prefer-global-{name}"], prefer_global_checks(rx, prop, mod, *messages))))
     return docs
 
 
@@ -425,6 +454,86 @@ def prefer_node_protocol_doc(builtins):
         {"id": "import-export-source", "ast": {"file": esm, "rule": {**builtin, "inside": {"field": "source", "any": [{"kind": "import_statement"}, {"kind": "export_statement"}]}}}, "message": message},
         {"id": "import-expression", "ast": {"file": esm, "rule": {**builtin, **first_argument_of(import_call)}}, "message": message}]
     return policy("n-prefer-node-protocol", "n/prefer-node-protocol", DESCRIPTIONS["n-prefer-node-protocol"], checks)
+
+
+def prefer_import_assert_strict_doc():
+    """n/prefer-import/assert-strict: the literal "node:assert" (exactly; no template, no bare "assert") as the source of
+    an import, export or import(), or the first argument of a call of any function named require, unless only `strict`
+    is taken from it: import or export specifiers that all name strict; a require read as `.strict`/`["strict"]`, or
+    destructured into properties that are all strict (a string key is not), or assigned to a `.strict` member."""
+    src = {"kind": "string", "value": {"regex": "^node:assert$"}}
+    strict_name = {"any": [{"kind": "identifier", "regex": "^strict$"}, {"kind": "string", "value": {"regex": "^strict$"}}]}
+    strict_member = {"any": [{"kind": "member_expression", "has": {"field": "property", "kind": "property_identifier", "regex": "^strict$"}},
+                             {"kind": "subscript_expression", "has": {"field": "index", "kind": "string", "value": {"regex": "^strict$"}}}]}
+    strict_property = {"any": [{"kind": "shorthand_property_identifier_pattern", "regex": "^strict$"},
+                               {"kind": "pair_pattern", "has": {"field": "key", "any": [{"kind": "property_identifier", "regex": "^strict$"},
+                                                                                        {"kind": "computed_property_name", "has": {"kind": "string", "value": {"regex": "^strict$"}}}]}},
+                               {"kind": "object_assignment_pattern", "has": {"field": "left", "kind": "shorthand_property_identifier_pattern", "regex": "^strict$"}}]}
+    property_kinds = [{"kind": k} for k in ("shorthand_property_identifier_pattern", "pair_pattern", "object_assignment_pattern", "rest_pattern")]
+    only_strict_pattern = {"kind": "object_pattern", "has": {"any": property_kinds}, "not": {"has": {"any": property_kinds, "not": strict_property}}}
+    strict_parent = {"any": [
+        {"inside": {"field": "object", **strict_member}},
+        {"inside": {"kind": "variable_declarator", "field": "value", "has": {"field": "name", **only_strict_pattern}}},
+        {"inside": {"kind": "assignment_expression", "field": "right", "has": {"field": "left", "any": [only_strict_pattern, strict_member]}}}]}
+    # ESTree has no parentheses: `(require("node:assert")).strict` takes only strict too.
+    only_strict_require = {"any": [strict_parent, {"inside": {"kind": "parenthesized_expression", **strict_parent}}]}
+    require_call = {"kind": "call_expression", "has": {"field": "function", "kind": "identifier", "regex": "^require$"}, "not": only_strict_require}
+    only_strict_import = {"has": {"kind": "import_clause", "not": {"has": {"any": [{"kind": "identifier"}, {"kind": "namespace_import"}]}},
+                                  "has": {"kind": "named_imports", "has": {"kind": "import_specifier"},
+                                          "not": {"has": {"kind": "import_specifier", "not": {"has": {"field": "name", **strict_name}}}}}}}
+    only_strict_export = {"has": {"kind": "export_clause", "has": {"kind": "export_specifier"},
+                                  "not": {"has": {"kind": "export_specifier", "not": {"has": {"field": "name", **strict_name}}}}}}
+    message = "Import node:assert/strict instead of node:assert, so assertions compare strictly."
+    return policy("n-prefer-import-assert-strict", "n/prefer-import/assert-strict", DESCRIPTIONS["n-prefer-import-assert-strict"], [
+        {"id": "require", "ast": {"rule": {**src, "nthChild": FIRST, "inside": {"kind": "arguments", "inside": {"field": "arguments", **require_call}}}}, "message": message},
+        {"id": "import", "ast": {"rule": {**src, "inside": {"field": "source", "kind": "import_statement", "not": only_strict_import}}}, "message": message},
+        {"id": "export", "ast": {"rule": {**src, "inside": {"field": "source", "kind": "export_statement", "not": only_strict_export}}}, "message": message},
+        {"id": "import-expression", "ast": {"rule": {**src, "nthChild": FIRST, "inside": {"kind": "arguments", "inside": {"field": "arguments", "kind": "call_expression", "has": {"field": "function", "kind": "import"}}}}}, "message": message}])
+
+
+def prefer_process_get_builtin_module_doc(builtins, node_builtins):
+    """n/prefer-process-get-builtin-module, enabled where the configured Node range is within ^20.16.0 || >=22.3.0:
+    `require(M)` (one argument, not optional, `require` unshadowed or a const made by createRequire imported from
+    module or node:module) and `await import(M)` (no options), M a constant string naming a built-in module (Node's
+    isBuiltin: the plugin's list, each with and without node:, and module.builtinModules of the Node.js running this
+    generator, the deprecated constants and sys included), unless a binding named process is in scope."""
+    names = sorted({b for b in builtins} | {b if b.startswith("node:") else "node:" + b for b in builtins} | set(node_builtins))
+    constant = {"value": {"regex": "^(?:" + "|".join(re.escape(b).replace("\\/", "/") for b in names) + ")$"}}
+    builtin = {"any": [constant, {"kind": "parenthesized_expression", "has": {"stopBy": {"not": {"kind": "parenthesized_expression"}}, **constant}}]}
+    gate = {"package": {"nodeVersion": {"subsetOf": "^20.16.0 || >=22.3.0"}}}
+    one_argument = {"field": "arguments", "kind": "arguments", "has": {"nthChild": FIRST, **builtin}, "not": {"has": {"nthChild": {"position": 2, "ofRule": NOT_COMMENT}}}}
+    module_source = {"kind": "string", "value": {"regex": "^(?:node:)?module$"}}
+    create_require = {"kind": "identifier", "resolves": {"binding": {"site": {"kind": "import_specifier", "has": {"field": "name", "kind": "identifier", "regex": "^createRequire$"},
+                                                                               "inside": {"stopBy": "end", "kind": "import_statement", "has": {"field": "source", **module_source}}}}}}
+    node_require = {"kind": "identifier", "regex": "^require$", "any": [
+        {"resolves": {"global": ["require"], "declared": False}},
+        {"resolves": {"binding": {"site": {"kind": "variable_declarator", "has": {"field": "name", "kind": "identifier"},
+                                         "inside": {"kind": "lexical_declaration", "has": {"field": "kind", "regex": "^const$"}},
+                                         "all": [{"has": {"field": "value", "kind": "call_expression", "has": {"field": "function", **create_require}}}]}}}}]}
+    declares_process = {"any": [
+        {"kind": "variable_declarator", "has": {"field": "name", "any": [{"kind": "identifier", "regex": "^process$"}, {"has": {"stopBy": "end", "any": [{"kind": "identifier"}, {"kind": "shorthand_property_identifier_pattern"}], "regex": "^process$"}}]}},
+        {"any": [{"kind": "function_declaration"}, {"kind": "class_declaration"}], "has": {"field": "name", "regex": "^process$"}},
+        {"kind": "import_statement", "has": {"kind": "import_clause", "has": {"stopBy": "end", "kind": "identifier", "regex": "^process$", "not": {"inside": {"field": "name", "kind": "import_specifier", "has": {"field": "alias", "kind": "identifier"}}}}}}]}
+    statement_declares_process = {"any": [{"kind": "lexical_declaration"}, {"kind": "variable_declaration"}], "has": declares_process}
+    functions = [{"kind": k} for k in ("function_declaration", "function_expression", "arrow_function", "method_definition", "generator_function", "generator_function_declaration")]
+    # isProcessShadowed (findVariable: a variable named process with a definition, in any scope from the node's up),
+    # read structurally: a declaration of process directly in an enclosing block or program, a var anywhere in an
+    # enclosing function's body, or a parameter of an enclosing function or catch clause.
+    var_process = {"kind": "variable_declaration", "has": declares_process}
+    shadowed = {"inside": {"stopBy": "end", "any": [
+        {"any": [{"kind": "program"}, {"kind": "statement_block"}, {"kind": "class_body"}], "has": {"any": [statement_declares_process, declares_process]}},
+        {"any": [{"kind": "program"}, *functions], "has": {"stopBy": {"any": functions}, **var_process}},
+        {"kind": "catch_clause", "has": {"field": "parameter", "any": [{"kind": "identifier", "regex": "^process$"}, {"has": {"stopBy": "end", "any": [{"kind": "identifier"}, {"kind": "shorthand_property_identifier_pattern"}], "regex": "^process$"}}]}},
+        {"any": functions, "has": {"field": "parameters", "has": {"stopBy": "end", "kind": "identifier", "regex": "^process$", "not": {"inside": {"stopBy": "end", "field": "right", "kind": "assignment_pattern"}}}}},
+        {"kind": "arrow_function", "has": {"field": "parameter", "regex": "^process$"}}]}}
+    return policy("n-prefer-process-get-builtin-module", "n/prefer-process-get-builtin-module", DESCRIPTIONS["n-prefer-process-get-builtin-module"], [
+        {"id": "require", "ast": {"languageOptions": FILE_LO, "file": gate, "rule": {"kind": "call_expression", "has": {"field": "function", **node_require},
+                                                                                    "all": [{"has": one_argument}, {"not": {"has": {"kind": "optional_chain"}}}, {"not": shadowed}]}},
+         "message": "Load this built-in module with process.getBuiltinModule() instead of require()."},
+        {"id": "import", "ast": {"languageOptions": FILE_LO, "file": gate, "rule": {"kind": "await_expression", "has": {"kind": "call_expression", "has": {"field": "function", "kind": "import"},
+                                                                                                                     "all": [{"has": one_argument}]},
+                                                                                    "not": shadowed}},
+         "message": "Load this built-in module with process.getBuiltinModule() instead of await import()."}])
 
 
 # ---- hand-shaped syntax rules ----------------------------------------------------------------------------------------
@@ -822,8 +931,9 @@ def main():
     parser.add_argument("--tools")
     parser.add_argument("--root", default=REPOSITORY)
     args = parser.parse_args()
-    builtins, globals_node, trace = load_data(os.path.abspath(args.tools or nearest_tools()))
-    for doc in syntax_docs() + prefer_global_docs() + prefer_promises_docs() + [no_path_concat_doc(), prefer_node_protocol_doc(builtins)]:
+    builtins, globals_node, trace, node_builtins = load_data(os.path.abspath(args.tools or nearest_tools()))
+    for doc in syntax_docs() + prefer_global_docs() + prefer_promises_docs() + [no_path_concat_doc(), prefer_node_protocol_doc(builtins),
+                                                                            prefer_import_assert_strict_doc(), prefer_process_get_builtin_module_doc(builtins, node_builtins)]:
         write_port(args.root, doc)
     write_port(args.root, no_deprecated_api_doc(trace), compact=True)
     write_port(args.root, hashbang_doc())
