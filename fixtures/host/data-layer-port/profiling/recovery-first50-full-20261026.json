@@ -1,0 +1,97 @@
+{
+  "format": "rerail.full-repository-recovery/v1",
+  "acceptance": false,
+  "reason": "Findings parity passes; CPU remains above the passing pre-SQL reference. All-60 acceptance is pending.",
+  "nativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+  "run": {
+    "name": "first-50",
+    "rules": 50,
+    "recordingSha256": "731ee09b9ebcb8686013588774cadbabccb4c1860de446734df15e95f5d5c980",
+    "command": [
+      "/usr/bin/time",
+      "-lp",
+      "-o",
+      "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/recovery-completion-20261025/full-recovered-demand/first-50/resource.txt",
+      "node",
+      "--import",
+      "tsx",
+      "conformance/data-layer/suite.ts",
+      "--recording",
+      ".rerail/profiles/full-repository-20261021/first-50-recording.json",
+      "--policies",
+      "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/recovery-completion-20261025/full-recovered-demand/artifact/policies",
+      "--output",
+      "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/recovery-completion-20261025/full-recovered-demand/first-50/parity.json",
+      "--allocator",
+      "system-malloc-shim",
+      "--cold-only",
+      "--progress"
+    ],
+    "startedUnixSeconds": 1792993599.712115,
+    "loadStart": [
+      25.076171875,
+      26.369140625,
+      24.09033203125
+    ],
+    "status": "complete",
+    "exitCode": 0,
+    "timedOut": false,
+    "seconds": 728.8853109580232,
+    "process": {
+      "samples": 143,
+      "processesSeen": 2,
+      "peakTreeRssBytes": 4897325056,
+      "peakRootRssBytes": 1277952,
+      "treeCpuSecondsLowerBound": 671.08,
+      "errors": [],
+      "note": "Sampled CPU is a lower bound: short-lived workers and final intervals can be missed. Summed RSS counts shared pages in each process. Use driver phase CPU and resource high-water RSS for exact single-process totals."
+    },
+    "loadEnd": [
+      12.10400390625,
+      14.62060546875,
+      18.6748046875
+    ],
+    "result": {
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24820,
+      "actual": 24820,
+      "phaseCpuMs": {
+        "compile": {
+          "userMs": 791.126,
+          "systemMs": 39.154
+        },
+        "cold": {
+          "userMs": 448715.926,
+          "systemMs": 224066.295
+        }
+      },
+      "coldMs": 725358.234375,
+      "compilationMs": 835.648625,
+      "peakRssBytes": 4960436224,
+      "workloadSha256": "d35f1e6ce087ba256827ab81d68aef0783d9977ceb0f82800b6f62df6a0cbb33",
+      "failures": 0,
+      "falsePositives": 0,
+      "falseNegatives": 0
+    }
+  },
+  "osResourceText": "real 728.83\nuser 451.21\nsys 224.62\n          4960436224  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              411290  page reclaims\n                 106  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n             2703251  voluntary context switches\n             1665439  involuntary context switches\n       7381888765547  instructions retired\n       2270658175432  cycles elapsed\n          4229752496  peak memory footprint\n",
+  "exclusiveCountersNs": {
+    "anchorSelectionNs": 347870681373,
+    "anchorIndexNs": 141066689044,
+    "anchorPlanningNs": 78008397668,
+    "astMatchNs": 23533680213,
+    "parseNs": 9455431751,
+    "manifestCandidateLookupNs": 49828268945
+  },
+  "reference": {
+    "passingPreSqlColdCpuSeconds": 125.804,
+    "previousFailedColdCpuSeconds": 903.545588,
+    "previousFailedOsPeakRssBytes": 4822499328
+  },
+  "measurementNotes": [
+    "No own builds, tests, probes or external sampling overlap this run. Other worktrees are not controlled.",
+    "Previous candidate failed dead-code evaluation and includes failure snapshot work. It is not a clean correctness-matched speed baseline.",
+    "Compile time is separate; physical planning remains in cold execution."
+  ]
+}

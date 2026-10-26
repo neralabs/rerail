@@ -4829,3 +4829,20 @@ Its output matches the clause's empty repository diagnostic oracle. The original
 The work allowances are unchanged. The [full validation receipt](../fixtures/host/data-layer-port/profiling/conditional-full-validation-20261026.json) records artifact identities and limits.
 This closes the reproduced conditional execution failure; it does not establish combined-rule performance acceptance.
 The frozen first-50 measurement starts next, followed by all 60. Neither run overlaps this agent's builds, tests, or profiling probes.
+
+
+### Frozen first-50 result: parity restored, CPU target still missed (2026-10-26)
+
+The latest first-50 run passes all 9,021 files and all 24,820 expected findings.
+It reports zero false positives, false negatives, and engine failures.
+Cold CPU is 672.782 seconds: 448.716 user seconds and 224.066 system seconds.
+Cold wall time is 725.358 seconds. Compilation takes 0.830 CPU seconds and 0.836 wall seconds.
+OS peak RSS is 4,960,436,224 bytes (4.620 GiB).
+No own build, test, trace, census, replay copy, or external sample overlaps this timing run.
+
+Cold CPU is 25.54% below the earlier failed 903.546-second candidate.
+That earlier run omitted 4,931 findings and performed failure snapshot copying, so it is not a clean correctness-matched speed baseline.
+The new complete result still uses 5.348 times the passing 125.804-second pre-SQL CPU reference.
+Peak RSS is 2.86% above the earlier failed candidate. The sparse-column improvement does not establish full-workload RSS recovery.
+The [checked receipt](../fixtures/host/data-layer-port/profiling/recovery-first50-full-20261026.json) retains counters and resource accounting.
+Aggregate recovery remains rejected. The sequential all-60 measurement starts after this process exits.
