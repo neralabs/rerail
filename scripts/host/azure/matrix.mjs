@@ -10,7 +10,7 @@
 //   node scripts/host/azure/matrix.mjs run --staged --run-id <id> [--env <id,...>]      then each run --staged
 //   node scripts/host/azure/matrix.mjs list [--env <id,...>]     JSON array of ids, for a CI matrix
 //   node scripts/host/azure/matrix.mjs affected --base <commit> --head <commit>     true when the matrix should run
-//   node scripts/host/azure/matrix.mjs sweep [--older-than-hours <n>]
+//   node scripts/host/azure/matrix.mjs sweep [--run-id <id> | --older-than-hours <n>]
 //
 // Everything goes through the `az` CLI, signed in (`az login` locally, OIDC in CI) to the subscription holding the
 // resource group that scripts/host/azure/bootstrap.sh made. No VM accepts inbound connections: scripts go in through
@@ -262,7 +262,7 @@ async function runEnvironment(environment, { runId, container, store, bundleSas,
       log(environment, `could not fetch results: ${error.message}`);
     }
     if (keep) {
-      log(environment, `--keep: leaving ${vm} in ${RESOURCE_GROUP} (admin ${ADMIN_USER}); delete it with sweep`);
+      log(environment, `--keep: leaving ${vm} in ${RESOURCE_GROUP} (admin ${ADMIN_USER}); delete it with sweep --run-id ${runId}`);
     } else {
       try {
         await deleteRun(runId, environment.id);
@@ -409,7 +409,18 @@ async function commandAffected(options) {
   console.log(String(reasons.length > 0));
 }
 
+// Deletes what runs left: with --run-id, everything of that one run, whatever its age (a --keep run, say); otherwise
+// every run's resources and storage container older than --older-than-hours (default 3, longer than a run takes, so
+// a run still going keeps its VMs and bundle).
 async function commandSweep(options) {
+  const store = await storage();
+  if (options["run-id"]) {
+    const runId = checkRunId(options["run-id"]);
+    await deleteRun(runId);
+    if ((await store.containers(`run-${runId}`)).some((c) => c.name === `run-${runId}`)) await store.deleteContainer(`run-${runId}`);
+    console.log(`swept run ${runId}`);
+    return;
+  }
   const hours = Number(options["older-than-hours"] ?? 3);
   const cutoff = Date.now() - hours * 60 * 60_000;
   const tagged = await az(["resource", "list", "-g", RESOURCE_GROUP, "--query", `[?tags.purpose=='${PURPOSE}' && tags.run != null].{run: tags.run, created: tags.created}`]);
@@ -420,7 +431,6 @@ async function commandSweep(options) {
   }
   // A run's container holds its bundle and results; its environments share it, so it goes here, once it is old,
   // rather than when one environment finishes. The storage account's lifecycle rule expires blobs, not containers.
-  const store = await storage();
   const containers = (await store.containers("run-")).filter((c) => Date.parse(c.modified) < cutoff);
   for (const { name } of containers) await store.deleteContainer(name);
   console.log(`swept ${stale.length} run(s) and ${containers.length} storage container(s) older than ${hours} h`);
@@ -449,7 +459,7 @@ try {
     case "list": console.log(JSON.stringify(selectEnvironments(options.env).map((e) => e.id))); break;
     case "affected": await commandAffected(options); break;
     case "sweep": await commandSweep(options); break;
-    default: throw new Error("Usage: matrix.mjs run (--tarball <file> | --npm <spec> | --staged --run-id <id>) [--env <ids>] [--keep] | stage --tarball <file> --run-id <id> | list [--env <ids>] | affected --base <commit> --head <commit> | sweep [--older-than-hours <n>]");
+    default: throw new Error("Usage: matrix.mjs run (--tarball <file> | --npm <spec> | --staged --run-id <id>) [--env <ids>] [--keep] | stage --tarball <file> --run-id <id> | list [--env <ids>] | affected --base <commit> --head <commit> | sweep [--run-id <id> | --older-than-hours <n>]");
   }
 } catch (error) {
   console.error(`matrix: ${error.message}`);

@@ -71,7 +71,7 @@ just rerail-env-matrix run --tarball neralabs-rerail-<version>.tgz              
 just rerail-env-matrix run --tarball <file> --env windows-11-x64,debian-12-x64      # some
 just rerail-env-matrix run --npm next                                               # a published version from npmjs
 just rerail-env-matrix run --tarball <file> --env ubuntu-24.04-x64 --keep          # leave the VM for a look
-just rerail-env-matrix sweep --older-than-hours 0                                   # delete what --keep left
+just rerail-env-matrix sweep --run-id <id>                                          # delete what a --keep run left
 ```
 
 A tarball needs every native engine, so take it from a `rerail-package` artifact (`gh run download <run> -n
