@@ -1,5 +1,7 @@
 # Candidate SQL replay host
 
+The [cold CPU experiments](cold-cpu.md) cover demand, fusion, native batches, publication, and plan reuse.
+
 This host compares physical SQL layouts over captured candidate inputs.
 It imports the production SQLite adapters, span codec, CPU clock, storage settings, and replay implementation directly.
 It does not parse ASTs or implement rule semantics.

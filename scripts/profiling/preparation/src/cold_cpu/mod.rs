@@ -15,6 +15,7 @@ fn demand(db: &Connection, scale: usize) -> rusqlite::Result<()> {
     // A descriptor is indivisible. Overlapping scopes and equal preorders in different files
     // are intentionally retained. Scale zero tests the empty admission gate.
     db.execute("WITH RECURSIVE ids(id) AS (SELECT 0 WHERE ?1>0 UNION ALL SELECT id+1 FROM ids WHERE id+1<?1) INSERT INTO demand SELECT id,fid,CASE WHEN id%4=3 THEN 100 ELSE 0 END,CASE WHEN id%4=3 THEN min(nodes,4000) ELSE nodes END FROM ids JOIN file ON fid=id%3+1",[scale as i64])?;
+    db.execute_batch("CREATE INDEX temp.demand_file_range ON demand(fid,lo,hi)")?;
     Ok(())
 }
 
@@ -120,6 +121,85 @@ fn planning(
     Ok(result)
 }
 
+fn metadata(
+    db: &Connection,
+    scale: usize,
+    variant: &str,
+    m: &mut Meter,
+) -> rusqlite::Result<(Vec<Vec<i64>>, Value)> {
+    // Reproduce retained statistics and active schemas seen by one SQL owner. Their
+    // row data are deliberately tiny: this tests schema work rather than a join.
+    let start = cpu_ms();
+    for id in 0..scale {
+        m.statement(db, &format!("CREATE TEMP TABLE retained_{id}(v INTEGER)"))?;
+        m.statement(db, &format!("INSERT INTO retained_{id} VALUES({id})"))?;
+        m.statement(
+            db,
+            &format!("CREATE INDEX temp.retained_{id}_v ON retained_{id}(v)"),
+        )?;
+    }
+    m.statement(db, "ANALYZE temp")?;
+    let retained_cpu = cpu_ms() - start;
+    let start = cpu_ms();
+    let mut out = Vec::new();
+    if variant == "reuse" {
+        m.statement(
+            db,
+            "CREATE TEMP TABLE local(consumer INTEGER,value INTEGER)",
+        )?;
+        m.statement(db, "CREATE INDEX temp.local_value ON local(value)")?;
+    }
+    if variant == "fused" {
+        out=m.statement(db,"WITH RECURSIVE ids(id) AS (VALUES(0) UNION ALL SELECT id+1 FROM ids WHERE id<63) SELECT id,id+1 FROM ids")?;
+    } else {
+        for id in 0..64 {
+            if variant == "reuse" {
+                m.statement(db, &format!("INSERT INTO local VALUES({id},{})", id + 1))?;
+            } else {
+                m.statement(
+                    db,
+                    &format!(
+                        "CREATE TEMP TABLE local AS SELECT {id} AS consumer,{} AS value",
+                        id + 1
+                    ),
+                )?;
+                m.statement(db, "CREATE INDEX temp.local_value ON local(value)")?;
+            }
+            if variant == "analyze-each" {
+                m.statement(db, "ANALYZE temp.local")?;
+            }
+            out.extend(m.statement(db, "SELECT consumer,value FROM local")?);
+            m.statement(
+                db,
+                if variant == "reuse" {
+                    "DELETE FROM local"
+                } else {
+                    "DROP TABLE local"
+                },
+            )?;
+        }
+    }
+    if variant == "reuse" {
+        m.statement(db, "DROP TABLE local")?;
+    }
+    let consumer_cpu = cpu_ms() - start;
+    let cleanup = cpu_ms();
+    for id in 0..scale {
+        m.statement(db, &format!("DROP TABLE retained_{id}"))?;
+    }
+    let cleanup_cpu = cpu_ms() - cleanup;
+    let remaining: i64 = db.query_row(
+        "SELECT count(*) FROM sqlite_temp_schema WHERE name GLOB 'retained_*' OR name='local'",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(remaining, 0);
+    Ok((
+        out,
+        json!({"retainedObjects":scale*2,"consumers":64,"retainedSetupCpuMs":retained_cpu,"consumerCpuMs":consumer_cpu,"retainedCleanupCpuMs":cleanup_cpu,"objectsAfterRelease":remaining,"scope":"SQLite schema/statistics scaling control; does not infer production owner object counts."}),
+    ))
+}
+
 pub fn run(capture: &Path, experiment: &str, variant: &str, scale: usize) -> Result<Value> {
     if scale > 2048 {
         return Err("scale must not exceed 2048".into());
@@ -170,6 +250,11 @@ pub fn run(capture: &Path, experiment: &str, variant: &str, scale: usize) -> Res
             r
         }
         "planning" => planning(db, &base, variant, scale, &mut m)?,
+        "metadata" => {
+            let (out, c) = metadata(db, scale, variant, &mut m)?;
+            counters = c;
+            out
+        }
         "composed" => {
             if variant == "staged" {
                 fusion(db, &arm(&v, "parent"), "staged", &mut m)?

@@ -29,6 +29,8 @@ struct Batch {
     visits: AtomicUsize,
     output: AtomicUsize,
     callbacks: AtomicUsize,
+    waves: AtomicUsize,
+    peak_rows: AtomicUsize,
 }
 #[repr(C)]
 struct Table {
@@ -42,7 +44,8 @@ struct Cursor {
     ids: Vec<usize>,
     task: usize,
     next: usize,
-    current: Option<[i64; 5]>,
+    columns: [Vec<i64>; 5],
+    row: usize,
     ordinal: i64,
 }
 fn invalid(s: &str) -> rusqlite::Error {
@@ -92,16 +95,21 @@ unsafe impl<'a> VTab<'a> for Table {
             ids: Vec::new(),
             task: 0,
             next: 0,
-            current: None,
+            columns: std::array::from_fn(|_| Vec::new()),
+            row: 0,
             ordinal: 0,
         })
     }
 }
 impl Cursor {
-    fn advance(&mut self) -> rusqlite::Result<()> {
-        self.current = None;
+    fn fill(&mut self) -> rusqlite::Result<()> {
+        for column in &mut self.columns {
+            column.clear();
+        }
+        self.row = 0;
+        let mut visits = 0;
         let mut reader = self.batch.reader.lock();
-        while self.task < self.ids.len() {
+        while self.task < self.ids.len() && self.columns[0].len() < 65_536 {
             let id = self.ids[self.task];
             let fid = self.batch.columns[2][id];
             let parent = self.batch.columns[3][id] as usize;
@@ -121,25 +129,42 @@ impl Cursor {
                 return Err(invalid("invalid child subtree"));
             }
             self.next += size;
-            self.batch.visits.fetch_add(1, Ordering::Relaxed);
+            visits += 1;
             let flags = reader.flags(fid, child)?;
             let kind = if flags & 8 != 0 {
                 65535
             } else {
                 i64::from(rec[0] & 1023)
             };
-            if i64::from(rec[0] >> 10) == self.batch.field && kind == self.batch.kind {
-                self.current = Some([
+            // This operator is the first child for a field, followed by a kind
+            // predicate, matching nera_child. Do not traverse unrelated siblings.
+            if i64::from(rec[0] >> 10) != self.batch.field {
+                continue;
+            }
+            self.next = end;
+            if kind == self.batch.kind {
+                let values = [
                     self.batch.columns[1][id],
                     fid,
                     parent as i64,
                     child as i64,
                     id as i64,
-                ]);
-                self.batch.output.fetch_add(1, Ordering::Relaxed);
-                return Ok(());
+                ];
+                for (column, value) in self.columns.iter_mut().zip(values) {
+                    column.push(value);
+                }
             }
         }
+        self.batch.visits.fetch_add(visits, Ordering::Relaxed);
+        self.batch
+            .output
+            .fetch_add(self.columns[0].len(), Ordering::Relaxed);
+        if !self.columns[0].is_empty() {
+            self.batch.waves.fetch_add(1, Ordering::Relaxed);
+        }
+        self.batch
+            .peak_rows
+            .fetch_max(self.columns[0].len(), Ordering::Relaxed);
         Ok(())
     }
 }
@@ -172,18 +197,22 @@ unsafe impl VTabCursor for Cursor {
         } else {
             push(args.get(0)?)?;
         }
-        self.advance()
+        self.fill()
     }
     fn next(&mut self) -> rusqlite::Result<()> {
         self.ordinal += 1;
-        self.advance()
+        self.row += 1;
+        if self.row >= self.columns[0].len() {
+            self.fill()?;
+        }
+        Ok(())
     }
     fn eof(&self) -> bool {
-        self.current.is_none()
+        self.columns[0].is_empty()
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> rusqlite::Result<()> {
         self.batch.callbacks.fetch_add(1, Ordering::Relaxed);
-        ctx.set_result(&self.current.unwrap()[col as usize])
+        ctx.set_result(&self.columns[col as usize][self.row])
     }
     fn rowid(&self) -> rusqlite::Result<i64> {
         Ok(self.ordinal)
@@ -205,13 +234,13 @@ pub(super) fn run(
     if direct {
         // The production bare token is k + base36(language*1024+kind). Compute it
         // from SQL vocabulary metadata once, never by pricing candidate postings.
-        m.statement(db,&format!("CREATE TEMP TABLE requests AS WITH RECURSIVE encoding(value,word) AS (SELECT lang*1024+{f},'' FROM file WHERE fid=1 UNION ALL SELECT value/36,substr('0123456789abcdefghijklmnopqrstuvwxyz',value%36+1,1)||word FROM encoding WHERE value>0), token(term) AS (SELECT 'k'||word FROM encoding WHERE value=0) SELECT row_number() OVER ()-1 AS id,d.scope,i.doc AS fid,i.offset AS pre,-1 AS end FROM demand d CROSS JOIN token t CROSS JOIN ftsk_inst i WHERE i.term=t.term AND i.doc=d.fid AND i.offset>=d.lo AND i.offset<d.hi"))?;
+        m.statement(db,&format!("CREATE TEMP TABLE requests AS WITH RECURSIVE encoding(value,word) AS (SELECT lang*1024+{f},'' FROM file WHERE fid=1 UNION ALL SELECT value/36,substr('0123456789abcdefghijklmnopqrstuvwxyz',value%36+1,1)||word FROM encoding WHERE value>0), token(term) AS (SELECT 'k'||word FROM encoding WHERE value=0) SELECT row_number() OVER (ORDER BY i.doc,i.offset,d.scope)-1 AS id,d.scope,i.doc AS fid,i.offset AS pre,-1 AS end FROM (SELECT 1 FROM demand LIMIT 1) admission CROSS JOIN token t CROSS JOIN ftsk_inst i CROSS JOIN demand d INDEXED BY demand_file_range WHERE i.term=t.term AND i.doc=d.fid AND i.offset>=d.lo AND i.offset<d.hi"))?;
     } else {
-        m.statement(db,&format!("CREATE TEMP TABLE requests AS SELECT row_number() OVER ()-1 AS id,d.scope,p.fid,p.pre,p.end FROM demand d CROSS JOIN n p INDEXED BY n_kind WHERE p.kind={f} AND p.fid=d.fid AND p.pre>=d.lo AND p.pre<d.hi"))?;
+        m.statement(db,&format!("CREATE TEMP TABLE requests AS SELECT row_number() OVER (ORDER BY p.fid,p.pre,d.scope)-1 AS id,d.scope,p.fid,p.pre,p.end FROM demand d CROSS JOIN n p INDEXED BY n_kind WHERE p.kind={f} AND p.fid=d.fid AND p.pre>=d.lo AND p.pre<d.hi"))?;
     }
     let stats=m.statement(db,&format!("SELECT coalesce(sum(s.n),0) FROM file_kind_counts s JOIN demand d ON d.fid=s.fid WHERE s.code={f}"))?;
     let rows = if variant == "sql" {
-        m.statement(db,&format!("SELECT r.scope,r.fid,r.pre,c.pre FROM requests r CROSS JOIN n c INDEXED BY n_parent WHERE c.fid=r.fid AND c.parent=r.pre AND c.field={field} AND c.kind={kind}"))?
+        m.statement(db,&format!("SELECT r.scope,r.fid,r.pre,c.pre FROM requests r CROSS JOIN n c INDEXED BY n_parent WHERE c.fid=r.fid AND c.parent=r.pre AND c.field={field} AND c.kind={kind} AND c.pre=(SELECT min(first.pre) FROM n first INDEXED BY n_parent WHERE first.fid=r.fid AND first.parent=r.pre AND first.field={field})"))?
     } else if variant == "scalar" || variant.starts_with("direct-scalar") {
         let projection = if variant.ends_with("consumers") {
             "SELECT consumers.id,scope,fid,pre,child FROM children CROSS JOIN (SELECT 1 id,2 modulus UNION ALL SELECT 2,3) consumers WHERE child%consumers.modulus=0"
@@ -248,16 +277,18 @@ pub(super) fn run(
             visits: AtomicUsize::new(0),
             output: AtomicUsize::new(0),
             callbacks: AtomicUsize::new(0),
+            waves: AtomicUsize::new(0),
+            peak_rows: AtomicUsize::new(0),
         });
         const MODULE: Module<Table> = Module::eponymous_only_module();
         db.create_module(c"field_children", &MODULE, Some(batch.clone()))?;
-        let query = if variant == "batch-consumers" || variant == "direct-batch-consumers" {
+        let query = if variant.ends_with("consumers") {
             "WITH children AS MATERIALIZED (SELECT scope,fid,parent,child FROM field_children WHERE request IN (SELECT id FROM requests)), consumers(id,modulus) AS (VALUES(1,2),(2,3)) SELECT consumers.id,children.* FROM children CROSS JOIN consumers WHERE children.child%consumers.modulus=0"
         } else {
             "SELECT scope,fid,parent,child FROM field_children WHERE request IN (SELECT id FROM requests)"
         };
         let result = m.statement(db, query)?;
-        let counters = json!({"requests":batch.columns[0].len(),"filters":batch.filters.load(Ordering::Relaxed),"visitedDirectChildren":batch.visits.load(Ordering::Relaxed),"outputRows":batch.output.load(Ordering::Relaxed),"columnCallbacks":batch.callbacks.load(Ordering::Relaxed),"estimatedRows":batch.estimate,"inputLayout":"five contiguous i64 columns; correlated request IDs via sqlite3_vtab_in","maxBufferedOutputRows":1});
+        let counters = json!({"requests":batch.columns[0].len(),"filters":batch.filters.load(Ordering::Relaxed),"visitedDirectChildren":batch.visits.load(Ordering::Relaxed),"outputRows":batch.output.load(Ordering::Relaxed),"columnCallbacks":batch.callbacks.load(Ordering::Relaxed),"estimatedRows":batch.estimate,"inputLayout":"five contiguous i64 columns; correlated request IDs via sqlite3_vtab_in","waves":batch.waves.load(Ordering::Relaxed),"maxBufferedOutputRows":batch.peak_rows.load(Ordering::Relaxed),"waveRows":65536});
         store.readers.clear();
         m.statement(db, "DROP TABLE requests")?;
         return Ok((result, counters));

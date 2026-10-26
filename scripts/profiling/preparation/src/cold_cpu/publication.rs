@@ -5,7 +5,7 @@ const COLUMNS: &str = "fid,nodes,path,digest,lang,srcenc,src,rec,spans,checkpoin
 #[derive(Default, serde::Serialize)]
 struct Executions {
     profile_events: usize,
-    internal_profile_events: usize,
+    commented_profile_events: usize,
     trigger_entries: usize,
 }
 // SAFETY: the pointer is a live stack-owned counter until tracing is detached below.
@@ -24,7 +24,7 @@ unsafe extern "C" fn trace(
                 .to_bytes()
                 .starts_with(b"--")
         {
-            out.internal_profile_events += 1;
+            out.commented_profile_events += 1;
         }
     } else if mask == rusqlite::ffi::SQLITE_TRACE_STMT
         && !sql.is_null()
@@ -169,8 +169,9 @@ pub(super) fn run(capture: &Path, variant: &str, scale: usize) -> Result<Value> 
         [capture.to_str().ok_or("path encoding")?],
     )?;
     let (packet, set_stats, cache) = match variant {
-        "file" => (1, false, 8192),
-        "packet-triggers" => (32, false, 8192),
+        "file" => (1, false, 1024),
+        "file-eight-cache" => (1, false, 8192),
+        "packet-triggers" => (32, false, 1024),
         "packet-set" => (32, true, 8192),
         "packet-small-cache" => (32, true, 1024),
         "packet-large-cache" => (32, true, 32768),
@@ -264,6 +265,13 @@ pub(super) fn run(capture: &Path, variant: &str, scale: usize) -> Result<Value> 
     }
     replay?;
     let diagnostic_cpu = cpu_ms() - diagnostic;
+    // Every host statement is submitted through this meter during the traced replay.
+    // SQLite's additional PROFILE completions are internal work, not new submissions.
+    let diagnostic_host = serde_json::to_value(&diagnostic_meter)?["statements"]
+        .as_u64()
+        .unwrap() as usize;
+    assert!(counts.profile_events >= diagnostic_host);
+    let internal_executions = counts.profile_events - diagnostic_host;
     assert_state(&db)?;
     assert_eq!(before, state(&db)?);
     let mut cache_used = 0;
@@ -279,6 +287,6 @@ pub(super) fn run(capture: &Path, variant: &str, scale: usize) -> Result<Value> 
         );
     }
     Ok(
-        json!({"format":"rerail.cold-cpu-spike/v1","experiment":"publication","variant":variant,"scale":scale,"cpuMs":common_cpu+kernel,"kernelCpuMs":kernel,"commonCpuMs":common_cpu,"processCpuMs":cpu_ms()-process,"peakRssBytes":peak_bytes(),"sqliteCacheBytes":cache_used,"cacheBefore":cache_before,"cacheAfter":cache_after,"cacheKiB":cache,"packetFiles":packet,"transactions":scale.div_ceil(packet),"sql":m,"rows":before,"rollback":true,"replacement":true,"pinnedSqlSnapshot":true,"diagnosticExecutions":counts,"diagnosticHost":diagnostic_meter,"diagnosticFiles":diagnostic_files,"diagnosticCpuMs":diagnostic_cpu,"sqliteVersion":rusqlite::version(),"scope":"Exact production FTS/value schema and real file-2 tape/posting bytes, replicated under separate file IDs. Includes image staging, SQL statistics, writes and commits. Verification and traced replay are separate. Parsing, source image encoding, engine version ownership and scheduling are not modeled. A pinned SQLite reader is verified separately."}),
+        json!({"format":"rerail.cold-cpu-spike/v1","experiment":"publication","variant":variant,"scale":scale,"cpuMs":common_cpu+kernel,"kernelCpuMs":kernel,"commonCpuMs":common_cpu,"processCpuMs":cpu_ms()-process,"peakRssBytes":peak_bytes(),"sqliteCacheBytes":cache_used,"cacheBefore":cache_before,"cacheAfter":cache_after,"cacheKiB":cache,"packetFiles":packet,"transactions":scale.div_ceil(packet),"sql":m,"rows":before,"rollback":true,"replacement":true,"pinnedSqlSnapshot":true,"diagnosticExecutions":counts,"diagnosticSqliteInternalExecutions":internal_executions,"diagnosticHost":diagnostic_meter,"diagnosticFiles":diagnostic_files,"diagnosticCpuMs":diagnostic_cpu,"sqliteVersion":rusqlite::version(),"scope":"Exact production FTS/value schema and real file-2 tape/posting bytes, replicated under separate file IDs. Includes image staging, SQL statistics, writes and commits. Verification and traced replay are separate. Parsing, source image encoding, engine version ownership and scheduling are not modeled. A pinned SQLite reader is verified separately."}),
     )
 }

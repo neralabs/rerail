@@ -61,7 +61,7 @@ fn reused_statement_resets_parameters_without_stale_consumer_state() {
     let (db, v) = fixture();
     let base = arm(&v, "parent");
     let mut expected = None;
-    for variant in ["private-schema", "reprepare", "reuse"] {
+    for variant in ["private-schema", "reprepare", "reuse", "batch"] {
         let mut r = planning(&db, &base, variant, 3, &mut Meter::default()).unwrap();
         r.sort();
         if let Some(e) = &expected {
@@ -78,6 +78,27 @@ fn reused_statement_resets_parameters_without_stale_consumer_state() {
             .unwrap(),
             0
         );
+    }
+}
+
+#[test]
+fn statement_reuse_does_not_misreport_executions_as_preparations() {
+    let (db, v) = fixture();
+    let mut m = Meter::default();
+    planning(&db, &arm(&v, "parent"), "reuse", 3, &mut m).unwrap();
+    let counts = serde_json::to_value(m).unwrap();
+    assert_eq!(counts["statements"], 3);
+    assert_eq!(counts["preparations"], 1);
+}
+
+#[test]
+fn schema_scaling_controls_preserve_outputs_and_release_objects() {
+    let (db, _) = fixture();
+    let expected = (0..64).map(|id| vec![id, id + 1]).collect::<Vec<_>>();
+    for variant in ["analyze-each", "no-analyze", "reuse", "fused"] {
+        let (out, counts) = metadata(&db, 4, variant, &mut Meter::default()).unwrap();
+        assert_eq!(out, expected);
+        assert_eq!(counts["objectsAfterRelease"], 0);
     }
 }
 
@@ -108,7 +129,7 @@ fn native_batch_keeps_overlapping_scopes_and_releases_blob_handles() {
     .unwrap();
     db.execute_batch("INSERT INTO kind VALUES(1,145,'function_definition',1),(1,1,'identifier',1); INSERT INTO field VALUES(1,19,'name')").unwrap();
     // Root function, a name, a non-name identifier, and another name. SQL/native retain
-    // both matching children; the one-child scalar comparison is used only on real Python names.
+    // the first matching field child, as the production nera_child accessor does.
     let mut rec = Vec::new();
     for words in [
         [145u16, 1, 4],
@@ -139,10 +160,43 @@ fn native_batch_keeps_overlapping_scopes_and_releases_blob_handles() {
         native::run(&store, &v, "parent", "batch", &mut Meter::default()).unwrap();
     actual.sort();
     assert_eq!(actual, expected);
-    assert_eq!(actual.len(), 600);
+    assert_eq!(actual.len(), 300);
     assert_eq!(c["filters"], 1);
-    assert_eq!(c["visitedDirectChildren"], 900);
-    assert_eq!(c["columnCallbacks"], 2400);
+    assert_eq!(c["visitedDirectChildren"], 300);
+    assert_eq!(c["columnCallbacks"], 1200);
+    assert_eq!(c["waves"], 1);
+    // A wrong-kind first field child must not fall through to a later child.
+    let mut edited = rec.clone();
+    edited[6..8].copy_from_slice(&(2u16 | (19 << 10)).to_le_bytes());
+    store
+        .db
+        .execute("UPDATE file SET rec=?1 WHERE fid=2", [edited])
+        .unwrap();
+    store
+        .db
+        .execute_batch("UPDATE n SET kind=2 WHERE fid=2 AND pre=1")
+        .unwrap();
+    for variant in ["sql", "scalar", "batch"] {
+        let (rows, _) = native::run(&store, &v, "parent", variant, &mut Meter::default()).unwrap();
+        assert_eq!(rows.len(), 150);
+        assert!(rows.iter().all(|r| r[1] == 1));
+    }
+    store
+        .db
+        .execute("UPDATE file SET rec=?1 WHERE fid=2", [rec])
+        .unwrap();
+    store
+        .db
+        .execute_batch("UPDATE n SET kind=1 WHERE fid=2 AND pre=1")
+        .unwrap();
+    // More output than one wave still uses one complete demand filter. xNext
+    // serves completed columns, with at most 65,536 buffered output rows.
+    store.db.execute_batch("WITH RECURSIVE ids(i) AS (VALUES(300) UNION ALL SELECT i+1 FROM ids WHERE i<79999) INSERT INTO demand SELECT i,1+i%2,0,4 FROM ids").unwrap();
+    let (rows, c) = native::run(&store, &v, "parent", "batch", &mut Meter::default()).unwrap();
+    assert_eq!(rows.len(), 80000);
+    assert_eq!(c["filters"], 1);
+    assert_eq!(c["waves"], 2);
+    assert_eq!(c["maxBufferedOutputRows"], 65536);
     store.db.execute_batch("DELETE FROM demand").unwrap();
     let (rows, c) = native::run(&store, &v, "parent", "batch", &mut Meter::default()).unwrap();
     assert!(rows.is_empty());

@@ -11,8 +11,9 @@ VARIANTS = {
     'anchor': ['broad', 'parent', 'child', 'chosen'],
     'fusion': ['staged', 'inline', 'materialized', 'fused'],
     'native': ['sql', 'scalar', 'batch'],
-    'publication': ['file', 'packet-triggers', 'packet-set', 'packet-small-cache', 'packet-large-cache'],
+    'publication': ['file', 'file-eight-cache', 'packet-triggers', 'packet-set', 'packet-small-cache', 'packet-large-cache'],
     'planning': ['private-schema', 'reprepare', 'reuse', 'batch'],
+    'metadata': ['analyze-each', 'no-analyze', 'reuse', 'fused'],
     'composed': ['staged', 'fused', 'native', 'direct-scalar', 'direct-native'],
 }
 
@@ -24,7 +25,7 @@ def digest(path):
 
 def run(args):
     root = Path(__file__).resolve().parents[3]
-    binary = root / 'scripts/profiling/preparation/target/release/cold_cpu'
+    binary = (args.binary or root / 'scripts/profiling/preparation/target/release/cold_cpu').resolve()
     args.output.mkdir(parents=True, exist_ok=False)
     sources = sorted((root / 'scripts/profiling/preparation/src/cold_cpu').glob('*.rs'))
     sources += [Path(__file__).resolve(), root / 'scripts/profiling/preparation/src/composition/mod.rs']
@@ -80,4 +81,5 @@ if __name__ == '__main__':
     parser.add_argument('--scale', type=int, default=4)
     parser.add_argument('--repetitions', type=int, default=3)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--binary',type=Path,help='Frozen replay host; defaults to the current release build')
     run(parser.parse_args())
