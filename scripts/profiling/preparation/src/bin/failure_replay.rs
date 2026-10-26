@@ -3,11 +3,17 @@
 mod backup;
 #[path = "../../../../../native/src/code_rule_dsl/profile/clock.rs"]
 mod clock;
+#[path = "../../../../../native/src/code_rule_dsl/relational/functions.rs"]
+mod sql_functions;
 use rusqlite::{Connection, OpenFlags, Result, StatementStatus, types::ValueRef};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Instant,
 };
 
@@ -15,7 +21,7 @@ fn restore(db: &Connection, path: &Path, schema: &std::ffi::CStr) -> Result<()> 
     let source = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     backup::copy(&source, c"main", db, schema)
 }
-fn database(manifest: &Path, data: &serde_json::Value) -> Result<Connection> {
+fn database(manifest: &Path, data: &serde_json::Value) -> Result<(Connection, Arc<AtomicUsize>)> {
     let db = Connection::open_in_memory()?;
     db.execute_batch("PRAGMA temp_store=FILE;PRAGMA cache_spill=ON;PRAGMA cache_size=-1024;PRAGMA temp.cache_size=-512;CREATE TEMP TABLE __snapshot_init(x);DROP TABLE __snapshot_init;")?;
     let directory = manifest.parent().unwrap();
@@ -27,7 +33,9 @@ fn database(manifest: &Path, data: &serde_json::Value) -> Result<Connection> {
     if let Some(temp) = data["temp"].as_str() {
         restore(&db, &directory.join(temp), c"temp")?;
     }
-    Ok(db)
+    let work = Arc::new(AtomicUsize::new(usize::MAX));
+    sql_functions::install(&db, 1024 * 1024, Arc::clone(&work))?;
+    Ok((db, work))
 }
 fn evaluate(db: &Connection, sql: &str) -> Result<serde_json::Value> {
     let cpu = clock::thread_cpu_ns();
@@ -98,13 +106,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .into()
     };
     let setup = Instant::now();
-    let db = database(manifest, &data)?;
+    let (db, work) = database(manifest, &data)?;
     let setup_ns = setup.elapsed().as_nanos();
     let result = evaluate(&db, &sql)?;
     println!(
         "{}",
         serde_json::json!({"format":"rerail.sql-failure-replay/v1","sqliteVersion":rusqlite::version(),
-        "setupWallNs":setup_ns,"result":result,"note":"Includes result hashing. No AST ingestion or original rule allowance. Missing native producers remain errors. Compare bag digests with this same replay binary."})
+        "setupWallNs":setup_ns,"result":result,"regexWorkUnits":usize::MAX-work.load(Ordering::Relaxed),
+        "note":"Includes result hashing. Uses production regex functions and SQLite. No AST ingestion or original rule allowance. Missing native producers remain errors. Compare bag digests with this same replay binary."})
     );
     Ok(())
 }
@@ -116,13 +125,19 @@ mod tests {
     fn replays_the_production_regex_functions_and_keeps_invalid_groups_as_errors() -> Result<()> {
         let directory = tempfile::tempdir().unwrap();
         let source = Connection::open(directory.path().join("main.sqlite"))?;
-        source.execute_batch("CREATE TABLE input(value);INSERT INTO input VALUES('é_async'),(NULL);")?;
+        source.execute_batch(
+            "CREATE TABLE input(value);INSERT INTO input VALUES('é_async'),(NULL);",
+        )?;
         let data = serde_json::json!({"main":"main.sqlite"});
-        let db = database(&directory.path().join("manifest.json"), &data)?;
-        let result = evaluate(&db, "SELECT rx_replace(value,'_async$',''),rx_extract(value,'(é)',1),rx_matches(value,'^é') FROM input")?;
+        let (db, work) = database(&directory.path().join("manifest.json"), &data)?;
+        let result = evaluate(
+            &db,
+            "SELECT rx_replace(value,'_async$',''),rx_extract(value,'(é)',1),rx_matches(value,'^é') FROM input",
+        )?;
         assert_eq!(result["rows"], 2);
         let expected = evaluate(&db, "SELECT 'é','é',1 UNION ALL SELECT '',NULL,0")?;
         assert_eq!(result["bagDigest"], expected["bagDigest"]);
+        assert_eq!(usize::MAX - work.load(Ordering::Relaxed), 6);
         assert!(evaluate(&db, "SELECT rx_extract('x','(x)',2)").is_err());
         Ok(())
     }
@@ -135,7 +150,7 @@ mod tests {
         let temp = Connection::open(directory.path().join("temp.sqlite"))?;
         temp.execute_batch("CREATE TABLE selected(value);INSERT INTO selected VALUES(1);")?;
         let data = serde_json::json!({"main":"main.sqlite","temp":"temp.sqlite"});
-        let db = database(&directory.path().join("manifest.json"), &data)?;
+        let (db, _) = database(&directory.path().join("manifest.json"), &data)?;
         let a = evaluate(&db, "SELECT value FROM input")?;
         let b = evaluate(&db, "SELECT value FROM input ORDER BY value DESC")?;
         assert_eq!(a["rows"], 3);

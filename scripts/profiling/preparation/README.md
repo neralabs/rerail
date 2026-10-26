@@ -201,6 +201,7 @@ SQL batch duration belongs to the batch. Use its captured logical membership whe
 Build the `failure_replay` binary with this package.
 It restores both SQL owners from a failure-only snapshot, then evaluates the saved SELECT query.
 It uses the same bundled SQLite version and backup boundary as the engine.
+It also installs the production regex functions, including their NULL and invalid-group behavior.
 Native virtual-table frames and external callbacks remain unavailable; queries that require them fail explicitly.
 
 ```sh
@@ -215,3 +216,6 @@ The report separates restore wall time from query CPU, wall time, VM steps, scan
 Query time includes result hashing. Row count and a commutative typed-row digest help compare alternatives with the same replay binary.
 A digest match is diagnostic evidence, not a replacement for full rule parity.
 The host has no original rule allowance. The external controller enforces the command deadline.
+The report counts regex work units separately from SQLite VM steps.
+New failure manifests preserve both remaining SQL allowance and the outer clause's work limit and consumed polls.
+These diagnostics identify the exhausted boundary without changing either allowance.

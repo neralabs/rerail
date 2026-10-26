@@ -86,6 +86,24 @@ pub(super) fn matcher_budget_observed() -> bool {
     })
 }
 
+/// Error-only diagnostics distinguish the outer clause from a SQL session's allowance.
+#[cfg(feature = "code-rule-profile")]
+pub(super) fn profile() -> serde_json::Value {
+    MATCH_BUDGET.with_borrow(|budget| {
+        let Some(deadline) = budget else {
+            return serde_json::Value::Null;
+        };
+        let (kind, limit) = match deadline.limit {
+            Limit::Work(units) => ("work", Some(units)),
+            Limit::Until(_) => ("deadline", None),
+        };
+        serde_json::json!({"kind":kind,"limit":limit,
+            "spent":deadline.work.load(Ordering::Relaxed),
+            "observed":deadline.observed(),"nestedObserved":deadline.nested.load(Ordering::Relaxed),
+            "closed":deadline.closed.load(Ordering::Relaxed)})
+    })
+}
+
 /// Spends this thread's budget without polling it: what a last step that runs past the budget and
 /// never polls leaves behind.
 #[cfg(test)]

@@ -317,6 +317,7 @@ Set `RERAIL_SQL_FAILURE_DIR` to a diagnostic directory before an engine run.
 A failed relational stage or result query copies its main and temporary SQLite databases before owner cleanup.
 Successful queries do no snapshot work and install no statement-tracing callback through this setting.
 The JSON manifest records the rule, clause, failed query, database filenames, and capture limits.
+Its budget record separates remaining SQL allowance from the outer clause's work limit, consumed polls, and observed exhaustion.
 Failed-run CPU includes snapshot work. Such a run fails acceptance regardless of its timing.
 SQLite backups do not serialize native virtual-table frames or external source callbacks.
 A query that requires those producers also requires their original inputs for replay.
