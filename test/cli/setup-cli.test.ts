@@ -159,6 +159,9 @@ describe("rerail install --root", () => {
     const installed = [join(updater.versionsRoot, "1.0.0", "node_modules", "@neralabs", "rerail"), join(context.home, "packs", "node_modules"), join(hostConfigHome, ".cache", "rerail")];
     for (const path of installed) await mkdir(path, { recursive: true });
     await writeFile(join(context.home, "consent.json"), "{}");
+    // What `rerail activate`, the device secret store, `rules export` and a daemon write cut short leave in the home.
+    await mkdir(join(context.home, "profiles", "acme"), { recursive: true });
+    for (const name of ["active-profile", "device-secrets", "rules.json", "daemon.json.4242.tmp"]) await writeFile(join(context.home, name), "");
     const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], context)).toBe(0);
@@ -174,7 +177,8 @@ describe("rerail install --root", () => {
     const text = output.mock.calls.join("");
     expect(text).toContain(`Removed ${dirname(updater.launcherPath)} (the rerail command).`);
     expect(text).toContain(`Removed ${join(hostConfigHome, ".cache", "rerail")} (the cache).`);
-    expect(text).toContain(`Kept ${context.home}: coding-agents.json, consent.json`);
+    // A home only Rerail uses, activated or not, may go as a whole.
+    expect(text).toContain(`Kept ${context.home}: active-profile, coding-agents.json, consent.json, daemon.json.4242.tmp, device-secrets, profiles, rules.json (Rerail's settings, logs and records; delete it if you will not install Rerail again).`);
   });
 
   it("deletes only Rerail's own files from a Rerail home shared with other files, and says what it kept", async () => {
@@ -224,7 +228,7 @@ describe("rerail install --root", () => {
   it("names a cleanup command that removes exactly the path, in PowerShell never expanding it, and never follows the current link", () => {
     const path = String.raw`C:\Users\O'Neil [work] $x & y\.rerail\versions`;
     expect(cleanupCommand(path, false, "win32")).toBe(String.raw`Remove-Item -LiteralPath 'C:\Users\O''Neil [work] $x & y\.rerail\versions' -Recurse -Force`);
-    expect(cleanupCommand(String.raw`C:\Users\a&b\.rerail\current`, true, "win32")).toBe(String.raw`cmd /c 'rmdir "C:\Users\a&b\.rerail\current"'`);
+    expect(cleanupCommand(String.raw`C:\Users\100%PATH%x\.rerail\current`, true, "win32")).toBe(String.raw`[System.IO.Directory]::Delete('C:\Users\100%PATH%x\.rerail\current')`);
     expect(cleanupCommand("/home/o'neil/.rerail/versions", false, "linux")).toBe(String.raw`rm -rf '/home/o'\''neil/.rerail/versions'`);
   });
 

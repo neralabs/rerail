@@ -650,7 +650,7 @@ Rerail's files in it are named. A file it
 cannot remove, such as one Windows keeps locked while a session still runs
 Rerail, is named with the command that finishes the job once that session is
 closed (`Remove-Item -LiteralPath '<path>' -Recurse -Force` in PowerShell, and
-`cmd /c 'rmdir "<path>"'` for the `current` link, which removes the link and not
+`[System.IO.Directory]::Delete('<path>')` for the `current` link, which removes the link and not
 what it points at; `rm -rf <path>` elsewhere); the rest of the uninstall has
 happened, so it still exits 0.
 

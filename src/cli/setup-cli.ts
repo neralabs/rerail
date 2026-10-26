@@ -216,20 +216,24 @@ function installedFiles(context: SetupContext): Array<{ path: string; what: stri
 /** What npm and the rule pack store put in the packs prefix, with the lock a pack change holds. */
 const RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set(["node_modules", "package.json", "package-lock.json", "staging", ".lock"]);
 
-/** What Rerail itself writes in its home: settings, records, logs, locks, its databases and the installation. */
+/**
+ * What Rerail itself writes in its home: settings, records, logs, locks, its databases, `rerail activate`'s profiles
+ * and device secrets, `rules export`'s `rules.json` and the installation, each with the `.<pid>[.<uuid>].tmp` or
+ * `.old` a write cut short leaves beside it.
+ */
 const RERAIL_HOME_ENTRY =
-  /^(?:(?:activation|previous-activation|coding-agents|consent|daemon|daemon-port|launcher-path|update-state)\.json|daemon\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs)$/u;
+  /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\.json|daemon\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs|profiles|active-profile|device-secrets)(?:\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old))?$/u;
 
 /**
  * The command that finishes removing `path` by hand. PowerShell: single quotes expand nothing, and `-LiteralPath` reads
- * `[` and `]` as themselves. A link (`current`, a junction on Windows) is removed by cmd's `rmdir`, which never follows
- * it as Windows PowerShell's `Remove-Item -Recurse` does; the path goes to cmd in double quotes, which `&` and `^`
- * cannot break out of.
+ * `[` and `]` as themselves. A link (`current`, a junction on Windows) goes through .NET's non-recursive
+ * `Directory.Delete`, which removes the link and never follows it as Windows PowerShell's `Remove-Item -Recurse` does,
+ * and, unlike cmd's `rmdir`, expands no `%NAME%` in the path.
  */
 export function cleanupCommand(path: string, link: boolean, platform: NodeJS.Platform = process.platform): string {
   if (platform !== "win32") return `rm -rf ${shellQuote(path, platform)}`;
-  const powershell = path.replaceAll("'", "''");
-  return link ? `cmd /c 'rmdir "${powershell}"'` : `Remove-Item -LiteralPath '${powershell}' -Recurse -Force`;
+  const powershell = `'${path.replaceAll("'", "''")}'`;
+  return link ? `[System.IO.Directory]::Delete(${powershell})` : `Remove-Item -LiteralPath ${powershell} -Recurse -Force`;
 }
 
 function isRerailLauncher(path: string): boolean {
