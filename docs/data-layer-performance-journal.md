@@ -4568,3 +4568,38 @@ CPU tracing, SQL statement tracing, page census, memory census, external samplin
 Failure-only SQL snapshots are enabled. They run only after an error; a failed measurement cannot pass acceptance.
 The evidence directory is `.rerail/profiles/recovery-completion-20261025/full-candidate/`.
 No own development workload will overlap these timing runs. Other worktrees remain outside this agent's control.
+
+### First-50 result: recovery rejected
+
+The frozen first-50 run completes all 9,021 files and fails acceptance.
+Cold CPU is 903.546 seconds: 600.330 user seconds and 303.215 system seconds.
+Cold wall time is 1,312.792 seconds. Logical compilation takes 1.129 CPU seconds and 1.492 wall seconds.
+OS peak RSS is 4,822,499,328 bytes (4.491 GiB).
+The complete process takes 907.50 CPU seconds and 1,318.46 wall seconds, including compilation, reporting, and cleanup.
+
+The run reports 19,889 of 24,820 expected findings, zero false positives, and 4,931 false negatives.
+All missing findings belong to `internal-dead-code`.
+Its `unreachable-internal-symbols` clause interrupts in `reachable` and reports an exhausted work budget.
+The constructor and public API failures from the earlier run do not recur.
+Matching the other findings does not offset this new failure.
+
+Cold CPU is 7.182 times the passing 125.804-second reference.
+It is also 0.50% above the previous failed 899.070-second measurement.
+These measurements do not demonstrate aggregate CPU recovery.
+Failure-only snapshot copying adds work after the error, so this failed timing is diagnostic.
+The [checked receipt](../fixtures/host/data-layer-port/profiling/recovery-full-candidate-20261025.json) preserves identities and measurements.
+
+Across all phases, exclusive counters record 453.404 seconds in selection, 206.421 in index preparation, and 93.175 in physical planning.
+The earlier failed run records 418.068, 183.807, and 132.476 seconds respectively.
+Both runs publish 28,230,245 nodes and select 6,425,028 root pairs.
+The lower planning cost does not recover the complete workload's CPU cost.
+
+The failure capture preserves 121 MiB of main data and 385 MiB of temporary data before cleanup.
+An initial host-SQLite EXPLAIN shows an automatic `reach_edges.source` index.
+That check executes no producer query and uses host SQLite 3.54.1.
+It does not prove a missing index or establish the production query's runtime.
+Production-SQLite replay must separate edge construction, recursive traversal, and both budget boundaries.
+
+The first-50 measurement has no overlap with this agent's builds or tests.
+The all-60 process continues as a diagnostic while failure investigation proceeds.
+Builds and bounded experiments can overlap that second process; its timing cannot establish acceptance.

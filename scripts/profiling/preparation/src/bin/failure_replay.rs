@@ -113,6 +113,21 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     #[test]
+    fn replays_the_production_regex_functions_and_keeps_invalid_groups_as_errors() -> Result<()> {
+        let directory = tempfile::tempdir().unwrap();
+        let source = Connection::open(directory.path().join("main.sqlite"))?;
+        source.execute_batch("CREATE TABLE input(value);INSERT INTO input VALUES('é_async'),(NULL);")?;
+        let data = serde_json::json!({"main":"main.sqlite"});
+        let db = database(&directory.path().join("manifest.json"), &data)?;
+        let result = evaluate(&db, "SELECT rx_replace(value,'_async$',''),rx_extract(value,'(é)',1),rx_matches(value,'^é') FROM input")?;
+        assert_eq!(result["rows"], 2);
+        let expected = evaluate(&db, "SELECT 'é','é',1 UNION ALL SELECT '',NULL,0")?;
+        assert_eq!(result["bagDigest"], expected["bagDigest"]);
+        assert!(evaluate(&db, "SELECT rx_extract('x','(x)',2)").is_err());
+        Ok(())
+    }
+
+    #[test]
     fn restores_both_owners_and_compares_typed_bags_without_running_writes() -> Result<()> {
         let directory = tempfile::tempdir().unwrap();
         let main = Connection::open(directory.path().join("main.sqlite"))?;
