@@ -58,7 +58,11 @@ person says yes.
      run was for (`--repo`), and set-up still asks before reading it. "No"
      (`--answer decline`) stops set-up with nothing new connected or started
      and removes an earlier yes, so the next set-up asks again; coding agents
-     connected before stay connected until `rerail install --remove`.
+     connected before stay connected until `rerail install --remove`. The
+     install above has already happened by then (a coding agent's answers run
+     the launcher it writes), so Rerail stays installed, off, with `rerail` on
+     `PATH`, and the screen says so: `rerail install --remove` takes it off
+     the computer.
      `rerail start` in a repository that is not set up asks it too. An
      update's health check (`start --repo <empty scratch folder> --answer
      pick-myself`, no coding agent) is not asked.
@@ -334,7 +338,7 @@ rerail update check      # is a newer version on the channel?
 rerail update            # install it; `rerail update rollback` undoes it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
-rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database
+rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
 ```
 
 Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
@@ -528,8 +532,17 @@ exists), so your rules and history are kept. Restart open harness sessions
 afterwards: their loaded hooks point at files that are about to go.
 
 It also takes the `PATH` entry set-up added out of every shell startup file
-(or the Windows user `Path`). Then delete the Rerail home (`~/.rerail`, or
-`$RERAIL_HOME`) and the content store directory (`~/.cache/rerail`).
+(or the Windows user `Path`). Last, it deletes the installation itself:
+`~/.rerail/current`, the launcher's `~/.rerail/bin`, every version under
+`~/.rerail/versions` with `update-state.json`, the rule packs in
+`~/.rerail/packs`, and the cache `~/.cache/rerail` (left alone, and said so,
+while another Rerail home's daemon holds it). It prints each path it removed,
+and what it kept in the Rerail home (settings such as `consent.json`, logs,
+records), which you can delete if you will not install Rerail again. A file it
+cannot remove, such as one Windows keeps locked while a session still runs
+Rerail, is named with the command that finishes the job once that session is
+closed (`Remove-Item -Recurse -Force <path>` on Windows, `rm -rf <path>`
+elsewhere); the rest of the uninstall has happened, so it still exits 0.
 
 ## Developing from a checkout
 

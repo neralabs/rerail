@@ -337,19 +337,24 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
     ],
     choices: [
       { answer: "allow", label: "Yes, allow", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
-      { answer: "decline", label: "No, cancel set-up", hint: "nothing changes", args: [SETUP_FLAGS.answer, "decline"] },
+      { answer: "decline", label: "No, cancel set-up", hint: "nothing is connected or started", args: [SETUP_FLAGS.answer, "decline"] },
     ],
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
   };
 }
 
-/** After "No": nothing new is connected or started. Coding agents connected before stay connected until removed. */
+/**
+ * After "No": nothing new is connected or started. Set-up installed Rerail and put `rerail` on PATH before asking (the
+ * coding agent's answers run that launcher), so the screen says it stays, off, and how to remove it. Coding agents
+ * connected before stay connected until removed.
+ */
 export function renderSessionsDeclined(lane: SetupLane): string {
   const style = styleFor(lane);
   return lines([
     ...(lane === "terminal" ? [""] : []),
     bullet("Set-up stopped. Nothing new was connected or started.", style),
     `  ${style.dim("Rerail needs your sessions to check rules. Run set-up again whenever you want to allow it.")}`,
+    `  ${style.dim("Rerail stays installed, and off; rerail install --remove takes it off this computer.")}`,
   ]);
 }
 

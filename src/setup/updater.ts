@@ -226,8 +226,9 @@ export function launcherShim(
       "setlocal",
       `set "RERAIL_NODE=${escapedNodePath}"`,
       'if not exist "%RERAIL_NODE%" set "RERAIL_NODE=node"',
-      `"%RERAIL_NODE%" "${escapedCliPath}" %*`,
-      "exit /b %ERRORLEVEL%",
+      // One line: cmd reads a batch file line by line, so once `install --remove` has deleted this file a separate
+      // `exit` line would end the run with "The batch file cannot be found." `exit /b` keeps node's exit code.
+      `"%RERAIL_NODE%" "${escapedCliPath}" %* & exit /b`,
       "",
     ].join("\r\n");
   }
