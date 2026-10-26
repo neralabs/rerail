@@ -24,6 +24,7 @@
 //! after. The same holds for a finding, plus its reads of the reached set, which `finish` adds
 //! from the states whose reached status toggled.
 use super::facts::{at, get, string, with, Change, Def, Facts, Kind, Tab, Val};
+use crate::lmap::LMap;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::Reverse;
@@ -44,6 +45,7 @@ fn layer(s: St) -> u32 {
     s as u32
 }
 
+#[derive(Clone)]
 pub struct Rx {
     api_module: Regex,
     create: Regex,
@@ -175,21 +177,65 @@ pub struct Prep {
 
 pub type Finding = (u32, i64, i64, u32, &'static str);
 
+/// The rule's maintained state. Every map is layered (`lmap`): a worktree's `Dc` starts as a
+/// view of its cluster's (frozen) and holds only what differs.
 pub struct Dc {
     rx: Rx,
     /// The reached states with their levels (BFS depth at scratch; an upper witness after edits).
-    reached: FxHashMap<St, u32>,
-    disp_by_node: FxHashMap<u32, Vec<u32>>,
-    nodes_by_disp: FxHashMap<u32, Vec<u32>>,
-    imported: FxHashMap<u32, u32>,
-    pub findings: FxHashMap<u32, Vec<Finding>>,
+    reached: LMap<St, u32>,
+    disp_by_node: LMap<u32, Vec<u32>>,
+    nodes_by_disp: LMap<u32, Vec<u32>>,
+    imported: LMap<u32, u32>,
+    pub findings: LMap<u32, Vec<Finding>>,
     succ_calls: usize,
 }
 
+/// Every map of `Dc`, for the layer operations.
+macro_rules! dc_maps {
+    ($m:ident) => {
+        $m!(reached, disp_by_node, nodes_by_disp, imported, findings)
+    };
+}
+
 impl Dc {
+    fn empty() -> Dc {
+        Dc { rx: Rx::new(), reached: LMap::default(), disp_by_node: LMap::default(), nodes_by_disp: LMap::default(), imported: LMap::default(), findings: LMap::default(), succ_calls: 0 }
+    }
+
+    /// A worktree's state over this (frozen) one.
+    pub fn view(&self) -> Dc {
+        macro_rules! v {
+            ($($f:ident),*) => { Dc { rx: self.rx.clone(), succ_calls: 0, $($f: self.$f.view()),* } };
+        }
+        dc_maps!(v)
+    }
+
+    pub fn freeze(&mut self) {
+        macro_rules! fr {
+            ($($f:ident),*) => { $(self.$f.freeze();)* };
+        }
+        dc_maps!(fr);
+    }
+
+    /// Bytes of the top (this worktree's difference) and of the top-most frozen layer; entries
+    /// in the top.
+    pub fn bytes(&self) -> (usize, usize, usize) {
+        let (mut t, mut l, mut n) = (0, 0, 0);
+        macro_rules! b {
+            ($($f:ident),*) => { $( t += self.$f.top_bytes(); l += self.$f.layer_bytes(0); n += self.$f.top_len(); )* };
+        }
+        dc_maps!(b);
+        (t, l, n)
+    }
+
+    /// Reached states.
+    pub fn reached_len(&self) -> usize {
+        self.reached.len()
+    }
+
     /// From scratch: every root, reachability, every definition's finding.
     pub fn scratch(f: &Facts) -> Dc {
-        let mut dc = Dc { rx: Rx::new(), reached: FxHashMap::default(), disp_by_node: FxHashMap::default(), nodes_by_disp: FxHashMap::default(), imported: FxHashMap::default(), findings: FxHashMap::default(), succ_calls: 0 };
+        let mut dc = Dc::empty();
         for is in f.imports_by_target.values() {
             for i in is {
                 dc.count_import(i.target, !i.symbol_kind, 1);
@@ -262,10 +308,11 @@ impl Dc {
     fn count_import(&mut self, target: u32, module_kind: bool, d: i32) {
         for m in import_chain(target, module_kind) {
             let k = crate::y2::facts::sym(&m);
-            let c = self.imported.entry(k).or_default();
-            *c = (*c as i32 + d) as u32;
-            if *c == 0 {
+            let c = (self.imported.get(&k).copied().unwrap_or(0) as i32 + d) as u32;
+            if c == 0 {
                 self.imported.remove(&k);
+            } else {
+                self.imported.insert(k, c);
             }
         }
     }
@@ -284,8 +331,8 @@ impl Dc {
         self.reached.insert(s, level);
         let l = layer(s);
         if l >= 2 {
-            self.disp_by_node.entry(node(s)).or_default().push(l);
-            self.nodes_by_disp.entry(l).or_default().push(node(s));
+            self.disp_by_node.push(node(s), l);
+            self.nodes_by_disp.push(l, node(s));
         }
         true
     }
@@ -294,14 +341,8 @@ impl Dc {
         assert!(self.reached.remove(&s).is_some());
         let l = layer(s);
         if l >= 2 {
-            for (m, k, v) in [(&mut self.disp_by_node, node(s), l), (&mut self.nodes_by_disp, l, node(s))] {
-                let e = m.get_mut(&k).unwrap();
-                let i = e.iter().position(|x| *x == v).unwrap();
-                e.swap_remove(i);
-                if e.is_empty() {
-                    m.remove(&k);
-                }
-            }
+            self.disp_by_node.pull(node(s), &l);
+            self.nodes_by_disp.pull(l, &node(s));
         }
     }
 
