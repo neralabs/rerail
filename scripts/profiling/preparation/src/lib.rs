@@ -73,6 +73,7 @@ mod graph;
 mod children;
 
 pub mod candidate_owner;
+pub mod cold_cpu;
 pub mod composition;
 pub mod fts;
 pub mod owner_projection;

@@ -17,13 +17,13 @@ fn inference_bytes(query: &str, names: &[String]) -> usize {
     query.len() + names.iter().map(|name| 2 * name.len() + 48).sum::<usize>() + 128
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Program {
     name: String,
     inputs: BTreeMap<String, String>,
     stages: Vec<Stage>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Stage {
     name: String,
     query: String,
@@ -247,6 +247,57 @@ pub fn affinity(
     let report = json!({"format":"rerail.post-c-affinity-spike/v1","programs":programs.iter().map(|p|&p.name).collect::<Vec<_>>(),"trials":trials,"scope":"Cold compiler metadata, including bounded cache sharing. Uses production schema module, typed cache keys and authorizer. Every inference statement counts. Input declarations use prepare-only modules. No authored expression executes. This is a component replay, not the complete guard."});
     std::fs::write(output, serde_json::to_vec_pretty(&report)?)?;
     println!("{report}");
+    Ok(())
+}
+
+/// Compare the production bounded schema cache across unchanged real programs.
+/// Source counts never enter this metadata key; changed declared input types do.
+pub fn plan_reuse(
+    input: &Path,
+    repeats: usize,
+    output: &Path,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    if repeats == 0 || repeats > 128 {
+        return Err("repeats must be 1..128".into());
+    }
+    let programs: Vec<Program> = serde_json::from_slice(&std::fs::read(input)?)?;
+    let mut trials = Vec::new();
+    for trial in 0..3 {
+        let mut variants = ["isolated-cache", "shared-cache"];
+        variants.rotate_left(trial % 2);
+        let mut expected = None;
+        for variant in variants {
+            let start = crate::composition::cpu_ms();
+            let (count, schemas) = if variant == "shared-cache" {
+                let all = std::iter::repeat_n(programs.clone(), repeats)
+                    .flatten()
+                    .collect::<Vec<_>>();
+                compile(&all, true)?
+            } else {
+                let mut count = 0;
+                let mut schemas = Vec::new();
+                for _ in 0..repeats {
+                    let (n, s) = compile(&programs, true)?;
+                    count += n;
+                    schemas.extend(s);
+                }
+                (count, schemas)
+            };
+            let cpu = crate::composition::cpu_ms() - start;
+            if let Some(e) = &expected {
+                assert_eq!(e, &schemas);
+            } else {
+                expected = Some(schemas);
+            }
+            trials.push(json!({"trial":trial,"variant":variant,"cpuMs":cpu,"inferenceStatements":count,"completeSchemasMatch":true}));
+        }
+    }
+    std::fs::write(
+        output,
+        serde_json::to_vec_pretty(
+            &json!({"format":"rerail.cold-plan-reuse/v1","programs":programs.iter().map(|p|&p.name).collect::<Vec<_>>(),"repeats":repeats,"trials":trials,"scope":"Actual recorded production SQL, authorizer, type inference and 128-entry/4-MiB cache. Complete schema comparison. Includes fresh per-program declaration contexts and metadata output retention. No rule execution, rows or engine scheduler. Tests unchanged decisions; does not prove source-version result reuse."}),
+        )?,
+    )?;
     Ok(())
 }
 

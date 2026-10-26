@@ -14,6 +14,7 @@ pub(super) struct Meter {
     execute_cpu_ms: f64,
     sql_bytes: usize,
     statements: usize,
+    preparations: usize,
     vm_steps: u64,
     fullscan_steps: u64,
     sorts: u64,
@@ -40,6 +41,27 @@ pub(super) fn peak_bytes() -> u64 {
     }
 }
 impl Meter {
+    pub(super) fn last_query(&self) -> Option<&str> {
+        self.last_query.as_deref()
+    }
+    pub(super) fn record_repeated(
+        &mut self,
+        stmt: &rusqlite::Statement<'_>,
+        bytes: usize,
+        executions: usize,
+        prepare_cpu: f64,
+        execute_cpu: f64,
+    ) {
+        self.statements += executions;
+        self.preparations += 1;
+        self.sql_bytes += bytes;
+        self.prepare_cpu_ms += prepare_cpu;
+        self.execute_cpu_ms += execute_cpu;
+        self.vm_steps += stmt.get_status(StatementStatus::VmStep) as u64;
+        self.fullscan_steps += stmt.get_status(StatementStatus::FullscanStep) as u64;
+        self.sorts += stmt.get_status(StatementStatus::Sort) as u64;
+        self.autoindex_rows += stmt.get_status(StatementStatus::AutoIndex) as u64;
+    }
     pub(super) fn statement(
         &mut self,
         db: &Connection,
@@ -50,6 +72,7 @@ impl Meter {
         }
         self.sql_bytes += sql.len();
         self.statements += 1;
+        self.preparations += 1;
         let start = cpu_ms();
         let mut stmt = db.prepare(sql)?;
         self.prepare_cpu_ms += cpu_ms() - start;
