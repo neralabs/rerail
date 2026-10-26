@@ -8,6 +8,18 @@ body:
       value: |
         We reply within 10 business days: accepted, declined, or "not now" with a reason ([response times](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#response-times)).
         A large change starts with a short design in the issue ([large changes](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#large-changes)).
+  - type: dropdown
+    id: feature-status
+    attributes:
+      label: Which feature is it about?
+      description: The README's [Internal testing](https://github.com/neralabs/rerail/blob/main/README.md#internal-testing) table lists the features still in internal testing.
+      options:
+        - A documented feature
+        - A feature in internal testing
+        - Something Rerail doesn't have
+        - Not sure
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
@@ -36,3 +48,10 @@ body:
       label: Building it
       options:
         - label: I'd like to build this myself ([becoming a trusted contributor](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#becoming-a-trusted-contributor)).
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send it
+      options:
+        - label: I searched open and closed issues, including ones labelled `known-issue`, and this isn't one of them.
+          required: true

@@ -42,3 +42,10 @@ body:
       label: Building it
       options:
         - label: I'd like to build this myself ([becoming a trusted contributor](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#becoming-a-trusted-contributor)).
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send it
+      options:
+        - label: I searched open and closed issues, including ones labelled `known-issue`, and this isn't one of them.
+          required: true

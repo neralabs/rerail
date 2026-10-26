@@ -19,6 +19,17 @@ body:
         - The steer was wrong or unhelpful
     validations:
       required: true
+  - type: dropdown
+    id: feature-status
+    attributes:
+      label: Is it a documented feature?
+      description: A rule in `block` mode, or a conversation rule, is in the README's [Internal testing](https://github.com/neralabs/rerail/blob/main/README.md#internal-testing) table, and can change without notice.
+      options:
+        - Documented
+        - Internal testing
+        - Not sure
+    validations:
+      required: true
   - type: input
     id: rule-id
     attributes:
@@ -75,4 +86,6 @@ body:
       label: Before you send it
       options:
         - label: The code above is mine to share and holds no secrets.
+          required: true
+        - label: I searched open and closed issues, including ones labelled `known-issue`, and this isn't one of them.
           required: true

@@ -19,6 +19,17 @@ body:
     validations:
       required: true
   - type: dropdown
+    id: feature-status
+    attributes:
+      label: Is it a documented feature?
+      description: Features in the README's [Internal testing](https://github.com/neralabs/rerail/blob/main/README.md#internal-testing) table (`rerail scan`, conversation rules, block mode and others) can change or go without notice.
+      options:
+        - Documented
+        - Internal testing
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
     id: agent
     attributes:
       label: Coding agent
@@ -79,5 +90,5 @@ body:
     attributes:
       label: Before you send it
       options:
-        - label: I searched the existing issues for this bug.
+        - label: I searched open and closed issues, including ones labelled `known-issue`, and this isn't one of them.
           required: true
