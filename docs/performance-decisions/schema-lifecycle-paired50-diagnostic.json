@@ -1,0 +1,328 @@
+{
+  "format": "rerail.paired-diagnostic/v1",
+  "note": "96-file subset, timing and control equivalence only. Repository-wide semantic domain changed; full acceptance still required. ABBA order, no own build/test overlap. The subset intentionally changes global analyses; its 95 apparent positives and one apparent negative against full-repository expected findings occur identically in both engines. This is no substitute for original-observation or full-repository parity.",
+  "runs": [
+    {
+      "variant": "control",
+      "exitCode": 1,
+      "files": 96,
+      "coldCpuSeconds": 2.479447,
+      "coldWallSeconds": 2.5773240830000006,
+      "peakRssBytes": 497582080,
+      "compileCpuSeconds": 1.053029,
+      "applies": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 381852,
+          "wallMs": 1588.944334,
+          "cpuMs": 1555.76,
+          "peakRssBytes": 476626944,
+          "rssBytes": 383183152,
+          "heapUsed": 40354920,
+          "external": 5732917,
+          "arrayBuffers": 3042415
+        },
+        {
+          "revision": 2,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 620336,
+          "wallMs": 562.7340829999998,
+          "cpuMs": 505.621,
+          "peakRssBytes": 487997440,
+          "rssBytes": 394537288,
+          "heapUsed": 40444480,
+          "external": 6986223,
+          "arrayBuffers": 4295681
+        },
+        {
+          "revision": 3,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 309237,
+          "wallMs": 346.0135839999998,
+          "cpuMs": 318.842,
+          "peakRssBytes": 493273088,
+          "rssBytes": 399796552,
+          "heapUsed": 40469056,
+          "external": 7688580,
+          "arrayBuffers": 4998038
+        },
+        {
+          "revision": 4,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 77.06566599999951,
+          "cpuMs": 95.424,
+          "peakRssBytes": 497221632,
+          "rssBytes": 403351880,
+          "heapUsed": 40480296,
+          "external": 7688580,
+          "arrayBuffers": 4998038
+        }
+      ],
+      "expected": 53,
+      "actual": 147,
+      "falsePositives": 95,
+      "falseNegatives": 1,
+      "failures": [],
+      "loadAverageStart": [
+        22.61669921875,
+        38.15673828125,
+        35.84912109375
+      ],
+      "loadAverageEnd": [
+        22.00634765625,
+        37.77197265625,
+        35.7265625
+      ],
+      "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518"
+    },
+    {
+      "variant": "span-index",
+      "exitCode": 1,
+      "files": 96,
+      "coldCpuSeconds": 2.513102,
+      "coldWallSeconds": 2.5807132079999997,
+      "peakRssBytes": 534315008,
+      "compileCpuSeconds": 1.049517,
+      "applies": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 381852,
+          "wallMs": 1510.3517499999998,
+          "cpuMs": 1511.388,
+          "peakRssBytes": 513130496,
+          "rssBytes": 412870168,
+          "heapUsed": 40167400,
+          "external": 5732917,
+          "arrayBuffers": 3042415
+        },
+        {
+          "revision": 2,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 620336,
+          "wallMs": 533.9108339999998,
+          "cpuMs": 519.86,
+          "peakRssBytes": 524189696,
+          "rssBytes": 423962160,
+          "heapUsed": 40256960,
+          "external": 6986223,
+          "arrayBuffers": 4295681
+        },
+        {
+          "revision": 3,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 309237,
+          "wallMs": 406.864333,
+          "cpuMs": 340.763,
+          "peakRssBytes": 529448960,
+          "rssBytes": 429221424,
+          "heapUsed": 40281536,
+          "external": 7688580,
+          "arrayBuffers": 4998038
+        },
+        {
+          "revision": 4,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 126.75845900000013,
+          "cpuMs": 137.213,
+          "peakRssBytes": 534003712,
+          "rssBytes": 433235504,
+          "heapUsed": 40292776,
+          "external": 7688580,
+          "arrayBuffers": 4998038
+        }
+      ],
+      "expected": 53,
+      "actual": 147,
+      "falsePositives": 95,
+      "falseNegatives": 1,
+      "failures": [],
+      "loadAverageStart": [
+        22.00634765625,
+        37.77197265625,
+        35.7265625
+      ],
+      "loadAverageEnd": [
+        21.76513671875,
+        37.4599609375,
+        35.62841796875
+      ],
+      "nativeSha256": "dd09f243ecc65ed798e597068c73f4eee11e79272ece9b990342c0c25b0a40df"
+    },
+    {
+      "variant": "span-index",
+      "exitCode": 1,
+      "files": 96,
+      "coldCpuSeconds": 2.454547,
+      "coldWallSeconds": 2.507981708,
+      "peakRssBytes": 506052608,
+      "compileCpuSeconds": 1.056539,
+      "applies": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 381852,
+          "wallMs": 1528.072167,
+          "cpuMs": 1522.882,
+          "peakRssBytes": 486146048,
+          "rssBytes": 412165656,
+          "heapUsed": 39593184,
+          "external": 5732917,
+          "arrayBuffers": 3042415
+        },
+        {
+          "revision": 2,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 620336,
+          "wallMs": 537.7874999999999,
+          "cpuMs": 492.77,
+          "peakRssBytes": 495976448,
+          "rssBytes": 421996056,
+          "heapUsed": 39682744,
+          "external": 6986223,
+          "arrayBuffers": 4295681
+        },
+        {
+          "revision": 3,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 309237,
+          "wallMs": 332.89095899999984,
+          "cpuMs": 312.623,
+          "peakRssBytes": 501202944,
+          "rssBytes": 427222552,
+          "heapUsed": 39707320,
+          "external": 7688580,
+          "arrayBuffers": 4998038
+        },
+        {
+          "revision": 4,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 106.43987500000003,
+          "cpuMs": 122.443,
+          "peakRssBytes": 505593856,
+          "rssBytes": 431072792,
+          "heapUsed": 39718560,
+          "external": 7688580,
+          "arrayBuffers": 4998038
+        }
+      ],
+      "expected": 53,
+      "actual": 147,
+      "falsePositives": 95,
+      "falseNegatives": 1,
+      "failures": [],
+      "loadAverageStart": [
+        21.76513671875,
+        37.4599609375,
+        35.62841796875
+      ],
+      "loadAverageEnd": [
+        21.38330078125,
+        37.1201171875,
+        35.51904296875
+      ],
+      "nativeSha256": "dd09f243ecc65ed798e597068c73f4eee11e79272ece9b990342c0c25b0a40df"
+    },
+    {
+      "variant": "control",
+      "exitCode": 1,
+      "files": 96,
+      "coldCpuSeconds": 2.316254,
+      "coldWallSeconds": 2.3115822500000003,
+      "peakRssBytes": 524763136,
+      "compileCpuSeconds": 1.027855,
+      "applies": [
+        {
+          "revision": 1,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 381852,
+          "wallMs": 1431.166459,
+          "cpuMs": 1451.985,
+          "peakRssBytes": 503037952,
+          "rssBytes": 424421248,
+          "heapUsed": 39569288,
+          "external": 5732917,
+          "arrayBuffers": 3042415
+        },
+        {
+          "revision": 2,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 620336,
+          "wallMs": 411.8204169999999,
+          "cpuMs": 423.702,
+          "peakRssBytes": 515358720,
+          "rssBytes": 436725632,
+          "heapUsed": 39658848,
+          "external": 6986223,
+          "arrayBuffers": 4295681
+        },
+        {
+          "revision": 3,
+          "phase": "file-inputs",
+          "files": 32,
+          "sourceBytes": 309237,
+          "wallMs": 381.203708,
+          "cpuMs": 341.767,
+          "peakRssBytes": 520667136,
+          "rssBytes": 442017664,
+          "heapUsed": 39683424,
+          "external": 7688580,
+          "arrayBuffers": 4998038
+        },
+        {
+          "revision": 4,
+          "phase": "global-results",
+          "files": 0,
+          "sourceBytes": 0,
+          "wallMs": 84.74274999999989,
+          "cpuMs": 95.131,
+          "peakRssBytes": 524435456,
+          "rssBytes": 445392768,
+          "heapUsed": 39694664,
+          "external": 7688580,
+          "arrayBuffers": 4998038
+        }
+      ],
+      "expected": 53,
+      "actual": 147,
+      "falsePositives": 95,
+      "falseNegatives": 1,
+      "failures": [],
+      "loadAverageStart": [
+        21.38330078125,
+        37.1201171875,
+        35.51904296875
+      ],
+      "loadAverageEnd": [
+        21.38330078125,
+        37.1201171875,
+        35.51904296875
+      ],
+      "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518"
+    }
+  ],
+  "identicalActualBagsToControl": true,
+  "meanColdCpuSeconds": {
+    "control": 2.3978504999999997,
+    "span-index": 2.4838245
+  },
+  "cpuChangePercent": 3.5854612287129717
+}

@@ -5277,3 +5277,12 @@ The 100 reference remains diagnostic rather than a resource acceptance substitut
 
 The combined addon is frozen at source `1efb5768` with SHA-256 `dd09f243ecc65ed798e597068c73f4eee11e79272ece9b990342c0c25b0a40df`.
 It receives a paired 96-file timing diagnostic and complete corrected repository measurements next.
+
+
+The [paired 96-file diagnostic](performance-decisions/schema-lifecycle-paired50-diagnostic.json) uses control/candidate/candidate/control order without overlapping builds or tests.
+Mean cold CPU is 2.398 seconds for the control and 2.484 seconds for the candidate, a 3.6 percent increase.
+The two control samples differ by 0.163 CPU seconds, more than the 0.086-second difference between means.
+The small subset does not establish a speed improvement or isolate the complete 50-rule regression.
+Both engines produce identical finding multisets and no failures.
+Its global scope differs from the original full-repository recording, so its oracle-difference counts are not semantic acceptance results.
+The final complete corrected 50- and 60-rule measurements now run sequentially with the same frozen artifact and policies.
