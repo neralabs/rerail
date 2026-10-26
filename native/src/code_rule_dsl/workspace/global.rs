@@ -528,12 +528,6 @@ pub(super) fn evaluate_batched_relations(
                 .flat_map(|partitions| partitions.keys().cloned())
         })
         .collect::<BTreeSet<_>>();
-    // Without the opt-in positional index there is nothing to prepare.
-    let paths = if crate::code_rule_dsl::matcher::Corpus::enabled() {
-        paths
-    } else {
-        BTreeSet::new()
-    };
     let mut demands = BTreeMap::new();
     for path in paths {
         let input = state

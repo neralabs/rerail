@@ -119,6 +119,10 @@ pub(super) fn profile_result(
     }
     let mut value: Value = serde_json::from_str(&result.text).map_err(json_error)?;
     value.as_object_mut().expect("workspace result").insert(
+        "phaseClock".to_owned(),
+        crate::code_rule_dsl::phase_clock::snapshot(),
+    );
+    value.as_object_mut().expect("workspace result").insert(
         "workspaceProfile".to_owned(),
         json!({
             "lineIndexNanoseconds": metrics.line_index_nanoseconds,

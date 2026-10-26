@@ -3541,7 +3541,6 @@ fn reads_package_manifests_only_with_an_ast_clause_in_a_manifest_family() {
 #[test]
 fn positional_index_lives_with_the_workspace_across_applies_and_deletions() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
-    let _index = crate::code_rule_dsl::matcher::Corpus::force_enabled();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace
         .add_code_rule(&tape_test_code_rule(), None)

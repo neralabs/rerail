@@ -79,21 +79,19 @@ pub(super) struct Image<'a> {
     postings: BTreeMap<(u16, &'a str), Vec<u32>>,
     cover: BTreeMap<u16, (u8, usize)>,
     missing: BTreeMap<u16, Vec<u32>>,
+    // Unclean leaves kept as terms unless the corpus-wide cap, applied by `settle`, refuses them.
+    residue: BTreeMap<u16, Vec<(u32, &'a str)>>,
 }
 impl<'a> Image<'a> {
-    pub fn build(
-        doc: &'a TapeDoc,
-        lang: u32,
-        previous: Option<i64>,
-        counts: &Counts,
-        interrupted: &impl Fn() -> bool,
-    ) -> Result<Self> {
+    /// Reads only the file, so it runs outside the corpus lock; `settle` applies the corpus counts.
+    pub fn build(doc: &'a TapeDoc, interrupted: &impl Fn() -> bool) -> Result<Self> {
         let mut image = Self {
             postings: BTreeMap::new(),
             cover: BTreeMap::new(),
             missing: BTreeMap::new(),
+            residue: BTreeMap::new(),
         };
-        let mut residue: BTreeMap<u16, Vec<(u32, &str)>> = BTreeMap::new();
+        let residue = &mut image.residue;
         let mut sizes: BTreeMap<u16, usize> = BTreeMap::new();
         for pre in 0..doc.transducer_len() as u32 {
             if pre.is_multiple_of(256) && interrupted() {
@@ -134,12 +132,7 @@ impl<'a> Image<'a> {
                 coverage.1 += 1;
                 let bytes = sizes.entry(kind).or_default();
                 *bytes = bytes.saturating_add(text.len());
-                if counts
-                    .prior(lang, kind, previous)
-                    .saturating_add(coverage.1)
-                    > RESIDUE_CAP
-                    || *bytes > RESIDUE_BYTES
-                {
+                if *bytes > RESIDUE_BYTES {
                     coverage.0 |= TOO_BIG;
                     residue.remove(&kind);
                 } else if coverage.0 & TOO_BIG == 0 {
@@ -147,15 +140,24 @@ impl<'a> Image<'a> {
                 }
             }
         }
-        for (kind, nodes) in residue {
-            if image.cover[&kind].0 & (INTERIOR | TOO_BIG) == 0 {
+        Ok(image)
+    }
+
+    /// The residue count only grows while building, so testing the cap once against the final
+    /// count refuses exactly the kinds a per-node test would.
+    pub fn settle(&mut self, lang: u32, previous: Option<i64>, counts: &Counts) {
+        for (kind, nodes) in std::mem::take(&mut self.residue) {
+            let coverage = self.cover.get_mut(&kind).expect("residue coverage");
+            if counts.prior(lang, kind, previous).saturating_add(coverage.1) > RESIDUE_CAP {
+                coverage.0 |= TOO_BIG;
+            }
+            if coverage.0 & (INTERIOR | TOO_BIG) == 0 {
                 for (pre, text) in nodes {
-                    image.postings.entry((kind, text)).or_default().push(pre);
+                    self.postings.entry((kind, text)).or_default().push(pre);
                 }
-                image.missing.remove(&kind);
+                self.missing.remove(&kind);
             }
         }
-        Ok(image)
     }
     pub fn put(&self, db: &Connection, fid: i64, lang: u32) -> Result<()> {
         super::store::publication::insert(
@@ -171,6 +173,23 @@ impl<'a> Image<'a> {
                     fid.into(),
                     i64::from(kind).into(),
                     pack(&sorted).into(),
+                ]
+            }),
+        )?;
+        // One row per term, counting the file's kinds that carry it, in place of a per-row trigger.
+        let mut terms = BTreeMap::<&str, i64>::new();
+        for &(_, term) in self.postings.keys() {
+            *terms.entry(term).or_default() += 1;
+        }
+        super::store::publication::insert(
+            db,
+            "INSERT INTO vlex",
+            "ON CONFLICT(lang,term) DO UPDATE SET n=n+excluded.n",
+            terms.into_iter().map(|(term, n)| {
+                [
+                    i64::from(lang).into(),
+                    term.to_owned().into(),
+                    n.into(),
                 ]
             }),
         )?;

@@ -15,6 +15,7 @@ mod module_graph;
 mod module_path;
 mod origin;
 mod package_manifest;
+mod phase_clock;
 mod php_literal;
 mod php_view;
 mod placement;

@@ -71,6 +71,8 @@ impl Store {
         } else if version == 1 {
             super::kind_postings::upgrade(&db)?;
         }
+        // Databases written before publication counted vlex itself (values.rs).
+        db.execute_batch("DROP TRIGGER IF EXISTS value_insert")?;
         db.execute_batch(include_str!("vocabulary.sql"))?;
         let readers = super::functions::install(&db)?;
         let values = parking_lot::Mutex::new(super::values::Counts::load(&db)?);
@@ -125,7 +127,7 @@ impl Store {
         self.put_known(path, doc, previous, known_language, interrupted)
     }
 
-    // Corpus metadata supplies identities; publication performs no per-file SELECT queries.
+    #[cfg(test)]
     pub fn put_known(
         &self,
         path: &str,
@@ -134,37 +136,34 @@ impl Store {
         known_language: bool,
         interrupted: &impl Fn() -> bool,
     ) -> Result<i64> {
+        self.write(path, image(doc, interrupted)?, previous, known_language)
+    }
+
+    // Corpus metadata supplies identities; publication performs no per-file SELECT queries.
+    pub fn write(
+        &self,
+        path: &str,
+        image: Image<'_>,
+        previous: Option<i64>,
+        known_language: bool,
+    ) -> Result<i64> {
         #[cfg(feature = "code-rule-profile")]
         let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
             crate::code_rule_dsl::profile::Phase::Index,
         );
+        let Image {
+            doc,
+            lang,
+            tape: image,
+            values: mut value_image,
+            tokens,
+            counts,
+            mut positions,
+            mask,
+        } = image;
         self.readers.clear();
-        let image = doc
-            .index_image(interrupted)
-            .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
-        let lang =
-            u32::from(language::tape_tag(*doc.get_lang()).expect("registered tape language"));
         let mut values = self.values.lock();
-        let value_image = super::values::Image::build(doc, lang, previous, &values, interrupted)?;
-        let mut tokens = String::with_capacity(doc.transducer_len() * 6);
-        let mut counts = [0_i64; 1024];
-        let mut positions = super::kind_postings::Builder::default();
-        let mut mask = [0_u8; 128];
-        for (pre, rec) in image.rec.chunks_exact(6).enumerate() {
-            if pre.is_multiple_of(256) && interrupted() {
-                return Err(rusqlite::Error::UserFunctionError(
-                    "index construction interrupted".into(),
-                ));
-            }
-            let kind = u16::from_le_bytes([rec[0], rec[1]]) & 1023;
-            positions.push(kind, pre as u32);
-            counts[usize::from(kind)] += 1;
-            mask[usize::from(kind) / 8] |= 1 << (kind % 8);
-            if pre != 0 {
-                tokens.push(' ');
-            }
-            tokens.push_str(&kind_token(lang * LANG_STRIDE + u32::from(kind)));
-        }
+        value_image.settle(lang, previous, &values);
         #[cfg(feature = "code-rule-profile")]
         self.db.context(serde_json::json!({"component":"ast-index", "stage":"ast-index-put", "path":path, "generation":doc.index_source_digest()}));
         let tx = self.db.unchecked_transaction()?;
@@ -312,6 +311,56 @@ impl Store {
     pub fn resident_bytes(&self) -> Result<usize> {
         self.db.resident_bytes()
     }
+}
+
+
+/// A file's index rows, built from the file alone so publication holds the corpus lock only to write.
+pub(super) struct Image<'a> {
+    doc: &'a TapeDoc,
+    lang: u32,
+    tape: crate::code_rule_dsl::tape::IndexImage,
+    values: super::values::Image<'a>,
+    tokens: String,
+    counts: [i64; 1024],
+    positions: super::kind_postings::Builder,
+    mask: [u8; 128],
+}
+
+pub(super) fn image<'a>(doc: &'a TapeDoc, interrupted: &impl Fn() -> bool) -> Result<Image<'a>> {
+    let image = doc
+        .index_image(interrupted)
+        .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?;
+    let lang = u32::from(language::tape_tag(*doc.get_lang()).expect("registered tape language"));
+    let values = super::values::Image::build(doc, interrupted)?;
+    let mut tokens = String::with_capacity(doc.transducer_len() * 6);
+    let mut counts = [0_i64; 1024];
+    let mut positions = super::kind_postings::Builder::default();
+    let mut mask = [0_u8; 128];
+    for (pre, rec) in image.rec.chunks_exact(6).enumerate() {
+        if pre.is_multiple_of(256) && interrupted() {
+            return Err(rusqlite::Error::UserFunctionError(
+                "index construction interrupted".into(),
+            ));
+        }
+        let kind = u16::from_le_bytes([rec[0], rec[1]]) & 1023;
+        positions.push(kind, pre as u32);
+        counts[usize::from(kind)] += 1;
+        mask[usize::from(kind) / 8] |= 1 << (kind % 8);
+        if pre != 0 {
+            tokens.push(' ');
+        }
+        tokens.push_str(&kind_token(lang * LANG_STRIDE + u32::from(kind)));
+    }
+    Ok(Image {
+        doc,
+        lang,
+        tape: image,
+        values,
+        tokens,
+        counts,
+        positions,
+        mask,
+    })
 }
 
 fn remove(db: &Connection, fid: i64) -> Result<()> {

@@ -50,9 +50,19 @@ const markPhase = (phase: string): void => {
 const files = recording.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" }));
 let revision = 0;
 let loadedFiles = 0;
+// With RERAIL_CODE_RULE_PROFILE, the engine's phase times (decision 0006): construction and
+// execution apart. Per-apply parse and match times sum; the phase clock is a running total.
+const engineProfile: { parseMs: number; matchMs: number; clock?: Record<string, number> } = { parseMs: 0, matchMs: 0 };
+const recordProfile = (result: unknown): void => {
+  if (typeof result !== "string" || !result.includes("phaseClock")) return;
+  const parsed = JSON.parse(result) as { phaseClock?: Record<string, number>; workspaceProfile?: Record<string, number> };
+  engineProfile.parseMs += (parsed.workspaceProfile?.astParseNanoseconds ?? 0) / 1e6;
+  engineProfile.matchMs += (parsed.workspaceProfile?.astMatchNanoseconds ?? 0) / 1e6;
+  if (parsed.phaseClock) engineProfile.clock = parsed.phaseClock;
+};
 const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<void> => {
   const cpu = process.cpuUsage(), started = performance.now();
-  await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal }));
+  recordProfile(await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal })));
   loadedFiles += batchFiles.length;
   const elapsed = process.cpuUsage(cpu), memory = process.memoryUsage();
   applies.push({ revision, phase: deferGlobal ? "file-inputs" : "global-results", files: batchFiles.length,
@@ -107,6 +117,10 @@ try {
   memoryCheckpoint("results-paged");
   const coldMs = performance.now() - started;
   finishCpu("cold", coldCpu);
+  const coldProfile = engineProfile.clock === undefined ? null : {
+    constructionMs: { parse: engineProfile.parseMs, indexPublish: engineProfile.clock.indexPublishNanoseconds! / 1e6 },
+    executionMs: { match: engineProfile.matchMs, anchorSelect: engineProfile.clock.anchorSelectNanoseconds! / 1e6, relational: engineProfile.clock.relationalNanoseconds! / 1e6 },
+  };
   const file = files.find(file => file.path === "impl/common/l2200_sql_dialect/sql_connection.py") ?? files[0]!;
   const incrementalResults: { phase: string; result: Awaited<ReturnType<typeof collect>> }[] = [];
   let unchangedFileMs: number | null = null, editedFileMs: number | null = null;
@@ -139,7 +153,7 @@ try {
   });
   const report = { commit: recording.commit, files: files.length, bytes: files.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
     oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, policyDigests, policyCompilationMs, compilationMs, coldMs, unchangedFileMs, editedFileMs, editedPath: file.path,
-    incrementalDifferences, phaseCpuMs, measuredPhases: Object.keys(phaseCpuMs), workloadSha256,
+    incrementalDifferences, phaseCpuMs, measuredPhases: Object.keys(phaseCpuMs), coldProfile, workloadSha256,
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
     peakRssBytes: process.resourceUsage().maxRSS * 1024,
     allocator: values.allocator, policies: values.policies, nativeSha256, nativeWorkers: 4,

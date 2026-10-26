@@ -37,36 +37,7 @@ struct State {
     writer: Store,
 }
 
-#[cfg(test)]
-static INDEX_FORCED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 impl Corpus {
-    /// Whether files are published into the positional SQL index at all. Publishing costs more
-    /// than walking the tape saves (2.7-5.8x CPU in single-rule runs, 23% across the data-layer
-    /// pack), so it is opt-in: `RERAIL_AST_SQL_INDEX=1`.
-    pub(in crate::code_rule_dsl) fn enabled() -> bool {
-        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        #[cfg(test)]
-        if INDEX_FORCED.load(std::sync::atomic::Ordering::Relaxed) > 0 {
-            return true;
-        }
-        *ENABLED.get_or_init(|| std::env::var_os("RERAIL_AST_SQL_INDEX").is_some_and(|v| v == "1"))
-    }
-
-    /// Turns the positional index on while the guard lives. Process-wide, since evaluation runs on
-    /// pool threads; rules evaluate to the same results either way, so other tests are unaffected.
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn force_enabled() -> impl Drop {
-        struct Forced;
-        impl Drop for Forced {
-            fn drop(&mut self) {
-                INDEX_FORCED.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-        INDEX_FORCED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Forced
-    }
-
     #[cfg(feature = "code-rule-profile")]
     pub(in crate::code_rule_dsl) fn record_origins<'a>(
         &self,
@@ -98,6 +69,22 @@ impl Corpus {
         doc: &TapeDoc,
         interrupted: &impl Fn() -> bool,
     ) -> Result<i64> {
+        use crate::code_rule_dsl::phase_clock;
+        phase_clock::timed(&phase_clock::INDEX_PUBLISH, || {
+            self.publish(path, doc, interrupted)
+        })
+    }
+
+    // The lock is held to look up and to write, not while the file's rows are built.
+    fn publish(&self, path: &str, doc: &TapeDoc, interrupted: &impl Fn() -> bool) -> Result<i64> {
+        let lang = u32::from(
+            crate::code_rule_dsl::language::tape_tag(*ast_grep_core::Doc::get_lang(doc))
+                .expect("tape language"),
+        );
+        if let Some(fid) = self.reuse(path, lang, doc) {
+            return Ok(fid);
+        }
+        let image = super::store::image(doc, interrupted)?;
         let mut state = self.state.lock();
         if state.is_none() {
             *state = Some(State {
@@ -113,29 +100,23 @@ impl Corpus {
             });
         }
         let state = state.as_mut().expect("initialized corpus");
-        let lang = u32::from(
-            crate::code_rule_dsl::language::tape_tag(*ast_grep_core::Doc::get_lang(doc))
-                .expect("tape language"),
-        );
+        // Another thread may have published the same source meanwhile.
         if let Some(file) = state
             .files
             .get(path)
             .filter(|file| file.lang == lang && &file.digest == doc.index_source_digest())
         {
-            #[cfg(feature = "code-rule-profile")]
-            crate::code_rule_dsl::profile::record_sql_index_reuse();
             return Ok(file.fid);
         }
         #[cfg(test)]
         crate::code_rule_dsl::test_support::record_walk(
             crate::code_rule_dsl::test_support::Walk::AnchorBuild,
         );
-        let fid = state.writer.put_known(
+        let fid = state.writer.write(
             path,
-            doc,
+            image,
             state.files.get(path).map(|file| file.fid),
             state.languages.contains(&lang),
-            interrupted,
         )?;
         state.languages.insert(lang);
         state.files.insert(
@@ -151,6 +132,18 @@ impl Corpus {
             }),
         );
         Ok(fid)
+    }
+
+    fn reuse(&self, path: &str, lang: u32, doc: &TapeDoc) -> Option<i64> {
+        let state = self.state.lock();
+        let file = state
+            .as_ref()?
+            .files
+            .get(path)
+            .filter(|file| file.lang == lang && &file.digest == doc.index_source_digest())?;
+        #[cfg(feature = "code-rule-profile")]
+        crate::code_rule_dsl::profile::record_sql_index_reuse();
+        Some(file.fid)
     }
 
     pub(super) fn prepared_file(
@@ -174,6 +167,11 @@ impl Corpus {
         &self,
         plans: &BTreeMap<u32, Vec<Arc<AnchorPlan>>>,
     ) -> Result<()> {
+        use crate::code_rule_dsl::phase_clock;
+        phase_clock::timed(&phase_clock::ANCHOR_SELECT, || self.select(plans))
+    }
+
+    fn select(&self, plans: &BTreeMap<u32, Vec<Arc<AnchorPlan>>>) -> Result<()> {
         let mut guard = self.state.lock();
         let Some(state) = guard.as_mut() else {
             return Ok(());
@@ -189,6 +187,11 @@ impl Corpus {
         &self,
         demands: &BTreeMap<String, Vec<Arc<AnchorPlan>>>,
     ) -> Result<()> {
+        use crate::code_rule_dsl::phase_clock;
+        phase_clock::timed(&phase_clock::ANCHOR_SELECT, || self.select_files(demands))
+    }
+
+    fn select_files(&self, demands: &BTreeMap<String, Vec<Arc<AnchorPlan>>>) -> Result<()> {
         let mut guard = self.state.lock();
         let Some(state) = guard.as_mut() else {
             return Ok(());

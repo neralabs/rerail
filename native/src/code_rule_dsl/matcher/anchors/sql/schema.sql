@@ -40,9 +40,7 @@ CREATE TABLE decoded_spans(fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE C
     start INTEGER NOT NULL,len INTEGER NOT NULL,PRIMARY KEY(fid,pre)) WITHOUT ROWID;
 CREATE TABLE decoded_children(fid INTEGER NOT NULL REFERENCES file(fid) ON DELETE CASCADE,pre INTEGER NOT NULL,
     field INTEGER NOT NULL,child INTEGER,PRIMARY KEY(fid,pre,field)) WITHOUT ROWID;
-CREATE TRIGGER value_insert AFTER INSERT ON vidx BEGIN
-    INSERT INTO vlex VALUES(NEW.lang,NEW.term,1) ON CONFLICT(lang,term) DO UPDATE SET n=n+1;
-END;
+-- Publication adds each file's vlex counts in one statement (values.rs); removal still counts down here.
 CREATE TRIGGER value_delete AFTER DELETE ON vidx BEGIN
     UPDATE vlex SET n=n-1 WHERE lang=OLD.lang AND term=OLD.term;
     DELETE FROM vlex WHERE lang=OLD.lang AND term=OLD.term AND n=0;

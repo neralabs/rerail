@@ -478,7 +478,7 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
 fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
     use crate::code_rule_dsl::matcher::{CorpusSlot, anchor_plans};
     let plans = anchor_plans(std::iter::once(code_rule));
-    if plans.is_empty() || !crate::code_rule_dsl::matcher::Corpus::enabled() {
+    if plans.is_empty() {
         return;
     }
     let corpus = CorpusSlot::current();

@@ -189,10 +189,6 @@ const POLL_INTERVAL: usize = 256;
 
 /// A file's nodes by kind, in preorder; `None` where the deadline passed first.
 fn kind_index(tape: &TapeDoc) -> Option<Arc<crate::code_rule_dsl::tape::KindPostings>> {
-    // Preparation primes the document's postings under the file's budget; a clause reuses them.
-    if let Some(kinds) = tape.kind_postings() {
-        return Some(Arc::clone(kinds));
-    }
     #[cfg(feature = "code-rule-profile")]
     let _span = crate::code_rule_dsl::profile::trace::Span::start("input-kind-index", "build");
     let mut kinds = rustc_hash::FxHashMap::<u16, Vec<u32>>::default();

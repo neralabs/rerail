@@ -28,8 +28,6 @@ The structural fix is the spec direction. Local rules execute over resident tape
 | Before phase A (recorded) | 50.7 s | 1.75 GB | 22 | baseline |
 | Phase A + shape fixes (§3, §5–§8) | 32.9 s | 1.03 GB | 10 | identical set |
 | + engine fixes (§9) | 29.7 s (−41%) | 1.10 GB | 0 | identical set |
-| + state rewrite, SQL index opt-in (§10–§11) | 9.0 s (−82%) | 0.79 GB | 0 | identical set |
-| + kind postings primed per file (§11) | **7.1 s (−86%)** | 0.91 GB | **0** | identical set |
 
 ## 2. Where the CPU goes: one rule at a time, 300 files
 
@@ -162,32 +160,18 @@ There is no CPU gain, for two reasons:
 
 The win arrives when `state-flow-project` also moves to narrow inputs and the tree copy disappears. An unconfirmed lead: the per-connection regex cache (64 entries, cleared when it fills) may churn on these many distinct patterns.
 
-## 11. The positional SQL index: why it loses, and opt-in
+## 11. The positional SQL index is mandatory; measure execution without construction
 
-Every file a syntax clause might match was published into a temporary SQLite positional index (`anchors::sql::Corpus::put`), and SQL then preselected candidate roots (§1). A spike switch skipped publication, so matching walked the tape instead. Runs were paired and concurrent on the same addon:
+**Withdrawn:** an earlier version of this section made the index opt-in (`RERAIL_AST_SQL_INDEX`). It compared whole runs with and without the index, and concluded the index was a net loss. That was wrong twice over:
 
-| Case | With index (CPU) | Without index (CPU) | Findings |
-|---|---|---|---|
-| backend-type-strings alone, 1,500 files | 8.15 s | 2.98 s | identical |
-| type-safety-patterns alone, full corpus (9,021 files) | 55.4 s (wall 123 s) | 9.6 s (wall 14 s) | identical, 0 failures |
-| all 60 checks, 300 files | 29.2 s, 976 MB | 22.6 s, 871 MB | identical, 0 failures |
+- **The index is not optional.** The anchor index (kind postings, value postings) is how the engine identifies and matches the correct anchors. Anchors are chosen as the rarest mandatory concrete variable, with a value anchor before kind (ast-index-spike design index topics 3 and 5, "kidx" and "vidx is mandatory"; D S049-S054, S151, S053). It is built every time, and nothing can turn it off. The opt-in was reverted.
+- **Whole-run CPU mixes construction with execution.** Parsing, tape building and index publication are construction costs. Execution is the matching and querying that run over what was built. Performance comparisons report execution only, with construction on its own line if at all.
 
-SQL is not slow here; we use it wrong. A stack sample of type-safety on the full corpus with the index on (8 s at 1 ms intervals, four workers) shows four mistakes:
+What the stack sample (type-safety, full corpus, index on) does show is the publication path's cost. These are fixed inside the index, not by skipping it:
 
-1. **One writer for every worker.** `Corpus::put` holds the corpus-wide `state` mutex for the whole publication, and selection (`prepare_files`) runs on the same connection. The four napi workers are idle 73% of the time, waiting on the store. That is why wall time is 123 s against 55 s of CPU, while without the index it is 14 s against 9.6 s.
-2. **A file on disk.** `Store::temporary` opens a named temporary file in WAL mode, so every publication `pwrite`s pages and checkpoints the WAL, about 2,300 `pwrite` samples in 8 s, plus open and unlink churn. The store is discarded at the end of the run, yet it pays for persistence.
-3. **A whole-tree copy per file.** Publication writes the source, the packed tape (records, spans, checkpoints, parents, sizes), one positional FTS5 token per node, kind postings and counts, and a value-term index (`vidx`) whose trigger upserts `vlex` row by row. In the sample, the value-term index takes 68% of publication time and the commit 30%. This is the tree copy the spec forbids (§20), made for every file a syntax clause might match.
-4. **A write-once, read-once index.** The spike measured the index as a persistent store, built once and queried many times. In a run, each file is published once and queried once per plan, so the index never amortizes. Selection then computes roots the resident tape already has: the per-file kind postings, which cost one pass over the records in memory.
-
-So the index belongs to the opt-in path, not the default. Local rules select roots from resident tapes. If SQL candidate selection comes back, for relational inputs or a persistent workspace store, it needs these changes, in this order:
-
-- publish narrow candidate rows, not tapes;
-- keep the store in memory, sharded or per worker, rather than behind one mutex;
-- build the value-term index only for the terms plans ask for.
-
-The index is now opt-in (`RERAIL_AST_SQL_INDEX=1`, `Corpus::enabled`). It is gated at all three publication sites: workspace evaluation, the global relational preparation loop, and single-file evaluation. With all three gated, the 60 checks on the 300-file sample take 9.0 s of CPU (792 MB), against 28.2 s with the index opted in, with identical findings and no failures. The spike gated only the first site, which explains its smaller 23% gain. This matches spec §20: local rules run over resident tapes, and only facts and relational candidates reach SQL. The candidate-selection SQL (`anchors/sql`) remains for comparison until the transducer path replaces it.
-
-Without the index, a clause picks its roots from per-file kind postings (the nodes of each kind, in preorder). These were built lazily by the first clause that asked and charged to that clause's work budget, so a tight clause budget failed the wrong clause and every later clause rebuilt them. The postings now live on the tape document, shared by its clones, and are built once during preparation under the file's budget, which is where index publication was charged before. The 60 checks on the 300-file sample then take 7.1 s of CPU (6.6 s user, 0.5 s sys), with identical findings and no failures.
+1. `Corpus::put` holds the corpus-wide `state` mutex for the whole publication, so the four workers wait on one writer.
+2. `Store::temporary` is a named file in WAL mode, so publication `pwrite`s pages and checkpoints, although the store is discarded after the run.
+3. Publication writes the value-term index row by row, through a trigger that upserts `vlex`. In the sample, that is 68% of publication time.
 
 ## 12. Round 2: no data-layer rule shape copies the tree any more
 
@@ -218,7 +202,7 @@ Splicing each rewritten piece into the pre-rewrite rule and running the full cor
 - **Two splits changed results.** Reading parameters only through annotations added 177 false positives to internal-dead-code. Splitting parameter forms into separate inputs added 23 to public-api-triples.
 - **Neutral changes.** Splitting base classes into two inputs, and the `direct_legacy` file gate, changed nothing.
 
-The splits existed to suit the positional index's candidate selection, which is now off by default (§11), so both rules are restored to their verified shapes. Every rewrite now needs a full-corpus check of each repository-wide clause, not only the sample.
+Two of the splits changed results, so both rules are restored to their verified shapes. Every rewrite now needs a full-corpus check of each repository-wide clause, not only the sample.
 
 A third full-corpus finding: `serverplan_quality` reported a false positive on `SqlConditionalStep` (SPQ-029, physical contract). The class's base `ConditionalStep` never resolved, because the import rows held only the first name of each `from m import (a, b, …)`. A relation with `field` reads only that field's first child, as upstream ast-grep does, and every name of an import shares the `name` field. So `has: {field: name}` with `each` cannot enumerate an import, and neither can `inside` with a field. Ten import rules across `conditional`, `legacy`, `quality`, `quality_annotations` and `target` had the shape. They now use `imported(...)` (`common.py`): a `has` over the statement's children that leaves out the `from` module. Fixtures stay exact (80, 200 and 12 rows), and the full corpus is clean with no failures.
 

@@ -1020,7 +1020,8 @@ pub(super) fn evaluate(
 
 /// SQL remains the consumer; capacity partitions bound suspended sessions.
 pub(super) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
-    batch::evaluate(jobs)
+    use super::phase_clock;
+    phase_clock::timed(&phase_clock::RELATIONAL, || batch::evaluate(jobs))
 }
 
 /// Restore documents only when the scheduler prepares this consumer.
@@ -1028,5 +1029,6 @@ pub(super) fn evaluate_prepared(
     jobs: Vec<Job<'_>>,
     prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause, Preparation) -> Result<()>,
 ) -> Vec<Evaluation> {
-    batch::evaluate_prepared(jobs, prepare)
+    use super::phase_clock;
+    phase_clock::timed(&phase_clock::RELATIONAL, || batch::evaluate_prepared(jobs, prepare))
 }
