@@ -76,9 +76,30 @@ pub(crate) struct Manifest {
     digest: [u8; 32],
     /// `node_version` parsed.
     node_range: Option<Range>,
-    /// Whether `node_range` (else the default) is a subset of a condition's range, by the range's
-    /// text (`node_range_is_subset_of`); shared by the manifest's copies, which keep its range.
-    node_subsets: Arc<Mutex<HashMap<String, bool>>>,
+}
+
+/// Whether a configured Node range is a subset of a condition's range, by the two ranges' texts
+/// (`Manifest::node_range_is_subset_of`): every manifest with the same range, and every copy of
+/// one, asks the same of each gated rule. Cleared when it holds `NODE_SUBSETS_MAX` answers.
+static NODE_SUBSETS: LazyLock<Mutex<HashMap<(String, String), bool>>> =
+    LazyLock::new(Mutex::default);
+const NODE_SUBSETS_MAX: usize = 1 << 16;
+
+/// Whether a configured Node range (`None`: eslint-plugin-n's default, as for a file without a
+/// manifest) is a subset of `range`, node-semver's `subset`, through `NODE_SUBSETS`.
+pub(crate) fn node_range_is_subset_of(configured: Option<&Range>, range: &Range) -> bool {
+    let configured = configured.unwrap_or(&DEFAULT_NODE_RANGE);
+    let key = (configured.text().to_owned(), range.text().to_owned());
+    if let Some(&subset) = NODE_SUBSETS.lock().get(&key) {
+        return subset;
+    }
+    let subset = configured.is_subset_of(range);
+    let mut subsets = NODE_SUBSETS.lock();
+    if subsets.len() >= NODE_SUBSETS_MAX {
+        subsets.clear();
+    }
+    subsets.insert(key, subset);
+    subset
 }
 
 /// Which files below a manifest are in their Next app's server module graph.
@@ -127,7 +148,6 @@ impl Manifest {
             server_graph: ServerGraph::Unread,
             digest: [0; 32],
             node_range,
-            node_subsets: Arc::default(),
         };
         manifest.digest = manifest.compute_digest();
         manifest
@@ -428,21 +448,9 @@ impl Manifest {
     }
 
     /// Whether eslint-plugin-n's configured Node range for files below the manifest (its own, else
-    /// the default) is a subset of `range`, worked out once per range text: every file below the
-    /// manifest asks the same of each gated rule.
+    /// the default) is a subset of `range`, worked out once per pair of range texts (`NODE_SUBSETS`).
     pub(crate) fn node_range_is_subset_of(&self, range: &Range) -> bool {
-        if let Some(&subset) = self.node_subsets.lock().get(range.text()) {
-            return subset;
-        }
-        let subset = self
-            .node_range
-            .as_ref()
-            .unwrap_or(&DEFAULT_NODE_RANGE)
-            .is_subset_of(range);
-        self.node_subsets
-            .lock()
-            .insert(range.text().to_owned(), subset);
-        subset
+        node_range_is_subset_of(self.node_range.as_ref(), range)
     }
 
     /// The JSX runtime the package names: its `jsxImportSource` where that names React (or a

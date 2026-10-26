@@ -101,9 +101,30 @@ const { READ, CALL, CONSTRUCT } = await import(U);
 function conv(o) { const r = {}; for (const [k, v] of Object.entries(o)) r[k] = conv(v); if (o[READ]) r.$READ = 1; if (o[CALL]) r.$CALL = 1; if (o[CONSTRUCT]) r.$CONSTRUCT = 1; return r; }
 console.log(JSON.stringify({ modules: conv(rawModules), globals: conv(globals) }));
 ''', utils_module)
+    # n/no-unsupported-features/node-builtins' trace maps, each entry's info kept; a map that contains itself
+    # (module.Module.Module) is cut where it repeats.
+    node_builtin_maps = node_json(tools, plugin, r'''
+import { pathToFileURL } from "node:url";
+const { NodeBuiltinModules, NodeBuiltinGlobals, NodeBuiltinImportMeta } = await import(pathToFileURL(process.cwd() + "/lib/unsupported-features/node-builtins.js").href);
+const { READ, CALL, CONSTRUCT } = await import(pathToFileURL(process.argv[1]).href);
+function conv(o, seen) {
+  const r = {};
+  for (const [k, v] of Object.entries(o)) if (!seen.includes(v)) r[k] = conv(v, [...seen, v]);
+  for (const [flag, symbol] of [["$READ", READ], ["$CALL", CALL], ["$CONSTRUCT", CONSTRUCT]]) if (o[symbol]) r[flag] = { supported: o[symbol].supported ?? [], experimental: o[symbol].experimental ?? [] };
+  return r;
+}
+const node = { modules: conv(NodeBuiltinModules, []), globals: conv(NodeBuiltinGlobals, []), meta: conv(NodeBuiltinImportMeta, []) };
+// n/no-unsupported-features/es-builtins keeps its trace map private: the rule module, imported with it exported.
+let src = (await import("node:fs")).readFileSync("lib/rules/no-unsupported-features/es-builtins.js", "utf8");
+const base = pathToFileURL(process.cwd() + "/lib/rules/no-unsupported-features/").href;
+src = src.replace(/from "(\.\.?\/[^"]+)"/g, (m, p) => `from "${new URL(p, base).href}"`).replace(/from "@eslint-community\/eslint-utils"/, `from "${pathToFileURL(process.argv[1]).href}"`);
+src = src.replace(/export default \{[\s\S]*$/, "export { traceMap }");
+const { traceMap } = await import("data:text/javascript," + encodeURIComponent(src));
+console.log(JSON.stringify({ node, es: { modules: conv(traceMap.modules, []), globals: conv(traceMap.globals, []) } }));
+''', utils_module)
     # Node's isBuiltin, which n/prefer-process-get-builtin-module calls, reads the running Node's builtinModules.
     node_builtins = node_json(tools, tools, 'import { builtinModules } from "node:module"; console.log(JSON.stringify(builtinModules))')
-    return builtins, globals_node, trace, node_builtins
+    return builtins, globals_node, trace, node_builtins, node_builtin_maps
 
 
 # ---- documents ---------------------------------------------------------------------------------------------------
@@ -173,6 +194,8 @@ DESCRIPTIONS = {
     "n-no-process-env": "Avoid reading process.env directly; pass configuration in explicitly so dependencies on the environment stay visible and testable.",
     "n-no-sync": "Avoid calling methods whose name ends in Sync, such as readFileSync; they block the Node.js event loop.",
     "n-prefer-global-buffer": "Use the global Buffer instead of importing or requiring it from the buffer module; it is always available in Node.js.",
+    "n-no-unsupported-features-es-builtins": "Use only the ECMAScript built-ins that every Node.js version in the package's engines.node range provides, or raise that range.",
+    "n-no-unsupported-features-node-builtins": "Use only the Node.js built-in APIs that every Node.js version in the package's engines.node range provides, or raise that range.",
     "n-prefer-global-crypto": "Use the global crypto object instead of reading webcrypto from the crypto module; Node.js provides it as a global.",
     "n-prefer-global-timers": "Use the global timer functions, such as setTimeout, instead of reading them from the timers module.",
     "n-prefer-import-assert-strict": "Import node:assert/strict instead of node:assert, so assertions use strict equality.",
@@ -634,9 +657,17 @@ def uid(path):
     return "v:" + ".".join(path)
 
 
-def tracker(modules, globals_):
+def tracker(modules, globals_, meta=None, group=None, export_all=None, exact=(), roots=None):
     """ReferenceTracker (legacy mode) over a trace map: per trie node a value utility v:<path>, and the report rules
-    per root (READ at members, destructured properties, specifiers; CALL/CONSTRUCT at calls and `new`)."""
+    per key (READ at members, destructured properties, specifiers; CALL/CONSTRUCT at calls and `new`).
+
+    `meta`: a map traced from `import.meta` (iteratePropertyReferences). `group(flag, path, info)`: the report key of
+    the entry at `path` flagged `flag` (`$READ`, `$CALL`, `$CONSTRUCT`), given its info; by default its root, a module
+    or `global <name>`. `export_all(module, member, key, ordinal)`: the key of the `export * from` report of a module's
+    READ member, `ordinal` counting the members before it that share `key`; by default one per member.
+    `exact`: the modules a node: prefix does not also name (each other module key stands for itself with and without
+    node:). `roots`: module name → the info of
+    its own READ, for modules whose name alone (node: or not, exactly) decides it."""
     utils = {
         "require-callee": {"any": [{"kind": "identifier", "regex": "^require$", "resolves": {"global": ["require"]}},
                                    {"kind": "parenthesized_expression", "has": {"matches": "require-callee"}}]},
@@ -648,11 +679,23 @@ def tracker(modules, globals_):
                                   {"kind": "parenthesized_expression", "has": {"matches": "global-object"}},
                                   {"kind": "identifier", "resolves": {"binding": {"destructuredValue": False, "value": {"matches": "global-object"}}}}]},
     }
+    if not modules:
+        del utils["require-callee"], utils["builtin-callee"]
     report = {}
     current = [None]
 
-    def out():
-        return report.setdefault(current[0], [])
+    def out(key):
+        return report.setdefault(key, [])
+
+    def grouped(flag, path, node, names):
+        """`names` (children of the trie node at `path` flagged `flag`) by report key, in order."""
+        keys = {}
+        for k in names:
+            keys.setdefault(current[0] if group is None else group(flag, path + [k], node[k][flag]), []).append(k)
+        return list(keys.items())
+
+    def root_key(flag, path, node):
+        return current[0] if group is None else group(flag, path, node[flag])
 
     def aliases(u):
         return [{"kind": "parenthesized_expression", "has": {"matches": u}},
@@ -681,17 +724,19 @@ def tracker(modules, globals_):
         u = uid(path)
         kids = [k for k in node if not k.startswith("$")]
         reads = [k for k in kids if node[k].get("$READ")]
-        if reads:
-            rrx = alt_rx(reads)
-            out().extend([member_property_first(u, rrx), destructured(pid, rrx)])
+        ordinals = {}
+        for key, names in grouped("$READ", path, node, reads):
+            rrx = alt_rx(names)
+            out(key).extend([member_property_first(u, rrx), destructured(pid, rrx)])
             if module is not None and len(path) == 1:
                 src = {"matches": f"m:{module}:esm-source"}
-                out().extend([{"kind": "import_specifier", "has": {"field": "name", "regex": rrx}, "inside": {"stopBy": "end", "kind": "import_statement", "has": {"field": "source", **src}}},
-                              {"kind": "export_specifier", "has": {"field": "name", "regex": rrx}, "inside": {"stopBy": "end", "kind": "export_statement", "has": {"field": "source", **src}}}])
+                out(key).extend([{"kind": "import_specifier", "has": {"field": "name", "regex": rrx}, "inside": {"stopBy": "end", "kind": "import_statement", "has": {"field": "source", **src}}},
+                                 {"kind": "export_specifier", "has": {"field": "name", "regex": rrx}, "inside": {"stopBy": "end", "kind": "export_statement", "has": {"field": "source", **src}}}])
                 # ReferenceTracker reports an `export * from` once per member of the module it marks READ, each with
                 # its own message: one clause per member, all on the same statement.
-                for k in reads:
-                    report.setdefault(f"{module} export-all {k}", []).append(
+                for k in names:
+                    ordinal = ordinals[key] = ordinals.get(key, -1) + 1
+                    report.setdefault(f"{module} export-all {k}" if export_all is None else export_all(module, k, key, ordinal), []).append(
                         {"kind": "export_statement", "has": {"field": "source", **src}, "not": {"has": {"kind": "export_clause"}}})
 
         def value_alts(cu, krx):
@@ -709,14 +754,14 @@ def tracker(modules, globals_):
 
         # One utility per parent for the called and constructed members: a callee is resolved once, not per name.
         for flag, kind, field in (("$CALL", "call_expression", "function"), ("$CONSTRUCT", "new_expression", "constructor")):
-            names = [k for k in kids if node[k].get(flag)]
-            if names:
-                fu = f"{flag[1:].lower()}:{'.'.join(path)}"
+            groups = grouped(flag, path, node, [k for k in kids if node[k].get(flag)])
+            for index, (key, names) in enumerate(groups):
+                fu = f"{flag[1:].lower()}:{'.'.join(path)}" + ("" if len(groups) == 1 else f"#{index}")
                 utils[fu] = {"any": value_alts(fu, alt_rx(names))}
                 rule = {"kind": kind, "has": {"field": field, "matches": fu}}
                 if kind == "call_expression":
                     rule = {**rule, **NOT_TAGGED}
-                out().append(rule)
+                out(key).append(rule)
         for k in kids:
             child = node[k]
             cp = path + [k]
@@ -728,7 +773,7 @@ def tracker(modules, globals_):
 
     for m, node in modules.items():
         current[0] = m
-        rx = f"^(?:node:)?{esc(m)}$"
+        rx = f"^{esc(m)}$" if m in exact else f"^(?:node:)?{esc(m)}$"
         utils[f"m:{m}:call"] = {"kind": "call_expression", **NOT_TAGGED, "all": [first_arg(rx), {"has": {"field": "function", "any": [{"matches": "require-callee"}, {"matches": "builtin-callee"}]}}]}
         utils[f"m:{m}:esm-source"] = {"kind": "string", "value": {"regex": rx}}
         utils[f"m:{m}:esm-whole"] = {"any": [{"kind": "namespace_import"}, {"kind": "import_clause"}, {"kind": "identifier", "inside": {"kind": "import_clause"}}],
@@ -737,8 +782,14 @@ def tracker(modules, globals_):
         utils[uid([m])] = {"any": [{"matches": f"m:{m}:call"}, esm_ref,
                                    {"kind": "member_expression", "all": [{"has": {"field": "property", "kind": "property_identifier", "regex": "^default$"}}, {"has": {"field": "object", **esm_ref}}]}] + aliases(uid([m]))}
         if node.get("$READ"):
-            out().extend([{"matches": f"m:{m}:call"}, {"any": [{"kind": "import_statement"}, {"kind": "export_statement"}], "has": {"field": "source", "matches": f"m:{m}:esm-source"}}])
+            out(root_key("$READ", [m], node)).extend([{"matches": f"m:{m}:call"}, {"any": [{"kind": "import_statement"}, {"kind": "export_statement"}], "has": {"field": "source", "matches": f"m:{m}:esm-source"}}])
         walk([m], node, m, pattern_util([m], None, None))
+    for m, info in (roots or {}).items():
+        current[0] = m
+        rx = f"^{esc(m)}$"
+        utils[f"r:{m}:call"] = {"kind": "call_expression", **NOT_TAGGED, "all": [first_arg(rx), {"has": {"field": "function", "any": [{"matches": "require-callee"}, {"matches": "builtin-callee"}]}}]}
+        source = {"kind": "string", "value": {"regex": rx}}
+        out(root_key("$READ", [m], {"$READ": info})).extend([{"matches": f"r:{m}:call"}, {"any": [{"kind": "import_statement"}, {"kind": "export_statement"}], "has": {"field": "source", **source}}])
     for g, node in globals_.items():
         current[0] = "global " + g
         gu = uid(["g", g])
@@ -746,13 +797,98 @@ def tracker(modules, globals_):
         gid = {"kind": "identifier", "regex": grx, "resolves": {"global": [g], "directives": "eslint"}}
         utils[gu] = {"any": [gid, member_property_first("global-object", grx)] + aliases(gu)}
         if node.get("$READ"):
-            out().extend([gid, member_property_first("global-object", grx)])
+            out(root_key("$READ", ["g", g], node)).extend([gid, member_property_first("global-object", grx)])
         if node.get("$CALL"):
-            out().append({"kind": "call_expression", **NOT_TAGGED, "has": {"field": "function", "matches": gu}})
+            out(root_key("$CALL", ["g", g], node)).append({"kind": "call_expression", **NOT_TAGGED, "has": {"field": "function", "matches": gu}})
         if node.get("$CONSTRUCT"):
-            out().append({"kind": "new_expression", "has": {"field": "constructor", "matches": gu}})
+            out(root_key("$CONSTRUCT", ["g", g], node)).append({"kind": "new_expression", "has": {"field": "constructor", "matches": gu}})
         walk(["g", g], node, None, pattern_util(["g", g], None, None))
+    if meta:
+        current[0] = "import.meta"
+        mu = uid(["import.meta"])
+        utils[mu] = {"any": [{"kind": "meta_property", "regex": "^import\\s*\\.\\s*meta$"}] + aliases(mu)}
+        walk(["import.meta"], meta, None, pattern_util(["import.meta"], None, None))
     return utils, report
+
+
+def semver_key(version):
+    return tuple(int(part) for part in version.lstrip("v=").split("."))
+
+
+def unsupported_builtins_doc(maps, globals_node, name, es=False):
+    """n/no-unsupported-features/<name> (node-builtins or es-builtins; default options: no ignores, allowExperimental
+    off), checkUnsupportedBuiltins over the rule's trace map: every reference
+    ReferenceTracker finds (legacy mode: require, process.getBuiltinModule, import and export, globals, import.meta) to
+    a built-in whose `supported` versions do not cover the configured Node range (isInRange: the range is a subset of
+    `^v` for each supported version or `>=` the latest), one clause per supported-version list, gated on
+    `nodeVersion.notSubsetOf`; a built-in with no supported version is reported everywhere."""
+    ranges = {}
+
+    def group(flag, path, info):
+        versions = sorted(info["supported"], key=semver_key, reverse=True)
+        if not versions:
+            return "unsupported"
+        key = " || ".join([f"^{v}" for v in versions] + [f">={versions[0]}"])
+        ranges[key] = versions
+        return key
+
+    # The map lists each module with and without node: (the same members; the module itself is supported from its own
+    # versions under each name): one trie for both names, and each name's own READ apart. A module under one name only
+    # (node:test) is traced under that name exactly.
+    members = lambda v: {k: x for k, x in v.items() if not k.startswith("$")}
+    modules, roots, exact = {}, {}, set()
+    for m, v in maps["modules"].items():
+        bare = m[5:] if m.startswith("node:") else m
+        pair = (f"node:{bare}" in maps["modules"]) and (bare in maps["modules"])
+        if not pair:
+            modules[m] = v
+            exact.add(m)
+            continue
+        assert members(maps["modules"][bare]) == members(maps["modules"][f"node:{bare}"]), m
+        modules.setdefault(bare, members(v))
+        if v.get("$READ"):
+            roots[m] = v["$READ"]
+    # ReferenceTracker finds a global's references only where the configuration declares it (globals.node here).
+    # es-builtins' globals are ECMAScript's, which ecmaVersion latest declares.
+    globals_ = {g: v for g, v in maps["globals"].items() if es or g in globals_node or g == "globalThis"}
+    utils, report = tracker(modules, globals_, meta=maps.get("meta"), group=group,
+                            export_all=lambda module, member, key, ordinal: f"{key} export-all {ordinal}", exact=exact, roots=roots)
+
+    def declared(alts):
+        """The languageOptions of a clause: globals.node's entries for the globals its rule reaches (each clause would
+        otherwise repeat all of them)."""
+        names, seen, todo = set(), set(), [alts]
+        while todo:
+            value = todo.pop()
+            if isinstance(value, dict):
+                if isinstance(value.get("matches"), str) and value["matches"] not in seen:
+                    seen.add(value["matches"])
+                    todo.append(utils[value["matches"]])
+                names.update(value.get("resolves", {}).get("global", []) if isinstance(value.get("resolves"), dict) else [])
+                todo.extend(value.values())
+            elif isinstance(value, list):
+                todo.extend(value)
+        names = sorted(name for name in names if name in globals_node and name not in ("require", "module", "exports", "__dirname", "__filename"))
+        return {**FILE_LO, **({"globals": {name: "readonly" for name in names}} if names else {})}
+
+    checks = [{"id": "trace-map", "define": {"language": "typescript", "utils": utils}}]
+    for key, alts in sorted(report.items(), key=lambda item: item[0]):
+        base, _, ordinal = key.partition(" export-all ")
+        cid = ("unsupported" if base == "unsupported" else "supported-" + "-".join(v.replace(".", "-") for v in ranges[base])) + (f"-export-all-{ordinal}" if ordinal else "")
+        what = "ECMAScript built-in" if es else "Node.js built-in"
+        if base == "unsupported":
+            message = f"This {what} is still experimental in every Node.js release; do not rely on it."
+            ast = {"language": "typescript", "languageOptions": declared(alts), "rule": {"any": alts}}
+        else:
+            latest, *backported = ranges[base]
+            since = latest + (f" (backported: {', '.join('^' + v for v in backported)})" if backported else "")
+            message = f"This {what} is not supported until Node.js {since}, and the configured Node range (engines.node) includes earlier versions."
+            ast = {"language": "typescript", "languageOptions": declared(alts), "file": {"package": {"nodeVersion": {"notSubsetOf": base}}}, "rule": {"any": alts}}
+        checks.append({"id": cid, "forbid": {"ast": ast},
+                       "violation": {"anchor": "witness.span", "code": f"n/no-unsupported-features/{name}", "message": message,
+                                     "suppress": suppress(f"n/no-unsupported-features/{name}")}})
+    return {"format": "rerail.policy/v1", "id": f"n-no-unsupported-features-{name}", "revision": 1, "mode": "steer",
+            "description": DESCRIPTIONS[f"n-no-unsupported-features-{name}"], "scope": {"include": INCLUDE, "exclude": []}, "clauses": checks}
 
 
 # n-no-deprecated-api: the message of the clause reporting each root of the trace map (a module, or `global <name>`).
@@ -931,11 +1067,13 @@ def main():
     parser.add_argument("--tools")
     parser.add_argument("--root", default=REPOSITORY)
     args = parser.parse_args()
-    builtins, globals_node, trace, node_builtins = load_data(os.path.abspath(args.tools or nearest_tools()))
+    builtins, globals_node, trace, node_builtins, node_builtin_maps = load_data(os.path.abspath(args.tools or nearest_tools()))
     for doc in syntax_docs() + prefer_global_docs() + prefer_promises_docs() + [no_path_concat_doc(), prefer_node_protocol_doc(builtins),
                                                                             prefer_import_assert_strict_doc(), prefer_process_get_builtin_module_doc(builtins, node_builtins)]:
         write_port(args.root, doc)
     write_port(args.root, no_deprecated_api_doc(trace), compact=True)
+    write_port(args.root, unsupported_builtins_doc(node_builtin_maps["node"], globals_node, "node-builtins"), compact=True)
+    write_port(args.root, unsupported_builtins_doc(node_builtin_maps["es"], globals_node, "es-builtins", es=True), compact=True)
     write_port(args.root, hashbang_doc())
     for doc in probe_docs(builtins, globals_node):
         write(args.root, os.path.join(PACK, "candidates", "probes", "rules"), doc)

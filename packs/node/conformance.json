@@ -411,6 +411,36 @@
         "suppression"
       ],
       "match": "line+column"
+    },
+    {
+      "id": "n-no-unsupported-features-node-builtins",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unsupported-features/node-builtins"
+      },
+      "policy": "candidates/rules/n-no-unsupported-features-node-builtins.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-unsupported-features-es-builtins",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unsupported-features/es-builtins"
+      },
+      "policy": "candidates/rules/n-no-unsupported-features-es-builtins.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
     }
   ]
 }

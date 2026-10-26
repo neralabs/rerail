@@ -690,7 +690,9 @@ const moduleRegex = z
 const packageConditionSchema = z
   .object({
     bin: z.boolean().optional(),
-    nodeVersion: z.object({ subsetOf: nonEmptyString }).strict().optional(),
+    nodeVersion: z
+      .union([z.object({ subsetOf: nonEmptyString }).strict(), z.object({ notSubsetOf: nonEmptyString }).strict()])
+      .optional(),
     dependsOn: z.array(nonEmptyString).min(1).optional(),
     path: moduleRegex.optional(),
     serverGraph: z.boolean().optional(),

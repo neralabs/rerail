@@ -4,7 +4,7 @@ use crate::code_rule_dsl::json::bounded_text;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::QueryWhen;
 use crate::code_rule_dsl::language::{
-    FileCondition, JsxRuntime, PackageCondition, SourceType, TextCondition,
+    FileCondition, JsxRuntime, NodeVersionCondition, PackageCondition, SourceType, TextCondition,
 };
 use crate::code_rule_dsl::scope::options::{
     DEFAULT_PYTHON_MINOR, EsGlobals, GlobalSetting, LanguageOptions, PythonOptions, PythonTyping,
@@ -648,9 +648,9 @@ fn flag_value(value: Option<&Value>, at: &str) -> Result<Option<bool>> {
     }
 }
 
-/// A TypeScript query's `file.package`: `bin` (true or false), `nodeVersion: { subsetOf }` (an
-/// npm semver range), `dependsOn` (a non-empty list of package names), `path` (a text
-/// condition) and `serverGraph` (true or false); at least one.
+/// A TypeScript query's `file.package`: `bin` (true or false), `nodeVersion: { subsetOf }` or
+/// `{ notSubsetOf }` (an npm semver range), `dependsOn` (a non-empty list of package names),
+/// `path` (a text condition) and `serverGraph` (true or false); at least one.
 fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<PackageCondition> {
     let package = object(value, at)?;
     reject_unknown(
@@ -668,12 +668,25 @@ fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<
         .map(|value| {
             let at = format!("{at}/nodeVersion");
             let version = object(value, &at)?;
-            reject_unknown(version, &["subsetOf"], &at)?;
+            reject_unknown(version, &["subsetOf", "notSubsetOf"], &at)?;
+            let (key, subset) = match (
+                version.contains_key("subsetOf"),
+                version.contains_key("notSubsetOf"),
+            ) {
+                (true, false) => ("subsetOf", true),
+                (false, true) => ("notSubsetOf", false),
+                _ => {
+                    return Err(invalid(format!(
+                        "{at} must set one of `subsetOf` and `notSubsetOf`"
+                    )));
+                }
+            };
             version
-                .get("subsetOf")
+                .get(key)
                 .and_then(Value::as_str)
                 .and_then(Range::parse)
-                .ok_or_else(|| invalid(format!("{at}/subsetOf must be an npm semver range")))
+                .map(|range| NodeVersionCondition { range, subset })
+                .ok_or_else(|| invalid(format!("{at}/{key} must be an npm semver range")))
         })
         .transpose()?;
     let depends_on = package

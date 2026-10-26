@@ -1,6 +1,6 @@
 # Rerail rule pack: Node.js
 
-28 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
+30 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
 the pack's conformance check on both of its sources, and in `candidates/rules/` until then. eslint-plugin-n has no port
 readiness gates ([docs/port-readiness.md](../../docs/port-readiness.md)); a pinned test set judges the pack instead
 (`TEST_SETS` in `scripts/s3/pack-fixtures.mjs`, [conformance/README.md](../../conformance/README.md)). Each port is
@@ -16,7 +16,8 @@ scored through the engine's production workspace path, with every disagreement d
 The conformance check (`--check`, run in CI) scores the tests and the test set: it fails a port in `rules/` on any
 unexplained FP or FN on either, and reports the candidates without failing them. 24 ports ship, 4 of them on (the ones
 the plugin's recommended configurations turn on: `n-hashbang`, `n-no-deprecated-api`, `n-no-exports-assign`,
-`n-no-process-exit`) and the other 20 off until a repository turns them on. The 4 candidates (`n-prefer-global-crypto`,
+`n-no-process-exit`) and the other 20 off until a repository turns them on. The 6 candidates
+(`n-no-unsupported-features-es-builtins`, `n-no-unsupported-features-node-builtins`, `n-prefer-global-crypto`,
 `n-prefer-global-timers`, `n-prefer-import-assert-strict`, `n-prefer-process-get-builtin-module`) pass the plugin's
 tests and have no test-set files yet.
 
@@ -46,7 +47,11 @@ no-deprecated-api) report them in CommonJS files only. Rules upstream reads by n
 no-mixed-requires, prefer-node-protocol) report in both. The recorder lints each fixture and corpus file the same way:
 `globals.node`, without those five names in an ES module. Upstream's RuleTester declares `globals.node` in every case,
 so a case it runs as a module that reads one of those names and has no module syntax is written as CommonJS (`.js`
-under the fixtures' `"type": "commonjs"` package.json), where Node defines them.
+under the fixtures' `"type": "commonjs"` package.json), where Node defines them. A case configured by nothing but a
+Node version (its `version` option, or the `n.version` setting) is written beside a package.json whose `engines.node`
+is that version, which the plugin reads when no option sets one, so the rules that read the configured range
+(`n-no-unsupported-features-*`, `n-prefer-node-protocol`, `n-prefer-process-get-builtin-module`) are judged at the
+range each case states.
 
 Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
 ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe

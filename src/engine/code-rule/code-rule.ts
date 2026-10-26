@@ -347,9 +347,9 @@ export interface CodeRuleDslPackageCondition {
   /**
    * The file's configured Node range is a subset of `subsetOf` (node-semver's `subset`). The configured range is
    * eslint-plugin-n's: `engines.node`, else the `devEngines.runtime` entry named `node`'s `version`, else `>=16.0.0`
-   * (also without a manifest); one that is no valid range falls through to the next.
+   * (also without a manifest); one that is no valid range falls through to the next. `notSubsetOf`: it is not.
    */
-  nodeVersion?: { subsetOf: string };
+  nodeVersion?: { subsetOf: string } | { notSubsetOf: string };
   /** The manifest lists one of these in `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`. Needs a manifest. */
   dependsOn?: string[];
   /** Over the file's path relative to the manifest's folder. Needs a manifest, `notRegex` too. */

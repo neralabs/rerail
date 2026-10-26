@@ -31,7 +31,7 @@ pub(crate) mod adapter;
 
 use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
 use crate::code_rule_dsl::module_path::ModulePath;
-use crate::code_rule_dsl::package_manifest::{DEFAULT_NODE_RANGE, Manifest};
+use crate::code_rule_dsl::package_manifest::{Manifest, node_range_is_subset_of};
 use crate::code_rule_dsl::semver::Range;
 use ast_grep_core::{
     language::Language,
@@ -850,8 +850,8 @@ pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
 pub(crate) struct PackageCondition {
     /// Whether the file is one of the manifest's `bin` targets (`Manifest::is_bin`).
     pub(crate) bin: Option<bool>,
-    /// The range the file's configured Node range must be a subset of.
-    pub(crate) node_version: Option<Range>,
+    /// The range the file's configured Node range must, or must not, be a subset of.
+    pub(crate) node_version: Option<NodeVersionCondition>,
     /// Names one of which the manifest must list as a dependency of any kind.
     pub(crate) depends_on: Option<Vec<String>>,
     /// Over the file's path relative to the manifest's folder.
@@ -860,15 +860,23 @@ pub(crate) struct PackageCondition {
     pub(crate) server_graph: Option<bool>,
 }
 
+/// `nodeVersion`: the file's configured Node range is (`subsetOf`) or is not (`notSubsetOf`) a
+/// subset of `range`, node-semver's `subset`.
+#[derive(Debug)]
+pub(crate) struct NodeVersionCondition {
+    pub(crate) range: Range,
+    pub(crate) subset: bool,
+}
+
 impl PackageCondition {
     fn holds(&self, path: &str, manifest: Option<&Manifest>) -> bool {
         self.bin
             .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
-            && self.node_version.as_ref().is_none_or(|range| {
+            && self.node_version.as_ref().is_none_or(|condition| {
                 manifest.map_or_else(
-                    || DEFAULT_NODE_RANGE.is_subset_of(range),
-                    |manifest| manifest.node_range_is_subset_of(range),
-                )
+                    || node_range_is_subset_of(None, &condition.range),
+                    |manifest| manifest.node_range_is_subset_of(&condition.range),
+                ) == condition.subset
             })
             && self
                 .depends_on

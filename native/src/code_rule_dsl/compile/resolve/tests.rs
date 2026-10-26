@@ -3729,6 +3729,33 @@ fn file_package_node_version_reads_eslint_plugin_ns_configured_range() {
     }
     assert!(!matched(subset_of(">=16"), &[("a.js", "")]).is_empty());
     assert!(matched(subset_of(">=18"), &[("a.js", "")]).is_empty());
+    // `notSubsetOf` holds exactly where `subsetOf` does not, without a manifest too.
+    let not_subset_of =
+        |range: &str| json!({ "package": { "nodeVersion": { "notSubsetOf": range } } });
+    for (files, range) in [
+        (
+            &[
+                ("package.json", r#"{ "engines": { "node": ">=18.18" } }"#),
+                ("a.js", ""),
+            ][..],
+            ">=20",
+        ),
+        (
+            &[
+                ("package.json", r#"{ "engines": { "node": ">=18.18" } }"#),
+                ("a.js", ""),
+            ][..],
+            ">=18",
+        ),
+        (&[("a.js", "")][..], ">=18"),
+        (&[("a.js", "")][..], ">=16"),
+    ] {
+        assert_ne!(
+            matched(subset_of(range), files).is_empty(),
+            matched(not_subset_of(range), files).is_empty(),
+            "{files:?} {range}"
+        );
+    }
 }
 
 /// A host's `package` must send `nodeVersion` as a valid npm range: one that does not parse is
@@ -4358,6 +4385,16 @@ fn malformed_package_and_jsx_runtime_conditions_are_rejected() {
             "typescript",
             json!({ "package": { "nodeVersion": { "subsetOf": ">=1.2.3.4" } } }),
             "subsetOf must be an npm semver range",
+        ),
+        (
+            "typescript",
+            json!({ "package": { "nodeVersion": { "notSubsetOf": "x y z" } } }),
+            "notSubsetOf must be an npm semver range",
+        ),
+        (
+            "typescript",
+            json!({ "package": { "nodeVersion": { "subsetOf": ">=18", "notSubsetOf": ">=20" } } }),
+            "must set one of `subsetOf` and `notSubsetOf`",
         ),
         (
             "typescript",
