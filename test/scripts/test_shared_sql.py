@@ -92,8 +92,8 @@ class SharedSqlTests(unittest.TestCase):
 
     def test_import_identifiers_bound_work_to_exact_subtrees_and_preserve_file_scope(self):
         policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
-        plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'quality-contracts-1')
-        stages = {s['name']: s for s in plan['stages']}
+        plans = [c['relational'] for c in policy['clauses'] if 'relational' in c and any(s['name']=='import_identifiers' for s in c['relational'].get('stages',[]))]
+        self.assertEqual(len(plans), 2)
         db = sqlite3.connect(':memory:')
         self.addCleanup(db.close)
         db.executescript('''
@@ -112,25 +112,26 @@ class SharedSqlTests(unittest.TestCase):
         db.executemany('INSERT INTO nodes VALUES(?,?,?,?,?)', rows)
         db.executemany('INSERT INTO edges VALUES(?,?,?)', [('a.py', 2*i, 2*i+1) for i in range(500)])
         # The SQL binding of the same native producer supplies a closed reference.
-        roots = stages.get('import_descendants', {}).get('reachability', {}).get('roots',
-            "SELECT __path,id FROM nodes WHERE kind IN ('import_statement','import_from_statement')")
+        roots = "SELECT __path,id FROM nodes WHERE kind IN ('import_statement','import_from_statement')"
         db.execute('CREATE TABLE import_descendants AS WITH RECURSIVE walk(__path,root,node) AS ('
             'SELECT __path,id,id FROM (' + roots + ') UNION SELECT w.__path,w.root,e.dst FROM walk w '
             'JOIN edges e ON e.__path=w.__path AND e.src=w.node) SELECT * FROM walk')
         db.execute('ANALYZE')
-        query = stages['import_identifiers']['query']
-        if 'import_ranges' in stages:
-            query = 'WITH import_ranges AS MATERIALIZED (' + stages['import_ranges']['query'] + ') ' + query
-        steps = 0
-
-        def limit():
-            nonlocal steps
-            steps += 1000
-            return steps > 1_000_000
-
-        db.set_progress_handler(limit, 1000)
-        self.assertEqual(set(db.execute(query)), {('a.py', 2*i+1) for i in range(500)})
-        self.assertLessEqual(steps, 1_000_000)
+        for plan in plans:
+            stages = {s['name']:s for s in plan['stages']}
+            query = stages['import_identifiers']['query']
+            if 'import_ranges' in stages:
+                query = 'WITH import_ranges AS MATERIALIZED (' + stages['import_ranges']['query'] + ') ' + query
+            steps = 0
+    
+            def limit():
+                nonlocal steps
+                steps += 1000
+                return steps > 1_000_000
+    
+            db.set_progress_handler(limit, 1000)
+            self.assertEqual(set(db.execute(query)), {('a.py', 2*i+1) for i in range(500)})
+            self.assertLessEqual(steps, 1_000_000)
 
     def test_state_frontends_use_native_syntax_and_explicit_empty_admission(self):
         path = Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json'
