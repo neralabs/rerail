@@ -1,0 +1,166 @@
+{
+  "format": "rerail.projection-scope-recovery/v1",
+  "acceptance": false,
+  "nativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+  "before": {
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::inputs": {
+      "vmSteps": 132,
+      "cpuNs": 154083,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::calls": {
+      "vmSteps": 762705,
+      "cpuNs": 34948709,
+      "nativeNext": 13120,
+      "nativeColumns": 456888
+    },
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::descendants": {
+      "vmSteps": 2627331,
+      "cpuNs": 47726208,
+      "nativeNext": 50707,
+      "nativeColumns": 253535
+    },
+    "l9900_auto_api/rest_router.py::inputs": {
+      "vmSteps": 244,
+      "cpuNs": 146290,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "l9900_auto_api/rest_router.py::calls": {
+      "vmSteps": 440682,
+      "cpuNs": 19792544,
+      "nativeNext": 7530,
+      "nativeColumns": 247228
+    },
+    "l9900_auto_api/rest_router.py::descendants": {
+      "vmSteps": 2283766,
+      "cpuNs": 38876083,
+      "nativeNext": 44071,
+      "nativeColumns": 220355
+    },
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::result": {
+      "vmSteps": 89917664,
+      "cpuNs": 2010949458,
+      "nativeNext": 12787357,
+      "nativeColumns": 38675753
+    },
+    "l9900_auto_api/rest_router.py::result": {
+      "vmSteps": 91771764,
+      "cpuNs": 2013894917,
+      "nativeNext": 13035287,
+      "nativeColumns": 39488065
+    }
+  },
+  "stringsOnly": {
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::inputs": {
+      "vmSteps": 132,
+      "cpuNs": 166043,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::calls": {
+      "vmSteps": 762705,
+      "cpuNs": 39041499,
+      "nativeNext": 13120,
+      "nativeColumns": 456888
+    },
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::descendants": {
+      "vmSteps": 2627331,
+      "cpuNs": 50938875,
+      "nativeNext": 50707,
+      "nativeColumns": 253535
+    },
+    "l9900_auto_api/rest_router.py::inputs": {
+      "vmSteps": 244,
+      "cpuNs": 175791,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "l9900_auto_api/rest_router.py::calls": {
+      "vmSteps": 440682,
+      "cpuNs": 20089624,
+      "nativeNext": 7530,
+      "nativeColumns": 247228
+    },
+    "l9900_auto_api/rest_router.py::descendants": {
+      "vmSteps": 2283766,
+      "cpuNs": 42706083,
+      "nativeNext": 44071,
+      "nativeColumns": 220355
+    },
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::result": {
+      "vmSteps": 89907102,
+      "cpuNs": 2152030208,
+      "nativeNext": 12777291,
+      "nativeColumns": 38645395
+    },
+    "l9900_auto_api/rest_router.py::result": {
+      "vmSteps": 91765171,
+      "cpuNs": 2071084335,
+      "nativeNext": 13029837,
+      "nativeColumns": 39469076
+    }
+  },
+  "after": {
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::inputs": {
+      "vmSteps": 132,
+      "cpuNs": 138040,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::calls": {
+      "vmSteps": 762705,
+      "cpuNs": 36440792,
+      "nativeNext": 13120,
+      "nativeColumns": 456888
+    },
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::descendants": {
+      "vmSteps": 2627331,
+      "cpuNs": 45248250,
+      "nativeNext": 50707,
+      "nativeColumns": 253535
+    },
+    "l9900_auto_api/rest_router.py::inputs": {
+      "vmSteps": 244,
+      "cpuNs": 170166,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "l9900_auto_api/rest_router.py::calls": {
+      "vmSteps": 440682,
+      "cpuNs": 18241376,
+      "nativeNext": 7530,
+      "nativeColumns": 247228
+    },
+    "l9900_auto_api/rest_router.py::descendants": {
+      "vmSteps": 2283766,
+      "cpuNs": 30799375,
+      "nativeNext": 44071,
+      "nativeColumns": 220355
+    },
+    "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py::result": {
+      "vmSteps": 288939,
+      "cpuNs": 8781041,
+      "nativeNext": 7627,
+      "nativeColumns": 128184
+    },
+    "l9900_auto_api/rest_router.py::result": {
+      "vmSteps": 275619,
+      "cpuNs": 8057124,
+      "nativeNext": 6920,
+      "nativeColumns": 112727
+    }
+  },
+  "result": {
+    "beforeFailures": 2,
+    "stringsOnlyFailures": 2,
+    "afterFailures": 0,
+    "afterFindings": 0
+  },
+  "redCommits": [
+    "2d296f25",
+    "6710fbc5"
+  ],
+  "limits": "Unchanged allowances. Instrumented two-file reproducer, not aggregate performance acceptance. Before queries interrupt, so their work is a lower bound."
+}

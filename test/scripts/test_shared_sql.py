@@ -136,7 +136,7 @@ class SharedSqlTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json'
         policy = json.loads(path.read_text())
         expected = {'state-signatures-1': (1, 18, 'file'), 'state-flow-1': (5, 25, 'file'),
-                    'state-projection-recovery-2': (4, 7, 'file'), 'state-flow-project-1': (5, 27, 'repository')}
+                    'state-projection-recovery-2': (4, 8, 'file'), 'state-flow-project-1': (5, 27, 'repository')}
         for clause in policy['clauses']:
             if clause['id'] not in expected:
                 continue

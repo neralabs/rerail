@@ -1,0 +1,414 @@
+{
+  "format": "rerail.quality-import-demand-recovery/v1",
+  "acceptance": false,
+  "nativeSha256": "6b86cf2df791208845a6ac469cd7c9b33674f52c6079e29d1646b2eff7c85d85",
+  "source": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+  "before": {
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::inputs": {
+      "vmSteps": 29154,
+      "cpuNs": 919249,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::functions": {
+      "vmSteps": 110599,
+      "cpuNs": 4242126,
+      "nativeNext": 905,
+      "nativeColumns": 64255
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::classes": {
+      "vmSteps": 23408,
+      "cpuNs": 687002,
+      "nativeNext": 129,
+      "nativeColumns": 1806
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::methods": {
+      "vmSteps": 3135321,
+      "cpuNs": 44085625,
+      "nativeNext": 116006,
+      "nativeColumns": 354600
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::attributes": {
+      "vmSteps": 789337,
+      "cpuNs": 9410665,
+      "nativeNext": 5256,
+      "nativeColumns": 84096
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::calls": {
+      "vmSteps": 1128646,
+      "cpuNs": 21042665,
+      "nativeNext": 11852,
+      "nativeColumns": 141241
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::arguments": {
+      "vmSteps": 3303499,
+      "cpuNs": 42460374,
+      "nativeNext": 9698,
+      "nativeColumns": 478562
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::keywords": {
+      "vmSteps": 329161,
+      "cpuNs": 10789167,
+      "nativeNext": 16050,
+      "nativeColumns": 79910
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::descendants": {
+      "vmSteps": 8334169,
+      "cpuNs": 96265750,
+      "nativeNext": 1073456,
+      "nativeColumns": 1273905
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::returns": {
+      "vmSteps": 230313,
+      "cpuNs": 4233167,
+      "nativeNext": 2996,
+      "nativeColumns": 25952
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::assignments": {
+      "vmSteps": 619693,
+      "cpuNs": 12494165,
+      "nativeNext": 11110,
+      "nativeColumns": 111586
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::files": {
+      "vmSteps": 703,
+      "cpuNs": 1120791,
+      "nativeNext": 1,
+      "nativeColumns": 16
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::base_names": {
+      "vmSteps": 8495,
+      "cpuNs": 1102123,
+      "nativeNext": 454,
+      "nativeColumns": 1692
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::method_nodes": {
+      "vmSteps": 2427138,
+      "cpuNs": 85338292,
+      "nativeNext": 59972,
+      "nativeColumns": 179916
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::py_names": {
+      "vmSteps": 86986185,
+      "cpuNs": 881107833,
+      "nativeNext": 107527,
+      "nativeColumns": 18269618
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::class_levels": {
+      "vmSteps": 11270,
+      "cpuNs": 1511334,
+      "nativeNext": 36,
+      "nativeColumns": 178
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::statements": {
+      "vmSteps": 179236,
+      "cpuNs": 3848957,
+      "nativeNext": 5304,
+      "nativeColumns": 35629
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::literal_bools": {
+      "vmSteps": 52023,
+      "cpuNs": 1423585,
+      "nativeNext": 510,
+      "nativeColumns": 1626
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::strings": {
+      "vmSteps": 99545,
+      "cpuNs": 1788291,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::module_functions": {
+      "vmSteps": 34177,
+      "cpuNs": 1081167,
+      "nativeNext": 817,
+      "nativeColumns": 3794
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::last_methods": {
+      "vmSteps": 379617,
+      "cpuNs": 3944708,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::last_module_functions": {
+      "vmSteps": 65084,
+      "cpuNs": 1118041,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::ir_names": {
+      "vmSteps": 144909,
+      "cpuNs": 2563125,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::scoped_nodes": {
+      "vmSteps": 5895942,
+      "cpuNs": 167284374,
+      "nativeNext": 162310,
+      "nativeColumns": 730225
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::call_paths": {
+      "vmSteps": 390619,
+      "cpuNs": 25051122,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    }
+  },
+  "after": {
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::inputs": {
+      "vmSteps": 29154,
+      "cpuNs": 750457,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::functions": {
+      "vmSteps": 110599,
+      "cpuNs": 4390542,
+      "nativeNext": 905,
+      "nativeColumns": 64255
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::classes": {
+      "vmSteps": 23408,
+      "cpuNs": 602042,
+      "nativeNext": 129,
+      "nativeColumns": 1806
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::methods": {
+      "vmSteps": 3135321,
+      "cpuNs": 48877417,
+      "nativeNext": 116006,
+      "nativeColumns": 354600
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::attributes": {
+      "vmSteps": 789337,
+      "cpuNs": 8664876,
+      "nativeNext": 5256,
+      "nativeColumns": 84096
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::calls": {
+      "vmSteps": 1128646,
+      "cpuNs": 20758917,
+      "nativeNext": 11852,
+      "nativeColumns": 141241
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::arguments": {
+      "vmSteps": 3303499,
+      "cpuNs": 42463418,
+      "nativeNext": 9698,
+      "nativeColumns": 478562
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::keywords": {
+      "vmSteps": 329161,
+      "cpuNs": 10044543,
+      "nativeNext": 16050,
+      "nativeColumns": 79910
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::descendants": {
+      "vmSteps": 8334169,
+      "cpuNs": 101846708,
+      "nativeNext": 1073456,
+      "nativeColumns": 1273905
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::returns": {
+      "vmSteps": 230313,
+      "cpuNs": 3726792,
+      "nativeNext": 2996,
+      "nativeColumns": 25952
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::assignments": {
+      "vmSteps": 619693,
+      "cpuNs": 12622500,
+      "nativeNext": 11110,
+      "nativeColumns": 111586
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::files": {
+      "vmSteps": 703,
+      "cpuNs": 1341167,
+      "nativeNext": 1,
+      "nativeColumns": 16
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::base_names": {
+      "vmSteps": 8495,
+      "cpuNs": 1014334,
+      "nativeNext": 454,
+      "nativeColumns": 1692
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::method_nodes": {
+      "vmSteps": 2427138,
+      "cpuNs": 85723752,
+      "nativeNext": 59972,
+      "nativeColumns": 179916
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::import_descendants": {
+      "vmSteps": 14279,
+      "cpuNs": 313084,
+      "nativeNext": 385,
+      "nativeColumns": 1925
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::py_names": {
+      "vmSteps": 5588856,
+      "cpuNs": 78179041,
+      "nativeNext": 78120,
+      "nativeColumns": 486462
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::class_levels": {
+      "vmSteps": 11270,
+      "cpuNs": 1327624,
+      "nativeNext": 36,
+      "nativeColumns": 178
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::statements": {
+      "vmSteps": 179236,
+      "cpuNs": 4286167,
+      "nativeNext": 5304,
+      "nativeColumns": 35629
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::literal_bools": {
+      "vmSteps": 52023,
+      "cpuNs": 1701375,
+      "nativeNext": 510,
+      "nativeColumns": 1626
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::strings": {
+      "vmSteps": 99545,
+      "cpuNs": 1707376,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::module_functions": {
+      "vmSteps": 34177,
+      "cpuNs": 1062542,
+      "nativeNext": 817,
+      "nativeColumns": 3794
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::last_methods": {
+      "vmSteps": 379617,
+      "cpuNs": 4208750,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::last_module_functions": {
+      "vmSteps": 65084,
+      "cpuNs": 1043082,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::ir_names": {
+      "vmSteps": 144909,
+      "cpuNs": 2797291,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::scoped_nodes": {
+      "vmSteps": 5895942,
+      "cpuNs": 162749917,
+      "nativeNext": 162310,
+      "nativeColumns": 730225
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::call_paths": {
+      "vmSteps": 2324003,
+      "cpuNs": 97471834,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::execution_calls": {
+      "vmSteps": 181246,
+      "cpuNs": 9107374,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::branches": {
+      "vmSteps": 183582,
+      "cpuNs": 3064334,
+      "nativeNext": 4048,
+      "nativeColumns": 35572
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::branch_flags": {
+      "vmSteps": 723165,
+      "cpuNs": 10147207,
+      "nativeNext": 45670,
+      "nativeColumns": 137055
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::module_string_values": {
+      "vmSteps": 29498,
+      "cpuNs": 1351168,
+      "nativeNext": 62,
+      "nativeColumns": 248
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::preop_functions": {
+      "vmSteps": 1152165,
+      "cpuNs": 31091334,
+      "nativeNext": 87315,
+      "nativeColumns": 361730
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::scopes": {
+      "vmSteps": 203632,
+      "cpuNs": 2888957,
+      "nativeNext": 2069,
+      "nativeColumns": 24695
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::scope_owners": {
+      "vmSteps": 6714660,
+      "cpuNs": 205557001,
+      "nativeNext": 323265,
+      "nativeColumns": 1705989
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::scope_chain": {
+      "vmSteps": 161398,
+      "cpuNs": 3865000,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::scope_imports": {
+      "vmSteps": 38788,
+      "cpuNs": 2314416,
+      "nativeNext": 462,
+      "nativeColumns": 3311
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::annotations": {
+      "vmSteps": 116354,
+      "cpuNs": 2936000,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::annotation_atoms": {
+      "vmSteps": 190335,
+      "cpuNs": 5137917,
+      "nativeNext": 8808,
+      "nativeColumns": 31597
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::atom_imports": {
+      "vmSteps": 1817065,
+      "cpuNs": 65163209,
+      "nativeNext": 101168,
+      "nativeColumns": 393957
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::resolved_atoms": {
+      "vmSteps": 96212,
+      "cpuNs": 1782375,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::ignored_annotation_metadata": {
+      "vmSteps": 39094,
+      "cpuNs": 757999,
+      "nativeNext": 0,
+      "nativeColumns": 0
+    },
+    "impl/common/l2070_server_plan/steps/intent_versioning_extended.py::result": {
+      "vmSteps": 229927,
+      "cpuNs": 21512746,
+      "nativeNext": 506,
+      "nativeColumns": 526
+    }
+  },
+  "result": {
+    "beforeFailures": 1,
+    "afterFailures": 0,
+    "afterFindings": 0
+  },
+  "redCommit": "c830a02f",
+  "ordinalRedCommit": "8beede3e",
+  "limits": "Unchanged SQL and clause allowances. Traced component evidence; aggregate performance remains open."
+}

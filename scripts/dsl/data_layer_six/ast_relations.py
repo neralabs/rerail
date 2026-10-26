@@ -31,17 +31,17 @@ def ast_stages():
  FROM owned JOIN edges e ON e.__path=owned.__path AND e.src=owned.id
  JOIN nodes child ON child.__path=e.__path AND child.id=e.dst) SELECT * FROM owned""",('__path','id'),('__path','fn'),('__path','top_fn'))]
 
-def narrow_ast_ordinals(clause):
- """Number unique CST nodes before joining their wide projected values."""
+def narrow_ast_ordinals(clause,parent_kinds):
+ """Number all children of demanded parent kinds; retain other nodes without an ordinal."""
  plan=clause['relational']
  nodes=next(stage for stage in plan['stages'] if stage['name']=='nodes')
  ordinal="row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1"
  if ordinal+' AS ordinal' not in nodes['query']:raise ValueError('expected the authored CST ordinal window')
- window=S('node_ordinals','SELECT __path,__start,__end,kind,'+ordinal+' AS ordinal FROM raw_nodes',('__path','__start','__end','kind'))
+ window=S('node_ordinals','SELECT __path,__start,__end,kind,'+ordinal+' AS ordinal FROM raw_nodes WHERE parent_kind IN '+literals(parent_kinds),('__path','__start','__end','kind'))
  nodes['query']="""SELECT n.*,n.kind||':'||n.__start||':'||n.__end AS id,
  n.parent_kind||':'||n.parent_start||':'||n.parent_end AS parent,
  n.ancestor_kind||':'||n.ancestor_start||':'||n.ancestor_end AS edge_parent,o.ordinal
- FROM raw_nodes n CROSS JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind"""
+ FROM raw_nodes n LEFT JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind"""
  plan['stages'].insert(plan['stages'].index(nodes),window)
 
 def relational(id,stages,query,code='issue',key=('issue','identity')):
@@ -314,4 +314,25 @@ def whole_file_syntax_relations(clause):
  for stage in plan['stages']:
   if 'reachability' in stage:
    stage['reachability']={'roots':lower(stage['reachability']['roots']),'syntax':'nodes'}
+ native_import_identifiers(plan)
  return True
+
+def native_import_identifiers(plan):
+ """Collect import subtrees in one separate demand batch, then select identifier keys."""
+ target=next((stage for stage in plan['stages'] if stage['name']=='import_identifiers'),None)
+ if target is None or any(stage['name']=='import_descendants' for stage in plan['stages']):return
+ if 'syntax' not in plan or plan.get('partitionBy')!='file':return
+ target['query']="""WITH imported(__path,id) AS MATERIALIZED (
+ SELECT __path,node FROM import_descendants)
+ SELECT n.__path,n.id FROM nodes n WHERE n.kind='identifier'
+ AND n.id IN (SELECT id FROM imported)
+ AND (n.__path,n.id) IN (SELECT __path,id FROM imported)"""
+ producer={'name':'import_descendants','reachability':{
+  'roots':"SELECT __path,id FROM nodes WHERE kind IN ('import_statement','import_from_statement')",
+  'syntax':plan['syntax']['name']}}
+ stages=[]
+ for stage in plan['stages']:
+  if stage['name']=='import_ranges':continue
+  if stage is target:stages.append(producer)
+  stages.append(stage)
+ plan['stages']=stages

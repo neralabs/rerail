@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "data-layer-serverplan-quality",
-  "revision": 2,
+  "revision": 4,
   "mode": "block",
   "description": "Candidate port of nera-data-layer serverplan_quality at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
@@ -3637,19 +3637,15 @@
             ]
           },
           {
-            "name": "import_ranges",
-            "query": "SELECT \"__path\",\"__start\",\"__end\" FROM (SELECT __path,__start,__end FROM nodes WHERE kind IN ('import_statement','import_from_statement'))",
-            "indexes": [
-              [
-                "__path",
-                "__start",
-                "__end"
-              ]
-            ]
+            "name": "import_descendants",
+            "reachability": {
+              "roots": "SELECT __path,id FROM nodes WHERE kind IN ('import_statement','import_from_statement')",
+              "syntax": "nodes"
+            }
           },
           {
             "name": "import_identifiers",
-            "query": "SELECT \"__path\",\"id\" FROM (SELECT n.__path,n.id FROM import_ranges imp JOIN nodes n ON n.__path=imp.__path AND n.__start>=imp.__start AND n.__start<=imp.__end WHERE n.kind='identifier' AND n.__end<=imp.__end)",
+            "query": "WITH imported(__path,id) AS MATERIALIZED (\n SELECT __path,node FROM import_descendants)\n SELECT n.__path,n.id FROM nodes n WHERE n.kind='identifier'\n AND n.id IN (SELECT id FROM imported)\n AND (n.__path,n.id) IN (SELECT __path,id FROM imported)",
             "indexes": [
               [
                 "__path",
@@ -9720,7 +9716,7 @@
           },
           {
             "name": "node_ordinals",
-            "query": "SELECT __path,__start,__end,kind,row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1 AS ordinal FROM (SELECT * FROM syntax_rows_0 UNION ALL SELECT * FROM syntax_rows_1)",
+            "query": "SELECT __path,__start,__end,kind,row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1 AS ordinal FROM (SELECT * FROM syntax_rows_0 UNION ALL SELECT * FROM syntax_rows_1) WHERE parent_kind IN ('conditional_expression','default_parameter','typed_default_parameter','typed_parameter')",
             "indexes": [
               [
                 "__path",
@@ -9732,7 +9728,7 @@
           },
           {
             "name": "nodes",
-            "query": "SELECT n.*,n.kind||':'||n.__start||':'||n.__end AS id,\n n.parent_kind||':'||n.parent_start||':'||n.parent_end AS parent,\n n.ancestor_kind||':'||n.ancestor_start||':'||n.ancestor_end AS edge_parent,o.ordinal\n FROM (SELECT * FROM syntax_rows_0 UNION ALL SELECT * FROM syntax_rows_1) n CROSS JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind",
+            "query": "SELECT n.*,n.kind||':'||n.__start||':'||n.__end AS id,\n n.parent_kind||':'||n.parent_start||':'||n.parent_end AS parent,\n n.ancestor_kind||':'||n.ancestor_start||':'||n.ancestor_end AS edge_parent,o.ordinal\n FROM (SELECT * FROM syntax_rows_0 UNION ALL SELECT * FROM syntax_rows_1) n LEFT JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind",
             "indexes": [
               [
                 "__path",

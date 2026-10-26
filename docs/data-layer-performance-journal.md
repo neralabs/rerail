@@ -4728,3 +4728,51 @@ Driver peak RSS changes only from 1,655,357,440 to 1,649,115,136 bytes.
 Census CPU changes from 20.336 to 18.423 seconds, but concurrent work prevents a timing acceptance claim.
 This addresses retained column padding. It does not prove full-repository RSS recovery.
 The [checked census](../fixtures/host/data-layer-port/profiling/projection-capacity-recovery-20261026.json) preserves scope and identities.
+
+
+### Quality imports and conditional ordinal demand (2026-10-26)
+
+The contract failure reproduces on `intent_versioning_extended.py` with 148,502 syntax nodes.
+The failure location is `call_paths`, but `py_names` consumes most of the shared SQL allowance first.
+Its range join compares file-wide identifier candidates against every import range.
+A separate import-subtree producer now receives all import roots together through the existing reachability contract.
+Identifier membership retains the composite file/node guard. It does not enlarge the general descendants domain.
+
+The traced `py_names` work decreases from 86,986,185 to 5,588,856 VM steps.
+The complete contract clause finishes without errors or findings on that file.
+Its original interrupted trace records 114,708,243 VM steps; the complete corrected trace records 47,135,698.
+These totals cover different completion states. No allowance increases apply.
+Red commit `c830a02f` bounds import collection and checks cross-file node-ID collisions.
+The [checked trace](../fixtures/host/data-layer-port/profiling/quality-import-demand-recovery-20261026.json) preserves stage counters.
+
+Red commit `8beede3e` requires conditional ordinals only for four demanded parent kinds.
+The correction numbers every child within those complete parent partitions.
+A LEFT JOIN retains all other nodes with NULL ordinals. The consumer predicates still read the same ranks.
+The 9,021-file conditional-clause validation runs separately; it is not yet a passing aggregate result.
+
+### Projection recovery: stop repeated ancestor and identifier scans (2026-10-26)
+
+Both remaining result failures reproduce on `sql_graph_query_builder.py` and `rest_router.py`.
+Their SQL allowances reach zero while the outer clause allowances remain unexhausted.
+The isolated assignments and string-value components finish cheaply.
+The ancestor predicate alone reproduces both failures.
+Its range access reads large node prefixes repeatedly before checking kind and scope name.
+
+A narrow `projection_scopes(__path,__start,__end)` relation now selects eligible scopes once per file.
+All conditional consumers reuse that exact file domain. No cross-rule union expands its scope.
+The existing fused result statement owns the materialization; no new execution mode or temporary-table lifecycle is added.
+Red commit `6710fbc5` reproduces 442,574 kind reads for 200 conditionals and checks function/class scope boundaries.
+The corrected test remains below 10,000 reads with identical selected conditions.
+
+The two complete result queries now finish with zero failures and findings.
+Their VM work changes from interrupted lower bounds of 89,917,664 and 91,771,764 steps to 288,939 and 275,619 steps.
+These are traced component results. They do not establish full-repository CPU or RSS recovery.
+A separate experiment that hides the range bound inside CASE still fails both files. It is rejected.
+The [checked comparison](../fixtures/host/data-layer-port/profiling/projection-scope-recovery-20261026.json) retains each file's counters.
+
+The same investigation found repeated identifier scans in module constant propagation.
+Red commit `2d296f25` measures 64,000 text reads for 80 bindings and 800 identifier uses.
+A narrow module-binding relation now precedes one identifier scan and an indexed SQL membership join.
+The test retains cross-file isolation and the complete propagated value set, below 2,000 text reads.
+This correction alone does not resolve the real result failures; the ancestor correction is required.
+All 16 shared-SQL tests pass. The original positive/clean corpus is rerun after these changes.

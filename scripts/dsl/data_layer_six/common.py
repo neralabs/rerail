@@ -67,7 +67,8 @@ def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block
    if quality and shared_syntax_relations(clause):
     narrow_columns(plan)
     continue
-   if quality and clause['id'].startswith('quality-conditional'):narrow_ast_ordinals(clause)
+   if quality and clause['id'].startswith('quality-conditional'):
+    narrow_ast_ordinals(clause,['typed_parameter','default_parameter','typed_default_parameter','conditional_expression'])
    if not clause['id'].startswith('step-'):typed_input_partitions(clause)
    if quality and clause['id'].startswith('quality-conditional'):
     # The typed columns share one selective AST query, including its captures.
