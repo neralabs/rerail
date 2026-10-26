@@ -160,11 +160,14 @@ impl<'a> Image<'a> {
         }
     }
     pub fn put(&self, db: &Connection, fid: i64, lang: u32) -> Result<()> {
+        // In key order (term, then kind), so consecutive rows land on neighbouring leaves.
+        let mut rows: Vec<_> = self.postings.iter().collect();
+        rows.sort_unstable_by_key(|&(&(kind, term), _)| (term, kind));
         super::store::publication::insert(
             db,
             "INSERT INTO vidx",
             "",
-            self.postings.iter().map(|(&(kind, term), pres)| {
+            rows.into_iter().map(|(&(kind, term), pres)| {
                 let mut sorted = pres.clone();
                 sorted.sort_unstable();
                 [
