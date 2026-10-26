@@ -1,0 +1,60 @@
+{
+  "format": "rerail.conditional-budget-diagnosis/v1",
+  "acceptance": false,
+  "runs": {
+    "quality-conditional-scoped": {
+      "manifest": {
+        "nativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+        "policySha256": "30fc3bff23db7a9acf852dfeda86fda3b3385c90583e3c6901db6f025376db69",
+        "recordingSha256": "aa45202414b245741ac69ba55d2c855f8b639124336b8203f794fde13ab9ed52"
+      },
+      "coldCpuMs": {
+        "userMs": 237517.725,
+        "systemMs": 187827.409
+      },
+      "coldMs": 449629.573709,
+      "failures": [
+        {
+          "clauseId": "quality-conditional-1",
+          "code": "relational-failed",
+          "message": "relational stage conditional_methods: relational query: interrupted",
+          "ruleId": "data-layer-serverplan-quality"
+        },
+        {
+          "clauseId": "quality-conditional-1",
+          "code": "budget-exceeded",
+          "message": "relational work budget exceeded",
+          "ruleId": "data-layer-serverplan-quality"
+        }
+      ],
+      "note": "Diagnostic concurrent development; compact2 also enables native tracing. Each run uses an empty clause oracle and is not combined-rule parity."
+    },
+    "quality-conditional-compact2": {
+      "manifest": {
+        "nativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+        "policySha256": "1c7b4d623da6ea1fba6d82d40d1ac5fb1f88b7ee7fb61fe957ece5ffe2585a5d",
+        "recordingSha256": "aa45202414b245741ac69ba55d2c855f8b639124336b8203f794fde13ab9ed52"
+      },
+      "coldCpuMs": {
+        "userMs": 210913.978,
+        "systemMs": 158086.062
+      },
+      "coldMs": 393173.652709,
+      "failures": [
+        {
+          "clauseId": "quality-conditional-1",
+          "code": "relational-failed",
+          "message": "relational stage conditional_functions: relational query: interrupted",
+          "ruleId": "data-layer-serverplan-quality"
+        },
+        {
+          "clauseId": "quality-conditional-1",
+          "code": "budget-exceeded",
+          "message": "relational work budget exceeded",
+          "ruleId": "data-layer-serverplan-quality"
+        }
+      ],
+      "note": "Diagnostic concurrent development; compact2 also enables native tracing. Each run uses an empty clause oracle and is not combined-rule parity."
+    }
+  }
+}

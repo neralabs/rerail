@@ -4807,3 +4807,18 @@ The fixed SQL accounting diagnostic records 296 engine submissions and 45 SQLite
 It retains complete accounting and parity, but exceeds the fixed 100 reference.
 The reference remains diagnostic under the agreed measurement gate. It is neither removed nor reported as passing.
 All 29 accounting tests remain part of the profiling suite.
+
+
+The column-only full conditional experiment still fails at `conditional_functions`.
+Its trace attributes 373,032,217 VM steps and 5.485 CPU seconds to constructing the node relation.
+Four node indexes cost another 4.365 CPU seconds. Ownership construction costs 4.295 CPU seconds and 108,719,114 VM steps.
+These costs precede the later failure. Narrower function storage alone does not close the outer budget failure.
+The [two diagnostic receipts](../fixtures/host/data-layer-port/profiling/conditional-budget-diagnosis-20261026.json) preserve both failures.
+The subsequent run includes the narrowed import selector. Its result remains pending.
+
+All 51 final production-shape tests pass. Static checks and the profiling suite pass.
+The original corpus retains all 2,350 executable observations, supplemental controls, and 376 batch 6 guard repeats.
+The quality and state groups are repeated after their final rule changes.
+A controller gates fresh sequential full 50/60 runs on the complete conditional-clause check.
+Those combined measurements disable tracing, census, replay copying, and external sampling.
+No own build, test, or profiling workload will overlap their timing intervals.
