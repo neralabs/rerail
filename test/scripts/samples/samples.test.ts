@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { decompressArchive, readArchive } from "../../../scripts/s3/test-data-archive.mjs";
-import { answerLabels } from "../../../scripts/samples/build-goldens.js";
-import { corpusFileLabels } from "../../../scripts/samples/convert-corpora.js";
 import { eslintTestSetSamples, fixedCopyPath } from "../../../scripts/samples/convert-eslint-test-set.js";
-import { packRuleIds, type PackConformance } from "../../../scripts/samples/corpora.js";
+import { packRuleIds, type PackConformance } from "../../../scripts/samples/conformance.js";
 import { LABELS_SUFFIX, sampleLabelsSchema } from "../../../scripts/samples/format.js";
 import { copyleftReason, licenceTexts } from "../../../scripts/samples/licences.js";
 import { packSamples } from "../../../scripts/samples/pack.js";
@@ -33,7 +31,7 @@ function sample(overrides: Partial<Sample> & { path?: string; text?: string } = 
   };
 }
 
-const conformance = (rules: PackConformance["rules"]): PackConformance => ({ pack: "rust", family: "rust", rules, corpora: [] });
+const conformance = (rules: PackConformance["rules"]): PackConformance => ({ pack: "rust", family: "rust", rules });
 
 const temporary: string[] = [];
 afterEach(() => {
@@ -62,30 +60,15 @@ describe("sample ids", () => {
 });
 
 describe("labels", () => {
-  it("map a recorded answer to line labels, a silent one to [], and an excluded or missing one to no key", () => {
-    expect(answerLabels({ findings: [[0, 4, 0, 9], [11, null, null, null]] })).toEqual({ state: "findings", labels: [{ line: 1, column: 5 }, { line: 12 }] });
-    expect(answerLabels({ findings: [] })).toEqual({ state: "silent", labels: [] });
-    expect(answerLabels({ excluded: "parse error" })).toEqual({ state: "excluded by upstream" });
-    expect(answerLabels(undefined)).toEqual({ state: "unanswered" });
-  });
-
-  it("give every pack rule porting one upstream rule the same labels (D4)", () => {
+  it("give every pack rule porting one upstream rule the same key (D4)", () => {
     const rules = conformance([
       { id: "clippy-unreadable-literal", policy: "rules/a.json", upstream: { tool: "clippy", rule: "unreadable_literal" } },
       { id: "clippy-unreadable-literal-no-fractions", policy: "rules/b.json", upstream: { tool: "clippy", rule: "unreadable_literal" } },
       { id: "clippy-other", policy: "rules/c.json", upstream: { tool: "clippy", rule: "other" } },
     ]);
-    const labels = corpusFileLabels(["unreadable_literal", "other"], new Map([["unreadable_literal", [{ line: 3 }]]]), false, (rule) => packRuleIds(rules, "clippy", rule));
-    expect(Object.fromEntries(labels)).toEqual({
-      "clippy-unreadable-literal": [{ line: 3 }],
-      "clippy-unreadable-literal-no-fractions": [{ line: 3 }],
-      "clippy-other": [],
-    });
-  });
-
-  it("leave a rule unjudged where its corpus recording did not analyse every line and found nothing", () => {
-    const labels = corpusFileLabels(["A", "B"], new Map([["A", [{ line: 2 }]]]), true, (rule) => [rule]);
-    expect(Object.fromEntries(labels)).toEqual({ A: [{ line: 2 }] });
+    expect(packRuleIds(rules, "clippy", "unreadable_literal")).toEqual(["clippy-unreadable-literal", "clippy-unreadable-literal-no-fractions"]);
+    expect(packRuleIds(rules, "clippy", "other")).toEqual(["clippy-other"]);
+    expect(packRuleIds(rules, "eslint", "other")).toEqual([]);
   });
 
   it("are written as the format's labels file, rule ids and labels sorted", () => {

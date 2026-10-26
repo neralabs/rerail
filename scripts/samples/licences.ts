@@ -163,7 +163,7 @@ export function samplesMarkdown(toolPack: string, lock: { sha256: string; files:
   const lines = [
     `# Real-code samples: ${toolPack}`,
     "",
-    `The sample set \`samples.lock\` pins (archive \`rerail/archives/samples/${toolPack}/${lock.sha256}.tar.zst\`, ${lock.files} files, ${lock.bytes} bytes) holds ${samples.length} sample(s): files copied from the repositories below, each under its repository's licence. The archive's \`LICENSES.md\` lists every file with its repository's licence text. None of it is published with the pack. \`scripts/samples/build.ts\` builds it (\`npm run samples:build\`).`,
+    `The sample set \`samples.lock\` pins (archive \`rerail/archives/samples/${toolPack}/${lock.sha256}.tar.zst\`, ${lock.files} files, ${lock.bytes} bytes) holds ${samples.length} sample(s): files copied from the repositories below, each under its repository's licence. The archive's \`LICENSES.md\` lists every file with its repository's licence text. None of it is published with the pack.`,
     "",
     "| Repository | Licence | Commits | Files |",
     "|---|---|---|---:|",

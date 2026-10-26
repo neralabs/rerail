@@ -1,6 +1,6 @@
 # Real-code samples: typescript/eslint-plugin-vitest
 
-The sample set `samples.lock` pins (archive `rerail/archives/samples/typescript/eslint-plugin-vitest/5e257fd10088467347d6f37d06548cdaadfe55fe955c70dbfb9525e665ff259b.tar.zst`, 121 files, 1140245 bytes) holds 60 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack. `scripts/samples/build.ts` builds it (`npm run samples:build`).
+The sample set `samples.lock` pins (archive `rerail/archives/samples/typescript/eslint-plugin-vitest/5e257fd10088467347d6f37d06548cdaadfe55fe955c70dbfb9525e665ff259b.tar.zst`, 121 files, 1140245 bytes) holds 60 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack.
 
 | Repository | Licence | Commits | Files |
 |---|---|---|---:|

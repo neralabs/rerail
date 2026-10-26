@@ -1,6 +1,6 @@
 # Real-code samples: python/ruff
 
-The sample set `samples.lock` pins (archive `rerail/archives/samples/python/ruff/7f6d43bc0a72ae83b4d4beae9cff444b41e98da12de40ef178a70c6de205e2b2.tar.zst`, 3304 files, 25719554 bytes) holds 822 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack. `scripts/samples/build.ts` builds it (`npm run samples:build`).
+The sample set `samples.lock` pins (archive `rerail/archives/samples/python/ruff/7f6d43bc0a72ae83b4d4beae9cff444b41e98da12de40ef178a70c6de205e2b2.tar.zst`, 3304 files, 25719554 bytes) holds 822 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack.
 
 | Repository | Licence | Commits | Files |
 |---|---|---|---:|

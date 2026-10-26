@@ -8,7 +8,7 @@ import { join, posix } from "node:path";
 
 import { z } from "zod";
 
-import { packRuleIds, type PackConformance } from "./corpora.js";
+import { packRuleIds, type PackConformance } from "./conformance.js";
 import type { SampleLabel } from "./format.js";
 import { sha256, toolPackName, type Sample, type ToolPack } from "./samples.js";
 

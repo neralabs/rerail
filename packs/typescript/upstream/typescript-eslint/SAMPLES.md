@@ -1,6 +1,6 @@
 # Real-code samples: typescript/typescript-eslint
 
-The sample set `samples.lock` pins (archive `rerail/archives/samples/typescript/typescript-eslint/aa438ac2251ecd5432648b3d42a22243b21ba1af9d6a862aae62ad93556c21a1.tar.zst`, 13523 files, 181170801 bytes) holds 4765 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack. `scripts/samples/build.ts` builds it (`npm run samples:build`).
+The sample set `samples.lock` pins (archive `rerail/archives/samples/typescript/typescript-eslint/aa438ac2251ecd5432648b3d42a22243b21ba1af9d6a862aae62ad93556c21a1.tar.zst`, 13523 files, 181170801 bytes) holds 4765 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack.
 
 | Repository | Licence | Commits | Files |
 |---|---|---|---:|

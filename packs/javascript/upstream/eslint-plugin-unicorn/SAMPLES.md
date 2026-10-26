@@ -1,6 +1,6 @@
 # Real-code samples: javascript/eslint-plugin-unicorn
 
-The sample set `samples.lock` pins (archive `rerail/archives/samples/javascript/eslint-plugin-unicorn/df4bf6d598699e9240e21eab71bc7a6cdcb9bdea34c9cf640d1d072266844072.tar.zst`, 111 files, 304738 bytes) holds 55 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack. `scripts/samples/build.ts` builds it (`npm run samples:build`).
+The sample set `samples.lock` pins (archive `rerail/archives/samples/javascript/eslint-plugin-unicorn/df4bf6d598699e9240e21eab71bc7a6cdcb9bdea34c9cf640d1d072266844072.tar.zst`, 111 files, 304738 bytes) holds 55 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack.
 
 | Repository | Licence | Commits | Files |
 |---|---|---|---:|

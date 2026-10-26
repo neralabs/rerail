@@ -26,10 +26,10 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `review/`: the guidance review (`just rerail-guidance-review`): every rule pack rule run on its examples and upstream
   fixtures, with the steer the coding agent reads, in a local page where each rule's guidance is approved or sent back
   with comments.
-- `samples/`: the packs' real-code sample sets (`format.ts` says what one holds): `build.ts` (`npm run samples:build`)
-  converts the port-readiness goldens, the corpus recordings, the ESLint test set and the licence replacements into one
-  canonical archive per tool-pack, leaving copyleft sources out and keeping only relevant clean files, and writes each
-  tool-pack's `samples.lock` and `SAMPLES.md` with a counts report of what became of every input.
+- `samples/`: the packs' real-code sample sets (`format.ts` says what one holds): the sample model and archive
+  (`samples.ts`, `pack.ts`), the clean-sample relevance selection (`relevance.ts`), the ESLint test set's conversion
+  (`convert-eslint-test-set.ts`), and the sources' licences with the `LICENSES.md` and `SAMPLES.md` they write
+  (`licences.ts`).
 - `s3/`: the packs' test data archives in S3 (`pack-fixtures.mjs`, `npm run fixtures:pull` and `fixtures:push`; the
   canonical tar and `test-data.lock` in `test-data-archive.mjs`; CONTRIBUTING.md, "Pack test data"), with the messages
   its consumers give in Python (`pack_fixtures.py`).

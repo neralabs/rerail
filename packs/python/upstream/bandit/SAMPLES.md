@@ -1,6 +1,6 @@
 # Real-code samples: python/bandit
 
-The sample set `samples.lock` pins (archive `rerail/archives/samples/python/bandit/70fa9dea28b17c34f41278c16d63a7d1e627d5d6b1921e90d4333503ac8ae7ad.tar.zst`, 819 files, 13099304 bytes) holds 409 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack. `scripts/samples/build.ts` builds it (`npm run samples:build`).
+The sample set `samples.lock` pins (archive `rerail/archives/samples/python/bandit/70fa9dea28b17c34f41278c16d63a7d1e627d5d6b1921e90d4333503ac8ae7ad.tar.zst`, 819 files, 13099304 bytes) holds 409 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack.
 
 | Repository | Licence | Commits | Files |
 |---|---|---|---:|
