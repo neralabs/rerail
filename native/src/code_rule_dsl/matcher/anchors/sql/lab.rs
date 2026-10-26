@@ -3,6 +3,7 @@
 //! corpus parse. Reports SQLite VM steps (load-independent) and rows per plan (for parity).
 //!
 //! RERAIL_LAB_POLICY=<policy.json>[:<policy.json>...] RERAIL_LAB_CAPTURES=<dir> [RERAIL_LAB_LIMIT=n]
+//!   [RERAIL_LAB_PER_PLAN=1] (each plan lowered and run alone, after the batch)
 //!   [RERAIL_LAB_DUMP=<dir>] (writes each policy's lowered stages per language)
 //!   cargo test --release --lib -- --ignored anchor_lab --nocapture
 use super::{execute, lower, store::Store};
@@ -42,6 +43,8 @@ fn run(policy: &str) {
     let (mut steps, mut cpu, mut files) = (0u64, 0u64, 0usize);
     let mut rows: std::collections::BTreeMap<(u32, usize), usize> = Default::default();
     let mut compile = 0u64;
+    let mut broadened = std::collections::BTreeSet::new();
+    let mut per_plan: std::collections::BTreeMap<(u32, usize), u64> = Default::default();
     for database in &databases {
         let copy = tempfile::NamedTempFile::new().unwrap();
         std::fs::copy(database, copy.path()).unwrap();
@@ -80,6 +83,13 @@ fn run(policy: &str) {
             let started = cpu_ns();
             let statement = lower::batch_files(&refs, lang, &[]);
             compile += cpu_ns() - started;
+            broadened.extend(
+                statement
+                    .admissions
+                    .iter()
+                    .filter(|admission| admission.broadened)
+                    .map(|admission| (lang, admission.consumer)),
+            );
             if let Ok(dump) = std::env::var("RERAIL_LAB_DUMP") {
                 let mut text = String::new();
                 for stage in &statement.stages {
@@ -105,6 +115,62 @@ fn run(policy: &str) {
             cpu += cpu_ns() - started;
         }
         steps += counter.load(Ordering::Relaxed) * STEP as u64;
+        if std::env::var_os("RERAIL_LAB_PER_PLAN").is_some() {
+            for (&lang, plans) in &plans {
+                let fids: Vec<i64> = store
+                    .db
+                    .prepare("SELECT fid FROM fk WHERE lang=?1 ORDER BY fid")
+                    .unwrap()
+                    .query_map([lang], |row| row.get(0))
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .collect();
+                let only = std::env::var("RERAIL_LAB_ONLY").ok();
+                for (qid, plan) in plans.iter().enumerate() {
+                    if only
+                        .as_ref()
+                        .is_some_and(|only| only.split(',').all(|q| q != qid.to_string()))
+                    {
+                        continue;
+                    }
+                    let statement = lower::batch_files(&[plan.as_ref()], lang, &[]);
+                    if let Ok(dump) = std::env::var("RERAIL_LAB_DUMP") {
+                        let text: String = statement
+                            .stages
+                            .iter()
+                            .map(|stage| format!("-- {}\n{};\n", stage.name, stage.sql))
+                            .chain(
+                                statement
+                                    .queries
+                                    .iter()
+                                    .map(|query| format!("-- results\n{query};\n")),
+                            )
+                            .collect();
+                        let stem = std::path::Path::new(policy)
+                            .file_stem()
+                            .unwrap()
+                            .to_string_lossy();
+                        std::fs::write(format!("{dump}/{stem}.{lang}.q{qid}.sql"), text).unwrap();
+                    }
+                    store
+                        .db
+                        .execute_batch("DELETE FROM decoded_properties; DELETE FROM decoded_files; DELETE FROM decoded_spans; DELETE FROM decoded_children;")
+                        .unwrap();
+                    let before = counter.load(Ordering::Relaxed);
+                    if statement.universal {
+                        execute::prepare_structural(&store, &fids).unwrap();
+                    }
+                    execute::rows_for(&store, &statement, &fids, true, |_, _, _| {}).unwrap();
+                    *per_plan.entry((lang, qid)).or_default() +=
+                        (counter.load(Ordering::Relaxed) - before) * STEP as u64;
+                }
+            }
+        }
+    }
+    let mut ranked: Vec<_> = per_plan.iter().collect();
+    ranked.sort_by_key(|(_, steps)| std::cmp::Reverse(**steps));
+    for ((lang, qid), steps) in ranked.into_iter().take(25) {
+        println!("LAB plan {lang}:{qid} vmSteps={:.1}M", *steps as f64 / 1e6);
     }
     println!(
         "LAB {} databases={} files={files} vmSteps={:.3}G executeCpu={:.2}s lowerCpu={:.2}s",
@@ -116,6 +182,18 @@ fn run(policy: &str) {
         steps as f64 / 1e9,
         cpu as f64 / 1e9,
         compile as f64 / 1e9
+    );
+    println!(
+        "LAB broadened {} {}",
+        std::path::Path::new(policy)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy(),
+        broadened
+            .iter()
+            .map(|(lang, qid)| format!("{lang}:{qid}"))
+            .collect::<Vec<_>>()
+            .join(" ")
     );
     println!(
         "LAB rows {} {}",

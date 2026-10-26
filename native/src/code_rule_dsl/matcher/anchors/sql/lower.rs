@@ -329,12 +329,72 @@ impl Lower {
     /// Whether `set` is known to be a subset of `outer`, or of every factor of an intersection.
     fn inside(&self, set: &str, outer: &str) -> bool {
         let containing = self.containing(set);
-        containing.contains(outer)
+        let within = |outer: &String| containing.contains(outer) || self.of_kinds(set, outer);
+        within(&outer.to_owned())
             || self
                 .reuse
                 .factors
                 .get(outer)
-                .is_some_and(|factors| factors.is_subset(&containing))
+                .is_some_and(|factors| factors.iter().all(within))
+    }
+    /// The kinds of a kind posting set, without the error-node conventions of kinds 0 and MAX.
+    fn root_kinds(&self, name: &str) -> Option<&BTreeSet<u16>> {
+        self.roots
+            .iter()
+            .find(|(kinds, set)| {
+                set.name == name && !kinds.contains(&0) && !kinds.contains(&u16::MAX)
+            })
+            .map(|(kinds, _)| kinds)
+    }
+    /// Whether every kind `set` can hold is in the kind posting set `outer`.
+    fn of_kinds(&self, set: &str, outer: &str) -> bool {
+        self.root_kinds(outer).is_some_and(|outer| {
+            self.reuse
+                .kinds
+                .get(set)
+                .is_some_and(|kinds| kinds.is_subset(outer))
+        })
+    }
+    /// A union of restrictions of one set to kinds is that set restricted to all their kinds.
+    fn factored(&mut self, names: &[String], exact: bool) -> Result<Option<Set>, ()> {
+        let mut common: Option<BTreeSet<String>> = None;
+        let mut kinds = BTreeSet::new();
+        for name in names {
+            let factors = self
+                .reuse
+                .factors
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| BTreeSet::from([name.clone()]));
+            let (roots, rest): (BTreeSet<_>, BTreeSet<_>) = factors
+                .into_iter()
+                .partition(|factor| self.root_kinds(factor).is_some());
+            let Some(restricted) = roots
+                .iter()
+                .map(|root| self.root_kinds(root).expect("root").clone())
+                .reduce(|a, b| a.intersection(&b).copied().collect())
+            else {
+                return Ok(None);
+            };
+            if rest.is_empty() || common.as_ref().is_some_and(|common| *common != rest) {
+                return Ok(None);
+            }
+            kinds.extend(restricted);
+            common = Some(rest);
+        }
+        let Some(common) = common else {
+            return Ok(None);
+        };
+        let base = match common.len() {
+            1 => common.first().cloned(),
+            _ => self.reuse.intersections.get(&common).cloned(),
+        };
+        let Some(base) = base else {
+            return Ok(None);
+        };
+        let base = Set { name: base, exact };
+        let kinds = self.kinds(&kinds)?;
+        self.combine(&base, &kinds, "INTERSECT", exact).map(Some)
     }
     /// One compound UNION: a chain of binary unions materializes and deduplicates every prefix.
     fn union(&mut self, branches: Vec<Set>) -> Result<Set, ()> {
@@ -363,6 +423,11 @@ impl Lower {
                     .copied()
                     .collect::<BTreeSet<_>>()
             });
+        if names.len() > 1 {
+            if let Some(selected) = self.factored(&names, exact)? {
+                return Ok(selected);
+            }
+        }
         // A branch that contains every other branch is the union.
         if let Some(name) = names
             .iter()
