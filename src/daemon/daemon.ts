@@ -21,11 +21,14 @@ import { DatabaseApiStores } from "../api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
 export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 4737;
+/** In the Rerail home: the port the daemon last listened on, which the next start without `--port` prefers. */
+export const DAEMON_PORT_FILE = "daemon-port.json";
 
 export interface RerailDaemonOptions {
   version: string;
@@ -36,8 +39,10 @@ export interface RerailDaemonOptions {
   host?: string;
   /** Hostnames besides loopback that requests may be addressed to; anything else is answered 421. */
   publicHosts?: readonly string[];
-  /** `0` asks the OS for a free port; omitted, the default port unless another process holds it. */
+  /** `0` asks the OS for a free port; omitted, the remembered port, else the default one, unless another process holds it. */
   port?: number;
+  /** Where the port the daemon listens on is remembered, so dashboard links outlive a restart. */
+  portFile?: string;
   /** Directory holding the page. Omit to serve `/api` and `/healthz` alone. */
   uiRoot?: string;
   /** `uiRoot` is the committed `ui/` source rather than the packaged copy; reported as `ui: "dev"`. */
@@ -107,16 +112,42 @@ async function listen(server: Server, port: number, host: string): Promise<void>
 }
 
 /**
- * An explicit port is bound or fails. Without one the daemon prefers the default port and, when another process
- * already holds it, takes a free port instead; clients find it through the state file, never by the port number.
+ * An explicit port is bound or fails. Without one the daemon prefers the port it last listened on, then the default
+ * port, and when another process holds those, takes a free port instead; clients find it through the state file,
+ * never by the port number.
  */
-async function listenPreferred(server: Server, port: number | undefined, host: string): Promise<void> {
+async function listenPreferred(server: Server, port: number | undefined, remembered: number | undefined, host: string): Promise<void> {
   if (port !== undefined) return await listen(server, port, host);
+  for (const preferred of new Set([remembered ?? DEFAULT_DAEMON_PORT, DEFAULT_DAEMON_PORT])) {
+    try {
+      return await listen(server, preferred, host);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) throw error;
+    }
+  }
+  await listen(server, 0, host);
+}
+
+async function readRememberedPort(portFile: string): Promise<number | undefined> {
   try {
-    await listen(server, DEFAULT_DAEMON_PORT, host);
+    const value: unknown = JSON.parse(await readFile(portFile, "utf8"));
+    const port = typeof value === "object" && value !== null && "port" in value ? value.port : undefined;
+    return typeof port === "number" && Number.isInteger(port) && port > 0 && port <= 65_535 ? port : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Remembering the port is a convenience: a failed write leaves the daemon running and is only reported. */
+async function rememberPort(portFile: string, port: number): Promise<void> {
+  const temporaryPortFile = `${portFile}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporaryPortFile, `${JSON.stringify({ port })}\n`, { mode: 0o600 });
+    await rename(temporaryPortFile, portFile);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) throw error;
-    await listen(server, 0, host);
+    process.stderr.write(`rerail daemon: could not remember port ${port} in ${portFile}: ${error instanceof Error ? error.message : String(error)}\n`);
+  } finally {
+    await rm(temporaryPortFile, { force: true });
   }
 }
 
@@ -263,7 +294,8 @@ export class RerailDaemon {
       app.onError((error, context) => context.json({ error: "internal", message: error.message }, 500));
       const listener = getRequestListener(app.fetch);
       server = createServer((request, response) => void listener(request, response));
-      await listenPreferred(server, options.port, bindHost);
+      const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
+      await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
         nativeServer: sessions, nativeToken,
@@ -277,6 +309,8 @@ export class RerailDaemon {
           await rm(temporaryStateFile, { force: true });
         }
       }
+      // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
+      if (options.portFile !== undefined && options.port !== 0 && daemon.port !== remembered) await rememberPort(options.portFile, daemon.port);
       return daemon;
     } catch (error) {
       // Every one of them, whatever another does: a socket left bound makes every later start fail (EADDRINUSE); the
@@ -508,6 +542,7 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     host: arguments_.host,
     publicHosts: arguments_.publicHosts,
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
+    portFile: join(defaultRerailHome(), DAEMON_PORT_FILE),
     uiRoot,
     dev,
     ...services,
