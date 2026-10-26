@@ -105,6 +105,8 @@ struct Lower {
     producers: crate::code_rule_dsl::producers::Registry<u32>,
     consumer: usize,
     producer_bindings: HashMap<Property, usize>,
+    /// A conjunction dropped members at the relation limit.
+    degraded: bool,
 }
 
 /// SQL set identities, independent of the matcher's conservative exactness metadata.
@@ -139,6 +141,7 @@ impl Lower {
             producers: Default::default(),
             consumer: 0,
             producer_bindings: HashMap::new(),
+            degraded: false,
         }
     }
     fn parameter(&mut self, value: impl Into<Value>) -> String {
@@ -520,7 +523,18 @@ impl Lower {
                     .filter(|p| anchored(p))
                     .chain(plans.iter().filter(|p| !anchored(p)))
                 {
-                    selected = self.plan(plan, selected)?;
+                    // Out of relations: the members evaluated so far are a sound, inexact superset.
+                    // Every later relation would fail too.
+                    match self.plan(plan, selected.clone()) {
+                        Ok(narrowed) => selected = narrowed,
+                        Err(()) => {
+                            self.degraded = true;
+                            return Ok(Set {
+                                exact: false,
+                                ..selected
+                            });
+                        }
+                    }
                 }
                 Ok(selected)
             }
@@ -942,7 +956,7 @@ fn batch_scope(
         admissions.push(Admission {
             consumer: qid,
             generated: lower.ctes.len() - checkpoint,
-            broadened: attempted.is_err(),
+            broadened: attempted.is_err() || lower.degraded,
         });
         let selected = match attempted {
             Ok(selected) => selected,
