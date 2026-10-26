@@ -1,0 +1,30 @@
+{
+  "files": 9021,
+  "bytes": 137924324,
+  "nativeSha256": "2e533a51a816eb47cc8ea682707cff4b88b34d2aff8d786a71f368aeb2d60cd4",
+  "workloadSha256": "a6e6e6ac021c2d09dbfe51a86588ff3a4259d024a8125f68dc20aded7addb86b",
+  "expected": 4931,
+  "actual": 4931,
+  "phaseCpuMs": {
+    "compile": {
+      "userMs": 17.228,
+      "systemMs": 7.041
+    },
+    "cold": {
+      "userMs": 84494.638,
+      "systemMs": 73021.623
+    }
+  },
+  "coldMs": 200574.441458,
+  "compilationMs": 24.599791000000096,
+  "format": "rerail.recovery-rule-validation/v1",
+  "rule": "internal_dead_code",
+  "policySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
+  "failures": [],
+  "falsePositives": 0,
+  "falseNegatives": 0,
+  "osPeakRssBytes": 2702163968,
+  "acceptance": false,
+  "correctnessPass": true,
+  "timingNote": "Overlaps the all-60 diagnostic and development. No performance acceptance claim."
+}

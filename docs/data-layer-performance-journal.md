@@ -4644,3 +4644,29 @@ Both union experiments are rejected. Production retains the original set operato
 The protocol-demand correction changes policy revision 2 and its generator only.
 The full 9,021-file original dead-code oracle now runs separately to check all 4,931 expected findings.
 Aggregate recovery remains open. No successful full-rule-set performance result follows from this component improvement.
+
+The corrected dead-code policy completes the full original repository oracle with 4,931 expected and actual findings.
+It reports zero false positives, false negatives, or engine failures over all 9,021 files.
+The [full validation receipt](../fixtures/host/data-layer-port/profiling/dead-code-full-validation-20261025.json) preserves identities and the concurrent-timing qualification.
+Cold CPU is 157.516 seconds, wall time is 200.574 seconds, and OS peak RSS is 2,702,163,968 bytes.
+That single-rule measurement overlaps other work and does not establish aggregate performance acceptance.
+
+The rebuilt native DSL suite passes 1,537 tests, with 23 explicit ignores and no failures.
+All 198 final-artifact batch 6 shards pass: 1,234 original observations and 376 guard repeats.
+The seven retained original cases remain explicit. No shard is missing or failed.
+Together with batch 1–5, this covers all 2,350 executable original observations, plus the supplemental controls.
+The final corpus addon is `2e533a51a816eb47cc8ea682707cff4b88b34d2aff8d786a71f368aeb2d60cd4`.
+The later diagnostic field for nested budget exhaustion also passes the rebuilt native suite.
+
+### Next candidate-selection frontier
+
+An external sample observes the running all-60 ingestion at 4,768 loaded files.
+Its active worker stays inside `Corpus::select_group` and `execute::rows_for` for all 467 observations.
+The hottest stacks compare B-tree records. This is a short sample, not a complete CPU census.
+The sample is `.rerail/profiles/recovery-completion-20261025/full-60-ingestion.sample.txt`.
+
+The regex value path places cached matching terms before the admitted file relation.
+It therefore performs a vocabulary-term by requested-file product before each `vidx` lookup.
+The global retained vocabulary can grow while a consumer requests only a few files.
+A new production-lowerer regression isolates this scaling shape with 20,000 unrelated terms and 32 admitted postings.
+This is the next experiment. No speed improvement or selected replacement follows from the source inspection alone.
