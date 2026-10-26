@@ -131,6 +131,61 @@
         "language": "python",
         "utils": {
           "b5-common-1": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "pattern": "$NAME"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "typed_parameter"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "pattern": "$NAME"
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "default_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "pattern": "$NAME",
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "b5-common-2": {
             "inside": {
               "all": [
                 {
@@ -210,7 +265,7 @@
               }
             }
           },
-          "b5-common-2": {
+          "b5-common-3": {
             "regex": "^(?:_fetchall|_fetchone|execute|execute_async|execute_fire_and_forget|execute_grammar|execute_grammar_fetchall|execute_grammar_fetchone|execute_raw|fetchall|fetchall_raw|fetchone|fetchone_raw|grammar_effect_lazy|grammar_fetchall|grammar_fetchall_async|grammar_fetchone|grammar_fetchone_async|grammar_row_lazy|grammar_rows_lazy|raw_execute)$|^(?:execute_grammar|grammar_fetch)"
           }
         }
@@ -408,7 +463,100 @@
               }
             }
           },
-          "raw_plain_parameters": {
+          "raw_parameters": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "matches": "b5-common-1"
+                          },
+                          {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "list_splat_pattern"
+                                },
+                                {
+                                  "kind": "dictionary_splat_pattern"
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "typed_parameter"
+                                    },
+                                    {
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "kind": "list_splat_pattern"
+                                          },
+                                          {
+                                            "kind": "dictionary_splat_pattern"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "precedes": {
+                                "kind": "positional_separator",
+                                "stopBy": "end"
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "parameters",
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "matches": "b5-common-2"
+                          },
+                          {
+                            "pattern": "$PARAM"
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "pattern": "$TYPE",
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          },
+                          {
+                            "pattern": "$_"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "owner": "capture.OWNER.startByte",
+                "name": "capture.NAME",
+                "annotation": "capture.TYPE"
+              }
+            }
+          },
+          "raw_parameter_annotations": {
             "evidence": {
               "as": "row",
               "query": {
@@ -421,329 +569,13 @@
                         "kind": "identifier"
                       },
                       {
-                        "inside": {
-                          "kind": "parameters",
-                          "stopBy": "neighbor"
-                        }
-                      },
-                      {
-                        "pattern": "$NAME"
-                      },
-                      {
-                        "not": {
-                          "any": [
-                            {
-                              "kind": "list_splat_pattern"
-                            },
-                            {
-                              "kind": "dictionary_splat_pattern"
-                            },
-                            {
-                              "all": [
-                                {
-                                  "kind": "typed_parameter"
-                                },
-                                {
-                                  "has": {
-                                    "any": [
-                                      {
-                                        "kind": "list_splat_pattern"
-                                      },
-                                      {
-                                        "kind": "dictionary_splat_pattern"
-                                      }
-                                    ],
-                                    "stopBy": "neighbor"
-                                  }
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "not": {
-                          "precedes": {
-                            "kind": "positional_separator",
-                            "stopBy": "end"
-                          }
-                        }
-                      },
-                      {
-                        "matches": "b5-common-1"
-                      },
-                      {
-                        "pattern": "$PARAM"
-                      }
-                    ]
-                  }
-                }
-              },
-              "project": {
-                "owner": "capture.OWNER.startByte",
-                "name": "capture.NAME"
-              }
-            }
-          },
-          "raw_typed_parameters": {
-            "evidence": {
-              "as": "row",
-              "query": {
-                "ast": {
-                  "language": "python",
-                  "syntax": "valid",
-                  "rule": {
-                    "all": [
-                      {
-                        "all": [
-                          {
-                            "kind": "typed_parameter"
-                          },
-                          {
-                            "inside": {
-                              "kind": "parameters",
-                              "stopBy": "neighbor"
-                            }
-                          },
-                          {
-                            "has": {
-                              "all": [
-                                {
-                                  "kind": "identifier"
-                                },
-                                {
-                                  "pattern": "$NAME"
-                                }
-                              ],
-                              "stopBy": "neighbor"
-                            }
-                          },
-                          {
-                            "not": {
-                              "any": [
-                                {
-                                  "kind": "list_splat_pattern"
-                                },
-                                {
-                                  "kind": "dictionary_splat_pattern"
-                                },
-                                {
-                                  "all": [
-                                    {
-                                      "kind": "typed_parameter"
-                                    },
-                                    {
-                                      "has": {
-                                        "any": [
-                                          {
-                                            "kind": "list_splat_pattern"
-                                          },
-                                          {
-                                            "kind": "dictionary_splat_pattern"
-                                          }
-                                        ],
-                                        "stopBy": "neighbor"
-                                      }
-                                    }
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "not": {
-                              "precedes": {
-                                "kind": "positional_separator",
-                                "stopBy": "end"
-                              }
-                            }
-                          },
-                          {
-                            "matches": "b5-common-1"
-                          },
-                          {
-                            "pattern": "$PARAM"
-                          }
-                        ]
-                      },
-                      {
-                        "any": [
-                          {
-                            "has": {
-                              "pattern": "$TYPE",
-                              "stopBy": "neighbor",
-                              "field": "type"
-                            }
-                          },
-                          {
-                            "pattern": "$_"
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                }
-              },
-              "project": {
-                "owner": "capture.OWNER.startByte",
-                "name": "capture.NAME",
-                "annotation": "capture.TYPE"
-              }
-            }
-          },
-          "raw_default_parameters": {
-            "evidence": {
-              "as": "row",
-              "query": {
-                "ast": {
-                  "language": "python",
-                  "syntax": "valid",
-                  "rule": {
-                    "all": [
-                      {
-                        "all": [
-                          {
-                            "any": [
-                              {
-                                "kind": "default_parameter"
-                              },
-                              {
-                                "kind": "typed_default_parameter"
-                              }
-                            ]
-                          },
-                          {
-                            "inside": {
-                              "kind": "parameters",
-                              "stopBy": "neighbor"
-                            }
-                          },
-                          {
-                            "has": {
-                              "pattern": "$NAME",
-                              "stopBy": "neighbor",
-                              "field": "name"
-                            }
-                          },
-                          {
-                            "not": {
-                              "any": [
-                                {
-                                  "kind": "list_splat_pattern"
-                                },
-                                {
-                                  "kind": "dictionary_splat_pattern"
-                                },
-                                {
-                                  "all": [
-                                    {
-                                      "kind": "typed_parameter"
-                                    },
-                                    {
-                                      "has": {
-                                        "any": [
-                                          {
-                                            "kind": "list_splat_pattern"
-                                          },
-                                          {
-                                            "kind": "dictionary_splat_pattern"
-                                          }
-                                        ],
-                                        "stopBy": "neighbor"
-                                      }
-                                    }
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "not": {
-                              "precedes": {
-                                "kind": "positional_separator",
-                                "stopBy": "end"
-                              }
-                            }
-                          },
-                          {
-                            "matches": "b5-common-1"
-                          },
-                          {
-                            "pattern": "$PARAM"
-                          }
-                        ]
-                      },
-                      {
-                        "any": [
-                          {
-                            "has": {
-                              "pattern": "$TYPE",
-                              "stopBy": "neighbor",
-                              "field": "type"
-                            }
-                          },
-                          {
-                            "pattern": "$_"
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                }
-              },
-              "project": {
-                "owner": "capture.OWNER.startByte",
-                "name": "capture.NAME",
-                "annotation": "capture.TYPE"
-              }
-            }
-          },
-          "raw_typed_annotations": {
-            "evidence": {
-              "as": "row",
-              "query": {
-                "ast": {
-                  "language": "python",
-                  "syntax": "valid",
-                  "rule": {
-                    "all": [
-                      {
-                        "all": [
-                          {
-                            "kind": "identifier"
-                          },
-                          {
-                            "pattern": "$TOKEN"
-                          },
-                          {
-                            "regex": "(?i)^(?:databaseconnection|lazyresult|lazyseq|readtransaction|serverplan|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction)$"
-                          }
-                        ]
+                        "pattern": "$TOKEN"
                       },
                       {
                         "inside": {
                           "all": [
                             {
-                              "kind": "typed_parameter"
-                            },
-                            {
-                              "inside": {
-                                "kind": "parameters",
-                                "stopBy": "neighbor"
-                              }
-                            },
-                            {
-                              "has": {
-                                "all": [
-                                  {
-                                    "kind": "identifier"
-                                  },
-                                  {
-                                    "pattern": "$NAME"
-                                  }
-                                ],
-                                "stopBy": "neighbor"
-                              }
+                              "matches": "b5-common-1"
                             },
                             {
                               "not": {
@@ -786,111 +618,13 @@
                               }
                             },
                             {
-                              "matches": "b5-common-1"
-                            },
-                            {
-                              "pattern": "$PARAM"
-                            }
-                          ],
-                          "field": "type",
-                          "stopBy": "end"
-                        }
-                      }
-                    ]
-                  }
-                }
-              },
-              "project": {
-                "owner": "capture.OWNER.startByte",
-                "parameter": "capture.PARAM.startByte",
-                "parameter_name": "capture.NAME",
-                "name": "capture.TOKEN"
-              }
-            }
-          },
-          "raw_typed_default_annotations": {
-            "evidence": {
-              "as": "row",
-              "query": {
-                "ast": {
-                  "language": "python",
-                  "syntax": "valid",
-                  "rule": {
-                    "all": [
-                      {
-                        "all": [
-                          {
-                            "kind": "identifier"
-                          },
-                          {
-                            "pattern": "$TOKEN"
-                          },
-                          {
-                            "regex": "(?i)^(?:databaseconnection|lazyresult|lazyseq|readtransaction|serverplan|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction)$"
-                          }
-                        ]
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "typed_default_parameter"
-                            },
-                            {
                               "inside": {
                                 "kind": "parameters",
                                 "stopBy": "neighbor"
                               }
                             },
                             {
-                              "has": {
-                                "pattern": "$NAME",
-                                "stopBy": "neighbor",
-                                "field": "name"
-                              }
-                            },
-                            {
-                              "not": {
-                                "any": [
-                                  {
-                                    "kind": "list_splat_pattern"
-                                  },
-                                  {
-                                    "kind": "dictionary_splat_pattern"
-                                  },
-                                  {
-                                    "all": [
-                                      {
-                                        "kind": "typed_parameter"
-                                      },
-                                      {
-                                        "has": {
-                                          "any": [
-                                            {
-                                              "kind": "list_splat_pattern"
-                                            },
-                                            {
-                                              "kind": "dictionary_splat_pattern"
-                                            }
-                                          ],
-                                          "stopBy": "neighbor"
-                                        }
-                                      }
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            {
-                              "not": {
-                                "precedes": {
-                                  "kind": "positional_separator",
-                                  "stopBy": "end"
-                                }
-                              }
-                            },
-                            {
-                              "matches": "b5-common-1"
+                              "matches": "b5-common-2"
                             },
                             {
                               "pattern": "$PARAM"
@@ -907,7 +641,6 @@
               "project": {
                 "owner": "capture.OWNER.startByte",
                 "parameter": "capture.PARAM.startByte",
-                "parameter_name": "capture.NAME",
                 "name": "capture.TOKEN"
               }
             }
@@ -922,17 +655,10 @@
                   "rule": {
                     "all": [
                       {
-                        "all": [
-                          {
-                            "kind": "identifier"
-                          },
-                          {
-                            "pattern": "$TOKEN"
-                          },
-                          {
-                            "regex": "(?i)^(?:databaseconnection|lazyresult|lazyseq|readtransaction|serverplan|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction)$"
-                          }
-                        ]
+                        "kind": "identifier"
+                      },
+                      {
+                        "pattern": "$TOKEN"
                       },
                       {
                         "inside": {
@@ -1076,62 +802,7 @@
               }
             }
           },
-          "raw_base_names": {
-            "evidence": {
-              "as": "row",
-              "query": {
-                "ast": {
-                  "language": "python",
-                  "syntax": "valid",
-                  "rule": {
-                    "all": [
-                      {
-                        "kind": "identifier"
-                      },
-                      {
-                        "pattern": "$BASE"
-                      },
-                      {
-                        "inside": {
-                          "kind": "class_definition",
-                          "field": "superclasses",
-                          "stopBy": "end"
-                        }
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "argument_list"
-                            },
-                            {
-                              "inside": {
-                                "all": [
-                                  {
-                                    "kind": "class_definition"
-                                  },
-                                  {
-                                    "pattern": "$CLASS"
-                                  }
-                                ],
-                                "stopBy": "neighbor"
-                              }
-                            }
-                          ],
-                          "stopBy": "neighbor"
-                        }
-                      }
-                    ]
-                  }
-                }
-              },
-              "project": {
-                "owner": "capture.CLASS.startByte",
-                "name": "capture.BASE"
-              }
-            }
-          },
-          "raw_base_expressions": {
+          "raw_bases": {
             "evidence": {
               "as": "row",
               "query": {
@@ -1142,6 +813,9 @@
                     "all": [
                       {
                         "any": [
+                          {
+                            "kind": "identifier"
+                          },
                           {
                             "kind": "attribute"
                           },
@@ -1155,13 +829,6 @@
                       },
                       {
                         "pattern": "$BASE"
-                      },
-                      {
-                        "inside": {
-                          "kind": "class_definition",
-                          "field": "superclasses",
-                          "stopBy": "end"
-                        }
                       },
                       {
                         "inside": {
@@ -1440,7 +1107,7 @@
                                       "pattern": "$CALLEE"
                                     },
                                     {
-                                      "matches": "b5-common-2"
+                                      "matches": "b5-common-3"
                                     },
                                     {
                                       "regex": "_lazy$|^lazy_"
@@ -1461,7 +1128,7 @@
                                         "pattern": "$CALLEE"
                                       },
                                       {
-                                        "matches": "b5-common-2"
+                                        "matches": "b5-common-3"
                                       },
                                       {
                                         "regex": "_lazy$|^lazy_"
@@ -1531,19 +1198,6 @@
                           ],
                           "stopBy": "end"
                         }
-                      },
-                      {
-                        "inside": {
-                          "all": [
-                            {
-                              "kind": "module"
-                            },
-                            {
-                              "regex": "direct_legacy"
-                            }
-                          ],
-                          "stopBy": "end"
-                        }
                       }
                     ]
                   }
@@ -1557,14 +1211,6 @@
           }
         },
         "stages": [
-          {
-            "name": "raw_bases",
-            "query": "SELECT * FROM raw_base_names UNION ALL SELECT * FROM raw_base_expressions"
-          },
-          {
-            "name": "raw_parameter_annotations",
-            "query": "SELECT * FROM raw_typed_annotations UNION ALL SELECT * FROM raw_typed_default_annotations"
-          },
           {
             "name": "inventory",
             "query": "SELECT *, module || '::' || CASE WHEN class_name IS NULL THEN name ELSE class_name || '.' || name END AS id,\n module || '.' || CASE WHEN class_name IS NULL THEN name ELSE class_name || '.' || name END AS fqname\n FROM (SELECT __path,__start,__end,name,class_name,return_annotation,class_start,body_start, replace(rx_replace(__path, '/__init__\\.py$|\\.py$', ''), '/', '.') AS module, CASE WHEN class_name IS NULL THEN 'function' ELSE 'method' END AS kind FROM raw_functions\n UNION ALL SELECT __path,__start,__end,name,NULL,NULL,NULL,body_start,replace(rx_replace(__path, '/__init__\\.py$|\\.py$', ''), '/', '.'),'class' FROM raw_classes)",
@@ -1617,12 +1263,8 @@
             ]
           },
           {
-            "name": "parameter_rows",
-            "query": "SELECT __path,__start,__end,owner,name,NULL AS annotation FROM raw_plain_parameters\n UNION ALL SELECT __path,__start,__end,owner,name,annotation FROM raw_typed_parameters\n UNION ALL SELECT __path,__start,__end,owner,name,annotation FROM raw_default_parameters"
-          },
-          {
             "name": "parameters",
-            "query": "SELECT p.*, d.id AS symbol FROM parameter_rows p JOIN declarations d ON d.__path=p.__path AND d.__start=p.owner\n WHERE d.class_name IS NULL OR p.name NOT IN ('self','cls')",
+            "query": "SELECT p.*, d.id AS symbol FROM raw_parameters p JOIN declarations d ON d.__path=p.__path AND d.__start=p.owner\n WHERE d.class_name IS NULL OR p.name NOT IN ('self','cls')",
             "indexes": [
               [
                 "symbol"

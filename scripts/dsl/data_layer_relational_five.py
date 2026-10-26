@@ -23,32 +23,14 @@ def regex(values):return '(?:'+'|'.join(re.escape(value) for value in sorted(val
 MOD="replace(rx_replace(__path, '/__init__\\.py$|\\.py$', ''), '/', '.')"
 
 
-def symbol_inputs(annotated_only=False, annotation_names=None):
- """Symbol candidate rows. `annotated_only` omits parameter rows: a rule that reads parameters
- only through their annotations reads the annotation rows, which carry their parameter's name.
- `annotation_names` keeps only annotation identifiers with those case-insensitive names (a rule
- that tests no others)."""
+def symbol_inputs():
  fn=A(K('function_definition'),N(I(K('function_definition'))),P('OWNER'),F('name',P('FNAME')),
       optional(I(A(K('class_definition'),F('name',P('CLASS')),P('CLASS_NODE')),K('class_definition'))),
       optional(F('return_type',P('RET'))),F('body',P('BODY')))
  normal=N(O(K('list_splat_pattern'),K('dictionary_splat_pattern'),A(K('typed_parameter'),H(O(K('list_splat_pattern'),K('dictionary_splat_pattern'))))))
- # Candidate selection lowers positive kind sets only. An identifier alternative inside an `any`
- # (or a negated relation target) makes every identifier a candidate, so each parameter form is
- # its own input and the parameter rows are their union.
- def param(kinds,name):
-  return A(kinds,I(K('parameters'),'neighbor'),name,normal,N({'precedes':{**K('positional_separator'),'stopBy':'end'}}),I(fn,K('function_definition')),P('PARAM'))
- plain=param(K('identifier'),P('NAME'))
- typed=param(K('typed_parameter'),H(A(K('identifier'),P('NAME'))))
- defaulted=param(O(K('default_parameter'),K('typed_default_parameter')),F('name',P('NAME')))
- token=A(K('identifier'),P('TOKEN'),*([{'regex':'(?i)^(?:'+'|'.join(re.escape(v) for v in sorted(annotation_names))+')$'}] if annotation_names else []))
- typed_default=param(K('typed_default_parameter'),F('name',P('NAME')))
- def annotation(parameter):
-  return E(A(token,{'inside':{**parameter,'field':'type','stopBy':'end'}}),
-      {'owner':'capture.OWNER.startByte','parameter':'capture.PARAM.startByte','parameter_name':'capture.NAME','name':'capture.TOKEN'})
- def base(kinds):
-  return E(A(kinds,P('BASE'),{'inside':{**K('class_definition'),'field':'superclasses','stopBy':'end'}},
-      I(A(K('argument_list'),I(A(K('class_definition'),P('CLASS')),'neighbor')),'neighbor')),
-      {'owner':'capture.CLASS.startByte','name':'capture.BASE'})
+ param=A(O(A(K('identifier'),P('NAME')),A(K('typed_parameter'),H(A(K('identifier'),P('NAME')))),
+           A(O(K('default_parameter'),K('typed_default_parameter')),F('name',P('NAME')))),normal,
+         N({'precedes':{**K('positional_separator'),'stopBy':'end'}}),I(K('parameters'),'neighbor'),I(fn,K('function_definition')),P('PARAM'))
  common={'name':'capture.FNAME','class_name':'capture.CLASS','return_annotation':'capture.RET','class_start':'capture.CLASS_NODE.startByte','body_start':'capture.BODY.startByte'}
  decl=O(K('function_definition'),K('class_definition'))
  all_assignment=A(K('assignment'),F('left',{'pattern':'__all__'}),P('ALL'),I(K('expression_statement'),'neighbor'),
@@ -58,21 +40,18 @@ def symbol_inputs(annotated_only=False, annotation_names=None):
   'raw_classes':E(A(K('class_definition'),F('name',P('NAME')),F('body',P('BODY'))),{'name':'capture.NAME','body_start':'capture.BODY.startByte'}),
   'raw_decorators':E(A(K('decorator'),P('DECO'),I(A(K('decorated_definition'),H(A(decl,P('DECL')))),'neighbor')),
       {'owner':'capture.DECL.startByte','name':{'source':'capture.DECO','regex':r'^@\s*([^\s(]+)','group':1}}),
-  'raw_plain_parameters':E(plain,{'owner':'capture.OWNER.startByte','name':'capture.NAME'}),
-  'raw_typed_parameters':E(A(typed,optional(F('type',P('TYPE')))),{'owner':'capture.OWNER.startByte','name':'capture.NAME','annotation':'capture.TYPE'}),
-  'raw_default_parameters':E(A(defaulted,optional(F('type',P('TYPE')))),{'owner':'capture.OWNER.startByte','name':'capture.NAME','annotation':'capture.TYPE'}),
-  # Only typed forms have a `type` field.
-  'raw_typed_annotations':annotation(typed),
-  'raw_typed_default_annotations':annotation(typed_default),
-  'raw_return_annotations':E(A(token,{'inside':{**fn,'field':'return_type','stopBy':'end'}}),
+  'raw_parameters':E(A(param,optional(F('type',P('TYPE')))),
+      {'owner':'capture.OWNER.startByte','name':'capture.NAME','annotation':'capture.TYPE'}),
+  'raw_parameter_annotations':E(A(K('identifier'),P('TOKEN'),{'inside':{**param,'field':'type','stopBy':'end'}}),
+      {'owner':'capture.OWNER.startByte','parameter':'capture.PARAM.startByte','name':'capture.TOKEN'}),
+  'raw_return_annotations':E(A(K('identifier'),P('TOKEN'),{'inside':{**fn,'field':'return_type','stopBy':'end'}}),
       {'owner':'capture.OWNER.startByte','name':'capture.TOKEN'}),
   'raw_imports':E(A(O(K('import_from_statement'),K('import_statement')),
       {'regex':r'(?s)^(?:from\s+(?P<BASE>[^\s]+)\s+)?import\s+(?P<ITEMS>.*)$'},optional(A(I(K('module'),'neighbor'),P('TOP')))),
       {'base':'capture.BASE','items':'capture.ITEMS','top':'capture.TOP.startByte'}),
-  # The redundant superclasses ancestor is a positive constraint candidate selection can use, and
-  # identifier bases are their own input: an identifier alternative in an `any` defeats it.
-  'raw_base_names':base(K('identifier')),
-  'raw_base_expressions':base(O(K('attribute'),K('generic_type'),K('subscript'))),
+  'raw_bases':E(A(O(K('identifier'),K('attribute'),K('generic_type'),K('subscript')),P('BASE'),
+      I(A(K('argument_list'),I(A(K('class_definition'),P('CLASS')),'neighbor')),'neighbor')),
+      {'owner':'capture.CLASS.startByte','name':'capture.BASE'}),
   'raw_all':E(A(all_assignment,optional(F('right',A(O(K('list'),K('tuple')),P('ARRAY'))))),{'array':'capture.ARRAY'}),
   'raw_all_names':E(A(O(K('string'),K('concatenated_string')),P('VALUE'),
       I(A(O(K('list'),K('tuple')),I(all_assignment,'neighbor')),'neighbor')),
@@ -80,32 +59,23 @@ def symbol_inputs(annotated_only=False, annotation_names=None):
  }
  for key in ('raw_all','raw_all_names'):
   inputs[key]['evidence']['query']['ast']['file']={'path':{'regex':r'^data_layer/[^/]+\.py$'}}
- if annotated_only:
-  for key in ('raw_plain_parameters','raw_typed_parameters','raw_default_parameters'):del inputs[key]
  return inputs
 
 
-def symbol_stages(graph, annotated_only=False):
+def symbol_stages(graph):
  # These tables contain source facts, never expected diagnostics. A declaration
  # has the same ID after a reassignment; a repeated declaration keeps its final body.
  stages=[
- S('raw_bases','SELECT * FROM raw_base_names UNION ALL SELECT * FROM raw_base_expressions'),
- S('raw_parameter_annotations','SELECT * FROM raw_typed_annotations UNION ALL SELECT * FROM raw_typed_default_annotations'),
  S('inventory',f"""SELECT *, module || '::' || CASE WHEN class_name IS NULL THEN name ELSE class_name || '.' || name END AS id,
  module || '.' || CASE WHEN class_name IS NULL THEN name ELSE class_name || '.' || name END AS fqname
  FROM (SELECT __path,__start,__end,name,class_name,return_annotation,class_start,body_start, {MOD} AS module, CASE WHEN class_name IS NULL THEN 'function' ELSE 'method' END AS kind FROM raw_functions
  UNION ALL SELECT __path,__start,__end,name,NULL,NULL,NULL,body_start,{MOD},'class' FROM raw_classes)""",('id',),('module','name')),
  S('declarations',"""SELECT * FROM (SELECT *,row_number() OVER (PARTITION BY id ORDER BY __start DESC) AS selected FROM inventory) WHERE selected=1""",('id',),('__path','__start'),('module','name'),('fqname',),('kind','name'),('module','class_name')),
  S('decorators',"SELECT * FROM raw_decorators",('__path','owner')),
- *([] if annotated_only else [S('parameter_rows',"""SELECT __path,__start,__end,owner,name,NULL AS annotation FROM raw_plain_parameters
- UNION ALL SELECT __path,__start,__end,owner,name,annotation FROM raw_typed_parameters
- UNION ALL SELECT __path,__start,__end,owner,name,annotation FROM raw_default_parameters"""),
- S('parameters',"""SELECT p.*, d.id AS symbol FROM parameter_rows p JOIN declarations d ON d.__path=p.__path AND d.__start=p.owner
- WHERE d.class_name IS NULL OR p.name NOT IN ('self','cls')""",('symbol',),('__path','owner'),('__path','__start'))]),
+ S('parameters',"""SELECT p.*, d.id AS symbol FROM raw_parameters p JOIN declarations d ON d.__path=p.__path AND d.__start=p.owner
+ WHERE d.class_name IS NULL OR p.name NOT IN ('self','cls')""",('symbol',),('__path','owner'),('__path','__start')),
  S('annotation_names',"""SELECT d.id AS symbol,a.name FROM raw_return_annotations a JOIN declarations d ON d.__path=a.__path AND d.__start=a.owner
- UNION """+("""SELECT d.id,a.name FROM raw_parameter_annotations a JOIN declarations d ON d.__path=a.__path AND d.__start=a.owner
- WHERE d.class_name IS NULL OR a.parameter_name NOT IN ('self','cls')""" if annotated_only else
- "SELECT p.symbol,a.name FROM raw_parameter_annotations a JOIN parameters p ON p.__path=a.__path AND p.__start=a.parameter"),('symbol','name')),
+ UNION SELECT p.symbol,a.name FROM raw_parameter_annotations a JOIN parameters p ON p.__path=a.__path AND p.__start=a.parameter""",('symbol','name')),
  S('imports',f"""WITH RECURSIVE
  tokens(path,ordinal,top,base,item,rest) AS (
  SELECT __path,__start,top,base,'',rx_replace(items,'#[^\\n]*','') || ',' FROM raw_imports
@@ -152,17 +122,13 @@ def symbol_stages(graph, annotated_only=False):
  return stages
 
 
-# Public API traits test annotations only for these names.
-PUBLIC_ANNOTATION_NAMES=('databaseconnection','lazyresult','lazyseq','readtransaction','serverplan','versioneddatabaseconnection','versionedreadtransaction','versionedwritetransaction','writetransaction')
 def public_api_clause(module, graph):
- inputs=symbol_inputs(annotation_names=PUBLIC_ANNOTATION_NAMES)
+ inputs=symbol_inputs()
  outer=A(K('function_definition'),N(I(K('function_definition'))),P('OWNER'),
      I(A(K('decorated_definition'),H(A(K('decorator'),{'regex':r'^@\s*(?:\w+\.)*direct_legacy[^.\s(]*'}))),'neighbor'))
  call_name=A(P('CALLEE'),{'regex':'^'+regex(graph.EXECUTION_NAMES)+'$|^(?:execute_grammar|grammar_fetch)'},{'regex':r'_lazy$|^lazy_'})
  inputs['raw_execution_calls']=E(A(K('call'),F('function',O(A(K('identifier'),call_name),A(K('attribute'),F('attribute',call_name)))),
-     I(A(K('block'),I(outer,'neighbor'))),
-     # Only a file that names a direct legacy decorator can hold one; the literal gates the file.
-     I(A(K('module'),{'regex':'direct_legacy'}))),{'owner':'capture.OWNER.startByte','name':'capture.CALLEE'})
+     I(A(K('block'),I(outer,'neighbor')))),{'owner':'capture.OWNER.startByte','name':'capture.CALLEE'})
  stages=symbol_stages(graph)
  stages.append(S('execution_calls','SELECT * FROM raw_execution_calls',('__path','owner')))
  own="x.__path=d.__path AND x.owner=d.__start"
@@ -178,7 +144,7 @@ def public_api_clause(module, graph):
  chain="(d.class_name IS NOT NULL AND (trim(d.return_annotation,' ' || char(39) || char(34))=d.class_name OR instr(trim(d.return_annotation,' ' || char(39) || char(34)),d.class_name || '[')=1))"
  true_lazy="(rx_matches(d.name,'_lazy$') OR EXISTS(SELECT 1 FROM annotation_names a WHERE a.symbol=d.id AND lower(a.name) IN ('lazyresult','lazyseq','serverplan')))"
  base="rx_replace(d.name,'_(?:lazy|async|sync)$','')"
- context=f"(rx_matches(d.__path,{q(regex(module.EXECUTION_PATH_HINTS))}) OR rx_matches(lower(coalesce(d.class_name,'')),{q(regex(module.EXECUTION_OWNER_HINTS))}) OR EXISTS(SELECT 1 FROM annotation_names a WHERE a.symbol=d.id AND lower(a.name) IN {literals(PUBLIC_ANNOTATION_NAMES)}))"
+ context=f"(rx_matches(d.__path,{q(regex(module.EXECUTION_PATH_HINTS))}) OR rx_matches(lower(coalesce(d.class_name,'')),{q(regex(module.EXECUTION_OWNER_HINTS))}) OR EXISTS(SELECT 1 FROM annotation_names a WHERE a.symbol=d.id AND lower(a.name) IN ('databaseconnection','lazyresult','lazyseq','readtransaction','serverplan','versioneddatabaseconnection','versionedreadtransaction','versionedwritetransaction','writetransaction')))"
  primitive=f"(d.kind='function' AND d.__path IN {literals(module.LAZY_PRIMITIVE_PATHS)} AND instr(d.name,'lazy_')=1 AND {true_lazy})"
  internal=f"(d.__path IN {literals(module.RUNTIME_INTERNAL_CONTEXT_PATHS)} AND d.class_name IN {literals(module.RUNTIME_INTERNAL_CONTEXT_NAMES)})"
  abstract=dec('abstractmethod$')
@@ -243,35 +209,33 @@ def public_api_clause(module, graph):
 
 
 def dead_code_clause(module, graph, reference_contract):
- # Dead code reads parameters only through their annotations.
- inputs=symbol_inputs(annotated_only=True)
+ inputs=symbol_inputs()
+ fn=A(K('function_definition'),N(I(K('function_definition'))),P('OWNER'))
  nested_class=A(K('class_definition'),I(K('class_definition')),N(I(K('function_definition'))))
- # Module initialization reads module-level statements, nested class bodies, and top-level class
- # bodies outside methods (method decorators and default values included). Function bodies are
- # separate reference-graph facts. Each context is a positive kind set, so candidate selection
- # never visits identifiers in function bodies.
- def name(context):
-  return A(K('identifier'),context,P('WORD'),
+ # Module initialization reads class statements, method defaults and decorators.
+ # Function bodies are separate reference-graph facts.
+ name=A(K('identifier'),P('WORD'),
    N(I(O(K('import_statement'),K('import_from_statement')))),
    *[N({'inside':{**K(kind),'field':field,'stopBy':'neighbor'}}) for kind,field in (
        ('attribute','attribute'),('keyword_argument','name'),('function_definition','name'),('class_definition','name'))],
-   N({'binds':{'form':['parameter']}}))
- # Every module-level statement other than a definition or import (whose names never count).
- control=O(*[K(kind) for kind in ('assert_statement','break_statement','continue_statement','delete_statement','exec_statement',
-   'expression_statement','for_statement','future_import_statement','global_statement','if_statement','match_statement',
-   'nonlocal_statement','pass_statement','print_statement','raise_statement','return_statement','try_statement',
-   'type_alias_statement','while_statement','with_statement')])
- function_body=A(K('block'),I(K('function_definition'),'neighbor'))
- class_body=A(K('block'),I(A(K('class_definition'),N(I(K('function_definition')))),'neighbor'))
- header=O(N(I(K('function_definition'))),{'inside':{**O(K('default_parameter'),K('typed_default_parameter')),'field':'value','stopBy':'end'}})
- inputs['raw_control_names']=E(name(I(A(control,I(K('module'),'neighbor')))),{'name':'capture.WORD'})
- inputs['raw_nested_names']=E(name(I(nested_class)),{'name':'capture.WORD'})
- inputs['raw_class_body_names']=E(name(A(I(class_body,function_body),header)),{'name':'capture.WORD'})
+   N({'binds':{'form':['parameter']}}),
+   O(N(I(A(K('block'),I(K('function_definition'),'neighbor')))),I(nested_class),I(A(N(O(K('class_definition'),K('function_definition'),K('decorated_definition'))),I(K('module'),'neighbor')))),
+   optional(I(A(K('decorated_definition'),H(A(K('function_definition'),P('DEC_FN')))))),
+   optional(I(A(K('decorated_definition'),H(A(K('class_definition'),P('DEC_CLASS')))))),
+   optional(I(A(K('function_definition'),P('FUNCTION')),K('function_definition'))),
+   optional(I(A(K('class_definition'),P('CLASS')))),
+   optional(I(A(K('block'),P('CLASS_BODY'),I(K('class_definition'),'neighbor')))),
+   optional({'inside':{**A(O(K('default_parameter'),K('typed_default_parameter')),P('DEFAULT')),'field':'value','stopBy':'end'}}),
+   optional(I(A(nested_class,P('NESTED')))),
+   optional(I(A(P('CONTROL'),N(O(K('class_definition'),K('function_definition'),K('decorated_definition'))),I(K('module'),'neighbor')))))
+ inputs['raw_module_names']=E(name,{'name':'capture.WORD','decorated_function':'capture.DEC_FN.startByte','decorated_class':'capture.DEC_CLASS.startByte',
+   'function':'capture.FUNCTION.startByte','class':'capture.CLASS.startByte','class_body':'capture.CLASS_BODY.startByte','default_value':'capture.DEFAULT.startByte','nested_class':'capture.NESTED.startByte','control':'capture.CONTROL.startByte'})
  inputs['raw_modules']=E(K('module'),{'module':'file.module'})
  dynamic=module._LITERAL_DYNAMIC_IMPORT_ATTR_RE.pattern
  inputs['raw_dynamic_imports']=E(A(K('module'),{'regex':'(?P<ENTRY>'+dynamic+')'}),{'entry':'capture.ENTRY'},each='ENTRY')
- stages=symbol_stages(graph,annotated_only=True)
+ stages=symbol_stages(graph)
  stages.append(S('bases','SELECT * FROM raw_bases',('__path','owner')))
+ stages.append(S('function_headers','SELECT * FROM raw_functions',('__path','__start')))
  stages.append(S('dead_traits',"""SELECT d.*,rx_replace(d.name,'_(?:async|lazy)$','') AS base_name,CASE WHEN class_name IS NULL THEN NULL ELSE module || '::' || class_name END AS class_id,
  CASE WHEN kind='class' THEN EXISTS(SELECT 1 FROM bases b WHERE b.__path=d.__path AND b.owner=d.__start AND instr(b.name,'ABC')>0)
  ELSE EXISTS(SELECT 1 FROM decorators x WHERE x.__path=d.__path AND x.owner=d.__start AND rx_matches(x.name,'abstractmethod$')) END AS abstract,
@@ -285,8 +249,12 @@ def dead_code_clause(module, graph, reference_contract):
  (SELECT c.id FROM imports i JOIN resolved_names n ON n.fqname=i.target JOIN declarations c ON c.id=n.symbol AND c.kind='class' WHERE i.kind='symbol' AND i.module=r.module AND i.name=r.name LIMIT 1),
  (SELECT c.id FROM declarations c WHERE c.kind='class' AND c.module=r.module AND c.name=r.name LIMIT 1)) AS target
  FROM (SELECT DISTINCT d.module,a.name FROM annotation_names a JOIN declarations d ON d.id=a.symbol) r""",('module','name')))
- stages.append(S('module_names',f"""SELECT DISTINCT {MOD} AS module,name FROM (SELECT __path,name FROM raw_control_names
- UNION ALL SELECT __path,name FROM raw_nested_names UNION ALL SELECT __path,name FROM raw_class_body_names)""",('module','name')))
+ stages.append(S('module_names',f"""SELECT DISTINCT {MOD} AS module,n.name FROM raw_module_names n
+ WHERE n.control IS NOT NULL OR n.nested_class IS NOT NULL OR (
+ (n.decorated_function IS NULL OR EXISTS(SELECT 1 FROM function_headers f WHERE f.__path=n.__path AND f.__start=n.decorated_function AND f.class_name IS NOT NULL))
+ AND (n.decorated_class IS NULL OR n.class_body IS NOT NULL)
+ AND (n.class IS NULL OR n.class_body IS NOT NULL)
+ AND (n.function IS NULL OR (n.default_value IS NOT NULL AND EXISTS(SELECT 1 FROM function_headers f WHERE f.__path=n.__path AND f.__start=n.function AND f.class_name IS NOT NULL))))""",('module','name')))
  stages.append(S('imported_modules',"""WITH RECURSIVE modules(module) AS (
  SELECT CASE WHEN kind='module' THEN target ELSE rx_replace(target,'\\.?[^.]+$','') END FROM imports
  UNION SELECT rx_replace(module,'\\.?[^.]+$','') FROM modules WHERE instr(module,'.')>0)
