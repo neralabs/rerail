@@ -55,3 +55,22 @@ it("preserves node, field, parent, owner, ordinal and descendant bags over both 
     expect(legacy.length).toBeGreaterThan(70); expect(tape).toEqual(legacy);
   }
 });
+
+it("collects conditional import declarations without their unused identifier payloads", () => {
+  const production = JSON.parse(readFileSync(new URL("../../../../packs/data-layer/candidates/rules/data-layer-serverplan-quality.json", import.meta.url), "utf8"));
+  const plan = production.clauses.find((c: { id: string }) => c.id === "quality-conditional-1").relational;
+  const inputs = plan.inputs as Record<string, unknown>;
+  const query = Object.keys(inputs).map(name => `SELECT __path path,__start start_byte,__end end_byte,kind FROM ${name}`).join(" UNION ALL ");
+  production.clauses = [production.clauses[0], { id: "import-demand", relational: { inputs, query, key: ["kind"] },
+    violation: { code: "NODE", message: "Selected syntax", anchor: "witness.span" } }];
+  const compiled = native.CodeRuleDslRuntime.compile(JSON.stringify(production), "json", caps);
+  const source = Array.from({ length: 100 }, (_, i) => `from alpha.beta${i} import charlie as delta${i}\n`).join("");
+  const result = JSON.parse(compiled.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 1,
+    files: [{ path: "a.py", language: "python", source }] }), "report"));
+  expect(result.failures).toEqual([]);
+  const kinds = result.violations.map((v: { variables: { row: { kind: string } } }) => v.variables.row.kind);
+  expect(kinds.filter((kind: string) => kind === "identifier")).toHaveLength(0);
+  expect(kinds.filter((kind: string) => kind === "import_from_statement")).toHaveLength(100);
+  expect(kinds.filter((kind: string) => kind === "aliased_import")).toHaveLength(100);
+  expect(kinds.filter((kind: string) => kind === "dotted_name")).toHaveLength(100);
+});
