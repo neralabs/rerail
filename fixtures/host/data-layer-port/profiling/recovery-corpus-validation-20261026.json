@@ -1,0 +1,34 @@
+{
+  "format": "rerail.recovery-corpus-validation/v1",
+  "acceptance": false,
+  "nativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+  "firstFiveAndSupplemental": {
+    "replayedCalls": 1236,
+    "nativeCalls": 1236,
+    "positiveCalls": 769,
+    "cleanCalls": 467,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0
+  },
+  "sixthBatch": {
+    "complete": true,
+    "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b",
+    "nativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+    "shards": 198,
+    "verifiedOriginals": 1234,
+    "expectedOriginals": 1234,
+    "guardRepeats": 376,
+    "originalRetained": 7,
+    "positiveOriginals": 405,
+    "cleanOriginals": 829,
+    "missing": [],
+    "failed": []
+  },
+  "latestRechecks": [
+    "state shards 134:144 after scope correction",
+    "quality shards 151:175 after column and import scope corrections"
+  ],
+  "note": "Corpus parity and shape tests are correctness evidence. Full 50/60 repository CPU/RSS acceptance remains open."
+}

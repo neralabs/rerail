@@ -4776,3 +4776,34 @@ A narrow module-binding relation now precedes one identifier scan and an indexed
 The test retains cross-file isolation and the complete propagated value set, below 2,000 text reads.
 This correction alone does not resolve the real result failures; the ancestor correction is required.
 All 16 shared-SQL tests pass. The original positive/clean corpus is rerun after these changes.
+
+
+### Conditional preparation: later outer-budget exhaustion (2026-10-26)
+
+The scoped-ordinal run finishes ingestion of all 9,021 files but still fails.
+It passes ownership, then exhausts the 50,000-unit outer allowance at `conditional_methods`.
+The error snapshot retains 9,967,090 SQL work units. This is a different budget boundary from the contract and projection failures.
+Its functions table contains 161,553 rows with 53 columns. Conditional classes contain 31,841 rows with 55 columns.
+The original node relation contains 562,809 identifiers and 337,575 dotted names.
+
+The column-demand tool now supports projected-input plans as well as native syntax plans.
+It removes unused stored columns while retaining their logical names through NULL expressions in compatibility views.
+The existing 32-field deferred limit remains unchanged. Additional unused fields remain stored NULLs.
+Functions now store 21 columns, including 11 live values. Classes store 21 columns, including five live values.
+Conditional methods store 25 columns, including nine live values.
+The demand analysis preserves predicates, indexes, alternatives, window inputs, DISTINCT, bags, and deferred-expression dependencies.
+Tests compare projected and native input plans with the original row results.
+A direct attempt to remove logical names fails SQL binding in unused nested expressions and is rejected.
+
+The import selector also requested every descendant of every import.
+Alias resolution needs import declarations and direct dotted-name or aliased-import entries.
+The narrowed selector retains those entries. Other selector arms retain syntax needed by bodies and annotations.
+A production-policy native regression changes 400 unused identifier observations to zero over 100 imports.
+It retains all 100 import declarations, aliased imports, and direct dotted names.
+The [checked preparation receipt](../fixtures/host/data-layer-port/profiling/conditional-preparation-recovery-20261026.json) records stored widths and unchanged limits.
+The complete conditional repository check remains required before closing this failure.
+
+The fixed SQL accounting diagnostic records 296 engine submissions and 45 SQLite internal executions.
+It retains complete accounting and parity, but exceeds the fixed 100 reference.
+The reference remains diagnostic under the agreed measurement gate. It is neither removed nor reported as passing.
+All 29 accounting tests remain part of the profiling suite.

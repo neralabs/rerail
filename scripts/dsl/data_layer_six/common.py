@@ -42,7 +42,7 @@ def choice(option,yes,no):return {'$option':option,'cases':{'true':yes,'false':n
 
 def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block'):
  from .ast_relations import trim_ast_projection,typed_input_partitions,batched_reachability,defer_node_text,shared_syntax_relations,whole_file_syntax_relations,narrow_ast_ordinals
- from .sql_columns import narrow_columns
+ from .sql_columns import narrow_columns,compact_columns
  quality=name=='serverplan_quality'
  utils=dict(utils or {})
  for clause in clauses:
@@ -80,6 +80,7 @@ def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block
     utils[utility]=selection
     for ast in asts:ast['rule']['all'][-1]={'matches':utility}
    if quality or name=='serverplan_state_tripwires':batched_reachability(clause,forest=True)
+   if quality and clause['id'].startswith('quality-conditional'):compact_columns(plan)
  definition={'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'all'},**(options or {})}}
  if utils:definition.update(language='python',utils=utils)
  doc={'format':'rerail.policy/v1','id':'data-layer-'+name.replace('_','-'),'revision':1,'mode':mode,

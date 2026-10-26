@@ -7,7 +7,7 @@ import sys
 import unittest
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'scripts/dsl'))
-from data_layer_six.sql_columns import narrow_columns, schema
+from data_layer_six.sql_columns import compact_columns, narrow_columns, schema
 
 class SqlColumns(unittest.TestCase):
     def evaluate(self, plan, rows):
@@ -34,11 +34,16 @@ class SqlColumns(unittest.TestCase):
             db.execute('CREATE TABLE "'+name+'" ('+','.join('"'+c+'"' for c in cols)+')')
         for stage in plan['stages']:
             if 'reachability' in stage:db.execute('CREATE TABLE "'+stage['name']+'" (__path,root,node)')
-            else:db.execute('CREATE TABLE "'+stage['name']+'" AS '+stage['query']+' LIMIT 0')
+            else:
+                name=stage['name'];stored=name+'_stored' if stage.get('deferred') else name
+                db.execute('CREATE TABLE "'+stored+'" AS '+stage['query']+' LIMIT 0')
+                if stage.get('deferred'):
+                    values=','.join(expr+' AS "'+col+'"' for col,expr in stage['deferred'].items())
+                    db.execute('CREATE VIEW "'+name+'" AS SELECT *,'+values+' FROM "'+stored+'"')
         columns=lambda name:[r[1] for r in db.execute('PRAGMA table_info("'+name+'")')]
-        self.assertLessEqual(len(columns('functions')), 12)
-        self.assertLessEqual(len(columns('classes')), 6)
-        self.assertLessEqual(len(columns('conditional_methods')), 10)
+        self.assertLessEqual(len(columns('functions_stored')), 24)
+        self.assertLessEqual(len(columns('classes_stored')), 24)
+        self.assertLessEqual(len(columns('conditional_methods_stored')), 26)
         self.assertIn('parameters_kind',columns('functions'))
         self.assertIn('qualified_name',columns('conditional_classes'))
 
@@ -51,9 +56,15 @@ class SqlColumns(unittest.TestCase):
         ]
         for stages,query in programs:
             original={'inputs':{},'syntax':{'name':'nodes','fields':[],'columns':['__path','__start','__end','id','kind','ordinal'],'owners':{}},'stages':stages,'query':query}
-            candidate=copy.deepcopy(original);narrow_columns(candidate)
             rows=[{'id':1,'kind':'a','ordinal':2},{'id':1,'kind':'a','ordinal':3},{'id':2,'kind':None,'ordinal':None}]
-            self.assertEqual(self.evaluate(original,rows),self.evaluate(candidate,rows))
+            for project in [narrow_columns,compact_columns]:
+                for native in [True,False]:
+                    before=copy.deepcopy(original)
+                    if not native:
+                        del before['syntax']
+                        before['inputs']={'nodes':{'evidence':{'project':{'id':'id','kind':'kind','ordinal':'ordinal'}}}}
+                    candidate=copy.deepcopy(before);project(candidate)
+                    self.assertEqual(self.evaluate(before,rows),self.evaluate(candidate,rows))
 
     def test_all_query_alternatives_and_deferred_dependencies_retain_their_values(self):
         original={'inputs':{},'syntax':{'name':'nodes','fields':[],
@@ -61,11 +72,12 @@ class SqlColumns(unittest.TestCase):
             'stages':[{'name':'a','query':'SELECT id,kind,ordinal FROM nodes',
                 'indexes':[['id']], 'deferred':{'label':"kind||ordinal"}}],
             'query':{'$option':'entry','cases':{'label':'SELECT label FROM a'},'default':'SELECT ordinal FROM a'}}
-        candidate=copy.deepcopy(original);narrow_columns(candidate)
         rows=[{'id':1,'kind':'first','ordinal':2},{'id':2,'kind':'second','ordinal':3}]
-        for query in ['SELECT label FROM a','SELECT ordinal FROM a']:
-            before=copy.deepcopy(original);before['query']=query
-            after=copy.deepcopy(candidate);after['query']=query
-            self.assertEqual(self.evaluate(before,rows),self.evaluate(after,rows))
+        for project in [narrow_columns,compact_columns]:
+            candidate=copy.deepcopy(original);project(candidate)
+            for query in ['SELECT label FROM a','SELECT ordinal FROM a']:
+                before=copy.deepcopy(original);before['query']=query
+                after=copy.deepcopy(candidate);after['query']=query
+                self.assertEqual(self.evaluate(before,rows),self.evaluate(after,rows))
 
 if __name__=='__main__':unittest.main()

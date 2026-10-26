@@ -78,11 +78,12 @@ def schema(plan):
         tables[name] = columns
     for name, entry in plan['inputs'].items():
         create(name, ['__path','__start','__end',*entry['evidence']['project']])
-    spec = plan['syntax']
-    cols = [*BASE, *[f'{f}_{s}' for f in spec['fields'] for s in ['id','start','end','kind','source']]]
-    create(spec['name'], [c for c in cols if not spec.get('columns') or c in spec['columns']])
-    if spec.get('edges'): create(spec['edges'], ['__path','src','dst','ordinal'])
-    if spec.get('ownership'): create(spec['ownership'], ['__path','id',*sorted(spec['owners'])])
+    if 'syntax' in plan:
+        spec = plan['syntax']
+        cols = [*BASE, *[f'{f}_{s}' for f in spec['fields'] for s in ['id','start','end','kind','source']]]
+        create(spec['name'], [c for c in cols if not spec.get('columns') or c in spec['columns']])
+        if spec.get('edges'): create(spec['edges'], ['__path','src','dst','ordinal'])
+        if spec.get('ownership'): create(spec['ownership'], ['__path','id',*sorted(spec['owners'])])
     for stage in plan['stages']:
         name = stage['name']
         if 'reachability' in stage:
@@ -98,6 +99,15 @@ def schema(plan):
 
 
 def narrow_columns(plan):
+    return _project_columns(plan, False)
+
+
+def compact_columns(plan):
+    """Omit unused stored columns while preserving each SQL operator's full row semantics."""
+    return _project_columns(plan, True)
+
+
+def _project_columns(plan, compact):
     # Row carriers and logical width remain intact; internal rowids do not demand all cells.
     assert not any(re.search(r"\b(?:rowid|_rowid_|oid)\b", q, re.I) for s in plan["stages"] for q in sql_strings(s.get("query", "")))
     db, tables = schema(plan)
@@ -122,9 +132,13 @@ def narrow_columns(plan):
         if not wanted: wanted.add(selected[0])
         keep = [c for c in selected if c in wanted]
         dead = [c for c in selected if c not in wanted]
+        # Existing deferred-column contracts permit at most 32 names. Any extra
+        # logical padding stays as stored NULLs, without reading source payloads.
+        deferred_dead = dead[-max(0,32-len(stage.get('deferred',{}))):] if compact and len(stage.get('deferred',{}))<32 else []
+        stored = [c for c in selected if c not in deferred_dead]
         def change(query):
             # Keep logical schema and multiplicity, but avoid computing unused cells.
-            projection = ','.join(quote(c) if c in wanted else f'NULL AS {quote(c)}' for c in selected)
+            projection = ','.join(quote(c) if c in wanted else f'NULL AS {quote(c)}' for c in (stored if compact else selected))
             rewritten = f'SELECT {projection} FROM ({query})'
             if len(rewritten.encode()) > 16384:
                 raise ValueError(f'Relational projection exceeds the SQL size limit for {name}')
@@ -132,6 +146,10 @@ def narrow_columns(plan):
             collect(f'SELECT {actual} FROM ({rewritten})')
             return rewritten
         stage['query'] = map_sql(stage['query'], change)
+        if compact and deferred_dead:
+            # Retain logical names for unused expressions in downstream SELECT-star
+            # queries. NULL padding belongs to a view, not every stored row.
+            stage.setdefault('deferred', {}).update({c:'NULL' for c in deferred_dead})
         if dead: result.append({'stage':name, 'computedBefore':len(selected), 'computedAfter':len(keep), 'nulled':dead})
     db.close()
     return result

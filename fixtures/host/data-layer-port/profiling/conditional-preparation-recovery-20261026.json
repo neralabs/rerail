@@ -1,0 +1,100 @@
+{
+  "format": "rerail.conditional-preparation-recovery/v1",
+  "acceptance": false,
+  "redCommits": [
+    "c00360a8",
+    "3ce112f4"
+  ],
+  "policyFileSha256": "209201f59b5ff5927f40c878f0b231765cbf6ff47b49777953bc05ad0abb4d7b",
+  "storedWidths": {
+    "edges": {
+      "stored": 3,
+      "logical": 4,
+      "nullViewColumns": 1
+    },
+    "functions": {
+      "stored": 21,
+      "logical": 53,
+      "nullViewColumns": 32
+    },
+    "ownership": {
+      "stored": 4,
+      "logical": 5,
+      "nullViewColumns": 1
+    },
+    "classes": {
+      "stored": 21,
+      "logical": 53,
+      "nullViewColumns": 32
+    },
+    "attributes": {
+      "stored": 23,
+      "logical": 55,
+      "nullViewColumns": 32
+    },
+    "calls": {
+      "stored": 25,
+      "logical": 57,
+      "nullViewColumns": 32
+    },
+    "returns": {
+      "stored": 24,
+      "logical": 56,
+      "nullViewColumns": 32
+    },
+    "assignments": {
+      "stored": 27,
+      "logical": 59,
+      "nullViewColumns": 32
+    },
+    "parameters": {
+      "stored": 4,
+      "logical": 8,
+      "nullViewColumns": 4
+    },
+    "conditional_classes": {
+      "stored": 23,
+      "logical": 55,
+      "nullViewColumns": 32
+    },
+    "conditional_methods": {
+      "stored": 25,
+      "logical": 57,
+      "nullViewColumns": 32
+    },
+    "conditional_functions": {
+      "stored": 23,
+      "logical": 55,
+      "nullViewColumns": 32
+    },
+    "contract_blocks": {
+      "stored": 21,
+      "logical": 53,
+      "nullViewColumns": 32
+    },
+    "callable_names": {
+      "stored": 20,
+      "logical": 52,
+      "nullViewColumns": 32
+    },
+    "integer_returns": {
+      "stored": 5,
+      "logical": 6,
+      "nullViewColumns": 1
+    },
+    "self_stores": {
+      "stored": 32,
+      "logical": 64,
+      "nullViewColumns": 32
+    }
+  },
+  "nativeImportRegression": {
+    "imports": 100,
+    "beforeUnusedIdentifiers": 400,
+    "afterUnusedIdentifiers": 0,
+    "retainedImportDeclarations": 100,
+    "retainedAliasedImports": 100,
+    "retainedDirectDottedNames": 100
+  },
+  "limits": "Existing 32-field deferred limit and all work allowances retained. A second full conditional measurement remains required."
+}

@@ -184,8 +184,16 @@ class SharedSqlTests(unittest.TestCase):
         db.executemany('INSERT INTO functions VALUES (?,?,?,?)', [('a.py','m1','run',11),('a.py','m2','run',12),('a.py','m3','run',21),('a.py','g1','g',30),('a.py','g2','g',40)])
         db.executemany('INSERT INTO ownership VALUES (?,?,?)', [('a.py','m1','c2'),('a.py','m2','c2'),('a.py','m3','d1'),('a.py','g1',None),('a.py','g2',None)])
         db.execute("INSERT INTO module_names VALUES ('a.py','pkg')")
+        for table in ['classes','functions']:
+            for col in ['__end','body_start','body_end','body_kind','parameters_start','parameters_end','parameters_kind']:
+                db.execute('ALTER TABLE '+table+' ADD COLUMN '+col)
         for name in ['conditional_classes','conditional_methods','conditional_functions']:
-            db.execute('CREATE TABLE ' + name + ' AS ' + stages[name])
+            stage=next(s for s in clause['relational']['stages'] if s['name']==name)
+            stored=name+'_stored' if stage.get('deferred') else name
+            db.execute('CREATE TABLE ' + stored + ' AS ' + stages[name])
+            if stage.get('deferred'):
+                columns=','.join(expr+' AS "'+col+'"' for col,expr in stage['deferred'].items())
+                db.execute('CREATE VIEW '+name+' AS SELECT *,'+columns+' FROM '+stored)
         self.assertEqual(db.execute('SELECT id,qualified_name FROM conditional_classes ORDER BY id').fetchall(), [('c2','pkg.C'),('d1','pkg.D')])
         self.assertEqual(db.execute('SELECT id,cls FROM conditional_methods ORDER BY id').fetchall(), [('m2','c2'),('m3','d1')])
         self.assertEqual(db.execute('SELECT id,qualified_name FROM conditional_functions').fetchall(), [('g2','pkg.g')])
