@@ -112,6 +112,61 @@ fn show(r: &Row) -> String {
     format!("({})", parts.join(", "))
 }
 
+/// The role of an arrangement operator from its name (`n<node>:<role>`).
+fn role(rest: &str) -> &'static str {
+    if rest.starts_with("by") {
+        "by"
+    } else if rest.ends_with("presence-in") {
+        "presence-in"
+    } else if rest.ends_with("presence-out") {
+        "presence-out"
+    } else if rest.starts_with("iter-join") {
+        "iter-join"
+    } else if rest.starts_with("iter-semi-l") {
+        "iter-semi-l"
+    } else if rest == "group-in" {
+        "group-in"
+    } else if rest == "group-out" {
+        "group-out"
+    } else {
+        "other"
+    }
+}
+
+/// Arranged records (differential's logging) attributed to the plan nodes whose lowering built
+/// them: in total, per role, per set of plans reading the node (a node shared by plans counts
+/// once, under the set), per (plan set, role), and per stage (the stage that first built the node).
+fn attribution(sizes: &crate::flow::Sizes, built: &lower::Built) -> serde_json::Value {
+    let mut by_role: BTreeMap<&str, isize> = BTreeMap::new();
+    let mut by_plans: BTreeMap<String, isize> = BTreeMap::new();
+    let mut by_plans_role: BTreeMap<String, isize> = BTreeMap::new();
+    let mut by_stage: BTreeMap<String, isize> = BTreeMap::new();
+    let mut total = 0isize;
+    let mut unattributed = 0isize;
+    for (op, n) in &sizes.records {
+        total += n;
+        let name = sizes.names.get(op).map(String::as_str).unwrap_or("");
+        let parsed = name.strip_prefix('n').and_then(|s| s.split_once(':')).and_then(|(id, rest)| Some((id.parse::<usize>().ok()?, rest)));
+        let group = built.op_groups.iter().find(|(lo, hi, _)| lo <= op && op < hi).map(|x| x.2);
+        let (Some((node, rest)), Some(gi)) = (parsed, group) else {
+            unattributed += n;
+            continue;
+        };
+        let (g, names) = &built.groups[gi];
+        let bits = built.node_plans[gi].get(node).copied().unwrap_or(0);
+        let plans: Vec<&str> = names.iter().enumerate().filter(|(i, _)| bits & (1 << i) != 0).map(|(_, s)| s.as_str()).collect();
+        let plans = if plans.is_empty() { "(none)".to_string() } else { plans.join("+") };
+        let r = role(rest);
+        *by_role.entry(r).or_default() += n;
+        *by_plans_role.entry(format!("{plans} | {r}")).or_default() += n;
+        *by_stage.entry(format!("{plans} | {}", g.labels.get(node).map(String::as_str).unwrap_or("?"))).or_default() += n;
+        *by_plans.entry(plans).or_default() += n;
+    }
+    let mut stages: Vec<(String, isize)> = by_stage.into_iter().filter(|x| x.1 != 0).collect();
+    stages.sort_by_key(|x| -x.1);
+    json!({"total": total, "unattributed": unattributed, "by_role": by_role, "by_plans": by_plans, "by_plans_role": by_plans_role, "by_stage": stages})
+}
+
 /// Exported rows per (export, path, content), computed (vectors) or read (real plans) when a tag
 /// first holds the (path, content), evicted when none does.
 struct Facts {
@@ -231,6 +286,8 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let world = Rc::new(RefCell::new(World::new(st)));
         // One string table: the store's interner holds every text value of the dataflow.
         val::install(world.clone());
+        // Symbols of the store (memberships, paths): never reclaimed by the sweeps.
+        let pinned = val::syms_len();
         // Plans: IR repository plans, normalised by the generator.
         let mut graphs = Vec::new();
         let mut refusals_static = Vec::new();
@@ -292,13 +349,83 @@ pub fn run(run_dir: &Path, opts: Opts) {
         model.install();
         let model_s = t_model.elapsed().as_secs_f64();
         eprintln!("model: {} clusters, cost {} (flat {}), {:.2}s", model.clusters.len(), model.cost, model.flat_cost, model_s);
+        // `FACTS_LOAD_AFTER=1`: the memberships at the end of the events (worktrees they create
+        // attached to the model as the replay attaches them), loaded from scratch, no replay: the
+        // replayed state's arranged records less this load's are merge slack and history the
+        // traces did not compact, not divergence.
+        let load_after = std::env::var("FACTS_LOAD_AFTER").is_ok_and(|v| v != "0");
+        if load_after {
+            for ev in &events {
+                let w = ev.worktree;
+                if ev.group == "new_worktree" || ev.group == "commit_init" {
+                    let weight = |p: Sym, c: Cid| facts.borrow_mut().weight(p, c);
+                    model.attach(w, &script_base_map, &weight);
+                    members.insert(w, script_base_map.clone());
+                }
+                let mut wd = world.borrow_mut();
+                let m = members.get_mut(&w).unwrap();
+                for (path, old, new) in &ev.changes {
+                    let p = wd.path(path);
+                    let oldc = old.as_ref().map(|x| wd.store.load(&sd, &store::parse_hex(x)));
+                    let newc = new.as_ref().map(|x| wd.store.load(&sd, &store::parse_hex(x)));
+                    assert_eq!(m.get(&p).copied(), oldc, "event {} {path}: old content mismatch", ev.seq);
+                    m.remove(&p);
+                    if let Some(c) = newc {
+                        m.insert(p, c);
+                    }
+                }
+            }
+        }
+        let replay: &[Event] = if load_after { &[] } else { &events };
 
         let probe = timely::dataflow::operators::probe::Handle::new();
         let sizes = crate::flow::register_logging(worker);
         let t_dataflow = Instant::now();
+        // The interner's epoch sweep (real plans only: the vectors' derivations keep symbols in
+        // the world's caches): every arrangement of this dataflow registered for marking.
+        let sweeping = vector_names.is_empty() && std::env::var("FACTS_SWEEP").map_or(true, |v| v != "0");
+        lower::register_traces(sweeping);
         let mut built = lower::build(worker, graphs.clone(), src.clone(), &probe, opts.track);
+        lower::register_traces(false);
+        // Marks every symbol a holder keeps (store pins, paths, cached exported rows, outputs and
+        // refusals, constants, arrangements) and reclaims the rest.
+        let gc = |built: &lower::Built, at: &str| -> serde_json::Value {
+            if !sweeping {
+                return json!(null);
+            }
+            let t = Instant::now();
+            let pins: Vec<Sym> = world.borrow().paths.iter().flat_map(|(p, i)| [*p, i.module, i.package]).collect();
+            // The arrangements' rows (keys and values, as stored): count, values, and the heap
+            // bytes of the rows longer than `Row`'s inline 2 (8 B a value, 16 B allocation quanta).
+            let (mut rows_n, mut vals_n, mut heap) = (0u64, 0u64, 0u64);
+            let (freed, live, bytes, strings) = val::sweep(pinned, &pins, |f| {
+                for rows in facts.borrow().rows.values() {
+                    rows.iter().for_each(|r| f(r));
+                }
+                for (_, o) in built.outputs.iter().chain(&built.refusals) {
+                    o.borrow().keys().for_each(|(_, r)| f(r));
+                }
+                for (g, _) in &built.groups {
+                    for op in &g.nodes {
+                        if let norm::Op::Const(rows) = op {
+                            rows.iter().for_each(|r| f(r));
+                        }
+                    }
+                }
+                lower::walk_rows(&mut |r: &[val::Val]| {
+                    rows_n += 1;
+                    vals_n += r.len() as u64;
+                    if r.len() > 2 {
+                        heap += (r.len() as u64 * 8).div_ceil(16) * 16;
+                    }
+                    f(r)
+                });
+            });
+            json!({"at": at, "reclaimed": freed, "live": live, "bytes": bytes, "string_bytes": strings, "seconds": t.elapsed().as_secs_f64(), "arranged_rows": rows_n, "arranged_values": vals_n, "arranged_row_heap_bytes": heap})
+        };
+        let mut sweeps = Vec::new();
         let dataflow_s = t_dataflow.elapsed().as_secs_f64();
-        eprintln!("dataflow built: {:.2}s, {} plan nodes", dataflow_s, graphs.iter().map(|(_, g)| g.nodes.len()).sum::<usize>());
+        eprintln!("dataflow built: {:.2}s, {} plan nodes", dataflow_s, built.groups.iter().map(|(g, _)| g.nodes.len()).sum::<usize>());
         let mut resident = Resident::default();
         let mut epoch: T = 0;
         let prof_dir = run_dir.clone();
@@ -361,7 +488,12 @@ pub fn run(run_dir: &Path, opts: Opts) {
             per_level_ms.push(json!([w, t0.elapsed().as_secs_f64() * 1e3]));
         }
         let load_s = t_build.elapsed().as_secs_f64();
+        let interned_before_sweep = val::syms_footprint();
+        sweeps.push(gc(&built, "loaded"));
         let rss_loaded = rss();
+        let attr_loaded = attribution(&sizes.borrow(), &built);
+        let syms_loaded = val::syms_footprint();
+        let row_bytes_loaded = facts.borrow().bytes();
         eprintln!("loaded: {:.2}s, rss {:.1} MB, resident (path, content) {}", load_s, mb(rss_loaded.0), resident.held());
 
         // ---- checks: the dataflow's view of worktree w against a from-scratch evaluation.
@@ -423,7 +555,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
                     let r = real.as_ref().unwrap();
                     let (_, k, p, _) = &r.plans[i];
                     let exported = |id: u32| -> Result<Vec<Vec<rerail_facts::sql::value::V>>, String> {
-                        let e = (*k as u32 + 1) * real::STRIDE + id;
+                        let e = r.global(*k, id);
                         let mut rows = Vec::new();
                         for (_, ps, c) in &ordered {
                             rows.extend(facts.borrow_mut().compute(e, *ps, *c).iter().map(|x| val::row_to_v(x)));
@@ -510,11 +642,11 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut lat: BTreeMap<String, Vec<f64>> = BTreeMap::new();
         let mut per_event = Vec::new();
         let mut edits_done = 0usize;
-        let mut rss_samples = vec![json!({"at": "loaded", "rss_mb": mb(rss_loaded.0), "footprint_mb": mb(rss_loaded.1)})];
+        let mut rss_samples = vec![json!({"at": "loaded", "rss_mb": mb(rss_loaded.0), "footprint_mb": mb(rss_loaded.1), "arranged": attr_loaded["total"], "interned": syms_loaded.0, "interned_bytes": syms_loaded.1, "exported_row_bytes": row_bytes_loaded})];
         let mut fact_load_s = 0.0;
         let mut stopped = false;
         let mut events_done = 0usize;
-        for ev in &events {
+        for ev in replay {
             if stopped {
                 break;
             }
@@ -596,15 +728,18 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 }
             }
             if ev.group == "edit" && edits_done % 100 == 0 {
+                sweeps.push(gc(&built, &format!("edit {edits_done}")));
                 let r = rss();
                 let arranged: isize = sizes.borrow().records.values().sum();
                 rss_samples.push(json!({"at": format!("edit {edits_done}"), "rss_mb": mb(r.0), "footprint_mb": mb(r.1), "resident_pairs": resident.held(), "resident_contents": resident.contents(), "arranged": arranged}));
             }
         }
+        sweeps.push(gc(&built, "end"));
         let rss_end = rss();
         if let Some(d) = y2.as_mut() {
             d.flush();
         }
+        let attr_end = attribution(&sizes.borrow(), &built);
         rss_samples.push(json!({"at": "end", "rss_mb": mb(rss_end.0), "footprint_mb": mb(rss_end.1)}));
         let mut lat_summary = serde_json::Map::new();
         for (k, v) in &lat {
@@ -619,6 +754,27 @@ pub fn run(run_dir: &Path, opts: Opts) {
             .refusals
             .iter()
             .flat_map(|(plan, o)| members.keys().filter_map(move |w| lower::full(o, *w).ok().filter(|m| !m.is_empty()).map(|m| json!({"plan": plan, "worktree": w, "refusals": m.keys().map(|r| show(r)).collect::<Vec<_>>()}))))
+            .collect();
+        // Every output's rows per worktree at the end, as (rows, blake3 of the sorted rendered
+        // rows): text by value, so two runs compare whatever their symbol ids (R37's run-level
+        // differential: sharing on vs `FACTS_SHARE=0`).
+        let findings_digest: BTreeMap<String, Vec<serde_json::Value>> = built
+            .outputs
+            .iter()
+            .map(|(n, o)| {
+                let per: Vec<serde_json::Value> = members
+                    .keys()
+                    .map(|w| match lower::full(o, *w) {
+                        Ok(m) => {
+                            let mut rows: Vec<String> = m.iter().map(|(r, c)| format!("{} x{c}", show(r))).collect();
+                            rows.sort();
+                            json!([w, rows.len(), blake3::hash(rows.join("\n").as_bytes()).to_hex()[..16].to_string()])
+                        }
+                        Err(e) => json!([w, -1, e]),
+                    })
+                    .collect();
+                (n.clone(), per)
+            })
             .collect();
         let (nsyms, sym_bytes) = val::syms_footprint();
         // Per-worktree state (with --track): live records per tag over every operator output.
@@ -660,25 +816,29 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let out = json!({
             "arrangements": arrangements,
             "construction": lower::construction(),
-            "plans": graphs.iter().map(|(n, g)| json!({"plan": n, "nodes": g.nodes.len()})).collect::<Vec<_>>(),
+            "attribution": {"loaded": attr_loaded, "end": attr_end},
+            "plans": graphs.iter().map(|(n, g)| json!({"plan": n, "nodes": g.nodes.len(), "graph_outputs": g.outputs.len()})).collect::<Vec<_>>(),
+            "sharing": real.as_ref().map(|r| r.sharing.clone()),
             "refused_static": refusals_static,
             "runtime_refusals": runtime_refusals,
             "runtime_refusals_live": runtime_refusals_live,
             "runtime_refusals_seen": live_seen,
             "expected_refusals": expected_refusals.iter().map(|(p, (e, r))| (p.clone(), json!({"expected": e, "refused": r}))).collect::<BTreeMap<_, _>>(),
             "missing_expected_refusals": missing_expected_refusals,
-            "events": events.len(),
+            "events": replay.len(),
+            "loaded_after_events": if load_after { events.len() } else { 0 },
             "model": {"clusters": model.clusters.iter().map(|(t, (ws, m))| json!({"tag": t, "worktrees": ws, "paths": m.len()})).collect::<Vec<_>>(), "cost": model.cost, "flat_cost": model.flat_cost, "seconds": model_s, "base_paths": model.base.len()},
             "load": {"store_seconds": load_store_s, "dataflow_build_seconds": dataflow_s, "levels_and_deltas_seconds": load_s, "rss_store_mb": mb(rss_store.0), "rss_loaded_mb": mb(rss_loaded.0), "per_level_ms": per_level_ms},
             "divergence_initial": divergence,
             "latency": lat_summary,
             "fact_load_seconds_total": fact_load_s,
             "rss": rss_samples,
-            "resident": {"pairs": resident.held(), "contents": resident.contents(), "exported_row_bytes": facts.borrow().bytes(), "interned": nsyms, "interned_bytes": sym_bytes},
+            "resident": {"pairs": resident.held(), "contents": resident.contents(), "exported_row_bytes": facts.borrow().bytes(), "interned": nsyms, "interned_bytes": sym_bytes, "interned_at_load_before_sweep": interned_before_sweep, "sweeps": sweeps},
             "exactness": {"checks": checks, "worktree_checks": worktree_checks, "differences": differences.len(), "first_differences": differences.iter().take(20).collect::<Vec<_>>(), "oracle_seconds": oracle_s, "stopped_early": stopped, "scratch": if opts.reference_scratch { "reference" } else { "engine" }, "scratch_dataflows": scratch_runs, "scratch_seconds": scratch_s, "check_every": opts.check_every, "sweep": opts.sweep},
             "initial_findings_per_worktree": initial,
             "state": state,
             "parity_rows": parity_rows,
+            "findings_digest": findings_digest,
         });
         std::fs::write(run_dir.join("results.json"), serde_json::to_string_pretty(&out).unwrap()).unwrap();
         std::fs::write(run_dir.join("events.json"), serde_json::to_string(&per_event).unwrap()).unwrap();

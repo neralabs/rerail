@@ -31,8 +31,8 @@ Checks (clean build, `FACTS_MUTANT` unset), in nine concurrent lanes:
      classifier-leak  cargo test -p rerail-facts leak: a per-file plan reading cross-file state is refused.
      planner-audit    cargo test -p rerail-facts phys::tests::audit: an inner scan is refused.
      facts-a-unit     cargo test -p facts-a --bin facts-a: the leaf executor's and spike SQL engine's unit tests.
-     facts-b-unit     cargo test -p facts-b --bin facts-b norm::tests: the delta generator's rewrite tests (R15, R20-R32: reference
-                      before vs after; the generated dataflow vs the reference) and its ordered aggregates (mutant 42).
+     facts-b-unit     cargo test -p facts-b --bin facts-b tests:: (norm::tests, hybrid::tests): the delta generator's rewrite tests (R15, R20-R32: reference
+                      before vs after; the generated dataflow vs the reference), its ordered aggregates (mutant 42) and M2's D1 (mutant 60).
      explain-stable   facts-a explain over the pack: byte-identical across two runs and per-rule processes.
      harness-replay   Jeremy's replay.ts --engine facts: same acceptance as a-replay.
   v  views-derived    S4's facts-a derived-check --shard 0/8 (VIEWS_SHARD): schema views equal the policies'
@@ -164,6 +164,8 @@ MUTANTS = [
     (42, "ordered-aggregate-order", "facts-b", "gen: ordered aggregates (lower.rs agg_logic)", "group_concat/json_group_array fold a group's rows in representation order, not the Sort's",
      ["facts-b-unit"]),
     (46, "left-join-key-antijoin", "facts-b", "gen: LEFT JOIN on equalities (norm.rs join)", "unmatched left rows found by a semijoin instead of the antijoin on the join's keys",
+     ["facts-b-unit"]),
+    (56, "interner-sweep-arrangements", "facts-b", "gen: the interner's epoch sweep (lower.rs walk_rows)", "the sweep does not mark the arrangements' rows, so a symbol only an arrangement holds is reclaimed and its id reused",
      ["facts-b-unit"]),
 ]
 REWRITES = ROOT / "docs/facts/REWRITES.md"
@@ -625,7 +627,7 @@ CARGO_CHECKS = {
     "classifier-leak": ("rerail-facts", ["leak"], "leak tests"),
     "planner-audit": ("rerail-facts", ["phys::tests::audit"], "plan audit tests"),
     "facts-a-unit": ("facts-a", ["--bin", "facts-a"], "facts-a unit tests (leaf executor, spike SQL engine)"),
-    "facts-b-unit": ("facts-b", ["--bin", "facts-b", "norm::tests"], "facts-b generator rewrite tests"),
+    "facts-b-unit": ("facts-b", ["--bin", "facts-b", "tests::"], "facts-b generator rewrite tests and M2's D1 tests"),
 }
 
 
