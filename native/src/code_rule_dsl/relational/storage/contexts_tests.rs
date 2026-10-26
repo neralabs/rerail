@@ -1,6 +1,47 @@
 use super::*;
 
 #[test]
+fn imported_index_statistics_follow_publication_removal_and_same_size_replacement() -> Result<()> {
+    let db = Connection::open_in_memory()?;
+    let mut s = Storage::default();
+    let slot = "__context_input_statistics";
+    s.bind_scope(&db, 1, BTreeMap::from([(slot.into(), 1)]))?;
+    s.declare_input(
+        &db,
+        slot,
+        format!("CREATE TABLE {slot}(__path TEXT,__start INTEGER,__end INTEGER)"),
+    )?;
+    let (table, _) = s.write_target(slot);
+    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100) INSERT INTO {table} SELECT 1,'same.py',x,x+1 FROM n"))?;
+    s.populated(slot, 100);
+    s.statistics_boundary(&db)?;
+    let stat = || {
+        db.query_row(
+            "SELECT stat FROM temp.sqlite_stat1 WHERE idx=?1",
+            [format!("__binding_{slot}")],
+            |r| r.get::<_, String>(0),
+        )
+    };
+    let first = stat()?;
+    s.clear_owner(&db, 1)?;
+    s.statistics_boundary(&db)?;
+    assert!(
+        matches!(stat(), Err(rusqlite::Error::QueryReturnedNoRows)),
+        "empty input retained populated statistics"
+    );
+    s.bind_scope(&db, 2, BTreeMap::from([(slot.into(), 2)]))?;
+    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100) INSERT INTO {table} SELECT 2,printf('f%d.py',x),x,x+1 FROM n"))?;
+    s.populated(slot, 100);
+    s.statistics_boundary(&db)?;
+    assert_ne!(
+        first,
+        stat()?,
+        "equal input sizes hid changed file distribution"
+    );
+    Ok(())
+}
+
+#[test]
 fn imported_span_lookup_does_not_scan_every_row_in_the_scope() -> Result<()> {
     let db = Connection::open_in_memory()?;
     let mut s = Storage::default();
