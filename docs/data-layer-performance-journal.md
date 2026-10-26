@@ -5420,3 +5420,13 @@ Its recorded peaks are 859,832,320 bytes before the fix and 787,988,480 bytes af
 These are bounded, census-enabled diagnostics, not full-repository acceptance.
 The complete native payload retirement artifact receives new complete 50- and 60-rule measurements next.
 The cold computation and report order stay unchanged; close CPU/RSS are additional sidecar observations.
+
+
+Frame-retirement source is `c2f1f2e29cdc048b6d6d865d8b8df6dea18dc0fc`.
+Frozen addon SHA-256 is `fcbd28d41d16b4c9dade8b25c071d3bfd591f44c0cfb4f4ae52337657abac28e`.
+The larger source batches and five-file quality domain pass without finding differences or engine errors.
+The fixed guard remains 357 host and 69 internal SQLite executions, with complete parity.
+A new complete 50/60-rule measurement starts sequentially on the frozen artifact, without overlapping builds or tests.
+The native close stays in its original position; only its additional CPU/RSS sidecar and the controller's primary RSS source change.
+Comparison uses the previously recorded authoritative OS resources, not the old driver's earlier RSS sample.
+The 125.804-second first-50 recovery target and source ownership frontier remain outside this schema-lifecycle delivery.
