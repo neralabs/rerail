@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { PACKAGE_ROOT } from "../../src/engine/index.js";
@@ -43,43 +43,7 @@ export async function checkoutPinned(repository: string, commit: string, directo
   return directory;
 }
 
-/** One corpus a rerail pack pins in its conformance manifest: a repository at a commit, the paths of it to read. */
-export interface RerailCorpus {
-  name: string;
-  repository: string;
-  commit: string;
-  paths: string[];
-  exclude: string[];
-}
-
-/** The conformance manifests of a pack that pin corpora: the pack's own, and its candidates'. */
+/** The conformance manifests of a pack: the pack's own, and its candidates'. */
 export function conformancePaths(pack: string): string[] {
   return [`packs/${pack}/conformance.json`, `packs/${pack}/candidates/conformance.json`];
-}
-
-/**
- * Every corpus a pack pins, by name: the `corpora` of its conformance manifests under `root`. A name pinned twice must
- * name the same repository, commit and paths.
- */
-export async function readRerailCorpora(root: string, pack: string): Promise<RerailCorpus[]> {
-  const byName = new Map<string, RerailCorpus>();
-  for (const path of conformancePaths(pack)) {
-    const text = await readFile(join(root, path), "utf8").catch(() => null);
-    if (text === null) continue;
-    const corpora = (JSON.parse(text) as { corpora?: unknown }).corpora;
-    if (!Array.isArray(corpora)) continue;
-    for (const entry of corpora as Partial<RerailCorpus>[]) {
-      const valid = typeof entry.name === "string" && /^[a-z0-9][a-z0-9._-]*$/u.test(entry.name)
-        && typeof entry.repository === "string" && /^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/u.test(entry.repository)
-        && typeof entry.commit === "string" && /^[0-9a-f]{40}$/u.test(entry.commit)
-        && Array.isArray(entry.paths) && entry.paths.length > 0 && entry.paths.every((item) => typeof item === "string" && item !== "" && !item.split("/").includes(".."))
-        && (entry.exclude === undefined || (Array.isArray(entry.exclude) && entry.exclude.every((item) => typeof item === "string")));
-      if (!valid) throw new Error(`${path} pins a corpus the gates cannot read: ${JSON.stringify(entry)}`);
-      const corpus: RerailCorpus = { name: entry.name!, repository: entry.repository!, commit: entry.commit!, paths: [...entry.paths!].sort(), exclude: [...(entry.exclude ?? [])].sort() };
-      const pinned = byName.get(corpus.name);
-      if (pinned !== undefined && JSON.stringify(pinned) !== JSON.stringify(corpus)) throw new Error(`pack ${pack} pins two different corpora named ${corpus.name}`);
-      byName.set(corpus.name, corpus);
-    }
-  }
-  return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
