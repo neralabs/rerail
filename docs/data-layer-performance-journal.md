@@ -4403,3 +4403,11 @@ SQL totals include census overhead: repeated dbstat queries consume 1.421 CPU se
 One candidate-family fill consumes 22,244,658 VM steps; the largest result packet consumes 38,253,186.
 Its source-confirmation transport reads 8.8 MB in the earlier comparable diagnostic.
 Source-buffer copying is therefore not established as the main CPU cause; no new source cache is added.
+
+### Indexed family boundary ladder
+
+A closed 2,000-row regression preserves findings but observes zero authored indexes for a repeatedly read stage.
+Fusion puts that stage inside a materialized CTE and discards its declared lookup index.
+The correction retains one indexed owner when validated consumers read the producer more than once.
+Single-use and unused stages remain eligible for fusion.
+The read graph and existing conservative occurrence counter select this boundary; no runtime configuration chooses it.
