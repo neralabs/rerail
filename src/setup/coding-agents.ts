@@ -25,9 +25,13 @@ export const CODING_AGENT_NAMES: Readonly<Record<Harness, string>> = {
 
 export type { CodingAgentState };
 
-/** Coding agent config lives under the user's home (`~/.cursor`, `~/.claude`, …), not under the Rerail home. */
+/**
+ * Coding agent config lives under the user's home (`~/.cursor`, `~/.claude`, …), not under the Rerail home: the home
+ * the coding agents read, which is `HOME` on macOS and Linux and the profile folder (`USERPROFILE`) on Windows, where
+ * Git Bash's own `HOME` may name another folder.
+ */
 export function codingAgentHome(): string {
-  return process.env.HOME ?? homedir();
+  return homedir();
 }
 
 /** Registrations point at `<rerail home>/current` once set-up has run; before that, at the running package. */

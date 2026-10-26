@@ -13,7 +13,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { delimiter, join, resolve, win32 } from "node:path";
 import { shellQuote } from "../harness/setup-screens.js";
@@ -107,7 +107,10 @@ export async function addLauncherToPath(options: LauncherPathOptions): Promise<L
       const text = addBlock(existing?.text ?? "", file.block(options.binDir));
       if (text === (existing?.text ?? "")) continue;
       changed.push(file.path);
-      if (options.dryRun !== true) await writeTextFile(file.path, text, existing ?? { exists: false, mode: 0o644 });
+      if (options.dryRun !== true) {
+        if (existing !== undefined) await backUp(file.path);
+        await writeTextFile(file.path, text, existing ?? { exists: false, mode: 0o644 }, false);
+      }
     }
     return changed.length === 0 ? { status: "unchanged", locations: files.map(file => file.path) } : { status: "changed", locations: changed };
   } catch (error) {
@@ -130,9 +133,11 @@ export async function removeLauncherFromPath(options: LauncherPathOptions): Prom
       if (options.dryRun === true) continue;
       // Only a line that is still blank goes with the block, so the lines around it stay as they are.
       const text = existing.text.replace(BLOCK_AND_GAP, "");
+      const backup = await backupPath(path);
       // The fish file is Rerail's own; a shared startup file stays, however little is left in it.
       if (path.endsWith("rerail.fish") && text.trim() === "") await rm(path, { force: true });
-      else await writeTextFile(path, text, existing);
+      else await writeTextFile(path, text, existing, false);
+      await rm(backup, { force: true });
     }
     return changed.length === 0 ? { status: "unchanged", locations: [] } : { status: "changed", locations: changed };
   } catch (error) {
@@ -146,6 +151,21 @@ function addBlock(text: string, block: string): string {
   if (BLOCK.test(text)) return text.replace(BLOCK, () => `${block}\n`);
   if (text === "") return `${block}\n`;
   return `${text}${text.endsWith("\n") ? "" : "\n"}\n${block}\n`;
+}
+
+/**
+ * A startup file's one backup, `<file>.rerail.bak` beside the file a symlink leads to: the file as it was before
+ * Rerail last changed it. Each change replaces it, so backups never pile up in the home folder, and taking the block
+ * out deletes it, since the file is then as the person left it.
+ */
+async function backupPath(path: string): Promise<string> {
+  return `${await realpath(path)}.rerail.bak`;
+}
+
+async function backUp(path: string): Promise<void> {
+  const backup = await backupPath(path);
+  await copyFile(path, backup);
+  await chmod(backup, 0o600);
 }
 
 interface StartupFile {

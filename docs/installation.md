@@ -140,7 +140,9 @@ person says yes.
    `BROWSER=none`, the session is over SSH, or Linux has no display.
 
 Every set-up run also puts `~/.rerail/bin` (the Windows launcher is
-`rerail.cmd`) on `PATH`, so `rerail` runs from a new terminal. So does every
+`rerail.cmd`, with an sh launcher `rerail` beside it for Git Bash, which runs
+neither `.cmd` nor `.bat` files by bare name) on `PATH`, so `rerail` runs
+from a new terminal. So does every
 `rerail update`, through the `rerail install --refresh` it ends with, for an
 install whose set-up predates this step (0.1.0-next.2 or earlier): it gets the
 entry on its next update, once. Set-up records that it handled `PATH` in
@@ -157,8 +159,18 @@ once. On Windows it appends the directory to the user `Path`
 (`HKCU\Environment`), keeping that value's registry kind. Set-up says what it
 changed, and changes nothing when the running `PATH` has the directory
 already, when the entry is in place, or with `RERAIL_MODIFY_PATH=0`; a block
-written for another Rerail home is replaced. A file it changes gets the same
-`<file>.<timestamp>.bak` as coding agent config.
+written for another Rerail home is replaced. A startup file it changes keeps
+one backup beside it, `<file>.rerail.bak`: the file as it was before Rerail
+last changed it. Each change replaces that backup, and `rerail install
+--remove` deletes it once it has taken the block out.
+
+The block is in the file an interactive shell reads, so a shell that is not
+interactive misses it: `zsh -c`, `ssh host rerail …` to a zsh account, and a
+script. There, call `~/.rerail/bin/rerail` by its full path, or add the
+directory to `PATH` yourself in a file every such shell reads (`~/.zshenv`
+for zsh). Rerail does not write `~/.zshenv`: every zsh reads it, scripts
+included, and on macOS `/etc/zprofile` reorders `PATH` after it. Coding agents
+run Rerail by its full path, so they need neither.
 
 "Skip for now" (no repository) connects the coding agents found and starts
 Rerail nowhere. Set-up run again in a repository that is set up never asks

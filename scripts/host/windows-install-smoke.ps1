@@ -14,14 +14,16 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "windows-host.ps1")
 $Tarball = (Resolve-Path $Tarball).Path
 $base = Join-Path ([IO.Path]::GetTempPath()) ("rerail-windows-smoke-" + [guid]::NewGuid())
-$sandbox = Join-Path $base "home"
+# A profile folder named as people are, with a space and accents: cmd.exe reads the batch launcher in the console's
+# code page, so a path written out in UTF-8 would come back garbled.
+$sandbox = Join-Path $base ("Jos" + [char]0x00E9 + " Garc" + [char]0x00ED + "a")
 $project = Join-Path $sandbox "proj"
 $rerailHome = Join-Path $sandbox ".rerail"
 $launcher = Join-Path $rerailHome "bin\rerail.cmd"
 
 function Step($message) { Write-Host "==> $message" }
 
-New-Item -ItemType Directory -Force $project, "$sandbox\.claude", "$sandbox\.codex", "$sandbox\.cursor", "$base\npm-cache" | Out-Null
+New-Item -ItemType Directory -Force $project, "$sandbox\.claude", "$sandbox\.codex", "$sandbox\.cursor", "$base\npm-cache", "$base\git-bash-home" | Out-Null
 $registry = $null
 try {
   Step "Starting a local registry for the @neralabs scope"
@@ -31,8 +33,9 @@ try {
   # os.homedir() reads USERPROFILE on Windows; the rest pins npm and Rerail state, including the one Rerail
   # database under RERAIL_HOME, inside the sandbox. The user config maps only the @neralabs scope to the
   # local registry, so Rerail's own npm calls (install, update check) resolve it the same way. BROWSER=none keeps
-  # the dashboard link from opening a browser on the runner.
-  $env:USERPROFILE = $sandbox; $env:HOME = $sandbox; $env:RERAIL_HOME = $rerailHome
+  # the dashboard link from opening a browser on the runner. HOME names another folder, as Git Bash's may: coding
+  # agents read the profile folder, so set-up must connect them there.
+  $env:USERPROFILE = $sandbox; $env:HOME = "$base\git-bash-home"; $env:RERAIL_HOME = $rerailHome
   $env:NPM_CONFIG_USERCONFIG = "$sandbox\.npmrc"; $env:NPM_CONFIG_CACHE = "$base\npm-cache"
   $env:RERAIL_STORAGE_ROOT = "$project\.rerail\sessions"
   $env:BROWSER = "none"
@@ -46,6 +49,17 @@ try {
   Write-Host $status
   if ($status -notmatch [regex]::Escape("running at http://127.0.0.1:$daemonPort")) { throw "rerail status does not show the setup-started daemon" }
   if ($status -notmatch "Engine: ok") { throw "the daemon has no working native engine" }
+
+  Step "Running rerail from Git Bash"
+  # Git Bash runs a command without an extension or with `.exe`, never `rerail.cmd`; a new terminal gets the user Path
+  # set-up wrote, which this one predates.
+  $windowsPath = $env:PATH
+  $env:PATH = "$rerailHome\bin;$windowsPath"
+  $gitBash = (& (Join-Path $env:ProgramFiles "Git\bin\bash.exe") -c 'command -v rerail && rerail version') -join "`n"
+  $gitBashExit = $LASTEXITCODE
+  $env:PATH = $windowsPath
+  Write-Host $gitBash
+  if ($gitBashExit -ne 0) { throw "bare rerail did not run in Git Bash (exit $gitBashExit)" }
 
   Step "Starting Rerail in the project"
   # Set-up's "start" answer turned Rerail on in the project; starting again says it is already on.
