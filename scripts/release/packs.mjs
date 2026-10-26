@@ -91,6 +91,16 @@ export function readChangesets(directory = join(ROOT, ".changeset")) {
     .map((file) => ({ file, text: readFileSync(join(directory, file), "utf8") }));
 }
 
+/** Each package a changeset's front matter names, with its bump: `{ name, bump }`. */
+export function changesetEntries(text) {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";
+  return front
+    .split(/\r?\n/u)
+    .map((line) => /^\s*["']?([^"':]+)["']?\s*:\s*(patch|minor|major)\s*$/u.exec(line))
+    .filter((entry) => entry !== null)
+    .map(([, name, bump]) => ({ name, bump }));
+}
+
 /**
  * What the pending `changesets` bump past a patch on a pack below 1.0.0. A pack is pre-release until 1.0.0, so every
  * change to it is a patch (docs/pack-format.md, "Versioning and release"); `changeset version` would otherwise take
@@ -100,15 +110,34 @@ export function changesetBumpFailures(changesets, packs) {
   const versions = new Map(packs.map((pack) => [pack.name, pack.version]));
   const failures = [];
   for (const { file, text } of changesets) {
-    const front = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";
-    for (const line of front.split(/\r?\n/u)) {
-      const entry = /^\s*["']?([^"':]+)["']?\s*:\s*(patch|minor|major)\s*$/u.exec(line);
-      if (entry === null) continue;
-      const [, name, bump] = entry;
+    for (const { name, bump } of changesetEntries(text)) {
       const version = versions.get(name);
       if (version === undefined || bump === "patch" || !version.startsWith("0.")) continue;
       failures.push(`${file}: ${name} is ${version}, below 1.0.0, so its bump is patch, not ${bump}`);
     }
+  }
+  return failures;
+}
+
+/**
+ * Each pack a pull request changes what it publishes of, with no changeset of that pull request naming it. A pack
+ * publishes its `package.json` and what its `files` list (a file, or everything under a directory); its recordings,
+ * candidates and `CHANGELOG.md` are not published, and changing them needs no changeset. `changed` lists the pull
+ * request's changed paths (old and new paths of a rename both), `changesets` the changesets it adds or edits, and
+ * `packs` each pack's `{ id, name, files }`.
+ */
+export function missingChangesets(changed, changesets, packs) {
+  const named = new Set(changesets.flatMap(({ text }) => changesetEntries(text).map((entry) => entry.name)));
+  const failures = [];
+  for (const { id, name, files } of packs) {
+    const prefix = `packs/${id}/`;
+    const published = changed
+      .filter((path) => path.startsWith(prefix))
+      .map((path) => path.slice(prefix.length))
+      .filter((path) => path === "package.json" || files.some((entry) => path === entry || path.startsWith(`${entry}/`)));
+    if (published.length === 0 || named.has(name)) continue;
+    const shown = published.slice(0, 3).map((path) => `${prefix}${path}`).join(", ");
+    failures.push(`${name}: ${shown}${published.length > 3 ? ` and ${published.length - 3} more` : ""} changed, and no changeset names it`);
   }
   return failures;
 }

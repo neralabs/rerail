@@ -217,6 +217,7 @@ declare module "*/ui/repo-rules.js" {
   export interface RuleCounts { total: number; on: number }
   export function ruleCountsOf(entries: ReadonlyArray<object>): RuleCounts;
   export function repoTag(counts: RuleCounts | null): string | null;
+  export function repoLine(repo: { setUp: boolean; started: boolean; checkoutCount: number }, counts: RuleCounts | null): string;
   export function repoRuleCounts(key: string): RuleCounts | null;
   export function loadRepoRuleCounts(keys: readonly string[]): Promise<boolean>;
 }

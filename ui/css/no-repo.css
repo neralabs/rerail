@@ -1,9 +1,12 @@
 /* The page that asks for a repository (views/no-repo.js): a note, then every repository Rerail has seen. */
 
 .norepo > .welcome{margin:24px 0 24px}
-.repolist [role="option"]{display:grid;gap:2px;width:100%;text-align:left;padding:12px 16px;border-top:1px solid var(--border)}
+.repolist [role="option"]{display:grid;grid-template-columns:auto minmax(0,1fr) 20px;gap:2px 12px;align-items:center;width:100%;text-align:left;padding:12px 16px;border-top:1px solid var(--border)}
 .repolist [role="option"]:first-child{border-top:0}
 .repolist [role="option"]:hover{background:var(--subtle)}
-.repolist [role="option"] b{font-family:var(--font-mono);font-weight:600;font-size:13.5px}
-.repolist [role="option"] span{font-size:12.5px;color:var(--muted-foreground)}
-.repolist [role="option"] .ico{display:none}
+.repolist [role="option"] b{grid-column:2;font-family:var(--font-mono);font-weight:600;font-size:13.5px;color:var(--brand-foreground)}
+.repolist [role="option"] .rline{grid-column:2;font-size:12.5px;color:var(--muted-foreground)}
+.repolist [role="option"] .rcheck{display:none}
+/* The arrow a row opens with: the sidebar's icon box, quiet until the row is hovered. */
+.repolist [role="option"] .rgo{grid-column:3;grid-row:1 / span 2;display:inline-flex;width:20px;height:20px;padding:3px;color:var(--muted-foreground)}
+.repolist [role="option"]:hover .rgo{color:var(--brand-foreground)}

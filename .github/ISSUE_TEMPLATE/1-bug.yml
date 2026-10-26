@@ -1,0 +1,94 @@
+name: Bug report
+description: Rerail crashed, hung, or did something other than what its docs say.
+labels: [bug, needs-triage]
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A rule that flags fine code, misses bad code or steers badly? Use **Rule misfire** instead.
+        A vulnerability? Report it privately ([SECURITY.md](https://github.com/neralabs/rerail/blob/main/SECURITY.md)), never here.
+
+        We reply within 5 business days ([response times](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#response-times)). Leave out secrets and code you can't share.
+  - type: input
+    id: rerail-version
+    attributes:
+      label: Rerail version
+      description: The `Current:` line of `rerail update status`.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: feature-status
+    attributes:
+      label: Is it a documented feature?
+      description: Features in the README's [Internal testing](https://github.com/neralabs/rerail/blob/main/README.md#internal-testing) table (`rerail scan`, conversation rules, block mode and others) can change or go without notice.
+      options:
+        - Documented
+        - Internal testing
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Coding agent
+      options:
+        - Claude Code
+        - Codex
+        - Cursor
+        - OMP
+        - Pi
+        - None (the CLI or dashboard only)
+    validations:
+      required: true
+  - type: input
+    id: agent-version
+    attributes:
+      label: Coding agent version
+      placeholder: "2.1.0"
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS, Apple silicon
+        - macOS, Intel
+        - Linux x64
+        - Linux arm64
+        - Windows x64
+        - Windows arm64
+        - WSL
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what happened, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: The smallest steps or code that make it happen.
+      placeholder: |
+        1. npx @neralabs/rerail setup in a new repository
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The error, the steer text, or the relevant lines of `~/.rerail/daemon.log`.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send it
+      options:
+        - label: I searched open and closed issues, including ones labelled `known-issue`, and this isn't one of them.
+          required: true

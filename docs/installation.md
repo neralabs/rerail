@@ -123,9 +123,15 @@ person says yes.
    `BROWSER=none`, the session is over SSH, or Linux has no display.
 
 Every set-up run also puts `~/.rerail/bin` (the Windows launcher is
-`rerail.cmd`) on `PATH`, so `rerail` runs from a new terminal. On macOS and
+`rerail.cmd`) on `PATH`, so `rerail` runs from a new terminal. So does every
+`rerail update`, through the `rerail install --refresh` it ends with, for an
+install whose set-up predates this step (0.1.0-next.2 or earlier): it gets the
+entry on its next update, once. Set-up records that it handled `PATH` in
+`~/.rerail/launcher-path.json`, and from then on `PATH` is yours: a block you
+take out stays out of later updates, and only `rerail setup` run again adds
+it back. On macOS and
 Linux it appends a block between `# >>> rerail >>>` and `# <<< rerail <<<` to
-the startup file `$SHELL` reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
+the startup file `$SHELL` (else the account's login shell) reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
 `~/.bashrc` and the first of `~/.bash_profile`, `~/.bash_login`,
 `~/.profile` that exists (else `~/.profile`) for bash; its own
 `~/.config/fish/conf.d/rerail.fish` for fish; `~/.profile` otherwise. The block
@@ -319,6 +325,7 @@ rerail stop              # stop Rerail in this checkout; the daemon keeps servin
 rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
 rerail daemon stop       # stop the background daemon
 rerail status            # whether Rerail is started here, otherwise daemon/database/kernel
+rerail version           # the installed version
 rerail manage            # opens the dashboard's Overview (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
 rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
@@ -527,8 +534,8 @@ It also takes the `PATH` entry set-up added out of every shell startup file
 ## Developing from a checkout
 
 A source checkout builds and tests with Node.js 24+, npm, Rust, and
-[`just`](https://github.com/casey/just); see [Develop](../README.md#develop)
-in the README.
+[`just`](https://github.com/casey/just); see
+[Development setup](../CONTRIBUTING.md#development-setup) in the contributing guide.
 
 ```sh
 just rerail-dev --install-bridge

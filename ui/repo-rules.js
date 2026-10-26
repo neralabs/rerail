@@ -26,6 +26,23 @@ export function repoTag(counts) {
   return counts.total === 0 ? "No rules added" : `${fmt(counts.on)} ${plural(counts.on, "rule")} on`;
 }
 
+/** The words about a set-up repository's rules: its tag; "Off · 12 rules" while it is off with rules; On or Off until the counts are read. */
+function rulesWords(started, counts) {
+  if (counts === null) return [started ? "On" : "Off"];
+  if (counts.total > 0 && !started) return ["Off", `${fmt(counts.total)} ${plural(counts.total, "rule")}`];
+  return [repoTag(counts)];
+}
+
+/**
+ * The line under a repository's name in the repository choices: "Set up · 12 rules on · 2 checkouts", "Set up · Off ·
+ * 12 rules", "Set up · No rules added", "Not set up · nothing runs". One checkout goes unsaid.
+ */
+export function repoLine(repo, counts) {
+  const checkouts = repo.checkoutCount > 1 ? [`${fmt(repo.checkoutCount)} checkouts`] : [];
+  const state = repo.setUp ? ["Set up", ...rulesWords(repo.started, counts)] : ["Not set up", "nothing runs"];
+  return [...state, ...checkouts].join(" · ");
+}
+
 /** The counts last read for repository `key`, or `null` before they are. */
 export const repoRuleCounts = key => known.get(key)?.counts ?? null;
 

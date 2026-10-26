@@ -30,7 +30,7 @@ In addition to the team-wide blockers:
 ## High-risk areas
 
 - Migrations: `src/engine/storage/` (the Rerail database in users' repos, its schema and `migrations.ts`) and `native/src/content_store/schema.rs` (the content store's schema and version floor). Check that existing databases still open, nothing is lost, and an older binary still refuses a store it can't read.
-- CI and deployment: `.github/` (workflows, actions, Dependabot; always high-risk for the reviewer), `scripts/release/` and `.changeset/config.json`. Check that checks still gate and that a release publishes what it should, where it should.
+- CI and deployment: `.github/` (workflows, actions, Dependabot; always high-risk for the reviewer, except the issue forms and the pull request template, which are text people fill in), `scripts/release/` and `.changeset/config.json`. Check that checks still gate and that a release publishes what it should, where it should.
 - Packaging: the root `package.json` and `Cargo.toml`, `native/Cargo.toml`, `native/build.rs`, `scripts/build/`, `tsconfig.build.json`, `packs/*/package.json`, and the agent plugin manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`). Check what the packages contain, their versions and their entry points.
 - `src/setup/`: installs rerail into users' agents.
 - `LICENSES/` and `scripts/check/licence-allowlist.json`: licensing.
