@@ -123,3 +123,34 @@ it.skipIf(!required)("does not hydrate repository source for a complete empty ad
  expect(admitted.failures.some((f:{message:string})=>f.message.includes('maxSourceBytes'))).toBe(true);
  expect(admitted.violations).toEqual([]);
 });
+
+it.skipIf(!required)("streams pure wide projections into narrow window consumers without copying helper rows", () => {
+ const directory=mkdtempSync(join(tmpdir(),"rerail-projection-stream-"));
+ try {
+  const program=`
+   import {readFileSync} from 'node:fs';import {loadNativeBinding} from ${JSON.stringify(engine)};
+   const n=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(caps)}),'utf8');
+   const padding=Array.from({length:48},(_,i)=>'NULL AS unused_'+i).join(',');
+   const relational={inputs:{events:{evidence:{as:'e',query:{ast:{language:'python',rule:{kind:'identifier',pattern:'$NAME'}}},project:{name:'capture.NAME'}}}},stages:[
+    {name:'helper',query:'SELECT __path,__start,__end,name,'+padding+' FROM events'},
+    {name:'keys',query:'SELECT __path,__start,row_number() OVER(PARTITION BY __path ORDER BY __start)-1 AS ordinal FROM helper'}],
+    query:'SELECT h.__path path,h.__start start_byte,h.__end end_byte,h.name,k.ordinal FROM helper h CROSS JOIN keys k ON k.__path=h.__path AND k.__start=h.__start'};
+   const policy={format:'rerail.policy/v1',id:'pure-projection',revision:1,mode:'log',clauses:[{id:'rows',relational,violation:{code:'ROW',message:'Row',anchor:'witness.span'}}]};
+   const w=new n.CodeRuleDslWorkspace();w.addCodeRule(n.CodeRuleDslRuntime.compile(JSON.stringify(policy),'json',caps));
+   try {console.log(await w.applyAsync(JSON.stringify({revision:1,files:[{path:'a.py',language:'python',source:Array.from({length:2000},(_,i)=>'v'+i).join(String.fromCharCode(10))}],removed:[]})));}finally{w.close();}
+  `;
+  const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30_000,maxBuffer:8*1024*1024,env:{...process.env,RERAIL_SQL_PROFILE_DIR:directory,RERAIL_SQL_PROFILE_SCOPE:'relational'}});
+  expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
+  const result=JSON.parse(child.stdout.trim()).evaluation;
+  expect(result.failures).toEqual([]);expect(result.violations).toHaveLength(2000);
+  let found=false;
+  for(const file of readdirSync(directory).filter(f=>/^profile-.*\.json$/.test(f))){
+   const catalogue=JSON.parse(readFileSync(join(directory,file),'utf8'));
+   for(const query of catalogue.queries.filter((q:{sql:string})=>q.sql.includes('unused_47')&&q.sql.includes('SELECT h.__path'))){
+    found=true;
+    expect(query.plan.filter((row:unknown[])=>String(row[3]).includes('MATERIALIZE helper'))).toEqual([]);
+   }
+  }
+  expect(found).toBe(true);
+ }finally{rmSync(directory,{recursive:true,force:true});}
+},35_000);
