@@ -4822,3 +4822,10 @@ The quality and state groups are repeated after their final rule changes.
 A controller gates fresh sequential full 50/60 runs on the complete conditional-clause check.
 Those combined measurements disable tracing, census, replay copying, and external sampling.
 No own build, test, or profiling workload will overlap their timing intervals.
+
+
+The narrowed-import conditional check completes all 9,021 files with zero execution failures.
+Its output matches the clause's empty repository diagnostic oracle. The original positive corpus also remains green.
+The work allowances are unchanged. The [full validation receipt](../fixtures/host/data-layer-port/profiling/conditional-full-validation-20261026.json) records artifact identities and limits.
+This closes the reproduced conditional execution failure; it does not establish combined-rule performance acceptance.
+The frozen first-50 measurement starts next, followed by all 60. Neither run overlaps this agent's builds, tests, or profiling probes.

@@ -1,0 +1,19 @@
+{
+  "format": "rerail.conditional-full-validation/v1",
+  "acceptance": false,
+  "scope": "Conditional clause only; empty diagnostic oracle. Complete positive corpus is checked separately. Timing overlaps development and is not aggregate acceptance.",
+  "files": 9021,
+  "nativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+  "policyFileSha256": "209201f59b5ff5927f40c878f0b231765cbf6ff47b49777953bc05ad0abb4d7b",
+  "recordingSha256": "aa45202414b245741ac69ba55d2c855f8b639124336b8203f794fde13ab9ed52",
+  "failures": [],
+  "expected": 0,
+  "actual": 0,
+  "coldCpuMs": {
+    "userMs": 231108.997,
+    "systemMs": 193732.494
+  },
+  "coldMs": 483048.94166699995,
+  "compilationMs": 129.44083299999966,
+  "resourceText": "real 487.29\nuser 232.55\nsys 194.24\n          2941386752  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              283637  page reclaims\n                  96  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n             2646188  voluntary context switches\n              744020  involuntary context switches\n       3886933166831  instructions retired\n       1313333312823  cycles elapsed\n          2720830184  peak memory footprint\n"
+}
