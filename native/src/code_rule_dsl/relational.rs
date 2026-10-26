@@ -52,6 +52,10 @@ pub(super) struct References {
     pub(super) key: super::calls::contracts::Key,
 }
 
+/// Source bytes per syntax node, at most: Python averages 7.9 bytes a token over the data-layer
+/// corpus (9,021 files), and a tree has more nodes than tokens.
+const SOURCE_BYTES_PER_NODE: usize = 8;
+
 pub(super) const REFERENCE_FIELDS: &[&str] = &[
     "target_path",
     "target_start",
@@ -440,6 +444,9 @@ pub(super) struct Inputs {
     pub facts: syntax::Files,
     pub snapshot: Snapshot,
     pub file_local: bool,
+    /// Source bytes of the files the clause reads, where its snapshot does not carry them (a
+    /// repository clause that reads no source has an empty snapshot); 0 means the snapshot's.
+    pub read_bytes: usize,
 }
 struct Session<'a> {
     code_rule: &'a CompiledCodeRule,
@@ -556,8 +563,20 @@ impl<'a> Session<'a> {
             Some(spec) => syntax::prepare_trees(spec, &syntax_files)?,
             None => Vec::new(),
         };
+        // The stages' work grows with the code they read, not with how few rows a rule asks for:
+        // a rule that projects narrow candidate rows instead of copying the tree joins as much.
+        // So the allowance is per node of the scoped source (estimated at no fewer than one per
+        // `SOURCE_BYTES_PER_NODE` bytes) when that is more than per input row.
+        let read = snapshot
+            .files
+            .iter()
+            .filter(|f| code_rule.scope.matches(&f.path))
+            .map(|f| f.source.len())
+            .sum::<usize>()
+            .max(inputs.read_bytes)
+            / SOURCE_BYTES_PER_NODE;
         let spent = usize::MAX - work.load(Ordering::Relaxed);
-        let allowance = limits.visits_for(count);
+        let allowance = limits.visits_for(count.max(read));
         if spent > allowance {
             return Err(invalid("relational input row budget exceeded"));
         }
@@ -988,6 +1007,7 @@ pub(super) fn evaluate(
         inputs: Inputs {
             gate: None,
             file_local: false,
+            read_bytes: 0,
             rows: Some(rows),
             facts: Vec::new(),
             snapshot: snapshot.clone(),

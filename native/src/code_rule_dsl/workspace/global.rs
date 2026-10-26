@@ -149,6 +149,24 @@ pub(super) fn forget_evidence(state: &mut WorkspaceState, path: &str) {
     }
 }
 
+/// Source bytes of the resident files in `code_rule`'s scope. A file whose source was freed
+/// counts nothing, so the estimate errs low.
+fn scoped_source_bytes(state: &WorkspaceState, code_rule: &CompiledCodeRule) -> usize {
+    state
+        .files
+        .iter()
+        .filter(|(path, _)| code_rule.scope.matches(path))
+        .map(|(_, file)| file.input.source.len())
+        .chain(
+            state
+                .evicted_inputs
+                .iter()
+                .filter(|(path, _)| code_rule.scope.matches(path))
+                .map(|(_, input)| input.source.len()),
+        )
+        .sum()
+}
+
 /// A relation's rows: every partition of its producer in the relation's domain. A failed file, or
 /// one read around syntax errors, has unknown rows.
 fn relation_rows(state: &WorkspaceState, id: ClauseId, relation: &FactQuery) -> evidence::Rows {
@@ -647,6 +665,7 @@ pub(super) fn evaluate_batched_relations(
                         inputs: relational::Inputs {
                             gate: None,
                             file_local: false,
+                            read_bytes: 0,
                             rows: None,
                             facts: Vec::new(),
                             snapshot: Snapshot {
@@ -689,12 +708,15 @@ pub(super) fn evaluate_batched_relations(
                 } else {
                     files = snapshot.files.clone();
                 }
+                // A repository clause's work grows with the code in its scope, as a file's does.
+                let read_bytes = scoped_source_bytes(state, code_rule);
                 jobs.push(Job {
                     code_rule,
                     clause,
                     inputs: relational::Inputs {
                         gate: None,
                         file_local: false,
+                        read_bytes,
                         rows: None,
                         facts: Vec::new(),
                         snapshot: Snapshot {
@@ -702,7 +724,7 @@ pub(super) fn evaluate_batched_relations(
                             files,
                         },
                     },
-                    budget: Context::work(closed, super::CLAUSE_WORK_BUDGET),
+                    budget: Context::work(closed, super::file_work_budget(read_bytes)),
                 });
                 keys.push((index, clause.id.clone(), None));
             }

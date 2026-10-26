@@ -433,6 +433,7 @@ pub(super) fn evaluate_clauses(
                         inputs: super::relational::Inputs {
                             gate: None,
                             file_local: false,
+                            read_bytes: 0,
                             rows: None,
                             facts: Vec::new(),
                             snapshot: partition,

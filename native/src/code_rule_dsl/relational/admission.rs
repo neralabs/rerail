@@ -93,6 +93,7 @@ mod tests {
             rows: None,
             facts: vec![],
             file_local: false,
+            read_bytes: 0,
             snapshot: Snapshot {
                 revision: 1,
                 files: vec![
