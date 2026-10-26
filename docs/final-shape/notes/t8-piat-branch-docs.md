@@ -660,3 +660,240 @@ Causes (:271-354)
 4. **Changed file repeats pipeline (invalidation)**: "Unchanged replay is fast because the workspace retains final clause results. A changed source version invalidates those results, including for a trailing newline. The changed file then repeats input extraction, SQL materialization, and index creation for its clauses. This explains quality's 11.119-second edit despite an 8.272-millisecond unchanged replay." (:347-350). "Shared input and relation work should therefore precede a general incremental-SQL mechanism." Validate clean->positive, positive->clean, removal, option changes, companion-file edits (:352-353).
 - Profiler bug: Rayon can run a one-item iterator on the apply thread; `WorkerProfile` cleared enclosing profile; fixed (:358-360).
 
+---
+
+## data-layer-performance-journal.md (3701 lines) -- chronological digest
+
+The journal is written newest-first (:11 is 2026-10-24 latest; :3463 is the 2026-10-21 baseline; :3570 "Experiment ledger" is oldest-first, 2026-10-20 onward). Below is oldest-first. Workloads: "quality" = 5 files/1,026,452 B; "state" = 7 files/1,123,712 B (later "state, one file" = 108,562 B); "dispatch" = 1 file/136,810 B; "positive control" = two rules, twelve files, 61 findings; "ten rules" = ten sixth-batch rules (12 files/1,984,216 B in one place, 2 files/178,826 B in the "smaller ten-rule snapshot"); repository = 9,021 files/137,924,324 B (first-50) or 9,010 files/137,896,473 B (batch six). Later 2026-10-24 entries use a fixed "small state-tripwire guard" (two original observations through snapshot + workspace paths in one cold process) measured in **engine-submitted SQL statements** against a fixed 100-submission gate. Policy (D, :8-9, :3697-3701): one chosen execution path; experiments in isolated worktrees; no selectable execution paths.
+
+### 2026-10-20 (Experiment ledger :3572-3608)
+- Shared SQL + reachability (`d97e1239`): keep SQL as semantic engine; reuse shared facts before comparing backends; "The earlier specialized Rust evaluator did not provide a fair comparison against equivalently shared SQL preparation." Batched recursive SQL for general directed graphs; recursive UNION for cycle termination + dedup; "UNION ALL is valid only with a proved unique-path invariant. Scalar probes do not replace a broad batch interface." (:3574-3582)
+- Generic forest traversal and storage (`f52817fc`): native structural primitives only where graph contract explicit; IR-name propagation native is slower, rejected; budget model initially double-charged (:3590-3597).
+- Shared syntax preparation (`c4bd76bf`): "remove repeated preparation before adding more execution backends"; immutable syntax facts, direct parser identities, subtree boundaries (:3603-3606).
+
+### 2026-10-21 ledger entries (:3610-3684)
+- Broad producer passes (`eec751d0`): count/scan/scatter per dependency wave; resident packed input; pass count constant as roots/files/policies grow; "Batching alone does not establish a large CPU gain." (:3612-3618)
+- Complete SQL instrumentation (`e45dd638`): statement capture, CPU counters, plans, bytecode (:3624-3627). "VM instructions, sorts, and cursor visits supply explanations. They do not replace measured CPU."
+- Isolated SQL-shape experiments (`b6934ddf`; M, medians of 3, quality workload, process CPU ms) (:3637-3651):
+
+| Experiment | Cold | Edit | Decision |
+|---|---:|---:|---|
+| Baseline | 2,966 | 1,180 | Control |
+| Method identity index | 2,822 | 1,011 | Keep |
+| Forced owner-first joins | 2,842 | 1,048 | Reject forced order |
+| Index + forced joins | 2,799 | 985 | Keep index alone |
+| Return range index + bound | 2,943 | 1,120 | Keep |
+| Narrow projections | 2,815 | 1,098 | Keep |
+| UNION ALL root seeds | 3,027 | 1,197 | Reject |
+| Materialized root CTE | 3,131 | 1,296 | Reject |
+| Root unpivot | 3,080 | 1,247 | Reject |
+| Virtual publication | 2,412 | 989 | Keep |
+| SQL combination w/ UNION ALL roots | 2,548 | 835 | Control |
+| That + virtual publication | 1,996 | 718 | Control |
+| Accepted combination, original roots | 1,991 | 685 | Promote |
+
+  - Method index lets SQLite choose join order without forced CROSS JOIN; `self_stores` ~8.1M -> 77,000 VM instructions (:3653-3654). Narrow projections keep multiplicity, not physical column removal (:3656-3657). **Virtual publication** replaces output insertion + SQLite index construction with access to completed numeric arrays: diagnostic publication CPU 671 ms -> 19 ms, some extra cost in consumers (:3659-3661). "All root rewrites regress ... UNION ALL removes sorts and lowers VM counts ... Those counter reductions do not offset their other execution costs." (:3663-3666)
+- Promotion (`7da151b8`): method + return indexes, column narrowing, completed-output virtual table become normal; bounded 32-row insertion; stages always released after last consumer; three source domains separate; five execution switches removed (:3672-3678).
+
+### 2026-10-21 Current baseline, `7da151b8` (:3463-3568) (M; median of 5 fresh processes; process CPU ms)
+
+| Workload | Files / bytes | Compile | Cold | Unchanged | Edit |
+|---|---|---:|---:|---:|---:|
+| Quality | 5 / 1,026,452 | 88.2 | 1,940.1 | 1.96 | 710.1 |
+| State | 7 / 1,123,712 | 298.3 | 12,512.3 | 1.61 | 1,137.8 |
+| Dispatch | 1 / 136,810 | 46.8 | 982.7 | 1.43 | 972.5 |
+
+- Peaks 444 / 1,223 / 390 MiB (:3480). Build opt-level 1, deps 3, thin LTO, 256 CGU, Apple M5 Max 18 logical CPUs, Node 26.8.1, four workers (:3496-3499). Diagnostic span CPU: SQL materialization 1,096 / 5,495 / 675 ms; ordinary indexes 251 / 2,410 / 158; completed numeric publication 20 ms (quality) (:3518-3522). Quality targets `scoped_nodes` ~131 ms, `scope_owners` ~124 ms, root query ~113 ms (:3532-3534). "State is now the largest cold workload ... Those paths still reconstruct facts through the older evidence and SQL representation." (:3536-3539)
+- Note dispatch edit (972.5) ~ cold (982.7): edits re-run the whole file's work.
+
+### 2026-10-21 Full repository verification, `3285b48f` (:3358-3461) (M)
+
+| Workload | Cold CPU | Cold elapsed | Unchanged CPU | Edit CPU | Peak RSS | Result |
+|---|---:|---:|---:|---:|---:|---|
+| First 50 rules | 212.619 s | 233.738 s | 0.801 s | 40.182 s | 6.60 GiB | Pass, 24,820 findings |
+| Batch six historical | n/r | 951.004 s | n/r | n/r | 11.14 GiB | Pass, 173 |
+| Batch six current | 538.452 s | 645.958 s | 0.087 s | 11.344 s | 21.33 GiB | Fail: 890 engine failures |
+
+- Remembered "1,400 s" = 1,456.276 s for batch six's ten rules with 84 extra findings and 46 failures; no historical CPU recorded (:3391-3395). Source corpus: 3,210 native observations (1,631 positive, 1,579 clean) all pass (:3403).
+- Root causes (:3418-3428): 889 `producer capacity exceeded` in `quality-contracts-1`: producer packs ready relations into shared 64 MiB arena and rejects every pending relation when exceeded; driver creates all dirty jobs and SQL sessions before the producer wave; SQL session storage outside arena. One `repository input budget exceeded` in `quality-conditional-1`: `Session::new` checks combined source bytes against 32 MB limit before selecting syntax-gated files. Sample: 789/796 in SQLite stage construction (:3430-3431).
+
+### 2026-10-21 Batch six diagnosis, after `71ea1606` (:3156-3356) (M)
+
+| Combined 60-rule run | Cold CPU | Elapsed | Unchanged | Edit | Peak RSS | Result |
+|---|---:|---:|---:|---:|---:|---|
+| After capacity admission, before SQL fixes | 1,076.563 s | 1,054.093 s | 2.102 s | 53.083 s | 28.12 GiB | Fail |
+| Final | 1,114.637 s | 1,277.989 s | 2.109 s | 63.196 s | 18.30 GiB | Pass 24,993 findings |
+
+- Fix 1, capacity admission: driver now prepares consumers as capacity permits; counts shared packed columns once; SQLite storage via 64-bit status API at first producer suspension; finished consumers close before admission continues; one 100-pass allowance across partitions (:3190-3196). Target 256 MiB SQLite; producer 64 MiB input / 256 MiB numeric output (:3198-3203).
+- Fix 2, "A file gate cannot preserve selected AST rows": the conditional rule's authored AST input selects individual rows + ancestry, but native syntax lowering replaced it with a file gate + whole-file syntax; because the selection includes module declarations, every file qualifies -> entire repository's syntax and source demand -> 32 MB guard correctly rejects 137 MB (:3211-3216). Fix restricts native syntax lowering to file-partitioned contract clauses; global conditional clause uses projected AST inputs and ordinary SQLite stages; 20 typed input partitions share one AST selection utility (:3221-3223).
+- SQL shape changes (:3241-3289): general column-nulling pass increased VM 9,574,525 -> 10,680,292 (removed); ordinal window sorts narrow keys before joining projected values; declaration selection uses materialized key sets; together 8,723,163 VM (~9% fewer) without CPU gain (:3242-3249). Descendant normalization exhausted work at 784,639,688 VM because normalizer prepared graph keys for every selected file; authored plan now materializes roots once and limits edges to those file domains ("CST edges cannot cross files"); one covering forward edge index replaces two; unused outermost-function ownership index removed (:3251-3258). Graph-key compaction: key sort 67,410,860 VM, two key indexes 18,962,193, compaction 12,967,702 before interruption; fix: declare dense number as `INTEGER PRIMARY KEY`, SQLite assigns during dedup insertion, removing numbering window + redundant index; 5,008 keys normalization ~921,600 -> 699,000 VM (:3260-3273). Prepare union of requested subtrees through one frontier: graph catalog 824,441 -> 88,625 keys; key insertion 67,410,860 -> 4,596,429 VM; conditional-only diagnostic 199.837 s cold CPU, 7.24 GiB (traced, 2,048-file batches) (:3276-3288).
+- Quality-only run 140.094 s cold CPU, 2.79 GiB; first partition 439 files, 950,054 roots, three producer passes; 268,454,464 SQLite admission bytes across 450 suspended sessions (:3291-3296). Five-file quality probe 3.888 s cold / 1.068 s edit vs earlier 1.940 / 0.710: correctness cost of preserving selected global evidence (:3299-3301).
+- Profiling overhead: `record_workspace_residency` after every ingestion batch walks all retained witnesses (74/96 samples) (:3304-3308). Workspace prepares every dirty file-local job before SQL scheduler; eligibility witnesses are gates not complete inputs; consumer restores tapes, extracts full AST inputs via `relational_rows` and retains rows in queued jobs; 87/89 samples include `relational_rows`/`stateless_rows` (:3313-3323). "The next admission boundary must precede full projection, with queued descriptors holding document versions rather than complete input row vectors." (:3324)
+- Conditional forest walk ~56 ms CPU for 46,469 roots in 182 batches vs ~200 s diagnostic: "Faster graph traversal cannot remove the extraction and materialization costs around it." (:3353-3354)
+
+### 2026-10-21 CPU and memory attribution, after `4def200d` (:3012-3154) (M)
+- Python vs Rerail, ten sixth-batch rules, 12 files, 1,984,216 bytes, 61 findings: upstream Python shared fact engine (one worker) 4.320 s / 196.70 MiB; Rerail 37.237 s / 1.681 GiB; **8.62x CPU, 8.75x RSS** (:3027-3031). Native: 7.558 s ingestion + 29.675 s global prep + SQL (:3041).
+- Queue before admission: 80 jobs, 577,199 projected rows, 9,833,801 JSON fields, ~1,256,398,807-byte referenced heap estimate; RSS peak 1,805,041,664 (:3058-3062). Consumers: state flow 196,089 rows, legacy execution graphs 162,195, state signatures 118,589, remaining 100,326 (:3066-3069). Field names 103,706,252 bytes, string values 82,247,225 bytes (:3072). "The 256 MiB SQL admission target starts after this queue exists. It therefore cannot bound this preparation peak." 64 MiB document cache can't release syntax objects retained by queued jobs (:3077-3079).
+- Field navigation (64-file quality): 16,140,707 field lookups; 427,807,885 child examinations; 423,856,845 (99.08%) inside failed lookups; max scan 400 children; `TapeNode::child_by_field_id` searches sibling list per request; 43.0% and 63.7% of self samples in two windows (:3088-3095). "Python's fact engine shares one AST traversal across collectors and accesses AST fields directly." (:3098)
+- Profiling quadratic: residency accounting summed ~316 GB estimates across 288 revisions; 74/96 samples; old 1,114.637 s can't establish clean time; removed (64-file control 7.630 -> 7.245 s) (:3106-3117).
+- One state-signature descendant materialization 23,860,081 VM instructions (:3125).
+- Required order (D) (:3133-3137): 1) queue versioned descriptors before construction, admit capture + syntax leases in same memory boundary as SQL consumers; 2) shared capture columns per file version with row-selection views and union of demanded columns; 3) source text as bounded references; 4) index AST field access, reject impossible fields; 5) reduce demanded descendant roots + repeated intermediates.
+
+### 2026-10-21 Field-aware anchors and shared input indexes, after `a92c126a` (:2923-3010) (M)
+- Existing kind + value postings plus sparse postings for requested AST fields (each field posting = first child in that field); stored parent links for reverse navigation; file-local fact extraction uses these before matcher builds captures (:2928-2933). Tape records first-field occupancy in existing padding: navigation record stays 40 bytes (D) (:2935-2936). Candidate indexes remain in Rust because matcher consumes tape before SQL input construction (:2940).
+- Ten rules 12 files: 38.155 -> 32.436 s CPU, 2.564 -> 2.474 GiB; quality 64 files (traced) 9.184 -> 6.947 s (:2955-2956).
+- Navigation: field lookups 16,140,707 -> 614,645; child examinations 427,807,885 -> 1,403,498 (-99.67%); failed-lookup examinations 423,856,845 -> 808,916; direct known-edge checks 0 -> 2,050,091 (:2971-2978). First impl rebuilt structural index per input: 695 builds over 31,441,607 nodes, rejected; final 76 indexes over 3,466,450 nodes; selection cache keyed by compiled plan + current source identity; source change clears cache (:2979-2990).
+- Remaining: 22.052 s SQL batch, 5.785 s input prep (:3002).
+
+### 2026-10-21 SQLite positional kind anchors, after `5616076a` (:2789-2921)
+- **Decision: use the positional FTS5 kind index from `ast-index-spike`** (`bench/tape_store.py::_build_kind_fts`): one contentless FTS5 row per file; each preorder node contributes a bare token `k<base36(language * 1024 + kind)>` including anonymous nodes; FTS5 instance vocabulary returns file IDs + preorder positions; contentless deletion for replacement/removal; no field tokens or persistent row per AST node (:2791-2798).
+- Storage: real temp file, 1 MiB main page-cache target, file-backed temp storage with 512 KiB target, mmap disabled; a 4,816,896-byte DB -> 1,114,704 bytes SQLite page cache + schema + statements (:2800-2805).
+- SQL selects candidates via kind postings, text predicates, field constraints, parent relationships; existing matcher constructs captures and checks semantics (:2807-2809).
+- Rejected trials (:2825-2876): loading full tape BLOBs 16.005 s vs Rust 2.631-2.848 s, 76.33% in `pread`; incremental BLOB reads -> 3.867 s. CTE reference expansion -> 178 table-reference-limit errors; fix: temp tables at shared deps with large expansion estimates (physical boundaries). **`SQLITE_ENABLE_MEMORY_MANAGEMENT` forced all connections into one shared page-cache group: 44.84% samples in mutex wakeups; disabled.** Pattern plans scanned postings per candidate root and estimated by kind counts; fixed to actual posting counts + indexed temp tables; materialized span relation computes subtree end once. Ancestor walks replaced by indexed SQL range queries since subtree ordinals form intervals; inside predicates remove nested intervals with a SQL window (:2869-2874).
+- Matched (M): ten rules 12 files Rust 32.436 s vs SQL 105.663 s (2.474 vs 2.546 GiB); quality Rust 2.631 vs SQL 3.113 s (:2890-2893). Candidate selection 81.422 s vs Rust 3.722 s; root pairs 5,176,955 vs 1,604,003; 1,258 compiler broadenings ("compiler broadens plans that exceed its CTE bound ... preserves findings but weakens filtering") (:2902-2911).
+
+### 2026-10-21 Corpus index lifetime correction (:2696-2787)
+- Previous adapter rebuilt a temp SQL index per file partition (rejected). Workspace now owns **one file-backed corpus database**; file's source digest + grammar determine whether postings need replacement; unchanged documents reuse rows incl. after tape restoration and document-cache eviction; publication of missing files before partitions; removal deletes rows (:2698-2707). Workers lease separate connections; WAL; DB survives workspace revisions, not process restarts (:2709-2719). Kind counts by file support replacement/deletion without scanning vocabulary (:2714).
+- 12 files / 379,809 nodes published once vs rejected adapter 88 indexes / 3,846,259 nodes; preparation 0.677 -> 0.062 s (:2726-2729). Ten rules: Rust 32.436 s vs corpus SQL 122.420 s (:2733). Incremental probe: unchanged 0.002788 s CPU; edit 0.816207 s (M) (:2743-2745).
+- Selection 93.322 s vs Rust 3.722 s; 1,258 broadenings; 8,990,941 candidate root pairs (:2749-2750). **FTS access-path limitation**: vocabulary table seeks by term then tests file; `fts5VocabBestIndexMethod` exposes no document constraint; 100 requested postings constant + 32 unrelated files: ~700 -> 160,700 VM steps (:2751-2756).
+
+### 2026-10-21 Batch candidate preparation (:2611-2694)
+- Previously queried postings separately per file and rule: "That query boundary defeated batching." Now prepare candidate sets before matching; partitions consume without candidate SQL (:2613-2616). Each SQL batch up to 32 plans and 16,384 files of one language (D) (:2619). One workspace corpus retains prepared sets across partitions and revisions; source or grammar change invalidates that file's sets; unchanged request issues no candidate SQL (:2621-2623). Transport stores empty, complete, sparse, or bitmap selections (:2628). Interrupted batch publishes no partial absence (:2634).
+- M: positive 2.620 -> 2.198 s, 298.39 -> 376.33 MiB; quality 2.606 -> 3.023 s, 488.83 -> 614.84 MiB (:2655-2658). Unchanged revision executes no candidate statements; edit executes nine (:2670).
+
+### 2026-10-21 Repeated index comparison (:2572-2609) (M, 3 trials)
+
+| Implementation | Positive CPU | Positive RSS | Quality CPU | Quality RSS |
+|---|---:|---:|---:|---:|
+| Rust index | 0.462 s | 305.12 MiB | 2.648 s | 497.36 MiB |
+| SQL, rebuilt per partition | 2.339 s | 303.06 | 3.196 s | 496.27 |
+| SQL, shared corpus individual queries | 2.633 s | 301.22 | 3.025 s | 492.66 |
+| SQL, batched candidates | 2.136 s | 399.39 | 2.956 s | 614.05 |
+
+- Batched SQL vs Rust index: +362.9% CPU on positive control, +11.6% quality (:2595).
+
+### 2026-10-21 Candidate SQL CPU root cause (:2476-2570)
+- "The kind postings match `ast-index-spike`'s encoding, but the value access path is missing." Reference persists value postings in `vidx` and distinct-term vocabulary in `vlex`; evaluates text predicates against vocabulary terms then seeks postings; ours decoded and tested individual occurrences (:2479-2483). Reference has coverage checks and bounded residue to avoid false absence (:2485-2486).
+- Positive control: 164,171,085 VM steps, 2,174 sorts; one statement with 710 CTEs and 536 sorts; redundant `s162 = s160 INTERSECT s5` then intersect with `s5` twice more (:2492-2499). Compiler reuses identical relations + canonical intersections (:2500). After cleanup: statements 82 -> 72; VM 164,171,085 -> 111,766,482; sorts 2,174 -> 1,292; BLOB reads 2,858,925 -> 2,791,126; text extractions 519,033 -> 517,994 (:2505-2512). BLOB API transferred 102,258,042 bytes, repeated packed-span blocks 82,960,502, source text 8,637,096; 340,517 AST nodes indexed once (:2516-2519).
+- Measurement error: an internal FTS cursor open while other statements run reported 14.5 CPU s lifetime during a 2.547 s cold phase (:2534-2538).
+- M: positive 2.216 -> 1.783 s (-19.5%); quality 2.948 -> 2.984 s (:2547-2548).
+
+### 2026-10-21 Value postings, vocabulary access, shared SQL properties (:2392-2474)
+- Corpus stores case-exact value postings and a persistent distinct-term vocabulary; value index beside positional kind index; replacement and deletion update both in same transaction (:2394-2396). SQLite B-tree keys keep complete terms (not reference's linear-hash buckets); each `(term, file, kind)` has a delta-varint posting segment; small vtab streams packed ordinals; SQL owns filtering/joins (:2399-2403).
+- Coverage: every clean token incl. keywords, numbers, anonymous tokens; clean-token limit 96 Unicode chars; non-clean leaf residue corpus-wide limit 4,096 occurrences per language and kind; residue text <= 384 KiB per kind per publication (D) (:2405-2409). Literal predicates seek terms; regex predicates test distinct vocabulary terms once per batch (:2411).
+- **Shared decoded properties live in ordinary SQL columns keyed by file and preorder**; separate tables for structural properties, span offsets, first-child field lookups; batched fills decode missing keys and reuse rows; file replacement invalidates via foreign keys; no source text for interior nodes (:2416-2420).
+- **Affinity regression**: first impl regressed positive control 1.854 -> 9.112 s: INTEGER bounds from decoded properties met temp ordinal columns with empty affinity; SQLite omitted ordinal range constraints and scanned complete postings; two statements > 660 million VM steps; fix: explicit INTEGER affinity on materialized numeric columns; 2,048-interval case ~35,664,900 -> 32,700 VM (:2422-2430).
+- Repeated base-posting scans + tiny BLOB reads: materialize shared kind postings, enumerate with series vtab; small record/span buffers (:2433-2436). A live all-node demand covers subset demands; hoisted; file completeness recorded in SQL (:2439-2441).
+- M: positive 1.874 -> 2.504 s (+33.6%); quality 3.004 -> 3.192 s (+6.2%) (:2446-2449). Text extractions 517,994 -> 13,739; BLOB reads 2,791,126 -> 51,444; VM 111,766,482 -> 130,976,638; data statements 72 -> 550 (:2456-2460). "Shared property construction, temporary relation copying, and index construction now form the next performance frontier." (:2462)
+
+### 2026-10-22 SQL preparation and retained-layout experiments (:2258-2390)
+- Decision: keep shared preparation, duplicate-expression removal, incremental vocabulary matches; reject retained expanded postings and generic utility sets (:2260-2261).
+- M (medians of 3): positive cold 2.476 -> 1.936 s (-21.8%), edit 0.543 -> 0.418 s; quality cold 3.458 -> 3.268 s (-5.5%), edit 1.007 -> 0.933 s (:2277-2280). Unchanged ~3 ms, no candidate SQL (:2284). Missed the 30%/10% targets (:2289).
+- Accepted: universal structural demands collected across all 32-plan groups; fresh files stream typed tape columns into retained SQL properties table; partly prepared files decode missing keys only; changed files invalidate own facts (:2293-2297). Fixed SQL request tables receive file IDs in batches of 128 (:2302). Compiled preparation templates survive file edits (:2303). Regex matches persist by language, expression, term; FKs remove matches when last occurrence disappears; per-term dynamic regex compile regressed to 14.336 s, fixed by caching one predicate per SQL expression (:2306-2311).
+- Rejected retention (M; replay thread CPU): two rules temp stages 1.146 s vs retained postings 1.501 s (+31.0%) vs retained shared sets 1.164 s (+1.6%); three rules 1.948 vs 2.427 (+24.6%) vs 2.252 (+15.6%) (:2320-2323). Retained postings 303,285 rows with no reuse; 410,038 rows reusing 32 constructions; shared sets 163,552 rows reusing 38: "The reuse does not offset retained writes, wider keys, completion joins, and subsequent reads." (:2331-2334)
+- **Key-order lesson**: retained key with revision between file ID and preorder -> SQLite failed to use the ordinal suffix; corrected PK `(relation_id,fid,pre)` with revision in payload + cascading FK; 2,048-interval range work ~39.9M -> 79,000 VM; membership ~16.9M -> 92,000 (:2338-2343).
+- Remaining: 500 candidate statements incl. 480 materializations; structural prep decodes 340,517 nodes once ~155 ms; other materializations ~734 ms, temp indexes 116 ms, final queries 250 ms; VM 141.6M -> 98.9M; main DB 16.97 MB, temp 12.13 MB, WAL 9.36 MB (:2348-2356). "The separate authored relational executor has not acquired a shared relation cache." (:2357)
+
+### 2026-10-22 Typed projected facts and SQL input streaming (:2165-2256)
+- Decision: keep typed column storage, SQL column demand, deferred preparation, bounded SQL import; removes per-row JSON maps; no end-to-end improvement (:2167-2168). Projected facts share schemas, source slices, immutable typed column batches (`violations/projection.rs`); SQLite validation records actual column reads; import binds column positions once per schema; scheduler queues consumer descriptions and restores file-local inputs during session preparation; input sink inserts completed column batches and releases them (`relational/inputs.rs`) (:2174-2180).
+- M: state one file cold 3.202 -> 3.228 s; peak RSS 395.8 -> 461.6 MiB (+16.6%); RSS after global eval 288.3 -> 222.2 MiB (:2200-2204). Python 0.264 s (state) and 1.429 s (ten-rule): native ~12x and ~16x slower (:2215-2216). Queue: baseline 11,272 witnesses / 198,758 JSON fields / ~19,624,497 B; final 2 consumer descriptions, 0 materialized rows, streams 11,272 rows with <= 256 buffered (:2223-2225). Samples 98-100% SQLite (:2229).
+
+### 2026-10-22 SQL composition opportunities (:2075-2163) -- kernels (see sql-composition-opportunities.md); extra numbers: interval VM 9,529,897 -> 72,996 (694 rows) (:2118-2119); selective SQL still decodes all 4,612 identifiers; materialized demand 244 (:2123-2125); utility depth 4->8 named SQL 709 -> 1,333 bytes but preparation 0.392 -> 6.075 ms, physical cuts 0.274/0.431 ms: "Naming alone does not bound SQLite preparation work." (:2132-2135)
+
+### 2026-10-22 SQL composition promotion (:1951-2073)
+- Forest: 1,000-node chain retains 1,000 positions + 1,000 root ranges, exposes 500,500 logical pairs (:1967). 535-output regression -> five packets 128,128,128,128,23 (:1981).
+- Integration regressions: sharing full catalog amplified copies/scans during SQL generation; indexed dependency traversal template generation 1,116.586 -> 604.187 ms (old 600.219) (:1985-1988). **SQLite reordered correlated subtree probe to scan all identifiers before interval membership: `direct_events` 774,666 -> 16,328,922 VM; explicit `CROSS JOIN` -> 985,870** (:1990-1993).
+- State diagnostic: catalogs 5 -> 1; temp tables 1,784 -> 1,029; materialization+fill stages 3,044 -> 1,712; packets 5 -> 2 for 139-plan frontier (:1996-1999).
+- M: state 2.424 -> 2.120 s (-12.5%), RSS 397.2 -> 451.5 MiB (+13.6%); ten rules 13.338 -> 9.903 s (-25.8%), 497.1 -> 540.9 MiB (+8.8%) (:2020-2021). "Fewer SQL constructions do not guarantee lower allocator residency or a smaller live relation frontier." (:2041)
+
+### 2026-10-23 Candidate SQL relation lifetimes (:1829-1949)
+- Decision: one dependency schedule, construction before demand, release after last SQL consumer (previously every temp relation built before first packet and retained to end) (:1831, :1843-1844).
+- M: peak live tables state 1,029 -> 206, temp storage 14.00 -> 2.66 MiB; ten rules 1,905 -> 437, 48.10 -> 8.99 MiB (:1867-1868). CPU state 2.582 -> 2.597 s; ten rules 13.317 -> 13.106 s; RSS ~flat (:1876-1877).
+- Why memory stays high (:1900-1924): state run ends candidate prep with zero live temp tables; allocator in-use 65.9 -> 66.6 MiB, managed space 138.4 -> 210.4 MiB, RSS +71.7 MiB. SQLite execution peak 68.5 MiB (state) / 98.6 MiB (ten rules), preparation peak 10.1/11.8 MiB; the state peak is in the first result packet whose query contains **1,101 inline materialized CTEs, 983 temp B-trees**; compiled statement ~3.3 MiB (:1913-1921).
+
+### 2026-10-23 Design entries (:1757-1827): materialization ownership design (static audit 248/420 multi-statement definitions), compiled stage execution design, named producer discovery (state 1,716 host statements / 10,320 placements / 157 multi-host definitions / 1,240 extra; ten rules 3,216 / 19,001 / 255 / 2,048 -- lower than earlier audit because the tool distinguishes write epochs and CTAS projections) (:1784-1789), shared producer plan.
+
+### 2026-10-23 Aggregate optimization checkpoint (:1422-1755) -- the big regression
+- Repository comparisons (M) (:1457-1462):
+
+| Workload | Reference | Cold CPU | High-water RSS | Parity |
+|---|---|---:|---:|---|
+| First 50 | Pre-SQL | 125.804 s | 6.441 GiB | 24,820, pass |
+| First 50 | Final SQL | 2,507.496 s | 6.143 GiB | 24,820, pass |
+| 60 rules | Pre-SQL | 709.151 s | 16.102 GiB | match; 23 failures, 2 failed incremental |
+| 60 rules | Final SQL | 7,211.657 s | 14.997 GiB | match; 34 failures, 2 failed incremental |
+
+- First-50 SQL = **19.93x** pre-SQL (:1467). 60-rule SQL: 34 relational failures in `serverplan-state-tripwires` (12 regex-budget, 22 query interruptions) (:1479). 60-rule cold split 6,782.080 s ingestion + 429.207 s global (prior 202.550 + 506.184); unchanged 0.517 s; edit 121.587 s vs 62.576 s previously (:1486-1488). 288 ingestion batches, 1,363,392 candidate data statements, 1,359,072 materializations, 197,856 plan memberships = 687 plans/batch vs 377 first-50; 28,230,245 indexed nodes (:1494-1496).
+- First-50 phases: file-input applies 73.350 -> 2,456.015 s; global apply 52.144 -> 51.145 s (:1514-1517). Anchor selection counters 2,247.966 s, anchor index construction 125.776 s, parsing 11.087 s (:1519-1520). 492,480 data statements, 489,024 materializations (:1523).
+- Broad-run access-path regression (:1542-1576): `fts5VocabBestIndexMethod` accepts term but ignores document constraints; candidate query joins requested files after corpus-wide postings scan -> later batches repeat over growing corpus. Regression test: unrelated 2,000-statement file raises ticks 1 -> 361. A decoded `(fid,kind,pre)` index passed covered test but failed sparse ingestion probe (rejected). Selected: compressed positions on `file_kind_counts` rows with `(fid,code)` PK; atomic version-2 upgrade from persisted records without reparsing. Value: 200 unrelated files 1 -> 19 ticks; fenced term + requested-file inputs before `vidx` PK seek.
+- Retained-property join regression (:1616-1626): structural parents for one file + unrelated 2,000-statement file: 806 ticks instead of 6; fix: requested keys as outer input with `CROSS JOIN` fences.
+- **Preparation frontier** (:1639-1656): "The workspace gathers anchor plans from every compiled rule before it publishes the eligible source jobs ... then prepares every language-compatible plan for each published file. The corpus API receives language and plan identities, without per-rule file eligibility." One batch: 32 files, 377 plans, 1,710 statements, 1,698 materializations; 128 rule-file entries, 128 rejections. 83 applies with zero roots for every rule-file still execute 140,934 materializations and 697.407 s anchor-selection CPU. `SelectWhen` collects both queries before runtime condition selects consumers.
+- Pager pressure (:1662-1673): anchor-selection CPU per indexed node 50.2 -> 115.3 microseconds across four groups of 72 applies; 537/749 stack observations end in `pwrite`, 65 in `pread` (`pagerStress`, `pagerWalFrames`, `subjournalPageIfRequired`); main DB > 1 GiB with 1,024 KiB main / 512 KiB temp cache targets.
+- Controlled cache replay (M; 1,886 files, 6,223,803 nodes, `_conditional_compile.py` 18,993-node request; 146,136-row multiset; 59,590,722 VM steps, 3,294,894 full-scan steps, 4,979 sorts) (:1694-1709):
+
+| Main / temp cache | Median SQL CPU | Peak RSS | Misses | Writes | Spills |
+|---|---:|---:|---:|---:|---:|
+| 1 MiB / 0.5 MiB | 1,531.078 ms | 112.656 MiB | 66,709 | 14,949 | 14,630 |
+| 64 MiB / 0.5 MiB | 1,336.781 ms | 143.563 MiB | 10,814 | 5,427 | 1,721 |
+| 1 MiB / 16 MiB | 1,402.635 ms | 109.344 MiB | 62,595 | 13,119 | 12,909 |
+| 64 MiB / 16 MiB | 1,403.610 ms | 150.484 MiB | 6,700 | 3,597 | 0 |
+
+  - Larger budgets eliminate spills, -8.3% SQL CPU; do not explain 19.93x; "The unchanged VM work remains substantial for one requested file, so demand scope and repeated query work remain the main architectural targets." (:1711-1714)
+- Memory (:1719-1737): vmmap 6.6 GiB physical footprint (4.5 resident, 1.9 swapped `MALLOC_SMALL`); 15,992,992 allocations / 6.2 GiB; prepared candidate payloads ~218 MiB; later 31,521,959 allocations ~11.3 GiB, footprint ~12.7 GiB (peak 13.9); no leak established.
+
+### 2026-10-23 SQL execution limit restored (:1362-1420)
+- Fixed **100-execution job acceptance limit** from commit `c109a915`; counts complete cold process across workers/connections incl. compilation setup, DDL, publication, transactions, matching, cleanup; each `execute_batch` statement counts; cached executions count; EXPLAIN and native spans don't (:1364-1371).
+- First attempt (M): setup incl. DDL + ANALYZE 17,686; transactions 168; matching/publication/cleanup 6,305; **total 24,159 / 100**; 11,544 CREATEs, 5,508 DROPs; execution 101 creates `syntax_21` during compilation schema validation; 1,100 `INSERT INTO kind` and 128 `INSERT INTO field` executions (:1385-1396).
+
+### 2026-10-23 Recovery TDD + checkpoint (:890-1361; read bottom-up within the section)
+- Guard launcher bypass fixed (missing report returned zero) (:1139-1152). Execution inventory counts raw SQL events with session, worker, producer, binding, generation, file domain, consumer, stage, SQL CPU, VM steps (:1159-1161). Baseline inventory 24,159: 464 setup, 1,232 catalog publication, 3,339 relational, 19,124 unknown (:1165-1166).
+- R2 admission: adding a path-excluded rule grew prepared template from one plan to two; twenty files across two disjoint scopes ran both plans over all twenty files; fix: two batches, one plan + ten files each; path, text, syntax, language exclusions leave only admitted plan; "Source generation remains part of the corpus file identity" (:1172-1188). Count 24,159 -> 22,181 (-8.19%): 936 setup, 1,232 catalog publication, 272 file publication, 16,402 candidate preparation, 3,339 relational (:1210-1212). Snapshot + relational prep admission fixed; "Relational preparation no longer expands every workspace rule over the complete corpus." (:1229-1232)
+- R3 publication: four files x 200 identifier values: 275 kind inserts, 32 field, 28 kind-frequency, 28 file-kind, 808 value-posting, 28 coverage inserts = 1,199 executions -> 18 (one language-catalog batch per table, one publication batch per file and table); bindings below SQLite variable limit and a 4,096-value cap; empty batches execute no SQL (:1222-1247).
+- FTS audit: one/ten/101 documents execute 9/18/109 SQLite statements via one bulk `INSERT ... SELECT` (internal document-size writes once per document) (:1249-1252). Acceptance boundary fixed at **100 engine-submitted statements, SQLite internal executions reported separately** (user decision) (:1253-1255, :1261). Origin attribution via SQLite trace callback decoration (nested VDBE comment prefix) (:1265-1270). contentless-delete layout rejects `columnsize=0` (:1258).
+- FTS bulk experiment (M; 1,024 files x 256 tokens): packet transactions 39.275 ms; packet inserts in one transaction 23.189 ms; one complete bulk insert 11.545 ms (-70.6% / -50.2%); packet forms leave five segments, bulk one (:1288-1296). Supports whole-frontier `INSERT ... SELECT`.
+- Cleanup inventory: 10,443 engine submissions + 994 internal: 5,176 candidate construction, 2,534 cleanup, 1,781 relational, 904 setup, 48 publication (:1305-1306).
+- Recovery checkpoint (M) (:1319-1326): total SQLite executions 24,159 -> 11,437 (-52.66%); median complete replay CPU 3,441.002 -> 2,567.392 ms (-25.39%); maxRSS 476,144 -> 370,304 KiB.
+- Compiler schema (:978-1130): compiler registration via eponymous-only SQLite modules (no CREATE executed); prior addon executed 48 CREATE TABLE for 12 clauses (:1129-1135). `Corpus::prepare_files` sorts plans by Arc allocation address -> changing compiler allocation changes lowering order, reuse, broadening (:1120-1121); schema-adapter slice alone 11,641 submissions (candidate prep +1,088) (:1116-1118). Authored-order lowering: 14,699 submissions, +4.51% CPU (rejected) (:1031-1037); work-estimate order 14,699, +3.36% (rejected) (:1017-1021). Rollback of an over-budget selector cleared earlier reuse caches: 7 -> 8 materializations (:1067-1069) (later found control incomplete, :1047-1053). Compiler connections without runtime PRAGMAs (24 PRAGMAs across 12 prepare-only sessions removed) (:1086-1090). Selected compiler checkpoint: 9,695 submissions; connection setup 904 -> 498; CPU 2,374.190 -> 2,266.036 ms (-4.56%, overlapping) (:985-993). 194 compiler stage CTAS executions contain only 53 distinct SQL strings; "SQLite rejects CTAS through its virtual-table declaration API, so native affinity inference remains necessary on a cache miss" (:970-971). Schema cache keyed by exact SQL + complete ordered schemas of read relations + deferred column names; limits 128 entries / 4 MiB; process-owned; result 9,095 submissions; stage CREATEs 194 -> 68; CPU 2,479.402 -> 2,595.351 ms (+4.68% regression, kept for shape) (:894-921).
+
+### 2026-10-24 Shared producer foundation (:754-888)
+- Catalog + exports: 9,113 submissions; 8 manifests, 56 binding groups; one span binding with 117 consumer/selector references; each frontier still 22 span-fill statements; CPU 2,390.952 -> 2,299.499 ms; RSS 412,064 -> 334,976 KiB (:857-867). Protected view fails: SQLite `count(*)` shortcut reports backing read without accessor; CTE can impersonate accessor label (:843-845).
+- Span waves: one physical span fill for two rules; balanced compound SELECTs handle 700 demand sources in one statement (:768). First impl repeated generated-SQL token scanning: +10.64% CPU (2,234.975 -> 2,472.817 ms), replaced (:772-774). Selected: 9,481 submissions (up from 9,113); two span fills per frontier vs 22; frontier stage counts unstable (1,333 vs 703) due to allocation-address ordering in `Corpus::prepare_files` (:777-789). Frozen-frontier: 22 split fills 108.291 ms vs two broad fills 104.903 ms SQL CPU (:801).
+
+### 2026-10-24 Frontier determinism (:684-752)
+- Permutation audit, 139-plan state policy: forward 1,609 stages / 54 broadened; reverse 1,532 / 64: "earlier producer-cache warmth changes admission under the existing 256-node allowance" (:743-746). Fix: each plan lowered under its own 256-node allowance, failed fragment discarded and fallback built fresh; canonical topological numbering; allocation addresses only local handles (:693-698). All orders 1,503 stages / 65 broadened (:689).
+- M: 9,481 -> 8,669 submissions (-8.56%); candidate prep 4,836 -> 4,252; cleanup 2,444 -> 2,216; CPU 2,318.369 -> 1,617.488 ms (-30.23%, all selected runs below all baseline runs); SQLite stepping heap 22,828,464 -> 19,793,328 B; candidate rows 135 -> 161 (broader supersets from independent admission) (:710-729).
+
+### 2026-10-24 Shared child demand (:614-682)
+- `(fid, pre, field)` transport dedup; `decoded_children` owns answers + completion; missing-coverage join tests `d.fid IS NULL` not `d.child IS NULL` (:620-622). 8,669 -> 7,733 (-10.80%); first frontier 647 -> 415 stages, child fills 246 -> 11; span fills 2 -> 5 (explicit dependencies); temp selector tables 393; peak live 100 -> 93 (:630-638). CPU nine pairs 1,739.994 -> 1,708.247 ms (-1.82%, overlapping) (:642). Replay: VM 81,781 -> 75,068; cache misses 259 -> 180, writes 401 -> 322, spills 282 -> 207; heap 19,793,328 unchanged (:649-653). Edit test preserves findings `2 -> 1 -> 2` (:659). Remaining candidate prep + cleanup 5,532 submissions (~72%) (:666).
+
+### 2026-10-24 Selector SQL owners (:511-612)
+- Target shape (red): 393 indexed `(fid, pre)` tables in first frontier, mostly different logical selectors; one SQL owner per compatible ready group with `(producer, fid, pre)` rows and one nonunique index; selectors read their tag via inline projection; UNION ALL preserves duplicates (:594-605).
+- Generic family packing REJECTED: 7,733 -> 4,109 submissions but CPU 1,679.669 -> 1,855.333 ms, then 1,682.382 -> 1,789.405 ms (all five selected trials worse) (:568-573). Nested member scopes heap 53,478,480 B vs 19,793,328 baseline; one shared scope 37,930,224; 128-unit preparation bound returns below baseline (:575-577). Costs: lowering work + SQLite SELECT preparation (:579).
+- Physical owner projection (green): final `(fid, pre)` CTE streams into its CTAS owner without ephemeral copy; one fewer `OpenEphemeral`; CPU 1,650.576 -> 1,638.666 ms (-0.72%); VM 75,068 -> 73,183; heap unchanged (:515-549). "Packing complete rendered selector trees repeats compiler processing and increases SQLite preparation expansion." (:561-562)
+
+### 2026-10-24 Original execution reduction planning (:490-509)
+- 7,733 submissions include 1,588 candidate table creates, 1,588 index creates, 1,588 drops; 1,028 adjacent retirement groups across four contexts. R5-A target 3,474 net removals (<= 4,259). R5-B provisional >= 2,000 (2,130 relational lifecycle executions, 136 clause-configuration PRAGMAs, 68 empty syntax-schema CTAS) (:496-502).
+
+### 2026-10-24 R5-A Candidate ownership delivery (:392-488)
+- 7,733 -> 3,685 (4,048 removed). Owner stores typed `(producer, fid, pre)` rows under one nonunique composite index per execution domain; independent frontiers share a bounded SQL population statement and one WITH scope; batch membership records completion even with no rows; each logical producer keeps its own last-use; adjacent releases share one DELETE (:400-405). Lifecycle 4,764 -> 716 (store creation 4, index 4, population 380, retirement 324, drops 4) (:408-417).
+- First impl +4.3% CPU (built two schedules before final, scanned discarded alias SQL); fixed; delivery CPU 1,695.593 -> 1,653.416 ms (-2.49%, overlapping) (:442-458). Replay heap 19,793,328 -> 19,269,664 B; VM 73,349 -> 62,073; peak live bindings 93 -> 110 (:469-472). WITH-before-CREATE alias bug (:435-436).
+
+### 2026-10-24 R5-B Relational storage delivery (:315-390)
+- 3,685 -> 2,250 (1,435 removed); SQLite internal 994 -> 181 (:318-319). Readers reuse empty typed tables, indexes, views when complete declarations match; input bindings keep separate row lifetimes; "does not infer shared data from equal SQL text"; retirement deletes populated backing at logical last use; empty slots complete with no DELETE; ANALYZE only for populated tables; generic graph construction stops early when no vertices (:325-331). Idle reader pool <= 4; each <= 128 reusable objects, 4 MiB metadata, 16 MiB SQLite+metadata (D) (:333-334). Runtime CREATE 1,192 -> 489, DROP 628 -> 161, ANALYZE 310 -> 39; replacement INSERTs 42 -> 310, DELETEs 0 -> 43; 68 reader connections -> 4 (:346-348).
+- Deferred-CAST bug: typed comparison lost finding after storage reuse; fix: compiler syntax declarations match runtime affinity; SQLite infers public deferred projection affinity once per typed schema and query (:357-362).
+- CPU 1,546.054 -> 1,541.322 ms (-0.3%: flat); "The engine submission reduction is 38.9%, but it does not deliver a substantial CPU speedup on this guard." Samples: alloc/free, copying, regex search, regex determinization (:377-383).
+
+### 2026-10-24 R5-C (complete shared spec superseded :298-313; bounded C scope :262-296; delivery :173-260)
+- Bounded C: exactly four state frontends + one generic nonempty-input precondition; excludes job-wide storage, general derived sharing, compiler-affinity redesign, replacement scheduler (:265-266). Concrete omission: state frontend's 25 typed AST input partitions reconstructing nodes, edges, ownership, staging unions (:270-271). Frontend prototype 2,250 -> 1,489 (761 removed); CPU 1,060.459 -> 427.484 ms (-59.7%) (:276-289). Nine complete empty-gate sessions = 500 engine statements (:282).
+- Delivery: 2,250 -> 975 (1,275 removed); SQLite internal 181 -> 106 (:175-177). Four state frontends -> tape-backed syntax relations, removing 25 AST partitions and five reconstruction stages (:184-185). `relational.requireNonemptyInput` names one declared input; complete empty evidence skips SQL reader and body preparation (:190-191). Repository syntax restores only eligible current documents incl. evicted via bounded metadata/source/tape batches; 257 cold sources read with three SQL statements; warm reads need no SQL (:194-196). Table: setup 244 -> 229; candidate prep 702 -> 308; cleanup 165 -> 24; relational 1,091 -> 366 (:202-210). **CPU 1,586.221 -> 550.052 ms (-65.3%); RSS 337,616 -> 298,784 KiB (-11.5%)** (:242-247).
+
+### 2026-10-24 Post-C survey + spikes (:11-171)
+- 975 submissions: candidate execution 312, event clauses 202, flow execution 184, index/reader setup 176, compiler inference 53, publication 48 (:123). Adding `requireNonemptyInput: events` to the other 28 clauses: 975 -> 785, CPU 575.665 -> 587.471 ms (+2.05%) (:132-138). Candidate execution has 110 key fills, 66 retirement DELETEs, 20 span fills, 28 child fills; zero-change 74/26/16/22: "Zero changed rows do not prove safe omission." (:146-147). Index setup 168 = 4 x 42 (:152). Flow execution 92 statements twice, 24 SQL-derived relations + one native reachability boundary (:158).
+- Combined spike: 975 -> 718; CPU 585.845 -> 579.437 ms (overlapping), RSS ~flat (:20, :49-51). Storage component: fresh DBs 220 submissions / 20.509 ms; clear-and-reuse 100 / 7.803 ms but replicated 71.157 ms and 29,791 internal (FTS deletion work); **private seed clones of immutable schema/catalog** 127 / 18.043 ms / 63.242 ms replicated -> selected (:64-75). Compiler CTAS inference batching 53 -> 31 statements; CPU flat (:78-83). Set folding 272 -> 252; heap increases; string rewriter not promoted (:85-90). First private-cut heuristic (710) removed required owners and interval indexes, losing range bounds and linear nesting (:102-104).
+- Final 100 gate still fails by 618 (:22).
+
+### Journal-level takeaways the journal itself states
+- Repeated structural fact reconstruction per scope (nodes, edges, ownership, descendants) was the dominant cost in every early profile (code-rule-profiling.md:273-282; journal :3536-3539, :270-271).
+- Statement-count reductions often did not move CPU (R5-B 38.9% fewer, CPU -0.3%; :382), while removing whole reconstructions did (shared syntax -71% cold; R5-C -65.3%).
+- SQLite planner hazards recurred: affinity loss (:2422-2430, :3260-3264), FTS vocab no document constraint (:2751-2756, :1542-1545), retained-table scans replacing probes (:1616-1625), correlated probe reordering (:1990-1993), key column order (:2338-2343). Each fix used explicit INTEGER affinity, `CROSS JOIN` fences, or key reorder.
+
