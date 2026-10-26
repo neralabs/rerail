@@ -26,6 +26,7 @@ fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 impl Storage {
+    pub fn statistics_boundary(&mut self,_db:&Connection)->Result<()> {Ok(())}
     pub fn bind_scope(
         &mut self,
         db: &Connection,

@@ -137,3 +137,29 @@ fn eviction_cannot_remove_pinned_complete_or_empty_bindings() -> Result<()> {
     assert!(!storage.ready(slot));
     Ok(())
 }
+
+#[test]
+fn publication_boundary_refreshes_statistics_after_equal_size_distribution_changes() -> Result<()> {
+    let db=Connection::open_in_memory()?;let mut storage=Storage::default();let slot="__context_stats";
+    let definition=format!("CREATE TABLE {slot}(v TEXT)");
+    storage.bind_scope(&db,1,BTreeMap::from([(slot.into(),1)]))?;
+    storage.declare(&db,slot,definition.clone(),true)?;
+    let (table,_)=storage.write_target(slot);
+    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100) INSERT INTO {table} SELECT 1,'same' FROM n"))?;
+    storage.written(slot,true);
+    storage.index(&db,slot,"__context_stats_v",format!("CREATE INDEX __context_stats_v ON {slot}(v)"))?;
+    storage.analyze(&db,slot,100)?;storage.statistics_boundary(&db)?;
+    let first:String=db.query_row("SELECT stat FROM temp.sqlite_stat1 WHERE idx='__context_stats_v'",[],|r|r.get(0))?;
+    storage.clear_owner(&db,1)?;
+    storage.bind_scope(&db,2,BTreeMap::from([(slot.into(),2)]))?;
+    storage.declare(&db,slot,definition,true)?;
+    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100) INSERT INTO {table} SELECT 2,printf('v%d',x) FROM n"))?;
+    storage.written(slot,true);storage.analyze(&db,slot,100)?;
+    storage.statistics_boundary(&db)?;
+    let second:String=db.query_row("SELECT stat FROM temp.sqlite_stat1 WHERE idx='__context_stats_v'",[],|r|r.get(0))?;
+    assert_ne!(first,second,"unchanged cardinality hid a changed value distribution");
+    let schema:i64=db.query_row("PRAGMA temp.schema_version",[],|r|r.get(0))?;
+    storage.statistics_boundary(&db)?;
+    assert_eq!(db.query_row("PRAGMA temp.schema_version",[],|r|r.get::<_,i64>(0))?,schema);
+    Ok(())
+}
