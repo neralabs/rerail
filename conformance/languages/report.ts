@@ -55,9 +55,8 @@ export const ruleRowSchema = z.object({
   /** The first 50 `reviewed` reports. */
   reviewedFindings: z.array(pointSchema),
   /**
-   * Evidence the rule stays silent where it should: the files judged clean for it (on samples, its clean samples; on
-   * the fixtures, the units upstream reports nothing of the rule on), and of those, the ones it reports nothing on and
-   * reads without a syntax error.
+   * Samples only: the clean samples judged for the rule, and of those, the ones it reports nothing on and reads without
+   * a syntax error (stays-silent evidence; 0 on the fixtures).
    */
   cleanSamples: z.number().int().nonnegative(),
   silentCleanSamples: z.number().int().nonnegative(),

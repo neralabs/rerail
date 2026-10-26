@@ -49,7 +49,7 @@ function passingGates(): RuleReport["gates"] {
     loads: ok,
     "not-overfit": { ...ok, flagged: [], words: {}, uncheckedRegexes: [] },
     compact: { ...ok, metrics: null },
-    "matches-upstream-tests": { ...ok, totals: null, cases: {}, differences: [], goldens: { count: 0, differing: { count: 0, first: [] }, engineGaps: { count: 0, first: [] } } },
+    "matches-upstream-tests": { ...ok, totals: null, cases: {}, silentCases: 0, differences: [], goldens: { count: 0, differing: { count: 0, first: [] }, engineGaps: { count: 0, first: [] } } },
     "passes-conformance": ok,
   };
 }

@@ -239,8 +239,6 @@ interface FixturesRun {
   recordings: Map<string, Recording | string>;
   /** `tool\0path` of every file evaluated; a recording lists every file it ran on. */
   scored: ReadonlySet<string>;
-  /** Per tool, the source paths of each unit evaluated: a unit upstream reports nothing of a rule on is stays-silent evidence. */
-  units: Map<string, string[][]>;
   summary: SourceSummary;
 }
 
@@ -334,14 +332,11 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
   const actual: FixturesRun["actual"] = new Map();
   const recordings: FixturesRun["recordings"] = new Map();
   const scored = new Set<string>();
-  const units: FixturesRun["units"] = new Map();
   const summary: SourceSummary = { source: "fixtures", units: 0, files: 0, bytes: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
   for (const tool of toolsOf(compiled)) {
     const recording = pinnedRecording(loaded, tool, fixturesRecordingPath(loaded, tool));
     recordings.set(tool, recording);
     if (typeof recording === "string") continue;
-    const toolUnits: string[][] = [];
-    units.set(tool, toolUnits);
     const source = (recording as FixtureRecording).source;
     const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
     for (const unit of source.files) {
@@ -371,7 +366,6 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
         summary.evaluationMs += evaluation.ms;
       }
       for (const file of files) scored.add(`${tool}\0${file.path}`);
-      toolUnits.push(files.map(file => file.path));
       summary.units += 1;
       summary.files += files.length;
       summary.bytes += [...sources.values()].reduce((total, bytes) => total + bytes.length, 0);
@@ -379,7 +373,7 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
   }
   summary.evaluationMs = Math.round(summary.evaluationMs);
   summary.syntaxErrorFiles = syntaxErrorSummary(actual);
-  return { actual, recordings, scored, units, summary };
+  return { actual, recordings, scored, summary };
 }
 
 /** The tools of `compiled`'s rules, each once, in order. */
@@ -637,17 +631,12 @@ function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, 
   }
   const rerail = run.actual.get(rule.id) ?? noActual();
   const actual = rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
-  // The units upstream reports nothing of the rule on, and of those the ones the rule reads and agrees on.
-  const flagged = new Set(findings.map(finding => finding.path));
-  const reported = new Set(rerail.points.map(point => point.path));
-  const clean = (run.units.get(tool) ?? []).filter(paths => paths.some(path => coversFixture(rule, path)) && !paths.some(path => flagged.has(path)));
-  const silent = clean.filter(paths => !paths.some(path => reported.has(path) || rerail.syntaxErrorFiles.has(path)));
   const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === "fixtures"));
   return rowOf(entry, loaded, "fixtures", {
     score: scoreSource(expected, actual, rule.match, applicable),
     reviewed: [],
-    cleanSamples: clean.length,
-    silentCleanSamples: silent.length,
+    cleanSamples: 0,
+    silentCleanSamples: 0,
     engineFailures: rerail.engineFailures,
     partialFiles: rerail.partialPaths.size,
     syntaxErrorFiles: [...rerail.syntaxErrorFiles.values()],

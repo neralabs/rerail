@@ -79,8 +79,12 @@ export interface RuleReport {
     loads: GateReport;
     "not-overfit": GateReport & { flagged: Pick<ClassifiedLiteral, "token" | "pointer" | "text">[]; words: Record<string, number>; uncheckedRegexes: string[] };
     compact: GateReport & { metrics: SizeMetrics | null };
-    /** `outOfScope`: the cases not scored because their file type is outside the tool-pack's rerail.in_scope, when there are any. */
-    "matches-upstream-tests": GateReport & { totals: MatchesUpstreamTestsResult["totals"] | null; compared?: MatchesUpstreamTestsResult["compared"]; cases: Record<string, number>; differences: CaseResult[]; outOfScope?: CaseResult[]; goldens: { count: number; differing: Sample<GoldenResult>; engineGaps: Sample<GoldenResult> } };
+    /**
+     * `outOfScope`: the cases not scored because their file type is outside the tool-pack's rerail.in_scope, when there
+     * are any. `silentCases`: the rule's own upstream cases where upstream reports nothing and the rule agrees, which
+     * passes-conformance's stays-silent reads (with the clean samples) when the tool-pack's report is assembled.
+     */
+    "matches-upstream-tests": GateReport & { totals: MatchesUpstreamTestsResult["totals"] | null; compared?: MatchesUpstreamTestsResult["compared"]; cases: Record<string, number>; silentCases: number; differences: CaseResult[]; outOfScope?: CaseResult[]; goldens: { count: number; differing: Sample<GoldenResult>; engineGaps: Sample<GoldenResult> } };
     /** Judged when the tool-pack's report is assembled, from the pack's conformance check; never cached. */
     "passes-conformance": GateReport;
   };
@@ -373,9 +377,9 @@ async function evaluateRule(
   let upstreamTests: RuleReport["gates"]["matches-upstream-tests"];
   const emptyGoldens = { count: goldens.get(id)?.length ?? 0, differing: sample<GoldenResult>([]), engineGaps: sample<GoldenResult>([]) };
   if (compiled.compiled === undefined) {
-    upstreamTests = { ...notRun("the document does not compile on this engine"), totals: null, cases: {}, differences: [], goldens: emptyGoldens };
+    upstreamTests = { ...notRun("the document does not compile on this engine"), totals: null, cases: {}, silentCases: 0, differences: [], goldens: emptyGoldens };
   } else if (notUpstream !== null) {
-    upstreamTests = { ...notRun(notUpstream), totals: null, cases: {}, differences: [], goldens: emptyGoldens };
+    upstreamTests = { ...notRun(notUpstream), totals: null, cases: {}, silentCases: 0, differences: [], goldens: emptyGoldens };
   } else {
     const result = matchesUpstreamTestsGate(engine, adapter, name, compiled.compiled, cases.get(name) ?? [], gaps.proven);
     for (const [gapId, uses] of Object.entries(result.gapUses)) gapUses[gapId] = (gapUses[gapId] ?? 0) + uses;
@@ -401,6 +405,7 @@ async function evaluateRule(
       totals: result.totals,
       compared: result.compared,
       cases: countBy(result.cases, (testCase) => testCase.status),
+      silentCases: result.cases.filter((testCase) => testCase.expected === 0 && testCase.status === "agree").length,
       differences: result.cases.filter((testCase) => testCase.status === "mismatch" || testCase.status === "excused"),
       ...(result.cases.some(outsideInScope) ? { outOfScope: result.cases.filter(outsideInScope) } : {}),
       goldens: {
@@ -665,7 +670,8 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
 
   const reports = judged.map((entry) => {
     const report = structuredClone(results.get(entry.key)!.report);
-    report.gates["passes-conformance"] = gate(passesConformanceChecks(conformance, report.id));
+    // stays-silent's own-case evidence comes from this rule's matches-upstream-tests result (`silentCases`).
+    report.gates["passes-conformance"] = gate(passesConformanceChecks(conformance, report.id, report.gates["matches-upstream-tests"].silentCases));
     Object.assign(report, verdict(report.gates));
     // A failing tool-pack check (a stale recording, an incomplete corpus, shipped rules that do not load together) fails
     // every rule, whatever its gates say: a shipped rule blocks, and a candidate is not ready to promote.

@@ -28,9 +28,9 @@ const samplesRows = (report: T4Report) =>
 
 const samplesRow = (report: T4Report): RuleRow => report.rules.find(row => row.source === "samples")!;
 
-/** The passes-conformance checks assert-used fails, from the report the gate would read. */
+/** The passes-conformance checks assert-used fails, from the report the gate would read, given one own silent upstream case. */
 const failingChecks = (report: T4Report): string[] =>
-  passesConformanceChecks(conformanceOf(loadPack(directory), report), "assert-used")
+  passesConformanceChecks(conformanceOf(loadPack(directory), report), "assert-used", 1)
     .filter(check => !check.ok)
     .map(check => check.id);
 
@@ -184,34 +184,29 @@ describe("samples divergences", () => {
 });
 
 describe("stays-silent", () => {
-  const staysSilent = (report: T4Report) =>
-    passesConformanceChecks(conformanceOf(loadPack(directory), report), "assert-used").find(check => check.id === "stays-silent")!;
-  /** The fixtures recording without clean.py, its one unit where examplelint reports nothing. */
-  const withoutCleanFixture = (): void =>
-    editJson(join(directory, "upstream", "examplelint", "fixtures.expected.json"), recording => ({
-      ...recording,
-      source: { ...(recording.source as Record<string, unknown>), files: ["asserts.py"] },
-    }));
+  /** The gate's stays-silent check for assert-used, given `ownSilentCases` from its matches-upstream-tests cases. */
+  const staysSilent = (report: T4Report, ownSilentCases: number) =>
+    passesConformanceChecks(conformanceOf(loadPack(directory), report), "assert-used", ownSilentCases).find(check => check.id === "stays-silent")!;
   const clean: HandMadeSample = { name: "clean", path: "app.py", text: "ready = True\n", expected: { "assert-used": [] } };
 
-  it("is met by a fixture unit upstream reports nothing on, where the rule is silent", async () => {
-    const report = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
-    const fixtures = report.rules.find(row => row.source === "fixtures") as RuleRow;
-    expect({ clean: fixtures.cleanSamples, silent: fixtures.silentCleanSamples }).toEqual({ clean: 1, silent: 1 });
-    expect(staysSilent(report)).toMatchObject({ ok: true, detail: "silent where upstream reports nothing on 1 fixture unit(s), and on 0 clean sample(s)" });
-  });
-
-  it("is met by a clean sample the rule is silent on", async () => {
-    withoutCleanFixture();
+  it("is not met by fixture units of other rules, however silent; a silent clean sample meets it", async () => {
+    // clean.py is a fixture unit examplelint reports nothing on and the rule is silent on, but it is no case of the
+    // rule's own upstream tests (none is silent here), so it proves nothing about the rule.
+    const fixturesOnly = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
+    expect(staysSilent(fixturesOnly, 0)).toMatchObject({ ok: false });
     const { report } = await score([clean], { fixtures: true });
     expect(samplesRows(report)).toEqual([expect.objectContaining({ cleanSamples: 1, silentCleanSamples: 1 })]);
-    expect(staysSilent(report)).toMatchObject({ ok: true, detail: "silent where upstream reports nothing on 0 fixture unit(s), and on 1 clean sample(s)" });
+    expect(staysSilent(report, 0)).toEqual({ id: "stays-silent", ok: true, detail: "silent where it should be: 0 own upstream case(s), 1 clean sample(s)" });
   });
 
-  it("fails with neither", async () => {
-    withoutCleanFixture();
+  it("is met by the rule's own silent upstream cases", async () => {
+    const report = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
+    expect(staysSilent(report, 2)).toEqual({ id: "stays-silent", ok: true, detail: "silent where it should be: 2 own upstream case(s), 0 clean sample(s)" });
+  });
+
+  it("is not met by a clean sample the engine cannot read", async () => {
     const { report } = await score([{ ...clean, text: UNREADABLE }], { fixtures: true });
-    expect(staysSilent(report).ok).toBe(false);
+    expect(staysSilent(report, 0).ok).toBe(false);
   });
 });
 

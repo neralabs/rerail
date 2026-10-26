@@ -55,8 +55,12 @@ export function conformanceOf(loaded: LoadedPack, report: T4Report): PackConform
 
 const point = (value: { path: string; line: number; column?: number | undefined } | undefined) => (value === undefined ? "" : `, first ${value.path}:${value.line}${value.column === undefined ? "" : `:${value.column}`}`);
 
-/** The checks the pack's conformance check makes of one rule, as it makes them of a shipped rule. */
-export function passesConformanceChecks(conformance: PackConformance, id: string): Check[] {
+/**
+ * The checks the pack's conformance check makes of one rule, as it makes them of a shipped rule. `ownSilentCases` is
+ * how many of the rule's own upstream test cases upstream reports nothing on and the rule agrees on (matches-upstream-
+ * tests' cases for its upstream rule): with the clean samples the rule is silent on, the evidence stays-silent reads.
+ */
+export function passesConformanceChecks(conformance: PackConformance, id: string, ownSilentCases: number): Check[] {
   const errors = conformance.ruleErrors.get(id) ?? [];
   const checks: Check[] = [{ id: "scored", ok: errors.length === 0, detail: errors.length === 0 ? "the pack's conformance check compiles and scores it" : errors.slice(0, 2).join("; ") }];
   const row = conformance.rows.get(id);
@@ -86,14 +90,17 @@ export function passesConformanceChecks(conformance: PackConformance, id: string
       },
     );
   }
-  // The counterpart of catches-something: somewhere the rule should report nothing, it reports nothing.
-  const silent = { fixtures: row.silentCleanSamples, samples: samples?.silentCleanSamples ?? 0 };
+  // The counterpart of catches-something: somewhere the rule should report nothing, it reports nothing. The evidence
+  // must be relevant to the rule: its own upstream test cases, or clean samples (kept as near misses for the rule).
+  // Other rules' fixture units are not chosen to hold its construct, so silence there proves nothing, and Rerail's
+  // probes are no upstream case.
+  const silentSamples = samples?.silentCleanSamples ?? 0;
   checks.push({
     id: "stays-silent",
-    ok: silent.fixtures + silent.samples > 0,
-    detail: silent.fixtures + silent.samples > 0
-      ? `silent where upstream reports nothing on ${silent.fixtures} fixture unit(s), and on ${silent.samples} clean sample(s)`
-      : "no fixture unit upstream reports nothing on and no clean sample where the rule is silent: add an upstream case or a probe without findings, or a clean real-code sample",
+    ok: ownSilentCases + silentSamples > 0,
+    detail: ownSilentCases + silentSamples > 0
+      ? `silent where it should be: ${ownSilentCases} own upstream case(s), ${silentSamples} clean sample(s)`
+      : "no own upstream case upstream reports nothing on and no clean sample where the rule is silent: add a clean real-code sample for it",
   });
   const stale = conformance.stale.get(id) ?? [];
   checks.push({ id: "divergences-current", ok: stale.length === 0, detail: stale.length === 0 ? "every declared divergence explains a disagreement" : `stale divergence(s) explain nothing: ${stale.slice(0, 3).join(", ")}` });
