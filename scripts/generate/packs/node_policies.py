@@ -16,7 +16,7 @@ Data read from the pinned tools (through `node`):
 
 Writes (every other policy of the pack is hand-written: packs/node/rules/n-no-process-exit.json):
 - packs/node/rules/<id>.json: the ports in SHIPPED, the ones that pass the pack's conformance check on eslint-plugin-n's
-  tests and on the Node test set (TEST_SETS in scripts/s3/pack-fixtures.mjs); each one's candidates/rules copy removed;
+  tests and on the tool-pack's real-code samples (samples.lock); each one's candidates/rules copy removed;
 - packs/node/candidates/rules/<id>.json: every other port. A candidate that passes joins SHIPPED, and the other way;
 - packs/node/candidates/probes/rules/<id>.json: the seven probes.
 The pack manifests, recordings and the probes' hand-labelled expectations are not written here.
@@ -49,14 +49,16 @@ PINS = {"eslint-plugin-n": "18.4.1", "globals": "17.13.0"}
 # set-up's `oxlintRuleOfPort` maps it).
 OXLINT_NODE_RULES = {"callback-return", "exports-style", "global-require", "handle-callback-err", "no-exports-assign",
                      "no-mixed-requires", "no-new-require", "no-path-concat", "no-process-env", "no-sync", "no-top-level-await"}
-# The ports that pass the pack's conformance check on eslint-plugin-n's tests and on the Node test set, written to
+# The ports that pass the pack's conformance check on eslint-plugin-n's tests and on its real-code samples, written to
 # packs/node/rules/ (n-no-process-exit, hand-written, ships too); every other port is written to
 # packs/node/candidates/rules/. Each is removed from the other directory, so promoting a port moves its document.
 SHIPPED = {"n-callback-return", "n-exports-style", "n-no-path-concat", "n-prefer-global-buffer", "n-prefer-global-process", "n-global-require", "n-handle-callback-err", "n-hashbang", "n-no-callback-literal",
            "n-no-deprecated-api", "n-no-exports-assign", "n-no-mixed-requires", "n-no-new-require", "n-no-process-env",
            "n-no-sync", "n-prefer-global-console", "n-prefer-global-text-decoder", "n-prefer-global-text-encoder",
            "n-prefer-global-url", "n-prefer-global-url-search-params", "n-prefer-node-protocol", "n-prefer-promises-dns",
-           "n-prefer-promises-fs"}
+           "n-prefer-promises-fs", "n-prefer-global-crypto", "n-prefer-global-timers", "n-prefer-import-assert-strict",
+           "n-prefer-process-get-builtin-module", "n-no-unsupported-features-node-builtins", "n-no-unsupported-features-es-builtins",
+           "n-no-unsupported-features-es-syntax", "n-no-top-level-await", "n-no-unpublished-bin"}
 
 INCLUDE = ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
 

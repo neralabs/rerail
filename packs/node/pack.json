@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "24 eslint-plugin-n rules ported to Rerail, 4 of them on and 20 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on the Node test set of real code.",
+  "covers": "33 eslint-plugin-n rules ported to Rerail, 7 of them on and 26 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on real-code samples.",
   "reason": "matches Node.js",
   "match": {
     "any": [
@@ -218,6 +218,66 @@
       "id": "n-prefer-promises-fs",
       "document": "rules/n-prefer-promises-fs.json",
       "title": "eslint-plugin-n prefer-promises/fs: Enforce `require(\"fs\").promises`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-crypto",
+      "document": "rules/n-prefer-global-crypto.json",
+      "title": "eslint-plugin-n prefer-global/crypto: enforce either `crypto` or `require(\"crypto\").webcrypto`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-timers",
+      "document": "rules/n-prefer-global-timers.json",
+      "title": "eslint-plugin-n prefer-global/timers: enforce either global timer functions or `require(\"timers\")`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-import-assert-strict",
+      "document": "rules/n-prefer-import-assert-strict.json",
+      "title": "eslint-plugin-n prefer-import/assert-strict: enforce using `node:assert/strict` instead of `node:assert`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-process-get-builtin-module",
+      "document": "rules/n-prefer-process-get-builtin-module.json",
+      "title": "eslint-plugin-n prefer-process-get-builtin-module: enforce using `process.getBuiltinModule()` to load Node.js built-in modules",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-unsupported-features-node-builtins",
+      "document": "rules/n-no-unsupported-features-node-builtins.json",
+      "title": "eslint-plugin-n no-unsupported-features/node-builtins: disallow unsupported Node.js built-in APIs on the specified version",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-unsupported-features-es-builtins",
+      "document": "rules/n-no-unsupported-features-es-builtins.json",
+      "title": "eslint-plugin-n no-unsupported-features/es-builtins: disallow unsupported ECMAScript built-ins on the specified version",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-unsupported-features-es-syntax",
+      "document": "rules/n-no-unsupported-features-es-syntax.json",
+      "title": "eslint-plugin-n no-unsupported-features/es-syntax: disallow unsupported ECMAScript syntax on the specified version",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-top-level-await",
+      "document": "rules/n-no-top-level-await.json",
+      "title": "eslint-plugin-n no-top-level-await: disallow top-level `await` in published modules",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-unpublished-bin",
+      "document": "rules/n-no-unpublished-bin.json",
+      "title": "eslint-plugin-n no-unpublished-bin: disallow `bin` files that npm ignores",
       "group": "eslint-plugin-n",
       "on": false
     }

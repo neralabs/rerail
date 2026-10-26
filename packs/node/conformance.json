@@ -359,7 +359,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-global/crypto"
       },
-      "policy": "candidates/rules/n-prefer-global-crypto.json",
+      "policy": "rules/n-prefer-global-crypto.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -374,7 +374,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-global/timers"
       },
-      "policy": "candidates/rules/n-prefer-global-timers.json",
+      "policy": "rules/n-prefer-global-timers.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -389,7 +389,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-import/assert-strict"
       },
-      "policy": "candidates/rules/n-prefer-import-assert-strict.json",
+      "policy": "rules/n-prefer-import-assert-strict.json",
       "capabilities": [
         "syntax",
         "value",
@@ -403,7 +403,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-process-get-builtin-module"
       },
-      "policy": "candidates/rules/n-prefer-process-get-builtin-module.json",
+      "policy": "rules/n-prefer-process-get-builtin-module.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -418,7 +418,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-unsupported-features/node-builtins"
       },
-      "policy": "candidates/rules/n-no-unsupported-features-node-builtins.json",
+      "policy": "rules/n-no-unsupported-features-node-builtins.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -433,7 +433,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-unsupported-features/es-builtins"
       },
-      "policy": "candidates/rules/n-no-unsupported-features-es-builtins.json",
+      "policy": "rules/n-no-unsupported-features-es-builtins.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -448,7 +448,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-unpublished-bin"
       },
-      "policy": "candidates/rules/n-no-unpublished-bin.json",
+      "policy": "rules/n-no-unpublished-bin.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -461,7 +461,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-top-level-await"
       },
-      "policy": "candidates/rules/n-no-top-level-await.json",
+      "policy": "rules/n-no-top-level-await.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -474,7 +474,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-unsupported-features/es-syntax"
       },
-      "policy": "candidates/rules/n-no-unsupported-features-es-syntax.json",
+      "policy": "rules/n-no-unsupported-features-es-syntax.json",
       "capabilities": [
         "syntax",
         "scope",

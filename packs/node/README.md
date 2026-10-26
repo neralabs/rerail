@@ -1,26 +1,23 @@
 # Rerail rule pack: Node.js
 
-32 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
-the pack's conformance check on both of its sources, and in `candidates/rules/` until then. eslint-plugin-n has no port
-readiness gates ([docs/port-readiness.md](../../docs/port-readiness.md)); a pinned test set judges the pack instead
-(`TEST_SETS` in `scripts/s3/pack-fixtures.mjs`, [conformance/README.md](../../conformance/README.md)). Each port is
-scored through the engine's production workspace path, with every disagreement declared in `divergences.json`
-(`n-prefer-promises-fs` does not report `fs.watch`, on both sources; `n-callback-return` does not report a final
-`callback?.()`, on the test set), against:
+35 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
+the pack's conformance check, and in `candidates/rules/` until then ([docs/port-readiness.md](../../docs/port-readiness.md),
+[conformance/README.md](../../conformance/README.md)). Each port is scored through the engine's production workspace
+path, with every disagreement declared in `divergences.json` (`n-prefer-promises-fs` does not report `fs.watch`;
+`n-callback-return` does not report a final `callback?.()`; `n-no-unsupported-features-es-syntax` cannot read a tagged
+template with an invalid escape), against:
 
-- **the plugin's own findings on its rule tests** (`fixtures`), and on two pinned corpora (fastify, prettier);
-- **the Node test set** (`node-test-set`): 239 real files from 46 MIT and Apache-2.0 repositories, each at the commit
-  that introduced a violation of one rule (about ten per rule), each beside its nearest package.json, where the plugin's
-  findings for that rule are expected, and the 222 copies with that rule's findings fixed by hand, where none is.
+- **the plugin's own findings on its rule tests** (`fixtures`);
+- **the tool-pack's real-code samples** (`samples.lock`, `SAMPLES.md`): files from fastify and prettier labelled with
+  the plugin's findings, and the Node test set: 323 real files from 49 MIT and Apache-2.0 repositories, each at the
+  commit that introduced a violation of one rule (about ten per rule), beside its nearest package.json, labelled with
+  the plugin's findings for that rule, and 279 copies with those findings fixed by hand, clean for it.
 
-The conformance check (`--check`, run in CI) scores the tests and the test set: it fails a port in `rules/` on any
-unexplained FP or FN on either, and reports the candidates without failing them. 24 ports ship, 4 of them on (the ones
-the plugin's recommended configurations turn on: `n-hashbang`, `n-no-deprecated-api`, `n-no-exports-assign`,
-`n-no-process-exit`) and the other 20 off until a repository turns them on. The 8 candidates
-(`n-no-top-level-await`, `n-no-unpublished-bin`, `n-no-unsupported-features-es-builtins`,
-`n-no-unsupported-features-node-builtins`, `n-prefer-global-crypto`, `n-prefer-global-timers`,
-`n-prefer-import-assert-strict`, `n-prefer-process-get-builtin-module`) pass the plugin's tests and have no test-set
-files yet.
+33 ports ship, 7 of them on (the ones the plugin's recommended configurations turn on: `n-hashbang`,
+`n-no-deprecated-api`, `n-no-exports-assign`, `n-no-process-exit`, `n-no-unsupported-features-es-builtins`,
+`n-no-unsupported-features-es-syntax`, `n-no-unsupported-features-node-builtins`) and the other 26 off until a
+repository turns them on. The 2 candidates, `n-no-restricted-import` and `n-no-restricted-require`, report nothing at
+upstream's default options, so neither source shows them catching anything.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.
@@ -29,10 +26,10 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 |---|---|
 | `pack.json` | The pack (`rerail.rule-pack/v1`): the shipped rules, and the match that recommends it for a repository with a Node.js server framework or Electron dependency, or `.cjs`/`.mjs`/`.cts`/`.mts` files outside tests, scripts, fixtures and configuration |
 | `rules/` | The shipped ports; `node_policies.py` writes every document (its `SHIPPED`) but the hand-written `n-no-process-exit` |
-| `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin and the pinned corpora (fastify, prettier) |
+| `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin |
 | `divergences.json` | Declared disagreements with the plugin |
-| `upstream/eslint-plugin-n/` | The plugin's copied rule tests (`tests/`), one file per test case (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`) and the recorder (`generate.mjs`, sharing `conformance/recorders/eslint-record.mjs`) |
-| `candidates/` | The ports that are not judged on both sources yet (`rules/`, listed in `conformance.json`) and the Node probes (`probes/`), scored, never shipped |
+| `upstream/eslint-plugin-n/` | The plugin's copied rule tests (`tests/`), one file per test case (`fixtures/`), its recording (`fixtures.expected.json`), the recorder (`generate.mjs`, sharing `conformance/recorders/eslint-record.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
+| `candidates/` | The ports that do not pass yet (`rules/`, listed in `conformance.json`) and the Node probes (`probes/`), scored, never shipped |
 | `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, listing every copied file |
 
 No rule pins `languageOptions.sourceType` (the probes do, to state Node facts). The rules that reach CommonJS names
@@ -45,7 +42,7 @@ the other packs. Only a CommonJS file has `require`, `module`,
 `exports`, `__dirname` and `__filename`; an ES module has none (`flat/recommended-module` turns them off), so the rules
 that reach them through scope (exports-style, no-exports-assign, no-path-concat, prefer-global/\*, prefer-promises/\*,
 no-deprecated-api) report them in CommonJS files only. Rules upstream reads by name (global-require, no-new-require,
-no-mixed-requires, prefer-node-protocol) report in both. The recorder lints each fixture and corpus file the same way:
+no-mixed-requires, prefer-node-protocol) report in both. The recorder lints each fixture the same way:
 `globals.node`, without those five names in an ES module. Upstream's RuleTester declares `globals.node` in every case,
 so a case it runs as a module that reads one of those names and has no module syntax is written as CommonJS (`.js`
 under the fixtures' `"type": "commonjs"` package.json), where Node defines them. A case configured by nothing but a
@@ -67,7 +64,7 @@ as `.mjs`/`.mts` in the same folder, so its package and module system both hold.
 Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
 ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
 (`scripts/pack-data/recipes/node.ts`) runs `upstream/eslint-plugin-n/generate.mjs` against the pinned tools (eslint
-10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0) and corpora.
+10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0).
 Regenerating the rule documents runs offline, against the same tools installed under `.rerail/tools/node`:
 
 Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
@@ -80,19 +77,19 @@ npm run fixtures:push -- --pack node     # on your own branch: archive it and re
 python3 scripts/generate/packs/node_policies.py
 ```
 
-Scoring one rule with every false positive and false negative printed, on the tests and on the test set (fetched from
-S3 and verified the first time), and the probes:
+Scoring one rule with every false positive and false negative printed, on the tests and on the samples (`npm run
+fixtures:pull` fetches them), and the probes:
 
 ```sh
 node --import tsx conformance/languages/cli.ts --pack node --rule n-no-process-exit --fixtures
-node --import tsx conformance/languages/cli.ts --pack node --rule n-no-process-exit --test-set
+node --import tsx conformance/languages/cli.ts --pack node --rule n-no-process-exit --samples
 node --import tsx conformance/languages/cli.ts --pack-dir packs/node/candidates/probes --fixtures
 ```
 
-The test set is built outside this repository, from full clones of the source repositories: a history scan, then a
-pattern search for the rules the scan left short, keeping only violations a commit introduced, with every fixed copy
-checked to parse, to have no finding of its rule, to add no suppression comment and to keep 70% of its lines. A new
-build is a new zip in S3 and a new `TEST_SETS` pin ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)).
+The Node test set's files were mined outside this repository, from full clones of the source repositories: a history
+scan, then a pattern search for the rules the scan left short, keeping only violations a commit introduced, with every
+fixed copy checked to parse, to have no finding of its rule, to add no suppression comment and to keep 70% of its
+lines. They are samples like any other: a new set is a new archive and `samples.lock` ([docs/port-readiness.md](../../docs/port-readiness.md#samples)).
 
 ## Rule details
 
