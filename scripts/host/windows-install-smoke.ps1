@@ -138,7 +138,7 @@ log: { type: stdout, level: warn }
   if ($update -notmatch "Update available: no") { throw "update check did not report 'Update available: no'" }
 
   Step "rerail.cmd passes on the CLI's exit code"
-  # The launcher ends with `& exit /b` on node's own line; a failing command must still fail.
+  # The launcher ends its batch before node runs (so install --remove can delete it); a failing command must still fail.
   $ErrorActionPreference = "Continue"
   & $launcher install --no-such-option 2>$null | Out-Null
   $failed = $LASTEXITCODE
