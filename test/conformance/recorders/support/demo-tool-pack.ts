@@ -6,10 +6,10 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
-import { recordingLockSchema } from "../../../conformance/port-readiness/recording/store.js";
-import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import type { AdapterFactory, RecordOptions } from "../../../conformance/recorders/port-readiness/record.js";
+import type { CorpusFile } from "../../../../conformance/port-readiness/corpus.js";
+import { recordingLockSchema } from "../../../../conformance/port-readiness/recording/store.js";
+import type { PackAdapter, UpstreamFile } from "../../../../conformance/port-readiness/types.js";
+import type { AdapterFactory, RecordOptions } from "../../../../conformance/recorders/port-readiness/record.js";
 
 export const MANIFEST = `adapter: bandit
 rerail:

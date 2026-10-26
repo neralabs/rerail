@@ -239,7 +239,7 @@ Port of ESLint no-iterator. Member accesses whose static property name (getStati
 
 ### `eslint-no-labels`
 
-Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. A candidate: on the ESLint test set (`conformance/README.md`) it misses findings in Flow-annotated files the engine's grammar cannot parse (NER-1764).
+Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. A candidate: on the ESLint test set (`conformance/README.md`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-lonely-if`
 
@@ -295,7 +295,7 @@ Matches member accesses whose static property name (ESLint getStaticPropertyName
 
 ### `eslint-no-prototype-builtins`
 
-Port of ESLint no-prototype-builtins. A candidate: on the ESLint test set (`conformance/README.md`) it misses findings in Flow-annotated files the engine's grammar cannot parse (NER-1764).
+Port of ESLint no-prototype-builtins. A candidate: on the ESLint test set (`conformance/README.md`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-redeclare`
 
@@ -311,7 +311,7 @@ Matches string literals and untagged, substitution-free template literals whose 
 
 ### `eslint-no-self-assign`
 
-Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. A candidate: on the ESLint test set (`conformance/README.md`) it misses findings in Flow-annotated files the engine's grammar cannot parse (NER-1764).
+Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. A candidate: on the ESLint test set (`conformance/README.md`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-self-compare`
 

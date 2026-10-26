@@ -17,7 +17,7 @@ import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readin
 import { CASE_LAYOUTS, checkRecording, committedSources, diffRecording, listedCopies, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources } from "../../../conformance/recorders/port-readiness/record.js";
 import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies, withoutMachinePaths } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
-import { corpusFile, counted, demoToolPack, fakeAdapter, lockOf, MANIFEST, nameRules, optionsFor, SOURCE, span } from "./record-fixture.js";
+import { corpusFile, counted, demoToolPack, fakeAdapter, lockOf, MANIFEST, nameRules, optionsFor, SOURCE, span } from "./support/demo-tool-pack.js";
 
 test("a fake adapter's answers are recorded as one archive the gates read back, and a record with nothing missing runs no upstream", async () => {
   const root = demoToolPack(["B301", "B999", "F401"]);

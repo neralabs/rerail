@@ -10,7 +10,7 @@ import { packTree } from "../../../conformance/port-readiness/recording/archive.
 import { decodeSource, upstreamCheckoutDirectory } from "../../../conformance/port-readiness/recorded-adapter.js";
 import type { ParserVerdict, UpstreamCase, UpstreamFile } from "../../../conformance/port-readiness/types.js";
 import { recordToolPack, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
-import { demoToolPack, fakeAdapter, MANIFEST, nameRules, optionsFor, span } from "./record-fixture.js";
+import { demoToolPack, fakeAdapter, MANIFEST, nameRules, optionsFor, span } from "./support/demo-tool-pack.js";
 
 // The digest of an adapter's code (archive.ts's ADAPTER_SOURCES) is part of every config id and parsers id, and moves
 // with any edit to an adapter, which is its own reason to record again and no change to what the recorder writes. It is
