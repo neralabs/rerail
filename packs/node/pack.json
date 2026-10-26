@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "eslint-plugin-n rules for sound, modern use of Node.js modules and APIs.",
+  "covers": "17 eslint-plugin-n rules ported to Rerail, 1 of them on and 16 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on the Node test set of real code.",
   "reason": "matches Node.js",
   "match": {
     "any": [
@@ -11,27 +11,52 @@
         "dependencies": {
           "ecosystem": "npm",
           "names": [
-            "@types/node"
+            "express",
+            "koa",
+            "fastify",
+            "@hapi/hapi",
+            "@nestjs/core",
+            "restify",
+            "@adonisjs/core",
+            "sails",
+            "@feathersjs/feathers",
+            "moleculer",
+            "electron"
           ]
         }
       },
       {
         "files": [
+          "**/*.cjs",
           "**/*.mjs",
-          "**/*.cjs"
+          "**/*.cts",
+          "**/*.mts"
         ],
-        "label": "*.mjs and *.cjs files"
+        "exclude": [
+          "**/*.d.mts",
+          "**/*.d.cts",
+          "**/test/**",
+          "**/tests/**",
+          "**/__tests__/**",
+          "**/__mocks__/**",
+          "**/spec/**",
+          "**/e2e/**",
+          "**/fixtures/**",
+          "**/*.test.*",
+          "**/*.spec.*",
+          "**/scripts/**",
+          "**/*.config.*",
+          "**/.*rc.*",
+          "**/.*/**",
+          "**/gulpfile.*",
+          "**/Gulpfile.*",
+          "**/Gruntfile.*"
+        ],
+        "label": "Node.js module files (*.cjs, *.mjs)"
       }
     ]
   },
   "rules": [
-    {
-      "id": "n-callback-return",
-      "document": "rules/n-callback-return.json",
-      "title": "eslint-plugin-n callback-return: Require `return` statements after callbacks",
-      "group": "eslint-plugin-n",
-      "on": false
-    },
     {
       "id": "n-exports-style",
       "document": "rules/n-exports-style.json",
@@ -61,12 +86,6 @@
       "on": false
     },
     {
-      "id": "n-no-exports-assign",
-      "document": "rules/n-no-exports-assign.json",
-      "title": "eslint-plugin-n no-exports-assign: Disallow the assignment to `exports`",
-      "group": "eslint-plugin-n"
-    },
-    {
       "id": "n-no-mixed-requires",
       "document": "rules/n-no-mixed-requires.json",
       "title": "eslint-plugin-n no-mixed-requires: Disallow `require` calls to be mixed with regular variable declarations",
@@ -77,13 +96,6 @@
       "id": "n-no-new-require",
       "document": "rules/n-no-new-require.json",
       "title": "eslint-plugin-n no-new-require: Disallow `new` operators with calls to `require`",
-      "group": "eslint-plugin-n",
-      "on": false
-    },
-    {
-      "id": "n-no-path-concat",
-      "document": "rules/n-no-path-concat.json",
-      "title": "eslint-plugin-n no-path-concat: Disallow string concatenation with `__dirname`, `__filename`, and `import.meta` paths",
       "group": "eslint-plugin-n",
       "on": false
     },
@@ -108,23 +120,9 @@
       "on": false
     },
     {
-      "id": "n-prefer-global-buffer",
-      "document": "rules/n-prefer-global-buffer.json",
-      "title": "eslint-plugin-n prefer-global/buffer: Enforce either `Buffer` or `require(\"buffer\").Buffer`",
-      "group": "eslint-plugin-n",
-      "on": false
-    },
-    {
       "id": "n-prefer-global-console",
       "document": "rules/n-prefer-global-console.json",
       "title": "eslint-plugin-n prefer-global/console: Enforce either `console` or `require(\"console\")`",
-      "group": "eslint-plugin-n",
-      "on": false
-    },
-    {
-      "id": "n-prefer-global-process",
-      "document": "rules/n-prefer-global-process.json",
-      "title": "eslint-plugin-n prefer-global/process: Enforce either `process` or `require(\"process\")`",
       "group": "eslint-plugin-n",
       "on": false
     },
@@ -160,6 +158,13 @@
       "id": "n-prefer-node-protocol",
       "document": "rules/n-prefer-node-protocol.json",
       "title": "eslint-plugin-n prefer-node-protocol: Enforce using the `node:` protocol when importing Node.js builtin modules",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-promises-dns",
+      "document": "rules/n-prefer-promises-dns.json",
+      "title": "eslint-plugin-n prefer-promises/dns: Enforce `require(\"dns\").promises`",
       "group": "eslint-plugin-n",
       "on": false
     },

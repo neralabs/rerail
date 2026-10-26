@@ -233,7 +233,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-promises/dns"
       },
-      "policy": "candidates/rules/n-prefer-promises-dns.json",
+      "policy": "rules/n-prefer-promises-dns.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -319,6 +319,34 @@
         "rule": "n/callback-return"
       },
       "policy": "rules/n-callback-return.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-deprecated-api",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-deprecated-api"
+      },
+      "policy": "candidates/rules/n-no-deprecated-api.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-hashbang",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/hashbang"
+      },
+      "policy": "candidates/rules/n-hashbang.json",
       "capabilities": [
         "syntax",
         "suppression"
