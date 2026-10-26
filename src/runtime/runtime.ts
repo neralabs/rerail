@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, chmod, mkdir, readFile, truncate } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, truncate, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
@@ -477,6 +477,19 @@ async function appendJsonLine(path: string, value: unknown, state: JsonlAppendSt
 
 function sessionDirectory(root: string, sessionId: string): string {
   return join(root, createHash("sha256").update(sessionId).digest("hex"));
+}
+
+/**
+ * Session records hold what the person typed, and the storage root defaults to `<checkout>/.rerail/sessions`. A
+ * `.gitignore` of `*` keeps them out of `git status` and `git add -A`, as `.pytest_cache` does, without touching the
+ * repository's own ignores. An existing one is left as it is.
+ */
+async function ignoreInGit(storageRoot: string): Promise<void> {
+  try {
+    await writeFile(join(storageRoot, ".gitignore"), "# Created by Rerail: session records stay out of Git.\n*\n", { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
 }
 
 /** Replays a session ledger into its registry and returns the turn the session had reached. */
@@ -1081,6 +1094,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await chmod(directory, 0o700);
+    await ignoreInGit(this.#storageRoot);
     const ledgerPath = join(directory, "events.jsonl");
     const { values, appendState } = await readLines(ledgerPath);
     const ledger = validatedLedger(values);
