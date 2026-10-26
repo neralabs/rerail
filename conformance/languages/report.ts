@@ -10,7 +10,6 @@ export const headerSchema = z.object({
   tier: z.string(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
   kernel: z.object({ path: z.string(), version: z.string() }),
-  corpora: z.array(z.object({ name: z.string(), repository: z.string(), commit: z.string() })),
   tools: z.array(z.object({ name: z.string(), version: z.string() })),
 });
 export type ReportHeader = z.infer<typeof headerSchema>;
@@ -21,7 +20,8 @@ const pointSchema = z.object({ path: z.string(), line: z.number().int().positive
  * Files a clause unsound under syntax errors skipped (`source-incomplete`, "file has syntax errors") where the grammar
  * reports a syntax error, and files no AST clause read because their error regions cover half of them or more
  * (`source-incomplete`, "file did not parse: …"), each at its first error (the engine's line and column). Attributed to
- * T1, not counted as engine failures; upstream findings in them stay FNs.
+ * T1, not counted as engine failures; upstream findings in them stay FNs. On a real-code sample, which is judged as a
+ * file the engine must read, a file here fails a shipped rule.
  */
 const syntaxErrorFilesSchema = z.object({
   count: z.number().int().nonnegative(),
@@ -29,7 +29,7 @@ const syntaxErrorFilesSchema = z.object({
 });
 export type SyntaxErrorLocation = z.infer<typeof syntaxErrorFilesSchema>["files"][number];
 
-/** Upper bound on the FP and FN examples a row lists; the counts are always exact. */
+/** Upper bound on the FP, FN and reviewed examples a row lists; the counts are always exact. */
 export const EXAMPLE_LIMIT = 50;
 
 export const ruleRowSchema = z.object({
@@ -40,16 +40,27 @@ export const ruleRowSchema = z.object({
   examples: z.boolean(),
   upstream: z.object({ tool: z.string(), rule: z.string() }),
   capabilities: z.array(z.string()),
-  /** `fixtures`, `eslint-test-set` or `corpus:<name>`. */
+  /** `fixtures` or `samples`. */
   source: z.string(),
+  /** On samples, labels the rule reports on the line of. */
   tp: z.number().int().nonnegative(),
-  /** Unexplained only; explained disagreements are in `divergences`. */
+  /** Unexplained only; explained disagreements are in `divergences`. On samples, reports on clean samples. */
   fp: z.number().int().nonnegative(),
+  /** On samples, labels the rule does not report on the line of. */
   fn: z.number().int().nonnegative(),
   precision: z.number().nullable(),
   recall: z.number().nullable(),
-  /** Findings, Rerail's and the upstream tool's, on lines the tool did not analyse (`source.unanalysed`); not scored. */
-  unanalysed: z.number().int().nonnegative(),
+  /** Samples only: reports on unlabelled lines of samples labelled for the rule, possibly real violations the labels miss; never failing. */
+  reviewed: z.number().int().nonnegative(),
+  /** The first 50 `reviewed` reports. */
+  reviewedFindings: z.array(pointSchema),
+  /**
+   * Evidence the rule stays silent where it should: the files judged clean for it (on samples, its clean samples; on
+   * the fixtures, the units upstream reports nothing of the rule on), and of those, the ones it reports nothing on and
+   * reads without a syntax error.
+   */
+  cleanSamples: z.number().int().nonnegative(),
+  silentCleanSamples: z.number().int().nonnegative(),
   /** Failures other than `source-partial` and `syntaxErrorFiles` this rule's code rule reported. */
   engineFailures: z.number().int().nonnegative(),
   /** Files with syntax errors the code rule's AST clauses ran around (`source-partial`). */
@@ -73,14 +84,11 @@ export type RuleRow = z.infer<typeof ruleRowSchema>;
 
 export const sourceSummarySchema = z.object({
   source: z.string(),
-  /** Analysis units (fixtures) or files (corpus) evaluated. */
+  /** Analysis units (fixtures) or judged samples evaluated. */
   units: z.number().int().nonnegative(),
+  /** Files evaluated, a sample's context files included. */
   files: z.number().int().nonnegative(),
   bytes: z.number().int().nonnegative(),
-  /** Corpus files the upstream tool could not analyse (`source.skipped`), left out of evaluation and scoring. */
-  skipped: z.number().int().nonnegative(),
-  /** Upstream findings in files outside the scored set (excluded paths, other dialects), not scored. */
-  outsideScope: z.number().int().nonnegative(),
   /** Every file of the source any rule skipped for its syntax errors. */
   syntaxErrorFiles: syntaxErrorFilesSchema,
   /** Wall time of the evaluation: cold workspace build plus result paging. */
@@ -90,8 +98,8 @@ export type SourceSummary = z.infer<typeof sourceSummarySchema>;
 
 export const t4ReportSchema = headerSchema.extend({
   tier: z.literal("t4-rules"),
-  /** What the run covered; a T4 report of record covers every rule, the fixtures and every corpus. */
-  scope: z.object({ rules: z.array(z.string()), fixtures: z.boolean(), eslintTestSet: z.boolean(), corpora: z.array(z.string()) }),
+  /** What the run covered; a T4 report of record covers every rule, the fixtures and the samples. */
+  scope: z.object({ rules: z.array(z.string()), fixtures: z.boolean(), samples: z.boolean() }),
   coverage: z.object({
     rules: z.number().int().nonnegative(),
     minimumRules: z.number().int().positive(),
@@ -108,7 +116,7 @@ export const t4ReportSchema = headerSchema.extend({
   staleDivergences: z.array(z.object({ rule: z.string(), source: z.string().optional(), path: z.string(), line: z.number(), kind: z.string() })),
   /** Configuration errors (missing or mismatched recordings, code rules that do not compile, …); each fails the run. */
   errors: z.array(z.string()),
-  /** No unexplained FP, no unexplained fixture or ESLint test set FN (corpus misses are recall), no engine failure, no stale divergence, no error. */
+  /** No unexplained FP, no unexplained FN, no engine failure (on samples, no unparsable judged sample), no stale divergence, no error. */
   pass: z.boolean(),
 });
 export type T4Report = z.infer<typeof t4ReportSchema>;

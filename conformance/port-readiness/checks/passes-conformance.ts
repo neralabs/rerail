@@ -1,33 +1,29 @@
 /**
  * passes-conformance: the pack contract's own check (`test:conformance`, conformance/languages/) as a gate, so the rule
  * gates are a superset of it and a candidate is never "ready to promote" while the pack's check would fail it once
- * shipped. The pack's fixtures tier runs once per tool-pack run, over every rule, shipped or candidate (each in its own
- * workspace, as the check runs them): upstream's fixtures and Rerail's probes, and for the packs it scores the ESLint
- * test set, after the pack's declared divergences. Every rule is held to what the check fails a shipped rule on
- * (`reportFailures`). When the pack pins corpora, the
- * tool's corpus recordings must also cover the rule, as the check requires of every shipped rule.
+ * shipped. The pack's check runs once per tool-pack run, over every rule, shipped or candidate (each in its own
+ * workspace, as the check runs them): upstream's fixtures and Rerail's probes, and the pack's real-code samples, after
+ * the pack's declared divergences. Every rule is held to what the check fails a shipped rule on (`reportFailures`),
+ * and must show it stays silent somewhere it should.
  */
-import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { packFixtureAbsence } from "../../../scripts/s3/pack-fixtures.mjs";
 
-import { corpusRecordingPath, loadPack, loadRecording } from "../../languages/pack.js";
-import type { RuleRow } from "../../languages/report.js";
-import { ESLINT_TEST_SET_SOURCE, runPack } from "../../languages/runner.js";
+import { loadPack, type LoadedPack } from "../../languages/pack.js";
+import type { RuleRow, T4Report } from "../../languages/report.js";
+import { runPack, SAMPLES_SOURCE } from "../../languages/runner.js";
 import type { Check } from "../types.js";
 
 /** The pack's conformance check, as the gate reads it: one fixtures row per rule id, and what it says about the rest. */
 export interface PackConformance {
   rows: Map<string, RuleRow>;
-  /** One ESLint test set row per rule id the set holds files for (none for a pack it does not score). */
-  testSetRows: Map<string, RuleRow>;
-  /** The pack pins corpora, so its corpus recordings must cover every rule that ships. */
-  pinsCorpora: boolean;
+  /** One samples row per rule id some sample is labelled for (none for a rule no sample judges). */
+  sampleRows: Map<string, RuleRow>;
   /** Divergences of a rule that explain nothing, as `path:line (kind)`. */
   stale: Map<string, string[]>;
-  /** Why the pack's corpus recordings do not cover a rule. */
-  uncovered: Map<string, string[]>;
-  /** The check's errors that name a rule (a document that does not compile, a recording that does not cover it). */
+  /**
+   * The check's errors that name a rule (a document that does not compile, a recording that does not cover it, its
+   * tool-pack's samples tree missing: a leg restores only its own tool-pack's data, so that fails no other tool's rule).
+   */
   ruleErrors: Map<string, string[]>;
   /** The check's errors that name no rule: they fail the whole run. */
   errors: string[];
@@ -35,13 +31,16 @@ export interface PackConformance {
 
 const add = (map: Map<string, string[]>, key: string, value: string) => map.set(key, [...(map.get(key) ?? []), value]);
 
-/** Run the pack's conformance check on its fixtures and the ESLint test set, as `test:conformance` does. */
+/** Run the pack's conformance check on its fixtures and samples, as `test:conformance` does. */
 export async function packConformance(root: string, pack: string): Promise<PackConformance> {
   const loaded = loadPack(join(root, "packs", pack));
-  const report = await runPack(loaded, { fixtures: true, eslintTestSet: true, corpora: [], date: "port-readiness" });
+  return conformanceOf(loaded, await runPack(loaded, { fixtures: true, samples: true, date: "port-readiness" }));
+}
+
+/** What the pack's conformance report says per rule. */
+export function conformanceOf(loaded: LoadedPack, report: T4Report): PackConformance {
   const ids = loaded.pack.rules.map((rule) => rule.id);
-  const rows = new Map(report.rules.filter((row) => row.source === "fixtures").map((row) => [row.rule, row]));
-  const testSetRows = new Map(report.rules.filter((row) => row.source === ESLINT_TEST_SET_SOURCE).map((row) => [row.rule, row]));
+  const rowsOf = (source: string) => new Map(report.rules.filter((row) => row.source === source).map((row) => [row.rule, row]));
   const stale = new Map<string, string[]>();
   for (const divergence of report.staleDivergences) add(stale, divergence.rule, `${divergence.path}:${divergence.line} (${divergence.kind})`);
   const ruleErrors = new Map<string, string[]>();
@@ -51,18 +50,7 @@ export async function packConformance(root: string, pack: string): Promise<PackC
     if (id === undefined) errors.push(error);
     else add(ruleErrors, id, error);
   }
-  const uncovered = new Map<string, string[]>();
-  for (const corpus of loaded.pack.corpora) {
-    for (const rule of loaded.pack.rules) {
-      const path = corpusRecordingPath(loaded, rule.upstream.tool, corpus.name);
-      if (!existsSync(path)) {
-        add(uncovered, rule.id, packFixtureAbsence(path) ?? `the pack pins corpus ${corpus.name}, and ${rule.upstream.tool} has no recording of it`);
-        continue;
-      }
-      if (!loadRecording(path).source.rules.includes(rule.upstream.rule)) add(uncovered, rule.id, `the ${rule.upstream.tool} recording of corpus ${corpus.name} does not cover ${rule.upstream.rule}`);
-    }
-  }
-  return { rows, testSetRows, pinsCorpora: loaded.pack.corpora.length > 0, stale, uncovered, ruleErrors, errors };
+  return { rows: rowsOf("fixtures"), sampleRows: rowsOf(SAMPLES_SOURCE), stale, ruleErrors, errors };
 }
 
 const point = (value: { path: string; line: number; column?: number | undefined } | undefined) => (value === undefined ? "" : `, first ${value.path}:${value.line}${value.column === undefined ? "" : `:${value.column}`}`);
@@ -83,19 +71,31 @@ export function passesConformanceChecks(conformance: PackConformance, id: string
     { id: "catches-something", ok: row.tp > 0 || row.examples, detail: row.tp > 0 ? `${row.tp} finding(s) agree with upstream on the fixtures` : row.examples ? "pack.json gives it examples" : "0 true positives on the fixtures and no examples in pack.json: nothing shows it catches anything" },
     { id: "engine-reads-fixtures", ok: row.engineFailures === 0, detail: row.engineFailures === 0 ? "the engine evaluates it on every fixture" : `${row.engineFailures} engine failure(s) on the fixtures` },
   );
-  const testSet = conformance.testSetRows.get(id);
-  if (testSet !== undefined) {
+  const samples = conformance.sampleRows.get(id);
+  if (samples !== undefined) {
+    const unread = samples.engineFailures + samples.syntaxErrorFiles.count;
     checks.push(
-      { id: "eslint-test-set-no-unexplained-false-positives", ok: testSet.fp === 0, detail: testSet.fp === 0 ? `no unexplained finding on the ESLint test set, with ${testSet.tp} true positive(s)` : `${testSet.fp} unexplained FP on the ESLint test set${point(testSet.falsePositives[0])}: ${fix}` },
-      { id: "eslint-test-set-no-unexplained-misses", ok: testSet.fn === 0, detail: testSet.fn === 0 ? "misses no finding ESLint reports on the ESLint test set" : `${testSet.fn} unexplained FN on the ESLint test set${point(testSet.falseNegatives[0])}: ${fix}` },
-      { id: "engine-reads-eslint-test-set", ok: testSet.engineFailures === 0, detail: testSet.engineFailures === 0 ? "the engine evaluates it on every file of the ESLint test set" : `${testSet.engineFailures} engine failure(s) on the ESLint test set` },
+      { id: "samples-catch-labelled", ok: samples.fn === 0, detail: samples.fn === 0 ? `catches every labelled violation of its real-code samples (${samples.tp})` : `${samples.fn} labelled violation(s) of its real-code samples missed${point(samples.falseNegatives[0])}: ${fix}` },
+      { id: "samples-silent-on-clean", ok: samples.fp === 0, detail: samples.fp === 0 ? `reports nothing on its ${samples.cleanSamples} clean sample(s)${samples.reviewed > 0 ? `; ${samples.reviewed} report(s) on labelled samples' unlabelled lines to review` : ""}` : `${samples.fp} finding(s) on clean samples${point(samples.falsePositives[0])}: ${fix}` },
+      {
+        id: "engine-reads-samples",
+        ok: unread === 0,
+        detail: unread === 0
+          ? "the engine evaluates it on every sample judged for it"
+          : `${samples.engineFailures} engine failure(s) and ${samples.syntaxErrorFiles.count} judged sample(s) the engine could not read${point(samples.syntaxErrorFiles.files[0])}`,
+      },
     );
   }
+  // The counterpart of catches-something: somewhere the rule should report nothing, it reports nothing.
+  const silent = { fixtures: row.silentCleanSamples, samples: samples?.silentCleanSamples ?? 0 };
+  checks.push({
+    id: "stays-silent",
+    ok: silent.fixtures + silent.samples > 0,
+    detail: silent.fixtures + silent.samples > 0
+      ? `silent where upstream reports nothing on ${silent.fixtures} fixture unit(s), and on ${silent.samples} clean sample(s)`
+      : "no fixture unit upstream reports nothing on and no clean sample where the rule is silent: add an upstream case or a probe without findings, or a clean real-code sample",
+  });
   const stale = conformance.stale.get(id) ?? [];
   checks.push({ id: "divergences-current", ok: stale.length === 0, detail: stale.length === 0 ? "every declared divergence explains a disagreement" : `stale divergence(s) explain nothing: ${stale.slice(0, 3).join(", ")}` });
-  if (conformance.pinsCorpora) {
-    const uncovered = conformance.uncovered.get(id) ?? [];
-    checks.push({ id: "corpus-recorded", ok: uncovered.length === 0, detail: uncovered.length === 0 ? "the pack's corpus recordings cover it" : `${uncovered[0]}: record the corpus again with it` });
-  }
   return checks;
 }

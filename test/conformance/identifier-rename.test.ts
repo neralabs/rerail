@@ -128,7 +128,7 @@ describe.each(gated.map(loaded => [loaded.pack.pack, loaded] as const))("pack %s
   it("scores every shipped port identically", async () => {
     const directory = mkdtempSync(join(tmpdir(), "rerail-identifier-rename-"));
     try {
-      const options = { fixtures: true, corpora: [], date: "2026-01-01" };
+      const options = { fixtures: true, samples: false, date: "2026-01-01" };
       const normal = await runPack(loaded, options);
       const renamedReport = await runPack(renamedPack(loaded, renamed, directory), options);
       expect(renamedReport.errors).toEqual(normal.errors);

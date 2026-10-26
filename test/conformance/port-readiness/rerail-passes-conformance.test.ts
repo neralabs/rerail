@@ -5,16 +5,18 @@ import { passesConformanceChecks, type PackConformance } from "../../../conforma
 import type { RuleRow } from "../../../conformance/languages/report.js";
 import { verdict } from "../../../conformance/port-readiness/types.js";
 
-function row(rule: string, counts: Partial<Pick<RuleRow, "tp" | "fp" | "fn" | "engineFailures" | "examples">> = {}): RuleRow {
+type Counts = Partial<Pick<RuleRow, "tp" | "fp" | "fn" | "engineFailures" | "examples" | "reviewed" | "cleanSamples" | "silentCleanSamples" | "syntaxErrorFiles">>;
+
+function row(rule: string, counts: Counts = {}, source = "fixtures"): RuleRow {
   return {
-    rule, candidate: true, examples: false, upstream: { tool: "ruff", rule: "X1" }, capabilities: [], source: "fixtures", tp: 2, fp: 0, fn: 0,
-    precision: 1, recall: 1, unanalysed: 0, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: { count: 0, files: [] }, divergences: [],
-    falsePositives: [], falseNegatives: [], ...counts,
-  } as RuleRow;
+    rule, candidate: true, examples: false, upstream: { tool: "ruff", rule: "X1" }, capabilities: [], source, tp: 2, fp: 0, fn: 0,
+    precision: 1, recall: 1, reviewed: 0, reviewedFindings: [], cleanSamples: 1, silentCleanSamples: 1, engineFailures: 0, partialFiles: 0,
+    syntaxErrorFiles: { count: 0, files: [] }, divergences: [], falsePositives: [], falseNegatives: [], ...counts,
+  };
 }
 
 function conformance(rows: RuleRow[], extra: Partial<PackConformance> = {}): PackConformance {
-  return { rows: new Map(rows.map((entry) => [entry.rule, entry])), testSetRows: new Map(), pinsCorpora: false, stale: new Map(), uncovered: new Map(), ruleErrors: new Map(), errors: [], ...extra };
+  return { rows: new Map(rows.map((entry) => [entry.rule, entry])), sampleRows: new Map(), stale: new Map(), ruleErrors: new Map(), errors: [], ...extra };
 }
 
 const failing = (checks: { id: string; ok: boolean }[]) => checks.filter((check) => !check.ok).map((check) => check.id);
@@ -25,32 +27,42 @@ test("a rule passes when the pack's check would pass it as shipped", () => {
 });
 
 test("an unexplained finding on the pack's fixtures or probes fails it, naming the first, as the check fails a shipped rule", () => {
-  const withFp = { ...row("a", { fp: 1 }), falsePositives: [{ path: "rerail/probes/A1.py", line: 5, column: 23 }] } as RuleRow;
-  const checks = passesConformanceChecks(conformance([withFp, row("b", { fn: 2 }), row("c", { tp: 0 }), row("d", { engineFailures: 1 })]), "a");
+  const withFp = { ...row("a", { fp: 1 }), falsePositives: [{ path: "rerail/probes/A1.py", line: 5, column: 23 }] };
+  const all = conformance([withFp, row("b", { fn: 2 }), row("c", { tp: 0 }), row("d", { engineFailures: 1 })]);
+  const checks = passesConformanceChecks(all, "a");
   assert.deepEqual(failing(checks), ["no-unexplained-false-positives"]);
   assert.match(checks.find((check) => !check.ok)!.detail, /1 unexplained FP on the pack's fixtures, first rerail\/probes\/A1\.py:5:23/u);
-  const all = conformance([withFp, row("b", { fn: 2 }), row("c", { tp: 0 }), row("d", { engineFailures: 1 })]);
   assert.deepEqual(failing(passesConformanceChecks(all, "b")), ["no-unexplained-misses"]);
   assert.deepEqual(failing(passesConformanceChecks(all, "c")), ["catches-something"]);
   assert.deepEqual(failing(passesConformanceChecks(all, "d")), ["engine-reads-fixtures"]);
 });
 
-test("a stale divergence, an uncovered corpus recording or a missing row fails it", () => {
+test("a stale divergence, an error naming the rule or a missing row fails it", () => {
   assert.deepEqual(failing(passesConformanceChecks(conformance([row("a")], { stale: new Map([["a", ["x.py:3 (upstream-wrong)"]]]) }), "a")), ["divergences-current"]);
-  const uncovered = conformance([row("a")], { pinsCorpora: true, uncovered: new Map([["a", ["the ruff recording of corpus django does not cover X1"]]]) });
-  assert.deepEqual(failing(passesConformanceChecks(uncovered, "a")), ["corpus-recorded"]);
+  const missingTree = conformance([row("a")], { ruleErrors: new Map([["a", ["a (samples): no samples tree at .rerail/pack-data/samples/python/ruff/0123"]]]) });
+  assert.deepEqual(failing(passesConformanceChecks(missingTree, "a")), ["scored"]);
   assert.deepEqual(failing(passesConformanceChecks(conformance([]), "missing")), ["fixtures-row"]);
 });
 
-test("an unexplained FP or miss on the ESLint test set, or an engine failure there, fails it; a rule the set holds no files for is not judged there", () => {
-  const testSet = (counts: Parameters<typeof row>[1]) => ({ ...row("a", counts), source: "eslint-test-set" }) as RuleRow;
-  const judged = (counts: Parameters<typeof row>[1]) => failing(passesConformanceChecks(conformance([row("a")], { testSetRows: new Map([["a", testSet(counts)]]) }), "a"));
+test("a missed label, a finding on a clean sample or an unread sample fails it; a reviewed report does not; a rule no sample judges is not judged there", () => {
+  const judged = (counts: Counts) => failing(passesConformanceChecks(conformance([row("a")], { sampleRows: new Map([["a", row("a", counts, "samples")]]) }), "a"));
   assert.deepEqual(judged({}), []);
-  assert.deepEqual(judged({ fp: 1 }), ["eslint-test-set-no-unexplained-false-positives"]);
-  assert.deepEqual(judged({ fn: 1 }), ["eslint-test-set-no-unexplained-misses"]);
-  assert.deepEqual(judged({ engineFailures: 1 }), ["engine-reads-eslint-test-set"]);
+  assert.deepEqual(judged({ reviewed: 3 }), []);
+  assert.deepEqual(judged({ fn: 1 }), ["samples-catch-labelled"]);
+  assert.deepEqual(judged({ fp: 1 }), ["samples-silent-on-clean"]);
+  assert.deepEqual(judged({ engineFailures: 1 }), ["engine-reads-samples"]);
+  assert.deepEqual(judged({ syntaxErrorFiles: { count: 1, files: [{ path: "s/a.py", line: 2, column: 1 }] } }), ["engine-reads-samples"]);
   const ids = passesConformanceChecks(conformance([row("a")]), "a").map((check) => check.id);
-  assert.ok(!ids.some((id) => id.includes("eslint-test-set")));
+  assert.ok(!ids.some((id) => id.startsWith("samples-") || id === "engine-reads-samples"));
+});
+
+test("stays-silent: a silent fixture unit upstream reports nothing on, or a silent clean sample, meets it", () => {
+  const silentOn = (fixtures: number, samples: number | undefined) =>
+    failing(passesConformanceChecks(conformance([row("a", { silentCleanSamples: fixtures })], samples === undefined ? {} : { sampleRows: new Map([["a", row("a", { silentCleanSamples: samples }, "samples")]]) }), "a"));
+  assert.deepEqual(silentOn(1, undefined), []);
+  assert.deepEqual(silentOn(0, 1), []);
+  assert.deepEqual(silentOn(0, 0), ["stays-silent"]);
+  assert.deepEqual(silentOn(0, undefined), ["stays-silent"]);
 });
 
 test("it blocks like any gate, after the V1 gates: a rule that passes them but not the pack's check stops there", () => {

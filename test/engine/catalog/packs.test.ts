@@ -1,8 +1,7 @@
 /**
  * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
  * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
- * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
- * corpus, a missing checkout failing; 0: none).
+ * ported rules on the tools' fixtures.
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
  * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
@@ -14,7 +13,7 @@ import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
+import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 
@@ -28,8 +27,6 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal =>
 const PACKS = fileURLToPath(new URL("../../../packs/", import.meta.url));
 const FIXTURES = fixturesPath("packs");
 const TIMEOUT = 600_000;
-
-const CORPORA: ValidatePackOptions = process.env.RERAIL_PACK_CORPORA === "1" ? { corpora: true } : process.env.RERAIL_PACK_CORPORA === "0" ? { corpora: false } : {};
 
 const packs = existsSync(PACKS)
   ? readdirSync(PACKS, { withFileTypes: true })
@@ -50,7 +47,7 @@ function listedRules(id: string): string[] {
 
 describe.each(packs)("pack %s", id => {
   let validation: Promise<PackValidation> | undefined;
-  const validated = (): Promise<PackValidation> => (validation ??= validatePack(join(PACKS, id), CORPORA));
+  const validated = (): Promise<PackValidation> => (validation ??= validatePack(join(PACKS, id)));
 
   it.each(PACK_CHECKS)("check $number: $name", { timeout: TIMEOUT }, async ({ name }) => {
     expect((await validated()).checks[name]).toEqual([]);
@@ -134,7 +131,7 @@ describe("validatePack", () => {
     Object.fromEntries(Object.entries(validation.checks).filter(([, failures]) => failures.length > 0));
 
   it("passes a valid pack, every rule ok", async () => {
-    const validation = await validatePack(join(FIXTURES, "valid"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "valid"));
     expect(failing(validation)).toEqual({});
     expect(validation.pass).toBe(true);
     expect(validation.rules).toEqual([
@@ -144,7 +141,7 @@ describe("validatePack", () => {
   });
 
   it("passes a pack for a planned language, its rules not supported yet and their examples skipped", async () => {
-    const validation = await validatePack(join(FIXTURES, "exemplar"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "exemplar"));
     expect(failing(validation)).toEqual({});
     expect(validation.rules).toEqual([
       { id: "no-identifier", document: "rules/no-identifier.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `exemplar` is not supported yet" },
@@ -152,7 +149,7 @@ describe("validatePack", () => {
   });
 
   it("passes a pack that ships no rules while its ports are candidates", async () => {
-    const validation = await validatePack(join(FIXTURES, "empty"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "empty"));
     expect(failing(validation)).toEqual({});
     expect(validation.pass).toBe(true);
     expect(validation.rules).toEqual([]);
@@ -374,7 +371,7 @@ describe("validatePack", () => {
   ];
 
   it.each(cases)("fails %s", async (_name, change, expected) => {
-    const validation = await validatePack(changed("valid", change), { corpora: false });
+    const validation = await validatePack(changed("valid", change));
     expect(failing(validation)).toEqual(expected);
     expect(validation.pass).toBe(false);
   });
@@ -386,7 +383,6 @@ describe("validatePack", () => {
         ...document,
         clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message } })),
       }))),
-      { corpora: false },
     );
     expect(failing(validation)).toEqual({});
     expect(validation.pass).toBe(true);
@@ -402,7 +398,7 @@ describe("validatePack", () => {
 
   describe("check 7: manifest", () => {
     it("fails a pack.json without match, as a manifest failure besides check 1's schema failure", async () => {
-      const validation = await validatePack(changed("valid", directory => editJson(join(directory, "pack.json"), ({ match: _match, ...pack }) => pack)), { corpora: false });
+      const validation = await validatePack(changed("valid", directory => editJson(join(directory, "pack.json"), ({ match: _match, ...pack }) => pack)));
       expect(failing(validation)).toEqual({
         rules: ["pack.json: ✖ Invalid input: expected object, received undefined\n  → at match"],
         proof: ["pack.json does not parse; see check 1"],
@@ -412,7 +408,7 @@ describe("validatePack", () => {
     });
 
     it("fails a pack core's generated pack list does not name, when it must be listed", async () => {
-      const validation = await validatePack(join(FIXTURES, "valid"), { corpora: false, listed: true });
+      const validation = await validatePack(join(FIXTURES, "valid"), { listed: true });
       expect(failing(validation)).toEqual({ manifest: ["src/engine/catalog/pack-list.generated.ts does not list valid; run npm run generate:packs"] });
     });
   });
@@ -420,7 +416,6 @@ describe("validatePack", () => {
   it("marks the rule a failure belongs to", async () => {
     const validation = await validatePack(
       changed("valid", directory => writeFileSync(join(directory, "divergences.json"), "[]\n")),
-      { corpora: false },
     );
     expect(validation.rules.map(({ id, status }) => ({ id, status }))).toEqual([
       { id: "assert-used", status: "failed" },
@@ -429,7 +424,7 @@ describe("validatePack", () => {
   });
 
   it("passes a pack whose ESLint port honours ESLint's suppression comments", async () => {
-    const validation = await validatePack(join(FIXTURES, "eslint-port"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "eslint-port"));
     expect(failing(validation)).toEqual({});
     expect(validation.rules).toEqual([{ id: "no-debugger", document: "rules/no-debugger.json", status: "ok" }]);
   });
@@ -449,7 +444,7 @@ describe("validatePack", () => {
     editJson(join(directory, "conformance.json"), pack => ({ ...pack, suppressionExemptions: [{ rule: "no-debugger", reason: "recorded before the port modelled eslint-disable comments" }] }));
 
   it("fails an ESLint port whose violation does not suppress its upstream rule", async () => {
-    const validation = await validatePack(changed("eslint-port", withoutSuppress), { corpora: false });
+    const validation = await validatePack(changed("eslint-port", withoutSuppress));
     expect(failing(validation)).toEqual({
       ports: [
         "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
@@ -464,13 +459,12 @@ describe("validatePack", () => {
         withoutSuppress(directory);
         exempted(directory);
       }),
-      { corpora: false },
     );
     expect(failing(validation)).toEqual({});
   });
 
   it("fails a stale suppression exemption, for a port that suppresses its upstream rule", async () => {
-    const validation = await validatePack(changed("eslint-port", exempted), { corpora: false });
+    const validation = await validatePack(changed("eslint-port", exempted));
     expect(failing(validation)).toEqual({ ports: ["no-debugger: stale suppression exemption: every violation of rules/no-debugger.json names no-debugger in suppress.eslint.rules"] });
   });
 
@@ -485,7 +479,6 @@ describe("validatePack", () => {
             .map(clause => ({ ...clause, violation: { ...clause.violation, suppress: { oxlint: { rules: ["no-debugger"] } } } })),
         })),
       ),
-      { corpora: false },
     );
     expect(failing(validation)).toEqual({
       ports: [
@@ -511,10 +504,10 @@ describe("validatePack", () => {
         "no-debugger: rules/no-debugger.json carries suppress.eslint without suppress.biome naming lint/suspicious/noDebugger (clause debugger-statement), the Biome 2.5.15 rule the same as the ESLint rule it names, so the biome-ignore comments that silence it are ignored; run scripts/generate/packs/biome-suppression.mjs",
       ],
     };
-    expect(failing(await validatePack(changed("eslint-port", suppressing({ eslint, oxlint })), { corpora: false }))).toEqual(missing);
+    expect(failing(await validatePack(changed("eslint-port", suppressing({ eslint, oxlint }))))).toEqual(missing);
     const otherRule = suppressing({ eslint, oxlint, biome: { rules: ["lint/suspicious/noConsole"] } });
-    expect(failing(await validatePack(changed("eslint-port", otherRule), { corpora: false }))).toEqual(missing);
-    const alone = await validatePack(changed("eslint-port", suppressing({ biome: { rules: ["lint/suspicious/noDebugger"] } })), { corpora: false });
+    expect(failing(await validatePack(changed("eslint-port", otherRule)))).toEqual(missing);
+    const alone = await validatePack(changed("eslint-port", suppressing({ biome: { rules: ["lint/suspicious/noDebugger"] } })));
     expect(failing(alone)).toEqual({
       ports: [
         // The fixture's eslint-disable comments no longer silence the port: its recording disagrees.
@@ -540,7 +533,7 @@ describe("validatePack", () => {
             violation: { ...clause.violation, suppress: { eslint: { rules: ["no-debugger"] } } },
           })),
       }));
-    const validation = await validatePack(changed("eslint-port", vue), { corpora: false });
+    const validation = await validatePack(changed("eslint-port", vue));
     // The fixtures are .js files, which a Vue query does not read; nothing asks for suppress.biome.
     expect(failing(validation)).toEqual({
       ports: [

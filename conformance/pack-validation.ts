@@ -24,7 +24,7 @@ import {
   RULE_PACK_LIST,
 } from "../src/engine/index.js";
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
-import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
+import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { packFixtureAbsence } from "../scripts/s3/pack-fixtures.mjs";
 import { capabilitiesJson } from "./engine.js";
@@ -64,13 +64,6 @@ export interface PackValidation {
 }
 
 export interface ValidatePackOptions {
-  /**
-   * Check 4 always scores the ported rules on the tools' fixtures. Corpora: `true` scores every pinned corpus (a
-   * missing checkout fails), `false` none, and by default those checked out under `corpusRoot`.
-   */
-  corpora?: boolean;
-  /** Corpus checkouts, `<corpusRoot>/<corpus name>`; default the nearest `.rerail/corpora/<pack>`. */
-  corpusRoot?: string;
   /**
    * Whether the pack must be in core's generated pack list (`src/engine/catalog/pack-list.generated.ts`), and that
    * list current. Default: when `directory` is one of the repository's `packs/` directories, the packs Rerail
@@ -617,8 +610,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
   }
 
-  // Check 4: ports. The fixture tier (and corpora) of the conformance runner, with rules not supported yet skipped,
-  // plus capability coverage and each port's suppression comments.
+  // Check 4: ports. The fixture tier of the conformance runner, with rules not supported yet skipped, plus capability
+  // coverage and each port's suppression comments.
   const notSupported = new Map<string, string>();
   if (loaded !== undefined) {
     const ruleOfPort = new Map<string, string>();
@@ -632,15 +625,10 @@ export async function validatePack(directory: string, options: ValidatePackOptio
         if (candidate.kind === "not-supported-yet") notSupported.set(port.id, candidate.reason);
       }
     }
-    const corpusRoot = options.corpusRoot ?? defaultCorpusRoot(loaded.pack.pack);
-    const corpora = loaded.pack.corpora
-      .filter(corpus => (options.corpora === undefined ? existsSync(join(corpusRoot, corpus.name)) : options.corpora))
-      .map(corpus => corpus.name);
     const report = await runPack(loaded, {
       rules: loaded.pack.rules.filter(port => !notSupported.has(port.id)).map(port => port.id),
       fixtures: true,
-      corpora,
-      corpusRoot,
+      samples: false,
       date: new Date().toISOString().slice(0, 10),
     });
     for (const failure of reportFailures(report)) {

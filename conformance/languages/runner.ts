@@ -1,12 +1,10 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
-import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, join, relative, sep } from "node:path";
 import { z } from "zod";
-import { ESLINT_TEST_SET, eslintTestSet, eslintTestSetKey, isPackFixture, packFixtureAbsence, requirePackFixture } from "../../scripts/s3/pack-fixtures.mjs";
+import { isPackFixture, packFixtureAbsence, requirePackFixture, samplesTree, type Aws } from "../../scripts/s3/pack-fixtures.mjs";
+import { LABELS_SUFFIX, SAMPLE_ID, sampleLabelsSchema } from "../../scripts/samples/format.js";
 import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
 import {
-  IGNORED_DIRECTORIES,
   languageFor,
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
@@ -21,8 +19,6 @@ import {
 } from "../../src/engine/index.js";
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import {
-  corpusRecordingPath,
-  defaultCorpusRoot,
   fixturesDirectory,
   fixturesRecordingPath,
   loadRecording,
@@ -31,16 +27,20 @@ import {
   isCandidate,
   MINIMUM_RULES,
   RERAIL_ROOT,
-  type CorpusRecording,
   type Divergence,
   type FixtureRecording,
   type LoadedPack,
-  type PackCorpus,
   type PackRule,
   type Recording,
 } from "./pack.js";
 import { EXAMPLE_LIMIT, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
-import { precisionRecall, scoreSource, type Point } from "./score.js";
+import { precisionRecall, scoreSamples, scoreSource, type JudgedSample, type Point, type SourceScore } from "./score.js";
+
+// The samples transport's tree accessor (contract C2). Remove this declaration once pack-fixtures.d.mts declares it.
+declare module "../../scripts/s3/pack-fixtures.mjs" {
+  /** A tool-pack's verified, extracted samples tree, fetched on demand; undefined when the tool-pack has no samples.lock. */
+  export function samplesTree(options: { root?: string; pack: string; tool: string; aws?: Aws }): string | undefined;
+}
 
 /** The production repository audit's batching and paging (`code-rule-enforcer.ts`). */
 const AUDIT_BATCH_FILES = 32;
@@ -236,17 +236,30 @@ interface RuleActual {
   syntaxErrorFiles: Map<string, SyntaxErrorLocation>;
 }
 
-interface SourceRun {
-  /** `fixtures` or the corpus name, as divergences name it. */
-  name: string;
-  /** `fixtures` or `corpus:<name>`, as report rows name it. */
-  label: string;
+const noActual = (): RuleActual => ({ points: [], engineFailures: 0, partialPaths: new Set(), syntaxErrorFiles: new Map() });
+
+interface FixturesRun {
   /** Per pack rule id. */
   actual: Map<string, RuleActual>;
   /** Per tool: its recording, or the reason there is none. */
   recordings: Map<string, Recording | string>;
-  /** Paths evaluated; upstream findings elsewhere are out of scope. */
+  /** `tool\0path` of every file evaluated; a recording lists every file it ran on. */
   scored: ReadonlySet<string>;
+  /** Per tool, the source paths of each unit evaluated: a unit upstream reports nothing of a rule on is stays-silent evidence. */
+  units: Map<string, string[][]>;
+  summary: SourceSummary;
+}
+
+/** The real-code samples as a source, as divergences and report rows name it. */
+export const SAMPLES_SOURCE = "samples";
+
+interface SamplesRun {
+  /** Per pack rule id. */
+  actual: Map<string, RuleActual>;
+  /** Per pack rule id, the samples judged for it; a rule no sample has a key for has no samples row. */
+  judged: Map<string, JudgedSample[]>;
+  /** Rules whose tool's samples tree is missing: the run's errors name each, and none of their divergences is stale. */
+  unscored: ReadonlySet<string>;
   summary: SourceSummary;
 }
 
@@ -256,12 +269,12 @@ function collectActual(
   evaluation: Evaluation,
   sources: ReadonlyMap<string, Buffer>,
   syntaxErrors: ReadonlyMap<string, SyntaxErrorLocation>,
-  actual: SourceRun["actual"],
+  actual: Map<string, RuleActual>,
 ): void {
   const byCodeRule = new Map(compiled.map(entry => [entry.policyId, entry.rule.id]));
   const slot = (rule: string): RuleActual => {
     let entry = actual.get(rule);
-    if (entry === undefined) actual.set(rule, (entry = { points: [], engineFailures: 0, partialPaths: new Set(), syntaxErrorFiles: new Map() }));
+    if (entry === undefined) actual.set(rule, (entry = noActual()));
     return entry;
   };
   for (const entry of compiled) slot(entry.rule.id);
@@ -294,7 +307,7 @@ function readCaseSource(path: string): string {
 }
 
 /** The recording at `path`, checked against the pack's pins, or why it cannot be used. */
-function pinnedRecording(loaded: LoadedPack, tool: string, path: string, corpus: PackCorpus | undefined): Recording | string {
+function pinnedRecording(loaded: LoadedPack, tool: string, path: string): Recording | string {
   const where = relative(RERAIL_ROOT, path);
   if (!existsSync(path)) return packFixtureAbsence(path) ?? `no recording at ${where}`;
   let recording: Recording;
@@ -306,11 +319,7 @@ function pinnedRecording(loaded: LoadedPack, tool: string, path: string, corpus:
   const version = loaded.pack.tools.find(entry => entry.name === tool)?.version;
   if (recording.tool !== tool) return `${where} records ${recording.tool}, not ${tool}`;
   if (recording.version !== version) return `${where} records ${tool} ${recording.version}; the pack pins ${version}`;
-  if (corpus === undefined && recording.source.kind !== "fixtures") return `${where} is not a fixtures recording`;
-  if (corpus !== undefined) {
-    if (recording.source.kind !== "corpus" || recording.source.name !== corpus.name) return `${where} is not a recording of corpus ${corpus.name}`;
-    if (recording.source.commit !== corpus.commit) return `${where} records ${corpus.name} at ${recording.source.commit}; the pack pins ${corpus.commit}`;
-  }
+  if (recording.source.kind !== "fixtures") return `${where} is not a fixtures recording`;
   return recording;
 }
 
@@ -326,16 +335,19 @@ async function evaluateApart(rules: readonly CompiledRule[], files: readonly Sou
   return evaluations;
 }
 
-async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], errors: string[]): Promise<SourceRun> {
+async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], errors: string[]): Promise<FixturesRun> {
   const languages = familyLanguages(loaded);
-  const actual: SourceRun["actual"] = new Map();
-  const recordings: SourceRun["recordings"] = new Map();
+  const actual: FixturesRun["actual"] = new Map();
+  const recordings: FixturesRun["recordings"] = new Map();
   const scored = new Set<string>();
-  const summary: SourceSummary = { source: "fixtures", units: 0, files: 0, bytes: 0, skipped: 0, outsideScope: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
-  for (const tool of [...new Set(compiled.map(entry => entry.rule.upstream.tool))].sort(compareDeterministicStrings)) {
-    const recording = pinnedRecording(loaded, tool, fixturesRecordingPath(loaded, tool), undefined);
+  const units: FixturesRun["units"] = new Map();
+  const summary: SourceSummary = { source: "fixtures", units: 0, files: 0, bytes: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
+  for (const tool of toolsOf(compiled)) {
+    const recording = pinnedRecording(loaded, tool, fixturesRecordingPath(loaded, tool));
     recordings.set(tool, recording);
     if (typeof recording === "string") continue;
+    const toolUnits: string[][] = [];
+    units.set(tool, toolUnits);
     const source = (recording as FixtureRecording).source;
     const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
     for (const unit of source.files) {
@@ -365,6 +377,7 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
         summary.evaluationMs += evaluation.ms;
       }
       for (const file of files) scored.add(`${tool}\0${file.path}`);
+      toolUnits.push(files.map(file => file.path));
       summary.units += 1;
       summary.files += files.length;
       summary.bytes += [...sources.values()].reduce((total, bytes) => total + bytes.length, 0);
@@ -372,128 +385,155 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
   }
   summary.evaluationMs = Math.round(summary.evaluationMs);
   summary.syntaxErrorFiles = syntaxErrorSummary(actual);
-  return { name: "fixtures", label: "fixtures", actual, recordings, scored, summary };
+  return { actual, recordings, scored, units, summary };
+}
+
+/** The tools of `compiled`'s rules, each once, in order. */
+function toolsOf(compiled: readonly CompiledRule[]): string[] {
+  return [...new Set(compiled.map(entry => entry.rule.upstream.tool))].sort(compareDeterministicStrings);
 }
 
 /** Every file of a source some rule skipped for its syntax errors, each once, in path order. */
-function syntaxErrorSummary(actual: SourceRun["actual"]): SourceSummary["syntaxErrorFiles"] {
+function syntaxErrorSummary(actual: Map<string, RuleActual>): SourceSummary["syntaxErrorFiles"] {
   const files = new Map<string, SyntaxErrorLocation>();
   for (const rule of actual.values()) for (const [path, point] of rule.syntaxErrorFiles) files.set(path, point);
   const sorted = [...files.values()].sort((left, right) => compareDeterministicStrings(left.path, right.path));
   return { count: sorted.length, files: sorted };
 }
 
-async function walk(root: string, directory: string, files: string[]): Promise<void> {
-  const entries = await readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOTDIR") return undefined;
-    throw error;
-  });
-  if (entries === undefined) {
-    files.push(relative(root, directory).split(sep).join("/"));
-    return;
-  }
-  for (const entry of entries) {
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      if (!IGNORED_DIRECTORIES.has(entry.name)) await walk(root, path, files);
-    } else if (entry.isFile()) files.push(relative(root, path).split(sep).join("/"));
-  }
+/** Every regular file under `directory`, as a posix path relative to `root`, in path order. */
+function filesUnder(root: string, directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true })
+    .flatMap(entry => {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) return filesUnder(root, path);
+      return entry.isFile() ? [relative(root, path).split(sep).join("/")] : [];
+    })
+    .sort(compareDeterministicStrings);
 }
 
-async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], corpus: PackCorpus, corpusRoot: string, errors: string[]): Promise<SourceRun | undefined> {
-  const directory = join(corpusRoot, corpus.name);
-  if (!existsSync(directory)) {
-    errors.push(`corpus ${corpus.name}: no checkout at ${directory} (clone ${corpus.repository} at ${corpus.commit})`);
-    return undefined;
-  }
-  if (existsSync(join(directory, ".git"))) {
-    const head = execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    if (head !== corpus.commit) {
-      errors.push(`corpus ${corpus.name}: ${directory} is at ${head}; the pack pins ${corpus.commit}`);
-      return undefined;
-    }
-  }
-  const recordings: SourceRun["recordings"] = new Map();
-  const skipped = new Set<string>();
-  for (const tool of [...new Set(compiled.map(entry => entry.rule.upstream.tool))].sort(compareDeterministicStrings)) {
-    const path = corpusRecordingPath(loaded, tool, corpus.name);
-    // A corpus recording covers the shipped ports: a tool with only candidates may have none, and they skip the corpus.
-    if (!existsSync(path) && compiled.every(entry => entry.rule.upstream.tool !== tool || isCandidate(entry.rule))) continue;
-    const recording = pinnedRecording(loaded, tool, path, corpus);
-    recordings.set(tool, recording);
-    if (typeof recording !== "string") for (const path of (recording as CorpusRecording).source.skipped) skipped.add(path);
-  }
-
-  const languages = familyLanguages(loaded);
-  const candidates: string[] = [];
-  for (const path of corpus.paths) await walk(directory, join(directory, path), candidates);
-  const files: SourceFile[] = [];
-  for (const path of [...new Set(candidates)].sort(compareDeterministicStrings)) {
-    const language = languageFor(path);
-    if (language === undefined || !languages.has(language) || skipped.has(path)) continue;
-    if (corpus.exclude.some(pattern => matchesGlob(path, pattern))) continue;
-    files.push({ path, language, source: await readFile(join(directory, path), "utf8") });
-  }
-  const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
-  const manifests = await corpusManifests(directory, files);
-  const actual: SourceRun["actual"] = new Map();
-  let evaluationMs = 0;
-  for (const [group, evaluation] of await evaluateApart(compiled, [...manifests, ...files])) {
-    collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
-    evaluationMs += evaluation.ms;
-  }
-  const scored = new Set<string>();
-  for (const tool of recordings.keys()) for (const file of files) scored.add(`${tool}\0${file.path}`);
-  return {
-    name: corpus.name,
-    label: `corpus:${corpus.name}`,
-    actual,
-    recordings,
-    scored,
-    summary: {
-      source: `corpus:${corpus.name}`,
-      units: 1,
-      files: files.length,
-      bytes: [...sources.values()].reduce((total, bytes) => total + bytes.length, 0),
-      skipped: skipped.size,
-      outsideScope: 0,
-      syntaxErrorFiles: syntaxErrorSummary(actual),
-      evaluationMs: Math.round(evaluationMs),
-    },
-  };
+/** A judged file of a sample with its labels; the sample's other files ride along as its context, never judged. */
+interface Sample {
+  /** `<sample-id>/<source.path>`: the workspace path it is evaluated under and divergences name it by. */
+  path: string;
+  /** Pack rule id → labelled lines; `[]` is clean for the rule, and a rule with no key does not judge the sample. */
+  expected: Record<string, number[]>;
+  context: string[];
 }
 
 /**
- * The package.json files at or above the corpus's sources, up to the checkout, which a host reads for their manifest
- * facts, and each package's project configuration chain (`moduleConfigFiles`: its tsconfig.json or jsconfig.json and
- * the bases it extends), whose jsxImportSource and import aliases the engine reads: they ride along as fixture units'
- * do, no sources, whether or not the corpus's paths walk them. A package.json that is no regular file has no fields,
- * as a host reads it.
+ * The samples in a tool-pack's samples tree (scripts/samples/format.ts): each directory at its top is a sample, and each
+ * file in it with a labels file beside it is judged. Files at the top (LICENSES.md, the extraction marker) are no
+ * samples. A labels key that is no rule of the tool in the pack is an error: the labels name rules by their pack id.
  */
-async function corpusManifests(directory: string, files: readonly SourceFile[]): Promise<SourceFile[]> {
-  const folders = new Set<string>();
-  for (const file of files) {
-    let folder = file.path;
-    do {
-      folder = posix.dirname(folder);
-      if (folders.has(folder)) break;
-      folders.add(folder);
-    } while (folder !== ".");
+function readSamples(loaded: LoadedPack, tool: string, directory: string, errors: string[]): Sample[] {
+  const where = `${SAMPLES_SOURCE} ${tool}`;
+  const toolRules = new Set(loaded.pack.rules.filter(rule => rule.upstream.tool === tool).map(rule => rule.id));
+  const ids = readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareDeterministicStrings);
+  const samples: Sample[] = [];
+  for (const id of ids) {
+    if (!SAMPLE_ID.test(id)) {
+      errors.push(`${where}: ${id} is no sample id (<source>-<path slug>-<first 12 of its sha256>)`);
+      continue;
+    }
+    const files = filesUnder(directory, join(directory, id));
+    const judged = new Set(files.filter(path => path.endsWith(LABELS_SUFFIX)).map(path => path.slice(0, -LABELS_SUFFIX.length)));
+    const context = files.filter(path => !path.endsWith(LABELS_SUFFIX) && !judged.has(path));
+    for (const path of judged) {
+      const labelsPath = `${path}${LABELS_SUFFIX}`;
+      const parsed = sampleLabelsSchema.safeParse(JSON.parse(readFileSync(join(directory, labelsPath), "utf8")));
+      if (!parsed.success) {
+        errors.push(`${where}: ${labelsPath}: ${z.prettifyError(parsed.error)}`);
+        continue;
+      }
+      if (path !== `${id}/${parsed.data.source.path}`) {
+        errors.push(`${where}: ${labelsPath} labels ${parsed.data.source.path}, which is not the file beside it`);
+        continue;
+      }
+      if (!files.includes(path)) {
+        errors.push(`${where}: ${labelsPath} labels a file the sample does not hold`);
+        continue;
+      }
+      const unknown = Object.keys(parsed.data.expected).filter(rule => !toolRules.has(rule));
+      if (unknown.length > 0) errors.push(`${where}: ${path} is labelled for ${unknown.join(", ")}, no ${tool} rule of the ${loaded.pack.pack} pack`);
+      const expected = Object.fromEntries(Object.entries(parsed.data.expected).map(([rule, labels]) => [rule, labels.map(label => label.line)]));
+      samples.push({ path, expected, context });
+    }
   }
-  const manifests: SourceFile[] = [];
-  const configurations = new Set<string>();
-  for (const folder of [...folders].sort(compareDeterministicStrings)) {
-    const path = folder === "." ? "package.json" : `${folder}/package.json`;
-    const absolute = join(directory, path);
-    const entry = lstatSync(absolute, { throwIfNoEntry: false });
-    if (entry === undefined) continue;
-    manifests.push({ path, language: languageFor(path)!, source: entry.isFile() ? await readFile(absolute, "utf8") : "" });
-    for (const configuration of loadNativeBinding().moduleConfigFiles(directory, folder === "." ? "" : folder))
-      configurations.add(configuration);
+  return samples;
+}
+
+/**
+ * The pack's real-code samples, per tool-pack from its samples tree (`directoryOf`; undefined when it has none). Each
+ * rule is evaluated alone over the samples labelled for it, their context files riding along first as a fixture unit's
+ * manifests do: a file's AST work budget is shared by the rules beside it, so a rule's verdict never depends on which
+ * other rules a sample is labelled for. A tree that cannot be had fails the rules of its tool alone, since a
+ * port-readiness leg restores only its own tool-pack's data.
+ */
+async function runSamples(loaded: LoadedPack, compiled: readonly CompiledRule[], directoryOf: (tool: string) => string | undefined, errors: string[]): Promise<SamplesRun> {
+  const languages = familyLanguages(loaded);
+  const actual: SamplesRun["actual"] = new Map();
+  const judged: SamplesRun["judged"] = new Map();
+  const unscored = new Set<string>();
+  const evaluated = new Map<string, number>();
+  const judgedPaths = new Set<string>();
+  let evaluationMs = 0;
+  for (const tool of toolsOf(compiled)) {
+    const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
+    let directory: string | undefined;
+    try {
+      directory = directoryOf(tool);
+      if (directory !== undefined && !existsSync(directory)) throw new Error(`no samples tree at ${directory}`);
+    } catch (error) {
+      for (const entry of rules) {
+        errors.push(`${entry.rule.id} (${SAMPLES_SOURCE}): ${error instanceof Error ? error.message : String(error)}`);
+        unscored.add(entry.rule.id);
+      }
+      continue;
+    }
+    if (directory === undefined) continue;
+    const tree = directory;
+    const samples = readSamples(loaded, tool, tree, errors).filter(sample => {
+      const language = languageFor(sample.path);
+      if (language !== undefined && languages.has(language)) return true;
+      errors.push(`${SAMPLES_SOURCE} ${tool}: ${sample.path} is not a ${loaded.pack.family} source by the host's routing`);
+      return false;
+    });
+    const texts = new Map<string, string>();
+    const fileOf = (path: string, language: CodeRuleSourceLanguage): SourceFile => {
+      let source = texts.get(path);
+      if (source === undefined) texts.set(path, (source = readFileSync(join(tree, path), "utf8")));
+      return { path, language, source };
+    };
+    for (const entry of rules) {
+      const labelled = samples.filter(sample => sample.expected[entry.rule.id] !== undefined);
+      if (labelled.length === 0) continue;
+      judged.set(entry.rule.id, labelled.map(sample => ({ path: sample.path, lines: sample.expected[entry.rule.id]! })));
+      const context = labelled.flatMap(sample =>
+        sample.context.flatMap(path => {
+          const language = languageFor(path);
+          return language === undefined ? [] : [fileOf(path, language)];
+        }),
+      );
+      const files = labelled.map(sample => fileOf(sample.path, languageFor(sample.path)!));
+      const all = [...context, ...files];
+      const sources = new Map(all.map(file => [file.path, Buffer.from(file.source, "utf8")]));
+      const evaluation = await evaluateWorkspace([entry.compiled], all);
+      collectActual([entry], evaluation, sources, await syntaxErrorLocations(loaded, evaluation, all), actual);
+      evaluationMs += evaluation.ms;
+      for (const [path, bytes] of sources) evaluated.set(path, bytes.length);
+      for (const file of files) judgedPaths.add(file.path);
+    }
   }
-  for (const path of [...configurations].sort(compareDeterministicStrings))
-    manifests.push({ path, language: languageFor(path)!, source: await readFile(join(directory, path), "utf8") });
-  return manifests;
+  const summary: SourceSummary = {
+    source: SAMPLES_SOURCE,
+    units: judgedPaths.size,
+    files: evaluated.size,
+    bytes: [...evaluated.values()].reduce((total, bytes) => total + bytes, 0),
+    syntaxErrorFiles: syntaxErrorSummary(actual),
+    evaluationMs: Math.round(evaluationMs),
+  };
+  return { actual, judged, unscored, summary };
 }
 
 /**
@@ -504,106 +544,14 @@ function ridesAlong(path: string): boolean {
   return /^(?:package\.json|(?:ts|js)config[^/]*\.json)$/.test(basename(path));
 }
 
-/** The ESLint test set as a source (scripts/s3/pack-fixtures.mjs, ESLINT_TEST_SET), as divergences and report rows name it. */
-export const ESLINT_TEST_SET_SOURCE = "eslint-test-set";
-
-/** Whether the ESLint test set scores the pack's rules. */
-export function scoresEslintTestSet(loaded: LoadedPack): boolean {
-  return ESLINT_TEST_SET.packs.includes(loaded.pack.pack);
-}
-
-const testSetManifestSchema = z.object({
-  schema: z.literal("nera.eslint-test-set/v1"),
-  tools: z.object({ eslint: z.string() }),
-  entries: z.array(z.object({ file: z.string() })),
-});
-const testSetEntrySchema = z.object({
-  file: z.string(),
-  /** The same file with every finding of the rule fixed by hand: ESLint reports nothing for the rule in it. */
-  fixed: z.string().nullable(),
-  rule: z.string(),
-  rerailRule: z.string(),
-  pack: z.string(),
-  eslint: z.object({ findings: z.array(z.object({ line: z.number().int().positive(), column: z.number().int().positive() })) }),
-});
-type TestSetEntry = z.infer<typeof testSetEntrySchema>;
-
-/**
- * The ESLint test set's files for the pack, each evaluated for its own rule alone: an original, where ESLint's findings
- * for the rule are expected and any other finding of it is an FP, and its fixed copy, where none is. A rule's files
- * share one workspace of their own, since a file's AST work budget is shared by the rules beside it. The set's answers
- * become, per tool, a fixtures-kind recording over the files of the rules it holds, so rows score as the fixtures do.
- */
-async function runEslintTestSet(loaded: LoadedPack, compiled: readonly CompiledRule[], directory: string, errors: string[]): Promise<SourceRun> {
-  const manifest = testSetManifestSchema.parse(JSON.parse(readFileSync(join(directory, "manifest.json"), "utf8")));
-  const byRule = new Map<string, TestSetEntry[]>();
-  for (const { file } of manifest.entries) {
-    const entry = testSetEntrySchema.parse(JSON.parse(readFileSync(join(directory, `${file}.eslint.json`), "utf8")));
-    if (entry.pack !== loaded.pack.pack) continue;
-    const rule = loaded.pack.rules.find(candidate => candidate.id === entry.rerailRule);
-    if (rule === undefined || rule.upstream.rule !== entry.rule) {
-      errors.push(`${ESLINT_TEST_SET_SOURCE}: ${entry.file} is for ${entry.rerailRule} (${entry.rule}), which is no rule of the ${loaded.pack.pack} pack porting ${entry.rule}`);
-      continue;
-    }
-    byRule.set(rule.id, [...(byRule.get(rule.id) ?? []), entry]);
-  }
-  const languages = familyLanguages(loaded);
-  const actual: SourceRun["actual"] = new Map();
-  const recordings: SourceRun["recordings"] = new Map();
-  const scored = new Set<string>();
-  const summary: SourceSummary = { source: ESLINT_TEST_SET_SOURCE, units: 0, files: 0, bytes: 0, skipped: 0, outsideScope: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
-  for (const entry of compiled) {
-    const entries = byRule.get(entry.rule.id);
-    if (entries === undefined) continue;
-    const { tool, rule: upstreamRule } = entry.rule.upstream;
-    let recording = recordings.get(tool) as FixtureRecording | undefined;
-    if (recording === undefined) {
-      recording = { tool, version: manifest.tools.eslint, source: { kind: "fixtures", origin: `s3://nera-test-fixtures/${eslintTestSetKey(ESLINT_TEST_SET.sha256)}`, rules: [], files: [] }, findings: [] };
-      recordings.set(tool, recording);
-    }
-    recording.source.rules.push(upstreamRule);
-    const files: SourceFile[] = [];
-    for (const testSetEntry of entries) {
-      for (const path of testSetEntry.fixed === null ? [testSetEntry.file] : [testSetEntry.file, testSetEntry.fixed]) {
-        const language = languageFor(path);
-        if (language === undefined || !languages.has(language)) {
-          errors.push(`${ESLINT_TEST_SET_SOURCE}: ${path} is not a ${loaded.pack.family} source by the host's routing`);
-          continue;
-        }
-        files.push({ path, language, source: readFileSync(join(directory, path), "utf8") });
-        recording.source.files.push(path);
-        scored.add(`${tool}\0${path}`);
-      }
-      // ESLint counts columns without a leading byte order mark; the runner's line 1 has it, so a line-1 column moves
-      // by one, as the ESLint recorder moves it (packs/javascript/upstream/generate.mjs).
-      const bom = files.find(file => file.path === testSetEntry.file)?.source.startsWith("\uFEFF") === true ? 1 : 0;
-      for (const finding of testSetEntry.eslint.findings)
-        recording.findings.push({ rule: upstreamRule, path: testSetEntry.file, line: finding.line, column: finding.column + (finding.line === 1 ? bom : 0) });
-    }
-    const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
-    const evaluation = await evaluateWorkspace([entry.compiled], files);
-    collectActual([entry], evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
-    summary.evaluationMs += evaluation.ms;
-    summary.units += entries.length;
-    summary.files += files.length;
-    summary.bytes += [...sources.values()].reduce((total, bytes) => total + bytes.length, 0);
-  }
-  summary.evaluationMs = Math.round(summary.evaluationMs);
-  summary.syntaxErrorFiles = syntaxErrorSummary(actual);
-  return { name: ESLINT_TEST_SET_SOURCE, label: ESLINT_TEST_SET_SOURCE, actual, recordings, scored, summary };
-}
-
 export interface RunOptions {
   /** Pack rule ids to score; all when omitted. */
   rules?: readonly string[];
   fixtures: boolean;
-  /** Score the ESLint test set too, for a pack it scores (`scoresEslintTestSet`); a no-op for any other pack. */
-  eslintTestSet?: boolean;
-  /** The ESLint test set's tree (its manifest.json's directory); default the pinned set, fetched and extracted. */
-  eslintTestSetDirectory?: string;
-  /** Corpus names to score. */
-  corpora: readonly string[];
-  corpusRoot?: string;
+  /** Score the pack's real-code samples (every tool with a samples.lock). */
+  samples: boolean;
+  /** Test seam: a tool's extracted samples tree; default samplesTree() from pack-fixtures.mjs. */
+  samplesDirectory?: (tool: string) => string | undefined;
   date: string;
 }
 
@@ -618,51 +566,19 @@ function engineInfo(): { path: string; version: string } {
   return { path: relative(RERAIL_ROOT, path), version: `${loadNativeBinding().health().kernelVersion}${built}` };
 }
 
-function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: Set<Divergence>, errors: string[]): RuleRow | undefined {
-  const { rule } = entry;
-  const recording = run.recordings.get(rule.upstream.tool);
-  if (recording === undefined) return undefined;
-  if (typeof recording === "string") {
-    errors.push(`${rule.id} (${run.label}): ${recording}`);
-    return undefined;
-  }
-  if (!recording.source.rules.includes(rule.upstream.rule)) {
-    // Candidates are scored on the fixtures, and on a corpus only where its recording covers them; the ESLint test set
-    // scores only the rules it holds files for.
-    if (run.name === ESLINT_TEST_SET_SOURCE || (isCandidate(rule) && recording.source.kind === "corpus")) return undefined;
-    errors.push(`${rule.id} (${run.label}): the ${rule.upstream.tool} recording does not cover ${rule.upstream.rule}`);
-    return undefined;
-  }
-  // Lines the tool did not analyse: its silence there is no verdict, so neither side's findings are scored.
-  const unanalysed = recording.source.kind === "corpus" ? recording.source.unanalysed : [];
-  const analysed = (point: Point): boolean =>
-    !unanalysed.some(region => region.path === point.path && region.startLine <= point.line && point.line <= region.endLine);
-  let left = 0;
-  const expected: Point[] = [];
-  for (const finding of recording.findings) {
-    if (finding.rule !== rule.upstream.rule) continue;
-    // A rule scoped to part of the fixtures (`fixtures`) is scored only there; other units ran another configuration.
-    if (run.name === "fixtures" && !coversFixture(rule, finding.path)) continue;
-    if (!run.scored.has(`${rule.upstream.tool}\0${finding.path}`)) {
-      // A corpus recording covers the whole checkout; a fixtures recording lists every file it ran on.
-      if (run.name === "fixtures") errors.push(`${rule.id} (fixtures): ${finding.path} is not among the recording's files`);
-      else run.summary.outsideScope += 1;
-      continue;
-    }
-    if (rule.match === "line+column" && finding.column === undefined) {
-      errors.push(`${rule.id} (${run.label}): ${finding.path}:${finding.line} has no column; the rule matches line+column`);
-      continue;
-    }
-    const point = { path: finding.path, line: finding.line, ...(rule.match === "line+column" ? { column: finding.column! } : {}) };
-    if (analysed(point)) expected.push(point);
-    else left += 1;
-  }
-  const rerail: RuleActual = run.actual.get(rule.id) ?? { points: [], engineFailures: 0, partialPaths: new Set(), syntaxErrorFiles: new Map() };
-  const claimed = rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
-  const actual = claimed.filter(analysed);
-  left += claimed.length - actual.length;
-  const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === run.name));
-  const score = scoreSource(expected, actual, rule.match, applicable);
+/** A row's fields that come from its scoring rather than from the rule. */
+interface Scored {
+  score: SourceScore;
+  reviewed: readonly Point[];
+  cleanSamples: number;
+  silentCleanSamples: number;
+  engineFailures: number;
+  partialFiles: number;
+  syntaxErrorFiles: readonly SyntaxErrorLocation[];
+}
+
+function rowOf({ rule }: CompiledRule, loaded: LoadedPack, source: string, scored: Scored, used: Set<Divergence>): RuleRow {
+  const { score } = scored;
   for (const entry of score.explained) used.add(entry.divergence);
   return {
     rule: rule.id,
@@ -670,17 +586,20 @@ function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: S
     examples: loaded.exampled.has(documentPath(rule.policy)),
     upstream: rule.upstream,
     capabilities: rule.capabilities,
-    source: run.label,
+    source,
     tp: score.tp,
     fp: score.falsePositives.length,
     fn: score.falseNegatives.length,
     ...precisionRecall(score),
-    unanalysed: left,
-    engineFailures: rerail.engineFailures,
-    partialFiles: rerail.partialPaths.size,
+    reviewed: scored.reviewed.length,
+    reviewedFindings: scored.reviewed.slice(0, EXAMPLE_LIMIT),
+    cleanSamples: scored.cleanSamples,
+    silentCleanSamples: scored.silentCleanSamples,
+    engineFailures: scored.engineFailures,
+    partialFiles: scored.partialFiles,
     syntaxErrorFiles: {
-      count: rerail.syntaxErrorFiles.size,
-      files: [...rerail.syntaxErrorFiles.values()].sort((left, right) => compareDeterministicStrings(left.path, right.path)).slice(0, EXAMPLE_LIMIT),
+      count: scored.syntaxErrorFiles.length,
+      files: [...scored.syntaxErrorFiles].sort((left, right) => compareDeterministicStrings(left.path, right.path)).slice(0, EXAMPLE_LIMIT),
     },
     divergences: score.explained.map(({ side, point, divergence }) => ({ kind: divergence.kind, side, ...point, evidence: divergence.evidence })),
     falsePositives: score.falsePositives.slice(0, EXAMPLE_LIMIT),
@@ -688,38 +607,106 @@ function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: S
   };
 }
 
-/** T4: score the pack's rules over its upstream fixtures, the ESLint test set and/or pinned corpora. */
+function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, used: Set<Divergence>, errors: string[]): RuleRow | undefined {
+  const { rule } = entry;
+  const { tool } = rule.upstream;
+  const recording = run.recordings.get(tool);
+  if (recording === undefined) return undefined;
+  if (typeof recording === "string") {
+    errors.push(`${rule.id} (fixtures): ${recording}`);
+    return undefined;
+  }
+  if (!recording.source.rules.includes(rule.upstream.rule)) {
+    errors.push(`${rule.id} (fixtures): the ${tool} recording does not cover ${rule.upstream.rule}`);
+    return undefined;
+  }
+  // A rule scoped to part of the fixtures (`fixtures`) is scored only there; other units ran another configuration.
+  const findings = recording.findings.filter(finding => finding.rule === rule.upstream.rule && coversFixture(rule, finding.path));
+  const expected: Point[] = [];
+  for (const finding of findings) {
+    if (!run.scored.has(`${tool}\0${finding.path}`)) {
+      errors.push(`${rule.id} (fixtures): ${finding.path} is not among the recording's files`);
+      continue;
+    }
+    if (rule.match === "line+column" && finding.column === undefined) {
+      errors.push(`${rule.id} (fixtures): ${finding.path}:${finding.line} has no column; the rule matches line+column`);
+      continue;
+    }
+    expected.push({ path: finding.path, line: finding.line, ...(rule.match === "line+column" ? { column: finding.column! } : {}) });
+  }
+  const rerail = run.actual.get(rule.id) ?? noActual();
+  const actual = rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
+  // The units upstream reports nothing of the rule on, and of those the ones the rule reads and agrees on.
+  const flagged = new Set(findings.map(finding => finding.path));
+  const reported = new Set(rerail.points.map(point => point.path));
+  const clean = (run.units.get(tool) ?? []).filter(paths => paths.some(path => coversFixture(rule, path)) && !paths.some(path => flagged.has(path)));
+  const silent = clean.filter(paths => !paths.some(path => reported.has(path) || rerail.syntaxErrorFiles.has(path)));
+  const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === "fixtures"));
+  return rowOf(entry, loaded, "fixtures", {
+    score: scoreSource(expected, actual, rule.match, applicable),
+    reviewed: [],
+    cleanSamples: clean.length,
+    silentCleanSamples: silent.length,
+    engineFailures: rerail.engineFailures,
+    partialFiles: rerail.partialPaths.size,
+    syntaxErrorFiles: [...rerail.syntaxErrorFiles.values()],
+  }, used);
+}
+
+/** Scores a rule on the samples judged for it (`scoreSamples`); only the judged files' findings and failures count. */
+function samplesRow(entry: CompiledRule, run: SamplesRun, loaded: LoadedPack, used: Set<Divergence>): RuleRow | undefined {
+  const { rule } = entry;
+  const samples = run.judged.get(rule.id);
+  if (samples === undefined) return undefined;
+  const judged = new Set(samples.map(sample => sample.path));
+  const rerail = run.actual.get(rule.id) ?? noActual();
+  const actual = rerail.points.filter(point => judged.has(point.path)).map(({ path, line }) => ({ path, line }));
+  const reported = new Set(actual.map(point => point.path));
+  const clean = samples.filter(sample => sample.lines.length === 0);
+  const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === SAMPLES_SOURCE));
+  const score = scoreSamples(samples, actual, applicable);
+  return rowOf(entry, loaded, SAMPLES_SOURCE, {
+    score,
+    reviewed: score.reviewed,
+    cleanSamples: clean.length,
+    silentCleanSamples: clean.filter(sample => !reported.has(sample.path) && !rerail.syntaxErrorFiles.has(sample.path)).length,
+    engineFailures: rerail.engineFailures,
+    partialFiles: [...rerail.partialPaths].filter(path => judged.has(path)).length,
+    syntaxErrorFiles: [...rerail.syntaxErrorFiles.values()].filter(file => judged.has(file.path)),
+  }, used);
+}
+
+/** The sources a divergence with no `source` applies to; it is stale only once each of them scored its rule. */
+const ALL_SOURCES = ["fixtures", SAMPLES_SOURCE] as const;
+
+/** T4: score the pack's rules over its upstream fixtures and/or its real-code samples. */
 export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<T4Report> {
   const { pack } = loaded;
   const errors: string[] = [];
   const unknown = (options.rules ?? []).filter(id => !pack.rules.some(rule => rule.id === id));
   if (unknown.length > 0) throw new Error(`unknown rule(s) in ${pack.pack}: ${unknown.join(", ")}`);
-  const unknownCorpora = options.corpora.filter(name => !pack.corpora.some(corpus => corpus.name === name));
-  if (unknownCorpora.length > 0) throw new Error(`unknown corpus/corpora in ${pack.pack}: ${unknownCorpora.join(", ")}`);
   const selected = options.rules === undefined ? pack.rules : pack.rules.filter(rule => options.rules!.includes(rule.id));
   const compiled = compileRules(loaded, selected, errors);
 
-  const runs: SourceRun[] = [];
-  if (options.fixtures && compiled.length > 0) runs.push(await runFixtures(loaded, compiled, errors));
-  if (options.eslintTestSet === true && scoresEslintTestSet(loaded) && compiled.length > 0)
-    runs.push(await runEslintTestSet(loaded, compiled, options.eslintTestSetDirectory ?? eslintTestSet(), errors));
-  const corpusRoot = options.corpusRoot ?? defaultCorpusRoot(pack.pack);
-  for (const name of options.corpora) {
-    if (compiled.length === 0) break;
-    const run = await runCorpus(loaded, compiled, pack.corpora.find(corpus => corpus.name === name)!, corpusRoot, errors);
-    if (run !== undefined) runs.push(run);
-  }
+  const fixtures = options.fixtures && compiled.length > 0 ? await runFixtures(loaded, compiled, errors) : undefined;
+  const directoryOf = options.samplesDirectory ?? ((tool: string) => samplesTree({ root: RERAIL_ROOT, pack: pack.pack, tool }));
+  const samples = options.samples && compiled.length > 0 ? await runSamples(loaded, compiled, directoryOf, errors) : undefined;
 
   const used = new Set<Divergence>();
-  const rows = runs.flatMap(run => compiled.flatMap(entry => rowFor(entry, run, loaded, used, errors) ?? []));
-  const scoredSources = new Set(runs.map(run => run.name));
-  const allSources = ["fixtures", ...(scoresEslintTestSet(loaded) ? [ESLINT_TEST_SET_SOURCE] : []), ...pack.corpora.map(corpus => corpus.name)];
+  const rows = [
+    ...(fixtures === undefined ? [] : compiled.flatMap(entry => fixturesRow(entry, fixtures, loaded, used, errors) ?? [])),
+    ...(samples === undefined ? [] : compiled.flatMap(entry => samplesRow(entry, samples, loaded, used) ?? [])),
+  ];
+  // A source scored a rule when it ran and had the rule's data. A divergence naming any other source (a corpus's, no
+  // longer scored) applies to nothing and is never stale.
+  const scored = (source: string, rule: string): boolean =>
+    source === "fixtures" ? fixtures !== undefined : source === SAMPLES_SOURCE && samples !== undefined && !samples.unscored.has(rule);
   const selectedIds = new Set(selected.map(rule => rule.id));
   const stale = loaded.divergences.filter(
     divergence =>
       selectedIds.has(divergence.rule) &&
       !used.has(divergence) &&
-      (divergence.source === undefined ? allSources.every(source => scoredSources.has(source)) : scoredSources.has(divergence.source)),
+      (divergence.source === undefined ? ALL_SOURCES.every(source => scored(source, divergence.rule)) : scored(divergence.source, divergence.rule)),
   );
 
   const capabilities: Record<string, string[]> = {};
@@ -736,9 +723,8 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
     tier: "t4-rules",
     date: options.date,
     kernel: engineInfo(),
-    corpora: pack.corpora.map(({ name, repository, commit }) => ({ name, repository, commit })),
     tools: pack.tools,
-    scope: { rules: selected.map(rule => rule.id), fixtures: options.fixtures, eslintTestSet: runs.some(run => run.name === ESLINT_TEST_SET_SOURCE), corpora: [...options.corpora] },
+    scope: { rules: selected.map(rule => rule.id), fixtures: options.fixtures, samples: options.samples },
     coverage: {
       rules: pack.rules.length,
       minimumRules: MINIMUM_RULES,
@@ -746,7 +732,7 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
       uncovered: pack.capabilities.filter(capability => capabilities[capability]!.length === 0 && !exempt.has(capability)),
       exempt: pack.exemptCapabilities,
     },
-    sources: runs.map(run => run.summary),
+    sources: [fixtures, samples].flatMap(run => (run === undefined ? [] : [run.summary])),
     rules: rows,
     staleDivergences: stale.map(({ rule, source, path, line, kind }) => ({ rule, ...(source === undefined ? {} : { source }), path, line, kind })),
     errors,
@@ -757,12 +743,13 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
 }
 
 /**
- * Why a report fails, one line per problem; empty when it passes. An unexplained FP fails on every source; an
- * unexplained FN only on the fixtures, which the port must reproduce, and on the ESLint test set, whose every finding
- * ESLint's own rule reports on real code: on a corpus, misses are the rule's recall. A
- * shipped port with no fixture TP fails unless pack.json gives its rule examples: divergences can excuse every
- * finding of its fixtures, and a port that matches nothing must still show it catches something. A candidate's row
- * (a port under `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
+ * Why a report fails, one line per problem; empty when it passes. On the fixtures, which the port must reproduce, an
+ * unexplained FP or FN fails, and so does a shipped port with no fixture TP unless pack.json gives its rule examples:
+ * divergences can excuse every finding of its fixtures, and a port that matches nothing must still show it catches
+ * something. On the samples, which show a rule works on real code as intended, a missed label fails, as does a finding
+ * on a clean sample or a judged sample the engine cannot read; a report on a labelled sample's unlabelled line is only
+ * reviewed. Engine failures fail on both. A candidate's row (a port under `candidates/`) is reported but fails
+ * nothing; its errors and stale divergences still do.
  */
 export function reportFailures(report: T4Report): string[] {
   return [
@@ -770,10 +757,17 @@ export function reportFailures(report: T4Report): string[] {
     ...report.rules.flatMap(row => {
       const problems: string[] = [];
       if (row.candidate) return problems;
-      if (row.fp > 0) problems.push(`${row.rule} (${row.source}): ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
-      if (row.fn > 0 && (row.source === "fixtures" || row.source === ESLINT_TEST_SET_SOURCE)) problems.push(`${row.rule} (${row.source}): ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
-      if (row.tp === 0 && row.source === "fixtures" && !row.examples) problems.push(`${row.rule} (${row.source}): 0 TP and no examples in pack.json; nothing shows it catches anything`);
-      if (row.engineFailures > 0) problems.push(`${row.rule} (${row.source}): ${row.engineFailures} engine failure(s)`);
+      const where = `${row.rule} (${row.source})`;
+      if (row.source === SAMPLES_SOURCE) {
+        if (row.fn > 0) problems.push(`${where}: ${row.fn} missed label(s), first ${JSON.stringify(row.falseNegatives[0])}`);
+        if (row.fp > 0) problems.push(`${where}: ${row.fp} finding(s) on clean samples, first ${JSON.stringify(row.falsePositives[0])}`);
+        if (row.syntaxErrorFiles.count > 0) problems.push(`${where}: ${row.syntaxErrorFiles.count} judged sample(s) the engine could not read, first ${JSON.stringify(row.syntaxErrorFiles.files[0])}`);
+      } else {
+        if (row.fp > 0) problems.push(`${where}: ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
+        if (row.fn > 0) problems.push(`${where}: ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
+        if (row.tp === 0 && !row.examples) problems.push(`${where}: 0 TP and no examples in pack.json; nothing shows it catches anything`);
+      }
+      if (row.engineFailures > 0) problems.push(`${where}: ${row.engineFailures} engine failure(s)`);
       return problems;
     }),
     ...report.staleDivergences.map(divergence => `${divergence.rule}: stale divergence ${divergence.path}:${divergence.line} (${divergence.kind}) explains nothing`),

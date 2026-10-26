@@ -27,7 +27,6 @@ const corpusSchema = z.strictObject({
   /** `path.matchesGlob` patterns over the corpus-relative path; a match is never evaluated nor scored. */
   exclude: z.array(nonEmpty).default([]),
 });
-export type PackCorpus = z.infer<typeof corpusSchema>;
 
 const toolSchema = z.strictObject({ name: nonEmpty, version: nonEmpty });
 
@@ -42,7 +41,7 @@ const ruleSchema = z.strictObject({
   /**
    * `path.matchesGlob` patterns over the tool's fixture paths: the rule is evaluated and scored only on the fixture
    * units they match, the tests its upstream configuration ran on (one rule option variant, say). Default: every
-   * unit. Corpora are always scored whole.
+   * unit.
    */
   fixtures: z.array(nonEmpty).min(1).optional(),
 });
@@ -172,13 +171,12 @@ export const recordingSchema = z.strictObject({
 });
 export type Recording = z.infer<typeof recordingSchema>;
 export type FixtureRecording = Recording & { source: z.infer<typeof fixtureSourceSchema> };
-export type CorpusRecording = Recording & { source: z.infer<typeof corpusSourceSchema> };
 
 export const DIVERGENCE_KINDS = ["upstream-wrong", "not-comparable", "rerail-unknown"] as const;
 const divergenceSchema = z.strictObject({
   /** Pack rule id. */
   rule: nonEmpty,
-  /** `fixtures` or a corpus name; omitted, it applies to every source. */
+  /** `fixtures` or `samples` (matched by a sample's evaluation path, `<sample-id>/<source.path>`); omitted, every source. */
   source: nonEmpty.optional(),
   path: nonEmpty,
   line: z.number().int().positive(),
@@ -198,7 +196,7 @@ const rulePackExamplesSchema = z.object({ rules: z.array(z.object({ document: no
 export interface LoadedPack {
   pack: Pack;
   directory: string;
-  /** Root of the per-tool recordings: `<oracles>/<tool>/{fixtures,corpus-<name>}.expected.json`. */
+  /** Root of the per-tool recordings: `<oracles>/<tool>/fixtures.expected.json`. */
   oraclesDirectory: string;
   divergences: Divergence[];
   /**
@@ -256,22 +254,6 @@ export function fixturesDirectory(loaded: LoadedPack, tool: string): string {
   return join(loaded.oraclesDirectory, tool, "fixtures");
 }
 
-export function corpusRecordingPath(loaded: LoadedPack, tool: string, corpus: string): string {
-  return join(loaded.oraclesDirectory, tool, `corpus-${corpus}.expected.json`);
-}
-
 export function loadRecording(path: string): Recording {
   return parseJson(path, recordingSchema);
-}
-
-/**
- * Pinned corpora are gitignored checkouts under `.rerail/corpora/<pack>/<name>`. A worktree nested inside the main
- * checkout shares its corpora, so the nearest ancestor holding `.rerail/corpora/<pack>` is the default.
- */
-export function defaultCorpusRoot(pack: string): string {
-  for (let directory = RERAIL_ROOT; ; directory = dirname(directory)) {
-    const candidate = join(directory, ".rerail", "corpora", pack);
-    if (existsSync(candidate)) return candidate;
-    if (dirname(directory) === directory) return join(RERAIL_ROOT, ".rerail", "corpora", pack);
-  }
 }
