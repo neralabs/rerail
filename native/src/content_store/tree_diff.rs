@@ -117,6 +117,28 @@ impl ContentStore {
         diff.changes.sort();
         Ok(diff)
     }
+
+    /// `tree_changes` from the root whose digest an observer last bound (`old`, of `new`'s hash
+    /// algorithm). A last root whose trees were collected compares as nothing observed: every path
+    /// is listed, and rebinding the unchanged ones changes nothing.
+    pub fn tree_changes_since(&self, old: Option<[u8; 32]>, new: HashKey) -> StoreResult<TreeDiff> {
+        let old = match old.map(|digest| HashKey::from_padded(new.algorithm, digest)) {
+            Some(old) if self.tree_stored(old)? => Some(old),
+            _ => None,
+        };
+        self.tree_changes(old, new)
+    }
+
+    fn tree_stored(&self, key: HashKey) -> StoreResult<bool> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        connection
+            .prepare_cached(
+                "SELECT EXISTS (SELECT 1 FROM hashes h INDEXED BY hashes_by_prefix JOIN git_trees t ON t.tree_hash_id=h.hash_id \
+                 WHERE h.algorithm_id=?1 AND h.lane0=?2 AND h.lane1=?3 AND h.lane2=?4 AND h.lane3=?5 AND t.complete=1)",
+            )?
+            .query_row(rusqlite::params_from_iter(super::rows::hash_params(key)), |row| row.get(0))
+            .map_err(StoreError::from)
+    }
 }
 
 fn digest(lanes: [i64; 4]) -> [u8; 32] {
