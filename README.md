@@ -237,6 +237,7 @@ From a Rerail checkout, `just rerail` runs the same set-up. To start in another 
 - **In a terminal**, answer each question there: move with ↑/↓ and press Enter, or type its number.
 - **From a coding agent**, ask it to install Rerail and give it this section. A coding agent runs `npx @neralabs/rerail setup --relay`: set-up then prints each question for the coding agent to ask you as written, with the command to run for each answer (`rerail setup --relay --answer … --repo … --agents …`), even where the coding agent runs commands in a terminal. Without `--relay`, set-up asks this way whenever it has no terminal to ask in. The coding agent waits for your reply and runs the command for the answer you gave.
 - **If your coding agent can't install it, run the same line in a terminal.**
+- **If something goes wrong**, see [Troubleshooting](docs/troubleshooting.md). [Supported and not supported](docs/installation.md#supported-and-not-supported) lists the operating systems, Node versions, shells and coding agents Rerail runs with, and those it does not.
 
 Prerequisites:
 
