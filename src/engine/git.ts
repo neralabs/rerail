@@ -1,24 +1,73 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
+import { posix, win32 } from "node:path";
 
-/** Where a system Git is looked for; PATH is deliberately not consulted. */
-const GIT_CANDIDATES: readonly string[] = process.platform === "win32"
-  ? [String.raw`C:\Program Files\Git\cmd\git.exe`, String.raw`C:\Program Files (x86)\Git\cmd\git.exe`]
-  : ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"];
+/**
+ * Where a system Git is looked for, in order. PATH is deliberately not consulted: Rerail runs Git from hooks in
+ * whatever environment the coding agent started in, inside repositories it does not trust, and a PATH entry a
+ * repository controls (a relative entry, `node_modules/.bin`, direnv's `PATH_add`) could put its own `git` first;
+ * the same reason the calls below switch off fsmonitor and hooks. The fixed system locations come first, then the
+ * per-user installs whose path only the person's account decides: Git for Windows installed for one user and scoop's
+ * Git, Linuxbrew's, and a Nix profile's.
+ */
+export function gitCandidates(
+  platform: NodeJS.Platform = process.platform,
+  home: string = accountHome(),
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (platform === "win32") {
+    const localAppData = env.LOCALAPPDATA || win32.join(home, "AppData", "Local");
+    return [
+      String.raw`C:\Program Files\Git\cmd\git.exe`,
+      String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
+      win32.join(localAppData, "Programs", "Git", "cmd", "git.exe"),
+      win32.join(home, "scoop", "apps", "git", "current", "cmd", "git.exe"),
+    ];
+  }
+  return [
+    "/usr/bin/git",
+    "/usr/local/bin/git",
+    "/opt/homebrew/bin/git",
+    "/home/linuxbrew/.linuxbrew/bin/git",
+    "/run/current-system/sw/bin/git",
+    posix.join(home, ".nix-profile", "bin", "git"),
+  ];
+}
 
-export class GitUnavailableError extends Error {
-  constructor() {
-    super("Git is not installed in a supported system location");
-    this.name = "GitUnavailableError";
+/**
+ * The account's own home, not `HOME`: the install's health check runs Rerail with a scratch `HOME`, and it must find
+ * the same Git as the person's sessions do. An account without a user database entry (a container's arbitrary uid)
+ * falls back to `HOME`.
+ */
+function accountHome(): string {
+  try {
+    return userInfo().homedir;
+  } catch {
+    return homedir();
   }
 }
 
-let probed: { path: string | undefined } | undefined;
+export class GitUnavailableError extends Error {
+  /** Every path Rerail looked for Git at. */
+  readonly looked: readonly string[];
+
+  constructor(looked: readonly string[]) {
+    super(`Git is not installed where Rerail looks for it: ${looked.join(", ")}`);
+    this.name = "GitUnavailableError";
+    this.looked = looked;
+  }
+}
+
+let probed: { path: string | undefined; looked: readonly string[] } | undefined;
 
 /** The system Git, probed once per process; throws {@link GitUnavailableError} when none is installed. */
 export function gitExecutable(): string {
-  probed ??= { path: GIT_CANDIDATES.find(existsSync) };
-  if (probed.path === undefined) throw new GitUnavailableError();
+  if (probed === undefined) {
+    const looked = gitCandidates();
+    probed = { path: looked.find(existsSync), looked };
+  }
+  if (probed.path === undefined) throw new GitUnavailableError(probed.looked);
   return probed.path;
 }
 
