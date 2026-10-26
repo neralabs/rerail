@@ -294,21 +294,25 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
 }
 
 /**
- * The packs that fit the repository at `repositoryRoot`, from its files and dependency manifests: no model, no
- * network, no code from the packs, and no list of what does not fit. A pack without a rule that starts on never fits.
- * Languages come first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
- * `RulePackRecommendation.folder`).
+ * The packs whose match definition fits the repository at `repositoryRoot`, from its files and dependency manifests:
+ * no model, no network, no code from the packs, and no list of what does not fit. A pack fits whatever its rules;
+ * `ruleCount` is how many start on. Languages come first, then frameworks, then repository packs. Each comes with the
+ * folder it belongs in (see `RulePackRecommendation.folder`).
  */
-export function recommendRulePacks(repositoryRoot: string, packs: readonly RulePack[] = loadRulePacks()): RulePackRecommendation[] {
+export function rulePacksThatFit(repositoryRoot: string, packs: readonly RulePack[]): RulePackRecommendation[] {
   const scan = scanRepository(repositoryRoot);
   return packs.flatMap(pack => {
-    const ruleCount = pack.rules.filter(rule => rule.on).length;
-    if (ruleCount === 0) return [];
     const reason = matchReason(pack.match, scan);
     if (reason === undefined) return [];
+    const ruleCount = pack.rules.filter(rule => rule.on).length;
     const folder = pack.category === "repository" ? "" : matchFolder(pack.match, scan);
     return [{ pack, ruleCount, reason, folder }];
   });
+}
+
+/** The packs that fit the repository at `repositoryRoot` (`rulePacksThatFit`) and have a rule that starts on. */
+export function recommendRulePacks(repositoryRoot: string, packs: readonly RulePack[] = loadRulePacks()): RulePackRecommendation[] {
+  return rulePacksThatFit(repositoryRoot, packs).filter(found => found.ruleCount > 0);
 }
 
 /** How long a daemon reuses a repository's recommendations before scanning it again. */

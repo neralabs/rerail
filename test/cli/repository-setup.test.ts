@@ -6,12 +6,16 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
-// Passed through, and watched: a run that must read no code never calls the recommender.
-const recommendRulePacks = vi.hoisted(() => vi.fn<(root: string) => unknown>());
+// Passed through, and watched: a run that must read no code never matches packs against the repository.
+const readsRepository = vi.hoisted(() => vi.fn<(root: string) => void>());
 vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
-  const actual = await importOriginal<{ recommendRulePacks(root: string): unknown }>();
-  recommendRulePacks.mockImplementation(actual.recommendRulePacks);
-  return { ...actual, recommendRulePacks };
+  type Match = (root: string, packs?: readonly unknown[]) => unknown;
+  const actual = await importOriginal<{ recommendRulePacks: Match; rulePacksThatFit: Match }>();
+  const watched = (match: Match): Match => (root, packs) => {
+    readsRepository(root);
+    return match(root, packs);
+  };
+  return { ...actual, recommendRulePacks: watched(actual.recommendRulePacks), rulePacksThatFit: watched(actual.rulePacksThatFit) };
 });
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { repositoryIdentityLocation } from "../../src/engine/index.js";
@@ -29,7 +33,7 @@ import { attachedPacks } from "../support/attached-packs.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  recommendRulePacks.mockClear();
+  readsRepository.mockClear();
   removeInstalledPacks();
   vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
@@ -417,7 +421,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
       .toEqual({ status: "waiting" });
     expect(asked.text()).toContain("Unknown coding agent: nope.");
     expect(asked.text()).toContain("Find rule packs for acme-api?");
-    expect(recommendRulePacks).not.toHaveBeenCalled();
+    expect(readsRepository).not.toHaveBeenCalled();
     expect(environment.connections).toEqual([]);
     expect(existsSync(setup.databasePath)).toBe(false);
     expectUntouched(setup);
@@ -432,7 +436,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: "~" }))).toEqual({ status: "waiting" });
     expect(asked.text()).toContain("Start Rerail inside a repository, not your home folder.");
     expect(asked.text()).toContain("Which project do you want to start with?");
-    expect(recommendRulePacks).not.toHaveBeenCalled();
+    expect(readsRepository).not.toHaveBeenCalled();
     expect(existsSync(setup.databasePath)).toBe(false);
   });
 
@@ -745,7 +749,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
       expect(io.text()).toContain("Start Rerail inside a repository, not your home folder.");
       expect(io.text()).toContain("Which project do you want to start with?");
     }
-    expect(recommendRulePacks).not.toHaveBeenCalled();
+    expect(readsRepository).not.toHaveBeenCalled();
     expect(existsSync(setup.databasePath)).toBe(false);
   });
 
@@ -1022,6 +1026,19 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(asked.text()).toContain("Start Rerail in acme-api with this rule pack?");
   });
 
+  it("names a pack that fits but has no rules yet, and does not offer it", async () => {
+    const setup = await fixture();
+    // The TypeScript pack as it would be published before any of its rules is ready.
+    const packsRoot = join(setup.root, "packs");
+    cpSync(repositoryPath("packs", "typescript"), join(packsRoot, "typescript"), { recursive: true, filter: source => !source.includes("upstream") });
+    const packJson = join(packsRoot, "typescript", "pack.json");
+    writeFileSync(packJson, JSON.stringify({ ...JSON.parse(readFileSync(packJson, "utf8")) as Record<string, unknown>, rules: [] }));
+    const asked = agentIo();
+    await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: directoryPackStore(packsRoot, ["typescript"]) }), { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain("TypeScript would fit, but has no rules yet, so set-up does not offer it.");
+    expect(asked.text()).not.toContain("--packs typescript@");
+  });
+
   it("offers no Choose rule packs… when npm gives no pack, so the person is never asked for one they cannot name", async () => {
     const setup = await fixture();
     // Yes, read it; `choose` is no answer here and is asked again; then 2 is "Not now", not Change.
@@ -1050,7 +1067,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(asked.text()).toContain("Which rule packs should Rerail start with in acme-api?");
     expect(asked.text()).toContain(`complexity@${complexity!.version}  Cyclomatic complexity (limit 6)`);
     expect(asked.text()).toContain(`--answer pick-myself --repo ${setup.repo} --packs none`);
-    expect(recommendRulePacks).not.toHaveBeenCalled();
+    expect(readsRepository).not.toHaveBeenCalled();
     expect(packs.installs).toEqual([]);
     expectUntouched(setup);
   });
@@ -1064,7 +1081,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(packs.installs).toEqual([[`@neralabs/rerail-pack-complexity@${complexity[0]!.version}`]]);
     // Not `complexity@src`, where its match would put it: the person did not let Rerail read the repository.
     expect(attachedPacks(setup.repo, setup.databasePath)).toEqual(["complexity"]);
-    expect(recommendRulePacks).not.toHaveBeenCalled();
+    expect(readsRepository).not.toHaveBeenCalled();
   });
 
   it("checks each pack's core range against the active Rerail, not the package set-up runs from", async () => {

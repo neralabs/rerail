@@ -414,6 +414,8 @@ export interface RecommendedPacksInput {
   readonly available: readonly AvailablePack[];
   /** Rule packs set-up could not fetch or check, and why. */
   readonly unavailable?: readonly string[];
+  /** The names of the rule packs that would fit but have no rules yet, so are not offered. */
+  readonly withoutRules?: readonly string[];
   /** The coding agents "Yes" connects. */
   readonly agentsFound: readonly CodingAgent[];
   readonly setupCommand?: string;
@@ -482,6 +484,17 @@ function unavailableLines(unavailable: readonly string[] | undefined, style: Sty
   ];
 }
 
+/**
+ * The packs published before any of their rules is ready: never offered, since adding one would run nothing, but
+ * named, so a person who expects one (React in a React repo) is not left wondering where it went.
+ */
+function withoutRulesLines(names: readonly string[] | undefined, wouldFit: boolean): string[] {
+  if (names === undefined || names.length === 0) return [];
+  const one = names.length === 1;
+  const has = one ? "has" : "have";
+  return [`  ${andList(names.map(clean))} ${wouldFit ? `would fit, but ${has}` : has} no rules yet, so set-up does not offer ${one ? "it" : "them"}.`];
+}
+
 function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): string[] {
   const style = styleFor(lane);
   const repo = clean(input.repoName);
@@ -496,6 +509,7 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
     lane === "terminal" ? bullet(scanned, style) : scanned,
     ...(count === 0 ? [] : ["", ...packTable(input.packs, style)]),
     ...replaceLines(input.packs, style),
+    ...withoutRulesLines(input.withoutRules, true),
     ...lintConfigLines(input, style),
     ...unavailableLines(input.unavailable, style),
     "",
@@ -738,6 +752,8 @@ export interface PickPacksInput {
   readonly available: readonly AvailablePack[];
   /** Packs set-up could not fetch or check, and why. */
   readonly unavailable: readonly string[];
+  /** The names of the rule packs that have no rules yet, so are not offered. */
+  readonly withoutRules?: readonly string[];
   /** Overrides `rerail setup` in the agent lane's answer commands. */
   readonly setupCommand?: string;
 }
@@ -762,6 +778,7 @@ export function pickPacksQuestion(input: PickPacksInput, lane: SetupLane): Quest
           "  Rerail’s rule packs, from npm:",
           ...input.available.map(pack => `    ${withHint(`${clean(pack.id)}@${clean(pack.version)}  ${clean(pack.name)}`, pack.reason === undefined ? undefined : clean(pack.reason), style)}`),
         ]),
+      ...withoutRulesLines(input.withoutRules, false),
       ...unavailableLines(input.unavailable, style),
     ],
     prompt: `Which rule packs should Rerail start with in ${clean(input.repoName)}?`,

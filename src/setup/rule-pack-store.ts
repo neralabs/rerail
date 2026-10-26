@@ -12,7 +12,7 @@ import semver from "semver";
 import { RULE_PACK_LIST } from "../engine/catalog/pack-list.generated.js";
 import { activeCoreVersion, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog, SkippedRulePack } from "../engine/catalog/repository-model.js";
-import { recommendRulePacks, rulePackPackageName, type RulePack } from "../engine/catalog/rule-packs.js";
+import { rulePackPackageName, rulePacksThatFit, type RulePack } from "../engine/catalog/rule-packs.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { runNpm, type NpmRunner } from "../runtime/npm.js";
 import { withPacksLock } from "./packs-lock.js";
@@ -214,6 +214,12 @@ export interface PackDiscovery {
   readonly recommended: readonly DiscoveredPack[];
   /** Every fetched pack that passed its checks and has a rule that starts on, recommended ones first. */
   readonly available: readonly DiscoveredPack[];
+  /**
+   * Fetched packs that passed their checks but have no rule that starts on (published before their rules pass the port
+   * readiness gates), those that fit first: never offered, since adding one would run nothing, but named so a person
+   * who expects one knows why it is missing.
+   */
+  readonly withoutRules: readonly DiscoveredPack[];
   /** Packs that could not be fetched or failed a check, and why. */
   readonly problems: readonly string[];
   /** The catalog of the fetched packs: what their rules would be, before any is installed. */
@@ -266,23 +272,25 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
     const standIns = installedPackDirectories(home).filter(directory => !fetchedIds.has(packIdOf(directory)));
     const catalog = readRuleCatalog([...fromNpm.map(pack => pack.directory), ...standIns], { coreVersion: activeCoreVersion(home), compile: true });
     const packs = [...catalog.packs.values()];
-    const matched = new Map((repositoryRoot === undefined ? [] : recommendRulePacks(repositoryRoot, packs)).map(found => [found.pack.id, found]));
+    const matched = new Map((repositoryRoot === undefined ? [] : rulePacksThatFit(repositoryRoot, packs)).map(found => [found.pack.id, found]));
     const discovered = packs.flatMap((pack): DiscoveredPack[] => {
-      const ruleCount = pack.rules.filter(rule => rule.on).length;
-      if (ruleCount === 0 || pack.version === null) return [];
+      if (pack.version === null) return [];
       const found = matched.get(pack.id);
       return [{
         pack,
         version: pack.version,
-        ruleCount,
+        ruleCount: pack.rules.filter(rule => rule.on).length,
         ...(found === undefined ? {} : { match: { reason: found.reason, folder: found.folder } }),
         installed: installedPackVersion(pack.id, home),
       }];
     });
-    const recommended = discovered.filter(pack => pack.match !== undefined);
+    // Those that fit first, in catalog order within each.
+    const ordered = [...discovered.filter(pack => pack.match !== undefined), ...discovered.filter(pack => pack.match === undefined)];
+    const available = ordered.filter(pack => pack.ruleCount > 0);
     return {
-      recommended,
-      available: [...recommended, ...discovered.filter(pack => pack.match === undefined)],
+      recommended: available.filter(pack => pack.match !== undefined),
+      available,
+      withoutRules: ordered.filter(pack => pack.ruleCount === 0),
       problems: [...fetch.problems.map(problem => `${problem.packageName}: ${problem.reason}`), ...catalog.skipped.map(skippedProblem)],
       catalog,
     };
