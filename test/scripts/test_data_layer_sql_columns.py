@@ -1,5 +1,6 @@
 """Semantic regression tests for column demand in generated data-layer policies."""
 import copy
+import json
 from pathlib import Path
 import sqlite3
 import sys
@@ -22,6 +23,24 @@ class SqlColumns(unittest.TestCase):
                 columns=','.join(expr+' AS "'+name+'"' for name,expr in stage['deferred'].items())
                 db.execute('CREATE VIEW "'+name+'" AS SELECT *,'+columns+' FROM "'+stored+'"')
         result=sorted(db.execute(plan['query']).fetchall());db.close();return result
+
+    def test_repository_conditional_functions_store_only_demanded_columns(self):
+        policy=json.loads((ROOT/'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
+        plan=next(c['relational'] for c in policy['clauses'] if c['id']=='quality-conditional-1')
+        db=sqlite3.connect(':memory:');self.addCleanup(db.close)
+        for name,arity in [('rx_matches',2),('rx_extract',3),('rx_replace',3)]:db.create_function(name,arity,lambda *args:None)
+        for name,entry in plan['inputs'].items():
+            cols=['__path','__start','__end',*entry['evidence']['project']]
+            db.execute('CREATE TABLE "'+name+'" ('+','.join('"'+c+'"' for c in cols)+')')
+        for stage in plan['stages']:
+            if 'reachability' in stage:db.execute('CREATE TABLE "'+stage['name']+'" (__path,root,node)')
+            else:db.execute('CREATE TABLE "'+stage['name']+'" AS '+stage['query']+' LIMIT 0')
+        columns=lambda name:[r[1] for r in db.execute('PRAGMA table_info("'+name+'")')]
+        self.assertLessEqual(len(columns('functions')), 12)
+        self.assertLessEqual(len(columns('classes')), 6)
+        self.assertLessEqual(len(columns('conditional_methods')), 10)
+        self.assertIn('parameters_kind',columns('functions'))
+        self.assertIn('qualified_name',columns('conditional_classes'))
 
     def test_pruning_retains_distinct_multiplicity_aggregate_and_window_inputs(self):
         programs=[
