@@ -1,0 +1,110 @@
+{
+  "format": "rerail.full-repository-recovery/v1",
+  "acceptance": false,
+  "reason": "Findings parity passes; full performance recovery remains open. Deferred evaluation takes 1392.224 CPU seconds.",
+  "nativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+  "run": {
+    "name": "all-60",
+    "rules": 60,
+    "recordingSha256": "5ede2971ed87b1e64bd7fd125281410e3c527f5d7f756934e82f93d0828c9585",
+    "command": [
+      "/usr/bin/time",
+      "-lp",
+      "-o",
+      "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/recovery-completion-20261025/full-recovered-demand/all-60/resource.txt",
+      "node",
+      "--import",
+      "tsx",
+      "conformance/data-layer/suite.ts",
+      "--recording",
+      ".rerail/profiles/full-repository-20261021/all-60-recording.json",
+      "--policies",
+      "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/recovery-completion-20261025/full-recovered-demand/artifact/policies",
+      "--output",
+      "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/recovery-completion-20261025/full-recovered-demand/all-60/parity.json",
+      "--allocator",
+      "system-malloc-shim",
+      "--cold-only",
+      "--progress"
+    ],
+    "startedUnixSeconds": 1792994329.494047,
+    "loadStart": [
+      12.10400390625,
+      14.62060546875,
+      18.6748046875
+    ],
+    "status": "complete",
+    "exitCode": 0,
+    "timedOut": false,
+    "seconds": 2615.1341347499983,
+    "process": {
+      "samples": 514,
+      "processesSeen": 2,
+      "peakTreeRssBytes": 6306988032,
+      "peakRootRssBytes": 1277952,
+      "treeCpuSecondsLowerBound": 2542.16,
+      "errors": [],
+      "note": "Sampled CPU is a lower bound: short-lived workers and final intervals can be missed. Summed RSS counts shared pages in each process. Use driver phase CPU and resource high-water RSS for exact single-process totals."
+    },
+    "loadEnd": [
+      9.6494140625,
+      12.12353515625,
+      14.68212890625
+    ],
+    "result": {
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24993,
+      "actual": 24993,
+      "phaseCpuMs": {
+        "compile": {
+          "userMs": 1447.318,
+          "systemMs": 85.556
+        },
+        "cold": {
+          "userMs": 1855029.934,
+          "systemMs": 685603.71
+        }
+      },
+      "coldMs": 2611044.762083,
+      "compilationMs": 1565.928375,
+      "peakRssBytes": 6722682880,
+      "workloadSha256": "71e61b64127b3eaec1ec694a8f80af6d25f78f342b0626107355a005f71dcb1c",
+      "failures": 0,
+      "falsePositives": 0,
+      "falseNegatives": 0
+    }
+  },
+  "osResourceText": "real 2615.20\nuser 1858.24\nsys 686.51\n          6862143488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              892085  page reclaims\n                 184  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n             2795361  voluntary context switches\n             5061000  involuntary context switches\n      24703893029484  instructions retired\n       9206232869627  cycles elapsed\n          6911107632  peak memory footprint\n",
+  "exclusiveCountersNs": {
+    "anchorSelectionNs": 729927534195,
+    "anchorIndexNs": 129736143043,
+    "anchorPlanningNs": 159367603504,
+    "astMatchNs": 91228450356,
+    "parseNs": 9015846365,
+    "manifestCandidateLookupNs": 1398712694073
+  },
+  "globalApply": {
+    "revision": 289,
+    "phase": "global-results",
+    "files": 0,
+    "sourceBytes": 0,
+    "wallMs": 1446934.9844999998,
+    "cpuMs": 1392224.377,
+    "peakRssBytes": 6722682880,
+    "rssBytes": 5836907224,
+    "heapUsed": 193892408,
+    "external": 4927110,
+    "arrayBuffers": 2241491
+  },
+  "reference": {
+    "previousFailedColdCpuSeconds": 2714.76833,
+    "previousFailedOsPeakRssBytes": 12607602688
+  },
+  "measurementNotes": [
+    "No own builds, tests, probes or external sampling overlap this run. Other worktrees are not controlled.",
+    "Previous candidate has seven failures and includes diagnostic snapshot work. Its timing is not a clean parity-matched reference.",
+    "OS high-water RSS through process exit is 6862143488 bytes, above the driver checkpoint.",
+    "Compilation remains separate from cold execution."
+  ]
+}

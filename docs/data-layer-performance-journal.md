@@ -4846,3 +4846,25 @@ The new complete result still uses 5.348 times the passing 125.804-second pre-SQ
 Peak RSS is 2.86% above the earlier failed candidate. The sparse-column improvement does not establish full-workload RSS recovery.
 The [checked receipt](../fixtures/host/data-layer-port/profiling/recovery-first50-full-20261026.json) retains counters and resource accounting.
 Aggregate recovery remains rejected. The sequential all-60 measurement starts after this process exits.
+
+
+### Frozen all-60 result: parity restored, deferred evaluation dominates (2026-10-26)
+
+The all-60 run passes all 9,021 files and all 24,993 expected findings, with zero failures and diagnostic differences.
+Cold CPU is 2,540.634 seconds: 1,855.030 user seconds and 685.604 system seconds.
+Cold wall time is 2,611.045 seconds. Compilation takes 1.533 CPU seconds and 1.566 wall seconds.
+OS high-water RSS through exit is 6,862,143,488 bytes (6.391 GiB).
+The driver checkpoint is lower; comparisons use the OS figure for both runs.
+
+Cold CPU is only 6.41% below the earlier failed 2,714.768-second candidate.
+OS peak RSS decreases 45.57% from 12,607,602,688 bytes.
+The earlier candidate reports seven failures and includes snapshot work, so the CPU comparison remains qualified.
+No own builds, tests, traces, census, replay copies, or external samples overlap the new sequential measurements.
+The [checked receipt](../fixtures/host/data-layer-port/profiling/recovery-all60-full-20261026.json) preserves identities, accounting, and the comparison limits.
+
+The final deferred apply alone takes 1,392.224 CPU seconds and 1,446.935 wall seconds.
+It includes deferred file analyses as well as repository-wide clauses; it is not one global SQL query.
+Across the whole job, exclusive counters record 729.928 seconds in selection, 129.736 in index preparation, and 159.368 in physical planning.
+The default worker phase records another 1,398.713 seconds, dominated by that deferred apply.
+The next profiling slice must attribute this work to clauses and preparation stages before selecting another optimization.
+Recovery remains open despite complete findings parity and the substantial all-60 memory reduction.
