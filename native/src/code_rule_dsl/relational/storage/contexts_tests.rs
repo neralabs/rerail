@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn statistics_boundary_does_not_rescan_unchanged_relations() -> Result<()> {
+    let db = Connection::open_in_memory()?;
+    let mut s = Storage::default();
+    for (id, slot) in [(1, "__context_unchanged"), (2, "__context_changed")] {
+        s.bind_scope(&db, id, BTreeMap::from([(slot.into(), id)]))?;
+        s.declare(&db, slot, format!("CREATE TABLE {slot}(v INTEGER)"), true)?;
+        let (table, _) = s.write_target(slot);
+        db.execute(&format!("INSERT INTO {table} VALUES(?1,1)"), [id as i64])?;
+        s.analyze(&db, slot, 1)?;
+    }
+    s.statistics_boundary(&db)?;
+    // A sentinel makes an unnecessary statistics refresh observable without timing.
+    db.execute(
+        "UPDATE temp.sqlite_stat1 SET stat='12345 12345' WHERE tbl='__rows___context_unchanged'",
+        [],
+    )?;
+    s.analyze(&db, "__context_changed", 1)?;
+    s.statistics_boundary(&db)?;
+    assert_eq!(
+        db.query_row(
+            "SELECT stat FROM temp.sqlite_stat1 WHERE tbl='__rows___context_unchanged'",
+            [],
+            |r| r.get::<_, String>(0)
+        )?,
+        "12345 12345"
+    );
+    Ok(())
+}
+
+#[test]
+fn scope_selection_is_an_outer_gate_for_recursive_readers() -> Result<()> {
+    let db = Connection::open_in_memory()?;
+    let mut s = Storage::default();
+    let slot = "__context_recursive_gate";
+    s.bind_scope(&db, 1, BTreeMap::from([(slot.into(), 1)]))?;
+    s.declare(
+        &db,
+        slot,
+        format!("CREATE TABLE {slot}(id INTEGER,parent INTEGER)"),
+        true,
+    )?;
+    let (table, _) = s.write_target(slot);
+    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO {table} SELECT 1,x,x-1 FROM n;INSERT INTO {table} VALUES(2,2,0)"))?;
+    // Plan shape is the contract: the one-row scope gate must be outside the
+    // backing lookup, rather than a scalar subquery attached to every arm.
+    let sql: String = db.query_row(
+        "SELECT sql FROM temp.sqlite_schema WHERE name=?1",
+        [slot],
+        |r| r.get(0),
+    )?;
+    assert!(
+        sql.contains("CROSS JOIN"),
+        "scope selection was not an outer gate: {sql}"
+    );
+    assert_eq!(db.query_row(&format!("WITH RECURSIVE reaching(id) AS (VALUES(0) UNION SELECT v.id FROM reaching r JOIN {slot} v ON v.parent=r.id) SELECT count(*) FROM reaching"), [], |r| r.get::<_, i64>(0))?, 1001);
+    Ok(())
+}
+
+#[test]
 fn scopes_share_a_schema_without_sharing_rows_or_rebuilding_indexes() -> Result<()> {
     let db = Connection::open_in_memory()?;
     let mut storage = Storage::default();

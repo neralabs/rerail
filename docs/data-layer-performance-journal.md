@@ -5195,3 +5195,34 @@ The control includes the import-membership policy correction.
 Detailed tracing, SQL capture, allocator census, external sampling, and overlapping worktree builds or tests remain off during these timings.
 Compilation CPU is reported separately from cold CPU.
 Process CPU and OS peak RSS also include final cleanup and remain distinct from the driver's cold phase.
+
+
+### Reject the first full schema-lifecycle candidate (2026-10-26)
+
+All four measurements use the complete 9,021-file, 137,924,324-byte repository.
+The [machine-readable receipt](performance-decisions/schema-lifecycle-20261026-rejected.json) records identities, failures, compile costs, and OS resources.
+
+| Rules | Artifact | Cold CPU, s | Cold wall, s | Peak RSS, bytes | Engine failures |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 50 | Matching control | 743.541 | 890.458 | 4,738,318,336 | 0 |
+| 50 | `2cc0a5a2` candidate | 829.704 | 1,066.183 | 4,699,488,256 | 0 |
+| 60 | Matching control | 3,899.342 | 5,557.645 | 6,520,143,872 | 0 |
+| 60 | `2cc0a5a2` candidate | 2,096.511 | 2,631.567 | 6,323,503,104 | 5 |
+
+All findings match: 24,820 for 50 rules and 24,993 for 60 rules.
+The 50-rule candidate regresses cold CPU by 11.6 percent.
+The 60-rule candidate exhausts SQL work in five `runtime-reference-summaries` consumers.
+Neither result passes acceptance. The apparent 60-rule improvement is not an accepted speedup.
+Host load and wall time vary substantially; the receipt retains these observations.
+They do not excuse either the CPU regression or the engine errors.
+
+Captured failing queries expose a scope-index planning error.
+A scalar scope predicate encourages SQLite to put input scans before the recursive frontier.
+Two captured consumers take 818,453,316 and 1,250,315,587 VM steps after removing the original budget for laboratory replay.
+An outer binding gate reduces them to 27,793 and 13,116 VM steps, with identical typed row multisets.
+These are query-only diagnostic measurements, not full workload timings.
+The laboratory changes only restored snapshot copies.
+
+The statistics boundary also runs `ANALYZE temp`, revisiting unchanged relations at every family frontier.
+The next correction tests outer scope gates and refreshes only dirty physical cuts.
+The complete repository acceptance gate remains pending.

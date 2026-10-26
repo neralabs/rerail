@@ -1,0 +1,178 @@
+{
+  "format": "rerail.schema-lifecycle-receipt/v1",
+  "status": "rejected",
+  "reason": "50-rule CPU regressed; 60-rule candidate has five work-budget failures. Findings alone are insufficient.",
+  "runs": [
+    {
+      "variant": "full-control",
+      "workload": "first-50",
+      "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518",
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24820,
+      "actual": 24820,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "compileCpuSeconds": 0.959788,
+      "compileWallSeconds": 0.9560030409999999,
+      "coldCpuSeconds": 743.5413389999999,
+      "coldWallSeconds": 890.4575093749999,
+      "peakRssBytes": 4738318336,
+      "resource": {
+        "realSeconds": 894.4,
+        "userSeconds": 480.75,
+        "sysSeconds": 266.16,
+        "peakRssBytes": 4738318336,
+        "cpuSeconds": 746.9100000000001
+      },
+      "loadAverageStart": [
+        10.6845703125,
+        20.3505859375,
+        25.2275390625
+      ],
+      "loadAverageEnd": [
+        22.53955078125,
+        29.3505859375,
+        28.6337890625
+      ],
+      "sourceArtifact": ".rerail/profiles/schema-lifecycle-20261026/full-control/first-50"
+    },
+    {
+      "variant": "full-control",
+      "workload": "all-60",
+      "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518",
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24993,
+      "actual": 24993,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "compileCpuSeconds": 1.876891,
+      "compileWallSeconds": 2.0760331669999994,
+      "coldCpuSeconds": 3899.342024,
+      "coldWallSeconds": 5557.644716375,
+      "peakRssBytes": 6520143872,
+      "resource": {
+        "realSeconds": 5564.34,
+        "userSeconds": 2814.86,
+        "sysSeconds": 1090.7,
+        "peakRssBytes": 6520143872,
+        "cpuSeconds": 3905.5600000000004
+      },
+      "loadAverageStart": [
+        23.056640625,
+        29.3447265625,
+        28.6357421875
+      ],
+      "loadAverageEnd": [
+        22.34326171875,
+        32.0634765625,
+        39.1875
+      ],
+      "sourceArtifact": ".rerail/profiles/schema-lifecycle-20261026/full-control/all-60"
+    },
+    {
+      "variant": "full-candidate",
+      "workload": "first-50",
+      "nativeSha256": "63bad0a538b78a8d6022123df6a100ff27311859130cbc298706f9c7bb729211",
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24820,
+      "actual": 24820,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "compileCpuSeconds": 1.103098,
+      "compileWallSeconds": 1.2409095829999999,
+      "coldCpuSeconds": 829.704097,
+      "coldWallSeconds": 1066.1829659579998,
+      "peakRssBytes": 4699488256,
+      "resource": {
+        "realSeconds": 1070.69,
+        "userSeconds": 533.53,
+        "sysSeconds": 299.91,
+        "peakRssBytes": 4699488256,
+        "cpuSeconds": 833.44
+      },
+      "loadAverageStart": [
+        25.5263671875,
+        31.26806640625,
+        38.40478515625
+      ],
+      "loadAverageEnd": [
+        23.39208984375,
+        29.48779296875,
+        33.71728515625
+      ],
+      "sourceArtifact": ".rerail/profiles/schema-lifecycle-20261026/full-candidate/first-50"
+    },
+    {
+      "variant": "full-candidate",
+      "workload": "all-60",
+      "nativeSha256": "63bad0a538b78a8d6022123df6a100ff27311859130cbc298706f9c7bb729211",
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24993,
+      "actual": 24993,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [
+        {
+          "clauseId": "runtime-reference-summaries",
+          "code": "relational-failed",
+          "message": "relational stage consumers: relational query: interrupted",
+          "ruleId": "data-layer-serverplan-steps"
+        },
+        {
+          "clauseId": "runtime-reference-summaries",
+          "code": "relational-failed",
+          "message": "relational stage consumers: relational query: interrupted",
+          "ruleId": "data-layer-serverplan-steps"
+        },
+        {
+          "clauseId": "runtime-reference-summaries",
+          "code": "relational-failed",
+          "message": "relational stage consumers: relational query: interrupted",
+          "ruleId": "data-layer-serverplan-steps"
+        },
+        {
+          "clauseId": "runtime-reference-summaries",
+          "code": "relational-failed",
+          "message": "relational stage consumers: relational query: interrupted",
+          "ruleId": "data-layer-serverplan-steps"
+        },
+        {
+          "clauseId": "runtime-reference-summaries",
+          "code": "relational-failed",
+          "message": "relational stage consumers: relational query: interrupted",
+          "ruleId": "data-layer-serverplan-steps"
+        }
+      ],
+      "compileCpuSeconds": 1.997097,
+      "compileWallSeconds": 2.1698549999999996,
+      "coldCpuSeconds": 2096.511198,
+      "coldWallSeconds": 2631.5670415000004,
+      "peakRssBytes": 6323503104,
+      "resource": {
+        "realSeconds": 2638.15,
+        "userSeconds": 1422.39,
+        "sysSeconds": 680.37,
+        "peakRssBytes": 6323503104,
+        "cpuSeconds": 2102.76
+      },
+      "loadAverageStart": [
+        23.39208984375,
+        29.48779296875,
+        33.71728515625
+      ],
+      "loadAverageEnd": [
+        26.10546875,
+        30.97607421875,
+        30.4716796875
+      ],
+      "sourceArtifact": ".rerail/profiles/schema-lifecycle-20261026/full-candidate/all-60"
+    }
+  ]
+}

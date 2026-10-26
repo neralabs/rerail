@@ -96,13 +96,13 @@ fn evaluate(db: &Connection, sql: &str) -> Result<serde_json::Value> {
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     assert!(
-        (1..=2).contains(&args.len()),
-        "usage: failure_replay MANIFEST.json [QUERY.sql]"
+        (1..=3).contains(&args.len()),
+        "usage: failure_replay MANIFEST.json [QUERY.sql [SETUP.sql]]"
     );
     let manifest = Path::new(&args[0]);
     let data: serde_json::Value = serde_json::from_slice(&std::fs::read(manifest)?)?;
     assert_eq!(data["format"], "rerail.sql-failure-snapshot/v1");
-    let sql = if args.len() == 2 {
+    let sql = if args.len() >= 2 {
         std::fs::read_to_string(&args[1])?
     } else {
         data["context"]["query"]
@@ -112,6 +112,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     };
     let setup = Instant::now();
     let (db, work) = database(manifest, &data)?;
+    // Experiments mutate only this restored, in-memory copy, never the snapshots.
+    if let Some(setup) = args.get(2) {
+        db.execute_batch(&std::fs::read_to_string(setup)?)?;
+    }
     let setup_ns = setup.elapsed().as_nanos();
     let result = evaluate(&db, &sql)?;
     println!(
