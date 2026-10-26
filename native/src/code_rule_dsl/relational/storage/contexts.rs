@@ -179,8 +179,17 @@ impl Contexts {
             "CREATE TEMP VIEW {} AS SELECT {columns} FROM {source}",
             quote(name)
         ))?;
+        // Every imported row carries its file and source span. This replaces
+        // the scope-only index, so interval/file joins gain a range lookup
+        // without a second index or a per-consumer index build. Its prefix
+        // still serves bulk scope cleanup.
+        let lookup = if outer_gate {
+            format!("{},\"__path\",\"__start\",\"__end\"", quote(&key_column))
+        } else {
+            quote(&key_column)
+        };
         db.execute_batch(&format!(
-            "CREATE INDEX {} ON {}({key_column})",
+            "CREATE INDEX {} ON {}({lookup})",
             quote(&format!("__binding_{name}")),
             quote(&backing(name))
         ))?;

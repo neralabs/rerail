@@ -61,10 +61,10 @@ fn scope_selection_is_an_outer_gate_for_recursive_readers() -> Result<()> {
     s.declare_input(
         &db,
         slot,
-        format!("CREATE TABLE {slot}(id INTEGER,parent INTEGER)"),
+        format!("CREATE TABLE {slot}(__path TEXT,__start INTEGER,__end INTEGER,id INTEGER,parent INTEGER)"),
     )?;
     let (table, _) = s.write_target(slot);
-    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO {table} SELECT 1,x,x-1 FROM n;INSERT INTO {table} VALUES(2,2,0)"))?;
+    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO {table} SELECT 1,'a.py',x,x+1,x,x-1 FROM n;INSERT INTO {table} VALUES(2,'a.py',2,3,2,0)"))?;
     // Plan shape is the contract: the one-row scope gate must be outside the
     // backing lookup, rather than a scalar subquery attached to every arm.
     let sql: String = db.query_row(
