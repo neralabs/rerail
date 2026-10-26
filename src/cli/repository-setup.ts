@@ -558,7 +558,8 @@ async function pickMyself(run: Run, repository: Repository): Promise<SetupOutcom
 async function pickPacksMyself(run: Run, repository: Repository): Promise<SetupOutcome> {
   const { packs, packsError } = run.request;
   if (packsError === undefined && packs !== undefined) return startPicked(run, repository, packs);
-  const offered = discoveryOffering(await discoverPacks(undefined, run.request.environment.packs));
+  const discovery = await discoverPacks(undefined, run.request.environment.packs);
+  const offered = discoveryOffering(discovery);
   // Nothing to pick, and nothing went wrong: on with none. When packs could not be fetched or installed, the person
   // is told why and asked, rather than started without the packs they wanted.
   if (offered.available.length === 0 && offered.unavailable.length === 0 && packsError === undefined) return pickMyself(run, repository);
@@ -567,6 +568,7 @@ async function pickPacksMyself(run: Run, repository: Repository): Promise<SetupO
     repoPath: repository.root,
     available: offered.available,
     unavailable: offered.unavailable,
+    withoutRules: discovery.withoutRules.map(found => found.pack.name),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
   }, run.io.lane);
   if (packsError !== undefined) say(run.io, packsError);
@@ -653,6 +655,8 @@ interface Offering {
   readonly available: readonly AvailablePack[];
   /** Packs set-up could not fetch or check, and why. */
   readonly unavailable: readonly string[];
+  /** The names of the packs that fit but have no rules yet, so are not offered. */
+  readonly withoutRules: readonly string[];
   /** The catalog the offered packs' rules come from, for the lint config's settings. */
   readonly catalog: RuleCatalog;
 }
@@ -669,6 +673,7 @@ function discoveryOffering(discovery: PackDiscovery): Offering {
     }]),
     available: discovery.available.map(found => ({ id: found.pack.id, version: found.version, name: found.pack.name, ...(found.match === undefined ? {} : { reason: found.match.reason }) })),
     unavailable: discovery.problems,
+    withoutRules: discovery.withoutRules.flatMap(found => found.match === undefined ? [] : [found.pack.name]),
     catalog: discovery.catalog,
   };
 }
@@ -693,6 +698,7 @@ function chosenOffering(run: Run, repository: Repository, chosen: readonly PackV
     offers,
     available: offers.map(offer => ({ id: offer.recommendation.pack.id, version: offer.version, name: offer.recommendation.pack.name, reason: offer.recommendation.reason })),
     unavailable: [],
+    withoutRules: [],
     catalog,
   };
 }
@@ -719,6 +725,7 @@ function packsInput(run: Run, repository: Repository, offering: Offering): Recom
     })),
     available: offering.available,
     unavailable: offering.unavailable,
+    withoutRules: offering.withoutRules,
     agentsFound: codingAgents(connecting),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
     lintConfig: readRepositoryLintConfig(repository.root, offering.catalog, offering.offers.map(({ recommendation }) => recommendation.pack.id)),
