@@ -207,3 +207,37 @@ Two of the splits changed results, so both rules are restored to their verified 
 A third full-corpus finding: `serverplan_quality` reported a false positive on `SqlConditionalStep` (SPQ-029, physical contract). The class's base `ConditionalStep` never resolved, because the import rows held only the first name of each `from m import (a, b, …)`. A relation with `field` reads only that field's first child, as upstream ast-grep does, and every name of an import shares the `name` field. So `has: {field: name}` with `each` cannot enumerate an import, and neither can `inside` with a field. Ten import rules across `conditional`, `legacy`, `quality`, `quality_annotations` and `target` had the shape. They now use `imported(...)` (`common.py`): a `has` over the statement's children that leaves out the `from` module. Fixtures stay exact (80, 200 and 12 rows), and the full corpus is clean with no failures.
 
 The engine no longer penalizes narrow inputs. A relational session's allowance is now per node of the scoped source (estimated at one node per 8 bytes) when that exceeds the per-row count. A repository clause's step budget grows with its scoped source, as a file's does (`file_work_budget`). With this change, the narrow module-name and annotation variants of internal-dead-code and public-api-triples finish exact on the full corpus (4,931/4,931, no failures). The narrow internal-dead-code variant is slower (90 s against 68 s CPU), so the restored shapes stay.
+
+## 14. Execution apart from construction; anchor selection fixes
+
+The anchor index is built every time (decision 0006). Comparisons now report execution apart from construction. Each phase clock counts the calling thread's CPU time (`phase_clock.rs`), so waiting on a lock counts nothing:
+
+- **Construction:** parse, index publication, and lowering and preparing anchor SQL (`anchorCompile`, nested in selection and subtracted from it).
+- **Execution:** clause matching, anchor selection, relational SQL.
+
+The data-layer suite reports both as `coldProfile`. Thread CPU includes kernel time, and these runs had 10 GB of swap in use on a shared machine, so system time is 20–35% of every figure.
+
+| Change | Effect (execution CPU) | Kept |
+|---|---|---|
+| File rows built outside the corpus lock, vocabulary counted per file, not per row | publication 7.1 s wall (lock waits) → 2.1 s CPU, 300 files | yes |
+| Inside walk selects by `IN` membership, not a join of two unindexed CTEs | public_api_triples selection 96.5 → 39.3 s; findings identical | yes |
+| Value postings inserted in key order | no measurable change on its own | yes (free) |
+| Group plans by the files that demand them | fewer templates; but each file then runs once per scope: selection +6% to +35% on the full corpus | no |
+| 64 MiB writer page cache | selection −4% (noise), +80 MB | no |
+
+The inside-walk join was quadratic. SQLite planned `w JOIN m ON fid,pre`, over two materialized CTEs, as `SCAN m` × `SCAN w`: up to 610M VM steps for a four-file batch. Stage-level attribution came from the profiling build (`RERAIL_PROFILE=1` spans) and `EXPLAIN QUERY PLAN` on captured batch databases.
+
+Full corpus (9,021 files), execution CPU in seconds, at `be03e110`:
+
+| Check | Match | Anchor selection | Relational | Construction (parse + publish + compile) | Result |
+|---|---:|---:|---:|---:|---|
+| serverplan_target_architecture | 0.2 | 11.6 (was 17.0) | 0.1 | 11.4 | 0 failures |
+| backend_type_strings | 0.0 | 1.3 (was 1.9) | 0.0 | 32.3 | 0 failures |
+| type_safety_patterns | 0.0 | 6.7 (was 10.1) | 0.0 | 33.6 | 0 failures |
+| legacy_execution_surfaces | 0.1 | 14.2 (was 17.1) | 2.3 | 9.5 | 0 failures |
+| serverplan_state_tripwires | 16.2 | 38.7 (was 54.8) | 34.3 | 45.9 | 24 `source-incomplete`, as before |
+| serverplan_quality | 3.3 | 82.3 | 3.3 | 131.4 | 0 failures (timed out before) |
+| internal_dead_code | 7.2 | 83.8 | 30.0 | 36.9 | 4,931/4,931 exact (timed out before) |
+| public_api_triples | 2.1 | 41.0 (was 100.8) | 6.7 | 36.8 | 0 failures |
+
+Anchor selection is still the largest execution cost; matching never exceeds 16 s.
