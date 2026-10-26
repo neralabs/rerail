@@ -137,6 +137,7 @@ struct Lower {
 #[derive(Default)]
 struct Reuse {
     bodies: HashMap<String, String>,
+    empty: BTreeSet<String>,
     factors: HashMap<String, BTreeSet<String>>,
     intersections: std::collections::BTreeMap<BTreeSet<String>, String>,
     strings: HashMap<String, usize>,
@@ -211,8 +212,17 @@ impl Lower {
         let name = format!("s{}", self.ctes.len());
         self.ctes
             .push(format!("{name}(fid,pre) AS MATERIALIZED ({body})"));
+        if body == "SELECT 0,0 WHERE 0" {
+            self.reuse.empty.insert(name.clone());
+        }
         self.reuse.bodies.insert(body, name.clone());
         Ok(Set { name, exact })
+    }
+    fn is_empty(&self, set: &Set) -> bool {
+        self.reuse.empty.contains(&set.name)
+    }
+    fn empty(&mut self, exact: bool) -> Result<Set, ()> {
+        self.relation("SELECT 0,0 WHERE 0".into(), exact)
     }
     fn all(&self) -> Set {
         Set {
@@ -239,6 +249,11 @@ impl Lower {
         Ok(selected)
     }
     fn union(&mut self, sets: &[Set]) -> Result<Set, ()> {
+        let sets = sets
+            .iter()
+            .filter(|set| !self.is_empty(set))
+            .cloned()
+            .collect::<Vec<_>>();
         if sets.is_empty() {
             return self.relation("SELECT 0,0 WHERE 0".into(), true);
         }
@@ -273,6 +288,21 @@ impl Lower {
         operator: &str,
         exact: bool,
     ) -> Result<Set, ()> {
+        let left_empty = self.is_empty(left);
+        let right_empty = self.is_empty(right);
+        if (operator == "INTERSECT" && (left_empty || right_empty))
+            || (operator == "EXCEPT" && left_empty)
+        {
+            return self.empty(exact);
+        }
+        if (operator == "UNION" && (left_empty || right_empty))
+            || (operator == "EXCEPT" && right_empty)
+        {
+            return Ok(Set {
+                name: if left_empty { &right.name } else { &left.name }.clone(),
+                exact,
+            });
+        }
         if operator == "INTERSECT" {
             if left.name == "all_nodes" {
                 return Ok(Set {
@@ -436,6 +466,14 @@ impl Lower {
     }
 
     fn plan(&mut self, plan: &AnchorPlan, scope: Set) -> Result<Set, ()> {
+        if self.is_empty(&scope) {
+            return Ok(scope);
+        }
+        if let (Some(known), Some(required)) = (self.reuse.kinds.get(&scope.name), &plan.root_kinds)
+            && known.is_disjoint(required)
+        {
+            return self.empty(scope.exact);
+        }
         if let Some(domain) = self.kind_domain(plan) {
             let exact = scope.exact && plan.exact && !self.partial;
             let mut selected = if domain.positive {
@@ -460,6 +498,9 @@ impl Lower {
             Some(kinds) => self.restrict_kinds(scope, kinds)?,
             None => scope,
         };
+        if self.is_empty(&scope) {
+            return Ok(scope);
+        }
         let kinds = self.reuse.kinds.get(&scope.name).cloned();
         let mut selected = match &plan.condition {
             Condition::Always => Ok(scope),
@@ -470,6 +511,9 @@ impl Lower {
                 let mut ordered = plans.iter().collect::<Vec<_>>();
                 ordered.sort_by_cached_key(|plan| self.compile_cost(plan));
                 for plan in ordered {
+                    if self.is_empty(&selected) {
+                        break;
+                    }
                     match self.plan(plan, selected.clone()) {
                         Ok(next) => selected = next,
                         Err(()) => {
@@ -514,7 +558,9 @@ impl Lower {
                                 covering = Some(branch);
                                 break;
                             }
-                            branches.push(branch);
+                            if !self.is_empty(&branch) {
+                                branches.push(branch);
+                            }
                         }
                         covering.map_or_else(|| self.union(&branches), Ok)
                     }
@@ -608,6 +654,9 @@ impl Lower {
             _ => self.all(),
         };
         let inner = self.plan(inner, inner_scope)?;
+        if self.is_empty(&inner) {
+            return self.empty(scope.exact && inner.exact);
+        }
         let guard = field.map_or(String::new(), |field| {
             format!(" AND c.field={field} AND (c.flags&16)<>0")
         });
@@ -641,6 +690,9 @@ impl Lower {
         field: Option<u16>,
     ) -> Result<Set, ()> {
         let inner = self.plan(inner, self.all())?;
+        if self.is_empty(&inner) {
+            return self.empty(scope.exact && inner.exact);
+        }
         let roots = if matches!(direction, Direction::Has) {
             &scope
         } else {

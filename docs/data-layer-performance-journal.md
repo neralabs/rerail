@@ -4488,3 +4488,15 @@ This switch controls instrumentation only; production execution has one algorith
 The candidate compiler also loses known empty scopes after contradictory kind constraints.
 A new regression requires an impossible structural branch to construct no decoder or source producers.
 This is exact empty-demand propagation, not a broader candidate superset or a changed matching contract.
+
+The statement-only profiler passes all 48 production-shape tests and 27 Python profiler tests.
+A bounded 32-file, 60-rule capture completes in 74.734 wall seconds, with no target timeout.
+Its target uses 16.788 ingestion CPU seconds under instrumentation. This is diagnostic, not an acceptance control.
+The report correctly rejects incomplete whole-job accounting because the capture filters AST-index contexts.
+No candidate database snapshots are written. Plans and bytecode still produce a large diagnostic report.
+One result statement performs 400 sorts, with 514 ORDER BY nodes in its captured plan.
+It consumes 38,423,234 VM steps. The current transport requires `ORDER BY qid,fid,pre` for one-file buffering.
+The selected correction uses bounded sparse-to-bitmap accumulators for unordered typed result rows.
+Each accumulator stays bounded by its file's retained candidate representation, without repository-sized ordinal vectors.
+The matcher must still receive canonical, sorted, unique ordinals. No algorithm-selection switch is added.
+The contradictory-kind regression fails after constructing eleven unnecessary relations.
