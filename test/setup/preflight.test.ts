@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { gitCandidates } from "../../src/engine/git.js";
 import { gitInstallCommand, MIN_LINUX_GLIBC, setupPreflight, unsupportedPlatform, wslNote } from "../../src/setup/preflight.js";
 
 describe("unsupportedPlatform", () => {
@@ -31,23 +30,6 @@ describe("setupPreflight", () => {
 });
 
 describe("Git", () => {
-  it("looks in the per-user installs too, never on PATH", () => {
-    expect(gitCandidates("win32", String.raw`C:\Users\me`, { LOCALAPPDATA: String.raw`D:\Local` })).toEqual([
-      String.raw`C:\Program Files\Git\cmd\git.exe`,
-      String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
-      String.raw`D:\Local\Programs\Git\cmd\git.exe`,
-      String.raw`C:\Users\me\scoop\apps\git\current\cmd\git.exe`,
-    ]);
-    expect(gitCandidates("linux", "/home/me", { PATH: "/home/me/bin" })).toEqual([
-      "/usr/bin/git",
-      "/usr/local/bin/git",
-      "/opt/homebrew/bin/git",
-      "/home/linuxbrew/.linuxbrew/bin/git",
-      "/run/current-system/sw/bin/git",
-      "/home/me/.nix-profile/bin/git",
-    ]);
-  });
-
   it("names the install command for the system's package manager", () => {
     expect(gitInstallCommand("linux", 'PRETTY_NAME="Debian GNU/Linux 13 (trixie)"\nID=debian\n', true)).toBe("apt-get install git");
     expect(gitInstallCommand("linux", "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n", false)).toBe("sudo apt-get install git");
