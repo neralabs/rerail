@@ -1,5 +1,8 @@
 # SQL performance recovery workplan
 
+The [2026-10-26 cold CPU plan](cold-cpu-recovery-plan.md) now governs the remaining work and all architectural spikes.
+The sections below retain the earlier delivery history.
+
 ## Active plan — 2026-10-25
 
 Status: both complete 50/60 repository runs now pass findings parity; aggregate CPU recovery remains open.
