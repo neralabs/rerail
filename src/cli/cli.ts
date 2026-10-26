@@ -134,6 +134,7 @@ function usage(): string {
     "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
+    "  rerail version",
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",
@@ -514,6 +515,11 @@ function runStateCommand(args: readonly string[]): number {
   return 0;
 }
 
+/** `rerail version`, or the flags people try first. */
+function isVersionRequest(command: string | undefined): boolean {
+  return command === "version" || command === "--version" || command === "-v";
+}
+
 /** Commands that read shared launcher state or this project's database and must run from whichever launcher the user invoked. */
 function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
@@ -521,6 +527,7 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
   // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
   if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
+  if (isVersionRequest(command)) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }
@@ -541,6 +548,12 @@ async function main(): Promise<number> {
   if (args[0] === "mcp-bridge") {
     if (args.length !== 1) throw new Error("mcp-bridge takes no arguments");
     await runRerailMcpBridge();
+    return 0;
+  }
+  // The version of the package answering: through the launcher, the active one. Nothing else is read for it.
+  if (isVersionRequest(args[0])) {
+    if (args.length !== 1) throw new Error(`${args[0]} takes no arguments`);
+    process.stdout.write(`${manifest.name.split("/").pop()} ${manifest.version}\n`);
     return 0;
   }
 

@@ -267,6 +267,41 @@ describe("rerail install --refresh", () => {
     expect(await readFile(cursorHooks, "utf8")).toBe("{ not json");
   });
 
+  it.skipIf(process.platform === "win32")("puts the launcher back on PATH when an earlier set-up never added it", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    // A version from before set-up wrote PATH left the launcher in place and the startup file alone.
+    await writeFile(zshrc, "setopt autocd\n");
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(await readFile(zshrc, "utf8")).toContain(join(context.home, "bin"));
+    expect(output.stdout()).toContain(`Added ${join(context.home, "bin")} to PATH in ${zshrc}`);
+  });
+
+  it.skipIf(process.platform === "win32")("leaves PATH alone, and says nothing about it, when the launcher is on it already", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const written = await readFile(zshrc, "utf8");
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(await readFile(zshrc, "utf8")).toBe(written);
+    expect(output.stdout()).not.toContain("PATH");
+  });
+
   it.each([[["--agents", "claude-code"]], [["--root", "."]], [["--remove"]], [["--dry-run"]]])("refuses --refresh with %j", async flag => {
     const { context } = await fixture();
     await expect(runInstallCommand(["--refresh", ...flag], context)).rejects.toThrow("--refresh");

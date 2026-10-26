@@ -195,12 +195,24 @@ async function runRefresh(context: SetupContext): Promise<number> {
   for (const { agent, message } of result.unchecked) {
     process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);
   }
+  // An install made by a version whose set-up never wrote PATH keeps the launcher off it until something puts it
+  // on: the refresh every update ends with is that something.
+  const pathLine = await repairLauncherPath(context);
+  if (pathLine !== undefined) process.stdout.write(`${pathLine}\n`);
   for (const { agent, message } of result.failures) {
     process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
   }
   if (result.failures.length === 0) return 0;
   process.stderr.write("rerail: fix that, then run rerail install --refresh\n");
   return 1;
+}
+
+/** Put the launcher on PATH where it is missing; the line to print when that changed or failed, else undefined. */
+async function repairLauncherPath(context: SetupContext): Promise<string | undefined> {
+  const { launcherPath } = context.updater;
+  if (!existsSync(launcherPath)) return undefined;
+  const binDir = dirname(launcherPath);
+  return describeLauncherPath(await addLauncherToPath({ binDir, home: codingAgentHome() }), binDir, "add");
 }
 
 export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {

@@ -123,7 +123,10 @@ person says yes.
    `BROWSER=none`, the session is over SSH, or Linux has no display.
 
 Every set-up run also puts `~/.rerail/bin` (the Windows launcher is
-`rerail.cmd`) on `PATH`, so `rerail` runs from a new terminal. On macOS and
+`rerail.cmd`) on `PATH`, so `rerail` runs from a new terminal. So does every
+`rerail update`, through the `rerail install --refresh` it ends with: an
+install whose set-up predates this step (0.1.0-next.2 or earlier) gets the
+entry on its next update. On macOS and
 Linux it appends a block between `# >>> rerail >>>` and `# <<< rerail <<<` to
 the startup file `$SHELL` reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
 `~/.bashrc` and the first of `~/.bash_profile`, `~/.bash_login`,
@@ -319,6 +322,7 @@ rerail stop              # stop Rerail in this checkout; the daemon keeps servin
 rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
 rerail daemon stop       # stop the background daemon
 rerail status            # whether Rerail is started here, otherwise daemon/database/kernel
+rerail version           # the installed version
 rerail manage            # opens the dashboard's Overview (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
 rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
