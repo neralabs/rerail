@@ -5286,3 +5286,26 @@ The small subset does not establish a speed improvement or isolate the complete 
 Both engines produce identical finding multisets and no failures.
 Its global scope differs from the original full-repository recording, so its oracle-difference counts are not semantic acceptance results.
 The final complete corrected 50- and 60-rule measurements now run sequentially with the same frozen artifact and policies.
+
+
+### Corrected full 50-rule result: parity passes, resources do not (2026-10-26)
+
+The corrected addon completes all 9,021 files with 24,820 expected and actual findings.
+There are zero false positives, false negatives, and engine failures.
+Cold CPU is 832.236 seconds; cold wall is 1,047.496 seconds.
+Policy compile CPU is 1.088 seconds, reported separately.
+OS peak RSS is 4,835,475,456 bytes.
+The earlier matching control records 743.541 cold CPU seconds and 4,738,318,336 peak RSS bytes.
+The corrected measurement fails the aggregate resource gate against that control.
+
+Input processing uses 775.910 CPU seconds; repository-wide results use 55.967 CPU seconds.
+The preceding rejected candidate uses 776.195 and 53.149 seconds for those same phases.
+The new correction therefore does not establish an aggregate 50-rule improvement.
+The original control uses 699.252 and 43.931 seconds.
+The slowdown also affects parsing and anchor operations outside the changed relational executor.
+Both artifact dependency lists and the recorded allocator SHA-256 match.
+Those observations motivate one contemporary frozen-control repeat; they do not establish the cause or excuse the failed gate.
+The repeat was declared before the 60-rule result and will retain both earlier control measurements.
+It uses the complete original repository and 50-rule set, without sharding or reduced policies.
+The measurement controller now accepts an explicit complete rule-set selection for this purpose.
+The corrected 60-rule measurement continues first, without overlapping worktree builds or tests.

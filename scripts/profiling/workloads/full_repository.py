@@ -40,6 +40,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--policies', type=Path, default=Path('packs/data-layer/candidates/rules'))
     parser.add_argument('--recordings', type=Path, default=Path('.rerail/profiles/full-repository-20261021'))
+    parser.add_argument('--sets', nargs='+', choices=['first-50', 'all-60'], default=['first-50', 'all-60'],
+                        help='Complete rule sets to measure, in order; every selected set still uses all 9,021 files.')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -70,7 +72,8 @@ def main():
     os.environ['RERAIL_NATIVE_WORKERS'] = '4'
     os.environ['DYLD_INSERT_LIBRARIES'] = '/tmp/librerail_jemalloc_check_shim.dylib'
     manifest['allocatorSha256'] = digest(Path(os.environ['DYLD_INSERT_LIBRARIES']))
-    for name, rules in [('first-50', 50), ('all-60', 60)]:
+    for name in args.sets:
+        rules = {'first-50': 50, 'all-60': 60}[name]
         recording = args.recordings.resolve() / (name + '-recording.json')
         data = json.loads(recording.read_text())
         if len(data['files']) != 9021 or len(data['events']) != rules or data['source_mismatches']:
