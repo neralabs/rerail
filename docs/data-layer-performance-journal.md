@@ -4378,3 +4378,28 @@ The filtered-profiler unit ladder passes all nine SQL profiler tests.
 A separate production test reproduces unwanted candidate snapshots during a relational-only capture.
 The red test observes one `.sqlite` snapshot where none is requested.
 Candidate capture, origin discovery, and source-version capture will use the same context selection as the statement tracer.
+
+
+The constructor-only full repository run now passes all 9,021 inputs, with no findings or engine failures.
+It uses the revised rule and the diagnostic addon; cold CPU is 6.945 seconds.
+The filtered capture implementation passes all nine profiler tests and all 44 production-shape tests.
+Clippy with warnings denied passes. The execution-accounting tests pass.
+The first static check fails the 25-file directory limit after two modules were added.
+The source-confirmation module moves under `functions/`; the cache module moves under `corpus/`.
+Rust module identities and behavior remain unchanged.
+
+The full public-API diagnostic reproduces the query interruption with filtered SQL capture and tracing.
+Its final query uses 419,835,138 VM steps, 18,055,384 full-scan steps, and 902,484 automatic-index rows.
+Sixteen fused stages are already `AS MATERIALIZED`; twelve `NOT MATERIALIZED` definitions are aliases of retained inputs.
+An initial interpretation of those aliases as missing boundaries was incorrect.
+The fused stages lose their authored indexes. The next ladder must test indexed boundaries and live result plans.
+Post-failure EXPLAIN currently reports released private inputs, so it cannot establish the failing result plan.
+The diagnostic takes 262.806 cold CPU seconds and 452.646 wall seconds, under tracing and concurrent workloads.
+It is not a performance control. Its raw SQL capture is 6.2 MiB and contains no candidate database copies.
+
+The fresh 32-file anchor SQL capture completes without a timeout.
+It intentionally fails complete-job accounting because it is filtered and has no findings oracle.
+SQL totals include census overhead: repeated dbstat queries consume 1.421 CPU seconds.
+One candidate-family fill consumes 22,244,658 VM steps; the largest result packet consumes 38,253,186.
+Its source-confirmation transport reads 8.8 MB in the earlier comparable diagnostic.
+Source-buffer copying is therefore not established as the main CPU cause; no new source cache is added.

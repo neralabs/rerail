@@ -85,7 +85,7 @@ pub(super) fn rows_for(
     store.readers.clear();
     #[cfg(feature = "code-rule-profile")]
     let nodes = if crate::code_rule_dsl::profile::trace::enabled()
-        || std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_some()
+        || crate::code_rule_dsl::profile::sql::captures_scope("ast-index")
     {
         store
             .graph

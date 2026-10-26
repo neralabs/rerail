@@ -12,9 +12,10 @@ The statement tracer, report renderer, cost summaries, and report tests come fro
 The integration uses this branch's relational executor and bounded profiling controller.
 The SQL matcher compiler and its optimization experiments remain on the source branch.
 
-## Complete-job execution limit
+## Complete-job execution accounting
 
-The fixed acceptance limit is **100 engine-submitted SQL statements for one complete cold job**.
+The fixed diagnostic reference is **100 engine-submitted SQL statements for one complete cold job**.
+Full-repository acceptance uses cold CPU, wall time, RSS, and complete findings with no engine failures.
 Commit `c109a915` on the source branch defines this limit. The earlier profiler import omitted its enforcement.
 Every worker and connection shares the allowance. File batches, rules, and output packets do not reset it.
 Setup, publication, DDL, transactions, matching, and cleanup count. Each statement inside `execute_batch` counts separately.
@@ -45,6 +46,19 @@ Use the existing [bounded profiling workflow](code-rule-profiling.md) to build a
 Production builds exclude this instrumentation.
 
 The [SQL shape experiments](sql-shape-spikes.md) record isolated changes, CPU results, parity checks, and reproduction commands.
+
+## Focus on one component
+
+Set `RERAIL_SQL_PROFILE_SCOPE=relational` to capture relational statements while excluding candidate-index publication.
+Use `ast-index` to select candidate preparation instead.
+The filter matches the connection context, including the scope of each native operation.
+A relational-only capture does not copy candidate databases or export candidate producer plans.
+Normal execution still runs every required operator.
+
+Filtered reports set `executionCoverage.fromSessionStart` to `false` and retain the selected context in `contextFilter`.
+They cannot pass the complete-job accounting check, even when their statement count is below 100.
+`filteredStatementNotifications` counts excluded trace notifications. It does not claim an execution-origin count.
+Unset this variable for complete captures and for performance measurements.
 
 ## Candidate preparation captures
 

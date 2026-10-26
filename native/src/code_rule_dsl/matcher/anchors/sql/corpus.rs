@@ -120,7 +120,7 @@ impl Corpus {
         &self,
         rules: impl IntoIterator<Item = &'a crate::code_rule_dsl::model::CompiledCodeRule>,
     ) {
-        if std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_none() {
+        if !crate::code_rule_dsl::profile::sql::captures_scope("ast-index") {
             return;
         }
         let guard = self.state.lock();
@@ -458,7 +458,7 @@ impl Corpus {
             return Self::select_group(state, lang, &ids, &plans, covered, paths, statistics);
         }
         #[cfg(feature = "code-rule-profile")]
-        if std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_some() {
+        if crate::code_rule_dsl::profile::sql::captures_scope("ast-index") {
             *state.writer.versions.lock() = state
                 .files
                 .values()

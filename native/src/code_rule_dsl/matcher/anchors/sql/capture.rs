@@ -12,6 +12,9 @@ pub(super) fn save(
     nodes: &HashMap<String, Node>,
     files: &[i64],
 ) -> Result<()> {
+    if !crate::code_rule_dsl::profile::sql::captures_scope("ast-index") {
+        return Ok(());
+    }
     let variant = "normal";
     let Some(directory) = std::env::var_os("RERAIL_SQL_PROFILE_DIR") else {
         return Ok(());

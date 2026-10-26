@@ -29,6 +29,15 @@ static ORIGIN: LazyLock<(Instant, u128)> = LazyLock::new(|| {
             .as_micros(),
     )
 });
+static CONTEXT_FILTER: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("RERAIL_SQL_PROFILE_SCOPE").ok());
+pub(in crate::code_rule_dsl) fn captures_scope(scope: &str) -> bool {
+    DIRECTORY.is_some()
+        && CONTEXT_FILTER
+            .as_deref()
+            .is_none_or(|wanted| wanted == scope)
+}
+
 static SERIAL: AtomicUsize = AtomicUsize::new(0);
 const STATUSES: [c_int; 4] = [
     ffi::SQLITE_STMTSTATUS_VM_STEP,
@@ -125,6 +134,7 @@ struct State {
     sql_time: Timing,
     error: Option<String>,
     events: usize,
+    filtered_notifications: usize,
     sql_started: usize,
     sql_completed: usize,
     origin_started: [usize; 3],
@@ -173,6 +183,13 @@ pub(in crate::code_rule_dsl) struct Profiler {
 unsafe impl Send for Profiler {}
 
 impl Profiler {
+    fn accepts(&self, context: &Value) -> bool {
+        self.context_filter.as_deref().is_none_or(|wanted| {
+            ["scope", "component"]
+                .iter()
+                .any(|key| context.get(*key).and_then(Value::as_str) == Some(wanted))
+        })
+    }
     pub(in crate::code_rule_dsl) fn context(&self, value: Value) {
         self.state.borrow_mut().context = value;
     }
@@ -188,7 +205,12 @@ impl Profiler {
         DIRECTORY
             .as_ref()
             // SAFETY: forwarded from the caller; Session owns the callback and connection.
-            .map(|path| unsafe { Self::new(connection, path) })
+            .map(|path| {
+                unsafe { Self::new(connection, path) }.map(|mut profiler| {
+                    profiler.context_filter = CONTEXT_FILTER.clone();
+                    profiler
+                })
+            })
             .transpose()
     }
 
@@ -318,7 +340,7 @@ impl Profiler {
             "clock":"process monotonic nanoseconds","originUnixUs":ORIGIN.1,"cpuClock":if cfg!(unix) {"thread CPU"} else {"unavailable"},
             "writtenAtUnixMs":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis(),
             "queries":state.queries,"error":state.error,
-            "executionCoverage":{"source":"code-rule-dsl","fromSessionStart":true,
+            "executionCoverage":{"source":"code-rule-dsl","fromSessionStart":self.context_filter.is_none(),"contextFilter":self.context_filter,"filteredStatementNotifications":state.filtered_notifications,
                 "started":state.sql_started,"completed":state.sql_completed,"running":state.running.len(), "origins":origins}});
         let file = File::create(self.stem.with_extension("json")).map_err(io_error)?;
         let mut writer = BufWriter::new(file);
@@ -444,6 +466,12 @@ unsafe extern "C" fn trace(
         }
         let pointer = statement.cast::<ffi::sqlite3_stmt>();
         let key = pointer as usize;
+        if !profiler.accepts(&state.context) && !state.running.contains_key(&key) {
+            if code == ffi::SQLITE_TRACE_STMT {
+                state.filtered_notifications += 1;
+            }
+            return;
+        }
         match code {
             ffi::SQLITE_TRACE_STMT => {
                 // Ignore repeated trigger notifications for an already running statement.

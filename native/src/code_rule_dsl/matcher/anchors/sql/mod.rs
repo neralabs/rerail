@@ -24,6 +24,7 @@ mod reader;
 #[cfg(all(test, feature = "code-rule-profile"))]
 mod replay;
 mod session;
+#[path = "functions/source_batch.rs"]
 mod source_batch;
 mod statistics;
 mod store;
@@ -171,4 +172,5 @@ mod retention_spikes;
 #[cfg(test)]
 mod tests;
 
+#[path = "corpus/cache.rs"]
 mod cache;
