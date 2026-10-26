@@ -47,6 +47,22 @@ const finishCpu = (phase: string, started: NodeJS.CpuUsage): void => {
 const markPhase = (phase: string): void => {
   if (process.env.RERAIL_PROFILE_PHASES !== undefined) console.error(`RERAIL_PROFILE_PHASE ${JSON.stringify({ phase, startUnixUs: Date.now() * 1000 })}`);
 };
+let closed = false;
+const closeWorkspace = (): void => {
+  if (closed) return;
+  markPhase("close");
+  const cpu = process.cpuUsage(), started = performance.now();
+  const before = { memory: process.memoryUsage(), peakRssBytes: process.resourceUsage().maxRSS * 1024 };
+  workspace.close();
+  closed = true;
+  const elapsed = process.cpuUsage(cpu);
+  // Preserve the original cold/report order and separately record the later
+  // native close peak. The census path also closes through this function.
+  writeFileSync(`${values.output}.close.json`, JSON.stringify({ format: "rerail.workspace-close/v1", nativeSha256,
+    wallMs: performance.now() - started, cpuMs: { userMs: elapsed.user / 1000, systemMs: elapsed.system / 1000 },
+    before, after: { memory: process.memoryUsage(), peakRssBytes: process.resourceUsage().maxRSS * 1024 },
+    note: "Separate from the original cold phase. The operating-system full-process receipt remains the peak-RSS authority." }, null, 2) + "\n");
+};
 const files = recording.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" }));
 let revision = 0;
 let loadedFiles = 0;
@@ -127,7 +143,7 @@ try {
     incrementalResults.push({ phase: "trailing-newline-edit", result: editedResult });
   }
   markPhase("report");
-  if (values["memory-census"]) { workspace.close(); memoryCheckpoint("workspace-closed"); }
+  if (values["memory-census"]) { closeWorkspace(); memoryCheckpoint("workspace-closed"); }
   const expected = recording.events.flatMap(event => event.findings.map(f => JSON.stringify([`data-layer-${event.check.replaceAll("_", "-")}`, f.path, f.line, f.code]))).sort();
   const actual = findingKeys(violations);
   const difference = (a: string[], b: string[]) => { const rest = [...b]; return a.filter(key => { const at = rest.indexOf(key); if (at < 0) return true; rest.splice(at, 1); return false; }); };
@@ -147,4 +163,4 @@ try {
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: failures.length, incrementalDifferences: incrementalDifferences.length }, null, 2));
   if (report.falsePositives.length + report.falseNegatives.length + failures.length + incrementalDifferences.length !== 0) process.exitCode = 1;
-} finally { workspace.close(); }
+} finally { closeWorkspace(); }

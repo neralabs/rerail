@@ -34,6 +34,16 @@ def resource_usage(path):
     return result
 
 
+def measurement_result(parity, resource, close=None):
+    result = {key: parity[key] for key in ['files', 'bytes', 'expected', 'actual', 'compilationMs', 'coldMs', 'phaseCpuMs']}
+    result.update(driverPeakRssBytes=parity['peakRssBytes'], peakRssBytes=resource['peakRssBytes'],
+                  falsePositives=len(parity['falsePositives']), falseNegatives=len(parity['falseNegatives']),
+                  failures=len(parity['failures']))
+    if close is not None:
+        result['close'] = close
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--addon', type=Path, required=True)
@@ -100,8 +110,9 @@ def main():
         parity_path = directory / 'parity.json'
         if parity_path.exists():
             parity = json.loads(parity_path.read_text())
-            receipt['result'] = {key: parity[key] for key in ['files', 'bytes', 'expected', 'actual', 'peakRssBytes', 'compilationMs', 'coldMs', 'phaseCpuMs']}
-            receipt['result'].update(falsePositives=len(parity['falsePositives']), falseNegatives=len(parity['falseNegatives']), failures=len(parity['failures']))
+            close_path = directory / 'parity.json.close.json'
+            close = json.loads(close_path.read_text()) if close_path.exists() else None
+            receipt['result'] = measurement_result(parity, receipt['resource'], close)
         (directory / 'invocation.json').write_text(json.dumps(receipt, indent=2) + '\n')
         (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         print(json.dumps({'finished': name, 'exitCode': code, 'elapsedSeconds': receipt['elapsedSeconds'], 'result': receipt.get('result')}), flush=True)

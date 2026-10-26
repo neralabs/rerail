@@ -1,0 +1,182 @@
+{
+  "format": "rerail.schema-lifecycle-full/v1",
+  "status": "memory gate failed; completed native payloads retained in module bindings",
+  "qualification": "Use OS peak including cleanup, not the earlier driver sample. Unchanged 50-rule controls vary by 9.6 percent CPU.",
+  "runs": [
+    {
+      "variant": "full-control",
+      "workload": "first-50",
+      "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518",
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24820,
+      "actual": 24820,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "compileCpuSeconds": 0.959788,
+      "coldCpuSeconds": 743.5413389999999,
+      "coldWallSeconds": 890.4575093749999,
+      "driverPeakRssBytes": 4738318336,
+      "peakRssBytes": 4738318336,
+      "resource": {
+        "realSeconds": 894.4,
+        "userSeconds": 480.75,
+        "sysSeconds": 266.16,
+        "peakRssBytes": 4738318336,
+        "cpuSeconds": 746.9100000000001
+      },
+      "loadAverageStart": [
+        10.6845703125,
+        20.3505859375,
+        25.2275390625
+      ],
+      "loadAverageEnd": [
+        22.53955078125,
+        29.3505859375,
+        28.6337890625
+      ],
+      "sourceArtifact": ".rerail/profiles/schema-lifecycle-20261026/full-control/first-50"
+    },
+    {
+      "variant": "full-contemporary-control",
+      "workload": "first-50",
+      "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518",
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24820,
+      "actual": 24820,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "compileCpuSeconds": 1.1249939999999998,
+      "coldCpuSeconds": 814.5601140000001,
+      "coldWallSeconds": 1013.31136925,
+      "driverPeakRssBytes": 4861984768,
+      "peakRssBytes": 4863492096,
+      "resource": {
+        "realSeconds": 1018.07,
+        "userSeconds": 507.05,
+        "sysSeconds": 311.36,
+        "peakRssBytes": 4863492096,
+        "cpuSeconds": 818.4100000000001
+      },
+      "loadAverageStart": [
+        22.2529296875,
+        31.63818359375,
+        33.38330078125
+      ],
+      "loadAverageEnd": [
+        24.177734375,
+        26.888671875,
+        28.96630859375
+      ],
+      "sourceArtifact": ".rerail/profiles/schema-lifecycle-20261026/full-contemporary-control/first-50"
+    },
+    {
+      "variant": "full-control",
+      "workload": "all-60",
+      "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518",
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24993,
+      "actual": 24993,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "compileCpuSeconds": 1.876891,
+      "coldCpuSeconds": 3899.342024,
+      "coldWallSeconds": 5557.644716375,
+      "driverPeakRssBytes": 6520143872,
+      "peakRssBytes": 6520143872,
+      "resource": {
+        "realSeconds": 5564.34,
+        "userSeconds": 2814.86,
+        "sysSeconds": 1090.7,
+        "peakRssBytes": 6520143872,
+        "cpuSeconds": 3905.5600000000004
+      },
+      "loadAverageStart": [
+        23.056640625,
+        29.3447265625,
+        28.6357421875
+      ],
+      "loadAverageEnd": [
+        22.34326171875,
+        32.0634765625,
+        39.1875
+      ],
+      "sourceArtifact": ".rerail/profiles/schema-lifecycle-20261026/full-control/all-60"
+    },
+    {
+      "variant": "full-input-statistics",
+      "workload": "first-50",
+      "nativeSha256": "7d3c667eb238ad3b4ec0ec09e989c06b2165e2fccb21bca83af76fa833518cf9",
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24820,
+      "actual": 24820,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "compileCpuSeconds": 1.0638889999999999,
+      "coldCpuSeconds": 764.566517,
+      "coldWallSeconds": 876.763143042,
+      "driverPeakRssBytes": 4677632000,
+      "peakRssBytes": 4677632000,
+      "resource": {
+        "realSeconds": 880.99,
+        "userSeconds": 485.09,
+        "sysSeconds": 282.97,
+        "peakRssBytes": 4677632000,
+        "cpuSeconds": 768.06
+      },
+      "loadAverageStart": [
+        24.177734375,
+        26.888671875,
+        28.96630859375
+      ],
+      "loadAverageEnd": [
+        15.8037109375,
+        20.0830078125,
+        23.8671875
+      ],
+      "sourceArtifact": ".rerail/profiles/schema-lifecycle-20261026/full-input-statistics/first-50"
+    },
+    {
+      "variant": "full-input-statistics",
+      "workload": "all-60",
+      "nativeSha256": "7d3c667eb238ad3b4ec0ec09e989c06b2165e2fccb21bca83af76fa833518cf9",
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 24993,
+      "actual": 24993,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "failures": [],
+      "compileCpuSeconds": 1.7256420000000001,
+      "coldCpuSeconds": 1894.330381,
+      "coldWallSeconds": 2095.69492875,
+      "driverPeakRssBytes": 6571507712,
+      "peakRssBytes": 7372029952,
+      "resource": {
+        "realSeconds": 2100.76,
+        "userSeconds": 1306.53,
+        "sysSeconds": 592.63,
+        "peakRssBytes": 7372029952,
+        "cpuSeconds": 1899.1599999999999
+      },
+      "loadAverageStart": [
+        15.8037109375,
+        20.0830078125,
+        23.8671875
+      ],
+      "loadAverageEnd": [
+        20.5322265625,
+        20.08349609375,
+        21.66552734375
+      ],
+      "sourceArtifact": ".rerail/profiles/schema-lifecycle-20261026/full-input-statistics/all-60"
+    }
+  ]
+}

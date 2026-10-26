@@ -5370,3 +5370,53 @@ The adjacent control uses 763.851 and 50.398 seconds respectively.
 Both phases vary; the complete difference cannot be attributed solely to SQL context reuse or statistics maintenance.
 The first-50 125.804-second recovery target remains unmet.
 The complete final 60-rule measurement now runs with the same frozen artifact and matching policies.
+
+
+### Full input-statistics result: CPU win, later cleanup RSS failure (2026-10-26)
+
+The [complete receipt](performance-decisions/schema-lifecycle-input-statistics-full.json) retains both controls and final full sets.
+The 60-rule run has exact 24,993-finding parity and zero engine failures over all 9,021 files.
+Cold CPU decreases from 3,899.342 to 1,894.330 seconds, a 51.4 percent reduction.
+Cold wall decreases from 5,557.645 to 2,095.695 seconds.
+Compile CPU is 1.726 seconds, separate from cold execution.
+Input CPU changes from 1,515.347 to 1,416.522 seconds.
+Global-result CPU changes from 2,383.574 to 477.478 seconds, an 80.0 percent reduction.
+This places roughly 75 percent of the remaining cold CPU in the input phase.
+
+The earlier driver peak sample is 6,571,507,712 bytes.
+The authoritative OS receipt reaches 7,372,029,952 bytes through complete process cleanup.
+The matching control OS peak is 6,520,143,872 bytes.
+The full memory gate therefore fails by 13.1 percent, rather than the apparent 0.8 percent from the pre-close sample.
+The earlier RSS comparison was incomplete. No memory acceptance is claimed.
+
+Code inspection identifies a real native payload lifetime defect.
+Stable module registration does not populate each lease's old private-module list.
+Final-query native sources can therefore remain bound after the owning lease completes, until another lease starts or the cached owner closes.
+Red commit `2c0ff6c8` proves this with a weak reference to a native row payload.
+The test also requires that dropping an inactive lease preserve another active owner's source.
+The correction clears active native bindings when their lease completes and preserves reusable schema metadata.
+The focused test now passes without rebuilding the schema.
+
+A four-file, 60-rule diagnostic reports about 860 MB peak RSS before the correction and 788 MB afterward.
+Both variants produce the same diagnostic findings and no engine failures; the restricted domain is not full-repository parity.
+Its census and overlapping validation make these diagnostic observations, not resource acceptance measurements.
+The lifetime test proves retention. The late full-process peak still needs a complete corrected measurement.
+
+The harness now writes a separate close receipt without moving the original cold/report sequence.
+Both ordinary and census runs record the first actual close, including its CPU and before/after peak RSS.
+The complete measurement controller now uses the OS peak as its primary RSS result and retains the earlier driver sample separately.
+A regression test uses the observed 6.57/7.37-GB mismatch to prevent a future false memory gate.
+
+
+The native frame retirement correction passes 1,560 native DSL tests with 23 existing ignores.
+All 192 original quality observations pass, including 130 positive and 62 clean observations, with no execution-path differences.
+All 52 execution-shape tests pass on an identical retry.
+The preceding concurrent shape run had one missing child-profile-record assertion; its finding assertions passed. No test or production change was made for that retry.
+Static checks, all-target native Clippy, and the profiling checks pass.
+The profiling test now requires the observed late OS peak to override the earlier driver sample, while retaining both values.
+
+The corrected four-file diagnostic retains identical finding multisets and zero engine failures.
+Its recorded peaks are 859,832,320 bytes before the fix and 787,988,480 bytes afterward.
+These are bounded, census-enabled diagnostics, not full-repository acceptance.
+The complete native payload retirement artifact receives new complete 50- and 60-rule measurements next.
+The cold computation and report order stay unchanged; close CPU/RSS are additional sidecar observations.

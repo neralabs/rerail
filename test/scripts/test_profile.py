@@ -20,6 +20,20 @@ from unittest.mock import patch
 
 
 class ProfileTests(unittest.TestCase):
+    def test_complete_memory_gate_uses_os_peak_even_when_close_exceeds_the_driver_sample(self):
+        from workloads.full_repository import measurement_result
+        parity = dict(files=9021, bytes=137924324, expected=24993, actual=24993,
+                      compilationMs=1820, coldMs=2095695, phaseCpuMs={'cold':{'userMs':1302995,'systemMs':591335}},
+                      peakRssBytes=6571507712, falsePositives=[], falseNegatives=[], failures=[])
+        resource = {'peakRssBytes':7372029952}
+        close = {'after':{'peakRssBytes':7372029952}}
+        result = measurement_result(parity, resource, close)
+        self.assertEqual(result['peakRssBytes'],7372029952)
+        self.assertEqual(result['driverPeakRssBytes'],6571507712)
+        self.assertEqual(result['close'],close)
+        self.assertEqual(parity['peakRssBytes'],6571507712)
+        self.assertNotIn('close',measurement_result(parity,resource))
+
     def test_external_profile_targets_workload_child_instead_of_time_wrapper(self):
         monitor=ProcessMonitor(10,Path('/unused'))
         monitor.rows=[{'processes':[

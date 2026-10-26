@@ -205,6 +205,15 @@ impl Drop for Lease {
         if !self.is_autocommit() {
             let _ = self.execute_batch("ROLLBACK");
         }
+        // Stable modules are shared metadata, so registration is not repeated
+        // in each lease's private-module list. Release their final-query frames
+        // too; otherwise the idle owner cache pins rows until its next lease.
+        // An inactive lease must preserve the current owner's bindings.
+        if self.active.get() == self.id {
+            for binding in self.modules_registry().values() {
+                binding.clear();
+            }
+        }
         let modules = std::mem::take(self.modules.get_mut());
         for module in modules {
             if let Some(binding) = self.modules_registry().get(&module) {
