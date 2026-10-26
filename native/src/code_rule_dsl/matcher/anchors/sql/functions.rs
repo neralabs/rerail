@@ -71,6 +71,53 @@ pub(super) fn install(db: &Connection) -> Result<super::reader::Readers> {
                 .is_match(ctx.get_raw(1).as_str()?))
         },
     )?;
+    // One row per term instead of one per pattern and term: the patterns of a set are compiled
+    // once and tried in turn (a combined RegexSet was slower, regex.md §2.2).
+    #[cfg(feature = "code-rule-profile")]
+    let regex_readers = readers.0.clone();
+    let sets = parking_lot::Mutex::new(Vec::<(String, Vec<(String, regex::Regex)>)>::new());
+    db.create_scalar_function(
+        c"nera_terms_matching",
+        2,
+        flags | FunctionFlags::SQLITE_DETERMINISTIC,
+        move |ctx| {
+            let set = ctx.get_raw(0).as_str()?;
+            let term = ctx.get_raw(1).as_str()?;
+            let mut sets = sets.lock();
+            let at = match sets.iter().position(|(key, _)| key == set) {
+                Some(at) => at,
+                None => {
+                    let expressions: Vec<String> =
+                        serde_json::from_str(set).map_err(|e| invalid(e.to_string()))?;
+                    let compiled = expressions
+                        .into_iter()
+                        .map(|expression| {
+                            #[cfg(feature = "code-rule-profile")]
+                            {
+                                regex_readers.lock().counters.regex_compiles += 1;
+                            }
+                            let regex = regex::Regex::new(&expression)
+                                .map_err(|e| invalid(e.to_string()))?;
+                            Ok((expression, regex))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    if sets.len() == 4 {
+                        sets.remove(0);
+                    }
+                    sets.push((set.to_owned(), compiled));
+                    sets.len() - 1
+                }
+            };
+            let matched: Vec<&str> = sets[at]
+                .1
+                .iter()
+                .filter(|(_, regex)| regex.is_match(term))
+                .map(|(expression, _)| expression.as_str())
+                .collect();
+            Ok((!matched.is_empty())
+                .then(|| serde_json::to_string(&matched).expect("expression JSON")))
+        },
+    )?;
     db.create_scalar_function(
         c"nera_literal_set",
         1,

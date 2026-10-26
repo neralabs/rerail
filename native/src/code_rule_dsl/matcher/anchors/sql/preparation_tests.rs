@@ -605,3 +605,27 @@ fn exact_literal_set_patterns_match_exactly_their_literals() {
         assert_eq!(literal_set(pattern), None, "{pattern} needs the regex");
     }
 }
+
+#[test]
+fn a_pattern_set_reports_each_pattern_a_term_matches() {
+    let store = store::Store::temporary().unwrap();
+    let matched = |term: &str| -> Option<String> {
+        store
+            .db
+            .query_row(
+                "SELECT nera_terms_matching(?1,?2)",
+                [r#"["_lazy$","execute|resolve","^Sql"]"#, term],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        matched("SqlExecutor_lazy").as_deref(),
+        Some(r#"["_lazy$","^Sql"]"#)
+    );
+    assert_eq!(
+        matched("resolve_async").as_deref(),
+        Some(r#"["execute|resolve"]"#)
+    );
+    assert_eq!(matched("other"), None);
+}
