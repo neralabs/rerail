@@ -13,8 +13,8 @@ Each copied file is the `code` of one of the rule's own `valid` or `invalid` Rul
 `upstream/generate.mjs`: cases with a custom parser or type information, and performance stress cases over 64 KiB, are
 left out, and identical code in the same language is written once. The port readiness gates' recorder (`npm run port-readiness:record`)
 reuses those files and writes every other case the gates read, the same verbatim `code`, as
-`upstream/eslint/fixtures/<rule>/<sha256 prefix>.<ext>`. Its recording (`recording.json`, which
-`upstream/eslint/recording.lock` names by its sha256; it is cached, not committed) also holds the `code` of every RuleTester case of
+`upstream/eslint/fixtures/<rule>/<sha256 prefix>.<ext>`. Its recording (`recording.tar.zst`, which
+`upstream/eslint/recording.lock` names by its sha256; it is an object in S3, not committed) also holds the `code` of every RuleTester case of
 ESLint's rule tests, verbatim, as the words `not-overfit` reads.
 
 Paths are relative to the pack directory, `packs/javascript/`.

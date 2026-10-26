@@ -348,7 +348,7 @@
         "tool": "eslint",
         "rule": "no-loss-of-precision"
       },
-      "policy": "rules/eslint-no-loss-of-precision.json",
+      "policy": "candidates/rules/eslint-no-loss-of-precision.json",
       "capabilities": [
         "syntax",
         "value",
@@ -495,7 +495,7 @@
         "tool": "eslint",
         "rule": "no-prototype-builtins"
       },
-      "policy": "rules/eslint-no-prototype-builtins.json",
+      "policy": "candidates/rules/eslint-no-prototype-builtins.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1390,7 +1390,7 @@
         "tool": "eslint",
         "rule": "no-labels"
       },
-      "policy": "rules/eslint-no-labels.json",
+      "policy": "candidates/rules/eslint-no-labels.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1520,7 +1520,7 @@
         "tool": "eslint",
         "rule": "no-self-assign"
       },
-      "policy": "rules/eslint-no-self-assign.json",
+      "policy": "candidates/rules/eslint-no-self-assign.json",
       "capabilities": [
         "syntax",
         "value",
