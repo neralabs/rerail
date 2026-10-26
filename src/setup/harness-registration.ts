@@ -271,20 +271,34 @@ interface HookTarget {
   script: string;
 }
 
-/** Node and hook script of a generated shell-form entry: direct, the POSIX `sh` fallback, or the Windows `cmd` fallback. */
+/**
+ * Node and hook script of a generated shell-form entry: direct, the POSIX `sh` fallback, the Windows `cmd` fallback, or
+ * Codex's PowerShell fallback.
+ */
 function shellHookTarget(context: Context, command: string, executable: string): HookTarget | undefined {
+  const windows = context.platform === "win32";
   const fallbackPrefix = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
   const windowsFallback = /^cmd \/d \/c "if exist ("[^"]+") \(\1 ("[^"]+")\) else \(node \2\)"$/u.exec(command);
+  const literal = String.raw`('(?:[^'\u2018-\u201B]|['\u2018-\u201B]{2})*')`;
+  const powershellFallback = new RegExp(
+    String.raw`^\$LASTEXITCODE = 1; if \(Test-Path -LiteralPath ${literal}\) \{ & \1 ${literal} \} else \{ node \2 \}; exit \$LASTEXITCODE$`,
+    "u",
+  ).exec(command);
   let direct = windowsFallback === null ? command : `${windowsFallback[1]} ${windowsFallback[2]}`;
   if (command.startsWith(fallbackPrefix)) direct = command.slice(fallbackPrefix.length);
-  const windows = context.platform === "win32";
+  if (powershellFallback !== null && windows) {
+    direct = [powershellFallback[1]!, powershellFallback[2]!]
+      .map(word => shellArgument(word.slice(1, -1).replace(/(['\u2018-\u201B])\1/gu, "$1"), "win32"))
+      .join(" ");
+  }
   const words = shellWords(direct, windows);
   if (words.length !== 2 || words.join(" ") !== direct) return undefined;
   const target = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
   const root = registeredRoot(target.script, executable);
   if (root === undefined) return undefined;
   const recorded = { ...context, root, nodePath: target.nodePath };
-  return hookCommand(recorded, executable) === command || directCommand(recorded, executable) === command ? target : undefined;
+  return [hookCommand(recorded, executable), directCommand(recorded, executable), powershellHookCommand(recorded, executable)]
+    .includes(command) ? target : undefined;
 }
 
 /** A node binary as setup records it: `node` or `node.exe`, bare or at any path. */
@@ -327,6 +341,19 @@ function hookCommand(context: Context, executable: string): string {
   const hook = shellArgument(join(context.root, executable), context.platform);
   if (context.platform === "win32") return `cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`;
   return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`;
+}
+
+/**
+ * The same order for Codex on Windows, which hands a hook's command to PowerShell (`-Command`): there the `cmd` form's
+ * nested double quotes split at a space in the profile path. A single-quoted literal keeps spaces, `$`, backticks and
+ * `%` as they are; a quote inside is doubled, and PowerShell reads ‘ ’ ‚ ‛ as single quotes too. `$LASTEXITCODE` starts
+ * at 1 so the hook still fails when neither node runs, and `exit` passes on the hook's own exit code.
+ */
+function powershellHookCommand(context: Context, executable: string): string {
+  const quote = (value: string) => `'${value.replace(/['\u2018-\u201B]/gu, "$&$&")}'`;
+  const node = quote(context.nodePath);
+  const hook = quote(join(context.root, executable));
+  return `$LASTEXITCODE = 1; if (Test-Path -LiteralPath ${node}) { & ${node} ${hook} } else { node ${hook} }; exit $LASTEXITCODE`;
 }
 
 /**
@@ -550,7 +577,9 @@ function planGroupedHooks(
     context.mode === "register"
       ? `register rerail hooks for ${events.length} ${label} events`
       : `remove rerail hooks from ${label} settings`;
-  const entry = { type: "command", command: hookCommand(context, executable) };
+  // Only Codex registers through here; on Windows it runs a hook's command through PowerShell.
+  const command = context.platform === "win32" ? powershellHookCommand(context, executable) : hookCommand(context, executable);
+  const entry = { type: "command", command };
   return planJsonFile(harness, path, context, detail, value => updateGroupedHooks(value, path, context, events, toolEvents, executable, entry));
 }
 

@@ -15,9 +15,10 @@ $npmBin = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin"
 $npmCli = Join-Path $npmBin "npm-cli.js"
 $npxCli = Join-Path $npmBin "npx-cli.js"
 $base = Join-Path ([IO.Path]::GetTempPath()) ("rerail-windows-smoke-" + [guid]::NewGuid())
-# An accented profile folder, as a person's name gives it: cmd.exe reads the batch launcher in the console's code
-# page, so a path written out in UTF-8 would come back garbled.
-$sandbox = Join-Path $base ("Jos" + [char]0x00E9)
+# A profile folder as a person's name gives it, accented and with a space: cmd.exe reads the batch launcher in the
+# console's code page, so a path written out in UTF-8 would come back garbled, and PowerShell, which runs the Codex
+# hook, splits a command at a space its quoting does not cover.
+$sandbox = Join-Path $base ("Jos" + [char]0x00E9 + " Garc" + [char]0x00ED + "a")
 $project = Join-Path $sandbox "proj"
 $launcher = Join-Path $sandbox ".rerail\bin\rerail.cmd"
 

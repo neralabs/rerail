@@ -170,18 +170,39 @@ describe("detectHarnesses", () => {
     expect(command).toContain(`${join(root, "dist")}/`);
   });
 
-  it("quotes Windows hook commands without POSIX backslash escaping", async () => {
-    const { home, root } = await fixture();
-    const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
-    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["codex"] });
-    const hooks = (await readJson(join(home, ".codex", "hooks.json"))).hooks as Record<
-      string,
-      Array<{ hooks: Array<{ command: string }> }>
-    >;
-    const command = hooks.SessionStart?.[0]?.hooks[0]?.command;
+  it("registers Codex's Windows hook as a PowerShell command with spaces, quotes and accents kept literal", async () => {
+    const { home } = await fixture();
+    // A profile folder with a space, an apostrophe, a typographic quote PowerShell also ends a string at, and accents.
+    const profile = join(dirname(home), "José O'Brien ‘García’ $x %y%");
+    const root = join(profile, ".rerail", "current");
+    await mkdir(join(root, "dist"), { recursive: true });
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+    const nodePath = String.raw`C:\Users\José O'Brien\AppData\Local\nvm\v24.9.0\node.exe`;
+    const path = join(home, ".codex", "hooks.json");
     const hookPath = join(root, "dist", "hosts", "codex", "codex-hook.js");
-    // cmd runs the recorded node when it is still installed, and node from PATH otherwise.
-    expect(command).toBe(`cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (node "${hookPath}")"`);
+    // The `cmd` form earlier set-ups wrote, `%` doubled for cmd; registering replaces it.
+    const [cmdNode, cmdHook] = [nodePath, hookPath].map(value => `"${value.replaceAll("%", "%%")}"`);
+    const cmdForm = `cmd /d /c "if exist ${cmdNode} (${cmdNode} ${cmdHook}) else (node ${cmdHook})"`;
+    await seed(path, { hooks: { SessionStart: [{ hooks: [{ type: "command", command: cmdForm }] }] } });
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["codex"] as const };
+
+    await registerHarnesses(windows);
+    const commands = () => readJson(path).then(value => Object.values(value.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>)
+      .flatMap(groups => groups.flatMap(group => group.hooks.map(hook => hook.command))));
+    // Codex hands the command to PowerShell, which would split the `cmd` form's nested double quotes at the space. In
+    // single quotes only a quote is special: doubled, it stands for itself.
+    const node = String.raw`'C:\Users\José O''Brien\AppData\Local\nvm\v24.9.0\node.exe'`;
+    const hook = `'${hookPath.replace("O'Brien ‘García’", "O''Brien ‘‘García’’")}'`;
+    const command = `$LASTEXITCODE = 1; if (Test-Path -LiteralPath ${node}) { & ${node} ${hook} } else { node ${hook} }; exit $LASTEXITCODE`;
+    expect(await commands()).toEqual(Array(5).fill(command));
+    expect(change((await registerHarnesses(windows)).changes, "codex", "hooks.json").action).toBe("unchanged");
+
+    const upgradedNode = String.raw`C:\Program Files\nodejs\node.exe`;
+    await registerHarnesses({ ...windows, nodePath: upgradedNode });
+    expect(await commands()).toEqual(Array(5).fill(command.replaceAll(node, String.raw`'C:\Program Files\nodejs\node.exe'`)));
+
+    await unregisterHarnesses(windows);
+    expect(await readJson(path)).toEqual({});
   });
 });
 
