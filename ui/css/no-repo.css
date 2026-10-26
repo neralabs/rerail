@@ -1,6 +1,7 @@
 /* The page that asks for a repository (views/no-repo.js): a note, then every repository Rerail has seen. */
 
 .norepo > .welcome{margin:24px 0 24px}
+.norepo > .group > .ghead h2{color:var(--brand-foreground)}
 .repolist [role="option"]{display:grid;gap:2px;width:100%;text-align:left;padding:12px 16px;border-top:1px solid var(--border)}
 .repolist [role="option"]:first-child{border-top:0}
 .repolist [role="option"]:hover{background:var(--subtle)}
