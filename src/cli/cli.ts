@@ -527,7 +527,6 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
   // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
   if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
-  if (isVersionRequest(command)) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }
@@ -550,9 +549,11 @@ async function main(): Promise<number> {
     await runRerailMcpBridge();
     return 0;
   }
-  // The version of the package answering: through the launcher, the active one. Nothing else is read for it.
-  if (isVersionRequest(args[0])) {
-    if (args.length !== 1) throw new Error(`${args[0]} takes no arguments`);
+  // The version of the package answering: through the launcher, the active one. Nothing else is read for it, and a
+  // `--profile` (internal testing) changes nothing about it.
+  const versionArgs = takeOption(args, "--profile").args;
+  if (isVersionRequest(versionArgs[0])) {
+    if (versionArgs.length !== 1) throw new Error(`${versionArgs[0]} takes no arguments`);
     process.stdout.write(`${manifest.name.split("/").pop()} ${manifest.version}\n`);
     return 0;
   }
