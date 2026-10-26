@@ -4515,3 +4515,37 @@ The mixed-coverage test compares complete typed row bags, since transport no lon
 The actual matcher-facing candidate representation remains sorted and unique.
 A bounded accumulator test covers sparse promotion, duplicate rows, word boundaries, and complete-file selection.
 The transport regression now measures SQLite sort counters over 6,000 candidate rows, rather than checking SQL text alone.
+
+### Conditional global failure: complete reproduction
+
+The conditional-only full run completes 9,021 input files and fails in ownership, with no reported findings.
+Its empty diagnostic oracle does not establish findings parity.
+Cold CPU is 996.902 seconds, including tracing and SQL capture. Cold wall time is 2,171.389 seconds.
+OS peak RSS is 8,332,623,872 bytes.
+The capture is `.rerail/profiles/recovery-completion-20261025/quality-conditional-diagnostic/`.
+The ownership plan uses both declared lookup keys. There is no demonstrated missing ownership index.
+The preceding nodes statement writes 1,419,253 wide rows and consumes 523,686,704 VM steps.
+The ownership statement interrupts after another 99,226,765 steps, following other stage and index work.
+The fused query materializes two wide pure projection unions, then copies the wide data into an automatic join index.
+The narrow ordinal consumer cannot push its column demand through those forced materialization boundaries.
+A closed production regression reproduces `MATERIALIZE helper` for a 48-column projection with a narrow window consumer.
+The correction streams pure column/NULL projection unions and directs the wide scan toward the narrow ordinal lookup.
+Native sources and deferred columns retain their evaluation boundaries. No rule allowance increases.
+
+Failure-only snapshots will preserve main and temporary SQL owners separately before failed-session cleanup.
+They require an explicit diagnostic directory and run only after failure, so successful benchmark runs do no snapshot work.
+Native virtual-table frames and external source callbacks are not serialized by SQLite backups.
+Snapshot metadata must record this limit.
+The refreshed admission artifact passes all 198 batch 6 shards: 1,234 original observations and 376 guard repeats.
+Seven original retained cases remain explicit. The transport artifact is receiving its own full recording rerun.
+
+The pure-projection implementation passes all 50 production-shape tests, 1,343 core DSL tests, and 194 workspace tests.
+All 1,236 original batch 1–5 and supplemental replays pass with the revised policy.
+The SQL laboratory initially fails to compile because earlier source-batch imports and a diagnostic hash dependency were missing.
+Its production source relation import is restored, and CST-dependent tests move into the native test owner.
+The laboratory adds the same SHA-256 dependency used by production. Existing dependency versions remain pinned.
+The failure replay host shares the engine's SQLite backup boundary and restores both SQL owners.
+Its closed test checks Unicode, NULL, typed bag comparison, temporary-owner restoration, and write rejection.
+The final addon hash is `dc6974796680385a06ecaca90e980ac339a9f36bdbb9c83a6c53fe332e54dc8e`.
+Its production-shape run also passes all 50 tests, including failure capture without statement tracing.
+Full recovery acceptance remains open until clean full-repository correctness and performance measurements are reviewed.

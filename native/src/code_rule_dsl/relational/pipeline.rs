@@ -37,14 +37,39 @@ fn closure(
     }
 }
 
-fn render(stages: &[Stage], selected: &BTreeSet<String>, query: &str) -> String {
+fn pure_projection(stage: &Stage, barriers: &BTreeSet<String>) -> bool {
+    static PURE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        let identifier = r"[a-z_][a-z_0-9]*";
+        let column = format!(r"(?:\*|{identifier}|NULL\s+AS\s+{identifier})");
+        let select = format!(r"SELECT\s+{column}(?:\s*,\s*{column})*\s+FROM\s+{identifier}");
+        regex::Regex::new(&format!(
+            r"(?ix)^\s*{select}(?:\s+UNION\s+ALL\s+{select})*\s*$"
+        ))
+        .expect("pure SQL projections")
+    });
+    stage.inputs.is_disjoint(barriers) && PURE.is_match(&stage.query)
+}
+
+fn render(
+    stages: &[Stage],
+    selected: &BTreeSet<String>,
+    query: &str,
+    barriers: &BTreeSet<String>,
+) -> String {
     if selected.is_empty() {
         return query.to_owned();
     }
     let definitions = stages
         .iter()
         .filter(|s| selected.contains(&s.name))
-        .map(|s| format!("{} AS MATERIALIZED ({})", quote(&s.name), s.query))
+        .map(|s| {
+            let mode = if pure_projection(s, barriers) {
+                "NOT MATERIALIZED"
+            } else {
+                "MATERIALIZED"
+            };
+            format!("{} AS {mode} ({})", quote(&s.name), s.query)
+        })
         .collect::<Vec<_>>()
         .join(",");
     format!("WITH RECURSIVE {definitions} SELECT * FROM ({query})")
@@ -52,8 +77,24 @@ fn render(stages: &[Stage], selected: &BTreeSet<String>, query: &str) -> String 
 
 /// Every original stage was already validated, including stages unused by the result.
 /// Shared ancestors crossing physical scopes become owners; multiple reads inside one scope
-/// use one materialized CTE. The chosen implementation has no execution configuration flag.
+/// use one materialized CTE, except pure projections that can push column demand into stored inputs.
+/// The chosen implementation has no execution configuration flag.
 pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<String>) {
+    // Native sources and deferred columns must retain their evaluation boundary.
+    let mut barriers = plan
+        .stages
+        .iter()
+        .filter(|s| !s.deferred.is_empty())
+        .map(|s| s.name.clone())
+        .collect::<BTreeSet<_>>();
+    if let Some(syntax) = &plan.syntax {
+        barriers.insert(syntax.name.clone());
+        barriers.extend(syntax.edges.iter().cloned());
+        barriers.extend(syntax.ownership.iter().cloned());
+    }
+    if plan.references.is_some() {
+        barriers.insert("reference_edges".into());
+    }
     let stages = plan
         .stages
         .iter()
@@ -207,7 +248,7 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
         );
         let mut stage = stage.clone();
         stage.reads_source |= inline.iter().any(|n| stages[n].reads_source);
-        stage.query = render(&plan.stages, &inline, &stage.query);
+        stage.query = render(&plan.stages, &inline, &stage.query, &barriers);
         stage.inputs = external;
         for input in &stage.inputs {
             last.insert(input.clone(), physical.len());
@@ -217,7 +258,7 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
     let mut inline = BTreeSet::new();
     let mut external = BTreeSet::new();
     closure(&final_reads, &stages, &retained, &mut inline, &mut external);
-    plan.query = render(&plan.stages, &inline, &plan.query);
+    plan.query = render(&plan.stages, &inline, &plan.query, &barriers);
     for input in external {
         last.insert(input, physical.len());
     }

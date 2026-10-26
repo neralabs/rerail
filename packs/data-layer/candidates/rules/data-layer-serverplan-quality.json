@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "data-layer-serverplan-quality",
-  "revision": 1,
+  "revision": 2,
   "mode": "block",
   "description": "Candidate port of nera-data-layer serverplan_quality at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
@@ -9732,7 +9732,7 @@
           },
           {
             "name": "nodes",
-            "query": "SELECT n.*,n.kind||':'||n.__start||':'||n.__end AS id,\n n.parent_kind||':'||n.parent_start||':'||n.parent_end AS parent,\n n.ancestor_kind||':'||n.ancestor_start||':'||n.ancestor_end AS edge_parent,o.ordinal\n FROM (SELECT * FROM syntax_rows_0 UNION ALL SELECT * FROM syntax_rows_1) n JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind",
+            "query": "SELECT n.*,n.kind||':'||n.__start||':'||n.__end AS id,\n n.parent_kind||':'||n.parent_start||':'||n.parent_end AS parent,\n n.ancestor_kind||':'||n.ancestor_start||':'||n.ancestor_end AS edge_parent,o.ordinal\n FROM (SELECT * FROM syntax_rows_0 UNION ALL SELECT * FROM syntax_rows_1) n CROSS JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind",
             "indexes": [
               [
                 "__path",

@@ -41,7 +41,7 @@ def narrow_ast_ordinals(clause):
  nodes['query']="""SELECT n.*,n.kind||':'||n.__start||':'||n.__end AS id,
  n.parent_kind||':'||n.parent_start||':'||n.parent_end AS parent,
  n.ancestor_kind||':'||n.ancestor_start||':'||n.ancestor_end AS edge_parent,o.ordinal
- FROM raw_nodes n JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind"""
+ FROM raw_nodes n CROSS JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind"""
  plan['stages'].insert(plan['stages'].index(nodes),window)
 
 def relational(id,stages,query,code='issue',key=('issue','identity')):
