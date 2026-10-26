@@ -23,6 +23,46 @@ def resolve(value, entry, oracle=False):
 
 
 class SharedSqlTests(unittest.TestCase):
+    def test_import_identifiers_bound_work_to_exact_subtrees_and_preserve_file_scope(self):
+        policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
+        plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'quality-contracts-1')
+        stages = {s['name']: s for s in plan['stages']}
+        db = sqlite3.connect(':memory:')
+        self.addCleanup(db.close)
+        db.executescript('''
+            CREATE TABLE nodes(__path TEXT,id INTEGER,kind TEXT,__start INTEGER,__end INTEGER);
+            CREATE INDEX node_kind ON nodes(kind);
+            CREATE INDEX node_id ON nodes(__path,id);
+            CREATE TABLE edges(__path TEXT,src INTEGER,dst INTEGER);
+            CREATE INDEX edge_src ON edges(__path,src);
+        ''')
+        rows = []
+        for i in range(500):
+            rows.extend([('a.py', 2*i, 'import_from_statement', 10*i, 10*i+8),
+                         ('a.py', 2*i+1, 'identifier', 10*i+3, 10*i+4)])
+        rows.extend(('a.py', 10000+i, 'identifier', 10000+i, 10001+i) for i in range(5000))
+        rows.append(('b.py', 1, 'identifier', 0, 1))
+        db.executemany('INSERT INTO nodes VALUES(?,?,?,?,?)', rows)
+        db.executemany('INSERT INTO edges VALUES(?,?,?)', [('a.py', 2*i, 2*i+1) for i in range(500)])
+        # The SQL binding of the same native producer supplies a closed reference.
+        roots = stages.get('import_descendants', {}).get('reachability', {}).get('roots',
+            "SELECT __path,id FROM nodes WHERE kind IN ('import_statement','import_from_statement')")
+        db.execute('CREATE TABLE import_descendants AS WITH RECURSIVE walk(__path,root,node) AS ('
+            'SELECT __path,id,id FROM (' + roots + ') UNION SELECT w.__path,w.root,e.dst FROM walk w '
+            'JOIN edges e ON e.__path=w.__path AND e.src=w.node) SELECT * FROM walk')
+        db.execute('ANALYZE')
+        query = 'WITH import_ranges AS MATERIALIZED (' + stages['import_ranges']['query'] + ') ' + stages['import_identifiers']['query']
+        steps = 0
+
+        def limit():
+            nonlocal steps
+            steps += 1000
+            return steps > 1_000_000
+
+        db.set_progress_handler(limit, 1000)
+        self.assertEqual(set(db.execute(query)), {('a.py', 2*i+1) for i in range(500)})
+        self.assertLessEqual(steps, 1_000_000)
+
     def test_state_frontends_use_native_syntax_and_explicit_empty_admission(self):
         path = Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json'
         policy = json.loads(path.read_text())
