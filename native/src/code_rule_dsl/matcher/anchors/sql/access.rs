@@ -1,5 +1,8 @@
 //! Value predicates operate on distinct vocabulary terms before locating packed postings.
 use super::{Lower, Set, decode::Property};
+#[cfg(test)]
+#[path = "lower/value_tests.rs"]
+mod tests;
 
 impl Lower {
     pub(super) fn text(&mut self, scope: &Set, expression: &str, literal: bool) -> Result<Set, ()> {
