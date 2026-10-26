@@ -1,4 +1,31 @@
 use super::*;
+
+#[test]
+fn small_projection_batches_retain_space_for_live_rows_only() {
+    let scope = Scope::enter();
+    let source = Arc::new("évidence".to_owned());
+    let rows = (0..6)
+        .map(|row| {
+            append(
+                (71, 72, 73),
+                || (0..32).map(|column| format!("field_{column}")).collect(),
+                (0..32).map(|column| match column {
+                    0 => Input::Source(&source, 0..source.len()),
+                    1 => Input::Null,
+                    _ => Input::Integer(row * 32 + column),
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    drop(scope);
+    assert_eq!(rows[0].identity(), rows[5].identity());
+    assert_eq!(rows[5].sql(0), ValueRef::Text(source.as_bytes()));
+    assert_eq!(rows[5].sql(1), ValueRef::Null);
+    assert_eq!(rows[5].sql(31), ValueRef::Integer(191));
+    let (retained, live_rows, columns, _) = rows[0].memory();
+    assert_eq!((live_rows, columns), (6, 32));
+    assert!(retained < 8192, "six rows retain {retained} bytes after publication");
+}
 use serde_json::json;
 
 #[test]
