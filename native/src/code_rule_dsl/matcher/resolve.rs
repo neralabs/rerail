@@ -1057,6 +1057,12 @@ fn file_path() -> Option<Arc<str>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.path.clone()))
 }
 
+/// The host's path of the file being matched (workspace-relative), if it gave one: where
+/// `importTarget` resolves from.
+pub(crate) fn matched_file_path() -> Option<Arc<str>> {
+    file_path()
+}
+
 /// The module system of the file being matched, for queries that leave `sourceType` to it: its
 /// path's and package's, else Node's reading of `root`'s syntax (`has_module_syntax`), read once.
 /// ESLint's `module` outside a file evaluation.

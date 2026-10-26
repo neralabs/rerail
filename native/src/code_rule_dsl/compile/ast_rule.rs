@@ -49,6 +49,7 @@ const AST_RULE_KEYS: &[&str] = &[
     "calls",
     "embedded",
     "host",
+    "importTarget",
 ];
 /// Tests add `testUnknown`, a leaf whose verdict is unknown where its regex matches the node's text.
 #[cfg(test)]
@@ -78,6 +79,7 @@ const AST_RULE_KEYS: &[&str] = &[
     "calls",
     "embedded",
     "host",
+    "importTarget",
     "testUnknown",
 ];
 
@@ -878,6 +880,21 @@ pub(crate) fn compile_ast_rule(
         )
     {
         terms.push(compiled?);
+    }
+    // An import target reads the node's value and the files around it, and binds nothing.
+    if let Some(target) = rule.get("importTarget") {
+        terms.push(
+            semantic::compile_key(
+                "importTarget",
+                target,
+                semantic::Stage::Late,
+                language,
+                &format!("{path}/importTarget"),
+                gaps,
+                utils,
+            )
+            .expect("importTarget is semantic")?,
+        );
     }
     // A call's reach reads the workspace closure: the costliest term, and it binds nothing.
     if let Some(calls) = rule.get("calls") {

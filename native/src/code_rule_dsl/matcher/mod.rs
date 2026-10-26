@@ -13,6 +13,7 @@ mod each;
 mod embedded;
 mod exported;
 mod format_args;
+mod import_target;
 mod layout;
 mod memo;
 mod nth_child;
@@ -93,6 +94,7 @@ use util::{
 use util::{THREE_VALUED, UNKNOWN};
 pub(super) use value::{Bound, Reading, ValueTest};
 
+pub(super) use import_target::ImportTargetTest;
 #[derive(Clone)]
 pub(super) struct GrammarMatcher {
     /// The dialect of the document the matcher reads: the file's own, or for an embedded clause

@@ -5,6 +5,7 @@ mod compile;
 mod embed;
 mod eval;
 mod identifier;
+mod import_target;
 mod json;
 mod language;
 mod lines;

@@ -11,8 +11,11 @@
 // 1. Copies the chosen rules' upstream tests verbatim to tests/lib/rules/ and runs them with stub-test-helpers.js
 //    (ours), which captures every RuleTester case; each case's `code` becomes one file under fixtures/<rule>/.
 // 2. Runs the pinned plugin (ESLint Node API, one config, default rule options, every chosen rule on) over every
-//    fixture file, and writes fixtures.expected.json.
-// 3. Writes ../../licenses/eslint-plugin-n/{LICENSE,UPSTREAM.md}.
+//    fixture file, and writes fixtures.expected.json. The run lints a copy of fixtures/ under a fresh temporary
+//    directory, so the plugin reads nothing above it while it resolves imports and reads packages: no node_modules,
+//    tsconfig.json or package.json of this repository or any folder above. Findings are relative to the copy's root.
+// 3. Writes ../../licenses/eslint-plugin-n/{LICENSE,UPSTREAM.md} and, beside the expected findings, provenance.json and
+//    LICENSES.md (the per-file record and licence texts the test-data archive carries).
 //
 // Source type is what Node itself uses for the file: `.mjs`/`.mts` module, `.cjs`/`.cts` commonjs, otherwise the
 // nearest package.json's `type` ("module" → module, anything else → commonjs). Globals: `globals.node` (globals
@@ -26,18 +29,22 @@
 // syntax and reads a CommonJS wrapper name: upstream's RuleTester declares `globals.node`, those names included, in
 // every case, so such a case is written as CommonJS (`.js`/`.ts`), the only module system where Node defines them. A
 // module case at an upstream fixture path (its `filename`) keeps the path, written as `.mjs`/`.mts` where its `.js`/`.ts`
-// name would be CommonJS beside its package.json. Each upstream fixture folder's package.json above a case is copied
-// with it, with the `.npmignore` and `.gitignore` beside it (what npm publishes, which the plugin reads). Each
-// fixture's analysis unit is the fixture, its nearest package.json (the one the plugin and Node read for it) and that
-// folder's `.npmignore`/`.gitignore`, so Rerail reads the same package: its `type`, `bin`, `engines` and published
-// files. `source.units` names each case's origin, the rule whose test file it came from; each case also gets a rename
-// variant under fixtures/renamed/ (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`) with copies of its
-// package files, linted like any case and marked `renamedFrom` it. A case whose only configuration is the configured
-// Node version (`options: [{ version }]` or `settings: { n: { version } }`) is written in a directory of its own
-// beside a package.json (ours) whose engines.node is that version, which the plugin reads when no option sets one, so
-// it is recorded under default options with the range its case states.
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { registerHooks } from "node:module";
+// name would be CommonJS beside its package.json. A case whose `filename` lies in an upstream fixture tree
+// (tests/fixtures/<tree>/…) gets that whole tree, node_modules, dotfiles and tsconfig files included, copied into its
+// case directory (fixtures/<rule>/<kind>-NNN/<tree>/…), its own file written over any upstream file at its path: the
+// packages, manifests, tsconfig files and modules its imports resolve against, read the same by ESLint and Rerail.
+// Each fixture's analysis unit is the fixture, its nearest package.json (the one the plugin and Node read for it)
+// and that folder's `.npmignore`/`.gitignore`, so Rerail reads the same package: its `type`, `bin`, `engines` and
+// published files; Rerail's engine reads the rest of the case directory from disk. `source.units` names each case's
+// origin, the rule whose test file it came from; each case also gets a rename variant under fixtures/renamed/
+// (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`) with copies of its package files, linted like any case
+// and marked `renamedFrom` it. A case whose only configuration
+// is the configured Node version (`options: [{ version }]` or `settings: { n: { version } }`) is written in a
+// directory of its own beside a package.json (ours) whose engines.node is that version, which the plugin reads when
+// no option sets one, so it is recorded under default options with the range its case states.
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire, isBuiltin, registerHooks } from "node:module";
+import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -54,12 +61,17 @@ const UPSTREAM_COMMIT = "f1d47aff402b9e009578f4b3155b84f7d8beef9b";
 export const RULES = [
   "callback-return",
   "exports-style",
+  "file-extension-in-import",
   "global-require",
   "handle-callback-err",
   "hashbang",
   "no-callback-literal",
   "no-deprecated-api",
   "no-exports-assign",
+  "no-extraneous-import",
+  "no-extraneous-require",
+  "no-missing-import",
+  "no-missing-require",
   "no-mixed-requires",
   "no-new-require",
   "no-path-concat",
@@ -70,6 +82,8 @@ export const RULES = [
   "no-sync",
   "no-top-level-await",
   "no-unpublished-bin",
+  "no-unpublished-import",
+  "no-unpublished-require",
   "no-unsupported-features/es-builtins",
   "no-unsupported-features/es-syntax",
   "no-unsupported-features/node-builtins",
@@ -160,7 +174,7 @@ function config(sourceType, tools, program) {
 }
 
 /** Lints `files` (relative to `cwd`), each under the source type Node gives it. */
-async function record(tools, cwd, files) {
+async function lintTree(tools, cwd, files) {
   const { ESLint } = tools.eslint;
   const findings = [];
   const skipped = [];
@@ -174,6 +188,34 @@ async function record(tools, cwd, files) {
   return { findings, skipped };
 }
 
+/**
+ * What the plugin reads above a file while it resolves an import (enhanced-resolve's node_modules, get-tsconfig's
+ * tsconfig.json) or reads its package (the nearest package.json, a pnpm workspace): none may lie above a linted copy.
+ */
+const ANCESTOR_FILES = ["node_modules", "package.json", "tsconfig.json", "jsconfig.json", "pnpm-workspace.yaml"];
+
+/**
+ * Lints `files` (relative to `root`) in a copy of `root` (less any `.git`) under a fresh temporary directory, its real
+ * path (macOS's /var is /private/var), so the plugin reads nothing above `root`: not the node_modules, tsconfig.json or
+ * package.json of the repository or of any other folder above it. Findings are relative to the copy's root, as they
+ * would be to `root`.
+ */
+async function record(tools, root, files) {
+  const scratch = mkdtempSync(join(realpathSync(tmpdir()), "rerail-eslint-plugin-n-"));
+  try {
+    for (let directory = dirname(scratch); ; directory = dirname(directory)) {
+      const found = ANCESTOR_FILES.find(name => existsSync(join(directory, name)));
+      if (found !== undefined) throw new Error(`${join(directory, found)} lies above the temporary directory ${scratch}`);
+      if (dirname(directory) === directory) break;
+    }
+    const copy = join(scratch, basename(root));
+    cpSync(root, copy, { recursive: true, verbatimSymlinks: true, filter: source => basename(source) !== ".git" });
+    return await lintTree(tools, copy, files);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 // ---- 1. upstream tests → fixtures -------------------------------------------------------------------------------
 
 const TESTS = join(HERE, "tests");
@@ -182,6 +224,7 @@ const EMPTY_MODULE = "data:text/javascript,export default {}";
 
 function installHooks(toolsDirectory) {
   const toolsParent = pathToFileURL(join(toolsDirectory, "package.json")).href;
+  const toolsRequire = createRequire(toolsParent);
   const testsUrl = pathToFileURL(TESTS).href;
   registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -190,7 +233,11 @@ function installHooks(toolsDirectory) {
       if (specifier === "#test-helpers" || specifier.endsWith("/test-helpers.js")) return { url: STUB, shortCircuit: true };
       // The rule under test and sinon are never exercised: the stub only captures cases.
       if (specifier.includes("/lib/rules/") || specifier === "sinon") return { url: EMPTY_MODULE, shortCircuit: true };
-      if (!/^(\.|\/|node:|file:|data:)/u.test(specifier)) return nextResolve(specifier, { ...context, parentURL: toolsParent });
+      if (!/^(\.|\/|node:|file:|data:)/u.test(specifier) && !isBuiltin(specifier)) {
+        // A require() (a test's createRequire) resolves from its caller's module whatever parentURL says.
+        if (context.conditions?.includes("require") === true) return { url: pathToFileURL(toolsRequire.resolve(specifier)).href, shortCircuit: true };
+        return nextResolve(specifier, { ...context, parentURL: toolsParent });
+      }
       return nextResolve(specifier, context);
     },
   });
@@ -249,24 +296,24 @@ const PACKAGE_FILES = ["package.json", ".npmignore", ".gitignore"];
 
 /**
  * The name a case at upstream fixture path `name` is written under. Upstream lints it as `sourceType`, whatever Node
- * would run it as; a module case at a `.js`/`.ts` path whose nearest package.json (one of the upstream `files` copied
- * with it, else the fixtures' own) does not say `"type": "module"` would be linted as CommonJS here, so it is written
- * as `.mjs`/`.mts` in the same folder: the package facts the plugin reads from its path stay the same.
+ * would run it as; a module case at a `.js`/`.ts` path whose nearest package.json (`manifest`, absolute: the upstream
+ * fixture tree's, copied with it, else undefined for the fixtures' own) does not say `"type": "module"` would be linted
+ * as CommonJS here, so it is written as `.mjs`/`.mts` in the same folder: the package facts the plugin reads from its
+ * path stay the same.
  */
-function moduleName(name, sourceType, files, upstreamFixtures) {
+function moduleName(name, sourceType, manifest) {
   const extension = extname(name);
   if (sourceType !== "module" || (extension !== ".js" && extension !== ".ts")) return name;
-  const manifest = files.find(file => basename(file) === "package.json");
-  const type = manifest === undefined ? fixturePackageJson.type : JSON.parse(readFileSync(join(upstreamFixtures, manifest), "utf8")).type;
+  const type = manifest === undefined ? fixturePackageJson.type : JSON.parse(readFileSync(manifest, "utf8")).type;
   return type === "module" ? name : `${name.slice(0, -extension.length)}${extension === ".js" ? ".mjs" : ".mts"}`;
 }
 
 /**
- * The fixture path (relative to fixtures/) of one case, and the upstream fixture files it needs: each package.json
- * above it and, beside each, the `.npmignore` and `.gitignore` the plugin reads for what npm publishes.
+ * The fixture path (relative to fixtures/) of one case, its case directory (`<rule>/<kind>-NNN`), and the upstream
+ * fixture tree its file lies in (`tree`, the top-level folder of tests/fixtures/), copied whole into the case directory.
  */
 function casePath(tools, upstream, rule, kind, index, run, item) {
-  const base = `${rule}/${kind}-${String(index).padStart(3, "0")}`;
+  const directory = `${rule}/${kind}-${String(index).padStart(3, "0")}`;
   const typescript = isTypeScript(run, item);
   const tester = item.languageOptions?.sourceType ?? run.languageOptions.sourceType;
   const sourceType = tester === "module" && readsCommonjsWrapper(tools, item.code, typescript) ? "commonjs" : tester;
@@ -279,19 +326,20 @@ function casePath(tools, upstream, rule, kind, index, run, item) {
     const absolute = filename.startsWith(`tests${sep}fixtures${sep}`) ? join(upstream, filename) : filename;
     const fixtureRoot = [upstreamFixtures, join(TESTS, "fixtures")].find(root => absolute.startsWith(root + sep));
     const relativeName = fixtureRoot === undefined ? filename.replace(/^.*[\\/]/u, "") : relative(fixtureRoot, absolute);
-    const manifests = [];
-    if (fixtureRoot !== undefined) {
-      for (let directory = dirname(join(upstreamFixtures, relativeName)); directory.startsWith(upstreamFixtures + sep); directory = dirname(directory)) {
-        if (!existsSync(join(directory, "package.json"))) continue;
-        for (const name of PACKAGE_FILES) if (existsSync(join(directory, name))) manifests.push(relative(upstreamFixtures, join(directory, name)));
+    const top = relativeName.split(sep)[0];
+    const tree = fixtureRoot !== undefined && top !== relativeName && existsSync(join(upstreamFixtures, top)) ? top : undefined;
+    let manifest;
+    if (tree !== undefined) {
+      for (let folder = dirname(join(upstreamFixtures, relativeName)); manifest === undefined && folder.startsWith(upstreamFixtures + sep); folder = dirname(folder)) {
+        if (existsSync(join(folder, "package.json"))) manifest = join(folder, "package.json");
       }
     }
-    return { path: `${base}/${moduleName(relativeName, sourceType, manifests, upstreamFixtures).split(sep).join("/")}`, manifests, sourceType };
+    return { path: `${directory}/${moduleName(relativeName, sourceType, manifest).split(sep).join("/")}`, directory, tree, sourceType };
   }
   const extension = typescript ? (sourceType === "module" ? ".mts" : ".ts") : sourceType === "module" ? ".mjs" : ".js";
   const engines = configuredVersion(item);
-  if (engines !== undefined) return { path: `${base}/case${extension}`, manifests: [], sourceType, engines };
-  return { path: `${base}${extension}`, manifests: [], sourceType };
+  if (engines !== undefined) return { path: `${directory}/case${extension}`, directory, sourceType, engines };
+  return { path: `${directory}${extension}`, directory, sourceType };
 }
 
 async function extract(upstream, tools) {
@@ -333,68 +381,143 @@ async function extract(upstream, tools) {
   return { cases, skippedUpstream };
 }
 
+/**
+ * Writes each case's file, with the upstream fixture tree it lies in copied whole into its case directory first (the
+ * case's own file wins over an upstream file at its path), and returns the copied trees (fixtures-relative folders) by
+ * their upstream folders.
+ */
 function writeFixtures(upstream, cases) {
   const fixtures = join(HERE, "fixtures");
   rmSync(fixtures, { recursive: true, force: true });
   mkdirSync(fixtures, { recursive: true });
   writeFileSync(join(fixtures, "package.json"), `${JSON.stringify(fixturePackageJson, null, 2)}\n`);
-  const manifests = new Map();
+  const upstreamFixtures = join(upstream, "tests", "fixtures");
+  const copies = new Map();
+  const written = new Set();
   for (const entry of cases) {
+    if (written.has(entry.path)) throw new Error(`duplicate fixture ${entry.path}`);
+    written.add(entry.path);
+    if (entry.tree !== undefined) {
+      cpSync(join(upstreamFixtures, entry.tree), join(fixtures, entry.directory, entry.tree), { recursive: true });
+      copies.set(`${entry.directory}/${entry.tree}`, `tests/fixtures/${entry.tree}`);
+    }
     const target = join(fixtures, entry.path);
-    if (existsSync(target)) throw new Error(`duplicate fixture ${entry.path}`);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, entry.code);
-    const caseDirectory = entry.path.split("/").slice(0, 2).join("/");
-    if (entry.engines !== undefined) writeFileSync(join(fixtures, caseDirectory, "package.json"), `${JSON.stringify(casePackageJson(entry.engines), null, 2)}\n`);
-    for (const manifest of entry.manifests) {
-      const copy = `${caseDirectory}/${manifest.split(sep).join("/")}`;
-      if (!existsSync(join(fixtures, copy))) {
-        mkdirSync(dirname(join(fixtures, copy)), { recursive: true });
-        cpSync(join(upstream, "tests", "fixtures", manifest), join(fixtures, copy));
-      }
-      manifests.set(copy, `tests/fixtures/${manifest.split(sep).join("/")}`);
-    }
+    if (entry.engines !== undefined) writeFileSync(join(fixtures, entry.directory, "package.json"), `${JSON.stringify(casePackageJson(entry.engines), null, 2)}\n`);
   }
-  return manifests;
+  return copies;
 }
 
 // ---- 3. licenses --------------------------------------------------------------------------------------------------
 
-/** `variants`: the kept rename variants, `{ unit, of }` (the variant's files, its original's key). */
-function writeLicenses(upstream, cases, manifests, variants) {
+const PROVENANCE_FORMAT = "rerail.pack-provenance/v1";
+const RERAIL = "rerail";
+const byBytes = (a, b) => Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
+
+/** Every file below `directory`, relative to it, `/`-separated. */
+function filesBelow(directory, prefix = "") {
+  return readdirSync(join(directory, prefix), { withFileTypes: true }).flatMap(entry => {
+    const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    return entry.isDirectory() ? filesBelow(directory, path) : [path];
+  });
+}
+
+/**
+ * The per-file record of the test data (`provenance.json`, beside the expected findings in the tool-pack's archive):
+ * each file under tests/ and fixtures/, its source, its upstream path and how it was made. `copies`: the copied
+ * upstream fixture trees (fixtures-relative folder to upstream folder); `variants`: the kept rename variants.
+ */
+function provenance(cases, copies, variants) {
+  const files = new Map();
+  const upstreamFile = (from, how, detail) => ({ source: TOOL, from, how, ...(detail === undefined ? {} : { detail }) });
+  const authored = detail => ({ source: RERAIL, how: "authored", detail });
+  for (const rule of RULES) files.set(`tests/lib/rules/${rule}.js`, upstreamFile(`tests/lib/rules/${rule}.js`, "verbatim"));
+  files.set("fixtures/package.json", authored("the fixtures' source type and engines (fixturePackageJson)"));
+  const fixtures = join(HERE, "fixtures");
+  for (const [copy, original] of copies) for (const path of filesBelow(join(fixtures, copy))) files.set(`fixtures/${copy}/${path}`, upstreamFile(`${original}/${path}`, "verbatim"));
+  for (const entry of cases) {
+    if (entry.engines !== undefined) files.set(`fixtures/${entry.directory}/package.json`, authored("the case's configured Node version as engines.node (casePackageJson)"));
+    files.set(`fixtures/${entry.path}`, upstreamFile(entry.testFile, "extracted", entry.origin));
+  }
+  for (const { unit, of } of variants) {
+    const [variant, ...packageFiles] = unit;
+    files.set(`fixtures/${variant}`, { ...upstreamFile(files.get(`fixtures/${of}`).from, "renamed"), renamedFrom: `fixtures/${of}` });
+    for (const copy of packageFiles) {
+      const original = files.get(`fixtures/${copy.slice(RENAMED_DIRECTORY.length + 1)}`);
+      files.set(`fixtures/${copy}`, original.source === RERAIL ? original : upstreamFile(original.from, "verbatim"));
+    }
+  }
+  files.set("fixtures.expected.json", { source: RERAIL, how: "recorded" });
+  const sources = {
+    [TOOL]: { repository: UPSTREAM_REPOSITORY, tag: `v${VERSION}`, commit: UPSTREAM_COMMIT, license: "MIT" },
+    [RERAIL]: { license: "Apache-2.0" },
+  };
+  return { format: PROVENANCE_FORMAT, snapshot: "written by packs/node/upstream/eslint-plugin-n/generate.mjs", pack: "node", tool: TOOL, sources, files: Object.fromEntries([...files].sort(([a], [b]) => byBytes(a, b))) };
+}
+
+const fence = text => "`".repeat(Math.max(2, ...[...text.matchAll(/`+/gu)].map(match => match[0].length)) + 1);
+
+/**
+ * Writes licenses/eslint-plugin-n/{LICENSE,UPSTREAM.md} (the repository's record: its source and the pack-path patterns
+ * taken from it) and, beside the expected findings, provenance.json and LICENSES.md (the per-file record and the
+ * licence texts the tool-pack's test-data archive carries).
+ */
+function writeLicenses(upstream, cases, copies, variants) {
   const directory = join(HERE, "..", "..", "licenses", TOOL);
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
-  const rows = [];
-  for (const rule of RULES) rows.push(`|\`upstream/${TOOL}/tests/lib/rules/${rule}.js\`|\`tests/lib/rules/${rule}.js\`|verbatim|`);
-  rows.push(`|\`upstream/${TOOL}/fixtures/package.json\`|none|Rerail's own, not copied: the fixtures' source type and engines (\`fixturePackageJson\`), under the pack's \`LICENSE\`|`);
-  for (const entry of cases.filter(entry => entry.engines !== undefined)) rows.push(`|\`upstream/${TOOL}/fixtures/${entry.path.split("/").slice(0, 2).join("/")}/package.json\`|none|Rerail's own, not copied: the case's configured Node version as engines (\`casePackageJson\`), under the pack's \`LICENSE\`|`);
-  for (const [copy, original] of [...manifests].sort()) rows.push(`|\`upstream/${TOOL}/fixtures/${copy}\`|\`${original}\`|verbatim (test data a case's \`filename\` reads)|`);
-  for (const entry of cases) rows.push(`|\`upstream/${TOOL}/fixtures/${entry.path}\`|\`${entry.testFile}\`|extracted from ${entry.testFile} ${entry.origin}|`);
-  const byPath = new Map(cases.map(entry => [entry.path, entry]));
-  const copiedManifests = new Map();
-  for (const { unit, of } of variants) {
-    const original = byPath.get(of);
-    rows.push(`|\`upstream/${TOOL}/fixtures/${unit[0]}\`|\`${original.testFile}\`|derived from ${original.testFile} ${original.origin} (\`fixtures/${of}\` with its names and literals renamed)|`);
-    for (const copy of unit.slice(1)) copiedManifests.set(copy, copy.slice(RENAMED_DIRECTORY.length + 1));
-  }
-  for (const [copy, original] of [...copiedManifests].sort()) {
-    const source = original === "package.json" ? "none" : `\`${manifests.get(original)}\``;
-    rows.push(`|\`upstream/${TOOL}/fixtures/${copy}\`|${source}|a copy of \`fixtures/${original}\`, beside the rename variants it gives a manifest|`);
-  }
-  const text = `# eslint-plugin-n ${VERSION}
+  writeFileSync(join(directory, "UPSTREAM.md"), `# eslint-plugin-n ${VERSION}
 
-Upstream: [eslint-community/eslint-plugin-n](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${VERSION}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2015 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
+License: MIT (Copyright (c) 2015 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at the commit below.
 
-The files listed below are the upstream rule tests of the rules the Node pack ports (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. Some listed files are Rerail's and say so in their rows: \`upstream/${TOOL}/fixtures/package.json\` (the fixtures' source type and engines) and each case's \`package.json\` that states its configured Node version, listed because they sit among the copied fixtures. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-n's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the recorder \`upstream/${TOOL}/generate.mjs\`, \`upstream/${TOOL}/stub-test-helpers.js\` (stands in for upstream's \`tests/test-helpers.js\` and only captures cases), and the \`*.expected.json\` recordings written by running eslint-plugin-n.
+## Source
 
-Paths are relative to the pack directory, \`packs/node/\`.
+| Repository | Tag | Commit | Licence |
+|---|---|---|---|
+| ${UPSTREAM_REPOSITORY} | \`v${VERSION}\` | \`${UPSTREAM_COMMIT}\` | MIT |
 
-|File|Upstream path|Copy|
+## Taken from it
+
+| Pack paths | Upstream paths | How |
 |---|---|---|
-${rows.join("\n")}
-`;
-  writeFileSync(join(directory, "UPSTREAM.md"), text);
+| \`upstream/${TOOL}/tests/**\` | \`tests/lib/rules/**\` | verbatim: the rule test files |
+| \`upstream/${TOOL}/fixtures/**\` | \`tests/**\` | extracted: each file is one RuleTester case's \`code\`, verbatim; and verbatim, the upstream test data (\`tests/fixtures/**\`) a case's \`filename\` reads: the package.json, \`.npmignore\` and \`.gitignore\` above it, or the whole fixture tree it lies in |
+| \`upstream/${TOOL}/fixtures/renamed/**\` | as its original | renamed: the file of the same path below \`fixtures/\`, with its names and literals renamed; and verbatim, a copy of the package files beside the variants |
+
+The files taken from it are the upstream rule tests of the rules the Node pack ports (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. Some files under \`upstream/${TOOL}/fixtures/\` are Rerail's although the pattern above covers them: \`fixtures/package.json\` (the fixtures' source type and engines), each case folder's \`package.json\` that states a case's configured Node version as \`engines.node\`, and their copies under \`fixtures/renamed/\`; \`provenance.json\` records them as Rerail's. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-n's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 ([\`LICENSE\`](../../LICENSE)).
+
+Paths are relative to the pack directory, \`packs/node/\`. The test files are in no package and not in git: the tool-pack's S3 archive (\`upstream/${TOOL}/test-data.lock\`) holds them, with \`provenance.json\` (every file, its upstream path and how it was made, written by \`generate.mjs\`) and \`LICENSES.md\` (this licence text). The expected findings recorded by running the tool are Rerail's.
+`);
+  const record = provenance(cases, copies, variants);
+  writeFileSync(join(HERE, "provenance.json"), `${JSON.stringify(record, null, 2)}\n`);
+  const entries = Object.values(record.files);
+  const counts = list => ["verbatim", "extracted", "renamed", "recorded", "authored"].map(how => [how, list.filter(entry => entry.how === how).length]).filter(([, n]) => n > 0).map(([how, n]) => `${n} ${how}`).join(", ");
+  const upstreamFiles = entries.filter(entry => entry.source === TOOL);
+  const own = entries.filter(entry => entry.source === RERAIL);
+  const licence = readFileSync(join(upstream, "LICENSE"), "utf8");
+  writeFileSync(join(HERE, "LICENSES.md"), [
+    `# Licences of the ${TOOL} test data`,
+    "",
+    `This archive is the test data of \`packs/node/upstream/${TOOL}/\`. \`provenance.json\` beside this file lists every file in it with its source, its upstream path and how it was made (written by generate.mjs). Each upstream source below is listed with its licence, how many files come from it, and its licence text as the repository tracks it under \`packs/node/licenses/\`; the rest is Rerail's.`,
+    "",
+    `## ${TOOL}`,
+    "",
+    `Repository ${UPSTREAM_REPOSITORY}, tag \`v${VERSION}\`, commit \`${UPSTREAM_COMMIT}\`. License: MIT.`,
+    "",
+    `${upstreamFiles.length} file(s): ${counts(upstreamFiles)}. They remain under ${TOOL}'s licence. Files marked \`extracted\` or \`renamed\` were changed by Rerail as \`provenance.json\` describes: \`extracted\` is one test case cut out of the upstream file it names (\`detail\` locates the case), and \`renamed\` is the file \`renamedFrom\` names with its names and literals renamed. \`verbatim\` files are unchanged copies.`,
+    "",
+    "### LICENSE",
+    "",
+    fence(licence),
+    licence.trimEnd(),
+    fence(licence),
+    "",
+    "## Rerail",
+    "",
+    `${own.length} file(s): ${counts(own)}. Rerail's, under Apache-2.0 (the pack's \`LICENSE\`): \`authored\` files were written by Rerail, and \`recorded\` files are a tool's output on this data, recorded by the pack's generators.`,
+    "",
+  ].join("\n"));
 }
 
 // ---- main ---------------------------------------------------------------------------------------------------------
@@ -419,7 +542,7 @@ async function main() {
   installHooks(toolsDirectory);
 
   const { cases, skippedUpstream } = await extract(upstream, tools);
-  const manifests = writeFixtures(upstream, cases);
+  const copies = writeFixtures(upstream, cases);
   const fixtures = join(HERE, "fixtures");
   // Each case is a case of the rule whose test file it came from. Its rename variant, under renamed/, renames the
   // case's code and copies its manifest.
@@ -429,11 +552,19 @@ async function main() {
   const fixtureRun = await record(tools, fixtures, [...cases.map(entry => entry.path), ...variants.map(variant => variant.paths.get(variant.of))]);
   const dropped = new Map(fixtureRun.skipped.map(entry => [entry.path, entry.reason]));
   const kept = cases.filter(entry => !dropped.has(entry.path));
-  for (const path of [...dropped.keys()].filter(path => !isVariantPath(path))) rmSync(join(fixtures, path));
+  // A dropped case goes with its directory when it has one of its own (a copied fixture tree, a package.json of ours).
+  for (const entry of cases.filter(entry => dropped.has(entry.path))) {
+    if (entry.tree === undefined && entry.engines === undefined) {
+      rmSync(join(fixtures, entry.path));
+      continue;
+    }
+    rmSync(join(fixtures, entry.directory), { recursive: true });
+    for (const copy of copies.keys()) if (copy.startsWith(`${entry.directory}/`)) copies.delete(copy);
+  }
   const recorded = withOrigins(fixtures, kept.map(entry => entry.path).sort().map(path => units.get(path)), origins, variants, new Set(dropped.keys()), fixtureRun.findings);
   writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: recorded.files, units: recorded.units }, recorded.findings);
   const keptVariants = recorded.files.filter(unit => isVariantPath(unit[0])).map(unit => ({ unit, of: recorded.units[unit[0]].renamedFrom }));
-  writeLicenses(upstream, kept, manifests, keptVariants);
+  writeLicenses(upstream, kept, copies, keptVariants);
 
   const mismatches = [];
   for (const entry of kept) {

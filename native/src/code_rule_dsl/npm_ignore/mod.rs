@@ -474,6 +474,16 @@ fn files_matcher(pattern: &str, match_basename: bool) -> Vec<Regex> {
         .collect()
 }
 
+/// eslint-plugin-n's `getWorkspacePatternMatcher` (check-extraneous.js): globrex's regex for a
+/// workspace pattern, with `extended` and `globstar`, case-sensitive as globrex leaves it
+/// without flags; `None` where it does not compile.
+pub(crate) fn workspace_matcher(pattern: &str) -> Option<Regex> {
+    fancy_regex::RegexBuilder::new(&globrex(pattern))
+        .backtrack_limit(BACKTRACK_LIMIT)
+        .build()
+        .ok()
+}
+
 fn any_match(matchers: &[Regex], path: &str) -> bool {
     matchers
         .iter()

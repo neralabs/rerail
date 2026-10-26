@@ -103,6 +103,7 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
         | AstMatcher::Compare(_)
         | AstMatcher::Semantic(Semantic::Resolves(_))
         | AstMatcher::Semantic(Semantic::Value(_))
+        | AstMatcher::Semantic(Semantic::ImportTarget(_))
         | AstMatcher::Semantic(Semantic::Arguments(_))
         | AstMatcher::Semantic(Semantic::Capture(_))
         | AstMatcher::Semantic(Semantic::Layout(_))
