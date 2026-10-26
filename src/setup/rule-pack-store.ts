@@ -14,7 +14,7 @@ import { activeCoreVersion, installedPackDirectories, installedPacksPrefix, load
 import type { RuleCatalog, SkippedRulePack } from "../engine/catalog/repository-model.js";
 import { rulePackPackageName, rulePacksThatFit, type RulePack } from "../engine/catalog/rule-packs.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
-import { runNpm, type NpmRunner } from "../runtime/npm.js";
+import { runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
 import { withPacksLock } from "./packs-lock.js";
 
 /** The dist-tag a pack is fetched under when core's update channel has no version of it: where a held pack publishes. */
@@ -90,7 +90,6 @@ export const packSpec = (pack: PackVersion): string => `${rulePackPackageName(pa
 
 const NO_VERSION_UNDER_TAG = /\bETARGET\b|No matching version found|\bnotarget\b/u;
 const NO_ACCESS = /\bE40[34]\b/u;
-const OFFLINE = /\b(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ENETUNREACH)\b/u;
 
 /**
  * Why npm would not give a pack, in one line. npm answers a restricted package the person may not read with the same
@@ -99,8 +98,8 @@ const OFFLINE = /\b(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ENETUN
 export function fetchProblemReason(packageName: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (NO_ACCESS.test(message)) return `no read access to ${packageName}, or it is not published; ask Nera for access`;
-  const offline = OFFLINE.exec(message);
-  if (offline !== null) return `npm could not reach the registry (${offline[1]})`;
+  const unreachable = unreachableRegistryReason(message);
+  if (unreachable !== undefined) return unreachable;
   const lines = message.split("\n").map(line => line.trim()).filter(line => line !== "");
   const npmLine = lines.find(line => line.startsWith("npm error ") && !line.startsWith("npm error code"));
   return npmLine?.slice("npm error ".length) ?? lines[0] ?? "npm failed";
@@ -222,6 +221,8 @@ export interface PackDiscovery {
   readonly withoutRules: readonly DiscoveredPack[];
   /** Packs that could not be fetched or failed a check, and why. */
   readonly problems: readonly string[];
+  /** When npm gave no pack at all, each distinct reason why: set-up cannot tell then which packs fit. */
+  readonly downloadFailures?: readonly string[];
   /** The catalog of the fetched packs: what their rules would be, before any is installed. */
   readonly catalog: RuleCatalog;
 }
@@ -292,6 +293,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
       available,
       withoutRules: ordered.filter(pack => pack.ruleCount === 0),
       problems: [...fetch.problems.map(problem => `${problem.packageName}: ${problem.reason}`), ...catalog.skipped.map(skippedProblem)],
+      ...(fetch.fetched.length === 0 && fetch.problems.length > 0 ? { downloadFailures: [...new Set(fetch.problems.map(problem => problem.reason))] } : {}),
       catalog,
     };
   } finally {
