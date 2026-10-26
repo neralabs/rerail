@@ -129,3 +129,8 @@ mod tests;
 #[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/relational/storage.rs"]
 mod relational_storage;
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path="../../../../native/src/code_rule_dsl/relational/pipeline/readers.rs"]
+mod family_readers;
