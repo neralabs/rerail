@@ -205,10 +205,11 @@ describe("the npm side of a rule's key", () => {
 });
 
 /**
- * Files run.ts loads that no rule's key covers: only checks/passes-conformance.ts reaches them, and run.ts judges
- * passes-conformance afresh on every run and never caches it.
+ * Files run.ts loads that no rule's key covers: only checks/passes-conformance.ts reaches them (the conformance
+ * runner, and the real-code sample format it reads samples by), and run.ts judges passes-conformance afresh on every
+ * run and never caches it.
  */
-const uncachedOnly = (path: string): boolean => path === "conformance/engine.ts" || path.startsWith("conformance/languages/");
+const uncachedOnly = (path: string): boolean => path === "conformance/engine.ts" || path.startsWith("conformance/languages/") || path === "scripts/samples/format.ts";
 
 // GATE_PACKAGES is a ledger whose gap keeps a stale verdict, so it is checked against what run.ts actually loads.
 test("GATE_PACKAGES covers every npm package a bundle of run.ts loads, and names none it does not", async () => {

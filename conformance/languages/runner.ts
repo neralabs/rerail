@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 import { z } from "zod";
-import { isPackFixture, packFixtureAbsence, requirePackFixture, samplesTree, type Aws } from "../../scripts/s3/pack-fixtures.mjs";
+import { isPackFixture, packFixtureAbsence, requirePackFixture, samplesTree } from "../../scripts/s3/pack-fixtures.mjs";
 import { LABELS_SUFFIX, SAMPLE_ID, sampleLabelsSchema } from "../../scripts/samples/format.js";
 import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
 import {
@@ -35,12 +35,6 @@ import {
 } from "./pack.js";
 import { EXAMPLE_LIMIT, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
 import { precisionRecall, scoreSamples, scoreSource, type JudgedSample, type Point, type SourceScore } from "./score.js";
-
-// The samples transport's tree accessor (contract C2). Remove this declaration once pack-fixtures.d.mts declares it.
-declare module "../../scripts/s3/pack-fixtures.mjs" {
-  /** A tool-pack's verified, extracted samples tree, fetched on demand; undefined when the tool-pack has no samples.lock. */
-  export function samplesTree(options: { root?: string; pack: string; tool: string; aws?: Aws }): string | undefined;
-}
 
 /** The production repository audit's batching and paging (`code-rule-enforcer.ts`). */
 const AUDIT_BATCH_FILES = 32;
@@ -441,7 +435,14 @@ function readSamples(loaded: LoadedPack, tool: string, directory: string, errors
     const context = files.filter(path => !path.endsWith(LABELS_SUFFIX) && !judged.has(path));
     for (const path of judged) {
       const labelsPath = `${path}${LABELS_SUFFIX}`;
-      const parsed = sampleLabelsSchema.safeParse(JSON.parse(readFileSync(join(directory, labelsPath), "utf8")));
+      let json: unknown;
+      try {
+        json = JSON.parse(readFileSync(join(directory, labelsPath), "utf8"));
+      } catch (error) {
+        errors.push(`${where}: ${labelsPath}: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      const parsed = sampleLabelsSchema.safeParse(json);
       if (!parsed.success) {
         errors.push(`${where}: ${labelsPath}: ${z.prettifyError(parsed.error)}`);
         continue;
