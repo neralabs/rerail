@@ -12,9 +12,11 @@ npx @neralabs/rerail setup
 ```
 
 Run it again at any time: setup is idempotent, so it doubles as "upgrade". In a
-repository that is set up already it changes nothing there and connects no
-coding agent installed since; name one to connect it, for example
-`npx @neralabs/rerail setup --agents codex`.
+repository that is set up already it changes nothing there and connects only
+the coding agents installed since an earlier set-up or `rerail install` last
+looked, never one you left out with `--agents` or removed with
+`rerail install --remove --agents <id>`; name one to connect it anyway, for
+example `npx @neralabs/rerail setup --agents codex`.
 
 ## What setup does
 
@@ -28,6 +30,7 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 ├── bin/rerail                                          launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
+├── coding-agents.json                                 the coding agents set-up and `rerail install` have seen
 ├── packs/node_modules/@neralabs/rerail-pack-<id>/     the rule packs you installed (`rerail packs`)
 └── versions/<older>/…                                 kept for `rerail update rollback`
 ```
@@ -95,7 +98,13 @@ person says yes.
    - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, and so on
    - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
 
-   Existing entries from other tools are preserved byte-for-byte. Entries
+   Existing entries from other tools are kept, with their content unchanged,
+   but the file is written back as JSON indented by two spaces, so its
+   formatting may change. A config that is not plain JSON (a comment, a
+   trailing comma) is never rewritten: set-up leaves that coding agent
+   unconnected, connects the others and starts the repository, and its summary
+   names the file, the parser's reason and what to do (`rerail install` stops
+   with the same reason and writes nothing). Entries
    another install of this package wrote (identified by the `package.json`
    beside the script they run) are replaced, not duplicated; that includes a
    Claude status line such an install composed, and because what it wrapped is
@@ -116,8 +125,13 @@ person says yes.
    a no-op.
 6. **Summary** — the rule packs added (by name, "TSLint in web" when added in
    one folder), the rules on, the other repositories Rerail is on in, the
-   coding agents connected, and the dashboard link (`#rules`, its Overview,
-   scoped to the repository and checkout). The daemon used is the active install's, which
+   dashboard link (`#rules`, its Overview, scoped to the repository and
+   checkout), and each coding agent that could not be connected. Commands are
+   shown as `$rerail-show-me` when Codex is the only coding agent connected,
+   with Codex's form beside the others' when it is one of several, and after
+   Codex's hooks are written a line says to trust them once with `/hooks` in
+   Codex. With no coding agent found it says so, names the ones Rerail works
+   with, and says to run `rerail setup` again once one is installed. The daemon used is the active install's, which
    serves every repository; one from another version or on another port is
    replaced (`--port` picks the port). The browser opens unless
    `BROWSER=none`, the session is over SSH, or Linux has no display.
@@ -145,7 +159,13 @@ written for another Rerail home is replaced. A file it changes gets the same
 
 "Skip for now" (no repository) connects the coding agents found and starts
 Rerail nowhere. Set-up run again in a repository that is set up never asks
-again: it shows the summary, or says Rerail is stopped there. Rerail stays off
+again: it connects the coding agents found since (named in the summary as "Now
+also connected"), then shows the summary, or says Rerail is stopped there.
+Which agents count as found since is kept in `~/.rerail/coding-agents.json`
+(`{ "seen": [<agent id>, …] }`): every coding agent set-up connected, left out
+or found, and every one `rerail install` found or was named, except one that
+could not be connected, so set-up run again tries it once more. Without the
+file every coding agent found counts as new. Rerail stays off
 in every other repository until you start it there (see "Starting and stopping
 Rerail" below); starting a repository that is not set up runs steps 2 to 6
 for it.
@@ -521,7 +541,10 @@ rerail install --remove
 installation — harness hooks, the Claude Code status line and commands, the
 Cursor commands, the Codex skill, the OMP extension symlink and MCP entry, and
 the Pi package entry — and leaves other tools' entries alone, writing a
-`<file>.<timestamp>.bak` beside every file it changes. It then stops the
+`<file>.<timestamp>.bak` beside every file it changes. A folder that held only
+what it removed goes too: each `~/.codex/skills/rerail*` (and `~/.codex/skills`
+when those were all it held), and `~/.omp/agent/extensions` when the link was
+all it held. It then stops the
 daemon and moves `rerail.sqlite` (with its `-wal`/`-shm`) into
 `~/.rerail-clean-YYYYMMDD/rerail-home/` (`-YYYYMMDD-HHMMSS` when one from today
 exists), so your rules and history are kept. Restart open harness sessions

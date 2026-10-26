@@ -948,6 +948,17 @@ describe("Codex hooks.json", () => {
     expect(change(again.changes, "codex", join("rerail-show-me", "SKILL.md")).action).toBe("created");
     expect(again.notes).not.toContainEqual(trust);
   });
+
+  it("removes each skill's folder with the skill, unless something else is in it", async () => {
+    const { home, root, nodePath } = await fixture();
+    const skills = join(home, ".codex", "skills");
+    await mkdir(join(skills, "mine"), { recursive: true });
+    await registerHarnesses({ root, home, nodePath, harnesses: ["codex"] });
+    await writeFile(join(skills, "rerail-help", "notes.md"), "kept");
+    await unregisterHarnesses({ root, home, nodePath, harnesses: ["codex"] });
+    expect((await readdir(skills)).sort()).toEqual(["mine", "rerail-help"]);
+    expect(await readdir(join(skills, "rerail-help"))).toEqual(["notes.md"]);
+  });
 });
 
 describe("legacy package-root cutover", () => {
@@ -1296,6 +1307,8 @@ describe("OMP extensions symlink", () => {
     const removed = await unregisterHarnesses({ root: otherRoot, home, nodePath, harnesses: ["omp"] });
     expect(change(removed.changes, "omp", "rerail").action).toBe("updated");
     await expect(lstat(link)).rejects.toMatchObject({ code: "ENOENT" });
+    // The extensions folder held only the link, so it goes too.
+    await expect(lstat(dirname(link))).rejects.toMatchObject({ code: "ENOENT" });
 
     const again = await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] });
     expect(change(again.changes, "omp", "rerail").action).toBe("unchanged");

@@ -7,8 +7,11 @@ import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-cont
 import {
   CODING_AGENT_NAMES,
   codingAgentHome,
+  connectCodingAgents,
+  recordSeenCodingAgents,
   refreshCodingAgents,
   registrationRoot as packageRegistrationRoot,
+  seenCodingAgents,
 } from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { daemonUsesPackageRoot, lookupDaemon, openDashboard, startDaemon, stopDaemon, type DaemonState } from "../runtime/daemon-control.js";
@@ -244,6 +247,8 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
     ? await unregisterHarnesses(registrationOptions(root, codingAgentHome(), parsed))
     : await registerHarnesses(registrationOptions(root, codingAgentHome(), parsed));
   printReport(report, parsed.dryRun);
+  // What `rerail install` found or was named is seen, so set-up run again connects no agent behind this choice.
+  if (!parsed.dryRun) await recordSeenCodingAgents(context.home, [...detectHarnesses(codingAgentHome()), ...(parsed.hosts ?? [])]);
   // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
   // checkout registered with `--root`, leaves the shared rules and history in place.
   const uninstall = remove && parsed.hosts === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
@@ -336,14 +341,15 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
   return {
     packs: context.packs ?? npmPackStore(context.home),
     agentsFound: () => detectHarnesses(codingAgentHome()),
+    agentsSeen: () => seenCodingAgents(context.home),
     async connect(agents, repoRoot) {
+      const home = codingAgentHome();
       // Claude Code's project status line lives in the repository: only one the person said yes to.
-      await registerHarnesses({
-        root: registrationRoot(context),
-        home: codingAgentHome(),
-        harnesses: agents,
-        ...(repoRoot === undefined ? {} : { workspaceDir: repoRoot }),
-      });
+      const result = await connectCodingAgents(registrationRoot(context), home, agents, repoRoot);
+      // One that could not be connected stays unseen, so set-up run again connects it once its config is fixed.
+      const failed = new Set(result.failures.map(({ agent }) => agent));
+      await recordSeenCodingAgents(context.home, [...detectHarnesses(home), ...agents].filter(id => !failed.has(id)));
+      return result;
     },
     sessionsApproved() {
       try {

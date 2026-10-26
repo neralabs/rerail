@@ -310,6 +310,33 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(later.text()).toContain("Rerail is on in acme-api");
   });
 
+  it("connects on a later plain run only the coding agents found since, never one an earlier run saw", async () => {
+    const setup = await fixture();
+    const first = fakeSetupEnvironment({ found: ["claude-code", "cursor"] });
+    await runSetup(agentIo(), request(setup, first, { answer: "start", repo: setup.repo, packs: TYPESCRIPT, agents: parseCodingAgents("claude-code") }));
+
+    // Codex installed since; Cursor, left out by `--agents`, stays out.
+    const later = fakeSetupEnvironment({ found: ["claude-code", "codex", "cursor"], seen: first.agentsSeen() });
+    const io = agentIo();
+    expect(await runSetup(io, request(setup, later))).toMatchObject({ status: "started" });
+    expect(later.connections).toEqual([{ agents: ["codex"], repoRoot: setup.repo }]);
+    expect(io.text()).toContain("Now also connected: Codex.");
+    expect(io.text()).toContain("Open Codex and run /hooks once to trust Rerail’s hooks.");
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
+  });
+
+  it("starts Rerail and connects the other coding agents when one's config is not plain JSON, naming it", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment({ unreadable: ["claude-code"] });
+    const io = agentIo();
+    expect(await runSetup(io, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }))).toMatchObject({ status: "started" });
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
+    expect(io.text()).toContain("Couldn’t connect Claude Code: /home/me/.claude-code/settings.json is not plain JSON");
+    expect(io.text()).toContain("then run rerail setup again to connect Claude Code.");
+    // Not seen, so set-up run again tries it once more.
+    expect(environment.agentsSeen()).toEqual(["cursor"]);
+  });
+
   it("takes a named folder as the go-ahead to read it, and leaves the repo it ran in alone", async () => {
     const setup = await fixture();
     const other = gitRepository(join(setup.root, "landing-page"));
