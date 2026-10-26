@@ -5,6 +5,7 @@ Status: every planned aspect has a runnable experiment and a decision.
 Production optimization remains separate.
 
 The [workplan](cold-cpu-recovery-plan.md) defines the implementation sequence and acceptance gate.
+The [schema lifecycle plan](sql-schema-lifecycle-plan.md) details the schema work and preserves opaque SQL scope during context reuse.
 The [attribution receipt](../fixtures/host/data-layer-port/profiling/cold-cpu-attribution-20261026.json) preserves the full diagnostic.
 The [experiment receipt](../fixtures/host/data-layer-port/profiling/cold-cpu-architectural-spikes-20261026.json) preserves trials, identities, exact row digests, and qualifications.
 The [tool guide](../scripts/profiling/preparation/cold-cpu.md) gives reproduction commands and model limits.

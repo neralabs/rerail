@@ -3,6 +3,7 @@
 Date: 2026-10-26.
 Status: all planned aspects have completed experiments. Production implementation remains separate.
 The [results](cold-cpu-spike-results.md) rank the work below from the complete diagnostic.
+The [schema lifecycle plan](sql-schema-lifecycle-plan.md) specifies Delivery 2, including context reuse, fusion, statistics, and cleanup.
 
 ## Problem and acceptance boundary
 
@@ -271,7 +272,7 @@ Do not ship a two-terminal-stage policy edit as this delivery.
 2. Resolve options, types, deferred columns, names, and producer dependencies before physical composition.
 3. Gather lightweight request descriptors without opening one SQL schema per suspended consumer.
 4. Partition the validated program at native readiness boundaries, recursive operator boundaries, and existing SQLite statement limits.
-5. Emit one narrow statement per physical family and demand batch.
+5. Emit a reusable statement for each physical family. Preserve opaque SQL scope and batch only partition-safe SQL operations.
 6. Carry consumer and source-domain IDs as data. Preserve each correlated request.
 7. Use a CTE cut only for an observed second consumer in the same domain.
 8. Pass result rows directly to finding consolidation when no subsequent SQL consumer needs them.
@@ -292,12 +293,13 @@ Test identical-scope sharing, unequal-scope separation, name conflicts, complete
 Run the 192 original quality observations before the broader corpus.
 
 **Budget and failure requirement:** preserve each consumer's existing remaining allowance.
-A shared statement can use the minimum remaining allowance as a conservative batch cap.
+Initial family executions retain the original consumer scope and budget.
+For partition-safe SQL batches, the minimum remaining allowance is a possible conservative batch cap.
 If it trips, discard uncommitted results and subdivide complete consumer domains with the same caps.
 Never multiply a rule allowance by batch size.
 Never split one repository-wide consumer into independent file analyses.
 Test one failing consumer beside successful consumers, including cancellation and rollback.
-The retry policy needs implementation proof before promotion.
+The retry policy needs implementation proof before use. It is not a prerequisite for stable context reuse.
 
 **Completion:** complete cold 50/60 results, exact findings, lower aggregate CPU, and no RSS regression.
 The quality clause must no longer pay the old repeated stage lifecycle.

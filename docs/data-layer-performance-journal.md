@@ -5025,3 +5025,32 @@ Final static checks, the complete profiling suite, all 70 laboratory tests, and 
 Native source is unchanged after the successful native DSL, shape, and all-target Clippy checks.
 The final packet-trigger comparison uses the same 1-MiB cache as the per-file control.
 Frozen primitive and publication-control binaries remain separate, with their one control-setting difference recorded in the receipt.
+
+
+### Detailed schema lifecycle implementation plan (2026-10-26)
+
+The [schema lifecycle plan](sql-schema-lifecycle-plan.md) expands the recovery plan's second delivery.
+It defines four complete implementation deliveries: consumer/context separation, SQL family fusion, statistics maintenance, and retained-state cleanup.
+Each delivery has concrete source locations, runtime responsibilities, a TDD ladder, and a complete resource gate.
+This is a documentation change. It adds no production implementation or new performance result.
+
+The detailed design distinguishes producer batching from SQL scope.
+Native producers consume complete demand batches and expose completed typed columns.
+Opaque authored SQL initially retains its original scope through a stable reusable context.
+`partitionBy: file` does not prove that aggregates, windows, limits, or arbitrary subqueries distribute over files.
+Cross-scope SQL batches therefore require an explicit partition-safe contract.
+A general SQL partition rewriter and a new retry scheduler are not prerequisites for schema reuse.
+
+Stable cut storage uses exact binding identities and dependency pins.
+A suspended consumer retains its data handles and releases its SQL context.
+The next execution rebinds its handles without constructing another private schema.
+Necessary boundary output goes directly into its final backing or typed frame, with no second full-result copy for suspension.
+
+Statistics maintenance follows the cuts that remain after fusion.
+The initial context-reuse delivery can retain required analyses within the smaller schema.
+Later changes require complete-cost evidence for each retained refresh.
+Equal row counts do not establish equal distributions or fresh statistics.
+The existing recovery plan and spike report now link this detailed design.
+
+The new document passes local link checks and the writing self-check.
+`git diff --check` and `npm run check` pass. No runtime tests repeat because this delivery changes documentation only.
