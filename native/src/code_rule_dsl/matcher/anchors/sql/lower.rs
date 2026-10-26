@@ -446,7 +446,9 @@ impl Lower {
         });
         let selected = match direction {
             Direction::Has => self.relation(format!("SELECT DISTINCT w.fid,w.pre FROM {name} w WHERE w.pre>=0{field}"), inner.exact)?,
-            Direction::Inside => self.relation(format!("SELECT DISTINCT w.fid,w.origin FROM {name} w JOIN {} m ON m.fid=w.fid AND m.pre=w.pre WHERE w.pre>=0{field}", inner.name), inner.exact && scope.exact)?,
+            // Membership, not a join: neither side is indexed, and SQLite planned the join as
+            // a scan of one per row of the other. An IN list always gets an ephemeral index.
+            Direction::Inside => self.relation(format!("SELECT DISTINCT w.fid,w.origin FROM {name} w WHERE w.pre>=0{field} AND (w.fid,w.pre) IN (SELECT fid,pre FROM {})", inner.name), inner.exact && scope.exact)?,
             _ => unreachable!(),
         };
         self.combine(
