@@ -175,6 +175,9 @@ it.skipIf(!required)("preserves failed SQL inputs before workspace cleanup witho
   expect(manifests).toHaveLength(1);expect(files.filter(f=>/^profile-/.test(f))).toEqual([]);
   const snapshot=JSON.parse(readFileSync(join(directory,manifests[0]!), 'utf8'));
   expect(snapshot.context).toMatchObject({rule:'failed-sql',clause:'rows',stage:'bad'});
+  expect(snapshot.context.budget.sqlRemaining).toBeTypeOf('number');
+  expect(snapshot.context.budget.clause).toMatchObject({kind:'work',limit:50_000,observed:false});
+  expect(snapshot.context.budget.clause.spent).toBeTypeOf('number');
   expect(snapshot.tempError).toBeNull();expect(snapshot.temp).toBeTypeOf('string');
   const read=spawnSync('python3',['-c',`import sqlite3,sys,json
 c=sqlite3.connect(sys.argv[1]);tables=c.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%events'").fetchall();assert len(tables)==1,tables
