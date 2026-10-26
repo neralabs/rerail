@@ -4549,3 +4549,22 @@ Its closed test checks Unicode, NULL, typed bag comparison, temporary-owner rest
 The final addon hash is `dc6974796680385a06ecaca90e980ac339a9f36bdbb9c83a6c53fe332e54dc8e`.
 Its production-shape run also passes all 50 tests, including failure capture without statement tracing.
 Full recovery acceptance remains open until clean full-repository correctness and performance measurements are reviewed.
+
+The final source passes static/type/boundary/path checks and native Clippy with warnings denied.
+The SQL laboratory passes 63 tests and Clippy with warnings denied under its pinned dependency lock.
+Its source-batch and diagnostic hash dependencies now match production.
+The transport artifact passes all 198 original batch 6 shards, including 1,234 original observations and 376 guards.
+All first-five-batch originals and supplemental controls also pass with the projection artifact.
+The final addon passes all 50 production-shape tests, with no skipped shape checks.
+The fixed execution-accounting suite passes all 29 tests.
+
+### Frozen full-repository candidate run
+
+The next measurement uses frozen addon `dc6974796680385a06ecaca90e980ac339a9f36bdbb9c83a6c53fe332e54dc8e`.
+Both 9,021-file workloads retain their original recordings and expected findings.
+Logical compilation, cold execution, wall time, and OS high-water RSS remain separate measurements.
+The controller runs the first 50 rules, then all 60, with four native workers and 32-file ingestion requests.
+CPU tracing, SQL statement tracing, page census, memory census, external sampling, and replay copying are disabled.
+Failure-only SQL snapshots are enabled. They run only after an error; a failed measurement cannot pass acceptance.
+The evidence directory is `.rerail/profiles/recovery-completion-20261025/full-candidate/`.
+No own development workload will overlap these timing runs. Other worktrees remain outside this agent's control.
