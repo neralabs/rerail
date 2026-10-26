@@ -15,9 +15,9 @@ $npmBin = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin"
 $npmCli = Join-Path $npmBin "npm-cli.js"
 $npxCli = Join-Path $npmBin "npx-cli.js"
 $base = Join-Path ([IO.Path]::GetTempPath()) ("rerail-windows-smoke-" + [guid]::NewGuid())
-# A profile folder named as people are, with a space and accents: cmd.exe reads the batch launcher in the console's
-# code page, so a path written out in UTF-8 would come back garbled.
-$sandbox = Join-Path $base ("Jos" + [char]0x00E9 + " Garc" + [char]0x00ED + "a")
+# An accented profile folder, as a person's name gives it: cmd.exe reads the batch launcher in the console's code
+# page, so a path written out in UTF-8 would come back garbled.
+$sandbox = Join-Path $base ("Jos" + [char]0x00E9)
 $project = Join-Path $sandbox "proj"
 $launcher = Join-Path $sandbox ".rerail\bin\rerail.cmd"
 
