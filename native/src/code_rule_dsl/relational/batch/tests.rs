@@ -111,21 +111,14 @@ fn an_oversized_relation_does_not_reject_fitting_peers() {
     }
 }
 #[test]
-fn capacity_partitions_share_the_original_stage_allowance() {
+fn capacity_partitions_do_not_spend_an_independent_consumers_stage_allowance() {
     let rule = rule();
-    let (results, stats) = run(jobs(&rule, files(40)), producer::MAX_RESIDENT_BYTES, 1);
-    assert_eq!(stats.partitions, 40);
-    assert!(
-        results[..33]
-            .iter()
-            .all(|r| r.failures.is_empty() && r.violations.len() == 1)
-    );
-    assert!(results[33..].iter().all(|r| {
-        r.violations.is_empty()
-            && r.failures
-                .iter()
-                .any(|f| f["message"] == "producer stage limit")
-    }));
+    let (results, stats) = run(jobs(&rule, files(120)), producer::MAX_RESIDENT_BYTES, 1);
+    assert_eq!(stats.partitions, 120);
+    for (i, result) in results.iter().enumerate() {
+        assert!(result.failures.is_empty(), "independent consumer {i}: {:?}", result.failures);
+        assert_eq!(result.violations.len(), 1);
+    }
 }
 
 #[test]
