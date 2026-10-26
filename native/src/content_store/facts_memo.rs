@@ -96,6 +96,25 @@ impl FactsMemo {
     pub fn is_empty(&self) -> bool {
         self.results.is_empty() && self.completed.is_empty()
     }
+
+    /// The digest of what `set`'s clauses produced, in clause order, when the memo knows every
+    /// one (None: a miss). It names the output, not the content: two contents whose clauses
+    /// report the same things share it, so a re-run that reproduces it cuts off (C5, C14).
+    pub fn run_digest(&self, set: &FactsPlanSet) -> Option<[u8; 32]> {
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.facts-run/v1\0");
+        for plan in set.plans.iter() {
+            let (tag, path_dependent, bytes) = match (self.results.get(plan), self.completed.get(plan)) {
+                (Some(result), _) => (1_u8, result.path_dependent, &result.entry),
+                (None, Some((path_dependent, counts))) => (2, *path_dependent, counts),
+                (None, None) => return None,
+            };
+            hash.update([tag, u8::from(path_dependent)]);
+            hash.update((bytes.len() as u64).to_le_bytes());
+            hash.update(bytes);
+        }
+        Some(hash.finalize().into())
+    }
 }
 
 impl HashKey {
@@ -193,14 +212,15 @@ impl ContentStore {
 
     /// Stores one file evaluation's clause runs under `set` (registered first): `results` as rows,
     /// `completions` as bits of the set's completion words (added to the stored words, with their
-    /// counts) at the content-pure path or at `key.path`.
+    /// counts) at the content-pure path or at `key.path`. Returns the run's digest
+    /// (`FactsMemo::run_digest`) when it covered every clause of `set`.
     pub fn put_facts_memo(
         &self,
         key: FactsMemoKey<'_>,
         set: &FactsPlanSet,
         results: &[FactsResult],
         completions: &[FactsCompletion],
-    ) -> StoreResult<()> {
+    ) -> StoreResult<Option<[u8; 32]>> {
         super::rows::validate_relative_path(key.path)?;
         let mut frames = Vec::with_capacity(results.len());
         for result in results {
@@ -221,6 +241,14 @@ impl ContentStore {
             words[word] |= 1 << bit;
             counts.insert(completion.ordinal, completion.counts.clone());
         }
+        let run = FactsMemo {
+            results: results.iter().map(|result| (result.plan, result.clone())).collect(),
+            completed: completions
+                .iter()
+                .map(|c| (set.plans[c.ordinal as usize], (c.path_dependent, c.counts.clone())))
+                .collect(),
+        }
+        .run_digest(set);
         let schema = i64::from(key.fact_schema);
         let level = self.compression_level;
         self.immediate_transaction(|transaction| {
@@ -255,7 +283,7 @@ impl ContentStore {
                 let path = if dependent == 1 { key.path } else { CONTENT_PURE };
                 merge_completion(transaction, key.source, schema, path, set, words, counts, level)?;
             }
-            Ok(())
+            Ok(run)
         })
     }
 

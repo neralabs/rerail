@@ -2,6 +2,8 @@
 
 // The push path is wired into the workspace scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
+pub(crate) mod memo;
+#[allow(dead_code)]
 pub(crate) mod observe;
 #[allow(dead_code)]
 pub(crate) mod propagate;

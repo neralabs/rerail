@@ -215,3 +215,27 @@ fn unknown_additive_tables_leave_the_store_readable() {
     }
     assert_eq!(count(&store, "future_facts"), 0, "the cascade follows collection");
 }
+
+#[test]
+fn a_run_digest_names_the_output_not_the_content() {
+    let (_path, store) = store("run-digest");
+    let set = FactsPlanSet::new(vec![plan(1), plan(2)]);
+    let results = [result(1, false, b"finding")];
+    let completions = [completion(1, true, b"c2")];
+    let mut digests = Vec::new();
+    for bytes in [&b"a = 1\n"[..], b"a = 1  \n"] {
+        let source = store.put_facts_source(bytes, content(bytes), &[]).unwrap();
+        let key = FactsMemoKey { source, fact_schema: 1, path: "a.py" };
+        let put = store.put_facts_memo(key, &set, &results, &completions).unwrap();
+        assert_eq!(put, store.facts_memo(key).unwrap().run_digest(&set));
+        digests.push(put.unwrap());
+    }
+    assert_eq!(digests[0], digests[1]);
+    // A run that leaves a clause unknown has no digest; a different report has another.
+    let bytes = b"a = 2\n";
+    let source = store.put_facts_source(bytes, content(bytes), &[]).unwrap();
+    let key = FactsMemoKey { source, fact_schema: 1, path: "a.py" };
+    assert_eq!(store.put_facts_memo(key, &set, &results, &[]).unwrap(), None);
+    let other = store.put_facts_memo(key, &set, &[result(1, false, b"other")], &completions).unwrap();
+    assert_ne!(other, Some(digests[0]));
+}
