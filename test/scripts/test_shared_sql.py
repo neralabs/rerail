@@ -23,6 +23,36 @@ def resolve(value, entry, oracle=False):
 
 
 class SharedSqlTests(unittest.TestCase):
+    def test_projection_scope_candidates_are_read_once_per_file(self):
+        policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json').read_text())
+        plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'state-projection-recovery-2')
+        query = plan['query']['cases']['all']['cases']['true']
+        query = query[:query.index(' AND EXISTS(SELECT 1 FROM descendants d JOIN nodes atom')]
+        scope = next((s for s in plan['stages'] if s['name'] == 'projection_scopes'), None)
+        if scope:
+            query = 'WITH projection_scopes AS MATERIALIZED (' + scope['query'] + ') ' + query
+        db = sqlite3.connect(':memory:')
+        self.addCleanup(db.close)
+        db.create_function('rx_matches', 2, lambda value, pattern: __import__('re').search(pattern, value or '') is not None)
+        db.execute('CREATE TABLE payload(data)')
+        nodes = [dict(__path='query_builder.py',id=i,__start=i,__end=i+1,kind='identifier',name_source='') for i in range(2000)]
+        nodes += [dict(__path='query_builder.py',id=3000+i,__start=3000+i,__end=3001+i,kind='if_statement',name_source='') for i in range(200)]
+        nodes += [dict(__path='query_builder.py',id=4000,__start=2999,__end=3100,kind='function_definition',name_source='project_rows'),
+                  dict(__path='query_builder.py',id=4001,__start=3150,__end=3180,kind='class_definition',name_source='alias_rows'),
+                  dict(__path='query_builder.py',id=4002,__start=3180,__end=3200,kind='function_definition',name_source='unrelated')]
+        db.execute('INSERT INTO payload VALUES(?)', (json.dumps(nodes),))
+        reads = 0
+        def kind(value):
+            nonlocal reads
+            reads += 1
+            return value
+        db.create_function('node_kind', 1, kind)
+        cols=['__path','id','__start','__end','name_source']
+        db.execute('CREATE VIEW nodes AS SELECT '+','.join("json_extract(j.value,'$."+c+"') AS "+c for c in cols)+",node_kind(json_extract(j.value,'$.kind')) AS kind FROM payload,json_each(payload.data) j")
+        found = {row[1] for row in db.execute(query)}
+        self.assertEqual(found, set(range(3000,3100)) | set(range(3151,3180)))
+        self.assertLess(reads, 10000, 'ancestor kind and name demand must not rescan every source node for each conditional')
+
     def test_module_string_binding_scans_identifier_text_once(self):
         policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json').read_text())
         plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'state-projection-recovery-2')
