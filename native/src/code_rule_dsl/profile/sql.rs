@@ -5,6 +5,7 @@
 mod coverage;
 #[path = "sql/timing.rs"]
 mod timing;
+mod snapshot;
 use rusqlite::{Connection, ffi};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
