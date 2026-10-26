@@ -17,6 +17,7 @@ mod rows;
 mod schema;
 mod search_index;
 mod snapshots;
+mod tree_diff;
 #[cfg(test)]
 mod tests;
 mod workspaces;
@@ -27,6 +28,7 @@ pub(crate) use connection::OperationDeadline;
 pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord};
 pub use facts_memo::{FactsCompletion, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
+pub use tree_diff::{TreeChange, TreeDiff};
 
 #[cfg(test)]
 pub(crate) use connection::{
