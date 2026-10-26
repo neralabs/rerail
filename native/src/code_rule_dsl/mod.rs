@@ -4,6 +4,7 @@ mod calls;
 mod compile;
 mod embed;
 mod eval;
+mod facts;
 mod identifier;
 mod json;
 mod language;
