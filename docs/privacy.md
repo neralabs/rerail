@@ -59,9 +59,6 @@ Rerail stores what it needs to evaluate rules and show you their history. None o
 `~/.rerail/`, the database, the daemon's state and log files and the session ledgers are created readable by your
 user only (directories `0700`, files `0600`).
 
-**Add `.rerail/` to your repository's `.gitignore`.** Rerail does not do it for you, and the session ledgers hold your
-prompts and file contents.
-
 ## The local dashboard and API
 
 The daemon serves the dashboard, its API and an MCP endpoint for your coding agents on `127.0.0.1:4737` by default
