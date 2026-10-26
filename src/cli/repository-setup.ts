@@ -41,7 +41,9 @@ import {
   confirmPacksAnswers,
   NO_PACKS,
   NO_REPO_ANSWERS,
+  PACKS_NOT_DOWNLOADED_ANSWERS,
   PICK_PACKS_ANSWERS,
+  packsNotDownloadedQuestion,
   pickPacksQuestion,
   noRepoQuestion,
   READ_REPO_ANSWERS,
@@ -750,11 +752,29 @@ async function confirm(run: Run, repository: Repository, answer: string | undefi
   }
   // An answer without `--packs` answers a question that offered no rule pack.
   if (errors.length === 0 && answer === "start") return start(run, repository, recommended([]));
-  const offering = discoveryOffering(await discoverPacks(repository.root, run.request.environment.packs));
-  const question = recommendedPacksQuestion(packsInput(run, repository, offering), run.io.lane);
   // A bad answer's coding agents or rule packs: the same question again, as the terminal asks again after one.
   for (const error of errors) say(run.io, error);
-  return confirmLoop(run, repository, offering, question);
+  const discovery = await discoverPacks(repository.root, run.request.environment.packs);
+  if (discovery.downloadFailures !== undefined && discovery.available.length === 0) return packsNotDownloaded(run, repository, discovery.downloadFailures);
+  const offering = discoveryOffering(discovery);
+  return confirmLoop(run, repository, offering, recommendedPacksQuestion(packsInput(run, repository, offering), run.io.lane));
+}
+
+/**
+ * Step 4 when npm gave no rule pack and none is installed to stand in: set-up cannot tell which fit, so it says why and
+ * asks to try again. "None fit" would be wrong, and starting with none is not what the person asked for.
+ */
+async function packsNotDownloaded(run: Run, repository: Repository, reasons: readonly string[]): Promise<SetupOutcome> {
+  const question = packsNotDownloadedQuestion({
+    repoName: repository.name,
+    repoPath: repository.root,
+    reasons,
+    ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
+  }, run.io.lane);
+  const picked = await choose(run, question, PACKS_NOT_DOWNLOADED_ANSWERS);
+  if (picked === undefined) return halted(run.io);
+  if (picked === "not-now") return notNow(run);
+  return confirm(run, repository, picked);
 }
 
 /**

@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 
 export interface CommandResult {
@@ -114,6 +116,20 @@ export type NpmRunner = (args: readonly string[], options?: NpmOptions) => Promi
 
 const NPM_UNAUTHORIZED = /\bE401\b|\b401 Unauthorized\b/u;
 
+/** npm's own error code when it could not reach a registry at all; a failed install script reports its exit code instead. */
+const NPM_UNREACHABLE = /\bnpm error code (ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ERR_SOCKET_TIMEOUT)$/mu;
+/** A registry that accepts the connection and never answers: npm's code is then only `FETCH_ERROR`. */
+const NPM_TIMEOUT = /\bnpm error network timeout at: /u;
+/** The URL npm's fetch error names: `request to <url> failed, reason: …` or `network timeout at: <url>`. */
+const NPM_FETCH_URL = /(?:request to|network timeout at:) (https?:\/\/[^\s,]+)/u;
+
+/**
+ * npm waits 10 s, then 60 s, before its two retries of a request, and against a registry that is down it does that for
+ * every package an install needs, one after another: many minutes without a word. One quick retry still rides out a
+ * dropped connection.
+ */
+const FETCH_RETRY_OPTIONS = ["--fetch-retries=1", "--fetch-retry-mintimeout=2000", "--fetch-retry-maxtimeout=10000"];
+
 /** npm's 401 detail is a wall of text; the fix is always the same, so lead with it and keep the one line that proves it. */
 function unauthorizedError(error: unknown): Error | undefined {
   if (!(error instanceof Error)) return undefined;
@@ -122,19 +138,52 @@ function unauthorizedError(error: unknown): Error | undefined {
   return new Error(`npm registry credentials are missing or expired. Run \`npm login\` to refresh them. (${line.trim()})`, { cause: error });
 }
 
+/** Why npm could not reach its registry, in one line with what to check; undefined when npm failed for another reason. */
+export function unreachableRegistryReason(message: string): string | undefined {
+  const code = NPM_UNREACHABLE.exec(message)?.[1] ?? (NPM_TIMEOUT.test(message) ? "timed out" : undefined);
+  if (code === undefined) return undefined;
+  const url = NPM_FETCH_URL.exec(message)?.[1];
+  const registry = url === undefined ? undefined : URL.parse(url)?.origin;
+  return `could not reach the npm registry (${registry === undefined ? code : `${registry}, ${code}`}): check your network, proxy, or registry in ~/.npmrc`;
+}
+
+function unreachableError(error: unknown): Error | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const reason = unreachableRegistryReason(error.message);
+  return reason === undefined ? undefined : new Error(reason, { cause: error });
+}
+
 async function spawnNpm(args: readonly string[], options: NpmOptions): Promise<CommandResult> {
   const { node: requested, ...command } = options;
   const node = requested === undefined ? undefined : resolveExecutable(requested, command.env);
+  // Options first: a caller's `--` ends them.
+  const npmArgs = [...FETCH_RETRY_OPTIONS, ...args];
   if (process.platform === "win32") {
-    return await runCommand(node ?? process.execPath, [windowsNpmCliPath(node ?? process.execPath), ...args], command);
+    return await runCommand(node ?? process.execPath, [windowsNpmCliPath(node ?? process.execPath), ...npmArgs], command);
   }
-  return await runCommand("npm", args, node === undefined ? command : { ...command, env: environmentForNode(node, command.env) });
+  return await runCommand("npm", npmArgs, node === undefined ? command : { ...command, env: environmentForNode(node, command.env) });
 }
 
 export const runNpm: NpmRunner = async (args, options = {}) => {
   try {
     return await spawnNpm(args, options);
   } catch (error) {
-    throw unauthorizedError(error) ?? error;
+    throw unauthorizedError(error) ?? unreachableError(error) ?? error;
   }
 };
+
+/**
+ * Fails, as `runNpm` words it, when npm cannot fetch `spec`'s metadata from its registry now. Against a registry that
+ * is down npm answers from its cache, however stale, once its retries are spent, so an install waits them out for every
+ * package in turn; one request with an empty cache finds out in seconds. npm set to work offline is left to it.
+ */
+export async function checkRegistry(spec: string): Promise<void> {
+  const cache = await mkdtemp(join(tmpdir(), "rerail-npm-"));
+  try {
+    await runNpm(["view", spec, "version", "--cache", cache, "--fetch-timeout=30000"]);
+  } catch (error) {
+    if (!(error instanceof Error) || !/\bENOTCACHED\b/u.test(error.message)) throw error;
+  } finally {
+    await rm(cache, { recursive: true, force: true });
+  }
+}

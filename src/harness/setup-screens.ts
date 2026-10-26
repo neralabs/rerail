@@ -570,6 +570,44 @@ export function renderRecommendedPacks(input: RecommendedPacksInput, lane: Setup
   return renderQuestion(recommendedPacksQuestion(input, lane), lane);
 }
 
+export interface PacksNotDownloadedInput {
+  readonly repoName: string;
+  readonly repoPath: string;
+  /** Why npm gave no rule pack, each distinct reason once. */
+  readonly reasons: readonly string[];
+  readonly setupCommand?: string;
+}
+
+/** The not-downloaded question's answers, in its order: "yes" scans again, as at the read-repo question. */
+export const PACKS_NOT_DOWNLOADED_ANSWERS = ["yes", "not-now"] as const;
+
+/**
+ * T4 when npm gave no rule pack at all: set-up cannot tell which fit, so it says why and offers to try again, rather
+ * than report that none fit and offer to start with none.
+ */
+export function packsNotDownloadedQuestion(input: PacksNotDownloadedInput, lane: SetupLane): QuestionForm {
+  const style = styleFor(lane);
+  const repo = clean(input.repoName);
+  const headline = `Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit ${repo}.`;
+  const shown = input.reasons.length > MAX_UNAVAILABLE_LINES ? input.reasons.slice(0, MAX_UNAVAILABLE_LINES - 1) : input.reasons;
+  const more = input.reasons.length - shown.length;
+  return {
+    id: "confirm-packs",
+    lead: [
+      lane === "terminal" ? bullet(headline, style) : headline,
+      ...shown.map(reason => `  ${style.dim(clean(reason))}`),
+      ...(more === 0 ? [] : [`  …and ${more} more.`]),
+    ],
+    prompt: "Try downloading them again?",
+    trail: [],
+    choices: [
+      { answer: "yes", label: "Yes, try again", args: [SETUP_FLAGS.answer, "yes", SETUP_FLAGS.repo, clean(input.repoPath)] },
+      { answer: "not-now", label: "Not now", hint: "nothing is turned on", args: [SETUP_FLAGS.answer, "not-now"] },
+    ],
+    ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
+  };
+}
+
 // ── T5 · Not now ───────────────────────────────────────────────────────────
 
 /** After "Not now": no rule pack installed, nothing connected or turned on. Set-up may have installed Rerail itself. */

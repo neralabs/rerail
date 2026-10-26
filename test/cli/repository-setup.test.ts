@@ -1039,14 +1039,19 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(asked.text()).not.toContain("--packs typescript@");
   });
 
-  it("offers no Choose rule packs… when npm gives no pack, so the person is never asked for one they cannot name", async () => {
+  it("says npm gave no pack and offers to try again, never that none fit or to start with none", async () => {
     const setup = await fixture();
-    // Yes, read it; `choose` is no answer here and is asked again; then 2 is "Not now", not Change.
-    const io = terminalIo(["1", "choose", "2"]);
-    const environment = fakeSetupEnvironment({ packs: countingStore([], ["typescript"]) });
+    // Yes, read it; 1 tries again, which fetches again; then 2 is "Not now".
+    const io = terminalIo(["1", "1", "2"]);
+    const packs = countingStore([], ["typescript"]);
+    const environment = fakeSetupEnvironment({ packs });
     expect(await runSetup(io, request(setup, environment))).toEqual({ status: "not-now" });
-    expect(io.text()).toContain("Start Rerail in acme-api with no rule packs on?");
-    expect(io.text()).not.toContain("Change rule packs…");
+    expect(packs.fetches).toHaveLength(2);
+    expect(io.text()).toContain("Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit acme-api.");
+    expect(io.text()).toContain("npm error code E401");
+    expect(io.text()).toContain("Try downloading them again?");
+    expect(io.text()).not.toContain("None of Rerail’s rule packs fit");
+    expect(io.text()).not.toContain("with no rule packs on?");
     expect(environment.connections).toEqual([]);
   });
 
