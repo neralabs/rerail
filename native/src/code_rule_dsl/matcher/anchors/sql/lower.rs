@@ -330,8 +330,9 @@ impl Lower {
             Condition::Text { regex, .. } => self.text(&scope, regex.as_str(), false),
             Condition::Pattern(required) => self.pattern(required, scope),
             Condition::All(plans) => {
+                // A conjunction commutes. Postings first, so no member reads a wider scope.
                 let mut selected = scope;
-                for plan in plans {
+                for plan in plans.iter().filter(|p| anchored(p)).chain(plans.iter().filter(|p| !anchored(p))) {
                     selected = self.plan(plan, selected)?;
                 }
                 Ok(selected)
@@ -399,6 +400,23 @@ impl Lower {
         }
         if recursive {
             return self.subtree_relation(scope, inner, direction, field);
+        }
+        if matches!(direction, Direction::Inside) && scope.name == "all_nodes" && anchored(inner) {
+            // Over every node, the parents of every node cost a decode each; the children of the
+            // inner postings are read from the tape.
+            let inner = self.plan(inner, scope)?;
+            let children = self.relation(
+                format!("SELECT DISTINCT s.fid,t.pre FROM {} s CROSS JOIN nera_tree(s.fid,s.pre,{}) t", inner.name, super::tree::CHILDREN),
+                inner.exact,
+            )?;
+            let Some(field) = field else {
+                return Ok(children);
+            };
+            let properties = self.decoded(&children, Property::Node);
+            return self.relation(
+                format!("SELECT s.fid,s.pre FROM {properties} s WHERE s.field={field} AND (s.flags&16)<>0"),
+                inner.exact,
+            );
         }
         // Evaluate inner predicates in their structural context, before reading node text.
         let inner_scope = match (direction, recursive, field) {
@@ -472,7 +490,7 @@ impl Lower {
         if matches!(direction, Direction::Has) {
             // The inner candidates of a kind-less plan are the scope's descendants.
             let ranges = self.intervals(&scope, field)?;
-            let inner_scope = if inner.root_kinds.is_none() && scope.name != "all_nodes" {
+            let inner_scope = if !anchored(inner) && scope.name != "all_nodes" {
                 let frontier = self.frontier(&ranges);
                 self.relation(format!("SELECT r.fid,d.value FROM {frontier} r CROSS JOIN generate_series(r.lo,r.hi-1,1) d"), scope.exact)?
             } else {
@@ -499,10 +517,10 @@ impl Lower {
 
     /// A kind-less inner plan would otherwise be evaluated over every node, and relating every
     /// node decodes every node's parent. Its candidates are only the scope's tree neighbours, read
-    /// from the tape per scope node (spike `nera_kids`; design index topic 2). A kinded inner plan
-    /// keeps its postings: the rarest anchor is cheaper than the neighbourhood.
+    /// from the tape per scope node (spike `nera_kids`; design index topic 2). An inner plan anchored
+    /// on postings keeps them: the rarest anchor is cheaper than every scope node's neighbourhood.
     fn neighbours(&mut self, scope: &Set, inner: &AnchorPlan, axis: i64) -> Result<Set, ()> {
-        if inner.root_kinds.is_some() || scope.name == "all_nodes" {
+        if anchored(inner) || scope.name == "all_nodes" {
             return Ok(self.all());
         }
         self.relation(
@@ -654,6 +672,36 @@ fn scope(lang: u32, fids: Option<&[i64]>, path_glob: Option<&str>) -> Lower {
         .push(format!("cf(fid) AS MATERIALIZED ({files})"));
     lower.ctes.push("all_nodes(fid,pre) AS NOT MATERIALIZED (SELECT f.fid,p.value FROM cf JOIN file f ON f.fid=cf.fid CROSS JOIN generate_series(0,f.nodes-1,1) p)".into());
     lower
+}
+
+/// Whether a plan selects from kind postings before it reads its scope: then evaluating it over
+/// every node costs only its postings and their neighbours. A conjunction evaluates its anchored
+/// members first (`plan`).
+fn anchored(plan: &AnchorPlan) -> bool {
+    plan.root_kinds.is_some()
+        || match &plan.condition {
+            Condition::Pattern(required) => !required.is_empty(),
+            Condition::All(plans) => plans.iter().any(anchored),
+            Condition::Any(plans) => plans.iter().all(anchored),
+            Condition::Utility(inner) => anchored(inner),
+            // Evaluated from the inner postings when the scope is every node (`related`).
+            Condition::Relation {
+                inner,
+                direction: Direction::Inside,
+                recursive: false,
+                ..
+            }
+            | Condition::Relation {
+                inner,
+                direction: Direction::Has,
+                recursive: false,
+                field: None,
+            } => anchored(inner),
+            Condition::Always
+            | Condition::Text { .. }
+            | Condition::Not(_)
+            | Condition::Relation { .. } => false,
+        }
 }
 
 fn batch_scope(

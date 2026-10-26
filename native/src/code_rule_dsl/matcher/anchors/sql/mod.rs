@@ -168,4 +168,6 @@ mod preparation_tests;
 #[cfg(all(test, feature = "code-rule-profile"))]
 mod retention_spikes;
 #[cfg(test)]
+mod lab;
+#[cfg(test)]
 mod tests;

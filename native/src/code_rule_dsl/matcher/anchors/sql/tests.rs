@@ -698,6 +698,25 @@ fn kindless_inner_relations_read_only_tree_neighbours() {
             serde_json::json!({"kind":"identifier","inside":{"not":{"regex":"^f"},"stopBy":"end"}}),
             3,
         ),
+        // An inside relation anchored on postings is read from the postings' children.
+        (
+            serde_json::json!({"kind":"identifier","inside":{"inside":{"kind":"arguments"},"stopBy":"end"}}),
+            3,
+        ),
+        (
+            serde_json::json!({"kind":"call_expression","inside":{"inside":{"kind":"call_expression","field":"arguments"},"stopBy":"end"}}),
+            2,
+        ),
+        // A conjunction is anchored by any member: never `all_nodes EXCEPT …` first.
+        (
+            serde_json::json!({"kind":"identifier","inside":{"all":[{"not":{"kind":"call_expression"}},{"inside":{"kind":"call_expression"}}],"stopBy":"end"}}),
+            3,
+        ),
+        // Every branch has a kind: postings, not the neighbourhood of every identifier.
+        (
+            serde_json::json!({"kind":"identifier","inside":{"any":[{"kind":"arguments"},{"kind":"template_string"}],"stopBy":"end"}}),
+            3,
+        ),
     ] {
         let compiled = compiled(serde_json::json!({"rule":rule}));
         let plan = &grammar_matchers(&compiled)[0].anchors;
@@ -713,6 +732,10 @@ fn kindless_inner_relations_read_only_tree_neighbours() {
             statement.stages.iter().all(|s| s.name != "decode_all_nodes"),
             "a kind-less inner plan must not decode every node: {rule}"
         );
+        // Children and ancestors come from the tape walk; descendants from subtree intervals.
+        let walks = |sql: &String| sql.contains("nera_tree") || sql.contains("generate_series(r.lo");
+        let walks = statement.stages.iter().any(|s| walks(&s.sql)) || statement.queries.iter().any(walks);
+        assert_eq!(walks, rule["inside"]["any"].is_null(), "{rule}");
         let mut roots = Vec::new();
         execute::rows(&store, &statement, |_, _, pre| roots.push(pre)).unwrap();
         assert_eq!(roots.len(), expected, "{rule}");
