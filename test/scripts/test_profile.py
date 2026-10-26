@@ -29,6 +29,25 @@ class ProfileTests(unittest.TestCase):
             args.memory_census=True
             self.assertEqual(instrumentation_env(args,Path(directory))['RERAIL_PROFILE_MEMORY_CENSUS'],'1')
 
+    def test_cpu_attribution_subtracts_children_and_keeps_threads_separate(self):
+        from cpu_attribution import summarize
+        def event(start,wall,cpu,thread='one',rule='',clause='',phase='stage'):
+            return dict(startUnixUs=start,wallNs=wall*1000,cpuNs=cpu,thread=thread,
+                        rule=rule,clause=clause,phase=phase,name=phase,runPhase='cold')
+        events=[event(0,100,100,rule='r',clause='c',phase='parent'),
+                event(10,60,60,phase='child'),event(20,20,20,phase='grandchild'),
+                event(0,100,20,thread='two',phase='other')]
+        result=summarize(events)
+        self.assertEqual(result['observedCpuNs'],120)
+        self.assertEqual(result['unattributedCpuNs'],20)
+        self.assertEqual(sum(r['selfCpuNs'] for r in result['rows']),120)
+        self.assertEqual({r['name']:r['selfCpuNs'] for r in result['rows']},
+                         {'parent':40,'child':40,'grandchild':20,'other':20})
+        self.assertTrue(all(r['clause']=='c' for r in result['rows'] if r['name']!='other'))
+        missing=summarize([event(0,10,None)])
+        self.assertEqual(missing['missingCpuEvents'],1)
+        self.assertEqual(missing['observedCpuNs'],0)
+
     def test_lowering_breakdown_keeps_parent_and_children_separate(self):
         import report as profiling_report
         events = [{"rule":"", "clause":"", "path":None, "name":"planning", "thread":"main",
