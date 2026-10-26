@@ -64,7 +64,7 @@ export const SOURCE_LICENCES: Readonly<Record<string, SourceLicence>> = {
   "bookstackapp/bookstack": { spdx: "MIT", files: ["LICENSE"] },
   "bagisto/bagisto": { spdx: "MIT", files: ["LICENSE"] },
   // The repository is partly public domain and partly BSD-2-Clause (LICENSE.rst); the file taken from it,
-  // lib/Crypto/IO/PEM.py, says `SPDX-License-Identifier: BSD-2-Clause` itself.
+  // lib/Crypto/IO/PEM.py, names BSD-2-Clause in its own SPDX licence header.
   "legrandin/pycryptodome": { spdx: "BSD-2-Clause", files: ["LICENSE.rst"] },
 };
 
