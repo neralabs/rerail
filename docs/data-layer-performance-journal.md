@@ -4500,3 +4500,18 @@ The selected correction uses bounded sparse-to-bitmap accumulators for unordered
 Each accumulator stays bounded by its file's retained candidate representation, without repository-sized ordinal vectors.
 The matcher must still receive canonical, sorted, unique ordinals. No algorithm-selection switch is added.
 The contradictory-kind regression fails after constructing eleven unnecessary relations.
+
+External vmmap evidence during conditional ingestion records 4.1 GiB of allocated native malloc storage.
+It reports about 4.5 million allocations, 2.3 GiB resident malloc pages, and 1.9 GiB swapped/compressed malloc pages.
+The JavaScript result array is not established as this memory's owner. Precise native ownership remains to be measured.
+The 32-file capture's 400 sorts arise from candidate transport, not authored rule ordering.
+Both transport regressions fail: sparse roots retain unordered duplicates, and SQL requires global packet ordering.
+The empty-branch correction passes its regression without changing matcher confirmation or candidate semantics.
+
+The SQL ladder catches a duplicate-row regression in the first empty-set shortcut.
+The correction preserves DISTINCT boundaries for UNION and EXCEPT, including empty arms.
+The SQL suite then passes 117 tests with one explicitly ignored replay laboratory test.
+The mixed-coverage test compares complete typed row bags, since transport no longer promises SQL ordering.
+The actual matcher-facing candidate representation remains sorted and unique.
+A bounded accumulator test covers sparse promotion, duplicate rows, word boundaries, and complete-file selection.
+The transport regression now measures SQLite sort counters over 6,000 candidate rows, rather than checking SQL text alone.

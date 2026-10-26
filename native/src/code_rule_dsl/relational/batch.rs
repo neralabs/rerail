@@ -297,6 +297,16 @@ fn execute(
         pending.push_back((local, ready.demand));
     }
     while !pending.is_empty() {
+        // Reject depth exhaustion before it can consume the wave's resident capacity.
+        pending.retain(|(local, _)| match stages[*local].reserve() {
+            Ok(()) => true,
+            Err(e) => {
+                let (index, clause) = identities[*local];
+                error(&mut results[index], clause, "relational-failed", &e.reason);
+                sessions[*local] = None;
+                false
+            }
+        });
         let mut next = VecDeque::new();
         while !pending.is_empty() {
             let mut footprint = producer::layout::Footprint::default();
@@ -305,14 +315,7 @@ fn execute(
                 if !footprint.admit(demand, input_limit) {
                     break;
                 }
-                let (local, demand) = pending.pop_front().unwrap();
-                if let Err(e) = stages[local].reserve() {
-                    let (index, clause) = identities[local];
-                    error(&mut results[index], clause, "relational-failed", &e.reason);
-                    sessions[local] = None;
-                    continue;
-                }
-                group.push((local, demand));
+                group.push(pending.pop_front().unwrap());
             }
             if group.is_empty() {
                 let Some((local, _)) = pending.pop_front() else {

@@ -532,6 +532,8 @@ fn kind_requests_preserve_mixed_coverage_error_and_missing_nodes() {
             actual.push((qid, fid, pre));
         })
         .unwrap();
+        // Candidate transport is unordered; compare the complete typed row bag.
+        actual.sort_unstable();
         actual
     };
     assert_eq!(select(), expected);

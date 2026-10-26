@@ -298,10 +298,9 @@ impl Lower {
         if (operator == "UNION" && (left_empty || right_empty))
             || (operator == "EXCEPT" && right_empty)
         {
-            return Ok(Set {
-                name: if left_empty { &right.name } else { &left.name }.clone(),
-                exact,
-            });
+            // UNION and EXCEPT remain set boundaries even when one arm is empty.
+            let source = if left_empty { &right.name } else { &left.name };
+            return self.relation(format!("SELECT DISTINCT fid,pre FROM {source}"), exact);
         }
         if operator == "INTERSECT" {
             if left.name == "all_nodes" {
@@ -1008,7 +1007,7 @@ fn batch_scope(
     }
     let queries = arms
         .chunks(128)
-        .map(|arms| arms.join(" UNION ALL ") + " ORDER BY qid,fid,pre")
+        .map(|arms| arms.join(" UNION ALL "))
         .collect();
     let indexed = indexed_nodes
         .into_iter()

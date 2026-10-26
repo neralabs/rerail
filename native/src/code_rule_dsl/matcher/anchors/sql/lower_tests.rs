@@ -916,10 +916,24 @@ fn candidate_transport_does_not_sort_each_sql_union_arm() {
         None,
     );
     assert!(
-        statement
-            .queries
-            .iter()
-            .all(|q| !q.ends_with("ORDER BY qid,fid,pre")),
-        "candidate transport forces a sorting contract on every result arm"
+        statement.stages.is_empty(),
+        "single-reader kind streams need no prepared relations"
     );
+    super::super::execute::request(&store, &[fid]).unwrap();
+    let mut rows = 0;
+    let mut sorts = 0;
+    for sql in &statement.queries {
+        let mut q = store.db.prepare(sql).unwrap();
+        let n = q.parameter_count();
+        let mut cursor = q
+            .query(rusqlite::params_from_iter(&statement.parameters[..n]))
+            .unwrap();
+        while cursor.next().unwrap().is_some() {
+            rows += 1;
+        }
+        drop(cursor);
+        sorts += q.get_status(rusqlite::StatementStatus::Sort);
+    }
+    assert_eq!(rows, 6000);
+    assert_eq!(sorts, 0, "candidate transport sorts its result arms");
 }

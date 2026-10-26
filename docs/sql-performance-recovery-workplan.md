@@ -4,9 +4,9 @@
 
 Status: A1 and further A2/A3 implementation are committed; aggregate performance acceptance remains open.
 
-The complete 50-rule measurement has matching findings and two remaining engine failures.
+The frozen 50-rule measurement has matching findings and two engine failures. Both failure causes now have passing corrections.
 It takes 899.070 cold CPU seconds. This predates bounded template ownership and reusable plan fragments.
-The corresponding 60-rule run is in progress. The [journal](data-layer-performance-journal.md) records artifacts and limits.
+The corresponding 60-rule diagnostic completes with 1,694 failures and 2,701.305 cold CPU seconds. The [journal](data-layer-performance-journal.md) records artifacts and limits.
 The first matched controls regress CPU by 16–18%. The journal records that result.
 Parent membership, scoped kind refinement, fused alternatives, and guarded projection streaming now pass their regression tests.
 The guarded-stream 128-file controls reduce CPU by 19.4% for 50 rules and 7.1% for 60 rules versus the failed before version.

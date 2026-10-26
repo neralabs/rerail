@@ -1,7 +1,10 @@
 //! Workspace-owned positional index. A file is published once per source and grammar;
 //! one batched preparation phase publishes compact candidate sets before any matching.
 use super::super::AnchorPlan;
-use super::{candidates::Roots, store::Store};
+use super::{
+    candidates::{Builder, Roots},
+    store::Store,
+};
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::Doc;
 use parking_lot::Mutex;
@@ -474,15 +477,13 @@ impl Corpus {
                 .collect();
             let statement = Self::template(state, lang, ids, plans, statistics);
             let stages = statement.preparations(covered);
-            let mut packed = HashMap::new();
-            let mut current = None;
-            let mut positions = Vec::new();
+            let mut packed = HashMap::<(usize, i64), Builder>::new();
             #[cfg(feature = "code-rule-profile")]
             let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
                 crate::code_rule_dsl::profile::Phase::Selection,
             );
-            // Rows are ordered by query and file. Buffer only one file's ordinals, then
-            // compact them; never retain a corpus-sized vector of uncompressed results.
+            // SQL emits unordered typed rows. Each file/consumer accumulator promotes
+            // to its bounded bitmap rather than retaining an uncompressed corpus vector.
             state.batch_queries += 1;
             state.data_statements +=
                 stages + 1 + statement.queries.len() + fids.len().div_ceil(128);
@@ -509,27 +510,19 @@ impl Corpus {
                 &fids,
                 covered,
                 |qid, fid, pre| {
-                    let key = (qid, fid);
-                    if current != Some(key)
-                        && let Some(previous) = current.replace(key)
-                    {
-                        packed.insert(
-                            previous,
-                            Roots::pack(std::mem::take(&mut positions), nodes[&previous.1]),
-                        );
-                    }
-                    positions.push(pre as u32);
+                    packed
+                        .entry((qid, fid))
+                        .or_insert_with(|| Builder::new(nodes[&fid]))
+                        .push(pre as u32);
                 },
             )?;
             check_budget()?;
-            if let Some(key) = current {
-                packed.insert(key, Roots::pack(positions, nodes[&key.1]));
-            }
             for (path, file) in files {
                 let current = Arc::make_mut(state.files.get_mut(path).expect("batch file"));
                 for (qid, &id) in ids.iter().enumerate() {
                     let roots = packed
                         .remove(&(qid, file.fid))
+                        .map(Builder::finish)
                         .unwrap_or_else(|| Roots::pack(Vec::new(), file.nodes));
                     current.bytes += roots.bytes();
                     if let Some(old) = current.roots.insert(id, roots) {
