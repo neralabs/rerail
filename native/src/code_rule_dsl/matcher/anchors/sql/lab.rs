@@ -4,6 +4,8 @@
 //!
 //! RERAIL_LAB_POLICY=<policy.json>[:<policy.json>...] RERAIL_LAB_CAPTURES=<dir> [RERAIL_LAB_LIMIT=n]
 //!   [RERAIL_LAB_PER_PLAN=1] (each plan lowered and run alone, after the batch)
+//!   [RERAIL_LAB_BATCH=1] (production batches: each capture's requested files, captures spread
+//!     over the run, and a warm vocabulary, which a corpus store fills once per term)
 //!   [RERAIL_LAB_DUMP=<dir>] (writes each policy's lowered stages per language)
 //!   cargo test --release --lib -- --ignored anchor_lab --nocapture
 use super::{execute, lower, store::Store};
@@ -38,8 +40,22 @@ fn run(policy: &str) {
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|e| e == "sqlite"))
         .collect();
-    databases.sort();
-    databases.truncate(limit);
+    let batch = std::env::var_os("RERAIL_LAB_BATCH").is_some();
+    if batch {
+        let id = |path: &std::path::PathBuf| -> u64 {
+            let stem = path.file_stem().unwrap().to_string_lossy();
+            stem.rsplit('-').next().unwrap().parse().unwrap()
+        };
+        databases.sort_by_key(id);
+        let count = databases.len();
+        let chosen = limit.min(count);
+        databases = (0..chosen)
+            .map(|i| databases[i * count / chosen].clone())
+            .collect();
+    } else {
+        databases.sort();
+        databases.truncate(limit);
+    }
     let (mut steps, mut cpu, mut files) = (0u64, 0u64, 0usize);
     let mut rows: std::collections::BTreeMap<(u32, usize), usize> = Default::default();
     let mut compile = 0u64;
@@ -54,6 +70,49 @@ fn run(policy: &str) {
             .db
             .execute_batch("DELETE FROM decoded_properties; DELETE FROM decoded_files; DELETE FROM decoded_spans; DELETE FROM decoded_children;")
             .unwrap();
+        let requested: Option<Vec<i64>> = batch.then(|| {
+            let json: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(database.with_extension("json")).unwrap(),
+            )
+            .unwrap();
+            json["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|fid| fid.as_i64().unwrap())
+                .collect()
+        });
+        let language_files = |store: &Store, lang: u32| -> Vec<i64> {
+            store
+                .db
+                .prepare("SELECT fid FROM fk WHERE lang=?1 ORDER BY fid")
+                .unwrap()
+                .query_map([lang], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .filter(|fid| requested.as_ref().is_none_or(|files| files.contains(fid)))
+                .collect()
+        };
+        if batch {
+            // The corpus store's vocabulary already holds every earlier term; a capture made under
+            // another policy has none of this policy's predicates.
+            for (&lang, plans) in &plans {
+                let fids = language_files(&store, lang);
+                if fids.is_empty() {
+                    continue;
+                }
+                let refs: Vec<_> = plans.iter().map(Arc::as_ref).collect();
+                let statement = lower::batch_files(&refs, lang, &[]);
+                if statement.universal {
+                    execute::prepare_structural(&store, &fids).unwrap();
+                }
+                execute::rows_for(&store, &statement, &fids, true, |_, _, _| {}).unwrap();
+            }
+            store
+                .db
+                .execute_batch("DELETE FROM decoded_properties; DELETE FROM decoded_files; DELETE FROM decoded_spans; DELETE FROM decoded_children;")
+                .unwrap();
+        }
         let counter = Arc::new(AtomicU64::new(0));
         let observed = Arc::clone(&counter);
         store
@@ -67,14 +126,7 @@ fn run(policy: &str) {
             )
             .unwrap();
         for (&lang, plans) in &plans {
-            let fids: Vec<i64> = store
-                .db
-                .prepare("SELECT fid FROM fk WHERE lang=?1 ORDER BY fid")
-                .unwrap()
-                .query_map([lang], |row| row.get(0))
-                .unwrap()
-                .map(Result::unwrap)
-                .collect();
+            let fids = language_files(&store, lang);
             if fids.is_empty() {
                 continue;
             }
@@ -117,14 +169,7 @@ fn run(policy: &str) {
         steps += counter.load(Ordering::Relaxed) * STEP as u64;
         if std::env::var_os("RERAIL_LAB_PER_PLAN").is_some() {
             for (&lang, plans) in &plans {
-                let fids: Vec<i64> = store
-                    .db
-                    .prepare("SELECT fid FROM fk WHERE lang=?1 ORDER BY fid")
-                    .unwrap()
-                    .query_map([lang], |row| row.get(0))
-                    .unwrap()
-                    .map(Result::unwrap)
-                    .collect();
+                let fids = language_files(&store, lang);
                 let only = std::env::var("RERAIL_LAB_ONLY").ok();
                 for (qid, plan) in plans.iter().enumerate() {
                     if only

@@ -72,6 +72,15 @@ pub(super) fn install(db: &Connection) -> Result<super::reader::Readers> {
         },
     )?;
     db.create_scalar_function(
+        c"nera_literal_set",
+        1,
+        flags | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            Ok(literal_set(ctx.get_raw(0).as_str()?)
+                .map(|literals| serde_json::to_string(&literals).expect("literal JSON")))
+        },
+    )?;
+    db.create_scalar_function(
         c"nera_word",
         2,
         flags | FunctionFlags::SQLITE_DETERMINISTIC,
@@ -190,4 +199,34 @@ pub(super) fn install(db: &Connection) -> Result<super::reader::Readers> {
             .is_some_and(|v| v & (1 << (code % 8)) != 0))
     })?;
     Ok(readers)
+}
+
+/// The terms a pattern matches when it is `\A` and `\z` around a finite set of exact literals.
+pub(super) fn literal_set(pattern: &str) -> Option<Vec<String>> {
+    use regex_syntax::hir::{Hir, HirKind, Look, literal::Extractor};
+    let hir = regex_syntax::parse(pattern).ok()?;
+    let HirKind::Concat(parts) = hir.kind() else {
+        return None;
+    };
+    let (first, rest) = parts.split_first()?;
+    let (last, middle) = rest.split_last()?;
+    if !matches!(first.kind(), HirKind::Look(Look::Start))
+        || !matches!(last.kind(), HirKind::Look(Look::End))
+    {
+        return None;
+    }
+    let core = Hir::concat(middle.to_vec());
+    // The extractor reads an assertion as the empty string.
+    if !core.properties().look_set().is_empty() {
+        return None;
+    }
+    let sequence = Extractor::new().extract(&core);
+    let literals = sequence.literals()?;
+    if literals.is_empty() || !literals.iter().all(|literal| literal.is_exact()) {
+        return None;
+    }
+    literals
+        .iter()
+        .map(|literal| String::from_utf8(literal.as_bytes().to_vec()).ok())
+        .collect()
 }

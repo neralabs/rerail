@@ -1080,6 +1080,10 @@ fn batch_scope(
                 ),
             ),
             (
+                "vocabulary_literals",
+                "INSERT OR IGNORE INTO vocabulary_literal SELECT p.lang,p.expression,j.value FROM vocabulary_predicate p CROSS JOIN json_each(nera_literal_set(p.expression)) j WHERE p.ready=0".to_owned(),
+            ),
+            (
                 "vocabulary_fill",
                 include_str!("vocabulary-fill.sql").to_owned(),
             ),

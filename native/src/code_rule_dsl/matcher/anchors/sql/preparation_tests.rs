@@ -548,3 +548,60 @@ fn file_scoped_structural_reads_do_not_scan_retained_corpus_rows() {
         "scoped structural work grew: {before} -> {after}"
     );
 }
+
+#[test]
+fn exact_literal_set_patterns_match_exactly_their_literals() {
+    use super::functions::literal_set;
+    let terms = [
+        "",
+        "compile",
+        "lower",
+        "compiler",
+        "precompile",
+        "Compile",
+        "LOWER",
+        "a",
+        "ab",
+        "b",
+        "x_lazy",
+        "post_op",
+        "pre_op",
+        "apply_x_effect",
+        "é",
+        "É",
+    ];
+    for pattern in [
+        r"^(?:compile|lower|post_op|pre_op)$",
+        r"^compile$",
+        r"\Acompile\z",
+        r"^(?i)lower$",
+        r"^[ab]$",
+        r"^a?b$",
+        r"^(?:É|é)$",
+        r"^$",
+    ] {
+        let literals = literal_set(pattern).unwrap_or_else(|| panic!("{pattern} is a literal set"));
+        let regex = regex::Regex::new(pattern).unwrap();
+        for term in terms {
+            assert_eq!(
+                literals.iter().any(|l| l == term),
+                regex.is_match(term),
+                "{pattern} on {term:?}"
+            );
+        }
+    }
+    for pattern in [
+        r"_lazy$",
+        r"^apply_.*_effect$",
+        r"compile",
+        r"^compile",
+        r"^(?m)compile$",
+        r"^compile\b$",
+        r"^[a-z]+$",
+        r"^(?:a|b)*$",
+        r"(?m)^a$",
+        r"^a$|^b",
+    ] {
+        assert_eq!(literal_set(pattern), None, "{pattern} needs the regex");
+    }
+}
