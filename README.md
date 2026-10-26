@@ -322,7 +322,7 @@ Release notes: a pull request that changes what core ships adds its entry under 
 One `rerail` install carries the rules kernel, the transcript database, and a browser view of it. `rerail daemon start` runs them as one background daemon:
 
 ```sh
-rerail daemon start            # background daemon on http://127.0.0.1:4737/ (a free port when 4737 is held), opens nothing
+rerail daemon start            # background daemon on the port it last ran on, else http://127.0.0.1:4737/ (a free port when those are held), opens nothing
 rerail daemon start --open     # same, then opens the browser view
 rerail daemon start --host 0.0.0.0 --allow-remote --public-host rerail.example   # bind off loopback (see below)
 rerail start                   # start Rerail in this checkout and the checkouts inside it (--repository: every checkout); in a repository that is not set up, first runs set-up's questions there
@@ -331,7 +331,7 @@ rerail state                   # prints started, stopped, or not-set-up for this
 rerail status                  # whether Rerail is on here, then the daemon; exit 3 when the daemon is not running
 rerail manage [--print]        # prints the dashboard's Overview URL and opens it; --print only prints
 rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it
-rerail daemon stop             # graceful stop where supported; forced termination after 10 s
+rerail daemon stop             # graceful stop where supported; forced termination after 10 s, and an error if the process outlives that by 5 s
 ```
 
 Before spawning, `rerail daemon start` probes the `better-sqlite3` binding under the Node that will run the daemon and rebuilds it in place when a Node upgrade has left it built for another ABI; a binding that still fails after the rebuild stops the launch with the reason, instead of the daemon crashing into `~/.rerail/daemon.log`. The same check runs when a harness session autostarts the daemon, and `rerail update` applies it to an installed version that fails validation before giving up on it.
@@ -387,7 +387,7 @@ The daemon binds `127.0.0.1` by default (`--port` and `--host` override). `--hos
 
 Being on loopback is not by itself the write authorization. A page on another site can resolve its own name to `127.0.0.1` (DNS rebinding) and reach the socket, so every request is first checked against the `Host` header the browser sent: it must name `127.0.0.1`, `localhost`, or `[::1]` on any port (a container port mapping or reverse proxy presents a port the daemon never bound), the literal address the daemon was bound to with `--host` (an IP literal cannot arrive by rebinding, and the daemon's own state URL dials it), or a hostname given with `--public-host <name,...>`. Anything else — including the private `/native/*` bridge, `/mcp`, `/healthz`, and the page — is answered `421 { "error": "host-not-allowed" }` before any route runs. On top of that, an `/api` write carrying an `Origin` is accepted only when that origin is one of the same hostnames on the port the request was addressed to (`403 api-origin-forbidden` otherwise); Rerail's own processes send no `Origin`. The page is served with `X-Content-Type-Options: nosniff`, and its HTML with `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`, so no other site can frame it.
 
-The daemon's pid, port, and database path live in `~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) and its output in `daemon.log` beside it. `rerail daemon start` reuses a daemon that is already running and reports where it is; a state file left by a crash or reboot is detected and cleared. `stop`, `status`, and `manage` always run from the launcher you invoked rather than re-executing the managed version, so they keep working while an update is in flight.
+The daemon's pid, port, and database path live in `~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) and its output in `daemon.log` beside it. `daemon-port.json` beside them remembers the port it last listened on (or the one `--port` named), and a later start without `--port` comes back on it, so dashboard links outlive a restart. `rerail daemon start` reuses a daemon that is already running and reports where it is; a state file left by a crash or reboot is detected and cleared. `stop`, `status`, and `manage` always run from the launcher you invoked rather than re-executing the managed version, so they keep working while an update is in flight.
 
 `daemon.json` also records `kernelSocketPath` (a Unix socket or Windows named pipe). Hooks reuse this service by default; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. `RERAIL_AUTOSTART=0` prevents automatic daemon creation and requires an existing daemon or explicit endpoint for command hooks.
 

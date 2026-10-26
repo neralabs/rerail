@@ -25,7 +25,7 @@ import {
   readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
-import { repositoryName } from "../engine/catalog/repository-identity.js";
+import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
@@ -204,13 +204,20 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
 }
 
 async function runStatusCommand(home: string): Promise<number> {
+  const lookup = await lookupDaemon(home);
+  // No managed install, no database and no daemon: Rerail was never set up here, so it is not merely stopped.
+  if (lookup.status === "absent" && !existsSync(join(home, "current")) && !existsSync(join(home, RERAIL_DATABASE_FILE))) {
+    process.stdout.write("Rerail is not installed on this computer. Install it with npx @neralabs/rerail setup.\n");
+    return 3;
+  }
   const workspace = process.cwd();
   const state = workspaceStartState(workspace);
-  const name = repositoryName(workspace);
-  if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
+  const location = repositoryIdentityLocation(workspace);
+  const name = repositoryFolderName(location);
+  if (!location.git && state === "stopped") process.stdout.write(`No repo found here (${workspace}). Run rerail status inside your project.\n`);
+  else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
-  const lookup = await lookupDaemon(home);
   if (lookup.status === "absent") {
     process.stdout.write("The Rerail daemon is not running. Start it with rerail daemon start.\n");
     return 3;

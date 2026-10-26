@@ -28,6 +28,7 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 ├── bin/rerail                                          launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
+├── daemon-port.json                                   the port the daemon comes back on after a restart
 ├── packs/node_modules/@neralabs/rerail-pack-<id>/     the rule packs you installed (`rerail packs`)
 └── versions/<older>/…                                 kept for `rerail update rollback`
 ```
