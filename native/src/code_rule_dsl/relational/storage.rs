@@ -1,8 +1,14 @@
 //! Reusable SQL schemas. A connection lease owns all rows; only empty backing is reusable.
 use rusqlite::{Connection, Result};
 use std::collections::BTreeMap;
+#[cfg(test)]
+#[path = "storage/contexts_tests.rs"]
+mod contexts_tests;
+#[path = "storage/contexts.rs"]
+mod contexts;
 #[derive(Default)]
 pub(super) struct Storage {
+    contexts: contexts::Contexts,
     objects: BTreeMap<String, Object>,
     pub(super) owner: Option<usize>,
     pins: BTreeMap<String, usize>,
@@ -20,6 +26,13 @@ fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 impl Storage {
+    pub fn bind_scope(&mut self, db:&Connection, owner:usize, bindings:BTreeMap<String,usize>)->Result<()> {
+        self.owner=Some(owner);
+        self.contexts.bind(db,owner,bindings)
+    }
+    pub fn write_target(&self,name:&str)->(String,Option<i64>) {
+        self.contexts.target(name).unwrap_or_else(||(name.to_owned(),None))
+    }
     pub fn declare(
         &mut self,
         db: &Connection,
@@ -27,6 +40,7 @@ impl Storage {
         definition: String,
         table: bool,
     ) -> Result<()> {
+        if contexts::managed(name) && table {return self.contexts.declare(db,name,&definition);}
         let name = &name.to_ascii_lowercase();
         if self
             .objects
@@ -61,6 +75,7 @@ impl Storage {
         Ok(())
     }
     pub fn index(&mut self, db: &Connection, table: &str, name: &str, sql: String) -> Result<()> {
+        if contexts::managed(table) {return self.contexts.index(db,table,name,&sql);}
         let table = &table.to_ascii_lowercase();
         let o = self
             .objects
@@ -77,6 +92,7 @@ impl Storage {
         Ok(())
     }
     pub fn analyze(&mut self, db: &Connection, name: &str, rows: usize) -> Result<()> {
+        if contexts::managed(name) {return self.contexts.analyze(db,name,rows);}
         let name = &name.to_ascii_lowercase();
         let o = self.objects.get_mut(name).expect("declared table");
         if rows > 0 || o.analyzed.is_some_and(|old| old > 0) {
@@ -86,11 +102,13 @@ impl Storage {
         Ok(())
     }
     pub fn written(&mut self, name: &str, rows: bool) {
+        if contexts::managed(name) {self.contexts.written(name,rows);return;}
         if let Some(o) = self.objects.get_mut(&name.to_ascii_lowercase()) {
             o.dirty |= rows;
         }
     }
     pub fn retire(&mut self, db: &Connection, name: &str) -> Result<bool> {
+        if contexts::managed(name) {return self.contexts.retire(db,name);}
         let Some(o) = self.objects.get_mut(&name.to_ascii_lowercase()) else {
             return Ok(false);
         };
@@ -104,6 +122,7 @@ impl Storage {
         Ok(true)
     }
     pub fn discard(&mut self, db: &Connection, name: &str) -> Result<()> {
+        if self.contexts.contains(name) {return self.contexts.discard(db,name);}
         if let Some(o) = self.objects.remove(&name.to_ascii_lowercase()) {
             db.execute_batch(&format!(
                 "DROP {} {}",
@@ -124,11 +143,13 @@ impl Storage {
         Ok(())
     }
     pub fn ready(&self, name: &str) -> bool {
+        if contexts::managed(name) {return self.contexts.ready(name);}
         self.objects
             .get(&name.to_ascii_lowercase())
             .is_some_and(|o| o.ready)
     }
     pub fn publish(&mut self, name: &str) {
+        if contexts::managed(name) {self.contexts.publish(name);return;}
         if let Some(object) = self.objects.get_mut(&name.to_ascii_lowercase()) {
             object.ready = true;
             object.owner = None;
@@ -146,6 +167,7 @@ impl Storage {
         }
     }
     pub fn clear_owner(&mut self, db: &Connection, owner: usize) -> Result<()> {
+        self.contexts.clear_owner(db,owner)?;
         let owned = self
             .objects
             .iter()
@@ -184,7 +206,7 @@ impl Storage {
         Ok(())
     }
     pub fn bytes(&self) -> usize {
-        self.objects
+        self.contexts.bytes()+self.objects
             .iter()
             .map(|(name, o)| {
                 std::mem::size_of::<Object>()
@@ -196,7 +218,7 @@ impl Storage {
                         .sum::<usize>()
                     + 64
             })
-            .sum()
+            .sum::<usize>()
     }
     pub fn bounded(&self) -> bool {
         self.objects.len() <= 128 && self.bytes() <= 4 * 1024 * 1024
