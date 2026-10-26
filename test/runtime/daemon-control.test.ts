@@ -173,9 +173,9 @@ describe("Rerail daemon control", () => {
   }, 15_000);
 
   it.runIf(process.platform === "linux")("counts a daemon nothing reaped as stopped, so stop returns in a container without init", async () => {
-    // `sh` backgrounds a child that exits at once, then becomes `sleep`, which never reaps it: the zombie a daemon
-    // becomes when PID 1 is `sleep infinity` rather than an init.
-    const parent = spawn("sh", ["-c", "true & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "ignore"] });
+    // `sh` backgrounds a child, then becomes `sleep`, which never reaps it: the zombie a daemon becomes when PID 1 is
+    // `sleep infinity` rather than an init. The child outlives the `exec`, so `sh` itself can never reap it first.
+    const parent = spawn("sh", ["-c", "sleep 0.2 & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "ignore"] });
     try {
       if (parent.stdout === null) throw new Error("test parent did not start");
       const [pidOutput] = await once(parent.stdout, "data") as [Buffer];
