@@ -172,8 +172,17 @@ describe("missingChangesets", () => {
     ]);
   });
 
-  it("passes changes to what a pack does not publish, a file that only starts like a published one, and other paths", () => {
-    const changed = ["packs/php/upstream/gates.yaml", "packs/php/candidates/rules/x.json", "packs/php/CHANGELOG.md", "packs/php/rules.md", "packs/README.md", "src/a.ts"];
+  it("passes changes to what a pack does not publish (its test data and their locks too), a file that only starts like a published one, and other paths", () => {
+    const changed = [
+      "packs/php/upstream/phpcs/gates.yaml",
+      "packs/php/upstream/phpcs/test-data.lock",
+      "packs/php/upstream/phpcs/recording.lock",
+      "packs/php/candidates/rules/x.json",
+      "packs/php/CHANGELOG.md",
+      "packs/php/rules.md",
+      "packs/README.md",
+      "src/a.ts",
+    ];
     expect(missingChangesets(changed, [], packs)).toEqual([]);
   });
 
