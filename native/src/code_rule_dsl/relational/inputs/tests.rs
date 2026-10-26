@@ -7,6 +7,7 @@ use crate::code_rule_dsl::{
         projection::{self, Input},
     },
 };
+use rusqlite::Connection;
 use serde_json::json;
 use std::sync::atomic::Ordering;
 

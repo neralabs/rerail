@@ -8,14 +8,31 @@ use std::{
     },
 };
 
-pub(super) fn install(db: &Connection, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<()> {
+pub(super) struct Binding {
+    max_pattern: usize,
+    work: Arc<AtomicUsize>,
+}
+pub(super) type SharedBinding = Arc<parking_lot::RwLock<Binding>>;
+pub(super) fn binding() -> SharedBinding {
+    Arc::new(parking_lot::RwLock::new(Binding {
+        max_pattern: 0,
+        work: Arc::new(AtomicUsize::new(0)),
+    }))
+}
+pub(super) fn rebind(binding: &SharedBinding, max_pattern: usize, work: Arc<AtomicUsize>) {
+    *binding.write() = Binding { max_pattern, work };
+}
+pub(super) fn install_bound(db: &Connection, binding: SharedBinding) -> Result<()> {
     let flags = FunctionFlags::SQLITE_UTF8
         | FunctionFlags::SQLITE_DETERMINISTIC
         | FunctionFlags::SQLITE_INNOCUOUS;
     for (name, arity) in [("rx_matches", 2), ("rx_extract", 3), ("rx_replace", 3)] {
         let cache = parking_lot::Mutex::new(HashMap::<String, regex::Regex>::new());
-        let work = Arc::clone(&work);
+        let binding = binding.clone();
         db.create_scalar_function(name, arity, flags, move |ctx| {
+            let binding = binding.read();
+            let max_pattern = binding.max_pattern;
+            let work = &binding.work;
             let text = ctx.get::<Option<String>>(0)?.unwrap_or_default();
             let pattern = ctx.get::<String>(1)?;
             let fail =

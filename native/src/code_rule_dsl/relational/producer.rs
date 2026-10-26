@@ -1,6 +1,5 @@
 //! Broad CPU producer passes. SQL publication is a separate completed-output consumer.
 use super::{Result, invalid, source, sql_error};
-use rusqlite::Connection;
 use std::{
     cell::Cell,
     sync::{Arc, atomic::AtomicUsize},
@@ -93,10 +92,8 @@ pub(super) struct Completed {
     paths: Vec<String>,
 }
 impl Completed {
-    pub fn publish(self, db: &Connection, name: &str, work: &Arc<AtomicUsize>) -> Result<()> {
-        #[cfg(feature = "code-rule-profile")]
-        let _span = crate::code_rule_dsl::profile::trace::Span::start("producer-publish", name);
-        completed::publish(self, db, name, Arc::clone(work))
+    pub fn into_source(self, work: Arc<AtomicUsize>) -> Result<Arc<dyn super::syntax::Source>> {
+        completed::into_source(self, work)
     }
 }
 /// Checked, flat request columns. Relation boundaries are numeric CSR offsets.

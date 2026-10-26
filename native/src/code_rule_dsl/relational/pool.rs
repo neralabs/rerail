@@ -51,15 +51,9 @@ impl Drop for Scope {
             && let Some(db) = inner.db.into_inner()
         {
             let _ = db.progress_handler(0, None::<fn() -> bool>);
-            for (name, n) in [
-                ("source_text", 3),
-                ("rx_matches", 2),
-                ("rx_extract", 3),
-                ("rx_replace", 3),
-            ] {
-                let _ = db.remove_function(name, n);
-            }
-            let bounded = db.bindings.borrow().bytes() <= 4 * 1024 * 1024;
+            let _ = super::source::bind(&db, None, Arc::new(AtomicUsize::new(0)));
+            super::functions::rebind(&db.regex_binding, 0, Arc::new(AtomicUsize::new(0)));
+            let bounded = db.bindings.borrow().data_bytes() <= 4 * 1024 * 1024;
             let clean = bounded || db.storage.borrow_mut().evict(&db, 0).is_ok();
             if !bounded {
                 db.bindings.borrow_mut().forget();
@@ -81,7 +75,7 @@ impl Pool {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-pool-trim", "admission");
         if let Some(db) = self.0.db.get() {
-            if db.bindings.borrow().bytes() > 4 * 1024 * 1024 {
+            if db.bindings.borrow().data_bytes() > 4 * 1024 * 1024 {
                 db.bindings.borrow_mut().forget();
             }
             let _ = db.storage.borrow_mut().evict(db, capacity);
@@ -94,6 +88,9 @@ impl Pool {
         let db = self.0.db.get().unwrap();
         configure_in_place(db, max_pattern, work)?;
         let id = db.bindings.borrow_mut().lease();
+        for binding in db.modules.borrow().values() {
+            binding.clear();
+        }
         db.active.set(id);
         db.storage.borrow_mut().owner = Some(id);
         Ok(Lease {
@@ -105,6 +102,11 @@ impl Pool {
     }
 }
 impl Lease {
+    fn modules_registry(
+        &self,
+    ) -> std::cell::Ref<'_, std::collections::BTreeMap<String, super::table::Binding>> {
+        self.deref().modules.borrow()
+    }
     pub fn private(&self, name: &str) -> String {
         format!("__private_{}_{}", self.id, name)
     }
@@ -117,6 +119,9 @@ impl Lease {
     }
     pub fn activate(&self, max: usize, work: Arc<AtomicUsize>) -> Result<()> {
         if self.active.get() != self.id {
+            for binding in self.modules_registry().values() {
+                binding.clear();
+            }
             configure_in_place(self, max, work)?;
             self.active.set(self.id);
         }
@@ -156,7 +161,13 @@ impl Drop for Lease {
         }
         let modules = std::mem::take(self.modules.get_mut());
         for module in modules {
-            let _ = super::table::unregister(self, &module);
+            if let Some(binding) = self.modules_registry().get(&module) {
+                if self.active.get() == self.id {
+                    binding.clear();
+                }
+            } else {
+                let _ = super::table::unregister(self, &module);
+            }
         }
         let _ = self.storage.borrow_mut().clear_owner(self, self.id);
         let pins = std::mem::take(self.pins.get_mut());
@@ -190,7 +201,7 @@ mod tests {
                 "test",
             )
             .unwrap();
-            super::super::source::install(
+            super::super::source::bind(
                 &db,
                 Some(&crate::code_rule_dsl::model::Snapshot {
                     revision: 1,

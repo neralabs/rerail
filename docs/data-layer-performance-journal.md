@@ -5054,3 +5054,31 @@ The existing recovery plan and spike report now link this detailed design.
 
 The new document passes local link checks and the writing self-check.
 `git diff --check` and `npm run check` pass. No runtime tests repeat because this delivery changes documentation only.
+
+
+### Schema lifecycle SC1: reusable backing and native bindings (2026-10-26)
+
+The matching control addon and current policies are frozen under `.rerail/profiles/schema-lifecycle-20261026/control/`.
+Its identity includes the final import-membership correction. No new full resource result exists yet.
+
+Red commit `b1d36739` requires schema reuse, scope isolation, and bounded completed storage.
+The laboratory red log shows 200 historical completed bindings retained, exceeding the 128-entry cache bound.
+The green storage ladder now passes all three tests, including pinned complete and empty output.
+The integrated relational ladder passes 45 tests.
+A new test suspends 200 consumers with at most eight schema objects and one native module.
+It resumes them in reverse order and checks each original input and syntax domain.
+
+Schema templates now have identities independent of source versions.
+Exact producer identity still determines whether completed SQL data can be shared.
+Stable SQL backing adds an indexed execution key, and views expose only its active binding.
+Input publication remains bulk and retains original SQL types and duplicate rows.
+Native adapters rebind immutable sources instead of registering one module per consumer.
+Open cursors retain their original frame; rebinding releases payloads after cursor closure.
+Regex and source functions retain their registrations and bind the active budget and source.
+Authored SQL still passes the original compiler authorizer before internal storage names exist.
+Runtime metadata preparation uses only those compiled and engine-resolved queries.
+
+This commit does not establish completion or a CPU improvement.
+Statistics freshness, retained-cut inventory, cleanup, original observations, and full resource acceptance remain in progress.
+The first complete native DSL invocation reached its 110-second deadline without a reported assertion failure.
+The focused relational suite completes in 0.11 seconds after loading the test binary.

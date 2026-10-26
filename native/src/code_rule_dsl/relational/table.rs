@@ -20,8 +20,76 @@ use std::{
 };
 #[derive(Clone)]
 struct Shared {
-    source: Arc<dyn Source>,
+    binding: Binding,
     stats: Arc<Counters>,
+}
+#[derive(Clone)]
+pub(super) struct Binding {
+    current: Arc<parking_lot::RwLock<Arc<dyn Source>>>,
+    schema: Arc<Metadata>,
+}
+impl Binding {
+    pub fn clear(&self) {
+        *self.current.write() = self.schema.clone();
+    }
+    pub fn set(&self, source: Arc<dyn Source>) -> Result<()> {
+        if self.schema.columns != source.columns() || self.schema.types != source.column_types() {
+            return Err(failure("native binding schema changed"));
+        }
+        *self.current.write() = source;
+        Ok(())
+    }
+}
+struct Metadata {
+    columns: Vec<String>,
+    types: Vec<String>,
+}
+impl Source for Metadata {
+    fn columns(&self) -> Vec<String> {
+        self.columns.clone()
+    }
+    fn column_types(&self) -> Vec<String> {
+        self.types.clone()
+    }
+    fn len(&self) -> usize {
+        0
+    }
+    fn estimated_matches(&self, _: usize, _: bool) -> usize {
+        0
+    }
+    fn indexed(&self, _: usize) -> bool {
+        false
+    }
+    fn lookup(&self, _: usize, _: &[Value]) -> Result<Option<Vec<usize>>> {
+        Ok(None)
+    }
+    fn column(&self, _: usize, _: usize, _: &mut Context) -> Result<()> {
+        Err(failure("empty execution binding"))
+    }
+    fn charge(&self, _: usize) -> Result<()> {
+        Ok(())
+    }
+}
+impl Shared {
+    fn current(&self) -> Arc<dyn Source> {
+        self.binding.current.read().clone()
+    }
+}
+pub(super) fn bind(db: &super::Database, name: &str, source: Arc<dyn Source>) -> Result<()> {
+    let mut bindings = db.modules.borrow_mut();
+    if let Some(binding) = bindings.get(name) {
+        return binding.set(source);
+    }
+    let binding = Binding {
+        schema: Arc::new(Metadata {
+            columns: source.columns(),
+            types: source.column_types(),
+        }),
+        current: Arc::new(parking_lot::RwLock::new(source)),
+    };
+    register_inner(db, name, binding.clone())?;
+    bindings.insert(name.into(), binding);
+    Ok(())
 }
 type Registration = Shared;
 #[repr(C)]
@@ -32,11 +100,7 @@ struct Table {
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
-pub(super) fn register(
-    db: &Connection,
-    name: &str,
-    source: Arc<dyn Source>,
-) -> Result<Arc<Counters>> {
+fn register_inner(db: &Connection, name: &str, binding: Binding) -> Result<Arc<Counters>> {
     if name.is_empty()
         || name.len() > 120
         || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -47,7 +111,7 @@ pub(super) fn register(
     let module = CString::new(name).map_err(|_| failure("invalid module name"))?;
     const MODULE: Module<Table> = Module::eponymous_only_module();
     let registration = Shared {
-        source,
+        binding,
         stats: Arc::clone(&stats),
     };
     db.create_module(module.as_c_str(), &MODULE, Some(registration))?;
@@ -73,10 +137,11 @@ unsafe impl<'a> VTab<'a> for Table {
         let sql = CString::new(format!(
             "CREATE TABLE x({})",
             shared
-                .source
-                .columns()
+                .binding
+                .schema
+                .columns
                 .iter()
-                .zip(shared.source.column_types())
+                .zip(&shared.binding.schema.types)
                 .map(|(c, t)| format!("{} {}", quote(c), t))
                 .collect::<Vec<_>>()
                 .join(",")
@@ -91,6 +156,7 @@ unsafe impl<'a> VTab<'a> for Table {
         ))
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
+        let source = self.shared.current();
         let _reader = super::producer::ReadOnly::enter();
         let selected = info
             .constraints()
@@ -99,16 +165,14 @@ unsafe impl<'a> VTab<'a> for Table {
                 if c.is_usable()
                     && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
                     && c.column() >= 0
-                    && self.shared.source.indexed(c.column() as usize)
+                    && source.indexed(c.column() as usize)
                     && info.collation(i).is_ok_and(|v| v == "BINARY")
                 {
                     let batch = info.is_in_constraint(i).ok()?;
                     Some((
                         i,
                         c.column(),
-                        self.shared
-                            .source
-                            .estimated_matches(c.column() as usize, batch),
+                        source.estimated_matches(c.column() as usize, batch),
                     ))
                 } else {
                     None
@@ -119,7 +183,7 @@ unsafe impl<'a> VTab<'a> for Table {
             let col = c.column();
             if !c.is_usable()
                 || col < 0
-                || !self.shared.source.range_indexed(col as usize)
+                || !source.range_indexed(col as usize)
                 || !info.collation(i).is_ok_and(|v| v == "BINARY")
             {
                 return None;
@@ -142,10 +206,7 @@ unsafe impl<'a> VTab<'a> for Table {
             let mut upper = None;
             for (i, c) in info.constraints().enumerate() {
                 let upper_equivalent = c.column() >= 0
-                    && self
-                        .shared
-                        .source
-                        .range_upper_compatible(col as usize, c.column() as usize)
+                    && source.range_upper_compatible(col as usize, c.column() as usize)
                     && matches!(
                         c.operator(),
                         IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_LT
@@ -201,8 +262,8 @@ unsafe impl<'a> VTab<'a> for Table {
             info.set_estimated_cost(matches.max(1) as f64);
         } else {
             info.set_idx_num(0);
-            info.set_estimated_rows(self.shared.source.estimated_len() as i64);
-            info.set_estimated_cost(self.shared.source.estimated_len().max(1) as f64);
+            info.set_estimated_rows(source.estimated_len() as i64);
+            info.set_estimated_cost(source.estimated_len().max(1) as f64);
         }
         Ok(true)
     }
@@ -210,6 +271,7 @@ unsafe impl<'a> VTab<'a> for Table {
         Ok(Cursor {
             base: rusqlite::ffi::sqlite3_vtab_cursor::default(),
             shared: self.shared.clone(),
+            source: self.shared.current(),
             range: 0..0,
             selected: None,
             position: 0,
@@ -220,6 +282,7 @@ unsafe impl<'a> VTab<'a> for Table {
 struct Cursor {
     base: rusqlite::ffi::sqlite3_vtab_cursor,
     shared: Shared,
+    source: Arc<dyn Source>,
     range: Range<usize>,
     selected: Option<Vec<usize>>,
     position: usize,
@@ -245,9 +308,10 @@ unsafe impl VTabCursor for Cursor {
         );
         let _read_only = super::producer::ReadOnly::enter();
         self.shared.stats.scans.fetch_add(1, Ordering::Relaxed);
+        self.source = self.shared.current();
         self.position = 0;
         self.selected = None;
-        self.range = 0..self.shared.source.len();
+        self.range = 0..self.source.len();
         if index & (1 << 20) != 0 {
             let column = ((index & ((1 << 20) - 1)) >> 4) - 1;
             let mut arg = 0;
@@ -263,7 +327,7 @@ unsafe impl VTabCursor for Cursor {
             } else {
                 None
             };
-            self.selected = self.shared.source.range_lookup(
+            self.selected = self.source.range_lookup(
                 column as usize,
                 lower.as_ref().map(|(v, b)| (v, *b)),
                 upper.as_ref().map(|(v, b)| (v, *b)),
@@ -282,14 +346,14 @@ unsafe impl VTabCursor for Cursor {
             } else {
                 vec![args.get::<Value>(0)?]
             };
-            self.selected = self.shared.source.lookup(column, &values)?;
+            self.selected = self.source.lookup(column, &values)?;
         }
         let count = self.selected.as_ref().map_or(self.range.len(), Vec::len);
         self.shared
             .stats
             .candidates
             .fetch_add(count as u64, Ordering::Relaxed);
-        self.shared.source.charge(1)?;
+        self.source.charge(1)?;
         Ok(())
     }
     fn next(&mut self) -> Result<()> {
@@ -299,7 +363,7 @@ unsafe impl VTabCursor for Cursor {
             1,
         );
         let _read_only = super::producer::ReadOnly::enter();
-        self.shared.source.charge(1)?;
+        self.source.charge(1)?;
         if self.selected.is_some() {
             self.position += 1;
         } else {
@@ -320,7 +384,7 @@ unsafe impl VTabCursor for Cursor {
         );
         let _read_only = super::producer::ReadOnly::enter();
         self.shared.stats.columns.fetch_add(1, Ordering::Relaxed);
-        self.shared.source.column(self.row(), col as usize, ctx)
+        self.source.column(self.row(), col as usize, ctx)
     }
     fn rowid(&self) -> Result<i64> {
         Ok(self.row() as i64 + 1)
@@ -349,3 +413,7 @@ pub(super) fn unregister(db: &Connection, name: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "table/bindings_tests.rs"]
+mod bindings_tests;

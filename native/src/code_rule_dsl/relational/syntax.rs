@@ -907,12 +907,11 @@ impl Source for Empty {
 }
 
 pub(super) type Files = Vec<(String, Arc<Facts>)>;
-pub(super) fn load(
-    db: &Connection,
+pub(super) fn sources(
     spec: &Spec,
     files: &Files,
     work: Arc<AtomicUsize>,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, Arc<dyn Source>)>> {
     let meter = Arc::new(Meter {
         work,
         steps: AtomicUsize::new(0),
@@ -921,18 +920,56 @@ pub(super) fn load(
     names.extend(spec.edges.iter().cloned());
     names.extend(spec.ownership.iter().cloned());
     if files.is_empty() {
-        for (name, columns) in compiler_schema(db, spec)? {
-            super::table::register(
-                db,
-                &name,
+        let mut output = Vec::new();
+        let mut schemas = vec![(
+            spec.name.clone(),
+            columns(spec)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
+        )];
+        if let Some(name) = &spec.edges {
+            schemas.push((
+                name.clone(),
+                ["__path", "src", "dst", "ordinal"]
+                    .map(str::to_owned)
+                    .to_vec(),
+            ));
+        }
+        if let Some(name) = &spec.ownership {
+            schemas.push((
+                name.clone(),
+                ["__path", "id"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .chain(spec.owners.keys().cloned())
+                    .collect(),
+            ));
+        }
+        for (name, fields) in schemas {
+            let columns = Arc::new(
+                fields
+                    .into_iter()
+                    .map(|name| super::schema::Column {
+                        declared_type: match name.as_str() {
+                            "__path" => "TEXT",
+                            "__start" | "__end" => "INTEGER",
+                            _ => "",
+                        }
+                        .into(),
+                        name,
+                    })
+                    .collect(),
+            );
+            output.push((
+                name,
                 Arc::new(Empty {
                     columns,
                     meter: Arc::clone(&meter),
-                }),
-            )
-            .map_err(sql_error)?;
+                }) as Arc<dyn Source>,
+            ));
         }
-        return Ok(names);
+        return Ok(output);
     }
     let mut families: Vec<Vec<Nodes>> = (0..names.len()).map(|_| Vec::new()).collect();
     for (path, facts) in files {
@@ -944,15 +981,18 @@ pub(super) fn load(
             family.push(nodes)
         }
     }
+    let mut output = Vec::new();
     for (name, sources) in names.iter().zip(families) {
         let mut offsets = vec![0];
         for s in &sources {
             offsets.push(offsets.last().unwrap() + s.len())
         }
-        super::table::register(db, name, Arc::new(Union { sources, offsets }))
-            .map_err(sql_error)?;
+        output.push((
+            name.clone(),
+            Arc::new(Union { sources, offsets }) as Arc<dyn Source>,
+        ));
     }
-    Ok(names)
+    Ok(output)
 }
 
 pub(super) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::producer::Tree>> {

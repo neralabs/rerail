@@ -75,6 +75,43 @@ pub(super) fn insert_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
     })
 }
 
+/// Bind one complete rowset to stable SQLite backing without row callbacks.
+pub(super) fn bound_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
+    db: &super::Database,
+    name: &str,
+    width: usize,
+    rows: impl IntoIterator<Item = R>,
+    work: &Arc<AtomicUsize>,
+    exhausted: &str,
+) -> Result<()> {
+    let (target, binding) = db.storage.borrow().write_target(name);
+    enum Bound<T> {
+        Key(i64),
+        Value(T),
+    }
+    impl<T: rusqlite::ToSql> rusqlite::ToSql for Bound<T> {
+        fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+            match self {
+                Self::Key(n) => n.to_sql(),
+                Self::Value(v) => v.to_sql(),
+            }
+        }
+    }
+    insert_rows(
+        db,
+        &target,
+        width + usize::from(binding.is_some()),
+        rows.into_iter().map(|row| {
+            binding
+                .into_iter()
+                .map(Bound::Key)
+                .chain(row.into_iter().map(Bound::Value))
+        }),
+        work,
+        exhausted,
+    )
+}
+
 /// Derived writes spend SQLite VM work; the producing algorithm charges visits.
 /// They are not new AST inputs, and the loop still polls cancellation.
 pub(super) fn stage_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(

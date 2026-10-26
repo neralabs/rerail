@@ -1,7 +1,7 @@
 //! Indexed access to completed output. No producer runs in callbacks.
 use super::{Completed, MAX_OUTPUT_BYTES, Output, capacity, source, sql_error};
-use crate::code_rule_dsl::relational::{syntax::Source, table};
-use rusqlite::{Connection, types::Value, vtab::Context};
+use crate::code_rule_dsl::relational::syntax::Source;
+use rusqlite::{types::Value, vtab::Context};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -122,12 +122,10 @@ impl Source for CompletedSource {
         self.meter.charge(n)
     }
 }
-pub(super) fn publish(
+pub(super) fn into_source(
     completed: Completed,
-    db: &Connection,
-    name: &str,
     work: Arc<AtomicUsize>,
-) -> super::Result<()> {
+) -> super::Result<Arc<dyn Source>> {
     let Completed { output, paths } = completed;
     let size = output
         .roots
@@ -152,17 +150,11 @@ pub(super) fn publish(
     };
     let root = Index::build(&output.roots, size, &meter).map_err(sql_error)?;
     let node = Index::build(&output.nodes, size, &meter).map_err(sql_error)?;
-    table::register(
-        db,
-        name,
-        Arc::new(CompletedSource {
-            output,
-            paths,
-            root,
-            node,
-            meter,
-        }),
-    )
-    .map_err(sql_error)?;
-    Ok(())
+    Ok(Arc::new(CompletedSource {
+        output,
+        paths,
+        root,
+        node,
+        meter,
+    }))
 }

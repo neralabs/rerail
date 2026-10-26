@@ -40,16 +40,38 @@ pub(super) fn charge(work: &AtomicUsize, count: usize) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn install(
-    db: &Connection,
-    snapshot: Option<&Snapshot>,
+pub(super) struct Binding {
+    files: HashMap<String, Arc<String>>,
     work: Arc<AtomicUsize>,
-) -> Result<()> {
+}
+pub(super) type SharedBinding = Arc<parking_lot::RwLock<Binding>>;
+pub(super) fn binding() -> SharedBinding {
+    Arc::new(parking_lot::RwLock::new(Binding {
+        files: HashMap::new(),
+        work: Arc::new(AtomicUsize::new(0)),
+    }))
+}
+fn update(binding: &SharedBinding, snapshot: Option<&Snapshot>, work: Arc<AtomicUsize>) {
     let files = snapshot
         .into_iter()
         .flat_map(|s| &s.files)
         .map(|file| (file.path.clone(), Arc::clone(&file.source)))
-        .collect::<HashMap<_, _>>();
+        .collect();
+    *binding.write() = Binding { files, work };
+}
+pub(super) fn bind(
+    db: &super::Database,
+    snapshot: Option<&Snapshot>,
+    work: Arc<AtomicUsize>,
+) -> Result<()> {
+    update(&db.source_binding, snapshot, work);
+    if !db.source_installed.get() {
+        install_bound(db, db.source_binding.clone())?;
+        db.source_installed.set(true);
+    }
+    Ok(())
+}
+fn install_bound(db: &Connection, binding: SharedBinding) -> Result<()> {
     db.create_scalar_function(
         c"source_text",
         3,
@@ -57,6 +79,9 @@ pub(super) fn install(
             | FunctionFlags::SQLITE_DETERMINISTIC
             | FunctionFlags::SQLITE_INNOCUOUS,
         move |ctx| {
+            let binding = binding.read();
+            let work = &binding.work;
+            let files = &binding.files;
             charge(&work, 1).map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
             let path = match ctx.get_raw(0) {
                 ValueRef::Null => None,

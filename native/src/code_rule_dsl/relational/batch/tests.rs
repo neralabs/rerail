@@ -4,6 +4,7 @@ use crate::code_rule_dsl::{
     model::{FileInput, Snapshot},
 };
 use serde_json::json;
+use std::ops::Deref;
 use std::sync::{Arc, atomic::AtomicBool};
 
 fn rule() -> CompiledCodeRuleDsl {
@@ -331,4 +332,41 @@ fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
     assert_eq!((anchor.start_byte, anchor.end_byte), (4, 5));
     assert!(!fallback);
     assert!(anchored_span(&Anchor::Capture("ABSENT".into()), witness).1);
+}
+
+#[test]
+fn hundreds_of_suspended_consumers_reuse_one_layout_and_restore_exact_input_domains() {
+    let rule = rule();
+    let pool = super::super::pool::Pool::default();
+    let mut sessions = Vec::new();
+    for job in jobs(&rule, files(200)) {
+        let mut metrics = Metrics::default();
+        let mut session =
+            Session::new(job.code_rule, job.clause, job.inputs, &mut metrics, &pool).unwrap();
+        assert!(session.advance().unwrap().is_some());
+        sessions.push(session);
+    }
+    let db = &sessions[0].db;
+    let count: i64 = db
+        .query_row("SELECT count(*) FROM temp.sqlite_schema", [], |r| r.get(0))
+        .unwrap();
+    assert!(
+        count <= 8,
+        "suspended consumers constructed {count} schema objects"
+    );
+    assert_eq!(db.deref().modules.borrow().len(), 1);
+    for (i, session) in sessions.iter().enumerate().rev() {
+        session.activate().unwrap();
+        let input = &session.aliases["gate"];
+        let native = &session.aliases["nodes"];
+        for name in [input, native] {
+            let path: String = session
+                .db
+                .query_row(&format!("SELECT __path FROM {name} LIMIT 1"), [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(path, format!("f{i:03}.py"));
+        }
+    }
 }

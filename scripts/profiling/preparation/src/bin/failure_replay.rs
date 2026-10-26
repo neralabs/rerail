@@ -37,7 +37,9 @@ fn database(manifest: &Path, data: &serde_json::Value) -> Result<(Connection, Ar
         restore(&db, &directory.join(temp), c"temp")?;
     }
     let work = Arc::new(AtomicUsize::new(usize::MAX));
-    sql_functions::install(&db, 1024 * 1024, Arc::clone(&work))?;
+    let binding=sql_functions::binding();
+    sql_functions::rebind(&binding,1024*1024,Arc::clone(&work));
+    sql_functions::install_bound(&db,binding)?;
     Ok((db, work))
 }
 fn evaluate(db: &Connection, sql: &str) -> Result<serde_json::Value> {

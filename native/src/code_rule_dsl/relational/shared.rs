@@ -87,6 +87,7 @@ impl Versions {
 
 #[derive(Clone, Eq, PartialEq)]
 enum Key {
+    Layout(String),
     Syntax {
         family: u8,
         files: Vec<(String, u32, [u8; 32])>,
@@ -123,6 +124,7 @@ impl Hash for Key {
     fn hash<H: Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
+            Self::Layout(value) => value.hash(state),
             Self::Syntax {
                 family,
                 files,
@@ -159,6 +161,7 @@ impl Hash for Key {
 }
 #[derive(Default)]
 pub(super) struct Bindings {
+    templates: Option<Box<Bindings>>,
     definitions: HashMap<Key, usize>,
     retained: HashSet<(u8, usize)>,
     next_lease: usize,
@@ -167,6 +170,9 @@ pub(super) struct Bindings {
 }
 impl Bindings {
     pub fn bytes(&self) -> usize {
+        self.bytes + self.templates.as_ref().map_or(0, |t| t.bytes())
+    }
+    pub fn data_bytes(&self) -> usize {
         self.bytes
     }
     pub fn forget(&mut self) {
@@ -190,6 +196,7 @@ impl Bindings {
             return *id;
         }
         let added = match &key {
+            Key::Layout(value) => value.len(),
             Key::Sql {
                 query,
                 schema,
@@ -362,10 +369,65 @@ impl Bindings {
         }
         bindings
     }
+    pub fn layouts(
+        &mut self,
+        rule: &CompiledCodeRule,
+        clause: &str,
+        plan: &Plan,
+        limit: usize,
+    ) -> BTreeMap<String, usize> {
+        let t = self.templates.get_or_insert_with(Default::default);
+        let versions = Versions::new(std::iter::empty());
+        let mut sources = BTreeMap::new();
+        for (name, _) in &plan.inputs {
+            sources.insert(
+                name.clone(),
+                t.evidence(rule, clause, name, &versions, &None, 0),
+            );
+        }
+        if plan.references.is_some() {
+            sources.insert(
+                "reference_edges".into(),
+                t.evidence(rule, clause, "reference_edges", &versions, &None, 0),
+            );
+        }
+        if plan.reads_source {
+            sources.insert(
+                "__source_text".into(),
+                t.evidence(rule, clause, "__source_text", &versions, &None, 0),
+            );
+        }
+        if let Some(spec) = &plan.syntax {
+            let owners = spec
+                .owners
+                .iter()
+                .map(|(n, o)| (n, &o.kind, o.outermost))
+                .collect::<Vec<_>>();
+            for (family, name) in [
+                (0, Some(&spec.name)),
+                (1, spec.edges.as_ref()),
+                (2, spec.ownership.as_ref()),
+            ] {
+                if let Some(name) = name {
+                    let definition = serde_json::json!([
+                        family,
+                        spec.fields,
+                        spec.columns,
+                        spec.exclude_kinds,
+                        spec.empty_text_kinds,
+                        owners
+                    ])
+                    .to_string();
+                    sources.insert(name.clone(), t.intern(Key::Layout(definition)));
+                }
+            }
+        }
+        t.stages(plan, &sources, limit)
+    }
 }
 
-pub(super) fn physical(id: usize) -> String {
-    format!("__fact_{id}")
+pub(super) fn layout(id: usize) -> String {
+    format!("__context_{id}")
 }
 
 pub(super) fn resolve(query: &str, aliases: &BTreeMap<String, String>) -> String {

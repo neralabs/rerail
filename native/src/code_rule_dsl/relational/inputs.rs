@@ -6,7 +6,7 @@ use crate::code_rule_dsl::{
     violations::{Witness, anchored_span, projection::Row},
 };
 use napi::Result;
-use rusqlite::{Connection, types::ValueRef};
+use rusqlite::types::ValueRef;
 use std::{
     cell::RefCell,
     sync::{Arc, atomic::AtomicUsize},
@@ -22,7 +22,7 @@ struct Pending {
     projection: Option<Row>,
 }
 struct Sink<'a> {
-    db: &'a Connection,
+    db: &'a super::Database,
     table: &'a str,
     input: &'a FactQuery,
     work: &'a Arc<AtomicUsize>,
@@ -43,7 +43,7 @@ impl Sink<'_> {
         if published == 0 {
             return Ok(());
         }
-        insert::insert_rows(
+        insert::bound_rows(
             self.db,
             self.table,
             self.input.project.len() + 3,
@@ -102,7 +102,7 @@ impl Sink<'_> {
 }
 #[allow(clippy::too_many_arguments)]
 pub(super) fn stream(
-    db: &Connection,
+    db: &super::Database,
     (table, _label): (&str, &str),
     input: &FactQuery,
     work: &Arc<AtomicUsize>,
