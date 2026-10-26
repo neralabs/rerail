@@ -2,6 +2,7 @@
 
 ## Using Rerail
 - [installation.md](installation.md): what `rerail setup` writes, removal, and the managed-installation layout
+- [troubleshooting.md](troubleshooting.md): what you see when set-up or Rerail goes wrong, and what to do
 - [distribution-model.md](distribution-model.md): how the package is distributed and updated
 - [writing-rules.md](writing-rules.md): which rules are worth having, and suggesting, writing, testing and tuning one
   with `/rerail-create` and `rerail rules evidence|test|add`

@@ -4,6 +4,8 @@ Rerail lands on a machine through one command, `rerail setup`, delivered by
 `npx` from npmjs. Everything below explains what that command does, what it
 needs before it can run, and how to update, reset, and remove an installation.
 To run Rerail from a source checkout instead, see "Developing from a checkout".
+What Rerail runs on is under [Supported and not supported](#supported-and-not-supported), and
+[Troubleshooting](troubleshooting.md) answers what goes wrong in set-up and after it.
 
 ## One line
 
@@ -313,6 +315,39 @@ When the credential is missing or has expired, npm-backed commands such as
 `rerail update` report that the npm registry credentials are missing or
 expired; sign in again with `npm login`. Rerail redacts `_authToken` and
 `_password` values from any npm output it prints.
+
+## Supported and not supported
+
+Supported:
+
+- **Operating systems**: macOS on arm64 and x64 (x64 Node under Rosetta works too); Linux on arm64 and x64 with
+  glibc 2.39 or newer (Ubuntu 24.04 and later, Debian 13 and later, Fedora 40 and later); Windows 11 on x64 and arm64.
+- **Node.js** 24 or newer, however it is installed (nodejs.org, Homebrew, nvm, fnm, Volta, NodeSource). After
+  upgrading or removing the Node that ran set-up, run `rerail install --refresh`.
+- **Git** at `/usr/bin/git`, `/usr/local/bin/git` or `/opt/homebrew/bin/git`, or on Windows Git for Windows in
+  `C:\Program Files\Git` (or `C:\Program Files (x86)\Git`). Rerail does not look for Git on `PATH`.
+- **Shells** set-up puts `rerail` on `PATH` for: zsh, bash and fish, any other shell through `~/.profile`, and on
+  Windows PowerShell and Command Prompt through the user `Path` (in Git Bash, type `rerail.cmd`).
+- **Coding agents**: Claude Code as the CLI, in the VS Code extension (whose panel shows no status line) and in the
+  JetBrains plugin; on Windows, Claude Code 2.1.139 or newer. Codex CLI (trust the hook once with `/hooks`). Cursor's
+  IDE agent and its CLI (`cursor-agent`). OMP and Pi. Each is found by its config folder in your home folder
+  (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.omp/agent`, `~/.pi/agent`).
+- **Containers and devcontainers** with a glibc 2.39 image (such as `node:24-trixie-slim`) and an init process.
+- **WSL 2**, as Linux, with the coding agent running in WSL too.
+- **A registry mirror or proxy** set in `~/.npmrc`.
+
+Not supported:
+
+- Linux with glibc older than 2.39: Debian 12 (and the default `node:24` and `node:24-slim` images), Ubuntu 22.04,
+  RHEL 9 and its rebuilds, Amazon Linux 2023. Alpine and other musl distributions. Other operating systems.
+- Node.js 23 or older.
+- A Git only on `PATH` somewhere else (Nix, Linuxbrew, scoop, a per-user Git for Windows), or no Git.
+- Other coding agents and editors: GitHub Copilot, Windsurf, Gemini CLI, Cline, Roo Code, Zed's agent, Aider,
+  Continue, OpenCode, Amp and the rest. Cursor's cloud agents, which run no user hooks.
+- Agent config folders moved with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, and agent config files that are not strict
+  JSON (comments, trailing commas).
+- A coding agent on Windows with Rerail in WSL, or the other way round.
+- Installing offline: set-up, `rerail update` and rule packs need the npm registry.
 
 ## After setup
 
