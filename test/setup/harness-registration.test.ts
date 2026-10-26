@@ -740,6 +740,9 @@ describe("Claude Code commands", () => {
     const uninstall = await read("rerail-uninstall");
     expect(uninstall).toContain(`allowed-tools: Bash(${command} install --remove --dry-run), Bash(${command} stop)\n`);
     expect(uninstall).toContain(`\n${command} install --remove\n`);
+    expect(uninstall).toContain("Remove Rerail from this computer?\n\n  Removes   /rerail commands, hooks and the status line\n");
+    expect(uninstall).toContain("  2. Only stop it in this repo    Rerail stays everywhere else\n");
+    expect(uninstall).toContain("  Restart your coding agents to finish.\n");
     const showMe = await read("rerail-show-me");
     expect(showMe).toContain(`allowed-tools: Bash(${command} show-me --json), Bash(${command} show-me --cleanup)\n`);
     expect(showMe).toContain("with your file edit or write tool");
