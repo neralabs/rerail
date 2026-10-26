@@ -633,6 +633,14 @@ async function runReleaseCommand(command: string, args: readonly string[], conte
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);
 }
 
+// `rerail setup … | head -2` closes the pipe while Rerail still has lines to write. The reader chose not to see them:
+// no stack trace, and the command still finishes what it started (an install half done would hold its lock).
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code !== "EPIPE") throw error;
+  });
+}
+
 try {
   process.exitCode = await main();
 } catch (error) {
