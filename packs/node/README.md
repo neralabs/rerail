@@ -1,6 +1,6 @@
 # Rerail rule pack: Node.js
 
-35 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
+42 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
 the pack's conformance check, and in `candidates/rules/` until then ([docs/port-readiness.md](../../docs/port-readiness.md),
 [conformance/README.md](../../conformance/README.md)). Each port is scored through the engine's production workspace
 path, with every disagreement declared in `divergences.json` (`n-prefer-promises-fs` does not report `fs.watch`;
@@ -16,8 +16,11 @@ template with an invalid escape), against:
 33 ports ship, 7 of them on (the ones the plugin's recommended configurations turn on: `n-hashbang`,
 `n-no-deprecated-api`, `n-no-exports-assign`, `n-no-process-exit`, `n-no-unsupported-features-es-builtins`,
 `n-no-unsupported-features-es-syntax`, `n-no-unsupported-features-node-builtins`) and the other 26 off until a
-repository turns them on. The 2 candidates, `n-no-restricted-import` and `n-no-restricted-require`, report nothing at
-upstream's default options, so neither source shows them catching anything.
+repository turns them on. The 9 candidates: `n-no-restricted-import` and `n-no-restricted-require` report nothing at
+upstream's default options, so neither source shows them catching anything; the seven rules that read where a
+specifier resolves (`n-no-missing-import`/`-require`, `n-file-extension-in-import`, `n-no-unpublished-import`/`-require`,
+`n-no-extraneous-import`/`-require`) pass the plugin's tests, and no sample judges them yet: a sample carries its file
+and its package.json, not the files and installed packages its imports resolve to.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.

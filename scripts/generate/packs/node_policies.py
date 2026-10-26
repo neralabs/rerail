@@ -1035,7 +1035,7 @@ def unsupported_builtins_doc(maps, globals_node, name, es=False):
 # it): inside a class, or below a "use strict" directive prologue of the program or an enclosing function. A module is
 # strict throughout, which the clauses' `when.sourceType` reads instead.
 USE_STRICT_PROLOGUE = {"kind": "expression_statement", "has": {"kind": "string", "regex": "^(?:'use strict'|\"use strict\")$"},
-                       "not": {"follows": {"stopBy": "end", "not": {"any": [{"kind": "comment"}, {"kind": "expression_statement", "has": {"kind": "string"}}]}}}}
+                       "not": {"follows": {"stopBy": "end", "not": {"any": [{"kind": "comment"}, {"kind": "expression_statement", "has": {"kind": "string"}}, {"regex": "^\\{$"}]}}}}
 STRICT_CODE = {"inside": {"stopBy": "end", "any": [
     {"kind": "class_body"}, {"kind": "class_heritage"},
     {"kind": "program", "has": USE_STRICT_PROLOGUE},
