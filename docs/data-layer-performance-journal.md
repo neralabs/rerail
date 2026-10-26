@@ -5226,3 +5226,54 @@ The laboratory changes only restored snapshot copies.
 The statistics boundary also runs `ANALYZE temp`, revisiting unchanged relations at every family frontier.
 The next correction tests outer scope gates and refreshes only dirty physical cuts.
 The complete repository acceptance gate remains pending.
+
+
+### Correct input scope planning and statistics maintenance (2026-10-26)
+
+Red commit `617ddca9` exposes scalar scope gates and repeated analysis of unchanged relations.
+Commit `94ca6865` makes imported inputs use an outer binding gate and refreshes only dirty physical cuts.
+Authored stage cuts retain their indexed scalar binding lookup.
+Applying outer gates to every cut changes a quality-rule plan and exhausts regex work in the five-file control.
+That broader variant is rejected; the production change applies only to imported input relations.
+
+A remaining interval join scans bindings through the scope-only index.
+Red commit `803c075b` requires a selective imported span lookup to use fewer than 1,000 VM steps.
+The original lookup uses 7,028 steps on the 1,000-row scope fixture.
+Commit `1efb5768` replaces the imported scope-only index with `(binding,__path,__start,__end)`.
+The scope prefix still supports cleanup. There is no second input index or per-consumer index build.
+Stage indexes retain their authored columns after the binding prefix.
+The [captured-query receipt](performance-decisions/schema-lifecycle-scope-plans.json) records matching complete typed multisets.
+
+The three captured queries change as follows:
+
+| Query | Original VM steps | Corrected VM steps | Rows |
+| --- | ---: | ---: | ---: |
+| Interval ownership | 20,960,663 | 6,179,714 | 1,801 |
+| Recursive consumers A | 818,453,316 | 17,843 | 4 |
+| Recursive consumers B | 1,250,315,587 | 11,288 | 4 |
+
+These query-only results exclude original work allowances and report index construction as setup.
+The production checks retain the original allowances and include index construction.
+The 12-file failure batch, 32-file batching control, and five-file quality domain now pass without engine failures or finding differences.
+All 192 original quality observations pass, including 130 positive and 62 clean observations.
+All 52 execution-shape tests pass on the combined addon.
+
+Statistics collection now targets dirty backing relations at each coherent family boundary.
+The regression test leaves an observable sentinel on an unchanged relation and requires that it survive the next boundary.
+Equal-size distribution invalidation still passes.
+The lifecycle report adds the number of analyzed relations, separate from boundary and request counts.
+Table-scoped ANALYZE still reloads SQLite statistics metadata; the bounded schema makes this a different cost from the old private-schema model.
+It avoids re-sampling every unchanged relation at each family frontier.
+Complete cold resource acceptance remains pending.
+
+
+The combined source passes 1,558 native DSL tests, with 23 existing ignores.
+All 81 laboratory tests pass; native all-target Clippy passes with warnings denied.
+Static and profiling checks pass. All ten selected serverplan source batches pass.
+Two short-deadline diagnostics timed out during concurrent compilation and then passed with 45-second deadlines.
+Those overlapping diagnostic runs are not performance comparisons.
+The fixed guard remains 349 host submissions plus 45 internal SQLite executions, with complete parity.
+The 100 reference remains diagnostic rather than a resource acceptance substitute.
+
+The combined addon is frozen at source `1efb5768` with SHA-256 `dd09f243ecc65ed798e597068c73f4eee11e79272ece9b990342c0c25b0a40df`.
+It receives a paired 96-file timing diagnostic and complete corrected repository measurements next.

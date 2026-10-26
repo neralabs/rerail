@@ -1,0 +1,33 @@
+{
+  "format": "rerail.sql-scope-planning-experiment/v1",
+  "note": "Query-only replay of restored failure snapshots. Counts and complete typed multiset digests establish query-plan behavior, not end-to-end resource acceptance. Original rule budgets disabled only in the replay host. Input index construction belongs to replay setup and remains included in full cold measurements.",
+  "queries": [
+    {
+      "snapshot": "failure-41011-0.json",
+      "kind": "interval ownership",
+      "originalVmSteps": 20960663,
+      "outerInputGateVmSteps": 20957939,
+      "outerInputGateAndSpanIndexVmSteps": 6179714,
+      "rows": 1801,
+      "typedBagDigestAllVariants": "560a4c5587ec431e"
+    },
+    {
+      "snapshot": "failure-41011-1.json",
+      "kind": "recursive consumers",
+      "originalVmSteps": 818453316,
+      "outerInputGateVmSteps": 27793,
+      "outerInputGateAndSpanIndexVmSteps": 17843,
+      "rows": 4,
+      "typedBagDigestAllVariants": "f84ec6cdc81c8d78"
+    },
+    {
+      "snapshot": "failure-41011-2.json",
+      "kind": "recursive consumers",
+      "originalVmSteps": 1250315587,
+      "outerInputGateVmSteps": 13116,
+      "outerInputGateAndSpanIndexVmSteps": 11288,
+      "rows": 4,
+      "typedBagDigestAllVariants": "5bd263b742017cb8"
+    }
+  ]
+}

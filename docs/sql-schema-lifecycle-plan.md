@@ -1,7 +1,8 @@
 # SQL schema lifecycle: implementation plan
 
 Date: 2026-10-26.
-Status: executor implementation and semantic validation are in progress. Full resource acceptance is pending.
+Status: SC1–SC4 executor changes are implemented. Broad validation and corrected full resource acceptance are in progress.
+The first full candidate failed acceptance; see the performance journal and rejected measurement receipt.
 
 This plan expands Delivery 2 of the [cold CPU recovery plan](cold-cpu-recovery-plan.md).
 The [spike results](cold-cpu-spike-results.md) and their receipts supply the evidence.
@@ -411,3 +412,33 @@ Each delivery must reduce complete cold CPU without a peak-RSS regression agains
 The final recovery gate remains broader than this schema plan.
 Candidate selection, publication, and source ownership still contribute to the complete result.
 Statement counts explain execution. They do not substitute for these resource and parity gates.
+
+
+## Implemented shape and acceptance status
+
+Stable SQL layouts and exact data bindings now have separate identities.
+Consumer descriptors retain data pins, options, budgets, and source domains.
+Ordered family frontiers refresh published cuts before dependent readers prepare.
+Whole native demand batches retain the existing count, scan, and scatter boundaries.
+The executor adds no generic graph scheduler or SQL partition rewrite.
+
+Imported input views use an outer one-row binding gate.
+Their backing index covers `(binding,__path,__start,__end)`.
+Indexed stage cuts preserve their original binding predicate and authored lookup columns.
+This distinction follows the input and stage contracts, with no rule-specific dispatch or configuration flag.
+
+SQL programs share immutable queries and schemas across compatible layouts.
+The family compiler fuses eligible cuts and records reasons for retained cuts.
+The default quality clause retains 39 physical stages from 54 logical stages, with 15 fused stages.
+Deferred fields, authored options, typed comparisons, and original work allowances remain covered by parity tests.
+
+Statistics refresh only dirty physical relations at coherent family boundaries.
+Unchanged cardinality does not suppress distribution invalidation.
+Targeted ANALYZE retains SQLite's metadata reload; it avoids repeated analysis of unchanged data within the bounded schema.
+Completed data and idle layouts have bounded caches.
+Final readers release exact binding pins, and cleanup groups ready-row deletions by backing relation.
+
+The first full candidate matched findings but failed resource and error acceptance.
+The journal records that rejected result and the subsequent input-planning correction.
+Full corrected 50- and 60-rule runs must pass before this plan is accepted.
+The broader cold CPU recovery target includes candidate selection and source ownership, which this delivery does not claim to solve.
