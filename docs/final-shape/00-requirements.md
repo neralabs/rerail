@@ -169,12 +169,28 @@ Source tags:
 | M11 | Commit as you go; never push. Keep large fixtures out of history | P25 23:43; P26 01:03 |
 | M12 | Typing work stays in the Typing-support worktree; other worktrees are read-only from here | T25 21:23 |
 
-## Gaps in 03 to close
+## Added 2026-10-26 (later)
 
-1. **The outer-SQL target and the pure-SQL fallback** (A1, A5): how a rule runs inside a user's SQL query, and how the same plan lowers to SQLite only.
-2. **Rule-language unification** (B3) and **the stated Datalog subset** (B4).
-3. **Regex** (B7, B8): regexes lowered to transducers, `tid` term matching, and trigram postings for the rest.
-4. **Tape content** (G4–G6): structure only; error spans as tree-sitter emits them; multiple trees per file range (injections).
-5. **Typing** (I1–I6): a section on type facts, three-valued rule predicates, user type declarations, generics, and the dependency universe (stubs and installed packages as content-addressed facts installed on demand).
-6. **Unbounded in-file recursion** (F2 vs E8): device-side enqueue inside a dispatch for data-dependent loops that terminate, and waves only for programs that cannot be bounded to one file.
-7. **Unknown(resource) and tooling** (J2, L1): carry PIAT `spec-tooling.md` forward.
+| # | Requirement | Source | 03 |
+|---|---|---|---|
+| B10 | Datalog is the underlying format, with extensions | W26 | §0, §12 |
+| B11 | Everything else is resolved as in the Typing-support branch | W26 | Part II (§12–§14) |
+| C13 | Git tree hashes and their relationships are facts the engine works with | W26 | §15 |
+| F6 | Device-side enqueue for recursion inside one file whose bound is not fixed | W26 | §7 |
+| B12 | File filtering may run regexes over the index or the vocabulary, guided by ast-index-spike | W26 | §16 |
+
+## How the earlier gaps are closed
+
+| Gap | Requirements | Closed in 03 |
+|---|---|---|
+| 1 | A1, A5: outer SQL and pure-SQL fallback | §17 (carried from the PIAT spec) |
+| 2 | B3, B4: dialect and Datalog subset | §12 |
+| 3 | B7, B8: regex | §16 |
+| 4 | G4–G6: tape content | §17 |
+| 5 | I1–I6: typing | §13 |
+| 6 | F2: unbounded in-file recursion | §7 (device-side enqueue) |
+| 7 | J2, L1: Unknown(resource) and tooling | §17 |
+
+Still open:
+- the k for cross-file typing rounds, adopted as 2;
+- how a regex's matched-term count feeds the plan-time estimate (§16).
