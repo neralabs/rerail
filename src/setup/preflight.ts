@@ -9,11 +9,11 @@ import {
 } from "../harness/setup-screens.js";
 
 /**
- * The oldest glibc the Linux engines load on. It must match how `.github/workflows/package.yml` builds them: a plain
- * `napi build` on the ubuntu-24.04 runners links against their glibc 2.39, and an older glibc refuses to load the
- * engine (`GLIBC_2.39' not found`). Change the two together.
+ * The oldest glibc Rerail runs on: what Node 24's own Linux binaries need. The engines load on older ones still
+ * (`.github/workflows/package.yml` builds them with napi's glibc 2.17 toolchain and fails the build if one needs more
+ * than 2.28, the same number), so change the two together.
  */
-export const MIN_LINUX_GLIBC = "2.39";
+export const MIN_LINUX_GLIBC = "2.28";
 
 /** The systems and processors `package.yml` builds an engine for. */
 const SUPPORTED: Readonly<Partial<Record<NodeJS.Platform, readonly string[]>>> = {

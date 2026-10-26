@@ -12,7 +12,7 @@ describe("unsupportedPlatform", () => {
 
   it("stops on musl, an older glibc, and a system or processor with no engine", () => {
     expect(unsupportedPlatform({ platform: "linux", arch: "arm64" })).toEqual({ kind: "musl" });
-    expect(unsupportedPlatform({ platform: "linux", arch: "x64", glibc: "2.36" })).toEqual({ kind: "glibc", found: "2.36" });
+    expect(unsupportedPlatform({ platform: "linux", arch: "x64", glibc: "2.27" })).toEqual({ kind: "glibc", found: "2.27" });
     expect(unsupportedPlatform({ platform: "linux", arch: "arm", glibc: "2.41" })).toEqual({ kind: "system", platform: "Linux", arch: "arm" });
     expect(unsupportedPlatform({ platform: "freebsd", arch: "x64" })).toEqual({ kind: "system", platform: "freebsd", arch: "x64" });
   });
@@ -24,8 +24,8 @@ describe("setupPreflight", () => {
     expect(text).toContain("✕ Rerail can’t run on this computer: this Linux uses musl (Alpine, for example), and Rerail needs glibc.");
     expect(text).toContain("Nothing was changed on this machine.");
     expect(text).toContain(`Rerail runs on macOS and Windows, and on Linux with glibc ${MIN_LINUX_GLIBC} or newer, each on arm64 or x64.`);
-    expect(setupPreflight("agent", { platform: "linux", arch: "x64", glibc: "2.36" }))
-      .toContain(`this Linux has glibc 2.36, and Rerail needs glibc ${MIN_LINUX_GLIBC} or newer.`);
+    expect(setupPreflight("agent", { platform: "linux", arch: "x64", glibc: "2.27" }))
+      .toContain(`this Linux has glibc 2.27, and Rerail needs glibc ${MIN_LINUX_GLIBC} or newer.`);
   });
 });
 
