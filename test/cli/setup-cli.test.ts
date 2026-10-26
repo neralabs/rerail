@@ -15,7 +15,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
 import { launcherPathMarker, ManagedUpdater } from "../../src/setup/index.js";
 
@@ -125,7 +125,8 @@ describe("rerail install --root", () => {
       expect(await readFile(join(hostConfigHome, backups[0]!, "rerail-home", name), "utf8")).toBe(text);
     }
 
-    // A second uninstall the same day never overwrites the first backup.
+    // A second uninstall the same day, after installing again, never overwrites the first backup.
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     await writeFile(join(context.home, "rerail.sqlite"), "later");
     await runInstallCommand(["--root", packageRoot, "--remove"], context);
     const later = (await readdir(hostConfigHome)).filter(name => /^\.rerail-clean-\d{8}-\d{6}$/u.test(name));
@@ -149,6 +150,31 @@ describe("rerail install --root", () => {
     const [backup] = (await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"));
     expect(await readdir(join(hostConfigHome, backup!, "rerail-home"))).toEqual(["rerail.sqlite"]);
     expect((await readdir(context.home)).filter(name => name.includes(".sqlite"))).toEqual([]);
+  });
+
+  it("deletes the installation on uninstall, never the checkout current points at, and names what it removed and kept", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const { updater } = context;
+    const installed = [join(updater.versionsRoot, "1.0.0", "node_modules"), join(context.home, "packs", "node_modules"), join(hostConfigHome, ".cache", "rerail")];
+    for (const path of installed) await mkdir(path, { recursive: true });
+    await writeFile(join(context.home, "consent.json"), "{}");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], context)).toBe(0);
+    expect(output.mock.calls.join("")).toContain(`Would remove ${updater.versionsRoot} (the installed versions).`);
+    expect(existsSync(updater.versionsRoot)).toBe(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+
+    for (const path of [updater.currentLink, updater.launcherPath, updater.versionsRoot, updater.statePath, join(context.home, "packs"), join(hostConfigHome, ".cache", "rerail")]) {
+      expect(existsSync(path), path).toBe(false);
+    }
+    expect(existsSync(join(packageRoot, "package.json"))).toBe(true);
+    const text = output.mock.calls.join("");
+    expect(text).toContain(`Removed ${dirname(updater.launcherPath)} (the rerail command).`);
+    expect(text).toContain(`Removed ${join(hostConfigHome, ".cache", "rerail")} (the cache).`);
+    expect(text).toContain(`Kept ${context.home}: consent.json`);
   });
 
   it("keeps rules and history when another checkout registered with --root is removed", async () => {

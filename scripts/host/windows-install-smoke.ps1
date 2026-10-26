@@ -2,7 +2,7 @@
 # `npx @neralabs/rerail setup`, from a throwaway local registry standing in for npmjs, in a sandbox profile, answering
 # set-up's questions through its machine-readable lane. Then exercise the managed runtime: launcher, `current`
 # junction, daemon and native engine, Claude Code's exec-form hook, the Codex hook as Codex runs it (PowerShell),
-# update check, and coding-agent registration removal. Uses `node` from PATH, so the runner's architecture decides
+# update check, and the full uninstall. Uses `node` from PATH, so the runner's architecture decides
 # which native engine is exercised. The environment matrix (scripts/host/azure/guest.ps1) runs the same steps from
 # windows-host.ps1 on Windows 11 VMs.
 #
@@ -89,11 +89,29 @@ try {
   Write-Host $update
   if ($update -notmatch "Update available: no") { throw "update check did not report 'Update available: no'" }
 
+  Step "rerail.cmd passes on the CLI's exit code"
+  # The launcher ends its batch before node runs; a failing command must still fail.
+  $ErrorActionPreference = "Continue"
+  & $launcher install --no-such-option 2>$null | Out-Null
+  $failed = $LASTEXITCODE
+  $ErrorActionPreference = "Stop"
+  if ($failed -eq 0) { throw "rerail.cmd exited 0 for a command that failed" }
+
   Step "rerail install --remove"
-  & $launcher install --remove
-  if ($LASTEXITCODE -ne 0) { throw "install --remove exited $LASTEXITCODE" }
+  # stderr too: cmd says "The batch file cannot be found." there when the launcher is deleted under it.
+  $ErrorActionPreference = "Continue"
+  $removal = (& $launcher install --remove 2>&1 | ForEach-Object { "$_" }) -join "`n"
+  $removed = $LASTEXITCODE
+  $ErrorActionPreference = "Stop"
+  Write-Host $removal
+  if ($removed -ne 0) { throw "install --remove exited $removed" }
   $leftovers = @(Get-RerailHookLeftovers -UserHome $sandbox)
   if ($leftovers.Count -gt 0) { throw "install --remove left Rerail hooks in $($leftovers -join ', ')" }
+  if ($removal -match "batch file cannot be found") { throw "cmd lost the launcher install --remove deleted under it" }
+  # Listed by name: Test-Path calls a junction whose target is gone absent.
+  $left = @(Get-ChildItem -Force -Name $rerailHome | Where-Object { $_ -in @("current", "bin", "versions", "update-state.json", "packs") })
+  if (Test-Path "$sandbox\.cache\rerail") { $left += "$sandbox\.cache\rerail" }
+  if ($left.Count -gt 0) { throw "install --remove left behind: $($left -join ', ')" }
   Step "windows-install-smoke: PASS"
 } finally {
   if (Test-Path $launcher) { & $launcher daemon stop | Out-Null }
