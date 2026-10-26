@@ -55,13 +55,6 @@ def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block
      if stage['name']=='returns':stage.setdefault('indexes',[]).append(['__path','__start','__end'])
    if not plan.get('locations') and not clause['id'].startswith('quality-conditional') and clause['id']!='quality-project-taxonomy':
     plan.setdefault('partitionBy','file')
-   if name=='serverplan_state_tripwires' and clause['id'] in {'state-signatures-1','state-flow-1','state-projection-recovery-2','state-flow-project-1'}:
-    # These generators select every CST node in each admitted file, including the
-    # closed repository domain. Keep each detector's existing source/option gate.
-    batched_reachability(clause,forest=True)
-    whole_file_syntax_relations(clause)
-    plan['requireNonemptyInput']='syntax_gate'
-    continue
    if quality and shared_syntax_relations(clause):
     narrow_columns(plan)
     continue

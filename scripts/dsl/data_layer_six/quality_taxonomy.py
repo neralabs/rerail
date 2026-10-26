@@ -24,6 +24,10 @@ def taxonomy_clauses(m):
  for name,entries,sql,partition in [('local',['_check_recursive_payload_taxonomy_duplication','_check_serverplan_quality_source'],local,True),('project',['_check_recursive_payload_taxonomy_duplication_across_surfaces'],across,False)]:
   enabled=choice('oracleAnalyzer',TRUE if partition else FALSE,primary if partition else TRUE)
   gate_= {'$option':'entryPoint','cases':{'all':enabled,**{e:TRUE for e in entries}},'default':FALSE}
-  evidence=E(A(gate_,copy.deepcopy(candidate)),{'name':'capture.FN_NAME'})
+  evidence=E(A(copy.deepcopy(candidate),gate_),{'name':'capture.FN_NAME'})
+  # Entry points and the production domain also select files before any node is matched.
+  every={'path':{'regex':r'(?s).*'}};none={'path':{'regex':r'\b\B'}}
+  files={'path':{'regex':'^(?:'+'|'.join(re.escape(p) for p in sorted(set(exact)))+')$|^(?:'+'|'.join(re.escape(p)+'/' for p in directories)+r'|impl/common/l2070_server_plan/[^/]+$)','notRegex':r'(?:^|/)__init__\.py$'}}
+  evidence['evidence']['query']['ast']['file']={'$option':'entryPoint','cases':{'all':choice('oracleAnalyzer',every if partition else none,files if partition else every),**{e:every for e in entries}},'default':none}
   clauses.append({'id':'quality-'+name+'-taxonomy','relational':{'inputs':{'candidates':evidence},'query':sql,'key':['issue','identity'],**({'partitionBy':'file'} if partition else {})},'violation':{'code':'SPQ-049','message':'Recursive payload taxonomy duplication','anchor':'witness.span'}})
  return clauses
