@@ -1,8 +1,10 @@
 # Environment matrix
 
 The environment matrix installs a Rerail package on throwaway Azure VMs, one per environment, and checks it there
-the way a user meets it. CI runs it after every push to `main` that can change what ships
-(`.github/workflows/env-matrix.yml`); `just rerail-env-matrix` runs it by hand.
+the way a user meets it. CI runs it (`.github/workflows/env-matrix.yml`) after a push to `main` that changes what
+core ships, by the rule the Release pull request uses (`scripts/release/core-paths.mjs`), or that changes the matrix
+itself; a pack, test, docs or other CI change leaves the package as the last run tested it. `just rerail-env-matrix`
+runs it by hand.
 
 ## Environments
 
@@ -30,7 +32,9 @@ brings, installed the way they would install it.
 
 The checks run as the VM's ordinary user, never as root or SYSTEM: on Linux through a login shell, on Windows in a
 desktop session the user is signed into (automatic sign-in, then a restart), so set-up writes PATH into the user's
-own startup files or registry hive as it would on a person's computer.
+own startup files or registry hive as it would on a person's computer. On Windows the registry, set-up, managed
+install, hook and uninstall steps are `scripts/host/windows-host.ps1`, the same code the release gate
+(`scripts/host/windows-install-smoke.ps1`) runs on every release.
 
 1. **registry**: the package under test and every rule pack in `packs/` are served from a registry on the VM, as
    npmjs will serve them; everything else comes from npmjs.
@@ -46,7 +50,8 @@ own startup files or registry hive as it would on a person's computer.
    it, records its session with the daemon; Cursor's hooks are registered.
 7. **daemon-restart**: `rerail daemon stop` returns within 60 seconds, `status` then reports no daemon, and `rerail
    daemon start` brings it back with the engine.
-8. **uninstall**: `rerail install --remove` takes the hooks out of the agents and Rerail's directory off PATH.
+8. **uninstall**: `rerail install --remove` leaves no Claude Code, Codex or Cursor config pointing into the Rerail
+   home, and takes Rerail's directory off PATH.
 
 Facts about each VM (OS, glibc or Windows build, Node, npm, Git, and on Windows the execution policy and what `npx`
 does in a new Windows PowerShell) are recorded alongside, not judged.
@@ -76,8 +81,17 @@ token meanwhile. Environments run in parallel; a run of all of them takes about 
 
 No VM accepts inbound connections. Scripts reach a VM through Azure Run Command, the package and the results move
 through blob URLs signed for three hours, and each VM's public IP carries only its outbound traffic. Each environment
-deletes its VM, disk, network interface and public IP when it finishes; `sweep` deletes what a cancelled run left
-(CI sweeps after every run).
+deletes its VM, disk, network interface and public IP when it finishes; `sweep` deletes what a cancelled run left and
+each run's storage container once it is three hours old (CI sweeps after every run).
+
+In CI the package is staged once per run (`stage` bundles it with the rule packs into the run's container) and each
+environment's job runs `run --staged` against it; re-running failed environments reuses that bundle.
+
+A Windows VM's administrator password is generated for the run and is readable in clear while the VM exists: in the
+Run Command resource (`az vm run-command show`, by anyone with Reader on the resource group), in
+`C:\rerail-env\guest.ps1`, and in the Winlogon `DefaultPassword` value that signs the user in. The VM admits no inbound
+connections and is deleted when its environment finishes, so the password opens nothing reachable and outlives
+nothing; keep the resource group's access to the people who run the matrix.
 
 ## Azure setup
 

@@ -1,19 +1,10 @@
-// scripts/release/core.mjs and dist-tags.mjs: when core is released (what it ships changed since its last tag), the
-// version it takes, the changelog and version edits the Release pull request makes, the tag guard, and the check of a
-// release's dist-tags.
+// scripts/release/core.mjs, core-paths.mjs and dist-tags.mjs: when core is released (what it ships changed since its
+// last tag), the version it takes, the changelog and version edits the Release pull request makes, the tag guard, and
+// the check of a release's dist-tags.
 
 import { describe, expect, it } from "vitest";
-import {
-  changelogSection,
-  coreChanges,
-  coreTagRefusal,
-  lockChangesCore,
-  nextCoreVersion,
-  releaseChangelog,
-  setLockVersion,
-  setPackageVersion,
-  shipsWithCore,
-} from "../../scripts/release/core.mjs";
+import { coreChanges, lockChangesCore, shipsWithCore } from "../../scripts/release/core-paths.mjs";
+import { changelogSection, coreTagRefusal, nextCoreVersion, releaseChangelog, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
 import { distTagReport, parseDistTagList, parseExpectation } from "../../scripts/release/dist-tags.mjs";
 
 describe("shipsWithCore", () => {

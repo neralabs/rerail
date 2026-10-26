@@ -17,6 +17,11 @@ upload() { # <file> <sas url>
   curl -fsS --retry 5 --retry-all-errors -X PUT -H 'x-ms-blob-type: BlockBlob' --data-binary "@$1" "$2" >/dev/null
 }
 
+# A download, retried: a new VM's first minutes on the network see failures a person would simply retry.
+fetch() { # <url> [curl options...]
+  curl -fsS --retry 5 --retry-all-errors --retry-delay 5 "$@"
+}
+
 provision() {
   set -e
   mkdir -p "$WORK"
@@ -25,8 +30,9 @@ provision() {
   exec >"$WORK/provision.log" 2>&1
   if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q
-    apt-get install -y -q git curl ca-certificates xz-utils
+    # On first boot unattended-upgrades holds the dpkg lock for minutes; wait for it rather than fail.
+    apt-get -o DPkg::Lock::Timeout=600 update -q
+    apt-get -o DPkg::Lock::Timeout=600 install -y -q git curl ca-certificates xz-utils
   elif command -v dnf >/dev/null; then
     dnf install -y -q git curl tar xz
   else
@@ -47,12 +53,14 @@ provision() {
     *) echo "unsupported machine $(uname -m)" >&2; exit 1 ;;
   esac
   # The newest release of the requested major, as a user downloading Node from nodejs.org gets it.
-  version="$(curl -fsS "https://nodejs.org/dist/latest-v${RERAIL_ENV_NODE}.x/SHASUMS256.txt" \
+  version="$(fetch "https://nodejs.org/dist/latest-v${RERAIL_ENV_NODE}.x/SHASUMS256.txt" \
     | sed -n "s/.*node-\(v[0-9.]*\)-linux-${arch}\.tar\.xz$/\1/p")"
   [ -n "$version" ] || { echo "no Node ${RERAIL_ENV_NODE}.x for linux-${arch}" >&2; exit 1; }
-  curl -fsS "https://nodejs.org/dist/${version}/node-${version}-linux-${arch}.tar.xz" | tar -xJ -C /usr/local --strip-components=1
+  # To a file first: a retried download piped into tar would hand it the failed attempt's bytes too.
+  fetch "https://nodejs.org/dist/${version}/node-${version}-linux-${arch}.tar.xz" -o "$WORK/node.tar.xz"
+  tar -xJf "$WORK/node.tar.xz" -C /usr/local --strip-components=1
   if [ -n "${RERAIL_ENV_BUNDLE_URL:-}" ]; then
-    curl -fsS --retry 5 "$RERAIL_ENV_BUNDLE_URL" -o "$WORK/bundle.tar"
+    fetch "$RERAIL_ENV_BUNDLE_URL" -o "$WORK/bundle.tar"
     mkdir -p "$WORK/bundle"
     tar -xf "$WORK/bundle.tar" -C "$WORK/bundle"
     chmod -R a+rX "$WORK/bundle"
@@ -267,12 +275,15 @@ check_daemon_restart() {
 
 check_uninstall() {
   "$LAUNCHER" install --remove || return 1
-  if grep -q claude-hook "$HOME/.claude/settings.json" 2>/dev/null; then echo "Claude Code hooks left behind"; return 1; fi
+  # No agent config may still point into the Rerail home, or the agent would run a deleted launcher.
   local file
+  for file in "$HOME/.claude/settings.json" "$HOME/.codex/hooks.json" "$HOME/.cursor/hooks.json"; do
+    if [ -f "$file" ] && grep -q '/\.rerail/' "$file"; then echo "Rerail hooks left in $file"; return 1; fi
+  done
   for file in "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile"; do
     if [ -f "$file" ] && grep -q '\.rerail/bin' "$file"; then echo "PATH block left in $file"; return 1; fi
   done
-  echo "agents unhooked and PATH block removed"
+  echo "Claude Code, Codex and Cursor unhooked, and the PATH block removed"
 }
 
 collect_facts

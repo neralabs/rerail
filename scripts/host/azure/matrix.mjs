@@ -6,7 +6,10 @@
 //
 //   node scripts/host/azure/matrix.mjs run --tarball <neralabs-rerail-*.tgz> [--env <id,...>] [--keep]
 //   node scripts/host/azure/matrix.mjs run --npm <version or dist-tag> [--env <id,...>]
+//   node scripts/host/azure/matrix.mjs stage --tarball <file> --run-id <id>     bundle once for a CI run's jobs, which
+//   node scripts/host/azure/matrix.mjs run --staged --run-id <id> [--env <id,...>]      then each run --staged
 //   node scripts/host/azure/matrix.mjs list [--env <id,...>]     JSON array of ids, for a CI matrix
+//   node scripts/host/azure/matrix.mjs affected --base <commit> --head <commit>     true when the matrix should run
 //   node scripts/host/azure/matrix.mjs sweep [--older-than-hours <n>]
 //
 // Everything goes through the `az` CLI, signed in (`az login` locally, OIDC in CI) to the subscription holding the
@@ -21,6 +24,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
+import { coreChanges } from "../../release/core-paths.mjs";
 
 const run = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -77,6 +81,12 @@ async function storage() {
     async container(container) {
       await az(["storage", "container", "create", ...auth, "-n", container], { json: false });
     },
+    containers(prefix) {
+      return az(["storage", "container", "list", ...auth, "--prefix", prefix, "--query", "[].{name: name, modified: properties.lastModified}"]);
+    },
+    async deleteContainer(container) {
+      await az(["storage", "container", "delete", ...auth, "-n", container], { json: false });
+    },
     async upload(container, blob, file) {
       await az(["storage", "blob", "upload", ...auth, "-c", container, "-n", blob, "-f", file, "--overwrite", "--no-progress"], { json: false });
     },
@@ -114,7 +124,9 @@ async function makeBundle(tarball) {
 
 const log = (environment, message) => console.log(`[${environment.id}] ${message}`);
 
-// Inline settings the guest scripts read: shell assignments for bash, a hashtable for Windows PowerShell.
+// The script Run Command takes: the settings the guest reads (shell assignments for bash, a hashtable for Windows
+// PowerShell), then the guest itself; on Windows with scripts/host/windows-host.ps1, which it shares with the
+// release gate, ahead of it.
 function guestScript(environment, settings) {
   if (environment.os === "linux") {
     const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -124,7 +136,8 @@ function guestScript(environment, settings) {
   }
   const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
   const header = `$RerailEnv = @{ ${Object.entries(settings).map(([key, value]) => `${key} = ${quote(value)}`).join("; ")} }`;
-  return `${header}\n${readFileSync(join(HERE, "guest.ps1"), "utf8")}`;
+  const shared = readFileSync(join(HERE, "..", "windows-host.ps1"), "utf8");
+  return `${header}\n${shared}\n${readFileSync(join(HERE, "guest.ps1"), "utf8")}`;
 }
 
 async function createVm(environment, { runId, vm, password }) {
@@ -196,7 +209,11 @@ function judge(environment, results, log) {
 }
 
 async function runEnvironment(environment, { runId, container, store, bundleSas, npmSpec, outDir, keep }) {
-  const vm = `rerail-${environment.id.replaceAll(".", "")}-${runId}`.slice(0, 64);
+  // One CI run keeps its run id across re-run attempts (they share its staged bundle), so each attempt at an
+  // environment gets its own VM and result blobs: a re-run never reads the results an earlier attempt left.
+  const attempt = randomBytes(2).toString("hex");
+  const vm = `rerail-${environment.id.replaceAll(".", "")}-${runId}-${attempt}`.slice(0, 64);
+  const blobs = `${environment.id}/${attempt}`;
   const password = `Rr1!${randomBytes(16).toString("hex")}`;
   if (process.env.GITHUB_ACTIONS === "true") console.log(`::add-mask::${password}`);
   const started = Date.now();
@@ -213,8 +230,8 @@ async function runEnvironment(environment, { runId, container, store, bundleSas,
       BundleUrl: bundleSas ?? "",
       NpmSpec: npmSpec ?? "",
       NpmToken: npmSpec ? (process.env.RERAIL_ENV_NPM_TOKEN ?? "") : "",
-      ResultUrl: await store.sas(container, `${environment.id}/results.json`, "cw"),
-      LogUrl: await store.sas(container, `${environment.id}/guest.log`, "cw"),
+      ResultUrl: await store.sas(container, `${blobs}/results.json`, "cw"),
+      LogUrl: await store.sas(container, `${blobs}/guest.log`, "cw"),
       ...(environment.os === "windows" ? { Password: password } : {}),
     };
     view = await runCommand(environment, vm, guestScript(environment, settings), started);
@@ -223,7 +240,7 @@ async function runEnvironment(environment, { runId, container, store, bundleSas,
     // results.json, which is what to wait for.
     if (environment.os === "windows" && view.executionState === "Succeeded") {
       log(environment, "waiting for the signed-in user's checks");
-      while (!(await store.exists(container, `${environment.id}/results.json`))) {
+      while (!(await store.exists(container, `${blobs}/results.json`))) {
         if (Date.now() - started > ENVIRONMENT_DEADLINE_MS) {
           view = { executionState: "TimedOut", error: "the signed-in user's checks uploaded no results in time" };
           break;
@@ -237,10 +254,10 @@ async function runEnvironment(environment, { runId, container, store, bundleSas,
   } finally {
     const resultsFile = join(outDir, `${environment.id}.json`);
     try {
-      if (await store.download(container, `${environment.id}/results.json`, resultsFile)) {
+      if (await store.download(container, `${blobs}/results.json`, resultsFile)) {
         results = JSON.parse(readFileSync(resultsFile, "utf8").replace(/^\uFEFF/, ""));
       }
-      await store.download(container, `${environment.id}/guest.log`, join(outDir, `${environment.id}.log`));
+      await store.download(container, `${blobs}/guest.log`, join(outDir, `${environment.id}.log`));
     } catch (error) {
       log(environment, `could not fetch results: ${error.message}`);
     }
@@ -294,29 +311,58 @@ function report(outcomes, packageLabel) {
 
 // ---- Commands ----------------------------------------------------------------------------------------------------
 
-async function commandRun(options) {
-  if (Boolean(options.tarball) === Boolean(options.npm)) throw new Error("Pass exactly one of --tarball <file> or --npm <version or dist-tag>");
-  const environments = selectEnvironments(options.env);
-  const runId = options["run-id"] ?? `${new Date().toISOString().slice(0, 10).replaceAll("-", "")}${randomBytes(3).toString("hex")}`;
+const newRunId = () => `${new Date().toISOString().slice(0, 10).replaceAll("-", "")}${randomBytes(3).toString("hex")}`;
+
+function checkRunId(runId) {
   if (!/^[a-z0-9-]{1,32}$/.test(runId)) throw new Error("--run-id takes lowercase letters, digits and dashes, at most 32");
+  return runId;
+}
+
+// Bundles a tarball (and every rule pack in packs/) into the run's container, where each environment's VM fetches
+// it. Done once per run: CI's environment jobs all run --staged against it.
+async function stage(store, container, tarball) {
+  if (!existsSync(tarball)) throw new Error(`No tarball at ${tarball}`);
+  const { bundle, contents } = await makeBundle(tarball);
+  console.log(`bundle: ${contents.join(", ")}`);
+  await store.upload(container, "bundle.tar", bundle);
+  const label = join(mkdtempSync(join(tmpdir(), "rerail-env-label-")), "package.txt");
+  writeFileSync(label, basename(tarball));
+  await store.upload(container, "package.txt", label);
+  return basename(tarball);
+}
+
+async function commandStage(options) {
+  if (!options.tarball || !options["run-id"]) throw new Error("stage needs --tarball <file> and --run-id <id>");
+  const store = await storage();
+  const container = `run-${checkRunId(options["run-id"])}`;
+  await store.container(container);
+  console.log(`staged ${await stage(store, container, resolve(options.tarball))} in ${container}`);
+}
+
+async function commandRun(options) {
+  if ([options.tarball, options.npm, options.staged].filter(Boolean).length !== 1) {
+    throw new Error("Pass exactly one of --tarball <file>, --npm <version or dist-tag>, or --staged");
+  }
+  if (options.staged && !options["run-id"]) throw new Error("--staged runs against what `stage` put in --run-id's container");
+  const environments = selectEnvironments(options.env);
+  const runId = checkRunId(options["run-id"] ?? newRunId());
   const outDir = resolve(options.out ?? join(REPO_ROOT, ".rerail", "env-matrix", runId));
   mkdirSync(outDir, { recursive: true });
   const store = await storage();
   const container = `run-${runId}`;
-  await store.container(container);
   let bundleSas;
   let packageLabel = `@neralabs/rerail@${options.npm} from npmjs`;
-  if (options.tarball) {
-    const tarball = resolve(options.tarball);
-    if (!existsSync(tarball)) throw new Error(`No tarball at ${tarball}`);
-    packageLabel = basename(tarball);
-    // Matrix jobs of one CI run share the container; the first to get here uploads.
-    if (!(await store.exists(container, "bundle.tar"))) {
-      const { bundle, contents } = await makeBundle(tarball);
-      console.log(`bundle: ${contents.join(", ")}`);
-      await store.upload(container, "bundle.tar", bundle);
-    }
+  if (options.staged) {
+    const label = join(outDir, "package.txt");
+    if (!(await store.download(container, "package.txt", label))) throw new Error(`Nothing is staged in ${container}; run stage first`);
+    packageLabel = readFileSync(label, "utf8").trim();
     bundleSas = await store.sas(container, "bundle.tar", "r");
+  } else {
+    await store.container(container);
+    if (options.tarball) {
+      packageLabel = await stage(store, container, resolve(options.tarball));
+      bundleSas = await store.sas(container, "bundle.tar", "r");
+    }
   }
   console.log(`run ${runId}: ${environments.map((e) => e.id).join(", ")} in ${RESOURCE_GROUP}; results in ${outDir}`);
   const outcomes = await Promise.all(environments.map((environment) =>
@@ -331,6 +377,38 @@ async function commandRun(options) {
   if (!outcomes.every(({ verdict }) => OK_OUTCOMES.has(verdict.outcome))) process.exitCode = 1;
 }
 
+// What the matrix itself runs on: a change to one of these is tested even though core does not ship it.
+const MATRIX_INPUTS = [
+  ".github/workflows/env-matrix.yml",
+  ".github/workflows/package.yml",
+  "scripts/host/azure/",
+  "scripts/host/windows-host.ps1",
+  "scripts/release/core-paths.mjs",
+];
+
+// Whether a push from `base` to `head` should run the matrix: when it changes what core ships, by the rule the Release
+// pull request uses (core-paths.mjs), or the matrix itself. Pack, test, docs and other CI changes leave the package as
+// the previous run tested it. Prints the reason to stderr and `true` or `false` to stdout.
+async function commandAffected(options) {
+  if (!options.base || !options.head) throw new Error("affected needs --base <commit> and --head <commit>");
+  if (/^0+$/.test(options.base)) {
+    console.error("no previous head to compare with");
+    console.log("true");
+    return;
+  }
+  const git = async (args) => (await run("git", args, { cwd: REPO_ROOT, maxBuffer: 64 * 1024 * 1024 })).stdout;
+  const changed = (await git(["diff", "--name-only", "--no-renames", options.base, options.head])).split("\n").filter(Boolean);
+  const lock = {};
+  for (const ref of ["release", "head"]) lock[ref] = changed.includes("package-lock.json") ? await git(["show", `${ref === "release" ? options.base : options.head}:package-lock.json`]) : "";
+  const core = coreChanges(changed, (ref) => lock[ref]);
+  const matrix = changed.filter((path) => MATRIX_INPUTS.some((input) => (input.endsWith("/") ? path.startsWith(input) : path === input)));
+  const reasons = [...core.slice(0, 5), ...matrix.slice(0, 5)];
+  console.error(reasons.length === 0
+    ? `nothing core ships or the matrix runs changed (${changed.length} file(s) changed)`
+    : `changed: ${reasons.join(", ")}${core.length + matrix.length > reasons.length ? ", …" : ""}`);
+  console.log(String(reasons.length > 0));
+}
+
 async function commandSweep(options) {
   const hours = Number(options["older-than-hours"] ?? 3);
   const cutoff = Date.now() - hours * 60 * 60_000;
@@ -340,7 +418,12 @@ async function commandSweep(options) {
     console.log(`deleting what run ${runId} left`);
     await deleteRun(runId);
   }
-  console.log(stale.length === 0 ? `nothing older than ${hours} h` : `swept ${stale.length} run(s)`);
+  // A run's container holds its bundle and results; its environments share it, so it goes here, once it is old,
+  // rather than when one environment finishes. The storage account's lifecycle rule expires blobs, not containers.
+  const store = await storage();
+  const containers = (await store.containers("run-")).filter((c) => Date.parse(c.modified) < cutoff);
+  for (const { name } of containers) await store.deleteContainer(name);
+  console.log(`swept ${stale.length} run(s) and ${containers.length} storage container(s) older than ${hours} h`);
 }
 
 const { values: options, positionals } = parseArgs({
@@ -349,19 +432,24 @@ const { values: options, positionals } = parseArgs({
     env: { type: "string" },
     tarball: { type: "string" },
     npm: { type: "string" },
+    staged: { type: "boolean", default: false },
     "run-id": { type: "string" },
     out: { type: "string" },
     keep: { type: "boolean", default: false },
     "older-than-hours": { type: "string" },
+    base: { type: "string" },
+    head: { type: "string" },
   },
 });
 
 try {
   switch (positionals[0]) {
     case "run": await commandRun(options); break;
+    case "stage": await commandStage(options); break;
     case "list": console.log(JSON.stringify(selectEnvironments(options.env).map((e) => e.id))); break;
+    case "affected": await commandAffected(options); break;
     case "sweep": await commandSweep(options); break;
-    default: throw new Error("Usage: matrix.mjs run (--tarball <file> | --npm <spec>) [--env <ids>] [--keep] | list [--env <ids>] | sweep [--older-than-hours <n>]");
+    default: throw new Error("Usage: matrix.mjs run (--tarball <file> | --npm <spec> | --staged --run-id <id>) [--env <ids>] [--keep] | stage --tarball <file> --run-id <id> | list [--env <ids>] | affected --base <commit> --head <commit> | sweep [--older-than-hours <n>]");
   }
 } catch (error) {
   console.error(`matrix: ${error.message}`);
