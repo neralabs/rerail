@@ -4,6 +4,10 @@
 
 pub(in crate::code_rule_dsl) mod crossfile;
 mod line_state;
+// Qualification laboratory for the shared structural execution replacement. The
+// production dispatcher changes once, after the complete catalog qualifies.
+#[cfg(test)]
+pub(crate) mod plan;
 pub(in crate::code_rule_dsl) mod name_closure;
 pub(in crate::code_rule_dsl) mod select_when;
 
