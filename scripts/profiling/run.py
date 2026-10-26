@@ -64,7 +64,7 @@ def kill_group(process):
         process.wait(timeout=2)
 
 
-def execute(args, command, output, deadline):
+def instrumentation_env(args, output):
     env = {**os.environ, "RERAIL_PROFILE_PHASES": "1"}
     env.pop("RERAIL_CODE_RULE_ANCHORS", None)
     env.pop("RERAIL_CODE_RULE_RELATIONAL_PROFILE", None)
@@ -85,6 +85,11 @@ def execute(args, command, output, deadline):
         env["RERAIL_SQL_QUERY_PLANS"] = "1"
     if args.trace == "on":
         env["RERAIL_PROFILE"] = "1"
+    return env
+
+
+def execute(args, command, output, deadline):
+    env = instrumentation_env(args, output)
     samples = []
     memory = []
     timed_out = False

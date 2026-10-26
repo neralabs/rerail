@@ -20,6 +20,15 @@ from unittest.mock import patch
 
 
 class ProfileTests(unittest.TestCase):
+    def test_allocator_census_requires_explicit_memory_request(self):
+        from run import instrumentation_env
+        from types import SimpleNamespace
+        args=SimpleNamespace(sql_profile=False,query_plans=False,trace='on',memory_census=False)
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'RERAIL_PROFILE_MEMORY_CENSUS':'1'}):
+            self.assertIsNone(instrumentation_env(args,Path(directory)).get('RERAIL_PROFILE_MEMORY_CENSUS'))
+            args.memory_census=True
+            self.assertEqual(instrumentation_env(args,Path(directory))['RERAIL_PROFILE_MEMORY_CENSUS'],'1')
+
     def test_lowering_breakdown_keeps_parent_and_children_separate(self):
         import report as profiling_report
         events = [{"rule":"", "clause":"", "path":None, "name":"planning", "thread":"main",
