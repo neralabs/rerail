@@ -1,5 +1,6 @@
-// Records eslint-plugin-vue 10.11.1 for the rules the Vue pack ports (../../conformance.json). Run offline by a
-// maintainer, never in CI, with the tools of ../../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
+// Records eslint-plugin-vue 10.11.1 for the rules the Vue pack ports (../../conformance.json). Run by
+// `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request CI), with
+// the tools of ../../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
 //
 //   node generate.mjs fixtures <eslint-plugin-vue checkout at tag v10.11.1 (ec9c53a6fbed637d7b0fbcd6893b0206ae32839f)>
 //   node generate.mjs corpus [<name>...]            # corpora of ../../../../fixtures/vue/corpora.json, under .rerail/corpora/vue
@@ -35,6 +36,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { packFixturesWritten, recordingWritten } from "../../../../scripts/s3/pack-fixtures.mjs";
 import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
 import { AUTHORED } from "./authored.mjs";
 
@@ -115,6 +117,7 @@ function write(file, source, findings) {
   };
   writeFileSync(join(HERE, file), `${JSON.stringify(out, null, 1)}\n`);
   console.log(`wrote ${file}: ${out.findings.length} findings`);
+  console.log(recordingWritten(join(HERE, file), source.kind));
 }
 
 // --- fixtures ----------------------------------------------------------------------------------------------------
@@ -230,6 +233,7 @@ function fixtures(checkout) {
   const findings = files.flatMap(path => lint(readFileSync(join(root, path), "utf8"), path).findings);
   writeAuthoredRecord(authored);
   writeFileSync(join(HERE, "cases.json"), `${JSON.stringify({ origin: ORIGIN, cases }, null, 1)}\n`);
+  console.log(packFixturesWritten([join(HERE, "cases.json")]));
   writeLicense(checkout, cases.filter(c => c.kept));
   write("fixtures.expected.json", { kind: "fixtures", origin: ORIGIN, rules: ruleIds, files }, findings);
   const kept = cases.filter(c => c.kept).length;

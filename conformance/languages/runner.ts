@@ -3,6 +3,7 @@ import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
 import { z } from "zod";
+import { isPackFixture, packFixtureAbsence, requirePackFixture } from "../../scripts/s3/pack-fixtures.mjs";
 import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
 import {
   IGNORED_DIRECTORIES,
@@ -287,10 +288,15 @@ function familyLanguages(loaded: LoadedPack): Set<string> {
   return new Set(Object.values(CODE_RULE_DIALECTS).filter(dialect => dialect.family === loaded.pack.family).map(dialect => dialect.label));
 }
 
+/** A fixture's text; pack test data missing from the checkout fails with the instruction to pull it. */
+function readCaseSource(path: string): string {
+  return readFileSync(isPackFixture(path) ? requirePackFixture(path) : path, "utf8");
+}
+
 /** The recording at `path`, checked against the pack's pins, or why it cannot be used. */
 function pinnedRecording(loaded: LoadedPack, tool: string, path: string, corpus: PackCorpus | undefined): Recording | string {
   const where = relative(RERAIL_ROOT, path);
-  if (!existsSync(path)) return `no recording at ${where}`;
+  if (!existsSync(path)) return packFixtureAbsence(path) ?? `no recording at ${where}`;
   let recording: Recording;
   try {
     recording = loadRecording(path);
@@ -343,14 +349,14 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
       for (const path of paths) {
         const language = languageFor(path);
         if (language !== undefined && ridesAlong(path)) {
-          manifests.push({ path, language, source: readFileSync(join(fixturesDirectory(loaded, tool), path), "utf8") });
+          manifests.push({ path, language, source: readCaseSource(join(fixturesDirectory(loaded, tool), path)) });
           continue;
         }
         if (language === undefined || !languages.has(language)) {
           errors.push(`fixtures ${tool}: ${path} is not a ${loaded.pack.family} source by the host's routing`);
           continue;
         }
-        files.push({ path, language, source: readFileSync(join(fixturesDirectory(loaded, tool), path), "utf8") });
+        files.push({ path, language, source: readCaseSource(join(fixturesDirectory(loaded, tool), path)) });
       }
       if (files.length === 0) continue;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));

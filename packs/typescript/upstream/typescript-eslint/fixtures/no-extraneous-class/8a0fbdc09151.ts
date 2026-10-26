@@ -1,4 +1,0 @@
-
-@FooDecorator
-class Foo {}
-      

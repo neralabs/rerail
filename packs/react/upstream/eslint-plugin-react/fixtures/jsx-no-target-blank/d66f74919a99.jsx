@@ -1,2 +1,0 @@
-<a href={href} target={isExternal ? "_blank" : undefined} rel={isExternal ? "noopener noreferrer" : undefined} />
-// features: [], parser: default

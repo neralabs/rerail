@@ -1,1 +1,0 @@
-const foo = window.Temporal; new foo();

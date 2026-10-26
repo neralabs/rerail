@@ -1,1 +1,0 @@
-let obj = {foo: function bar() {}};

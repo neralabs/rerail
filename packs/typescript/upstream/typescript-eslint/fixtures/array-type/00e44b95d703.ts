@@ -1,1 +1,0 @@
-let w: fooName.BazType<string>[] = [['baz']];

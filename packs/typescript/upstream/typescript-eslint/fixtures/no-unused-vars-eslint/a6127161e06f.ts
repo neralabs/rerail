@@ -1,6 +1,0 @@
-
-function gg(baz, bar) {
-  return baz;
-}
-gg();
-      

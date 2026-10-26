@@ -1,1 +1,0 @@
-if (foo) { let bar; } else baz();

@@ -139,6 +139,8 @@ describe("MCP callers and the agent guard", () => {
     expect((await call("repository_attachments_set", { add: [{ sourceKind: "library_rule", sourceId: "x" }] }, caller)).result)
       .toMatch(/^agent-not-permitted/u);
     expect((await call("repository_link", { address: "git@github.com:acme/app-renamed.git" }, caller)).result).toMatch(/^agent-not-permitted/u);
+    // Clearing history is the person's, in its own checkout too.
+    expect((await call("repository_reset", {}, caller)).result).toMatch(/^agent-not-permitted/u);
     // The checkout's own settings are the agent's to change.
     expect((await call("repository_settings_set", { ...repositoryOff, owner: "checkout" }, caller)).result)
       .toMatchObject({ settings: [{ owner: "checkout", ownerId: parent }] });

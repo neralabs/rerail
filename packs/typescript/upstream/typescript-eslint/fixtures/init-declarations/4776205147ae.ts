@@ -1,1 +1,0 @@
-let arr: string[] = ['arr', 'ar'];

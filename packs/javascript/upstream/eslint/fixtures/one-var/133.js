@@ -1,1 +1,0 @@
-switch (foo) { default: var baz = true, quux = false; }

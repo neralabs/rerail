@@ -1,1 +1,0 @@
-const foo = <button {...{ onClick: () => {} }} />;

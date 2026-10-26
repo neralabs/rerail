@@ -1,1 +1,0 @@
-for (var a of b) { console.log(a); }

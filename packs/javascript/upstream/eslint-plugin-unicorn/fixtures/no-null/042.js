@@ -1,1 +1,0 @@
-insertBefore(bar, null)

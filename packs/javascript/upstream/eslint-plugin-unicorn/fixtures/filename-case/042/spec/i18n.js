@@ -1,1 +1,0 @@
-/* Filename: spec/i18n.js */

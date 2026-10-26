@@ -1,5 +1,6 @@
-"""Records tlint 9.7.0 for the Blade pack's ported lints (rerail/packs/blade/conformance.json). Run offline,
-never in CI, with PHP 8.5.11:
+"""Records tlint 9.7.0 for the Blade pack's ported lints (rerail/packs/blade/conformance.json). Run by
+`npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request CI), with
+PHP 8.5.11:
 
     python3 generate.py fixtures <tighten/tlint checkout at tag v9.7.0> <composer project with tightenco/tlint 9.7.0>
     python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]

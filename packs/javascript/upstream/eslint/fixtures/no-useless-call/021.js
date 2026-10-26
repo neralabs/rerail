@@ -1,1 +1,0 @@
-foo.call(void 0, 1, 2);

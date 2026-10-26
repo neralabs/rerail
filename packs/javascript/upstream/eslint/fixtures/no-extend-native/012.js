@@ -1,1 +1,0 @@
-eval('Object.prototype.toString = 0')

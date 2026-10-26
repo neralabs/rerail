@@ -1,1 +1,0 @@
-function foo(): { [key: string]: any; bar: string } {}

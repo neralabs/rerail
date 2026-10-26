@@ -1,1 +1,0 @@
-var self; self.setTimeout('foo', 100);

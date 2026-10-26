@@ -1,1 +1,0 @@
-const obj = { async: async function foo() { bar(); } }

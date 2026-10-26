@@ -1,1 +1,0 @@
-var a = 0, b = 1; foo(); var c = 2;

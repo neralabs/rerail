@@ -1,4 +1,0 @@
-
-function Thing() {
-  useEffect(async () => {}, []);
-}

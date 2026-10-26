@@ -166,7 +166,7 @@ export default async function playgroundHarness(api: ExtensionAPI): Promise<void
       { ThinkingLevel },
       { installReplayFixtures, replayTools, REPLAY_TOOL_NAMES },
     ] = await Promise.all([
-      import("@oh-my-pi/pi-ai"),
+      import("@oh-my-pi/pi-ai/providers/mock"),
       import("@oh-my-pi/pi-ai/utils/event-stream"),
       import("../../dist/index.js"),
       import("@oh-my-pi/pi-agent-core"),

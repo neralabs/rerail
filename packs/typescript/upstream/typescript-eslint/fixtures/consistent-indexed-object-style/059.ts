@@ -1,1 +1,0 @@
-function foo(arg: { readonly [key: string]: any }) {}

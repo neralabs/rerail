@@ -1,1 +1,0 @@
-type Data<T extends unknown> = {};

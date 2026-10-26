@@ -1,1 +1,0 @@
-/*exported toaster*/ var toaster = 'great'

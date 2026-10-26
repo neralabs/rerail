@@ -1,3 +1,0 @@
-
-checksCounter?.textContent!.trim();
-      

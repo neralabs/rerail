@@ -1,1 +1,0 @@
-new print({ bar: 5 } as Foo);

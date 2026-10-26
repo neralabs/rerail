@@ -1,1 +1,0 @@
-if (a && b) {} else if (a && b && c) {}

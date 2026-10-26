@@ -1,6 +1,0 @@
-
-try {
-} catch (_err) {
-  console.error(_err);
-}
-      

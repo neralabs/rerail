@@ -1,1 +1,0 @@
-function f(a, b = 5, ...c) {}

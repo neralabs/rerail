@@ -1,1 +1,0 @@
-function foo(arg: Record<string, any>) {}

@@ -1,1 +1,0 @@
-SELECT col1 AS date FROM table1

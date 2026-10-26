@@ -1,1 +1,0 @@
-var a = function someFunction() {fs.fooSync();}

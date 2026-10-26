@@ -75,11 +75,19 @@ Per rule (TP / FP / FN, explained points in parentheses):
 
 ## Recording and scoring
 
-Re-recording runs offline against Clippy 0.1.99 and Rust 1.99.0:
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/rust.ts`) runs `upstream/clippy/generate.py` against Clippy 0.1.99 and Rust 1.99.0
+(installed with `rustup`), in `fixtures` mode and then `corpus` mode over ripgrep and tokio. Derive it on Linux, as the
+bump workflow does: tokio has `#[cfg(target_os = "linux")]` code, so `corpus-tokio.expected.json` derived on macOS
+differs. The same holds for the port readiness recordings; a pull request's CI legs record them on Linux and upload
+them as the artifact `recordings-rust--clippy` ([CONTRIBUTING.md](../../CONTRIBUTING.md#merging-maintainers)).
+The probes Rerail wrote (`fixtures/rerail/`) are authored: a change to them goes in your pull request with
+`git add -f`.
 
 ```sh
-python3 upstream/clippy/generate.py fixtures <rust-clippy checkout at tag rust-1.99.0> <scratch directory>
-python3 upstream/clippy/generate.py corpus <cargo target root> ripgrep=<ripgrep checkout> tokio=<tokio checkout>
+npm run fixtures:derive -- --pack rust
+npm run fixtures:push -- --pack rust     # on your own branch: archive it and rewrite its test-data.lock
 ```
 
 Scoring one rule with every false positive and false negative printed:

@@ -2,7 +2,7 @@
 
 A rule pack is a named set of rules, origin **By Rerail**. Rules you write yourself are **Created by you** and belong to no pack. Each pack is its own npm package, `@neralabs/rerail-pack-<id>`, and Rerail installs the packs you choose into its home (`$RERAIL_HOME/packs`); core itself ships no packs and no rules. A pack is a directory: its rule documents in `rules/`, and a `pack.json` that lists them with the metadata the dashboard shows (a title and a group for each rule), its match definition, and whether its rules start on.
 
-A rule pack runs only where a repository adds it. Setting a repository up installs and adds the packs the person confirms; after that, packs are added, removed, turned off or given another mode per repository, per folder and per checkout on the rules page or through the API (see [Rule scoping](rule-scoping.md)).
+A rule pack runs only where a repository adds it. Setting a repository up installs and adds the packs the person confirms; after that, packs are added and removed, and their rules turned on or off, in the dashboard (for the repository), or added, removed, turned off or given another mode per repository, per folder and per checkout through the API and its MCP tools (see [Rule scoping](rule-scoping.md)).
 
 Rerail recommends packs for a repository by matching the repository's files and dependency manifests against each pack's match definition. A match is data: a pack runs no code to decide whether it fits. Rerail does not read the code for violations to do this, it uses no model, and it says nothing about what no pack covers; the only network it uses is npm, to fetch the packs.
 
@@ -103,7 +103,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
 }
 ```
 
-- `category` is `language`, `framework` or `repository`. It drives the dashboard's filter chips. Packs are listed languages first, then frameworks, then repository packs.
+- `category` is `language`, `framework` or `repository`. It drives the kind chips of the dashboard's rule pack catalog. Packs are listed languages first, then frameworks, then repository packs.
 - `match` (required) is `{ "any": [signal, …] }`: what set-up recommends the pack for. A signal is one of:
   - `{ "files", "exclude"?, "label" }`: repository-relative globs. `**` crosses folders, `*` and `?` stay within one, and `{a,b}` gives alternatives.
   - `{ "dependencies": { "ecosystem", "names" } }`: any manifest in the repository that depends on one of the packages. `npm` reads `package.json` (`dependencies`, `devDependencies`, `peerDependencies`, `optionalDependencies`); `pypi` reads `requirements*.txt` and `pyproject.toml` (PEP 621 `dependencies` and `optional-dependencies`, Poetry's `dependencies` less `python`, its `group.<name>.dependencies`, and the `dev-dependencies` of Poetry before 1.2), comparing names normalised as PEP 503 does; `composer` reads `composer.json` (`require`, `require-dev`), case-insensitively.
@@ -118,7 +118,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   - `document` is the rule's document, `rules/<id>.json`, relative to the pack; it must carry the rule's id
     ([pack format](pack-format.md#packjson)).
 
-`test/engine/catalog/packs.test.ts` holds every pack under `packs/` to the [validation contract](pack-format.md#validation-contract), and `test/engine/catalog/rule-packs.test.ts` holds what a pack's match and examples promise: every rule starts in its document's mode, and every example is caught or passes as it says.
+`test/engine/catalog/packs.test.ts` holds every pack under `packs/` to the [validation contract](pack-format.md#the-validation-contract), and `test/engine/catalog/rule-packs.test.ts` holds what a pack's match and examples promise: every rule starts in its document's mode, and every example is caught or passes as it says.
 
 ## Matching
 

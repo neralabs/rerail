@@ -8,6 +8,7 @@ import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import {
+  addAttachment,
   loadRuleCatalog,
   openRerailDatabase,
   type RerailDatabase,
@@ -16,6 +17,7 @@ import {
   upsertLibraryRule,
   audits,
   checkouts,
+  libraryRules,
   repositories,
   PACKAGE_ROOT,
   defaultRerailHome,
@@ -247,6 +249,82 @@ describe("Rerail API over HTTP", () => {
     } while (cursor !== null);
     // The fixture's own session opened at the current clock; sessions started together keep id order.
     expect(seen).toEqual([`${SESSION.sessionId}:0`, "session-new:2", "session-tied:0", "session-old:0"]);
+  });
+
+  it("lists each session's steered violations and when it last recorded an event", async () => {
+    sessionStore.openSession({ ...SESSION, sessionId: "session-mixed" }, 2_000);
+    sessionStore.append({ sessionId: "session-mixed", eventId: "first", kind: "user-prompt", observedAt: 2_010, payload: {} });
+    sessionStore.append({ sessionId: "session-mixed", eventId: "last", kind: "turn-end", observedAt: 2_020, payload: {} });
+    sessionStore.openSession({ ...SESSION, sessionId: "session-quiet" }, 1_000);
+    const logged = { ...flagged, id: "violation-logged", path: "web/src/y.ts", mode: "log" as const };
+    const steered = { ...flagged, id: "violation-steered", path: "web/src/z.ts", mode: "steer" as const };
+    seedAudit({ sessionId: "session-mixed", at: 2_100, violations: [flagged, logged, steered] });
+    // Another audit reporting it again adds one more, as `violationCount` counts it.
+    seedAudit({ sessionId: "session-mixed", at: 2_200, violations: [steered] });
+
+    const { sessions } = await getJson<{ sessions: Array<{ sessionId: string; violationCount: number; steeredViolations: number; lastEventAt: number | null }> }>(
+      "/api/sessions",
+    );
+    const row = (sessionId: string) => sessions.find(session => session.sessionId === sessionId);
+    expect(row("session-mixed")).toMatchObject({ violationCount: 4, steeredViolations: 3, lastEventAt: 2_020 });
+    expect(row("session-quiet")).toMatchObject({ violationCount: 0, steeredViolations: 0, lastEventAt: null });
+  });
+
+  it("clears one repository's history, its aliases and clone ids included, and serves fresh reads after", async () => {
+    addRepository(WEB);
+    addCheckout(join(root, "web"), WEB, "clone-web");
+    const web = new SqliteSessionStore(databasePath, { repositoryId: WEB });
+    const byClone = new SqliteSessionStore(databasePath, { repositoryId: "clone-web" });
+    const other = new SqliteSessionStore(databasePath, { repositoryId: "remote:github.com/acme/other" });
+    try {
+      web.openSession({ ...SESSION, sessionId: "web-ended" }, 100);
+      web.append({ sessionId: "web-ended", eventId: "e1", kind: "turn-end", observedAt: 110, payload: {} });
+      web.closeSession("web-ended", 120);
+      web.openSession({ ...SESSION, sessionId: "web-running" }, 130);
+      web.append({ sessionId: "web-running", eventId: "e1", kind: "turn-end", observedAt: 140, payload: {} });
+      byClone.openSession({ ...SESSION, sessionId: "clone-ended" }, 90);
+      byClone.closeSession("clone-ended", 95);
+      other.openSession({ ...SESSION, sessionId: "other-ended" }, 80);
+      other.closeSession("other-ended", 85);
+      seedAudit({ sessionId: "web-ended", at: 115, violations: [flagged] });
+      seedAudit({ sessionId: "other-ended", at: 82, violations: [flagged] });
+
+      const before = await app.request("/api/sessions");
+      const tag = before.headers.get("etag")!;
+      const reset = await app.request("/api/repository/reset", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repository: WEB }),
+      });
+      expect(reset.status).toBe(200);
+      expect(await reset.json()).toEqual({ repositoryKey: WEB, sessions: 2, openSessions: 1 });
+
+      const after = await app.request("/api/sessions", { headers: { "if-none-match": tag } });
+      expect(after.status).toBe(200);
+      const { sessions } = await after.json() as { sessions: Array<{ sessionId: string; eventCount: number }> };
+      expect(sessions.map(session => session.sessionId).sort()).toEqual([SESSION.sessionId, "other-ended", "web-running"].sort());
+      expect(sessions.find(session => session.sessionId === "web-running")).toMatchObject({ eventCount: 0 });
+      expect((await getJson<{ total: number }>("/api/violations?since=0")).total).toBe(1);
+      expect((await getJson<{ total: number }>("/api/violations?since=0&sessionId=other-ended")).total).toBe(1);
+      expect((await app.request("/api/repository/reset", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repository: "remote:github.com/acme/unknown" }),
+      })).status).toBe(404);
+    } finally {
+      for (const store of [web, byClone, other]) store.close();
+    }
+  });
+
+  it("dates each effective rule by the attachment that adds it, and a rule created by you by its last edit", async () => {
+    addRepository(WEB, { configuredAt: 5, started: true });
+    addLibraryRules();
+    const libraryRule = MOCK_CODE_RULES[0]!;
+    database.update(libraryRules).set({ updatedAt: 333 }).where(eq(libraryRules.ruleId, libraryRule.id)).run();
+    addAttachment(database, { repositoryKey: WEB, folder: "", sourceKind: "pack", sourceId: "complexity" }, 111);
+    addAttachment(database, { repositoryKey: WEB, folder: "web", sourceKind: "library_rule", sourceId: libraryRule.id }, 222);
+
+    const { rules } = await getJson<{ rules: Array<{ rule: { id: string }; source: { kind: string }; addedAt: number | null; updatedAt: number | null }> }>(
+      `/api/repository/rules?repository=${encodeURIComponent(WEB)}`,
+    );
+    expect(rules.find(rule => rule.source.kind === "pack")).toMatchObject({ addedAt: 111, updatedAt: null });
+    expect(rules.find(rule => rule.rule.id === libraryRule.id)).toMatchObject({ source: { kind: "library_rule" }, addedAt: 222, updatedAt: 333 });
   });
 
   it("lists only the sessions started in range", async () => {

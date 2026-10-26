@@ -1,1 +1,0 @@
-new Print([5] as Foo);
