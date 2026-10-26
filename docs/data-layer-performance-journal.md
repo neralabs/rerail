@@ -5172,3 +5172,26 @@ The complete native DSL passes 1,555 tests with 23 existing ignores.
 All 52 shape tests pass, including the new post-native statistics-readiness regression.
 Final all-target native Clippy passes with warnings denied.
 The cache-eviction and row-count instrumentation receive a final rebuild and verification before full timings.
+
+
+### Frozen schema-lifecycle acceptance candidate (2026-10-26)
+
+Candidate source is `2cc0a5a2ee74b1b5c6d19f8ab2058e2f5fc61b72`.
+Frozen addon SHA-256 is `63bad0a538b78a8d6022123df6a100ff27311859130cbc298706f9c7bb729211`.
+The final source passes 1,555 native DSL tests with 23 existing ignores.
+All 52 shape tests, 78 laboratory tests, and static and profiling checks pass.
+Native all-target Clippy passes with warnings denied.
+All 192 original quality observations pass: 130 positive and 62 clean.
+The larger five-file domain also has no failures or finding differences.
+
+The fixed recorded-observation guard reports 349 engine submissions and 45 SQLite internal executions.
+Its complete cold job retains exact positive and clean parity.
+The preceding recorded count is 975. The 100 reference remains diagnostic.
+These counts do not establish full-repository speed or memory acceptance.
+
+Matching full 50- and 60-rule control and candidate runs now start sequentially.
+Both use all 9,021 files, current matching policies, four native workers, and 32-file input packets.
+The control includes the import-membership policy correction.
+Detailed tracing, SQL capture, allocator census, external sampling, and overlapping worktree builds or tests remain off during these timings.
+Compilation CPU is reported separately from cold CPU.
+Process CPU and OS peak RSS also include final cleanup and remain distinct from the driver's cold phase.
