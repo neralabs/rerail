@@ -34,7 +34,7 @@ test("several repositories seen: the page lists them, and the pill switches betw
   await expect(pill(page)).toHaveText("Pick a repo");
   await expect(page.locator("#content .norepo .welcome")).toContainText("No repo selected");
   await expect(listed(page).locator("b")).toHaveText(names);
-  await expect(listed(page).locator("span")).toHaveText(names.map(() => /^(Set up|Not set up) · /u));
+  await expect(listed(page).locator(".rline")).toHaveText(names.map(() => /^(Set up|Not set up) · /u));
 
   await pill(page).click();
   await expect(menuOptions(page).locator("b")).toHaveText(names);

@@ -21,8 +21,12 @@ export function repoCounts(repo) {
 /** The line under the repository's name (`repoLine`), from the counts the page holds for it. */
 export const repoMeta = repo => repoLine(repo, repoCounts(repo));
 
-/** A repository as an option; `selected` marks the one the page shows. */
+/**
+ * A repository as an option: its glyph on the name's line, its line under the name, the check that marks the one the
+ * page shows (`selected`; the menu shows it) and the arrow a row opens with (the page's list shows it).
+ */
 export function repoOption(repo, selected) {
   return h("button", { role: "option", "aria-selected": String(selected), "data-act": "pickrepo", "data-i": repo.repositoryKey, title: repo.repositoryKey },
-    h("b", null, repo.name), icon("check", 14), h("span", null, repoMeta(repo)));
+    h("span.rglyph", null, icon("repo", 14)), h("b", null, repo.name), h("span.rline", null, repoMeta(repo)),
+    h("span.rcheck", null, icon("check", 14)), h("span.rgo", null, icon("forward", 14)));
 }
