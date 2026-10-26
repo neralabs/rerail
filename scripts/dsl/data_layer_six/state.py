@@ -118,11 +118,12 @@ def state_clauses(m):
    gates[:0]=[{'$option':'entryPoint','cases':{'scan_project_sources':TRUE},'default':choice('sourceProvided',function_gate,TRUE)},
     {'$option':'entryPoint','cases':{'scan_project_sources':TRUE},'default':O({'matches':'state-flow-source'},I({'matches':'state-flow-source'}))}]
   # One per-file admission utility (decided once at the module) instead of one walk per gate.
-  if clause['id']=='state-flow-narrow':utils['state-flow-admit']=A(K('module'),*gates);gates=[O({'matches':'state-flow-admit'},I(A(K('module'),{'matches':'state-flow-admit'})))]
+  admit={'state-flow-narrow':'state-flow-admit','state-signatures':'state-signature-admit'}.get(clause['id'])
+  if admit:utils[admit]=A(K('module'),*gates);gates=[O({'matches':admit},I(A(K('module'),{'matches':admit})))]
   for name,relation in clause['relational']['inputs'].items():
    ast=relation['evidence']['query']['ast']
    # The writer lowers raw_nodes to a whole-file gate on the module node: test the kind first, so
    # the gates (which walk to the module) never run at other nodes. Other inputs test their own
    # shape first for the same reason.
-   ast['rule']=A(K('module'),*gates,ast['rule']) if name=='raw_nodes' else A(ast['rule']['all'][0],*gates,*ast['rule']['all'][1:]) if clause['id']=='state-flow-narrow' else A(ast['rule'],*gates)
+   ast['rule']=A(K('module'),*gates,ast['rule']) if name=='raw_nodes' else A(ast['rule']['all'][0],*gates,*ast['rule']['all'][1:]) if admit else A(ast['rule'],*gates)
  return clauses,utils
