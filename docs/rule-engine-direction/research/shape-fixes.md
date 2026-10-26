@@ -328,3 +328,26 @@ Full-corpus confirmation at `88a48c18`. Execution CPU in seconds against `1e7072
 | all60 (300 files) | 7.4 | 5.5 | 10.2 | 7.9 |
 
 Findings are unchanged: internal_dead_code is 4,931/4,931 exact, all60 has 1,653 actual and 1,052 false positives, and tripwires has the same 24 source-incomplete failures. serverplan_quality gains less on the corpus (−9%) than in the lab (−27% steps), so its remaining anchor time is not in the stages these rewrites touch.
+
+## 17. serverplan_quality: the vocabulary fill and the text fallback
+
+The corpus replay is not the lab's default workload. It runs about 290 revisions, each with about 14 anchor batches of about one file, against one growing store whose vocabulary persists. A partial profiled corpus trace of quality put about 18% of materialization CPU in `vocabulary_fill` and 11% in the base postings stage. The rest was spread over hundreds of small stages. The lab now has a batch mode (`RERAIL_LAB_BATCH=1`): each capture's requested files, captures spread over the run, and a warm vocabulary.
+
+- **Exact literal-set predicates fill the vocabulary by join** (`acfc934d`). `^(?:compile|lower|…)$` matches exactly its literals; regex.md §2.3 decided exact sets by hash. `nera_literal_set` classifies a predicate once, at registration, with regex-syntax's literal extractor: `\A` and `\z` around a finite, exact, assertion-free set. `vocabulary_literal` holds the literals, and new terms join them by index.
+- **General predicates take one row per term** (`5e8cbcea`). `nera_terms_matching` tries a language's general patterns, compiled once, in Rust. They are still tried one at a time, because a combined `RegexSet` was slower (regex.md §2.2).
+  - Lab with a full fill per capture: `vocabulary_fill` went 142M → 2.1M VM steps, 6.0 s → 0.95 s.
+- **The text fallback iterates the scope and probes the uncovered postings** (`b839fa05`). A node with an interior has no vocabulary term. So for call, attribute, assignment and the other non-terminal kinds, every node is uncovered (measured: uncovered postings equal the kind postings). The fallback scanned all of them per predicate. The scope lies within the same kinds, so it is never larger.
+  - Lab: quality 1.036G → 0.767G VM steps; type_safety_patterns 0.093G → 0.045G.
+- **Not kept:** `e1d45b3e` let a conjunction at the relation limit keep its evaluated members. Tripwires' matcher went 13.6 s → 12.9 s with about 500k fewer candidates. That was less than the extra anchor work (+16% VM steps in the lab), so `9749f80d` undid it.
+
+Full corpus at `b839fa05`, against `88a48c18` (§16). Execution CPU in seconds, load 28–41:
+
+| Check | anchorSelect before | after | execution total before | after |
+|---|---:|---:|---:|---:|
+| serverplan_quality | 53.7 | 44.4 | 60.4 | 50.7 |
+| type_safety_patterns | 5.9 | 4.6 | 5.9 | 4.6 |
+| all60 (300 files) | 5.5 | 5.3 | 7.9 | 8.4 |
+
+Other checks are within noise: dead code 21.5 → 23.8, triples 26.5 → 28.2, tripwires 23.5 → 24.8. Findings are unchanged: internal_dead_code 4,931/4,931, all60 1,653 actual and 1,052 false positives, tripwires the same 24 failures.
+
+What remains in quality: the base postings stage copies 42 posting lists per batch into the candidate store. These include the uncovered lists, which for non-terminal kinds duplicate the kind postings. After that come hundreds of small stages, and prepared statements (anchorCompile, 28.7 s, counted as construction).
