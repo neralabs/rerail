@@ -1,7 +1,7 @@
 """Aggregate attributed native spans. Inclusive spans must not be added to children."""
 import collections
 import json
-from cpu_attribution import summarize as cpu_attribution
+from analysis.cpu import summarize as cpu_attribution
 
 LEAF_PHASES = {"syntax-prepare", "producer-stage", "producer-publish", "syntax-owners", "sql-release", "input-extract", "sql-input", "sql-validate", "sql-materialize", "sql-index", "sql-analyze", "sql-result", "sql-reach-prepare", "sql-reach-walk", "sql-reach-index", "anchor-fact-preparation", "anchor-lower", "anchor-prepare", "anchor-materialize", "anchor-index", "anchor-results", "anchor-schema", "anchor-release", "anchor-explain"}
 PLANNING_PHASES = {"anchor-fragment", "anchor-compose", "anchor-layout", "anchor-render", "anchor-ownership"}

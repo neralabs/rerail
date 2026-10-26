@@ -20,6 +20,15 @@ from unittest.mock import patch
 
 
 class ProfileTests(unittest.TestCase):
+    def test_external_profile_targets_workload_child_instead_of_time_wrapper(self):
+        monitor=ProcessMonitor(10,Path('/unused'))
+        monitor.rows=[{'processes':[
+            dict(pid=10,parent=1,rssBytes=512*1024,cpuSeconds=0,command='/usr/bin/time'),
+            dict(pid=11,parent=10,rssBytes=4*2**30,cpuSeconds=100,command='node')]}]
+        self.assertEqual(monitor.profile_pid(),11)
+        monitor.rows=[]
+        self.assertEqual(monitor.profile_pid(),10)
+
     def test_allocator_census_requires_explicit_memory_request(self):
         from run import instrumentation_env
         from types import SimpleNamespace
@@ -30,7 +39,7 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(instrumentation_env(args,Path(directory))['RERAIL_PROFILE_MEMORY_CENSUS'],'1')
 
     def test_cpu_attribution_subtracts_children_and_keeps_threads_separate(self):
-        from cpu_attribution import summarize
+        from analysis.cpu import summarize
         def event(start,wall,cpu,thread='one',rule='',clause='',phase='stage'):
             return dict(startUnixUs=start,wallNs=wall*1000,cpuNs=cpu,thread=thread,
                         rule=rule,clause=clause,phase=phase,name=phase,runPhase='cold')
