@@ -3,7 +3,7 @@
   "id": "n-no-mixed-requires",
   "revision": 2,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/no-mixed-requires (default options, grouping off): a variable declaration with a declarator initialised by `require(\u2026)` (or a member chain on one; the name only, no scope) beside one uninitialised or initialised otherwise. A chain with `?.` is ESTree's ChainExpression, so not a require declarator.",
+  "description": "Keep require() declarations separate from other variable declarations instead of mixing them in one statement.",
   "scope": {
     "include": [
       "**/*.ts",

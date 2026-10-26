@@ -1,7 +1,0 @@
-{
-  "name": "vue-app",
-  "private": true,
-  "dependencies": {
-    "vue": "3.5.22"
-  }
-}

@@ -3,7 +3,7 @@
   "id": "ruff-f706-return-outside-function",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F706 (return-outside-function, a semantic syntax error) with default settings: `return` whose nearest enclosing function or class body is not a function body (module level, or directly in a class body).",
+  "description": "Keep return inside a function; at module level or directly in a class body it is a Python syntax error.",
   "scope": {
     "include": [
       "**/*"

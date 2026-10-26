@@ -400,8 +400,9 @@ export async function buildRerailCorpora(corpora: RerailCorpus[], cacheRoot: str
   for (const corpus of corpora) {
     const task = rerailCorpusId(corpus);
     const repository = corpus.repository.replace(/^https:\/\/github\.com\//u, "");
+    // A pinned path of `.` is the whole repository: every named file is under it.
     const named = [...wanted].filter((place) => place.startsWith(`${task}\0`)).map((place) => place.slice(task.length + 1))
-      .filter((path) => corpus.paths.some((root) => path === root || path.startsWith(`${root}/`)))
+      .filter((path) => corpus.paths.some((root) => root === "." || path === root || path.startsWith(`${root}/`)))
       .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     if (named.length === 0) {
       tasks.push({ task, substrate: "rerail", repository, baseSha: corpus.commit, patchSha256: null, status: "skipped", reason: "no golden names a file of it", files: 0 });

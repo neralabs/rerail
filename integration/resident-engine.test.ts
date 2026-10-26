@@ -6,10 +6,10 @@ import { ingestEngineEvent, startEngineService, stopDaemon, SqliteSessionReader 
 import { runCodexHook } from "../src/hosts/codex/index.js";
 import { RerailDaemon } from "../src/daemon/index.js";
 import { runCursorHook } from "../src/hosts/cursor/index.js";
-import { type AdapterDelivery, headlineText, steerHeadlines, parseConversationRule } from "../src/engine/index.js";
+import { type AdapterDelivery, parseConversationRule } from "../src/engine/index.js";
 import { awaitCodeRulesOpen } from "./support/code-rules-open.js";
 import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRule } from "./support/contract-code-rule.js";
-import { cursorRelayed, steerText } from "./support/steer-text.js";
+import { cursorRelayed, steerLine, steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 const originalRerailHome = process.env.RERAIL_HOME;
@@ -153,14 +153,16 @@ describe("engine service", () => {
         },
         options,
       );
-      const steer = await steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, `${CONTRACT_CURSOR_EXECUTE_MESSAGE} (api/route.py:2:5)`, common.cwd, "From your rule library.");
-      const shown = expect.stringContaining(headlineText(steerHeadlines(steer)[0]!, "plain"));
-      // Policy evaluation settles in the background: the steer returns as PostToolUse context when it is
-      // ready by then, otherwise as the Stop follow-up — exactly once either way. A Stop hold shows the person
-      // its reason under Codex's own "Blocked by hook", so it carries no separate line.
-      expect([initial, stop]).toEqual(Object.keys(initial).length === 0
-        ? [{}, { decision: "block", reason: expect.stringContaining(steer) }]
-        : [{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: expect.stringContaining(steer) }, systemMessage: shown }, {}]);
+      const next = await runCodexHook({ ...common, hook_event_name: "UserPromptSubmit", turn_id: "turn-2", prompt: "next" }, options);
+      const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5");
+      const late = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5", { kind: "late" });
+      const shown = expect.stringContaining(await steerLine(CONTRACT_CURSOR_EXECUTE_RULE_ID, common.cwd, "plain"));
+      // Policy evaluation settles in the background: the steer returns as PostToolUse context when it is ready by
+      // then; otherwise its line shows at Stop and its block, led as late, goes out with the next message. Never as a
+      // Stop block, whose reason Codex records as the user's turn.
+      expect([initial, stop, next]).toEqual(Object.keys(initial).length === 0
+        ? [{}, { systemMessage: shown }, { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: expect.stringContaining(late) } }]
+        : [{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: expect.stringContaining(steer) }, systemMessage: shown }, {}, {}]);
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -206,7 +208,7 @@ describe("engine service", () => {
         }),
         "DAEMON_ENGINE_MATCH",
       )).toEqual([
-        expect.objectContaining({ content: await steerText("resident", "DAEMON_ENGINE_MATCH"), mechanism: "additional-context" }),
+        expect.objectContaining({ content: steerText("resident", "DAEMON_ENGINE_MATCH"), mechanism: "additional-context" }),
       ]);
     } finally {
       await daemon?.close();
@@ -320,7 +322,7 @@ describe("engine service", () => {
             text: "continue",
           }, configuration),
           project,
-        )).toEqual([expect.objectContaining({ content: await steerText("project-rule", project), sessionId: session.sessionId })]);
+        )).toEqual([expect.objectContaining({ content: steerText("project-rule", project), sessionId: session.sessionId })]);
       }
     } finally {
       await service?.close();
@@ -369,7 +371,7 @@ describe("engine service", () => {
         },
         options,
       );
-      const recovery = await steerText("recovery", "CURSOR_RECOVERY", common.workspace_roots[0]!);
+      const recovery = await cursorRelayed(steerText("recovery", "CURSOR_RECOVERY", undefined, { kind: "tool", tool: "Write" }), "recovery", common.workspace_roots[0]!);
       let pollCount = 0;
       await expect.poll(
         async () => {
@@ -384,7 +386,7 @@ describe("engine service", () => {
           return runCursorHook({ ...tool, hook_event_name: "postToolUse", tool_output: "written" }, options);
         },
         { timeout: 10_000, interval: 10 },
-      ).toEqual({ additional_context: cursorRelayed(recovery) });
+      ).toEqual({ additional_context: recovery });
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -463,7 +465,7 @@ describe("engine service", () => {
     }
   }, 30_000);
 
-  it("starts a Codex continuation when a turn-boundary conversation rule fires at Stop", async () => {
+  it("shows a turn-boundary conversation rule's line at Codex's Stop and gives its steer with the next message", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-codex-stop-rule-"));
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail/sessions");
@@ -484,13 +486,15 @@ describe("engine service", () => {
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { cwd: root, session_id: "stop-rule", turn_id: "turn" };
       await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
-      const reason = await steerText("turn-steer", "CONTINUE_AFTER_STOP", common.cwd);
+      const content = steerText("turn-steer", "CONTINUE_AFTER_STOP");
       expect(
         await runCodexHook(
           { ...common, hook_event_name: "Stop", last_assistant_message: "Preserve database transaction atomicity" },
           options,
         ),
-      ).toEqual({ decision: "block", reason });
+      ).toEqual({ systemMessage: await steerLine("turn-steer", root, "plain") });
+      expect(await runCodexHook({ ...common, turn_id: "turn-2", hook_event_name: "UserPromptSubmit", prompt: "next" }, options))
+        .toEqual({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: content } });
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -606,7 +610,7 @@ describe("engine service", () => {
           },
           options,
         ),
-      ).toEqual({ additional_context: cursorRelayed(await steerText("transcript-prompt", marker, common.workspace_roots[0]!)) });
+      ).toEqual({ additional_context: await cursorRelayed(steerText("transcript-prompt", marker), "transcript-prompt", common.workspace_roots[0]!) });
       expect(
         await runCursorHook(
           {
@@ -712,7 +716,7 @@ describe("engine service", () => {
           },
           options,
         ),
-      ).toEqual({ additional_context: cursorRelayed(await steerText("native-prompt", marker, common.workspace_roots[0]!)) });
+      ).toEqual({ additional_context: await cursorRelayed(steerText("native-prompt", marker), "native-prompt", common.workspace_roots[0]!) });
       expect(
         await runCursorHook(
           {

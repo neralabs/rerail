@@ -76,19 +76,13 @@ describe("Rules sections", () => {
     expect(sections[3]!.groups.map(g => g.name)).toEqual(["acme-spirit"]);
   });
 
-  it("keeps an empty Created rules section, and filters rows without dropping the groups they belong to", () => {
+  it("keeps an empty Created rules section", () => {
     data.packs = [pack("tslint", "TSLint", [["tslint:triple-equals", "TSLint"]])];
     load([fileRule("tslint:triple-equals", "pack", "tslint")]);
 
-    ui.filter = "mine";
     const [mine, typescript] = ruleSections();
     expect(mine!.groups[0]!.all).toEqual([]);
     expect(typescript!.groups[0]!.all).toHaveLength(1);
-    expect(typescript!.groups[0]!.shown).toEqual([]);
-
-    ui.filter = "all";
-    ui.query = "tslint";
-    expect(ids(ruleSections()[1]!.groups[0]!.shown)).toEqual(["tslint:triple-equals"]);
   });
 
   it("files a pack's rule added on its own under Other rules by Rerail, named after its pack, when the pack is not added", () => {

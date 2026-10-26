@@ -116,7 +116,7 @@ function gapCandidateTable(report: GatesReport): string[] {
 function goldensSection(report: GatesReport): string[] {
   const { goldens } = report.summary;
   return [
-    `matches-upstream-tests judges each rule on its goldens: real-code files imported from NRV into goldens.tsv, whose expected answer is upstream's on the pinned corpus. Rerail does not run the rules over the corpus; NRV's real-code gate does. The rules have ${goldens.count} golden(s), differ on ${goldens.differing} the engine read fully, and ${goldens.engineGaps} are engine gaps.`,
+    `matches-upstream-tests judges each rule on its goldens: real-code files a real-code run found, listed in goldens.tsv with that run named on its source line, whose expected answer is upstream's on the pinned corpus. Rerail's CI does not run the rules over the corpus. The rules have ${goldens.count} golden(s), differ on ${goldens.differing} the engine read fully, and ${goldens.engineGaps} are engine gaps.`,
     "",
     report.corpus === null ? "The corpus was not read on this run." : `The corpus is ${report.corpus.files} file(s) from ${report.corpus.tasks.filter((task) => task.status === "applied").length} applied task(s) and corpora; ${report.corpus.files - report.corpus.excluded} have upstream's answer.`,
   ];

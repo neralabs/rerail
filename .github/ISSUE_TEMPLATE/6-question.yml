@@ -1,0 +1,19 @@
+name: Question
+description: How to do something with Rerail.
+labels: [question, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions are answered on a best-effort basis. The [docs](https://github.com/neralabs/rerail/tree/main/docs) may have it already.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Your setup
+      description: Rerail version (`rerail update status`), coding agent, and what you've tried.

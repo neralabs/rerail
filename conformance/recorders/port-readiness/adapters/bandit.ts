@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
+import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { banditSpan, banditSpanParts, TROJANSOURCE_RELEASE, trojansourcePoint } from "../../../port-readiness/span-units/bandit.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPythonToolkit, pythonRegex } from "../languages/python.js";
@@ -18,7 +19,7 @@ import { checkoutUpstream, filesUnder, treeDigest, uvRuntime } from "../runtimes
  */
 
 const DRIVER = fileURLToPath(new URL("./bandit_driver.py", import.meta.url));
-const SPARSE_PATHS = ["/bandit/", "/examples/", "/LICENSE", "/setup.cfg"];
+const SPARSE_PATHS = ["/bandit/", "/examples/", "/setup.cfg"];
 /** Bandit's helpers every plugin reads the tree through. */
 const SHARED_MODULES = ["bandit/core/context.py", "bandit/core/utils.py", "bandit/core/blacklisting.py", "bandit/blacklists/utils.py"];
 
@@ -39,7 +40,7 @@ export async function createBanditAdapter(pack: PackManifest, names: string[], c
     throw new Error(`${pack.id}: Bandit has no named configurations; recommended_configs must be [default], meaning bare \`bandit\``);
   }
   // Bandit publishes its PyPI package from bandit/ at the release tag, which is the bare version.
-  const upstream = await checkoutUpstream(cacheRoot, "bandit", pack.upstream, pack.upstream.version, "bandit", SPARSE_PATHS, runner);
+  const upstream = await checkoutUpstream(cacheRoot, pack.upstream, pack.upstream.version, "bandit", SPARSE_PATHS, runner);
   const runtime = await uvRuntime(pack.upstream.runtime, cacheRoot, runner);
   const python = await createPythonToolkit(cacheRoot, runner);
   const ask = async <T>(request: object): Promise<T> =>
@@ -130,7 +131,7 @@ export async function createBanditAdapter(pack: PackManifest, names: string[], c
         detail: `the installed package declares ${facts.license}; the pack records ${pack.upstream.license}`,
       },
     ],
-    licenseText: readFileSync(join(upstream.directory, "LICENSE"), "utf8"),
+    licenseText: upstreamLicenseText(upstream.directory),
     rule,
 
     implementationNames(name: string): Set<string> {

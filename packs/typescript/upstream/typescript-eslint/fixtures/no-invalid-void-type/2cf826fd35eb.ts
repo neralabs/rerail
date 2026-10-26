@@ -1,1 +1,0 @@
-type voidPromiseNeverUnion = void | Promise<void> | never;

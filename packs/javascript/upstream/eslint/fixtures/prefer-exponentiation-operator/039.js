@@ -1,1 +1,0 @@
-switch(foo){ case Math.pow(a, b): break; }

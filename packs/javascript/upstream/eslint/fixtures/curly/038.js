@@ -1,1 +1,0 @@
-if (foo) { await using bar = 'baz'; }

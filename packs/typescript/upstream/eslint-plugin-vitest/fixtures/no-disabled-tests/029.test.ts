@@ -1,1 +1,0 @@
-xtest.each``("foo", function () {})

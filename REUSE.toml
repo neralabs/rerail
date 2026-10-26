@@ -673,6 +673,79 @@ path = [
   "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-013.vue",
   "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-014.vue",
   "packs/vue/upstream/eslint-plugin-vue/fixtures/return-in-computed-property/**",
+  # The port readiness recorder's copies of RuleTester cases (`<sha256 prefix>.vue`, a script case wrapped in `<script>`).
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/01ce634462cf.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/26196b417c25.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/34eedb0ba56c.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/80844f915d89.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/c6ade39f5980.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/eb2b7d962fa1.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/487ac1097c04.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/860797bebe12.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/cf047fde94ee.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/d506b625657b.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/f61651c5c9c0.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/c39a1e5c17c9.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-template-shadow/2de754729dad.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/038f6b60e113.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/1342895915c8.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/142801e14b16.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/14f468b04762.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/15399799ef3e.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/167067a228a3.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/192c324f1bd1.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/31908e722dff.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/347bd419963a.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/36b543052880.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/3d5cd65ae75e.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/3df2b4ad6ce3.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/4237414410ca.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/432e05f821c8.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/4a4a8d47d34f.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/530b99463267.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/5655e81ebde4.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/59db13f02095.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/5c19364c688a.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6021b65d1b31.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6047649adfe8.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/61488c07853d.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/67714fd76512.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/67a1ae766704.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6bcc1c0423f6.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6d93a84c3fe6.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/71574c106bee.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/72719f9b8b4a.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/73914a56f71f.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/73c7ac9dbeb8.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/748620a018f7.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/749fdef07a59.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/755f79c82ed5.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/7f41acdc69ef.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/807fc680dcea.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/8a6e64e36b0e.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/956744c9ee60.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/9b8e27201082.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/9c0ebaa2d950.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a12f3f6fb8ad.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a2d28b7904de.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a2e622ca703b.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a32562ad21f7.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a85330302e80.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/ae291dfade60.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/b6bb14568eaf.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/b73947b20d69.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/c49f15223c66.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/cb060465daeb.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/cdf7e21ccb47.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/cff0a2474030.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/d74ebe2cfef2.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/e0375f497402.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/e3d4ee16ba60.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/e92083907cde.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/ed3a1d85854d.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/f1cd0abfda18.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/f2134f73e29e.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/f583587dc034.vue",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = ["2017 Toru Nagashima", "2026 Nera Software Inc."]
@@ -774,7 +847,7 @@ SPDX-License-Identifier = "Apache-2.0"
 # licence the pack publishes them under (its package.json); whether adapted rule documents need the upstream licence
 # is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = "packs/php/candidates/rules/**"
+path = ["packs/php/rules/**", "packs/php/candidates/rules/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors", "2016 Ondřej Mirtes", "2025 PHPStan s.r.o.", "2016 Vimeo", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND BSD-3-Clause AND MIT"
@@ -823,7 +896,7 @@ SPDX-License-Identifier = "MIT"
 # annotated with the licence the pack publishes them under (its package.json); whether adapted rule documents need the
 # upstream licence is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = "packs/blade/candidates/rules/**"
+path = ["packs/blade/rules/**", "packs/blade/candidates/rules/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["Johnathon Koster", "2023-present Tomas Votruba", "Tighten Co. <hello@tighten.co>", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
@@ -1034,8 +1107,8 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # The port readiness gates' recordings hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's tests
 # beside Rerail's recorded answers. They are no longer in this repository — each tool-pack commits a recording.lock
-# and the bytes are a GitHub release asset (conformance/port-readiness/recording/store.ts) — so REUSE cannot annotate them, and
-# there is nothing here to annotate. The attribution travels with the asset: each recording.json carries upstream's
+# naming them by sha256, and the bytes are a cache entry (conformance/port-readiness/recording/store.ts) — so REUSE cannot
+# annotate them, and there is nothing here to annotate. The attribution travels with the recording: each recording.json carries upstream's
 # LICENSE text (licenseText, its copyright and permission notice; recordings made before it was added carry only its
 # digest, licenseSha256, until they are recorded again). In this repository each upstream's
 # packs/<pack>/licenses/<project>/UPSTREAM.md lists the recording as excerpts under upstream's licence and Apache-2.0,

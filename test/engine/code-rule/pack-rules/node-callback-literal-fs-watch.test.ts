@@ -1,5 +1,5 @@
 /**
- * Two node pack rules must not steer an agent into breaking working code (NER-1834).
+ * Two node pack rules must not steer an agent into breaking working code.
  *
  * n-no-callback-literal (eslint-plugin-n n/no-callback-literal) judges a call by the callee's name alone: any `cb(...)`
  * or `callback(...)` whose first argument is a literal is reported as a literal "in error position". Many callbacks
@@ -83,7 +83,7 @@ describe("n-no-callback-literal", () => {
   it("tells the agent to check the callback is error-first before changing the call (ws verifyClient, ssh2 authHandler)", () => {
     const [finding] = findings(compile("n-no-callback-literal"), AUTH_HANDLER);
     expect(finding?.message).toBe(
-      "Unexpected literal in error position of callback. This rule goes by the callback's name only: if the callback is error-first, pass an Error or null as its first argument; if its API defines a different first argument (ws verifyClient's cb(result, code), ssh2 authHandler's callback(nextMethod)), leave the call as it is.",
+      "Pass an Error or null as this callback's first argument, unless its API expects a different first argument.",
     );
   });
 });

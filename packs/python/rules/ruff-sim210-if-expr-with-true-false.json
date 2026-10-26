@@ -3,7 +3,7 @@
   "id": "ruff-sim210-if-expr-with-true-false",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM210 (if-expr-with-true-false): a conditional expression whose body is the literal `True` and whose `else` arm is `False` (through any parentheses), reported on the whole expression. Ruff's message and fix differ when the test is a comparison or `bool` is shadowed; what is flagged does not.",
+  "description": "Use bool() on the condition instead of a conditional expression that yields True when it holds and False otherwise.",
   "scope": {
     "include": [
       "**/*"

@@ -1,1 +1,0 @@
-var {bacon, ...others} = stuff; foo(others)

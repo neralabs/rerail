@@ -6,7 +6,7 @@ import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { PACKAGE_ROOT } from "../../../../src/engine/index.js";
 import type { CorpusFile } from "../../../port-readiness/corpus.js";
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { notebookCodeCells } from "../../../port-readiness/recorded-adapter.js";
+import { notebookCodeCells, upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { diagnosticSpan, RUFF_SPAN_PARTS, ruffSpan } from "../../../port-readiness/span-units/ruff.js";
 import type { Check, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPythonToolkit } from "../languages/python.js";
@@ -23,7 +23,6 @@ import { enabledSelections, kebabCase, ruffTestLints, type RuleVariants } from "
  */
 
 const SPARSE_PATHS = [
-  "/LICENSE",
   "/pyproject.toml",
   "/crates/ruff_linter/",
   // linter.rs's notebook tests lint ruff_notebook's fixtures.
@@ -251,7 +250,7 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
     throw new Error(`${pack.id}: Ruff has no named configurations; recommended_configs must be [default], Ruff's default rule selection`);
   }
   // Ruff tags releases with the bare version and publishes its wheels from the crates at that tag.
-  const upstream = await checkoutUpstream(cacheRoot, "ruff", pack.upstream, pack.upstream.version, "crates", SPARSE_PATHS, runner);
+  const upstream = await checkoutUpstream(cacheRoot, pack.upstream, pack.upstream.version, "crates", SPARSE_PATHS, runner);
   // A cached checkout made with fewer sparse paths would silently lack files the gates read.
   const absent = SPARSE_PATHS.filter((path) => !existsSync(join(upstream.directory, path)));
   if (absent.length > 0) throw new Error(`the Ruff checkout at ${upstream.directory} lacks ${absent.join(", ")}: it was made with other sparse paths; delete it to fetch it again`);
@@ -475,7 +474,7 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
           detail: `pyproject.toml at the pinned commit declares ${declaredLicense}, the installed wheel's metadata ${wheelLicense}; the pack records ${pack.upstream.license}`,
         },
       ],
-      licenseText: readFileSync(join(upstream.directory, "LICENSE"), "utf8"),
+      licenseText: upstreamLicenseText(upstream.directory),
       rule,
 
       implementationNames(name: string): Set<string> {

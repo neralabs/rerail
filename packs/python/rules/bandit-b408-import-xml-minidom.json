@@ -3,7 +3,7 @@
   "id": "bandit-b408-import-xml-minidom",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of xml.dom.minidom.",
+  "description": "Avoid importing xml.dom.minidom to parse XML; it is open to XML attacks, so use defusedxml.",
   "scope": {
     "include": [
       "**/*.py"

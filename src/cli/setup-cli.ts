@@ -2,13 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { createInterface, type Interface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
 import {
   CODING_AGENT_NAMES,
   codingAgentHome,
-  connectedCodingAgents,
   refreshCodingAgents,
   registrationRoot as packageRegistrationRoot,
 } from "../setup/coding-agents.js";
@@ -24,7 +22,8 @@ import {
   type RegistrationReport,
 } from "../setup/harness-registration.js";
 import { checkNodeVersion } from "../setup/node-version.js";
-import { addLauncherToPath, describeLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
+import { addLauncherToPath, describeLauncherPath, launcherPathMarker, recordLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
+import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
@@ -88,6 +87,7 @@ async function launcherOnPath(context: SetupContext, lane: SetupLane): Promise<s
   const binDir = dirname(launcherPath);
   const home = codingAgentHome();
   const change = await addLauncherToPath({ binDir, home });
+  await recordLauncherPath(context.home, change);
   if (change.status === "failed") return renderOnPath({ binDir, locations: [], failure: change.reason, home }, lane).replace(/\n$/u, "");
   if (change.status !== "changed") return undefined;
   return renderOnPath({ binDir, locations: change.locations, home }, lane).replace(/\n$/u, "");
@@ -196,12 +196,30 @@ async function runRefresh(context: SetupContext): Promise<number> {
   for (const { agent, message } of result.unchecked) {
     process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);
   }
+  // An install made by a version whose set-up never wrote PATH keeps the launcher off it until something puts it
+  // on: the refresh every update ends with is that something, once. A set-up that handled PATH leaves a record, and
+  // from then on PATH is the person's: a block they took out stays out.
+  const pathLine = await repairLauncherPath(context);
+  if (pathLine !== undefined) process.stdout.write(`${pathLine}\n`);
   for (const { agent, message } of result.failures) {
     process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
   }
   if (result.failures.length === 0) return 0;
   process.stderr.write("rerail: fix that, then run rerail install --refresh\n");
   return 1;
+}
+
+/**
+ * Put the launcher on PATH where no set-up ever handled it; the line to print when that changed or failed, else
+ * undefined. A run that wrote no launcher (an install that failed) has nothing to put on PATH yet.
+ */
+async function repairLauncherPath(context: SetupContext): Promise<string | undefined> {
+  const { launcherPath } = context.updater;
+  if (existsSync(launcherPathMarker(context.home)) || !existsSync(launcherPath)) return undefined;
+  const binDir = dirname(launcherPath);
+  const change = await addLauncherToPath({ binDir, home: codingAgentHome() });
+  await recordLauncherPath(context.home, change);
+  return describeLauncherPath(change, binDir, "add");
 }
 
 export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
@@ -234,10 +252,12 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
     const binDir = dirname(context.updater.launcherPath);
     const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
     if (removed !== undefined) process.stdout.write(`${removed}\n`);
+    if (!parsed.dryRun) await rm(launcherPathMarker(context.home), { force: true });
   }
   if (explicitRoot !== undefined && !remove) {
     const binDir = dirname(context.updater.launcherPath);
     const change = await addLauncherToPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun });
+    await recordLauncherPath(context.home, change, parsed.dryRun);
     const pathLine = describeLauncherPath(change, binDir, "add", parsed.dryRun);
     process.stdout.write(["", ...(pathLine === undefined ? [] : [pathLine]), "Next:", "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks", ""].join("\n"));
   }
@@ -258,20 +278,15 @@ export function setupIo(args: readonly string[] = []): SetupIo {
     process.stdout.write(`${text}\n`);
   };
   if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) return { lane: "agent", say, close: () => {} };
-  // The iterator buffers lines typed ahead of the next question; `question()` would drop them.
-  let input: Interface | undefined;
-  let lines: AsyncIterator<string> | undefined;
+  // One reader for the run: lines for the folder and pack prompts, keys for each question's menu, and what is typed
+  // ahead of a prompt kept for it.
+  const input = new TerminalInput(process.stdin, text => process.stdout.write(text), undefined, () => process.stdout.columns);
   return {
     lane: "terminal",
     say,
-    async ask(prompt) {
-      process.stdout.write(prompt);
-      input ??= createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
-      lines ??= input[Symbol.asyncIterator]();
-      const next = await lines.next();
-      return next.done === true ? undefined : next.value;
-    },
-    close: () => input?.close(),
+    ask: async prompt => await input.line(prompt),
+    choose: async menu => await input.choose(menu),
+    close: () => input.close(),
   };
 }
 
@@ -283,8 +298,8 @@ export function noBrowserReason(env: NodeJS.ProcessEnv, platform: NodeJS.Platfor
   return undefined;
 }
 
-/** The dashboard's hash route for each page set-up links to. The review page is WR. */
-const DASHBOARD_ROUTES: Record<DashboardPage, string> = { rules: "rules", review: "rule-packs?review=1" };
+/** The dashboard's hash route for each page set-up links to. */
+const DASHBOARD_ROUTES: Record<DashboardPage, string> = { rules: "rules" };
 
 /**
  * The daemon of the active install; it serves every repository. A running daemon from another package (an older
@@ -329,10 +344,6 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
         harnesses: agents,
         ...(repoRoot === undefined ? {} : { workspaceDir: repoRoot }),
       });
-    },
-    async connectedAgents() {
-      // A dry run plans every write; an agent with nothing to write is connected already.
-      return connectedCodingAgents(registrationRoot(context), codingAgentHome());
     },
     sessionsApproved() {
       try {
@@ -506,7 +517,7 @@ async function install(context: SetupContext, parsed: SetupArguments, cwd: strin
   if (active !== undefined && (answering || origin === "start")) return undefined;
   await context.updater.install();
   if (answering || workspaceStartState(cwd, parsed.databasePath) === "started") return undefined;
-  return renderInstalled({ version: context.updater.packageVersionLabel }, lane).replace(/\n$/u, "");
+  return renderInstalled(lane).replace(/\n$/u, "");
 }
 
 /** The run's carry: its own arguments, with the place's configured database when it names none. */

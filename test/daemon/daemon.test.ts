@@ -128,6 +128,7 @@ describe("Rerail daemon", () => {
       database: { path: join(root, "rerail.sqlite"), exists: false },
       native: { ok: false, error: "addon missing" },
       ui: "dev",
+      installedAt: null,
     });
     const query = new URLSearchParams({ repository: root, host: "omp", sessionId: "missing" });
     expect((await getJson(daemon, `/api/presentation?${query}`)).body).toMatchObject({
@@ -191,7 +192,7 @@ describe("Rerail daemon", () => {
       body: {
         sessions: [{
           sessionId: "s1", host: "claude-code", cwd: "/workspace", repositoryId: "test-repository", startedAt: 1_000, endedAt: 2_000,
-          eventCount: 3, violationCount: 0,
+          eventCount: 3, violationCount: 0, steeredViolations: 0, lastEventAt: 1_003,
         }],
         total: 1,
         nextCursor: null,
@@ -225,7 +226,11 @@ describe("Rerail daemon", () => {
       body: { session: { sessionId: "s1", eventCount: 3 }, hud: { activeRuleCount: null, steeringCount: null } },
     });
     expect(await getJson(daemon, "/api/sessions/missing")).toMatchObject({ status: 404, body: { error: "session-not-found" } });
-    expect((await getJson(daemon, "/healthz")).body).toMatchObject({ database: { exists: true } });
+    // The database this test created dates the install; it is read once and never changes.
+    const { installedAt } = (await getJson<DaemonHealth>(daemon, "/healthz")).body;
+    expect(installedAt).toBeGreaterThan(0);
+    expect(installedAt).toBeLessThanOrEqual(Date.now());
+    expect((await getJson(daemon, "/healthz")).body).toMatchObject({ database: { exists: true }, installedAt });
   });
 
   it("resolves canonical presentation overrides in precedence order and falls through after deletion", async () => {

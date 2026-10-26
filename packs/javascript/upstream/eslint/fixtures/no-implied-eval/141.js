@@ -1,1 +1,0 @@
-global.setTimeout(1 + ';' + 1)

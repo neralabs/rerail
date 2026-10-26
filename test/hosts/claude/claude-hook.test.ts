@@ -2,18 +2,19 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { type AdapterDelivery, type RerailEventLoop, sessionStartNote, steerBlock } from "../../../src/engine/index.js";
+import { type AdapterDelivery, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
+import { editSteer, steeredRules } from "../../support/steers.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 
-function delivery(requested: AdapterDelivery["requested"], content: string, ruleIds: readonly string[] = []): AdapterDelivery {
-  return { sessionId: "claude-session", requested, mechanism: "additional-context", content, ruleIds };
+function delivery(requested: AdapterDelivery["requested"], content: string, ruleIds: readonly string[] = [], rules = steeredRules(ruleIds)): AdapterDelivery {
+  return { sessionId: "claude-session", requested, mechanism: "additional-context", content, ruleIds, rules };
 }
 
 describe("Claude Code hook without a daemon", () => {
@@ -122,7 +123,7 @@ describe("Claude Code one-shot hook", () => {
     expect(runtimeFailure.stderr).toMatch(/^rerail hook: /);
   });
 
-  it("links the session note and a steer's Why? to the checkout's dashboard when the daemon is on loopback", async () => {
+  it("links the session note and a steer's why? to the checkout's dashboard when the daemon is on loopback", async () => {
     const root = await temporaryDirectory();
     const home = join(root, "home");
     await mkdir(home);
@@ -134,7 +135,7 @@ describe("Claude Code one-shot hook", () => {
       const start = await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, scriptedLoop({}), join(root, "sessions"));
       expect(JSON.stringify(start)).toContain("http://127.0.0.1:4791/?sessionId=claude-session&host=claude-code#sessions");
 
-      const steer = scriptedLoop({ result: [delivery("steer", steerBlock("acme:no-print", "Remove print.", { mode: "steer" }), ["acme:no-print"])] });
+      const steer = scriptedLoop({ result: [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])] });
       const output = await handleClaudeEvent({
         ...common, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: "tool-1", tool_input: {}, tool_response: "ok",
       }, steer, join(root, "sessions"), { TERM_PROGRAM: "iTerm.app", COLORTERM: "truecolor" });
@@ -143,7 +144,7 @@ describe("Claude Code one-shot hook", () => {
         systemMessage: expect.stringMatching(/^◆ \u001b\[38;2;165;173;251mR\u001b\[39m .* · acme:no-print {2}steered {2}· {2}\u001b\]8;;http:\/\/127\.0\.0\.1:4791\/#rule\/acme%3Ano-print\u0007why\?\u001b\]8;;\u0007$/u),
         hookSpecificOutput: {
           hookEventName: "PostToolUse",
-          additionalContext: expect.stringContaining("Remove print.\nWhy? → http://127.0.0.1:4791/#rule/acme%3Ano-print"),
+          additionalContext: editSteer("acme:no-print", "Remove print."),
         },
       });
     } finally {
@@ -151,23 +152,37 @@ describe("Claude Code one-shot hook", () => {
     }
   });
 
-  it("shows a late steer's line at Stop and gives the coding agent its block with the next message, without the line again", async () => {
+  it("shows a late steer's line at Stop and gives the coding agent its block at the next tool call, not with the person's prompt", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "claude-session", cwd: root };
     const blocks = [
-      delivery("steer", steerBlock("a", "Fix a.", { mode: "steer" }), ["a"]),
-      delivery("steer", steerBlock("b", "Fix b.", { mode: "steer" }), ["b"]),
+      delivery("steer", editSteer("a", "Fix a."), ["a"]),
+      delivery("steer", editSteer("b", "Fix b."), ["b"]),
     ];
-    // Without a daemon the links stay relative, so each line is the header alone; without colour the mark is plain.
+    // Without a daemon the rules stay unlinked, so each line is the header alone; without colour the mark is plain.
     expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({ "turn-end": blocks }), storageRoot, { NO_COLOR: "1" }))
       .toEqual({ systemMessage: "\n◆ R E R A I L · a  steered\n◆ R E R A I L · b  steered" });
 
-    const next = scriptedLoop({ "user-prompt": [delivery("steer", steerBlock("c", "Fix c.", { mode: "steer" }), ["c"])] });
-    const output = await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, next, storageRoot, { NO_COLOR: "1" });
+    // UserPromptSubmit's context lands inside the person's turn, so every steer held then waits for the next tool call.
+    const prompt = scriptedLoop({ "user-prompt": [delivery("steer", editSteer("c", "Fix c."), ["c"])] });
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, prompt, storageRoot, { NO_COLOR: "1" }))
+      .toEqual({});
+
+    const output = await handleClaudeEvent({
+      ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {},
+    }, scriptedLoop({}), storageRoot, { NO_COLOR: "1" });
     expect(output).toEqual({
       systemMessage: "◆ R E R A I L · c  steered",
-      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: expect.stringMatching(/Fix a\.[\s\S]*Fix b\.[\s\S]*Fix c\./u) },
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        // The held steers reached the agent after it had moved on, and their lead says so; the new one leads as an edit's.
+        additionalContext: [
+          editSteer("a", "Fix a.").replace("Rerail found 1 problem in your last edit:", "Rerail finished checking your earlier edits after you moved on:"),
+          editSteer("b", "Fix b.").replace("Rerail found 1 problem in your last edit:", "Rerail finished checking your earlier edits after you moved on:"),
+          editSteer("c", "Fix c."),
+        ].join("\n\n"),
+      },
     });
   });
 
@@ -180,23 +195,26 @@ describe("Claude Code one-shot hook", () => {
       parsed => handleClaudeEvent(parsed, loop, storageRoot, { NO_COLOR: "1" }).then(output => bindSteerReceipt(output, (_receipt, ruleIds) => { receipts.push(ruleIds); })),
       JSON.stringify(input),
     );
-    const late = [delivery("steer", steerBlock("a", "Fix a.", { mode: "steer" }), ["a"]), delivery("steer", steerBlock("b", "Fix b.", { mode: "steer" }), ["b"])];
+    const late = [delivery("steer", editSteer("a", "Fix a."), ["a"]), delivery("steer", editSteer("b", "Fix b."), ["b"])];
 
     await serve({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({ "turn-end": late }));
     expect(receipts).toEqual([["a", "b"]]);
 
-    await serve({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({ "user-prompt": [delivery("steer", steerBlock("c", "Fix c.", { mode: "steer" }), ["c"])] }));
+    await serve({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({ "user-prompt": [delivery("steer", editSteer("c", "Fix c."), ["c"])] }));
+    expect(receipts).toEqual([["a", "b"]]);
+
+    await serve({ ...common, hook_event_name: "PostToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {}, tool_response: "ok" }, scriptedLoop({}));
     expect(receipts).toEqual([["a", "b"], ["c"]]);
   });
 
   it("prints the why link after the word when the terminal cannot draw links", () => {
-    const block = steerBlock("a", "Fix a.", { mode: "steer" }).replace("#rule/", "http://127.0.0.1:4791/#rule/");
-    expect(claudeHookOutput("PostToolUse", [delivery("steer", block, ["a"])], { links: "plain" })).toMatchObject({
+    const linked = delivery("steer", editSteer("a", "Fix a."), ["a"], steeredRules(["a"], "http://127.0.0.1:4791/"));
+    expect(claudeHookOutput("PostToolUse", [linked], { links: "plain" })).toMatchObject({
       systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a",
     });
   });
 
-  it("routes steer and block deliveries through additionalContext or the pending file", async () => {
+  it("routes steer and block deliveries through additionalContext or the pending file, never the person's prompt", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "claude-session", cwd: root };
@@ -239,8 +257,11 @@ describe("Claude Code one-shot hook", () => {
 
     expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({}), storageRoot)).toEqual({});
 
-    expect(await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({}), storageRoot)).toEqual({
-      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "Deferred steer.\n\nDeferred block." },
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({}), storageRoot)).toEqual({});
+    expect(await handleClaudeEvent({
+      ...common, hook_event_name: "PostToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {}, tool_response: "ok",
+    }, scriptedLoop({}), storageRoot)).toEqual({
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "Deferred steer.\n\nDeferred block." },
     });
 
     expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p2" }, scriptedLoop({}), storageRoot)).toEqual({});
@@ -264,7 +285,7 @@ describe("Claude Code one-shot hook", () => {
       storageRoot,
     )).toEqual({});
     expect(await handleClaudeEvent(
-      { ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "new session" },
+      { ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} },
       scriptedLoop({}),
       storageRoot,
     )).toEqual({});

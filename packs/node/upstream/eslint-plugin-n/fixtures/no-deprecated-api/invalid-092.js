@@ -1,1 +1,0 @@
-const {Buffer:b} = process.getBuiltinModule('buffer'); new b()

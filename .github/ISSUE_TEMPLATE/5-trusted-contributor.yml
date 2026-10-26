@@ -1,0 +1,36 @@
+name: Become a trusted contributor
+description: Ask to open pull requests. Only trusted contributors do.
+title: "Trusted contributor: "
+labels: [trust-request, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Pull requests come from trusted contributors ([how it works](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#trusted-contributors)). Already working in an issue? Ask there instead.
+        A maintainer answers here within 10 business days. If it's a yes, they add you to the list and assign you the work; if it's not yet, they say why and what would change it.
+  - type: textarea
+    id: change
+    attributes:
+      label: What you want to change
+      description: Link the issue if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: How you'd go about it
+      description: The approach, the parts of the repository it touches, and how you'd test it.
+    validations:
+      required: true
+  - type: textarea
+    id: background
+    attributes:
+      label: Anything that helps us know your work
+      description: Links to pull requests or projects elsewhere. Optional.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send it
+      options:
+        - label: I've read the [contributing guide](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md) and agree to follow the [Code of Conduct](https://github.com/neralabs/rerail/blob/main/CODE_OF_CONDUCT.md).
+          required: true

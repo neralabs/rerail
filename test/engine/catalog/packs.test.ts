@@ -1,5 +1,5 @@
 /**
- * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 7, one test per
+ * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
  * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
  * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
  * corpus, a missing checkout failing; 0: none).
@@ -14,7 +14,7 @@ import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, packedFileFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
+import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 
@@ -206,7 +206,7 @@ describe("validatePack", () => {
       "a candidate whose id is not lowercase letters, digits and dashes, though its file is named for it",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", clauses: [] });
+        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", description: "Avoid alert().", clauses: [] });
       },
       { rules: ["candidates/rules/eslint:no-alert.json: id eslint:no-alert is not lowercase letters, digits and dashes"] },
     ],
@@ -214,7 +214,7 @@ describe("validatePack", () => {
       "a candidate with no id",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "rerail.policy/v1", clauses: [] });
+        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "rerail.policy/v1", description: "Remove pass statements.", clauses: [] });
       },
       { rules: ["candidates/rules/no-pass.json: has no id"] },
     ],
@@ -222,7 +222,7 @@ describe("validatePack", () => {
       "a candidate in an older document format",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", checks: [] });
+        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", description: "Remove pass statements.", checks: [] });
       },
       { rules: ["candidates/rules/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1"] },
     ],
@@ -356,12 +356,48 @@ describe("validatePack", () => {
       directory => writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n"),
       { licences: ["upstream/examplelint/fixtures/clean.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
     ],
+    [
+      "a description that names its tool and holds code",
+      directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({ ...document, description: "Port of Ruff's `PIE790`." })),
+      {
+        text: [
+          "rules/pass-statement.json: description names an upstream tool: Port of Ruff's `PIE790`.",
+          "rules/pass-statement.json: description holds code (backticks): Port of Ruff's `PIE790`.",
+        ],
+      },
+    ],
+    [
+      "a rule with no description",
+      directory => editJson(join(directory, "rules", "pass-statement.json"), ({ description: _description, ...document }) => document),
+      { text: ["rules/pass-statement.json: has no description"] },
+    ],
   ];
 
   it.each(cases)("fails %s", async (_name, change, expected) => {
     const validation = await validatePack(changed("valid", change), { corpora: false });
     expect(failing(validation)).toEqual(expected);
     expect(validation.pass).toBe(false);
+  });
+
+  it("passes a rule whatever its message says: messages are left to review", async () => {
+    const message = `NEVER keep this pass (pass-statement); Rerail flags it.${" Remove it.".repeat(20)}`;
+    const validation = await validatePack(
+      changed("valid", directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({
+        ...document,
+        clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message } })),
+      }))),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
+    expect(validation.rules.find(rule => rule.id === "pass-statement")?.status).toBe("ok");
+  });
+
+  describe("check 8: text", () => {
+    it("reads no sentence end in an abbreviation or quoted text, and no tool name in a quoted value", () => {
+      const document = { description: "Use field init shorthand, e.g. Point { x } for Point { x: x }, not 'eslint' style.", clauses: [] };
+      expect(textFailures("rules/x.json", JSON.stringify(document))).toEqual([]);
+    });
   });
 
   describe("check 7: manifest", () => {

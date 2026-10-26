@@ -1,1 +1,0 @@
-globalThis.Object.pow(a, b)

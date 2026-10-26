@@ -1,1 +1,0 @@
-<template><div><div foo v-bind:foo></div></div></template>

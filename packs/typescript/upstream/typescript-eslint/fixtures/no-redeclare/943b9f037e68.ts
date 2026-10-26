@@ -1,4 +1,0 @@
-
-enum A {}
-namespace A {}
-      

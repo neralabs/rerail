@@ -3,7 +3,7 @@
   "id": "ruff-f602-multi-value-repeated-key-variable",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F602 (multi-value-repeated-key-variable) with default settings: a dictionary key that is a bare name equal to an earlier key of the same dict display, reported on each repeat (parentheses transparent).",
+  "description": "Avoid repeating the same variable as a key in a Python dict literal; the later value silently overwrites the earlier one.",
   "scope": {
     "include": [
       "**/*"
@@ -109,7 +109,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F602",
-        "message": "Dictionary key `$KEY` repeated",
+        "message": "Remove or merge the repeated key `$KEY` in this dict; the later value silently overwrites the earlier one.",
         "suppress": {
           "noqa": {
             "codes": [

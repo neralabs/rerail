@@ -1,6 +1,6 @@
 /**
  * phpcs-squiz-php-disallow-size-functions-in-loops (packs/php/, candidate) must not steer an agent into breaking a loop
- * (NER-1812). PHP_CodeSniffer's sniff reports every count(), sizeof() or strlen() in a loop condition and advises
+ *. PHP_CodeSniffer's sniff reports every count(), sizeof() or strlen() in a loop condition and advises
  * hoisting it before the loop. That is only correct when the loop leaves the measured value alone. When the loop
  * grows, shrinks or replaces it (a work queue drained with array_shift, a buffer filled with .=, a fixed-point loop
  * that runs until a collection stops growing), the size has to be read on every pass, and an agent that follows the
@@ -81,7 +81,7 @@ const NESTED = php(
 /** Loops that change the measured value: the size must be read on every pass, so the rule stays silent. */
 const SILENT: ReadonlyArray<[string, string]> = [
   [
-    "a fixed-point loop that runs until the collection stops growing (NER-1812)",
+    "a fixed-point loop that runs until the collection stops growing",
     php("do {", "    $before = count($defs);", "    foreach ($defs as $d) {", "        $defs += expand($d);", "    }", "} while (count($defs) !== $before);"),
   ],
   ["a work queue drained with array_shift", php("while (count($queue) > 0) {", "    run(array_shift($queue));", "}")],
@@ -121,12 +121,12 @@ describe(RULE_ID, () => {
   it("names the measured value and the safe rewrite in its message", () => {
     const [finding] = findings(compile(), REPORTED[0]![1]);
     expect(finding?.message).toBe(
-      "The loop condition re-reads the size of $items on every pass, and this rule found no change to $items inside the loop. If nothing changes it, assign the size to a variable before the loop and use the variable in the condition.",
+      "Assign the size of $items to a variable before the loop and use that in the condition; as written it is recomputed on every pass.",
     );
   });
 
   it("names the value, not the label, of a named argument", () => {
     const [finding] = findings(compile(), php("while (strlen(string: $text) > $pos) {", "    $pos++;", "}"));
-    expect(finding?.message).toContain("the size of $text on every pass");
+    expect(finding?.message).toContain("Assign the size of $text to a variable");
   });
 });

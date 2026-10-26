@@ -1,1 +1,0 @@
-declare function functionDeclaration1<T = void>(arg: T): void;

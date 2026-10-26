@@ -46,6 +46,18 @@ export interface RecordingChanges {
   rules: RuleChange[];
   /** Totals, so a reader sees the shape of the recording even when no rule moved. */
   totals: { rules: number; cases: number; corpusFiles: number };
+  /**
+   * The Composer runtimes the recorder installed, each with the packages it resolved. Nothing locks their transitive
+   * packages, so they are listed here, where a drift between two recordings shows, and not in the recording or its
+   * lock: a transitive release alone never fails a leg.
+   */
+  resolved: ResolvedRuntime[];
+}
+
+/** A runtime the recorder installed, and the package set it resolved as sorted `name@version`. */
+export interface ResolvedRuntime {
+  runtime: string;
+  packages: string[];
 }
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -110,9 +122,16 @@ export type UnreadRecording = { unavailable: string };
 
 /**
  * The per-rule summary of a re-record. `before` is null when the tool-pack had no recording, and says why when the
- * lock named one that could not be read: nothing is compared then, and the summary says so.
+ * lock named one that could not be read: nothing is compared then, and the summary says so. `resolved` is what the
+ * recorder's Composer runtimes resolved, carried into the summary as it is.
  */
-export function diffRecordings(pack: string, tool: string, before: RecordedPair | UnreadRecording | null, after: RecordedPair): RecordingChanges {
+export function diffRecordings(
+  pack: string,
+  tool: string,
+  before: RecordedPair | UnreadRecording | null,
+  after: RecordedPair,
+  resolved: ResolvedRuntime[] = [],
+): RecordingChanges {
   const totals = {
     rules: Object.keys(after.recording.rules).length,
     cases: Object.values(after.recording.rules).reduce((count, rule) => count + rule.cases.length, 0),
@@ -127,9 +146,10 @@ export function diffRecordings(pack: string, tool: string, before: RecordedPair 
       unavailable: null,
       rules: Object.keys(after.recording.rules).sort(byText).map((rule) => ({ rule, status: "added", expectedAdded: 0, expectedRemoved: 0, corpusFilesChanged: 0, factsChanged: [] })),
       totals,
+      resolved,
     };
   }
-  if ("unavailable" in before) return { pack, tool, pinsChanged: [], first: false, unavailable: before.unavailable, rules: [], totals };
+  if ("unavailable" in before) return { pack, tool, pinsChanged: [], first: false, unavailable: before.unavailable, rules: [], totals, resolved };
   const pinsChanged = (["repository", "commit", "version", "runtime"] as const)
     .filter((field) => before.recording.pins[field] !== after.recording.pins[field])
     .map((field) => `${field} ${before.recording.pins[field]} → ${after.recording.pins[field]}`);
@@ -162,15 +182,8 @@ export function diffRecordings(pack: string, tool: string, before: RecordedPair 
     if (expected.added + expected.removed + corpusFilesChanged + factsChanged.length === 0) continue;
     rules.push({ rule, status: "changed", expectedAdded: expected.added, expectedRemoved: expected.removed, corpusFilesChanged, factsChanged });
   }
-  return { pack, tool, pinsChanged, first: false, unavailable: null, rules, totals };
+  return { pack, tool, pinsChanged, first: false, unavailable: null, rules, totals, resolved };
 }
-
-/**
- * Starts each per-rule summary comment, so port-readiness-record.yml finds a tool-pack's earlier ones to collapse when
- * it posts a new one, as port-readiness.yml does with its own comment. Summaries posted while the recordings were named
- * for the gates start with `<!-- rerail-gate-recording -->`, which the workflow collapses too.
- */
-export const RECORDING_COMMENT_MARKER = "<!-- rerail-port-readiness-recording -->";
 
 /** At most this many rule rows; the rest are counted. A tool-pack has up to a few hundred rules. */
 const ROW_LIMIT = 60;
@@ -187,7 +200,6 @@ export function renderRecordingChanges(changes: RecordingChanges[]): string {
   const packs = (count: number) => `${count} tool-pack${count === 1 ? "" : "s"}`;
   const headline = [...(uncompared.length > 0 ? [`⚠️ ${packs(uncompared.length)} not compared`] : []), ...(moved.length > 0 ? [`${packs(moved.length)} moved`] : [])];
   const lines = [
-    RECORDING_COMMENT_MARKER,
     `## Port readiness recordings: ${headline.length === 0 ? "✅ re-recorded, and upstream answers the same" : headline.join(", ")}`,
     "",
     "Upstream's recorded answers are not in the diff (`recording.lock` names them; docs/port-readiness.md). This is what changed in them.",
@@ -203,31 +215,38 @@ export function renderRecordingChanges(changes: RecordingChanges[]): string {
         `${shape}. The recording the committed \`recording.lock\` named could not be read (${entry.unavailable}), so what moved is unknown. This is not a first recording, and not a recording that answers the same.`,
         "",
       );
-      continue;
-    }
-    if (entry.first) {
+    } else if (entry.first) {
       lines.push(`### ${label}: first recording`, "", `${shape}. Nothing to compare it with.`, "");
-      continue;
-    }
-    if (entry.rules.length === 0 && entry.pinsChanged.length === 0) {
+    } else if (entry.rules.length === 0 && entry.pinsChanged.length === 0) {
       lines.push(`### ${label}: unchanged`, "", `${shape}. Upstream answers exactly as it did.`, "");
-      continue;
+    } else {
+      lines.push(`### ${label}`, "", `${shape}.`, "");
+      if (entry.pinsChanged.length > 0) lines.push(`Pins moved: ${entry.pinsChanged.map((pin) => `\`${pin}\``).join(", ")}.`, "");
+      lines.push(
+        "| Upstream rule | | Expected findings | Corpus files | Facts |",
+        "| --- | --- | --- | --- | --- |",
+        ...entry.rules.slice(0, ROW_LIMIT).map((rule) => [
+          `\`${rule.rule}\``,
+          rule.status,
+          rule.expectedAdded + rule.expectedRemoved === 0 ? "—" : `+${rule.expectedAdded} / −${rule.expectedRemoved}`,
+          rule.corpusFilesChanged === 0 ? "—" : String(rule.corpusFilesChanged),
+          rule.factsChanged.length === 0 ? "—" : rule.factsChanged.map((field) => `\`${field}\``).join(", "),
+        ].join(" | ")).map((row) => `| ${row} |`),
+        ...(entry.rules.length > ROW_LIMIT ? [`| … | ${entry.rules.length - ROW_LIMIT} more | | | |`] : []),
+        "",
+      );
     }
-    lines.push(`### ${label}`, "", `${shape}.`, "");
-    if (entry.pinsChanged.length > 0) lines.push(`Pins moved: ${entry.pinsChanged.map((pin) => `\`${pin}\``).join(", ")}.`, "");
-    lines.push(
-      "| Upstream rule | | Expected findings | Corpus files | Facts |",
-      "| --- | --- | --- | --- | --- |",
-      ...entry.rules.slice(0, ROW_LIMIT).map((rule) => [
-        `\`${rule.rule}\``,
-        rule.status,
-        rule.expectedAdded + rule.expectedRemoved === 0 ? "—" : `+${rule.expectedAdded} / −${rule.expectedRemoved}`,
-        rule.corpusFilesChanged === 0 ? "—" : String(rule.corpusFilesChanged),
-        rule.factsChanged.length === 0 ? "—" : rule.factsChanged.map((field) => `\`${field}\``).join(", "),
-      ].join(" | ")).map((row) => `| ${row} |`),
-      ...(entry.rules.length > ROW_LIMIT ? [`| … | ${entry.rules.length - ROW_LIMIT} more | | | |`] : []),
-      "",
-    );
+    // Every package, not a diff: the run before may not be at hand, and two summaries compare line by line.
+    if (entry.resolved.length > 0) {
+      lines.push(
+        "<details><summary>Composer packages this recording resolved (not locked; a transitive release shows here)</summary>",
+        "",
+        ...entry.resolved.map(({ runtime, packages }) => `- \`runtimes/${runtime}\`: ${packages.map((name) => `\`${name}\``).join(", ")}`),
+        "",
+        "</details>",
+        "",
+      );
+    }
   }
   return `${lines.join("\n").trimEnd()}\n`;
 }

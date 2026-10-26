@@ -3,7 +3,7 @@
   "id": "react-no-direct-mutation-state",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/no-direct-mutation-state: an assignment or update whose target is a member chain rooted at `this.state`, inside a class component (nearest class extends Component / PureComponent / React.Component / React.PureComponent) or a function that is a property of the object passed to createReactClass; in a class constructor only when inside a call. Reported at `this`. Function components (Components.detect's stateless detection) are not modelled.",
+  "description": "Update class component state with setState() instead of assigning to this.state outside the constructor; direct mutation doesn't trigger a re-render.",
   "scope": {
     "include": [
       "**/*.ts",

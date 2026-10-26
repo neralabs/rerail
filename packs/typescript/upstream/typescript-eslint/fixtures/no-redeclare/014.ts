@@ -1,4 +1,0 @@
-
-var a = function () {};
-var a = new Date();
-      

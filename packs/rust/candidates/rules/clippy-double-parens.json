@@ -1,30 +1,40 @@
 {
   "format": "rerail.policy/v1",
   "id": "clippy-double-parens",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's double_parens lint: reports redundant nested parentheses around an expression (only whitespace between the two opening or closing parentheses, as Clippy's source check requires; a call's sole argument in parentheses, reported once where the nested-parentheses clauses already report the same span); macro expansion and tuple/unit argument semantics are not modelled.",
-  "scope": { "include": ["**/*"], "exclude": [] },
+  "description": "Remove redundant double parentheses around Rust expressions and around a call's only argument.",
+  "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {
       "id": "nested-parentheses",
-      "forbid": { "ast": { "language": "rust", "rule": {"kind": "parenthesized_expression", "has": {"kind": "parenthesized_expression"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}} } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+      "forbid": {"ast": {"language": "rust", "rule": {"kind": "parenthesized_expression", "has": {"kind": "parenthesized_expression"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}}}},
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "witness.span", "code": "double_parens", "message": "Remove the redundant outer parentheses around this expression."}
     },
     {
       "id": "nested-tuple",
-      "forbid": { "ast": { "language": "rust", "rule": {"kind": "parenthesized_expression", "has": {"kind": "tuple_expression"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}} } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+      "forbid": {"ast": {"language": "rust", "rule": {"kind": "parenthesized_expression", "has": {"kind": "tuple_expression"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}}}},
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "witness.span", "code": "double_parens", "message": "Remove the redundant outer parentheses around this tuple."}
     },
     {
       "id": "nested-unit",
-      "forbid": { "ast": { "language": "rust", "rule": {"kind": "parenthesized_expression", "has": {"kind": "unit_expression"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}} } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+      "forbid": {"ast": {"language": "rust", "rule": {"kind": "parenthesized_expression", "has": {"kind": "unit_expression"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}}}},
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "witness.span", "code": "double_parens", "message": "Remove the redundant outer parentheses around this ()."}
     },
     {
       "id": "parenthesized-call-argument",
-      "forbid": { "ast": { "language": "rust", "rule": {"kind": "parenthesized_expression", "inside": {"stopBy": "neighbor", "kind": "arguments"}, "follows": {"stopBy": "neighbor", "regex": "^\\($"}, "precedes": {"stopBy": "neighbor", "regex": "^\\)$"}, "not": {"has": {"any": [{"kind": "parenthesized_expression"}, {"kind": "tuple_expression"}, {"kind": "unit_expression"}]}}} } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Clippy double_parens: unnecessary double parentheses" }
+      "forbid": {"ast": {"language": "rust", "rule": {"kind": "parenthesized_expression", "inside": {"stopBy": "neighbor", "kind": "arguments"}, "follows": {"stopBy": "neighbor", "regex": "^\\($"}, "precedes": {"stopBy": "neighbor", "regex": "^\\)$"}, "not": {"has": {"any": [{"kind": "parenthesized_expression"}, {"kind": "tuple_expression"}, {"kind": "unit_expression"}]}}}}},
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "witness.span", "code": "double_parens", "message": "Remove the extra parentheses around this call's argument."}
+    },
+    {
+      "id": "transcribed-nested-parentheses",
+      "forbid": {"ast": {"language": "rust", "utils": {"transcribed": {"inside": {"field": "right", "kind": "macro_rule", "stopBy": "end"}}, "sole-paren-group": {"kind": "token_tree", "regex": "^\\(", "follows": {"stopBy": "neighbor", "regex": "^\\($"}, "precedes": {"stopBy": "neighbor", "regex": "^\\)$"}}, "paren-group-of-one": {"kind": "token_tree", "regex": "^\\(", "has": {"matches": "sole-paren-group"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}, "matches": "transcribed"}}, "rule": {"all": [{"matches": "paren-group-of-one"}, {"follows": {"stopBy": "neighbor", "regex": "^(?:=|=>|[{(\\[;,]|return)$"}}]}}},
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "witness.span", "code": "double_parens", "message": "Remove the redundant outer parentheses around this expression."}
+    },
+    {
+      "id": "transcribed-parenthesized-call-argument",
+      "forbid": {"ast": {"language": "rust", "utils": {"transcribed": {"inside": {"field": "right", "kind": "macro_rule", "stopBy": "end"}}, "sole-paren-group": {"kind": "token_tree", "regex": "^\\(", "follows": {"stopBy": "neighbor", "regex": "^\\($"}, "precedes": {"stopBy": "neighbor", "regex": "^\\)$"}}, "paren-group-of-one": {"kind": "token_tree", "regex": "^\\(", "has": {"matches": "sole-paren-group"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}, "matches": "transcribed"}}, "rule": {"all": [{"matches": "sole-paren-group"}, {"inside": {"stopBy": "neighbor", "matches": "paren-group-of-one", "follows": {"stopBy": "neighbor", "any": [{"kind": "identifier"}, {"kind": "metavariable"}]}}}, {"not": {"has": {"regex": "^,$"}}}, {"not": {"regex": "^\\(\\s*\\)$"}}, {"not": {"regex": "^\\(\\s*\\$\\("}}]}}},
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "witness.span", "code": "double_parens", "message": "Remove the redundant outer parentheses around this expression."}
     }
   ]
 }

@@ -1,1 +1,0 @@
-for (let x of foo) {}; for (let y of foo) {}

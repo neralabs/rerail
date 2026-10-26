@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { and, asc, eq, getTableName, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import type { CheckoutContext, RepositoryKey, RepositoryStartState, RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
@@ -15,11 +15,9 @@ import {
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { checkouts, events, repositories, sessions } from "../engine/storage/schema.js";
-import { clearSetupReview, setupReviewOffered } from "../engine/catalog/setup-review.js";
+import { clearSetupReview } from "../engine/catalog/setup-review.js";
 import type { RerailHost } from "../engine/adapter-contract.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
-
-type Reader = Pick<RerailDatabase, "select" | "get">;
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
 
@@ -171,6 +169,17 @@ export interface RepositorySetupIo {
   say(text: string): void;
   /** The terminal lane's answer to a question; undefined when input ended. Absent in the other lanes. */
   ask?(prompt: string): Promise<string | undefined>;
+  /**
+   * The terminal lane at a real terminal: the answer the person moves the cursor to, as its index; undefined when
+   * input ended or they cancelled. Absent where answers are typed as lines, which `ask` reads.
+   */
+  choose?(menu: ChoiceMenu): Promise<number | undefined>;
+}
+
+/** A question's answers as a menu: `frame` draws them with the cursor on one, then the line to answer on. */
+export interface ChoiceMenu {
+  readonly count: number;
+  frame(highlight: number): string;
 }
 
 export interface RepositoryStopOptions {
@@ -188,19 +197,6 @@ export function onRuleCount(database: RerailDatabase, checkout: CheckoutContext)
   const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
   return listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
     .rules.filter(rule => rule.on).length;
-}
-
-/**
- * Whether `repositoryKey` is what the dashboard's review leaves while set-up waits for the person to start Rerail with
- * the packs they kept on: set-up offered the review, the person set the repository up in the dashboard, and nobody has
- * started or stopped it anywhere since. A repository set up any other way is just set up.
- */
-export function awaitingStartAfterReview(db: Reader, repositoryKey: RepositoryKey): boolean {
-  const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
-    .from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
-  if (repository?.configuredAt == null || repository.started !== null || !setupReviewOffered(db, repositoryKey)) return false;
-  return db.select({ path: checkouts.checkoutPath }).from(checkouts)
-    .where(and(eq(checkouts.repositoryKey, repositoryKey), isNotNull(checkouts.started))).get() === undefined;
 }
 
 /** Start or stop a repository as a whole: its own value, with every checkout's own setting cleared. */

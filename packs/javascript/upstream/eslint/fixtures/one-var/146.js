@@ -1,1 +1,0 @@
-let foo = true; switch(foo) { case true: let bar = 2; break; case false: let baz = 3; break; }

@@ -1,8 +1,6 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v1",
+  "format": "rerail.port-readiness-recording-lock/v2",
   "tool": "eslint-plugin-next",
-  "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/vercel/next.js",
     "commit": "b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6",
@@ -24,14 +22,12 @@
     "recording.json": {
       "sha256": "48e75f88de0aa398664fde287ab0bb6b917b1cb681c9769b4e06a80d1f6dcde2",
       "size": 255587,
-      "format": "rerail.port-readiness-recording/v2",
-      "asset": "next-eslint-plugin-next-recording-48e75f88de0aa398664fde287ab0bb6b917b1cb681c9769b4e06a80d1f6dcde2.json.gz"
+      "format": "rerail.port-readiness-recording/v2"
     },
     "corpus.json": {
       "sha256": "a6cbf7bc426147b135e67a9e60b8c681b7da5b0098c69d0b9bd0bdb6fee677b3",
       "size": 32839,
-      "format": "rerail.port-readiness-corpus/v2",
-      "asset": "next-eslint-plugin-next-corpus-a6cbf7bc426147b135e67a9e60b8c681b7da5b0098c69d0b9bd0bdb6fee677b3.json.gz"
+      "format": "rerail.port-readiness-corpus/v2"
     }
   }
 }

@@ -1,2 +1,0 @@
-do doSomething() 
- ;while (foo)

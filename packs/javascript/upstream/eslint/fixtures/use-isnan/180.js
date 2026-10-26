@@ -1,1 +1,0 @@
-switch((doStuff(), Number.NaN)) {}

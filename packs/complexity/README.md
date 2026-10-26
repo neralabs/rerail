@@ -1,7 +1,10 @@
 # Complexity opt-in rule pack
 
 Cyclomatic complexity rules for Python, TypeScript and JavaScript, with the decision points of
-[lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. One document per language, rule id
+[lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. A `switch` or `match` counts once
+however many cases it has, as slapkit scores a function with the lower of lizard's standard count and its modified count
+(`-m`), so a flat dispatch table is not a reason to split a function. The rule decides per switch, so a default-only
+switch beside a cased one counts 0 where slapkit's whole-function minimum gives it 1 (see "Deviations"). One document per language, rule id
 `complexity-cyclomatic-<language>`. They form the `complexity` rule pack, which set-up offers for a repository with
 Python, TypeScript or JavaScript source outside tests and build output; once a repository adds it, its rules are on
 (see `docs/rule-packs.md`).
@@ -14,11 +17,12 @@ Every document has `mode: "steer"`: a rule that runs steers the agent and never 
 | `complexity-cyclomatic-javascript` | `.js`, `.jsx`, `.mjs`, `.cjs` |
 
 A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds 6, so 7 or more.
-The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported, and
-the message carries the number: `Cyclomatic complexity 7 (limit 6). Split this function into smaller ones or simplify
-its branching.` (code `CYCLOMATIC_COMPLEXITY`). The number comes from the count's `as`/`offset` binding: the rule
-counts decision points with `count.has` (`stopBy` the function boundary, so a nested function is not entered), binds
-the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
+The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported. The
+message names the function and its number, as slapkit's advisory does: `` `grade` has cyclomatic complexity 7, over the
+ceiling of 6. Decompose it into smaller functions. `` (code `CYCLOMATIC_COMPLEXITY`). A TypeScript or JavaScript function with no name of its own takes the variable, class field or object key it is assigned
+to; a callback with none of those is "This function" (the `too-complex-anonymous` clause). The number comes from the
+count's `as`/`offset` binding: the rule counts decision points with `count.has` (`stopBy` the function boundary, so a
+nested function is not entered), binds the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
 
 Test files are out of scope: Python `**/test_*.py`, `**/*_test.py`, `**/tests/**`, `**/conftest.py`; TypeScript and
 JavaScript `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`. So are dependency, virtual-environment, build-output and
@@ -28,8 +32,8 @@ generated directories (`node_modules`, `.venv`, `dist`, `build`, `generated`, ..
 
 Python, per `def` (async, decorated and methods included):
 
-- `if`, `elif`, `for` and `async for`, `while`, `except`, `finally`, each `and` and each `or`, and each `case` of a
-  `match` (the wildcard included);
+- `if`, `elif`, `for` and `async for`, `while`, `except`, `finally`, each `and` and each `or`, and each `match` once,
+  however many `case`s it has (the wildcard included);
 - the `if` of a conditional expression, and every `for` and `if` clause of a comprehension; a `case` guard is an `if`
   too;
 - not `else`, `with`, `assert`, `try` or `return`.
@@ -40,8 +44,8 @@ count toward the enclosing `def`, as lizard counts them.
 TypeScript and JavaScript, per function declaration, function expression, arrow function, method, getter, setter,
 constructor and generator function:
 
-- `if` (`else if` included), `for`, `for...in`, `for...of`, `while`, `do...while`, `catch`, each `case` of a `switch`
-  (not `default`), `&&`, `||`, `||=`, `&&=` and the `?:` conditional;
+- `if` (`else if` included), `for`, `for...in`, `for...of`, `while`, `do...while`, `catch`, each `switch` once however
+  many `case`s it has (a `switch` with only `default` counts 0), `&&`, `||`, `||=`, `&&=` and the `?:` conditional;
 - not optional parameters or properties (`a?: T`), optional chaining (`?.`), default parameters, `??` or `??=`.
 
 Each function is scored on its own: decisions inside a nested function do not count for the function around it. A
@@ -52,12 +56,13 @@ tree-sitter-javascript as vendored under `native/grammars/`):
 
 | Language | Function boundary | Decision |
 |---|---|---|
-| Python | `function_definition` | `if_statement`, `elif_clause`, `for_statement`, `while_statement`, `except_clause`, `finally_clause`, `boolean_operator` (one per operator), `conditional_expression`, `for_in_clause`, `if_clause`, `case_clause` |
-| TypeScript, JavaScript | `function_declaration`, `function_expression`, `arrow_function`, `method_definition`, `generator_function`, `generator_function_declaration` | `if_statement`, `for_statement`, `for_in_statement` (in and of), `while_statement`, `do_statement`, `catch_clause`, `switch_case`, `ternary_expression`, `binary_expression` with `&&` or `\|\|`, `augmented_assignment_expression` with `&&=` or `\|\|=` |
+| Python | `function_definition` | `if_statement`, `elif_clause`, `for_statement`, `while_statement`, `except_clause`, `finally_clause`, `boolean_operator` (one per operator), `conditional_expression`, `for_in_clause`, `if_clause`, `match_statement` |
+| TypeScript, JavaScript | `function_declaration`, `function_expression`, `arrow_function`, `method_definition`, `generator_function`, `generator_function_declaration` | `if_statement`, `for_statement`, `for_in_statement` (in and of), `while_statement`, `do_statement`, `catch_clause`, `switch_statement` with a `switch_case` in its `switch_body`, `ternary_expression`, `binary_expression` with `&&` or `\|\|`, `augmented_assignment_expression` with `&&=` or `\|\|=` |
 
 ## Deviations from lizard 1.24.0
 
-Each is a lizard defect found on real code (see "Checked on real code"), and each has a corpus case.
+Each but the last is a lizard defect found on real code (see "Checked on real code"); the last is a choice in how a
+switch counts. Each has a corpus case.
 
 - **`??` and `??=` count 0.** lizard's tokenizer reads each as two `?` and counts 2.
 - **A `?` inside a regex literal counts 0**, and so does **`?.` right after `)` or `]`** (`f()?.x`, `a[0]?.x`). lizard
@@ -70,6 +75,9 @@ Each is a lizard defect found on real code (see "Checked on real code"), and eac
 - **`?.` counts 0 in `.jsx` files too.** lizard's JSX reader counts each `?.` as a conditional; its `.js` and `.ts`
   readers do not, and neither does Rerail anywhere.
 - lizard does not read `.mts` or `.cts` files at all; the TypeScript rule covers them with the same grammar.
+- **A default-only switch counts 0 beside a cased one.** The recorded number is the lower of lizard's standard and `-m`
+  counts over the whole function, and there `-m`'s 1 for a switch with no case survives; the rule counts each switch on
+  its own (`defaultOnlyBesideCasedSwitch` in the TypeScript and JavaScript corpus).
 
 ## Checked on real code
 
@@ -107,21 +115,41 @@ lizard (`upstream/lizard/UPSTREAM.md`). `upstream/lizard/lizard-1.24.0.tsv` reco
 `test/engine/code-rule/complexity-rules.test.ts` evaluates the three rules over the corpus through the native runtime and checks
 that:
 
-- each rule reports exactly the in-scope functions lizard scores above 6, with lizard's number in the message;
-- the same counting without the threshold gives every in-scope function lizard's number, apart from the deviations,
+- each rule reports exactly the in-scope functions lizard scores above 6, with the recorded number in the message;
+- the same counting without the threshold gives every in-scope function the recorded number, apart from the deviations,
   which the test lists with lizard's number and Rerail's;
 - test files produce no finding, even though lizard scores them over the limit.
 
-lizard is never a runtime or CI dependency: the TSV is checked in.
+lizard is never a runtime dependency; it runs only to derive the TSV. The corpus and the TSV are pack test data, not in
+git ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)): the corpus is authored and the TSV is derived from it,
+and both are the tool-pack's archive in S3, which `upstream/lizard/test-data.lock` names and `npm run fixtures:pull`
+fetches. The test fails saying so without them.
 
 ## Regenerating the scores
 
-After changing the corpus, rerun lizard (needs [uv](https://docs.astral.sh/uv/) on `PATH`) and commit the TSV:
+After changing the corpus, derive the TSV again (needs [uv](https://docs.astral.sh/uv/) on `PATH`):
 
 ```sh
-node packs/complexity/upstream/lizard/generate.mjs
+npm run fixtures:derive -- --pack complexity
 ```
 
-It runs `uvx --from lizard==1.24.0 lizard --csv` on `upstream/lizard/fixtures/` and rewrites
-`upstream/lizard/lizard-1.24.0.tsv`. A new case lizard mis-scores needs an entry in the test's `DEVIATIONS`
-list and a line under "Deviations" above.
+Its recipe runs `upstream/lizard/generate.mjs`, which runs `uvx --from lizard==1.24.0 lizard --csv` with and without
+`-m` on `upstream/lizard/fixtures/`, keeps the lower of the two counts for each function, and rewrites
+`upstream/lizard/lizard-1.24.0.tsv`, which is never committed. Check the changed corpus files into your pull request
+with `git add -f`; a new one needs its row in `upstream/lizard/UPSTREAM.md`, which is what makes it authored, and
+removing a corpus file is removing its row. Before merge a maintainer derives the TSV, away from any credential, and
+archives both from a trusted worktree of main (`npm run fixtures:push -- --from <ref>`;
+[CONTRIBUTING.md](../../CONTRIBUTING.md#merging-maintainers)); CI then derives the TSV again and compares it with the
+archive (**Test data reproduces from the pins**).
+A new case lizard mis-scores needs an entry in the test's `DEVIATIONS` list and a line under "Deviations" above.
+
+## Rule details
+
+What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
+
+### `complexity-cyclomatic-typescript`
+
+Conditional types (`T extends U ? X : Y`) do not count as decision points. The README's "What counts" list for
+TypeScript names optional parameters/properties, optional chaining, default parameters, `??` and `??=` as not counting,
+but does not say conditional types are excluded too (it only mentions lizard reading conditional types as functions
+in the hono comparison).

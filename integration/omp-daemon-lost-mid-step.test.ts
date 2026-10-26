@@ -10,10 +10,10 @@ import { EVENTS_DROPPED_ENTRY_TYPE, type OmpSessionEntryLike } from "../src/runt
 import { OmpHost } from "./support/omp-host.js";
 
 /**
- * NER-1955: a live daemon was taken for a lost one, and the session's later tool events were dropped.
+ * Regression: a live daemon was taken for a lost one, and the session's later tool events were dropped.
  *
- * One shell command that writes many source files in the rules' scope (a test run writing its outputs, as the NER-1910
- * study's svelte runs did) makes the daemon hold the session's request lane past the omp extension's 30 s request
+ * One shell command that writes many source files in the rules' scope (a test run writing its outputs, as the svelte
+ * runs of a pack study did) makes the daemon hold the session's request lane past the omp extension's 30 s request
  * timeout: the turn end (and, on a native host, the command's tool result) waits in `RerailRuntime.#ingest` for the
  * audits of every file the command wrote, with no bound. `NativeSessionClient` took the timed-out request for an
  * outage (`#fail`), shut the event stream, and dropped the events queued behind it: the next turns' tool calls and
@@ -42,7 +42,7 @@ export default function Sample\${index}($$anchor, $$props) {
 mkdirSync("api/_output", { recursive: true });
 for (let index = 0; index < ${EMITTED_FILES}; index += 1) writeFileSync(\`api/_output/sample-\${index}.svelte.js\`, output(index));
 `;
-/** The JavaScript-side packs the NER-1910 study runs attached (it also attached python and next). */
+/** The JavaScript-side packs that study's runs attached (it also attached python and next). */
 const STUDY_PACKS = ["complexity", "javascript", "node", "typescript"];
 
 let cwd: string | undefined;
@@ -69,8 +69,8 @@ function recordedEventIds(databasePath: string, sessionId: string): Set<string> 
   } finally { database.close(); }
 }
 
-test("NER-1955: a shell command that writes many sources costs no session events", async () => {
-  cwd = await mkdtemp(join(tmpdir(), "rerail-ner-1955-"));
+test("a shell command that writes many sources costs no session events", async () => {
+  cwd = await mkdtemp(join(tmpdir(), "rerail-daemon-lost-"));
   const home = join(cwd, "home");
   const databasePath = defaultRerailDatabasePath({ RERAIL_HOME: home });
   await writeFile(join(cwd, "emit-outputs.cjs"), EMIT_SCRIPT);

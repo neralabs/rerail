@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { notJudgedNote, renderComment, unmappedCandidatesLine } from "./comment.js";
+import { notJudgedNote, renderComment, unmappedCandidatesLine, type RecordingSummary } from "./comment.js";
 import type { CommandRunner } from "./process.js";
 import { cell, firstFailure, gateTitle } from "./report.js";
 import { blockingFailures, gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GatesReport } from "./run.js";
@@ -53,6 +53,18 @@ export function readReports(directory: string): GatesReport[] {
     .sort(byText)
     .map((name) => JSON.parse(readFileSync(join(directory, name), "utf8")) as GatesReport)
     .filter((report) => report.format === REPORT_FORMAT);
+}
+
+/**
+ * Every `recording-<pack>--<tool>.md` in `directory`, sorted by tool-pack: the per-rule summary a gate leg that recorded
+ * its tool-pack wrote beside its report (port-readiness.yml). Every shard of a sharded tool-pack writes the same name.
+ */
+export function readRecordingSummaries(directory: string): RecordingSummary[] {
+  return readdirSync(directory)
+    .map((name) => /^recording-([a-z0-9-]+)--([A-Za-z0-9._-]+)\.md$/u.exec(name))
+    .filter((match): match is RegExpExecArray => match !== null)
+    .map(([name, pack, tool]) => ({ toolPack: `${pack}/${tool}`, markdown: readFileSync(join(directory, name), "utf8") }))
+    .sort((a, b) => byText(a.toolPack, b.toolPack));
 }
 
 /**
@@ -251,8 +263,8 @@ export function renderSummary(summary: Summary): string {
 /**
  * `gates summary <dir> [--base <sha>] [--planned <json>]`: write summary.{md,json} and the pull request comment
  * (comment.md), append the summary to the step summary, return whether it passed. Without `planned`, every gated
- * tool-pack needs a report. The comment names the commit in PORT_READINESS_COMMIT and links the run in
- * PORT_READINESS_RUN_URL when CI sets them.
+ * tool-pack needs a report. The comment names the commit in PORT_READINESS_COMMIT, links the run in
+ * PORT_READINESS_RUN_URL when CI sets them, and carries the recording summaries of the legs that recorded.
  */
 export async function writeSummary(root: string, directory: string, base: string | undefined, runner: CommandRunner, planned?: { pack: string; tool: string }[]): Promise<Summary> {
   if (!existsSync(directory)) throw new Error(`${directory} does not exist`);
@@ -262,7 +274,7 @@ export async function writeSummary(root: string, directory: string, base: string
   const markdown = renderSummary(summary);
   await writeFile(join(directory, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   await writeFile(join(directory, "summary.md"), markdown);
-  const context = { commit: process.env.PORT_READINESS_COMMIT ?? "", runUrl: process.env.PORT_READINESS_RUN_URL ?? "" };
+  const context = { commit: process.env.PORT_READINESS_COMMIT ?? "", runUrl: process.env.PORT_READINESS_RUN_URL ?? "", recordings: readRecordingSummaries(directory) };
   await writeFile(join(directory, "comment.md"), renderComment(summary, context));
   const step = process.env.GITHUB_STEP_SUMMARY;
   if (step !== undefined && step !== "") appendFileSync(step, markdown);

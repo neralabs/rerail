@@ -1,5 +1,0 @@
-
-class Foo {
-  override set setter(v: number) {}
-}
-      

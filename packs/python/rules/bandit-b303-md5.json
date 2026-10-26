@@ -3,7 +3,7 @@
   "id": "bandit-b303-md5",
   "revision": 1,
   "mode": "steer",
-  "description": "An MD2, MD4, MD5 or SHA1 hash from PyCrypto, PyCryptodome or cryptography. `hashlib` is Bandit's B324, which this pack does not include.",
+  "description": "Avoid MD2, MD4, MD5, and SHA1 hashes from PyCrypto, PyCryptodome, or cryptography; they are broken for security, so use SHA-256 or a password hash.",
   "scope": {
     "include": [
       "**/*.py",

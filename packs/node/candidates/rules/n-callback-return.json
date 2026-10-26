@@ -3,7 +3,7 @@
   "id": "n-callback-return",
   "revision": 2,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/callback-return (default callbacks callback, cb, next): a call of one of those names inside a function, unless its nearest block/return/arrow ancestor is a return or an arrow function, it is the last statement of a function body (or the right side of a binary/logical expression statement there), or the statement just before a block's final return.",
+  "description": "Return right after calling a callback named callback, cb or next; otherwise the function keeps running and the callback can fire twice.",
   "scope": {
     "include": [
       "**/*.ts",

@@ -1,1 +1,0 @@
-var a = 1; /*A block comment inline after code*/

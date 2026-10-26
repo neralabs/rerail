@@ -3,7 +3,7 @@
   "id": "eslint-no-negated-condition",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-negated-condition` (https://eslint.org/docs/latest/rules/no-negated-condition). Flags `if` with a plain `else` and ternaries whose test is `!x`, `!=` or `!==`.",
+  "description": "Avoid negated conditions in an if with an else or in a ternary; swap the branches and drop the negation.",
   "scope": {
     "include": [
       "**/*"
@@ -90,7 +90,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-negated-condition",
-        "message": "Unexpected negated condition.",
+        "message": "Remove the negation from this condition and swap the two branches.",
         "suppress": {
           "eslint": {
             "rules": [

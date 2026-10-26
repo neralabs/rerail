@@ -4119,7 +4119,7 @@ Gap = { "to": "token" | "sibling" | "capture.NAME", "comments"?: Bool, "edge"?: 
 <p class="caption">The mapping M11a records (<code>literal/offsets.rs</code>): each decoded character keeps the source span it came from; an escape maps to the whole escape, <code>\r\n</code> to both bytes, a line continuation to nothing, and implicit concatenation chains the parts. A node covers its first character's start to its last character's end. An <code>annotation</code> tree maps exactly by a shift for a simple string (one part, its source its value) and maps every node to the whole string otherwise; an <code>eslintDirective</code> tree maps each node to its exact bytes in the comment.</p>
 
 <section class="card" id="parse">
-<h3><span class="keys">parse</span> <a class="anchor" href="#parse">#</a><span class="since">M11a · eslintDirective M12a · printfFormat, scanfFormat, phpDoc M13 · rustFormat NER-1698</span></h3>
+<h3><span class="keys">parse</span> <a class="anchor" href="#parse">#</a><span class="since">M11a · eslintDirective M12a · printfFormat, scanfFormat, phpDoc M13 · rustFormat 0.1.0</span></h3>
 <p>A literal's decoded value parsed by a sub-grammar, and a rule of that grammar matched on the tree's root.</p>
 <dl class="facets">
 <dt>Shape</dt><dd><div class="shape">"parse": { "grammar": "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc" | "rustFormat", ...a rule over the tree }</div></dd>

@@ -1,1 +1,0 @@
-// @ts-check with a description and also with a no-op // @ts-ignore

@@ -4,9 +4,10 @@
  * and exits 1 when a fresh recording differs from what the committed lock names.
  */
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { packFixturesWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "../../port-readiness/corpus.js";
 import { ProcessCommandRunner } from "../../port-readiness/process.js";
@@ -15,7 +16,7 @@ import { RECORDING_LOCK } from "../../port-readiness/recording/store.js";
 import { diffRecording, recordToolPack, writeRecording } from "./record.js";
 
 const USAGE = `usage:
-  npm run port-readiness:record -- --pack <id> --tool <tool> [--cache dir] [--release tag] [--changes file] [--check]
+  npm run port-readiness:record -- --pack <id> --tool <tool> [--cache dir] [--changes file] [--check]
 `;
 
 async function main(): Promise<number> {
@@ -24,7 +25,6 @@ async function main(): Promise<number> {
       pack: { type: "string" },
       tool: { type: "string" },
       cache: { type: "string" },
-      release: { type: "string" },
       changes: { type: "string" },
       check: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
@@ -67,10 +67,12 @@ async function main(): Promise<number> {
     process.stdout.write(`${label}: the recording is stale; run npm run port-readiness:record -- --pack ${values.pack} --tool ${values.tool}\n${problems.map((problem) => `  ${problem}`).join("\n")}\n`);
     return 1;
   }
-  const written = await writeRecording(root, values.pack, values.tool, recorded, { cacheRoot, ...(values.release === undefined ? {} : { release: values.release }) });
+  const written = await writeRecording(root, values.pack, values.tool, recorded, { cacheRoot });
   process.stdout.write(`${label}: recorded ${summary}; copied ${written.missing.length} case sources\n`);
-  for (const asset of written.assets) process.stdout.write(`  ${asset.name} (${(asset.bytes / 1024 / 1024).toFixed(1)} MB gzipped)\n`);
-  process.stdout.write(`  ${RECORDING_LOCK} names them; the recordings are in ${cacheRoot}/recordings/ and the assets to upload in ${cacheRoot}/recordings/upload/\n`);
+  // New case sources are pack test data, which git ignores: a contributor adds them to the pull request by hand.
+  if (written.missing.length > 0) process.stdout.write(`${packFixturesWritten(written.missing.map((copy) => join(root, label, copy.file)))}\n`);
+  for (const file of Object.values(written.lock.files)) process.stdout.write(`  ${cacheRoot}/recordings/${file.sha256}.json (${(file.size / 1024 / 1024).toFixed(1)} MB)\n`);
+  process.stdout.write(`  ${RECORDING_LOCK} names them\n`);
 
   // The per-rule summary replaces the recording's own diff, which is no longer in the tree to read.
   const changes = [written.changes];

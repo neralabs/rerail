@@ -3,17 +3,23 @@ name: Release packs
 # Releases the rule packs under packs/, each its own npm package @neralabs/rerail-pack-<id> (docs/pack-format.md,
 # "Versioning and release"). Core's release is release.yml, on `v*` tags; this workflow never touches core.
 #
-# The "Version packs" pull request (each pack's version and CHANGELOG.md, written by changesets) is opened by
-# version-packs.yml; merging it is the release. On a push to main this workflow publishes:
+# The "Release" pull request (each pack's version and CHANGELOG.md, written by changesets, beside core's bump) is
+# opened by release-pr.yml; merging it is the release. On a push to main this workflow publishes:
 #   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
 #   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, published
-#   under `next` with trusted publishing, and tagged. A pack never published at all needs its first publish by hand;
-#   the run reports it and fails after publishing the others.
-# A pull request touching packs runs the validation and packing as a dry run and publishes nothing.
-# `workflow_dispatch` promotes released pack versions from `next` to `latest`: with no inputs, every pack whose
-# released version is not `latest` yet, less any pack held where someone put it back. The promote-plan job lists them
-# in the run summary before the promote job, which needs the `release` environment's approval, moves them all. Naming
-# a pack promotes it alone; naming an older version puts it back and holds it there (docs/pack-format.md, "Release").
+#   under `latest` with trusted publishing, and tagged. A pack held at an older `latest` (put back on purpose) is
+#   published under `next` instead, so the hold stays. The dist-tags job then lists each published pack's dist-tags in
+#   the run summary and fails if one is not where it was published. A pack never published at all needs its first
+#   publish by hand; the run reports it and fails after publishing the others.
+# A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
+# changes what a pack publishes without a changeset naming that pack (the Release pull request is not checked). Its
+# paths see only the git diff, not the packs' test data: a change to that data is a change to a tool-pack's
+# test-data.lock, under packs/**, and a pull request that checks data in adds it there too (CONTRIBUTING.md).
+# `workflow_dispatch` points `latest` at released pack versions, to put one back: naming a pack and an older version
+# puts it back and holds it there (`held`), and naming the pack alone, at its package.json version, promotes it again
+# and releases the hold. With no inputs, every pack whose released version is not `latest` yet, less any pack held.
+# The promote-plan job lists them in the run summary before the promote job, which needs the `release` environment's
+# approval, moves them all (docs/pack-format.md, "Release").
 
 on:
   push:
@@ -26,15 +32,17 @@ on:
       - "conformance/pack-validation.ts"
       - "scripts/release/**"
       - ".github/workflows/release-packs.yml"
+      - ".github/actions/pack-test-data/**"
+      - "scripts/s3/**"
   workflow_dispatch:
     inputs:
       pack:
-        description: Pack id to promote alone (the directory name under packs/); empty for every pack whose released version is not latest yet
+        description: Pack id to point latest at alone (the directory name under packs/); empty for every pack whose released version is not latest yet, less any held
         required: false
         default: ""
         type: string
       version:
-        description: Version of that pack to promote; empty for the one in packs/<id>/package.json on this branch. An older version puts the pack back and holds it there until it is promoted by name again
+        description: Version of that pack to point latest at; empty for the one in packs/<id>/package.json on this branch, which releases a hold. An older version puts the pack back and holds it there until it is promoted by name again
         required: false
         default: ""
         type: string
@@ -50,6 +58,31 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # A change to what a pack publishes is released only through a changeset (docs/pack-format.md, "Versioning and
+  # release"). The Release pull request writes versions and changelogs from the changesets and is not checked.
+  changesets:
+    name: Changesets
+    if: github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # The full history, so the diff can reach the merge base with the pull request's base.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Every pack whose published files changed has a changeset
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/release/packs-changesets.mjs "$BASE"
+
   plan:
     name: Packs to publish
     if: github.event_name != 'workflow_dispatch'
@@ -58,6 +91,7 @@ jobs:
     outputs:
       publish: ${{ steps.plan.outputs.publish }}
       first: ${{ steps.plan.outputs.first }}
+      held: ${{ steps.plan.outputs.held }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -65,21 +99,76 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # On a push, the plan reads each pack's dist-tags (is it held?), which for these restricted packs needs the
+      # read-only NPM_PACKS_READ_TOKEN, as the promote-plan job does. The file names the variable, not the token.
+      - name: Authenticate npm to read the packs
+        if: github.event_name == 'push'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Reading the restricted rule packs needs the repository secret NPM_PACKS_READ_TOKEN"
+            exit 1
+          fi
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+
       - id: plan
         name: List unpublished pack versions
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && secrets.NPM_PACKS_READ_TOKEN || '' }}
         run: node scripts/release/packs-plan.mjs ${{ github.event_name == 'pull_request' && '--all' || '' }}
 
+  # Fills the Actions cache with every pack's test data for the pack job (.github/actions/pack-test-data,
+  # `fetch: "true"`): from S3 under an OIDC token on a miss, which GitHub gives no fork's or Dependabot's pull request
+  # (those run no dry run). It runs nothing but the pull and never extracts a cache entry.
+  test-data:
+    name: Pack test data
+    needs: plan
+    if: >-
+      ${{
+        needs.plan.outputs.publish != '' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # id-token: the archives from S3 on a cache miss, with credentials only the action's pull step holds.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "true"
+
   # The publish gate and the tarballs. The pack tests need the release native engine; as in ci.yml's build job, main's
-  # cached build is reused when the engine's inputs are unchanged.
+  # cached build is reused when the engine's inputs are unchanged. The pack validation reads every pack's test data,
+  # restored from what the test-data job saved; this job restores caches, so it holds no OIDC token.
   pack:
     name: Validate and pack
-    needs: plan
-    if: needs.plan.outputs.publish != ''
+    needs: [plan, test-data]
+    if: >-
+      ${{
+        needs.plan.outputs.publish != '' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -88,6 +177,10 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
 
       - id: rust-toolchain
         name: Read pinned Rust toolchain
@@ -109,7 +202,7 @@ jobs:
 
       - name: Install pinned Rust toolchain
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
@@ -158,13 +251,15 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    outputs:
+      released: ${{ steps.publish.outputs.released }}
     steps:
       - name: Set up Node.js v24
         uses: actions/setup-node@v7
         with:
           node-version: "24"
 
-      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (promotion) 11.21.0.
+      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (the promote job) 11.21.0.
       - name: Install npm with trusted publishing support
         run: |
           npm install --global "npm@^11.21.0"
@@ -182,11 +277,49 @@ jobs:
           name: rule-packs
           path: ${{ runner.temp }}/rule-packs
 
-      - name: Publish under next and tag each release
+      - id: publish
+        name: Publish under latest and tag each release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          HELD: ${{ needs.plan.outputs.held }}
         run: node scripts/release/packs-publish.mjs "$RUNNER_TEMP/rule-packs"
+
+  # Reads back what the publish job released, with the read-only NPM_PACKS_READ_TOKEN: each pack's dist-tags in the
+  # run summary, failing if one's `latest` (`next` for a held pack) is not the version just published.
+  dist-tags:
+    name: Published dist-tags
+    needs: publish
+    if: needs.publish.outputs.released != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Authenticate npm to read the packs
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Reading the restricted rule packs needs the repository secret NPM_PACKS_READ_TOKEN"
+            exit 1
+          fi
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+
+      - name: Check each published pack's dist-tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+          RELEASED: ${{ needs.publish.outputs.released }}
+        run: node scripts/release/dist-tags-check.mjs
 
   first-publish:
     name: First publish needed
@@ -235,7 +368,9 @@ jobs:
 
       # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
       - name: Authenticate npm to read the packs
-        run: printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+        run: |
+          # shellcheck disable=SC2016 # npm expands ${NODE_AUTH_TOKEN} itself; the file must not hold the token.
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
 
       - id: plan
         name: List released pack versions to promote

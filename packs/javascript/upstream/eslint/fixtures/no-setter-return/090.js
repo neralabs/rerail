@@ -1,1 +1,0 @@
-Object.defineProperties({ bar: { set(val) { return 1; } } }, foo)

@@ -64,15 +64,27 @@ Revoking npm access prevents future downloads. It does not remove previously dow
 
 ### Release channels
 
-A package version is built once. Promotion changes only its npm dist-tag:
+A package version is built once and published under one npm dist-tag, the channel:
 
 ```text
-next    internal acceptance
+next    preview, opt-in
 beta    designated customer preview
 latest  stable customer release
 ```
 
-The bytes must not be rebuilt between channels. npm provenance attestations are generated once the source repository is public.
+Releases are plain versions published straight to `latest`: core's `0.1.0`, `0.1.1`, … and each rule pack's
+versions. Merging the **Release** pull request, which `.github/workflows/release-pr.yml` keeps up to date from `main`,
+is the release: it bumps core's patch version when anything core ships has changed since its last `v<version>` tag,
+beside the packs' changeset bumps. On merge the workflow tags core's new version, `release.yml` builds and publishes
+it, and `release-packs.yml` publishes the packs; each publish waits for a reviewer to approve the `release`
+environment, and each run then checks that `latest` is the version it published ([README](../README.md#release),
+[pack-format.md](pack-format.md#release)). `next` and `beta` stay available for a preview: a `v<version>-next.N` or
+`-beta.N` tag pushed by hand publishes under that channel.
+
+Putting a version back moves only its dist-tag, never the bytes: `release.yml`'s `workflow_dispatch` with `latest`
+set points core's `latest` at an earlier released version, and `release-packs.yml`'s does the same for a pack, and
+holds it there. Both use npm trusted publishing, so no one needs an npm login. The bytes must not be rebuilt between
+channels. npm provenance attestations are generated once the source repository is public.
 
 ## npm-backed explicit updates
 

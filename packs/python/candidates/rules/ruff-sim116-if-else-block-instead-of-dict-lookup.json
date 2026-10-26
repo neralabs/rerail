@@ -3,7 +3,7 @@
   "id": "ruff-sim116-if-else-block-instead-of-dict-lookup",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM116 (if-else-block-instead-of-dict-lookup): an `if` whose test and every `elif` test is `N == <literal>` (one `==`, the same name `N`, a string/bytes/number/boolean/None/ellipsis literal), each branch (and any `else`) being one `return` whose value has no side effect (Ruff's `contains_effect`), with at least three distinct literals (Ruff's ComparableLiteral, `text: \"structure-parts\"`: type and value, `1 == 0x1`, `'a' == \"a\"`, not `1 == 1.0`; an implicit concatenation part by part), unless `N` resolves to `sys.version_info`/`sys.platform`.",
+  "description": "Use a dictionary lookup instead of an if/elif chain that compares one variable to three or more literals and just returns a value for each.",
   "scope": {
     "include": [
       "**/*"

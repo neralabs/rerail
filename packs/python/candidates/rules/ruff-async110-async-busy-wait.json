@@ -3,7 +3,7 @@
  "id": "ruff-async110-async-busy-wait",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC110 (async-busy-wait): a `while` loop whose body is a single statement `await <call>` where the callee resolves to `trio.sleep`/`sleep_until`, `anyio.sleep`/`sleep_until` or `asyncio.sleep`, reported on the loop. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Use an Event instead of a while loop that only awaits sleep in trio, anyio or asyncio code; polling with sleep wastes wakeups and adds latency.",
  "scope": {
   "include": [
    "**/*"
@@ -115,7 +115,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC110",
-    "message": "Use `trio.Event` instead of awaiting `trio.sleep` in a `while` loop",
+    "message": "Replace this `while` loop around `trio.sleep` with waiting on a `trio.Event` that the changing code sets.",
     "suppress": {
       "noqa": {
         "codes": [
@@ -229,7 +229,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC110",
-    "message": "Use `anyio.Event` instead of awaiting `anyio.sleep` in a `while` loop",
+    "message": "Replace this `while` loop around `anyio.sleep` with waiting on an `anyio.Event` that the changing code sets.",
     "suppress": {
       "noqa": {
         "codes": [
@@ -342,7 +342,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC110",
-    "message": "Use `asyncio.Event` instead of awaiting `asyncio.sleep` in a `while` loop",
+    "message": "Replace this `while` loop around `asyncio.sleep` with waiting on an `asyncio.Event` that the changing code sets.",
     "suppress": {
       "noqa": {
         "codes": [

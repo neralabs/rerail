@@ -3,7 +3,7 @@
   "id": "ruff-b025-duplicate-try-block-exception",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B025 (duplicate-try-block-exception): an exception name (a name or dotted attribute chain) in an `except`/`except*` clause, as the type or a direct element of a tuple type, that an earlier handler of the same `try` already names; within one tuple only its first occurrence counts. Names compare structurally. Reported on the repeated name.",
+  "description": "Remove exception types repeated across handlers of the same try block; only the first handler that names one can ever run.",
   "scope": {
     "include": [
       "**/*"

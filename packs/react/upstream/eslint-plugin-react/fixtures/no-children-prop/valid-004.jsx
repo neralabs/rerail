@@ -1,1 +1,0 @@
-<div className="class-name"></div>;

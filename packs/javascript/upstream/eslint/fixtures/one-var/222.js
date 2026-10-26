@@ -1,1 +1,0 @@
-with (foo) var x, y;

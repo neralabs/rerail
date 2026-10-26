@@ -3,7 +3,7 @@
   "id": "bandit-b108-hardcoded-tmp-directory",
   "revision": 1,
   "mode": "steer",
-  "description": "Flag Python string constants whose decoded value starts with a default insecure temporary-directory prefix.",
+  "description": "Avoid hardcoded paths under /tmp, /var/tmp, or /dev/shm in Python; shared temp directories invite symlink and race attacks, so use the tempfile module.",
   "scope": {
     "include": [
       "**/*.py"
@@ -46,7 +46,7 @@
       "violation": {
         "code": "B108",
         "anchor": "witness.span",
-        "message": "Probable insecure use of a temporary-file path.",
+        "message": "Create this temporary path with the tempfile module instead of hardcoding a shared temp directory.",
         "suppress": {
           "nosec": {
             "codes": [

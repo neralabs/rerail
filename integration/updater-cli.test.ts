@@ -166,6 +166,10 @@ describe("Rerail managed launcher", () => {
     const entrypoint = join(launcherRoot, "dist", "cli", "cli.js");
     const connected = await run(["node", entrypoint, "install", "--root", launcherRoot, "--agents", "claude-code"], environment, root);
     expect(connected.exitCode).toBe(0);
+    // The installed version, for a terminal, without a daemon to ask: `rerail version`, or the flags people try first.
+    for (const argument of ["version", "--version", "-v"]) {
+      expect(await run(["node", entrypoint, argument], environment)).toEqual({ exitCode: 0, stdout: `rerail ${manifest.version}\n`, stderr: "" });
+    }
     const commands = join(userHome, ".claude", "commands");
     const showMe = join(commands, "rerail-show-me.md");
     // A command this version adds that the connected Claude Code lacks, as after updating from one without it.

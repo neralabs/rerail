@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { steerBlock, type AdapterDelivery, type AdapterEvent, type RerailEventLoop } from "../../../src/engine/index.js";
 import { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "../../../src/hosts/cursor/cursor-hook.js";
+import { steeredRules } from "../../support/steers.js";
 
 async function json(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -24,7 +25,7 @@ async function temporaryDirectory(): Promise<string> {
 }
 
 function delivery(requested: AdapterDelivery["requested"], content: string, ruleIds: readonly string[] = []): AdapterDelivery {
-  return { sessionId: "cursor-session", requested, mechanism: "deferred-context", content, ruleIds };
+  return { sessionId: "cursor-session", requested, mechanism: "deferred-context", content, ruleIds, rules: steeredRules(ruleIds) };
 }
 
 function scriptedLoop(script: Readonly<Record<string, readonly AdapterDelivery[]>>): RerailEventLoop & { events: AdapterEvent[] } {
@@ -110,6 +111,7 @@ describe("Cursor plugin contract", () => {
       mechanism: "deferred-context" as const,
       content: "Preserve the session.",
       ruleIds: [],
+      rules: [],
     };
     expect(cursorHookOutput("beforeSubmitPrompt", [delivery])).toEqual({ continue: true });
     expect(cursorHookOutput("postToolUse", [delivery])).toEqual({ additional_context: "Preserve the session." });
@@ -213,17 +215,15 @@ describe("Cursor plugin contract", () => {
     const root = await temporaryDirectory();
     const storage = join(root, "sessions");
     const common = { conversation_id: "cursor-session", generation_id: "generation-1", workspace_roots: [root], hook_event_name: "stop" };
-    const digest = `Rerail finished checking these edits only after the steps that made them had moved on:\n\n${steerBlock(
-      "test:no-bad", "Do not write bad. (a.ts:2:7)", { mode: "steer" },
-    )}`;
+    const digest = steerBlock({ kind: "late" }, [{ ruleId: "test:no-bad", mode: "steer", message: "Do not write bad.", location: "a.ts:2:7" }]);
     const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", digest, ["test:no-bad"])] });
 
     const followUp = await handleCursorEvent({ ...common, loop_count: 0 }, stopLoop, storage);
     expect(stopLoop.events.map(event => event.kind)).toEqual(["turn-end"]);
-    expect(followUp).toEqual({ followup_message: expect.stringMatching(/^Rerail finished checking these edits/u) });
-    expect(followUp.followup_message).toContain("Do not write bad. (a.ts:2:7)");
+    expect(followUp).toEqual({ followup_message: expect.stringMatching(/^Rerail finished checking your earlier edits/u) });
+    expect(followUp.followup_message).toContain("- a.ts:2:7 — Do not write bad. [test:no-bad]");
     // The person sees none of a hook's text in Cursor, so the agent is asked to relay the rule's line (with no dashboard
-    // running here, its link stays relative and the line carries none).
+    // running here, the rule stays unlinked and the line carries no link).
     expect(followUp.followup_message).toContain("Begin your next reply with these lines, exactly as written:\n◆ Rerail · test:no-bad  steered");
     // Carried once.
     expect(await handleCursorEvent({ ...common, loop_count: 1 }, scriptedLoop({}), storage)).toEqual({});
@@ -232,7 +232,7 @@ describe("Cursor plugin contract", () => {
     expect(await handleCursorEvent({ ...common, loop_count: CURSOR_FOLLOWUP_LOOP_LIMIT }, stopLoop, storage)).toEqual({});
     const toolResult = { ...common, hook_event_name: "postToolUse", tool_use_id: "read-1", tool_name: "Read", tool_output: "ok" };
     expect(await handleCursorEvent(toolResult, scriptedLoop({}), storage)).toEqual({
-      additional_context: expect.stringContaining("Do not write bad. (a.ts:2:7)"),
+      additional_context: expect.stringContaining("- a.ts:2:7 — Do not write bad. [test:no-bad]"),
     });
   });
 

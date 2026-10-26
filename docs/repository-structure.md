@@ -11,10 +11,11 @@ structure review on PR #1 plus #25, the generated-file manifest.
 |---|---|
 | `src/engine/`, `src/hosts/<harness>/`, `src/<layer>/` | The TypeScript package, one directory per layer, each with an `index.ts` entry point |
 | `native/` | The Rust engine; it compiles only from here (#4) |
-| `packs/<id>/` | A rule pack: `pack.json`, `package.json`, `README.md`, `LICENSE`, `NOTICE`, `rules/` (shipped), `candidates/` (scored, never shipped), `upstream/<tool>/` (recordings), `licenses/` |
+| `packs/<id>/` | A rule pack: `pack.json`, `package.json`, `README.md`, `LICENSE`, `NOTICE`, `rules/` (shipped), `candidates/` (scored, never shipped), `upstream/<tool>/` (recordings; their test data is not in git: one archive per tool, in S3, named by its `test-data.lock`, #3), `licenses/` |
 | `fixtures/<family>/<feature>/` | Engine and host test data; `<feature>` names an engine module (#10) |
 | `fixtures/packs/` | Pack-validator inputs |
 | `test/`, `integration/` | Unit and integration tests; helpers in `support/` |
+| `e2e/` | The dashboard's Playwright browser specs over seeded scenarios (`e2e/README.md`); helpers in `support/` |
 | `playground/` | The rule playground, its own npm package |
 | `scripts/generate/` | Generators of engine, host and pack data, listed in `scripts/generate/README.md` |
 
@@ -59,15 +60,29 @@ Exemption `engine-test-inputs`: a rule document may be an engine or host test in
 belong in a pack. A benchmark or test that needs a pack's rule references the pack's document.
 Exemption `validator-inputs`: `fixtures/packs/**`, whose pack format puts rule documents in `rules/`.
 
-### 3. Fixture data outside `fixtures/` and `packs/*/upstream` — target 0
+### 3. Fixture data outside `fixtures/` and `packs/*/upstream`, or pack test data in git or unpinned — target 0
 
 A file is fixture data when a directory in its path is `fixtures`/`__fixtures__`; it is a
 `*.expected.json` recording or `*.cases.json` case list; it is a code-rule document; it sits in a test
 root (`test/`, `integration/`, `conformance/`, `benchmark/`) and is not TS/JS source or Markdown; or it sits
 in `test/`/`integration/` with a fixture name. It may live only under `fixtures/` or `packs/<id>/upstream/`.
 Exemptions: `packs/<id>/candidates/**` (pack data), `gate-pins` (the port readiness gates' pinned inputs and workers:
-`conformance/port-readiness/*.json`, `conformance/recorders/port-readiness/runtimes/**` and the recorder's Python workers) and, for
+`conformance/port-readiness/*.json`, `conformance/recorders/port-readiness/runtimes/**` and the recorder's Python and PHP workers) and, for
 code-rule documents, `packs/<id>/rules/**`.
+
+No tracked file is pack test data either: a path `PACK_FIXTURE_PATTERNS` in `scripts/s3/pack-fixtures.mjs` matches
+(`packs/*/upstream/*/` `fixtures/**`, `tests/**`, `*.expected.json`, `cases.json`, `*.cases.json`,
+`fixtures.upstream-check.json`, `lizard-*.tsv`, `authored/**`; CONTRIBUTING.md, "Pack test data"). Each tool-pack's
+test data, derived and authored alike, is one archive in S3 that the tool directory's `test-data.lock` pins by
+sha256. A pull request that adds or changes the data tracks it with `git add -f` for review, and fails this metric
+until a maintainer runs `npm run fixtures:push -- --from <ref>` in a trusted worktree of main, which archives and
+uploads it and prints the new lock, and the pull request commits the lock and untracks the data with `git rm --cached`.
+
+Every tool directory (a `packs/<id>/upstream/<tool>/` that holds a tracked file; files directly under
+`packs/<id>/upstream/`, such as `common.py`, are not in one) has a tracked `test-data.lock`, and `parseLock` in
+`scripts/s3/test-data-archive.mjs` accepts it: `{ "format": 1, "sha256", "files", "bytes" }` with a 64-digit
+lowercase hex sha256 and non-negative integer counts. A missing lock is a finding at the path it would have; a
+malformed one carries `parseLock`'s message. These checks have no exemptions.
 
 ### 4. Engine source roots — target 1 (`native/`)
 
@@ -81,9 +96,10 @@ the item a `#[cfg(test)]` attribute applies to: its brace-matched body (comments
 literals skipped), or up to its `;` when it has none. `#[cfg(test)] mod tests;` declares a module in
 another file and exempts nothing after it.
 
-### 5. Test roots — target `test/`, `integration/` (+ `playground/`)
+### 5. Test roots — target `test/`, `integration/`, `e2e/` (+ `playground/`)
 
-Every test file is under `test/` or `integration/`.
+Every test file is under `test/`, `integration/` or `e2e/` (the dashboard's Playwright browser specs, kept out of
+`test/` because vitest runs every spec file under it).
 Exemptions: `playground-package` (`playground/` is its own package) and `data-roots` (upstream projects'
 copied tests). Rust `#[cfg(test)]` modules are part of the crate and not counted.
 
@@ -256,7 +272,8 @@ a `rules` directory, empty or not) starts with `packs/<id>/`.
 From every `run:` script in `.github/workflows/ci.yml`, expanded through npm scripts transitively
 (`npm run`, `npm test`, `npm --prefix <dir>`, `cd`), the gate collects what runs: `vitest` (by `--dir`,
 `--config` directory, filters, minus the package's `vitest.config.*` `exclude` globs), `node --test`,
-`pytest`, and entry points (`node`/`tsx`/`python`/`bash` files). Every test file outside the data roots
+`pytest`, `playwright test` (the spec files under its config's `testDir`), and entry points
+(`node`/`tsx`/`python`/`bash` files). Every test file outside the data roots
 runs, and every entry point that an npm script named `test*` or `conformance*` runs also runs in CI.
 Rust tests run through `cargo test`, outside this metric.
 

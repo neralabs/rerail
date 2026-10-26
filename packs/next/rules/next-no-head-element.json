@@ -3,7 +3,7 @@
   "id": "next-no-head-element",
   "revision": 1,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-head-element: a <head> opening element, unless the file's path contains `app/`.",
+  "description": "Use the Head component from next/head instead of a raw head element outside the app directory; Next.js manages the page head itself.",
   "scope": {
     "include": [
       "**/*.ts",

@@ -1,1 +1,0 @@
-type Test = { set f(value: number): void };

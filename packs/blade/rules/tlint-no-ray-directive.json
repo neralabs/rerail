@@ -1,0 +1,32 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tlint-no-ray-directive",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Remove @ray directives from Blade templates; Ray debugging calls should not ship.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "kind": "directive_name",
+            "regex": "^@(ray)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "NoRayDirective",
+        "message": "Do not use the @ray directive."
+      }
+    }
+  ]
+}

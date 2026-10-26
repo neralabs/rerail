@@ -4,7 +4,9 @@ Every test input and oracle the repository's tests read, in one place: language 
 reports and values upstream tools record for them, `*.expected.json`, and the `generate_*` scripts that record each),
 the host tests' data and the pack validator's inputs. Nothing here is published as a package or shipped to users: no
 package's `files` includes this directory. A rule pack's own tool recordings live with the pack, in
-`packs/<id>/upstream/<tool>/` ([pack format](../docs/pack-format.md)); everything else is here.
+`packs/<id>/upstream/<tool>/` ([pack format](../docs/pack-format.md)), and are not in git: that pack test data is one
+archive per tool-pack in S3, which the tool directory's `test-data.lock` names and `npm run fixtures:pull` fetches
+([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). Everything else is here, in git.
 
 Tests resolve this directory in one place per language: Rust through `native/build.rs` (the `fixtures_dir!` and
 `oracle!` macros of `native/src/code_rule_dsl/mod.rs` read what it found), TypeScript through `fixturesPath()` in
@@ -45,7 +47,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `{ecma,python}/matcher/ast-grep/` | `matcher` | relational rules, `field`, `nthChild`, `stopBy`, `utils` against ast-grep (`test/code-rule-dsl-upstream-differential.test.ts`) |
 | `{php,sql}/matcher/arguments/` | `matcher` | argument slots (`matcher/arguments.rs`; SQL's, PostgreSQL's binding, `matcher/arguments_sql.rs`) |
 | `{rust,sql,vue}/language/` | `language` | measurements that choose a planned language's registry entry: candidate grammars (`grammar/`, T1), Rust's capability census (`feasibility/`), Vue's embedded view (`view/`) |
-| `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`) |
+| `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`); `steer-strategy/`, the steer-strategy benchmark's task project and prompt (`benchmark/steer-strategy.ts`) |
 | `host/code-rule-dsl/` | — | engine-contract rule documents (`test/native-code-rule-dsl-runtime.test.ts`) |
 | `host/constraint-code-rules/` | — | constraint examples (`test/engine/code-rule/code-rule-dsl-constraints.test.ts`) |
 | `host/database/` | — | the database schema at the migration baseline (`test/engine/storage/database-baseline.test.ts`) |
