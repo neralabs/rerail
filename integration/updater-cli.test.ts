@@ -101,7 +101,10 @@ async function createLocalRegistry(root: string): Promise<string> {
   const fixture = join(bin, "npm-fixture.mjs");
   await writeFile(fixture, `import { cpSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-const args = process.argv.slice(2);
+// Rerail puts npm's own options (fetch retries) ahead of the command, as npm accepts them: the command is the first
+// argument that is not an option.
+const argv = process.argv.slice(2);
+const args = argv.slice(argv.findIndex(argument => !argument.startsWith("-")));
 if (args[0] === "view") {
   process.stdout.write(JSON.stringify(args[1].endsWith("@rejected") ? process.env.RERAIL_REJECTED_VERSION : process.env.RERAIL_ACCEPTED_VERSION) + "\\n");
   process.exit(0);
@@ -176,7 +179,8 @@ describe("Rerail managed launcher", () => {
     await rm(showMe);
 
     const update = await run(["node", entrypoint, "update"], environment);
-    expect(update).toMatchObject({ exitCode: 0, stderr: "" });
+    // Installing a version says what it downloads, on stderr; nothing else is written there.
+    expect(update).toMatchObject({ exitCode: 0, stderr: `Downloading ${manifest.name}@${acceptedVersion} from npm…\n` });
     expect(update.stdout).toContain(`${acceptedVersion}; new harness sessions will use it.`);
     expect(update.stdout).toContain(`Refreshed Rerail in Claude Code:`);
     expect(await readFile(showMe, "utf8")).toContain(join(home, "current", "dist", "cli", "cli.js"));
