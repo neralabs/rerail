@@ -489,7 +489,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(await readlink(updater.currentLink)).toBe(installed.current.packageRoot);
     expect((await lstat(updater.currentLink)).isSymbolicLink()).toBe(true);
     // Git Bash runs `rerail` through the extensionless sh launcher; it never finds `rerail.cmd` without the extension.
-    expect(await readFile(join(home, "bin", "rerail"), "utf8")).toBe(gitBashShim(updater.currentLink, process.execPath));
+    expect(await readFile(join(home, "bin", "rerail"), "utf8")).toBe(gitBashShim(updater.currentLink, pinnedNodePath()));
     expect(existsSync(updater.launcherPath)).toBe(true);
   });
 
