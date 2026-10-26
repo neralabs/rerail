@@ -696,9 +696,14 @@ const packageConditionSchema = z
     dependsOn: z.array(nonEmptyString).min(1).optional(),
     path: moduleRegex.optional(),
     serverGraph: z.boolean().optional(),
+    private: z.boolean().optional(),
+    published: z.boolean().optional(),
   })
   .strict()
-  .refine(condition => Object.values(condition).some(value => value !== undefined), "Set bin, nodeVersion, dependsOn, path or serverGraph.");
+  .refine(
+    condition => Object.values(condition).some(value => value !== undefined),
+    "Set bin, nodeVersion, dependsOn, path, serverGraph, private or published.",
+  );
 export const codeRuleFileConditionSchema = z
   .object({
     path: moduleRegex.optional(),

@@ -24,18 +24,21 @@
 // RuleTester's default (commonjs) and the engines of the package the upstream tests run in. An upstream case whose
 // tester or case sets sourceType module is written as `.mjs` (`.mts` for TypeScript), unless its code has no module
 // syntax and reads a CommonJS wrapper name: upstream's RuleTester declares `globals.node`, those names included, in
-// every case, so such a case is written as CommonJS (`.js`/`.ts`), the only module system where Node defines them.
-// Each fixture's analysis unit is the fixture and its nearest package.json (the one the plugin and Node read for
-// it), so Rerail reads the same manifest: its `type`, `bin` and `engines`. `source.units` names each case's origin,
-// the rule whose test file it came from; each case also gets a rename variant under fixtures/renamed/
-// (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`) with a copy of its manifest, linted like any case
-// and marked `renamedFrom` it. A case whose only configuration is the configured Node version (`options: [{ version
-// }]` or `settings: { n: { version } }`) is written in a directory of its own beside a package.json (ours) whose
-// engines.node is that version, which the plugin reads when no option sets one, so it is recorded under default
-// options with the range its case states.
+// every case, so such a case is written as CommonJS (`.js`/`.ts`), the only module system where Node defines them. A
+// module case at an upstream fixture path (its `filename`) keeps the path, written as `.mjs`/`.mts` where its `.js`/`.ts`
+// name would be CommonJS beside its package.json. Each upstream fixture folder's package.json above a case is copied
+// with it, with the `.npmignore` and `.gitignore` beside it (what npm publishes, which the plugin reads). Each
+// fixture's analysis unit is the fixture, its nearest package.json (the one the plugin and Node read for it) and that
+// folder's `.npmignore`/`.gitignore`, so Rerail reads the same package: its `type`, `bin`, `engines` and published
+// files. `source.units` names each case's origin, the rule whose test file it came from; each case also gets a rename
+// variant under fixtures/renamed/ (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`) with copies of its
+// package files, linted like any case and marked `renamedFrom` it. A case whose only configuration is the configured
+// Node version (`options: [{ version }]` or `settings: { n: { version } }`) is written in a directory of its own
+// beside a package.json (ours) whose engines.node is that version, which the plugin reads when no option sets one, so
+// it is recorded under default options with the range its case states.
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertCommit, isVariantPath, lint, pinnedRequire, RENAMED_DIRECTORY, REPOSITORY, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../../scripts/pack-data/eslint-expected.mjs";
@@ -63,6 +66,8 @@ export const RULES = [
   "no-process-env",
   "no-process-exit",
   "no-sync",
+  "no-top-level-await",
+  "no-unpublished-bin",
   "no-unsupported-features/es-builtins",
   "no-unsupported-features/node-builtins",
   "prefer-global/buffer",
@@ -113,12 +118,14 @@ export function nodeSourceType(file) {
 }
 
 /**
- * A fixture's analysis unit: the fixture (relative to `fixtures`), then its nearest package.json. The fixture comes
- * first, as a unit's first path is its key in `source.units`.
+ * A fixture's analysis unit: the fixture (relative to `fixtures`), then its nearest package.json and that folder's
+ * `.npmignore` and `.gitignore` where present (what the plugin reads of the package). The fixture comes first, as a
+ * unit's first path is its key in `source.units`.
  */
 function fixtureUnit(fixtures, path) {
-  const manifest = relative(fixtures, nearest(dirname(join(fixtures, path)), "package.json")).split(sep).join("/");
-  return [path, manifest];
+  const folder = dirname(nearest(dirname(join(fixtures, path)), "package.json"));
+  const packageFiles = PACKAGE_FILES.filter(name => existsSync(join(folder, name))).map(name => relative(fixtures, join(folder, name)).split(sep).join("/"));
+  return [path, ...packageFiles.sort()];
 }
 
 const TYPESCRIPT = [".ts", ".mts", ".cts", ".tsx"];
@@ -234,7 +241,27 @@ function configuredVersion(item) {
   return typeof version === "string" ? version : undefined;
 }
 
-/** The fixture path (relative to fixtures/) of one case, and the upstream fixture package.json files it needs. */
+/** A package folder's files the plugin reads: the manifest, and what npm leaves out of the package (get-npmignore.js). */
+const PACKAGE_FILES = ["package.json", ".npmignore", ".gitignore"];
+
+/**
+ * The name a case at upstream fixture path `name` is written under. Upstream lints it as `sourceType`, whatever Node
+ * would run it as; a module case at a `.js`/`.ts` path whose nearest package.json (one of the upstream `files` copied
+ * with it, else the fixtures' own) does not say `"type": "module"` would be linted as CommonJS here, so it is written
+ * as `.mjs`/`.mts` in the same folder: the package facts the plugin reads from its path stay the same.
+ */
+function moduleName(name, sourceType, files, upstreamFixtures) {
+  const extension = extname(name);
+  if (sourceType !== "module" || (extension !== ".js" && extension !== ".ts")) return name;
+  const manifest = files.find(file => basename(file) === "package.json");
+  const type = manifest === undefined ? fixturePackageJson.type : JSON.parse(readFileSync(join(upstreamFixtures, manifest), "utf8")).type;
+  return type === "module" ? name : `${name.slice(0, -extension.length)}${extension === ".js" ? ".mjs" : ".mts"}`;
+}
+
+/**
+ * The fixture path (relative to fixtures/) of one case, and the upstream fixture files it needs: each package.json
+ * above it and, beside each, the `.npmignore` and `.gitignore` the plugin reads for what npm publishes.
+ */
 function casePath(tools, upstream, rule, kind, index, run, item) {
   const base = `${rule}/${kind}-${String(index).padStart(3, "0")}`;
   const typescript = isTypeScript(run, item);
@@ -252,10 +279,11 @@ function casePath(tools, upstream, rule, kind, index, run, item) {
     const manifests = [];
     if (fixtureRoot !== undefined) {
       for (let directory = dirname(join(upstreamFixtures, relativeName)); directory.startsWith(upstreamFixtures + sep); directory = dirname(directory)) {
-        if (existsSync(join(directory, "package.json"))) manifests.push(relative(upstreamFixtures, join(directory, "package.json")));
+        if (!existsSync(join(directory, "package.json"))) continue;
+        for (const name of PACKAGE_FILES) if (existsSync(join(directory, name))) manifests.push(relative(upstreamFixtures, join(directory, name)));
       }
     }
-    return { path: `${base}/${relativeName.split(sep).join("/")}`, manifests, sourceType };
+    return { path: `${base}/${moduleName(relativeName, sourceType, manifests, upstreamFixtures).split(sep).join("/")}`, manifests, sourceType };
   }
   const extension = typescript ? (sourceType === "module" ? ".mts" : ".ts") : sourceType === "module" ? ".mjs" : ".js";
   const engines = configuredVersion(item);

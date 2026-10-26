@@ -193,6 +193,8 @@ DESCRIPTIONS = {
     "n-no-path-concat": "Use path.join() or path.resolve() instead of concatenating __dirname, __filename or import.meta paths with strings; hand-built paths break across platforms.",
     "n-no-process-env": "Avoid reading process.env directly; pass configuration in explicitly so dependencies on the environment stay visible and testable.",
     "n-no-sync": "Avoid calling methods whose name ends in Sync, such as readFileSync; they block the Node.js event loop.",
+    "n-no-top-level-await": "Avoid top-level await in modules npm publishes; require() cannot load an ES module that uses it, so move the await into an async function the module exports or calls.",
+    "n-no-unpublished-bin": "Publish every file package.json lists as a bin executable: keep it in package.json's files field and out of .npmignore, or npm leaves the command out of the package.",
     "n-prefer-global-buffer": "Use the global Buffer instead of importing or requiring it from the buffer module; it is always available in Node.js.",
     "n-no-unsupported-features-es-builtins": "Use only the ECMAScript built-ins that every Node.js version in the package's engines.node range provides, or raise that range.",
     "n-no-unsupported-features-node-builtins": "Use only the Node.js built-in APIs that every Node.js version in the package's engines.node range provides, or raise that range.",
@@ -987,6 +989,30 @@ def hashbang_doc():
         {"id": "crlf", "anchor": "file.start", "ast": {"file": {"package": {"bin": True}}, "rule": {"kind": "program", "regex": node_shebang_rx(crlf=True)}}, "message": "End the shebang line with LF, not CRLF; the system reads the carriage return as part of the interpreter's name and cannot run the file."}])
 
 
+def no_unpublished_bin_doc():
+    # Upstream reports the Program of a bin file (isBinFile, as n/hashbang reads `bin`) that get-npmignore.js ignores;
+    # the message cannot name the file's path relative to the package, which upstream's does.
+    return policy("n-no-unpublished-bin", "n/no-unpublished-bin", DESCRIPTIONS["n-no-unpublished-bin"], [
+        {"id": "upstream", "anchor": "file.start", "ast": {"file": {"package": {"bin": True, "published": False}}, "rule": {"kind": "program"}},
+         "message": "npm ignores this bin file, so the published package lacks the executable; list it in package.json's files field and keep .npmignore from ignoring it."}])
+
+
+def no_top_level_await_doc():
+    # Upstream counts ESLint's `:function` (FunctionDeclaration, FunctionExpression, ArrowFunctionExpression) around an
+    # AwaitExpression, a `for await` and an `await using` declaration; a method's FunctionExpression is its parameters
+    # and body, so its key and decorators are outside it. Class fields and static blocks are no functions. It skips a
+    # file outside a package and a file npm does not publish (default options: ignoreBin false).
+    method = {"kind": "method_definition"}
+    function = {"any": [{"kind": k} for k in ["function_declaration", "function_expression", "generator_function_declaration", "generator_function", "arrow_function"]]
+                + [{"inside": {**method, "field": "parameters"}}, {"inside": {**method, "field": "body"}}]}
+    await_token = {"has": {"regex": "^await$", "stopBy": "neighbor"}}
+    return policy("n-no-top-level-await", "n/no-top-level-await", DESCRIPTIONS["n-no-top-level-await"], [
+        {"id": "upstream", "ast": {"file": {"package": {"published": True}}, "rule": {
+            "any": [{"kind": "await_expression"}, {"kind": "for_in_statement", **await_token}, {"kind": "using_declaration", **await_token}],
+            "not": {"inside": {"stopBy": "end", **function}}}},
+         "message": "Top-level `await` is forbidden in published modules."}])
+
+
 # ---- probes ----------------------------------------------------------------------------------------------------------
 
 def probe_docs(builtins, globals_node):
@@ -1075,6 +1101,8 @@ def main():
     write_port(args.root, unsupported_builtins_doc(node_builtin_maps["node"], globals_node, "node-builtins"), compact=True)
     write_port(args.root, unsupported_builtins_doc(node_builtin_maps["es"], globals_node, "es-builtins", es=True), compact=True)
     write_port(args.root, hashbang_doc())
+    write_port(args.root, no_unpublished_bin_doc())
+    write_port(args.root, no_top_level_await_doc())
     for doc in probe_docs(builtins, globals_node):
         write(args.root, os.path.join(PACK, "candidates", "probes", "rules"), doc)
 

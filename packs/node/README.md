@@ -1,6 +1,6 @@
 # Rerail rule pack: Node.js
 
-30 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
+32 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
 the pack's conformance check on both of its sources, and in `candidates/rules/` until then. eslint-plugin-n has no port
 readiness gates ([docs/port-readiness.md](../../docs/port-readiness.md)); a pinned test set judges the pack instead
 (`TEST_SETS` in `scripts/s3/pack-fixtures.mjs`, [conformance/README.md](../../conformance/README.md)). Each port is
@@ -16,10 +16,11 @@ scored through the engine's production workspace path, with every disagreement d
 The conformance check (`--check`, run in CI) scores the tests and the test set: it fails a port in `rules/` on any
 unexplained FP or FN on either, and reports the candidates without failing them. 24 ports ship, 4 of them on (the ones
 the plugin's recommended configurations turn on: `n-hashbang`, `n-no-deprecated-api`, `n-no-exports-assign`,
-`n-no-process-exit`) and the other 20 off until a repository turns them on. The 6 candidates
-(`n-no-unsupported-features-es-builtins`, `n-no-unsupported-features-node-builtins`, `n-prefer-global-crypto`,
-`n-prefer-global-timers`, `n-prefer-import-assert-strict`, `n-prefer-process-get-builtin-module`) pass the plugin's
-tests and have no test-set files yet.
+`n-no-process-exit`) and the other 20 off until a repository turns them on. The 8 candidates
+(`n-no-top-level-await`, `n-no-unpublished-bin`, `n-no-unsupported-features-es-builtins`,
+`n-no-unsupported-features-node-builtins`, `n-prefer-global-crypto`, `n-prefer-global-timers`,
+`n-prefer-import-assert-strict`, `n-prefer-process-get-builtin-module`) pass the plugin's tests and have no test-set
+files yet.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.
@@ -52,6 +53,16 @@ Node version (its `version` option, or the `n.version` setting) is written besid
 is that version, which the plugin reads when no option sets one, so the rules that read the configured range
 (`n-no-unsupported-features-*`, `n-prefer-node-protocol`, `n-prefer-process-get-builtin-module`) are judged at the
 range each case states.
+
+The rules that read where a file sits in its package do it through `file.package` conditions on its nearest
+package.json: `bin` (its `bin` targets, as the plugin's `isBinFile` resolves them), `nodeVersion` (its configured Node
+range), `private` (its `private` is `true`) and `published` (npm publishes the file, as the plugin's `getNpmignore`
+reads the manifest's `files` and `main` and the `.npmignore`, else, without `files`, the `.gitignore` in its folder;
+[docs/code-rule-dsl-reference.html](../../docs/code-rule-dsl-reference.html)). Without a package.json none of them
+holds, `published: false` included, as the plugin checks nothing there. The recorder copies each upstream fixture
+folder's package.json, `.npmignore` and `.gitignore`, and they ride along with each case written there; a case
+upstream runs as a module at a `.js`/`.ts` fixture path beside a package.json without `"type": "module"` is written
+as `.mjs`/`.mts` in the same folder, so its package and module system both hold.
 
 Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
 ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
@@ -150,3 +161,11 @@ eslint-plugin-n 18.4.1 n/hashbang (default options). Whether a file needs a sheb
 ### `n-no-deprecated-api`
 
 eslint-plugin-n 18.4.1 n/no-deprecated-api (default options; the configured version only words the message). Reports every read, call or construction its deprecation trace map marks (generated from lib/rules/no-deprecated-api.js rawModules and globals), as ReferenceTracker (legacy mode) reaches it: require/process.getBuiltinModule/ESM imports of the modules (with and without `node:`), and `export * from` a module once for each deprecated member it re-exports (one clause per member, as ReferenceTracker reports it), global variables (declared by globals.node, the ES builtins or `/* global */` comments) and members of global/globalThis, through constant aliases, (nested) destructuring, defaults and member chains. No sourceType is pinned; `moduleSystem: "package-type"` gives each file the plugin's module system (.mjs/.mts an ES module, .cjs/.cts CommonJS, any other file an ES module only under package.json `"type": "module"`). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, `__dirname` and `__filename` (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `require` and its members are reached only in a CommonJS file; Buffer, global and process in every file.
+
+### `n-no-unpublished-bin`
+
+eslint-plugin-n 18.4.1 n/no-unpublished-bin (default options). Reports, at the start of the file, a file the nearest package.json's `bin` names (read as `n-hashbang` reads it) that npm leaves out of the package (`file.package.published: false`, upstream's get-npmignore.js: the `files` whitelist, the package folder's `.npmignore`, or its `.gitignore` when there is neither a `files` field nor a `.npmignore`; never `main` or `package.json`). Without a package.json nothing is checked. The message cannot name the file's path relative to the package, which upstream's does. Not ported: the `convertPath` option and setting.
+
+### `n-no-top-level-await`
+
+eslint-plugin-n 18.4.1 n/no-top-level-await (default options: `ignoreBin` false). Reports each `await` expression, `for await (…)` and `await using` declaration outside every function (ESLint's `:function`: function declarations and expressions, arrows, and a method's parameters and body; its key and decorators, class fields and static blocks are outside), in a file npm publishes (`file.package.published: true`): a file without a package.json, or one the package's `files`, `.npmignore` or `.gitignore` leaves out, is not checked. Not ported: the `ignoreBin` and `convertPath` options and the `convertPath` setting.

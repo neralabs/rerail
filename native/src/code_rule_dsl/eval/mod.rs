@@ -10,7 +10,7 @@ use super::model::{
     Snapshot, Terms, package_marker_directory, python_module_in,
 };
 use super::module_graph;
-use super::package_manifest::{Manifest, manifest_directory, manifest_in};
+use super::package_manifest::{Manifest, ignore_file_directory, manifest_directory, manifest_in};
 use napi::Result;
 pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
@@ -95,10 +95,11 @@ thread_local! {
 
 /// The `package` a snapshot gives each of its ECMA files without a host one: the nearest
 /// `package.json` entry it holds, read as on disk (`Manifest::parse`, `manifest_in`), with the
-/// `jsxImportSource` of the package's `tsconfig.json` or `jsconfig.json` entry, and with its
-/// package's server graph over the snapshot's files where `server_graph` asks for it
-/// (`module_graph::in_file_set`). It keeps what it read, so an editor's edit derives again only
-/// the packages the edit changes (`edited`), as a fresh snapshot would derive them.
+/// `jsxImportSource` of the package's `tsconfig.json` or `jsconfig.json` entry, the `.npmignore`
+/// and `.gitignore` entries in its folder, and with its package's server graph over the
+/// snapshot's files where `server_graph` asks for it (`module_graph::in_file_set`). It keeps what
+/// it read, so an editor's edit derives again only the packages the edit changes (`edited`), as a
+/// fresh snapshot would derive them.
 pub(super) struct DerivedPackages {
     /// The indices of the files whose `package` the snapshot derives.
     files: Vec<usize>,
@@ -142,9 +143,10 @@ impl DerivedPackages {
     }
 
     /// Derives again what an edit of the file at `index` changes: its package's manifest, where
-    /// it is a `package.json` entry; the packages whose configuration a project configuration
-    /// changes (its own, or one it `extends`); and, where a server graph reads the source, its
-    /// package's graph, only where the edit changes the source's summary.
+    /// it is a `package.json` entry or an ignore file beside one; the packages whose
+    /// configuration a project configuration changes (its own, or one it `extends`); and, where a
+    /// server graph reads the source, its package's graph, only where the edit changes the
+    /// source's summary.
     pub(super) fn edited(&mut self, snapshot: &mut Snapshot, index: usize) {
         if self.files.is_empty() {
             return;
@@ -156,6 +158,11 @@ impl DerivedPackages {
             if let Some((manifest, _)) = self.packages.get_mut(directory) {
                 *manifest = parsed;
             }
+            changed.insert(directory.to_owned());
+        }
+        if let Some(directory) = ignore_file_directory(&file.path)
+            && self.packages.contains_key(directory)
+        {
             changed.insert(directory.to_owned());
         }
         if module_graph::is_module_config(&file.path) {
@@ -197,12 +204,18 @@ impl DerivedPackages {
             manifests,
             summaries,
         } = self;
+        let ignore_files = ignore_texts(snapshot);
         for directory in directories {
             #[cfg(test)]
             DERIVED_MANIFESTS.set(DERIVED_MANIFESTS.get() + 1);
             let (parsed, config) = &packages[&directory];
+            let (npmignore, gitignore) = ignore_files
+                .get(directory.as_str())
+                .copied()
+                .unwrap_or_default();
             let manifest = parsed
                 .clone()
+                .with_ignore_files(npmignore.map(str::to_owned), gitignore.map(str::to_owned))
                 .with_jsx_import_source(config.jsx_import_source());
             let manifest = if *server_graph && manifest.has_server_graph() {
                 let members = module_graph::in_file_set(
@@ -236,6 +249,22 @@ fn config_texts(snapshot: &Snapshot) -> HashMap<&str, &str> {
         .filter(|file| module_graph::is_module_config(&file.path))
         .map(|file| (file.path.as_str(), file.source.as_str()))
         .collect()
+}
+
+/// The texts of the snapshot's `.npmignore` and `.gitignore` entries, by the folder they sit in.
+fn ignore_texts(snapshot: &Snapshot) -> HashMap<&str, (Option<&str>, Option<&str>)> {
+    let mut texts: HashMap<&str, (Option<&str>, Option<&str>)> = HashMap::new();
+    for file in &snapshot.files {
+        if let Some(directory) = ignore_file_directory(&file.path) {
+            let entry = texts.entry(directory).or_default();
+            if file.path.ends_with(super::package_manifest::NPMIGNORE) {
+                entry.0 = Some(file.source.as_str());
+            } else {
+                entry.1 = Some(file.source.as_str());
+            }
+        }
+    }
+    texts
 }
 
 /// Evaluates `code_rule`, its grammar matchers matched natively (`matcher::run_clause`).

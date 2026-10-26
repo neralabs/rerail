@@ -149,6 +149,14 @@ precedence = "override"
 SPDX-FileCopyrightText = ["Isaac Z. Schlueter and Contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "ISC"
 
+# eslint-plugin-n 18.4.1's getNpmignore, the ignore 5.3.2 and globrex 0.1.2 packages, ported to Rust (npm_ignore/mod.rs,
+# provenance in npm_ignore/UPSTREAM.md); their answers recorded by scripts/generate/npm-ignore/npm-ignore-cases.mjs.
+[[annotations]]
+path = ["native/src/code_rule_dsl/npm_ignore/mod.rs", "native/src/code_rule_dsl/npm_ignore/cases.json"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2015 Toru Nagashima", "2013 Kael Zhang <i@kael.me>, contributors", "2018 Terkel Gjervig Nielsen", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with

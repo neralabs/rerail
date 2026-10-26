@@ -677,11 +677,12 @@ async function runSamples(loaded: LoadedPack, compiled: readonly CompiledRule[],
 }
 
 /**
- * Whether a unit's file rides along with its sources rather than being one: a package.json, or a project configuration
- * (a `.json` file named `tsconfig…` or `jsconfig…`, as the engine's `is_module_config` names them).
+ * Whether a unit's file rides along with its sources rather than being one: a package.json, a `.npmignore` or
+ * `.gitignore` (as the engine's `ignore_file_directory` names them), or a project configuration (a `.json` file named
+ * `tsconfig…` or `jsconfig…`, as the engine's `is_module_config` names them).
  */
 function ridesAlong(path: string): boolean {
-  return /^(?:package\.json|(?:ts|js)config[^/]*\.json)$/.test(basename(path));
+  return /^(?:package\.json|\.npmignore|\.gitignore|(?:ts|js)config[^/]*\.json)$/.test(basename(path));
 }
 
 export interface RunOptions {

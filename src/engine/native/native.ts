@@ -166,6 +166,8 @@ export interface NativeRepositoryIndexOptions {
   ignoredDirectories: string[];
   /** The file label of each evaluated extension, keyed lowercase with its dot (`.py` → `python`). */
   sourceLanguages: Record<string, string>;
+  /** The file label of each file evaluated by its whole name, keyed lowercase (`.npmignore` → `text`); wins over `sourceLanguages`. */
+  sourceNames?: Record<string, string>;
   /** Folders below the workspace root that are checkouts judged by their own rules: not walked, only reported. */
   nestedCheckouts: string[];
   /** Leave out what Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`); never a tracked file. */
@@ -188,8 +190,11 @@ export interface NativeGitIgnoreMatcher {
  * `bin` targets relative to `folder`; `nodeVersion` the configured Node range (`engines.node`, else
  * `devEngines.runtime`'s `node` entry), a valid npm range (a `package` with any other is malformed); `dependencies`
  * every dependency name of any kind; `jsxImportSource` the `compilerOptions.jsxImportSource` of the `tsconfig.json`
- * (else `jsconfig.json`) beside it. `serverGraph`, which a host sends only where a code rule reads it and the manifest
- * names `next`, is whether the file is in its Next app's server module graph (`serverGraphAsync` below).
+ * (else `jsconfig.json`) beside it; `private` is `true` where the manifest's `private` is. `serverGraph`, which a host
+ * sends only where a code rule reads it and the manifest names `next`, is whether the file is in its Next app's server
+ * module graph (`serverGraphAsync` below). `published`, the file's own fact (`packageFacts` sends it, `nearestPackage`
+ * does not), is whether npm publishes the file, as eslint-plugin-n reads the manifest's `files` and `main` and its
+ * folder's `.npmignore`, else (without `files`) its `.gitignore`.
  */
 export interface NativePackageFacts {
   folder: string;
@@ -198,7 +203,14 @@ export interface NativePackageFacts {
   nodeVersion?: string;
   dependencies: string[];
   jsxImportSource?: string;
+  private?: boolean;
   serverGraph?: boolean;
+  published?: boolean;
+}
+
+/** One walk's `packageFacts` for the files below the root it was opened for, each manifest and ignore file read once. */
+export interface NativePackageFactsReader {
+  facts(label: string, absolute: string): NativePackageFacts | null;
 }
 
 /**
@@ -287,6 +299,7 @@ export interface NativeBinding {
   /** Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git worktree. */
   openGitIgnoreMatcher(root: string): NativeGitIgnoreMatcher | null;
   ConversationEngine: NativeConversationEngineConstructor;
+  PackageFactsReader: new (root: string) => NativePackageFactsReader;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
   CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;
 }

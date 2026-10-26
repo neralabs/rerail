@@ -844,8 +844,9 @@ pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
 }
 
 /// An ECMA query's `file.package`: conditions on the file's nearest `package.json`. `bin`,
-/// `dependsOn` and `path` need one, so a file without one fails them, `bin: false` included;
-/// `nodeVersion` reads eslint-plugin-n's default range there.
+/// `dependsOn`, `path`, `private` and `published` need one, so a file without one fails them,
+/// `bin: false`, `private: false` and `published: false` included; `nodeVersion` reads
+/// eslint-plugin-n's default range there.
 #[derive(Debug)]
 pub(crate) struct PackageCondition {
     /// Whether the file is one of the manifest's `bin` targets (`Manifest::is_bin`).
@@ -858,6 +859,10 @@ pub(crate) struct PackageCondition {
     pub(crate) path: Option<TextCondition>,
     /// Whether the file is in its Next app's server module graph (`Manifest::in_server_graph`).
     pub(crate) server_graph: Option<bool>,
+    /// Whether the manifest's `private` is `true` (`Manifest::is_private`).
+    pub(crate) private: Option<bool>,
+    /// Whether npm publishes the file (`Manifest::publishes`).
+    pub(crate) published: Option<bool>,
 }
 
 /// `nodeVersion`: the file's configured Node range is (`subsetOf`) or is not (`notSubsetOf`) a
@@ -889,6 +894,12 @@ impl PackageCondition {
             })
             && self.server_graph.is_none_or(|member| {
                 manifest.and_then(|manifest| manifest.in_server_graph(path)) == Some(member)
+            })
+            && self.private.is_none_or(|private| {
+                manifest.is_some_and(|manifest| manifest.is_private() == private)
+            })
+            && self.published.is_none_or(|published| {
+                manifest.and_then(|manifest| manifest.publishes(path)) == Some(published)
             })
     }
 }

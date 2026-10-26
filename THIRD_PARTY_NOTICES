@@ -512,6 +512,47 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ----------------------------------------------------------------------
 
+Ported code and recorded data: eslint-plugin-n 18.4.1 getNpmignore, ignore 5.3.2, globrex 0.1.2
+Files: native/src/code_rule_dsl/npm_ignore/mod.rs (a Rust port of eslint-plugin-n's
+  lib/util/get-npmignore.js, node-ignore's index.js and globrex's index.js), and
+  native/src/code_rule_dsl/npm_ignore/cases.json (their answers to getNpmignore().match()
+  and ignore().ignores(), recorded by scripts/generate/npm-ignore/npm-ignore-cases.mjs)
+Revisions: eslint-plugin-n v18.4.1, commit f1d47aff402b9e009578f4b3155b84f7d8beef9b;
+  ignore 5.3.2, commit cfd0fce1258fe87950d8ce3d18b345bf7d4ed780;
+  globrex 0.1.2, commit 9f6521b4a97664b2270b01de1f44a371a425e298
+Sources: https://github.com/eslint-community/eslint-plugin-n,
+  https://github.com/kaelzhang/node-ignore, https://github.com/terkelg/globrex
+License: MIT
+
+Modified by the Rerail authors: the JavaScript is translated to Rust for one
+package's publication (eslint-plugin-n), node-ignore's default options, and
+globrex's extended and globstar options on a POSIX host; the generated regexes
+run on fancy-regex, with JavaScript class syntax Rust reads differently escaped.
+
+Copyright (c) 2015 Toru Nagashima
+Copyright (c) 2013 Kael Zhang <i@kael.me>, contributors
+Copyright (c) 2018 Terkel Gjervig Nielsen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------
+
 Bundled grammar: tree-sitter/tree-sitter-typescript 0.23.2, patched
 Files: native/grammars/tree-sitter-typescript/ (LICENSE and {typescript,tsx}/src/scanner.c
   byte-identical to upstream; common/scanner.h patched; {typescript,tsx}/src/grammar.json

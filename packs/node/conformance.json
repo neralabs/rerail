@@ -441,6 +441,32 @@
         "suppression"
       ],
       "match": "line+column"
+    },
+    {
+      "id": "n-no-unpublished-bin",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unpublished-bin"
+      },
+      "policy": "candidates/rules/n-no-unpublished-bin.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-top-level-await",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-top-level-await"
+      },
+      "policy": "candidates/rules/n-no-top-level-await.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
     }
   ]
 }

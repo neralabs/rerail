@@ -497,8 +497,9 @@ pub(super) struct FileKeys {
 /// match the path the host sends, a `notRegex` that must not, or both. A family with declaration
 /// files has `declaration`, whether the path names one. A family reading package manifests has
 /// `package`, conditions on the file's nearest `package.json` (`bin`, `nodeVersion.subsetOf`,
-/// `dependsOn`, `path`); one with JSX runtimes `jsxRuntime`, the runtimes the file's JSX may be
-/// one of. A family naming modules from package markers has its module path, the host's `module`
+/// `dependsOn`, `path`, `serverGraph`, `private`, `published`); one with JSX runtimes
+/// `jsxRuntime`, the runtimes the file's JSX may be one of. A family naming modules from package
+/// markers has its module path, the host's `module`
 /// or the stem fallback: `module`, `moduleName` and `package` hold text conditions over the dotted
 /// names, the last one and the first one (in a package), and `inPackage` whether the host sent
 /// the path.
@@ -570,11 +571,11 @@ pub(super) fn compile_file_condition(
             .is_some_and(|package| names.iter().any(|name| package.contains_key(*name)))
     };
     let text_shaped = shaped(&["regex", "notRegex"]);
-    let manifest_shaped = shaped(&["bin", "nodeVersion", "dependsOn", "path", "serverGraph"]);
+    let manifest_shaped = shaped(&PACKAGE_KEYS);
     let (manifest, package) = match file.get("package") {
         Some(_) if keys.manifests && text_shaped => {
             return Err(invalid(format!(
-                "{path}/package: {language}'s package reads the nearest package.json: set bin, nodeVersion, dependsOn, path or serverGraph"
+                "{path}/package: {language}'s package reads the nearest package.json: set bin, nodeVersion, dependsOn, path, serverGraph, private or published"
             )));
         }
         Some(value) if keys.manifests => (
@@ -648,19 +649,27 @@ fn flag_value(value: Option<&Value>, at: &str) -> Result<Option<bool>> {
     }
 }
 
+/// The keys of a TypeScript query's `file.package`.
+const PACKAGE_KEYS: [&str; 7] = [
+    "bin",
+    "nodeVersion",
+    "dependsOn",
+    "path",
+    "serverGraph",
+    "private",
+    "published",
+];
+
 /// A TypeScript query's `file.package`: `bin` (true or false), `nodeVersion: { subsetOf }` or
 /// `{ notSubsetOf }` (an npm semver range), `dependsOn` (a non-empty list of package names),
-/// `path` (a text condition) and `serverGraph` (true or false); at least one.
+/// `path` (a text condition), and `serverGraph`, `private` and `published` (true or false); at
+/// least one.
 fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<PackageCondition> {
     let package = object(value, at)?;
-    reject_unknown(
-        package,
-        &["bin", "nodeVersion", "dependsOn", "path", "serverGraph"],
-        at,
-    )?;
+    reject_unknown(package, &PACKAGE_KEYS, at)?;
     if package.is_empty() {
         return Err(invalid(format!(
-            "{at} must set `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`"
+            "{at} must set `bin`, `nodeVersion`, `dependsOn`, `path`, `serverGraph`, `private` or `published`"
         )));
     }
     let node_version = package
@@ -718,6 +727,8 @@ fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<
         depends_on,
         path: text_condition(package.get("path"), &format!("{at}/path"), max_regex_bytes)?,
         server_graph: flag_value(package.get("serverGraph"), &format!("{at}/serverGraph"))?,
+        private: flag_value(package.get("private"), &format!("{at}/private"))?,
+        published: flag_value(package.get("published"), &format!("{at}/published"))?,
     })
 }
 

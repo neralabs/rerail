@@ -418,6 +418,9 @@ struct WorkspaceState {
     /// The `tsconfig.json`-style configuration texts requests sent, by path: the import aliases
     /// and `jsxImportSource` of those manifests (`refresh_manifest_context`).
     module_configs: BTreeMap<String, Arc<String>>,
+    /// The `.npmignore` and `.gitignore` texts requests sent, by path: with those manifests'
+    /// `files` and `main`, which of their files npm publishes (`refresh_manifest_context`).
+    ignore_files: BTreeMap<String, Arc<String>>,
     /// The manifest directories whose server graph the workspace derives for files the host sent
     /// no `package` for: requests that change what the graph reads refresh them
     /// (`refresh_server_graphs`).

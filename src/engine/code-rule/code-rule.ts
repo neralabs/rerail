@@ -370,6 +370,18 @@ export interface CodeRuleDslPackageCondition {
    * outside the graph; without such a manifest neither holds.
    */
   serverGraph?: boolean;
+  /** The manifest's `private` is `true`. Without a manifest neither `true` nor `false` holds. */
+  private?: boolean;
+  /**
+   * npm publishes the file, as eslint-plugin-n's `getNpmignore` reads it: a file is left out where the manifest's
+   * `files` whitelist leaves it out (each entry as `/<entry>` and `/<entry>/**` in node-ignore's gitignore semantics,
+   * `!` entries excluding at any depth, entries with braces or extglobs through globrex), or where its folder's
+   * `.npmignore` (else, without `files`, its `.gitignore`) ignores it (node-ignore, case-insensitive); never its `main`,
+   * `package.json`, or a top-level readme, licence, changelog or history file. Ignore files are regular files of at most
+   * 1 MiB (on disk never a symlink); without `files` or an ignore file, every file below the manifest is published.
+   * Without a manifest neither `true` nor `false` holds.
+   */
+  published?: boolean;
 }
 
 /** An inclusive version range; at least one bound. */
