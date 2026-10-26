@@ -14,7 +14,7 @@ import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { createRecordedAdapter, decodeSource, readRecordedInputs } from "./recorded-adapter.js";
-import { adapterSourcesDigest, parsersId, RECORDING_ARCHIVE } from "./recording/archive.js";
+import { answerConfig, configId, parsersId, RECORDING_ARCHIVE } from "./recording/archive.js";
 import { verdictPath } from "./recording/verdicts.js";
 import { ruleTreeDigest } from "./recording/tree.js";
 import { shardOf, type Shard } from "./shard.js";
@@ -445,7 +445,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     gatesYaml: sha256(readOr(GATES_MANIFEST)),
     // The recording is not in the tree: the lock's digest is what it is, and the lock is what the commit pins.
     recordingArchive: inputs.lock?.files[RECORDING_ARCHIVE].sha256 ?? "",
-    adapterSources: adapterSourcesDigest(manifest.adapter),
+    config: configId(answerConfig(root, manifest, inputs.lock?.runtimes ?? inputs.recording.runtimes)),
   };
   // What every rule reads of the recording beyond its own: the cases of any rule a known gap names, with their
   // committed sources, and the parsers' verdicts on each gap's probe, which provenGaps proves the gaps on.

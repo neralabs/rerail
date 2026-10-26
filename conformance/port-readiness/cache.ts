@@ -156,10 +156,11 @@ export interface SharedKeyInputs {
    */
   recordingArchive: string;
   /**
-   * The recorder's adapter code (archive.ts's adapterSourcesDigest): it is part of the config id the recording is
-   * read under, so moving it can leave a rule unanswered.
+   * This branch's config id (archive.ts's configId of answerConfig): every input that shapes a recorded answer, the
+   * recorder's adapter code and the pack's not-copied prefixes among them. recording-config compares it with the
+   * config the archive holds, so a key without it would replay a pass after the config moved.
    */
-  adapterSources: string;
+  config: string;
 }
 
 /** The inputs one rule adds. */
@@ -185,7 +186,7 @@ export interface RuleKeyInputs {
  */
 export function ruleKey(shared: SharedKeyInputs, rule: RuleKeyInputs): string {
   const parts = [
-    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.adapterSources,
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.config,
     rule.engine, rule.document, rule.conformanceEntry, rule.recording, ...rule.caseSources,
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));
@@ -210,7 +211,7 @@ export interface ToolPackKeyInputs {
 export function toolPackKey(shared: SharedKeyInputs, pack: ToolPackKeyInputs, judgedKeys: readonly string[]): string {
   const sorted = (values: readonly string[]) => [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join("\n");
   const parts = [
-    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingArchive, shared.adapterSources,
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingArchive, shared.config,
     pack.engine, sorted(pack.names), sorted(pack.caseSources), sorted(judgedKeys),
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));

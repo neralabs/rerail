@@ -190,8 +190,10 @@ fetches it); later runs reuse them and the results of every rule whose inputs di
 ### What a cached result is keyed by
 
 A rule's result key covers everything its verdict can depend on: the gate code a cached verdict can read, the npm
-packages the gate process loads, the tool-pack's manifest and recording, the rule's own document, conformance entry
-and upstream case sources, and the engine, though only the part of the engine the rule can be judged by.
+packages the gate process loads, the tool-pack's manifest and recording, this branch's config id (every input of a
+recorded answer, the "Not copied" prefixes among them, so a moved config never replays a `recording-config` pass), the
+rule's own document, conformance entry and upstream case sources, and the engine, though only the part of the engine
+the rule can be judged by.
 `passes-conformance` is not cached: the pack's conformance check, the samples included, runs on every run.
 
 The tool-pack checks (the known gaps) are cached under a key of their own (`toolPackKey`). They read every rule of the

@@ -204,7 +204,7 @@ describe("the report", () => {
 });
 
 describe("cache keys", () => {
-  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingArchive: "r", adapterSources: "a" };
+  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingArchive: "r", config: "c" };
   const rules = {
     a: { engine: "e", document: '{"id":"a"}', conformanceEntry: "{}", caseSources: ["fixtures/a.py\0aa"], recording: "ra" },
     b: { engine: "e", document: '{"id":"b"}', conformanceEntry: "{}", caseSources: ["fixtures/b.py\0bb"], recording: "rb" },
@@ -222,11 +222,14 @@ describe("cache keys", () => {
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
 
-  it("a gate-code, dependency or recorder adapter change changes every key", () => {
-    for (const part of ["gateCode", "dependencies", "adapterSources"] as const) {
+  // The config id covers every input of a recorded answer (recording-store.test.ts), the not-copied prefixes among them.
+  it("a gate-code, dependency or config change changes every rule's key and the tool-pack checks' key", () => {
+    const pack = { engine: "e", names: ["A", "B"], caseSources: ["fixtures/a.py\0aa", "fixtures/b.py\0bb"] };
+    for (const part of ["gateCode", "dependencies", "config"] as const) {
       const changed = { ...shared, [part]: "changed" };
       assert.notEqual(ruleKey(changed, rules.a), ruleKey(shared, rules.a));
       assert.notEqual(ruleKey(changed, rules.b), ruleKey(shared, rules.b));
+      assert.notEqual(toolPackKey(changed, pack, [ruleKey(shared, rules.a)]), toolPackKey(shared, pack, [ruleKey(shared, rules.a)]));
     }
   });
 
