@@ -59,11 +59,23 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
         .iter()
         .map(|s| (s.name.clone(), s))
         .collect::<BTreeMap<_, _>>();
+    // Physical scopes alone do not count repeated lookups inside a fused query.
+    // Keep authored indexes when their producer has multiple validated reads.
+    let mut readers = BTreeMap::<String, usize>::new();
+    for stage in &plan.stages {
+        for input in &stage.inputs {
+            *readers.entry(input.clone()).or_default() += occurrences(&stage.query, input);
+        }
+    }
+    for input in &final_reads {
+        *readers.entry(input.clone()).or_default() += occurrences(&plan.query, input);
+    }
     let mut retained = plan
         .stages
         .iter()
         .filter(|s| {
-            s.reachability.is_some()
+            (!s.indexes.is_empty() && readers.get(&s.name).is_some_and(|&n| n > 1))
+                || s.reachability.is_some()
                 || !s.deferred.is_empty()
                 || s.recursive
                 || s.query.to_ascii_uppercase().contains("COLLATE")
