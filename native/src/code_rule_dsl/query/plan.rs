@@ -3,6 +3,7 @@
 //! continuation, rule callback, or captured environment crosses this boundary.
 
 mod async_reference;
+mod call_batch;
 pub(crate) mod contract;
 pub(crate) mod python_structure;
 mod relation;

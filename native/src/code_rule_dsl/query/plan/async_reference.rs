@@ -2,8 +2,9 @@
 //! This is deliberately hand-authored reference SQL, not a rule-ID compiler.
 //! The generic compiler must later produce and qualify against this shape.
 use super::{
+    call_batch,
     contract::{Coverage, FindingKey, Findings},
-    python_structure::{self, ContextKind, NodeRef},
+    python_structure::{ContextKind, NodeRef},
     relation::Relation,
 };
 use crate::code_rule_dsl::{
@@ -14,11 +15,12 @@ use crate::code_rule_dsl::{
         Reading, ScopeTable,
         options::{DEFAULT_PYTHON_MINOR, PythonOptions},
     },
+    tape::TapeDoc,
 };
 use ast_grep_core::{Doc, Node};
 use rusqlite::{Connection, StatementStatus};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     time::Instant,
 };
 
@@ -100,6 +102,8 @@ struct Metrics {
     fullscan_steps: i32,
     autoindex_rows: i32,
     preparation_ns: u64,
+    diagnostics_ns: u64,
+    diagnostics_wall_ns: u64,
     execution_ns: u64,
     structure_ns: u64,
     scope_ns: u64,
@@ -143,17 +147,49 @@ fn id(node: NodeRef) -> i64 {
     node.node_id as i64
 }
 
+/// Tape preorder IDs provide direct node access; no per-node Node map is built.
+fn at<'t>(root: &Node<'t, TapeDoc>, pre: usize) -> Node<'t, TapeDoc> {
+    root.root().adopt(root.get_doc().node(pre as u32))
+}
+/// Scope tables name targets by source span and kind. Tape starts are monotone
+/// in preorder, so this locates a target without a global range-index copy.
+fn target_at<'t>(
+    root: &Node<'t, TapeDoc>,
+    target: python_facts::Target,
+) -> Option<Node<'t, TapeDoc>> {
+    let tape = root.get_doc();
+    let (mut lo, mut hi) = (0, tape.transducer_len());
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if tape.transducer_span(mid as u32).start < target.range.0 {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    while lo < tape.transducer_len() {
+        let span = tape.transducer_span(lo as u32);
+        if span.start != target.range.0 {
+            break;
+        }
+        if span.end == target.range.1 && tape.transducer_kind(lo as u32) == target.kind {
+            return Some(at(root, lo));
+        }
+        lo += 1;
+    }
+    None
+}
+
 /// Per-execution cache has one immutable tree/table/reading per document. It is
 /// intentionally not a cross-revision cache: no unsafe range-only cache keys.
-struct Semantics<'a, 't, D: Doc> {
-    nodes: &'a HashMap<(u32, usize), Node<'t, D>>,
-    roots: &'a [(u32, Node<'t, D>)],
+struct Semantics<'a, 't> {
+    documents: &'a BTreeMap<u32, Node<'t, TapeDoc>>,
     modules: &'a BTreeMap<u32, ModulePath>,
     tables: BTreeMap<u32, ScopeTable>,
     facts: BTreeMap<(u32, usize), NodeFacts>,
     failed: BTreeMap<u32, String>,
 }
-impl<'a, 't, D: Doc> Semantics<'a, 't, D> {
+impl<'a, 't> Semantics<'a, 't> {
     fn demand(&mut self, wanted: impl IntoIterator<Item = NodeRef>, metrics: &mut Metrics) {
         let started = cpu_ns();
         let scope_before = metrics.scope_ns;
@@ -168,13 +204,7 @@ impl<'a, 't, D: Doc> Semantics<'a, 't, D> {
         let python = PythonOptions::new(DEFAULT_PYTHON_MINOR);
         for (doc, ids) in requests {
             if let std::collections::btree_map::Entry::Vacant(entry) = self.tables.entry(doc) {
-                let root = self
-                    .roots
-                    .iter()
-                    .find(|(n, _)| *n == doc)
-                    .unwrap()
-                    .1
-                    .clone();
+                let root = self.documents[&doc].clone();
                 let scope_start = cpu_ns();
                 let table = ScopeTable::build_in(
                     root,
@@ -202,7 +232,7 @@ impl<'a, 't, D: Doc> Semantics<'a, 't, D> {
                     module: self.modules.get(&doc),
                     python: &python,
                 },
-                ids.into_iter().map(|node| self.nodes[&(doc, node)].clone()),
+                ids.into_iter().map(|node| at(&self.documents[&doc], node)),
             )
             .expect("fixed Python projection configuration");
             metrics.semantic_requests += batch.stats.distinct;
@@ -240,28 +270,23 @@ impl<'a, 't, D: Doc> Semantics<'a, 't, D> {
 
 /// Shared structural value origins. These are node relations, never condition
 /// evaluations. Constructors/symbols remain in SQL. One lookup per demanded owner.
-fn origins<'t, D: Doc>(
-    doc: u32,
-    owner: Node<'t, D>,
+fn origins<'t>(
+    owner: Node<'t, TapeDoc>,
     binding: Option<&python_facts::BindingProjection>,
-    index: &HashMap<(u32, usize, usize, u16), Node<'t, D>>,
+    root: &Node<'t, TapeDoc>,
     with_context: bool,
-) -> Vec<Node<'t, D>> {
+) -> Vec<Node<'t, TapeDoc>> {
     let owner = unparen(owner);
     let mut out = vec![owner.clone()];
     let Some(binding) = binding else { return out };
-    let find = |target: python_facts::Target| {
-        index
-            .get(&(doc, target.range.0, target.range.1, target.kind))
-            .cloned()
-    };
+    let find = |target: python_facts::Target| target_at(root, target);
     if let Some(value) = binding.value.and_then(find) {
         out.push(unparen(value));
     }
     if let Some(site) = binding.site.and_then(find) {
         if site.kind() == "assignment" {
             if let (Some(left), Some(right)) = (site.field("left"), site.field("right")) {
-                let list = |node: &Node<'_, D>| {
+                let list = |node: &Node<'_, TapeDoc>| {
                     matches!(
                         node.kind().as_ref(),
                         "list"
@@ -330,8 +355,8 @@ fn origins<'t, D: Doc>(
     out
 }
 
-fn execute<'t, D: Doc>(
-    roots: &[(u32, Node<'t, D>)],
+fn execute<'t>(
+    roots: &[(u32, Node<'t, TapeDoc>)],
     modules: &BTreeMap<u32, ModulePath>,
     copies: usize,
 ) -> Run {
@@ -341,25 +366,20 @@ fn execute<'t, D: Doc>(
         documents: roots.len(),
         ..Metrics::default()
     };
-    let mut nodes = HashMap::new();
-    let mut ranges = HashMap::new();
-    let mut parse_failed = BTreeMap::new();
-    let structure = python_structure::collect_with(roots.to_vec(), |doc, node| {
-        if node.is_error() || node.is_missing() {
-            parse_failed.insert(doc, "parse error".into());
-        }
-        nodes.insert((doc, node.node_id()), node.clone());
-        let r = node.range();
-        ranges
-            .entry((doc, r.start, r.end, node.kind_id()))
-            .or_insert_with(|| node.clone());
-    });
+    let documents: BTreeMap<_, _> = roots.iter().cloned().collect();
+    assert_eq!(documents.len(), roots.len(), "document IDs must be unique");
+    let node = |doc, pre| at(&documents[&doc], pre);
+    let structure = call_batch::collect(roots, ContextKind::AsyncFunction, |_, _| {});
+    let parse_failed = roots
+        .iter()
+        .filter(|(_, root)| root.get_doc().syntax_error_nodes().next().is_some())
+        .map(|(doc, _)| (*doc, "parse error".to_owned()))
+        .collect();
     metrics.structure_ns = cpu_ns() - started;
     metrics.syntax_nodes = structure.counters.visited_nodes;
-    metrics.calls = structure.calls.len();
+    metrics.calls = structure.counters.calls;
     let mut semantic = Semantics {
-        nodes: &nodes,
-        roots,
+        documents: &documents,
         modules,
         tables: BTreeMap::new(),
         facts: BTreeMap::new(),
@@ -370,7 +390,7 @@ fn execute<'t, D: Doc>(
         .iter()
         .filter(|c| structure.contexts[c.context as usize].kind == ContextKind::AsyncFunction)
         .filter(|c| {
-            nodes[&(c.callee.doc, c.callee.node_id)]
+            node(c.callee.doc, c.callee.node_id)
                 .next()
                 .is_some_and(|next| {
                     matches!(
@@ -436,7 +456,7 @@ fn execute<'t, D: Doc>(
         .collect();
     let mut receiver_nodes = BTreeMap::new();
     for attr in &structure.attributes {
-        if nodes[&(attr.name_node.doc, attr.name_node.node_id)].text() == "open"
+        if node(attr.name_node.doc, attr.name_node.node_id).text() == "open"
             && active_ids.contains(&(attr.node.doc, attr.node.node_id))
         {
             receivers.push(&[attr.node.doc as i64, id(attr.node), id(attr.object)]);
@@ -500,7 +520,7 @@ fn execute<'t, D: Doc>(
     semantic.demand(
         requests
             .iter()
-            .map(|(r, _)| reference(r.doc, &unparen(nodes[&(r.doc, r.node_id)].clone()))),
+            .map(|(r, _)| reference(r.doc, &unparen(node(r.doc, r.node_id)))),
         &mut metrics,
     );
     let mut origin_rows = Relation::new(&["doc", "owner", "reading", "value"]);
@@ -508,13 +528,13 @@ fn execute<'t, D: Doc>(
     let mut value_demand = BTreeSet::new();
     let mut constructed = BTreeSet::new();
     for (owner, reading) in requests {
-        let node = unparen(nodes[&(owner.doc, owner.node_id)].clone());
+        let value_node = unparen(node(owner.doc, owner.node_id));
         let binding = semantic
             .facts
-            .get(&(owner.doc, node.node_id()))
+            .get(&(owner.doc, value_node.node_id()))
             .filter(|f| {
                 f.binding_eligible
-                    && (reading == 1 || nodes[&(owner.doc, owner.node_id)].kind() == "identifier")
+                    && (reading == 1 || node(owner.doc, owner.node_id).kind() == "identifier")
             })
             .and_then(|f| {
                 let b = if reading == 1 {
@@ -528,7 +548,7 @@ fn execute<'t, D: Doc>(
                     None
                 }
             });
-        for value in origins(owner.doc, node, binding, &ranges, reading == 0) {
+        for value in origins(value_node, binding, &documents[&owner.doc], reading == 0) {
             let v = reference(owner.doc, &value);
             origin_rows.push(&[owner.doc as i64, id(owner), reading, id(v)]);
             if matches!(value.kind().as_ref(), "identifier" | "attribute") {
@@ -635,7 +655,7 @@ fn execute<'t, D: Doc>(
                     .into_iter()
                     .flatten()
                     .map(|node| {
-                        let line = nodes[&(*doc, *node)].start_pos().line() + 1;
+                        let line = at(&documents[doc], *node).start_pos().line() + 1;
                         FindingKey {
                             rule: rule.clone(),
                             code: code.into(),
@@ -650,6 +670,8 @@ fn execute<'t, D: Doc>(
     metrics.execution_ns = cpu_ns() - started - metrics.preparation_ns;
     metrics.wall_ns = wall.elapsed().as_nanos() as u64;
     // Diagnostics execute after the measured job and never invoke fact producers.
+    let diagnostics_started = cpu_ns();
+    let diagnostics_wall = Instant::now();
     for sql in [SELECT_TARGETS, COMPOSE] {
         let mut explain = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
         let mut rows = explain.raw_query();
@@ -657,8 +679,12 @@ fn execute<'t, D: Doc>(
             metrics.explain.push(row.get(3).unwrap());
         }
     }
+    metrics.diagnostics_ns = cpu_ns() - diagnostics_started;
+    metrics.diagnostics_wall_ns = diagnostics_wall.elapsed().as_nanos() as u64;
     Run { findings, metrics }
 }
 
+#[cfg(test)]
+mod native_oracle;
 #[cfg(test)]
 mod tests;

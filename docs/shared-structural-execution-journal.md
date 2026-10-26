@@ -69,3 +69,38 @@ Artifacts: `benchmark/shared-structural-execution/reference-500.json` and its ma
 The manifest records source hashes, binary hash, corpus commit, and compiler settings.
 This qualification build uses optimization level 3, 16 local codegen units, and no LTO.
 Apple's linker rejected the initial cached LLVM bitcode; disabling LTO resolved the local build issue.
+
+### Compact tape projection and indexed native baseline
+
+The second reference removes the per-node AST maps and unused structural relations.
+It reads tape columns once and creates nodes only for selected call neighborhoods and context boundaries.
+Binding targets use direct tape access and a span search instead of a copied global range index.
+Eleven plan tests and five semantic projection tests pass.
+The indexed native oracle also agrees with the stateless native oracle on the positive fixtures.
+
+The 500-file median reference CPU fell from 779 ms to 44 ms.
+Structural collection fell from 737 ms to 11 ms.
+The recorded process peak footprint fell from about 702 MB to 136 MB.
+
+The full frozen corpus contains 5,725 Python files and 95,697,853 source bytes.
+All three reference runs agree with native, with complete coverage and no findings.
+This remains a negative workload; positive-result correctness comes from the fixtures.
+Median reference execution CPU is 843 ms versus 1,394 ms for indexed native matching.
+The approximately 1.65x improvement does not meet the proposed 2x execution gate.
+Native first-use candidate selection costs another 43.879 seconds; later runs reuse that frontier.
+Those costs are reported separately and must not be mixed into a matching speedup claim.
+Common parse/tape construction costs 9.787 seconds; mandatory index construction costs 58.235 seconds.
+These costs dominate end-to-end time and are not improved by this reference.
+
+The full reference reads 19,007,630 tape rows and retains 65,399 async calls.
+It makes 65,302 semantic requests and builds 1,063 scope tables.
+Scope construction costs a median 462 ms, the largest remaining reference stage.
+Two SQL executions use 2,030,306 VM instructions and about 55 ms of CPU.
+Only ten candidate branches and thirteen value origins survive.
+This is evidence of excessive semantic demand and relation input, not expensive final composition.
+The next change applies a conservative import-syntax screen before qualification-only requests.
+Binding and value requests retain their exact semantic behavior.
+
+Artifacts: `reference-v2-500.json`, `reference-v2-full.json`, and `reference-v2-manifest.json` in `benchmark/shared-structural-execution`.
+The full benchmark process peak footprint is 1,462,961,664 bytes, including both engines and common preparation.
+These results qualify an independent reference only. Generic compilation and production cutover remain pending.

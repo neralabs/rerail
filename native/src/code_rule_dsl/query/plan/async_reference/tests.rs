@@ -1,3 +1,4 @@
+use super::native_oracle::Native;
 use super::*;
 use crate::code_rule_dsl::{
     CodeRuleDslRuntime,
@@ -6,6 +7,7 @@ use crate::code_rule_dsl::{
 };
 use ast_grep_core::{AstGrep, tree_sitter::StrDoc};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 fn parsed(sources: &[String]) -> Vec<AstGrep<TapeDoc>> {
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
@@ -56,7 +58,7 @@ fn native_policy() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     );
     let mut capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
     capabilities["limits"]["maxFiles"] = json!(10000);
-    capabilities["limits"]["maxSourceBytes"] = json!(10_000_000);
+    capabilities["limits"]["maxSourceBytes"] = json!(200_000_000);
     capabilities["limits"]["maxVisitedNodes"] = json!(100_000_000);
     capabilities["limits"]["maxWitnesses"] = json!(1_000_000);
     CodeRuleDslRuntime::compile(
@@ -140,7 +142,19 @@ fn check(sources: Vec<String>) -> Run {
         "{:?}",
         run.findings.coverage
     );
-    let native = native_run(&native_policy(), &sources);
+    let compiled = native_policy();
+    let native = native_run(&compiled, &sources);
+    let tapes = parsed(&sources);
+    let paths: Vec<_> = (0..sources.len())
+        .map(|doc| format!("doc{doc}.py"))
+        .collect();
+    let modules = BTreeMap::new();
+    let indexed = Native::new(&tapes, &compiled, &paths, &modules);
+    assert_eq!(
+        native,
+        indexed.run().keys,
+        "indexed native must match stateless native"
+    );
     assert_eq!(
         keys(&run),
         native,
@@ -249,6 +263,12 @@ fn duplicate_labels_do_not_repeat_producer_work() {
     let sources=vec!["import os\nfrom pathlib import Path\nasync def f():\n os.spawnl(os.P_WAIT, 'x')\n Path('x').open()\n".into()];
     let one = reference_run(&sources, 1);
     let many = reference_run(&sources, 16);
+    assert_eq!(
+        one.findings.keys.len(),
+        2,
+        "sharing gate must exercise positive output"
+    );
+    assert!(one.metrics.semantic_requests > 0);
     assert_eq!(one.metrics.syntax_nodes, many.metrics.syntax_nodes);
     assert_eq!(
         one.metrics.semantic_requests,
@@ -354,23 +374,30 @@ fn complete_async_family_corpus_profile() {
     let compile = cpu_ns();
     let native = native_policy();
     let compile_cpu = cpu_ns() - compile;
+    let indexed = Native::new(&parsed, &native, &paths, &modules);
     let mut runs = Vec::new();
     for iteration in 0..3 {
-        let candidate = || execute(&roots, &modules, 1);
-        let baseline = || {
+        let candidate = || {
             let cpu = cpu_ns();
             let wall = Instant::now();
-            let keys = native_run_at(&native, &sources, &paths, &module_wires);
-            (keys, cpu_ns() - cpu, wall.elapsed().as_nanos() as u64)
+            let mut run = execute(&roots, &modules, 1);
+            // Include producer/table destruction in job CPU. EXPLAIN remains
+            // diagnostic work, while preparation is reported separately.
+            run.metrics.execution_ns =
+                cpu_ns() - cpu - run.metrics.preparation_ns - run.metrics.diagnostics_ns;
+            run.metrics.wall_ns =
+                wall.elapsed().as_nanos() as u64 - run.metrics.diagnostics_wall_ns;
+            run
         };
-        let (run, (oracle, native_cpu, native_wall)) = if iteration % 2 == 0 {
+        let baseline = || indexed.run();
+        let (run, oracle) = if iteration % 2 == 0 {
             (candidate(), baseline())
         } else {
             let b = baseline();
             (candidate(), b)
         };
         let mismatches = keys(&run)
-            .symmetric_difference(&oracle)
+            .symmetric_difference(&oracle.keys)
             .cloned()
             .collect::<Vec<_>>();
         assert!(
@@ -385,9 +412,23 @@ fn complete_async_family_corpus_profile() {
                 .all(|c| *c == Coverage::Complete),
             "incomplete reference domains"
         );
-        runs.push(json!({"iteration":iteration,"reference_cold_cpu_ns":run.metrics.execution_ns+run.metrics.preparation_ns+parse_cpu,"reference":run.metrics,"findings":run.findings.keys.len(),"native_cold_eval_cpu_ns":native_cpu,"native_cold_eval_wall_ns":native_wall}));
+        assert!(run.metrics.sql_executions <= 100, "hard execution budget");
+        runs.push(json!({"iteration":iteration,
+            "reference_job_cpu_ns":run.metrics.execution_ns+run.metrics.preparation_ns+parse_cpu+indexed.index_ns,
+            "native_job_cpu_ns":oracle.cpu_ns+oracle.compile_ns+parse_cpu+indexed.index_ns,
+            "execution_cpu_ratio":run.metrics.execution_ns as f64/oracle.cpu_ns as f64,
+            "reference":run.metrics,"findings":run.findings.keys.len(),
+            "native_execution_cpu_ns":oracle.cpu_ns,"native_execution_wall_ns":oracle.wall_ns,
+            "native_selection_cpu_ns":oracle.prepare_ns,"native_sql_compile_ns":oracle.compile_ns,
+            "native_roots_matched":oracle.roots_matched,
+            "native_frontier_cached":iteration>0,
+            "native_match_cpu_ns":oracle.cpu_ns.saturating_sub(oracle.prepare_ns),
+            "reference_to_native_match_ratio":run.metrics.execution_ns as f64/oracle.cpu_ns.saturating_sub(oracle.prepare_ns) as f64}));
     }
-    let report = json!({"scope":"complete four-rule async family; raw matching, no suppressions/payloads; native stateless evaluation includes parse; reference parse+tape separately reported and added to reference_cold_cpu_ns","corpus":root,"files":sources.len(),"source_bytes":sources.iter().map(String::len).sum::<usize>(),"parse_cpu_ns":parse_cpu,"native_compile_cpu_ns":compile_cpu,"sql":[SELECT_TARGETS,COMPOSE],"runs":runs});
+    let report = json!({"scope":"complete four-rule async family; raw finding keys, no suppressions/payloads; indexed native shares scope/memo across clauses; job totals add common parse+tape and mandatory index construction; native candidate frontier is fresh only in iteration0, cached thereafter; compare match CPU separately",
+        "corpus":root,"files":sources.len(),"source_bytes":sources.iter().map(String::len).sum::<usize>(),
+        "parse_tape_cpu_ns":parse_cpu,"index_construction_cpu_ns":indexed.index_ns,
+        "native_compile_cpu_ns":compile_cpu,"sql":[SELECT_TARGETS,COMPOSE],"runs":runs});
     eprintln!("{}", serde_json::to_string_pretty(&report).unwrap());
     if let Ok(path) = std::env::var("RERAIL_SHARED_REPORT") {
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
