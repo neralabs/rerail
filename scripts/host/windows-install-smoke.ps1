@@ -118,6 +118,20 @@ log: { type: stdout, level: warn }
   Write-Host $gitBash
   if ($gitBashExit -ne 0) { throw "bare rerail did not run in Git Bash (exit $gitBashExit)" }
 
+  Step "Running rerail.cmd in a console on code page 437"
+  # The runner's console is on UTF-8 (65001); a person's is on their OEM code page, 437 or 850 in the West. A console of
+  # its own (CreateNoWindow) keeps the chcp from reaching this one.
+  $env:SMOKE_LAUNCHER = $launcher
+  $legacy = New-Object Diagnostics.ProcessStartInfo("cmd.exe")
+  $legacy.Arguments = '/d /s /c "chcp 437 >nul & call "%SMOKE_LAUNCHER%" version"'
+  $legacy.UseShellExecute = $false; $legacy.CreateNoWindow = $true
+  $legacy.RedirectStandardOutput = $true; $legacy.RedirectStandardError = $true
+  $legacyRun = [Diagnostics.Process]::Start($legacy)
+  $legacyOut = $legacyRun.StandardOutput.ReadToEndAsync(); $legacyErr = $legacyRun.StandardError.ReadToEndAsync()
+  $legacyRun.WaitForExit()
+  Write-Host ($legacyOut.Result + $legacyErr.Result)
+  if ($legacyRun.ExitCode -ne 0) { throw "rerail.cmd failed on code page 437 (exit $($legacyRun.ExitCode))" }
+
   Step "Starting Rerail in the project"
   # Set-up's "start" answer turned Rerail on in the project; starting again says it is already on.
   Write-Host ((& $launcher start --repo $project) -join "`n")
