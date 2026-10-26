@@ -507,7 +507,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(bootstrapped.previous).toEqual(first.current);
   });
 
-  it("leaves the previous state untouched when the install fails validation", async () => {
+  it("leaves no Rerail home behind when a first install fails validation", async () => {
     const { home, packageRoot } = await fixture();
     const registry = new FakeRegistry("1.0.0");
     const updater = new ManagedUpdater({
@@ -520,9 +520,25 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
       },
     });
     await expect(updater.install()).rejects.toThrow("native health failed");
-    expect(existsSync(join(home, "versions", "1.0.0"))).toBe(false);
-    expect(existsSync(updater.currentLink)).toBe(false);
-    expect(existsSync(updater.launcherPath)).toBe(false);
+    // Set-up then says nothing was changed: not even an empty versions/ or Rerail home remains.
+    expect(existsSync(home)).toBe(false);
+  });
+
+  it("removes only the empty versions/ it made when an install into an existing home fails", async () => {
+    const { home, packageRoot } = await fixture();
+    await mkdir(home);
+    await writeFile(join(home, "keep.json"), "{}");
+    const updater = new ManagedUpdater({
+      home,
+      packageRoot,
+      packageVersion: "1.0.0",
+      registry: new FakeRegistry("1.0.0"),
+      validateInstallation: async () => {
+        throw new Error("native health failed");
+      },
+    });
+    await expect(updater.install()).rejects.toThrow("native health failed");
+    expect(await readdir(home)).toEqual(["keep.json"]);
   });
 });
 
