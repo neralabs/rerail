@@ -5331,3 +5331,20 @@ Refresh stays at the existing coherent owner boundary and targets only changed r
 All ten focused production storage tests pass in the lightweight laboratory host.
 The original input row and query work allowances remain unchanged.
 The fresh frozen-control repeat and final candidate measurements follow after broad validation of this correction.
+
+
+The input-statistics correction passes 1,559 native DSL tests, with 23 existing ignores.
+All 82 laboratory tests, all 52 execution-shape tests, static checks, profiling checks, and all-target native Clippy pass.
+The original 192 quality observations retain exact parity: 130 positive and 62 clean.
+All ten selected serverplan source batches and the five-file quality domain pass.
+Four 12-second diagnostics hit their deadline during concurrent validation, then passed without engine errors at a 25-second bound after compilation finished.
+The fixed guard retains exact parity and reports 357 host submissions and 69 internal SQLite executions.
+The eight additional host statements publish and retire input statistics at the owner boundaries.
+Counts remain diagnostic.
+
+Final source is `2452e9611c50808ee30884abdab7310867a2fce8`.
+Frozen addon SHA-256 is `7d3c667eb238ad3b4ec0ec09e989c06b2165e2fccb21bca83af76fa833518cf9`.
+Frozen control and current policy identities match exactly.
+A contemporary complete 50-rule control repeat now precedes the complete final 50- and 60-rule candidate runs.
+They execute sequentially, without overlapping worktree builds, tests, detailed tracing, SQL capture, or allocator census.
+Both earlier control results and rejected candidates remain part of the record.
