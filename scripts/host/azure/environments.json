@@ -34,27 +34,21 @@
       "os": "linux",
       "image": "Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest",
       "size": "Standard_D2s_v5",
-      "expect": "setup-fails",
-      "failsWith": "GLIBC_2.39' not found",
-      "because": "glibc 2.35; the Linux engines are built on Ubuntu 24.04 and need glibc 2.39"
+      "expect": "pass"
     },
     {
       "id": "debian-12-x64",
       "os": "linux",
       "image": "Debian:debian-12:12-gen2:latest",
       "size": "Standard_D2s_v5",
-      "expect": "setup-fails",
-      "failsWith": "GLIBC_2.39' not found",
-      "because": "glibc 2.36; the Linux engines are built on Ubuntu 24.04 and need glibc 2.39"
+      "expect": "pass"
     },
     {
       "id": "rhel-9-x64",
       "os": "linux",
       "image": "RedHat:RHEL:9-lvm-gen2:latest",
       "size": "Standard_D2s_v5",
-      "expect": "setup-fails",
-      "failsWith": "GLIBC_2.39' not found",
-      "because": "glibc 2.34; the Linux engines are built on Ubuntu 24.04 and need glibc 2.39"
+      "expect": "pass"
     },
     {
       "id": "windows-11-x64",

@@ -293,8 +293,9 @@ Code, Codex and Cursor relay the questions as text.
 
 - Node.js 24 or newer on `PATH`. The launcher remembers the Node that ran setup
   and falls back to `PATH`, so version-manager switches do not break hooks.
-- macOS, Linux glibc, or Windows MSVC on arm64/x64. The package carries
-  prebuilt native kernels for those; nothing is compiled on the user's machine.
+- macOS, Linux with glibc 2.28 or newer (what Node 24 needs), or Windows MSVC on
+  arm64/x64. The package carries prebuilt native kernels for those; nothing is
+  compiled on the user's machine.
 - Read access to `@neralabs/rerail` on npmjs (see "Registry access").
 
 ## Registry access
