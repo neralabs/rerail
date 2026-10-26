@@ -130,3 +130,52 @@ Completed fact sources have explicit materialization owners to prevent per-row v
 Multi-branch queries use UNION without redundant branch-level DISTINCT operations.
 The independent SQL remains the qualification oracle for this emitted shape.
 This is the Phase 1 generated-shape prototype, not catalog grammar lowering.
+
+### Complete reference and generated SQL gate passed
+
+Source commit: `0fa3bf6e`. Twenty-eight focused tests pass.
+The new positive batch produces 120 findings across 24 documents and all four labels.
+Duplicate-label tests retain identical producer work for sixteen copies.
+The generated and independent SQL agree with both indexed and stateless native fixture results.
+Each completed relation is filtered at most once per statement.
+
+The corrected 500-file run has 27 ms median execution CPU and zero semantic requests.
+Native matching takes 75 ms. Generated SQL has the same execution cost as the independent reference.
+The full frozen workload also passes all finding and complete-coverage checks.
+
+| Full-workload measurement | Before demand pruning (v2) | Qualified reference (v4) |
+| --- | ---: | ---: |
+| Median execution CPU | 843 ms | 401 ms |
+| Scope tables built | 1,063 | 5 |
+| Semantic requests | 65,302 | 12 |
+| First-stage candidate rows | 10 | 10 |
+| Value-origin rows | 13 | 13 |
+| SQL executions | 2 | 2 |
+| SQL VM instructions | 2,030,306 | 1,887 |
+
+The generated shape takes 391 ms median CPU and 1,886 SQL VM instructions.
+Indexed native matching takes 1,347 ms median CPU in the same run.
+The reference/native per-run median CPU ratio is 0.297, passing the proposed 2x gate.
+The generated/reference per-run median ratio is 0.957, passing the 1.25x shape gate.
+SQL generation takes 143 microseconds and is reported separately.
+The two generated statements are 894 and 1,885 bytes; they have the same relational stages as the 464- and 971-byte reference statements.
+Quoted identifiers, explicit columns, and aliases account for the additional text.
+There are no SQL continuation states or rule callbacks.
+
+The corpus still produces zero findings for this family, so these timings describe negative-workload performance.
+Positive fixtures establish correctness, not positive-throughput performance.
+The benchmark process peak RSS is 1,318,387,712 bytes, below the 1.5 GiB ceiling.
+It includes both engines, generated/reference runs, and common preparation.
+
+End-to-end cost remains dominated by common preparation: 10.125 seconds for parsing/tapes and 53.031 seconds for mandatory index construction.
+Reference family job CPU is about 63.56 seconds versus 64.47–64.51 seconds for native with cached candidates.
+Native first-use candidate selection adds 42.615 seconds; its first job costs 107.125 seconds.
+The matching speedup must not be presented as an equivalent whole-job speedup.
+
+Artifacts: `reference-v4-500.json`, `reference-v4-full.json`, and `reference-v4-manifest.json`.
+The directory README and checked-in compiler wrapper describe reproduction.
+
+The next exposed producer-shape error is eager argument projection for all async calls.
+Only surviving spawn candidates need argument facts, but the structural collector currently builds them before SQL selection.
+The next change separates that producer and invokes it once for the distinct surviving call demand.
+Generic grammar lowering, selective-anchor integration, catalog coverage, incremental caches, and production cutover remain pending.
