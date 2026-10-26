@@ -13,6 +13,7 @@ mod oracle;
 mod replay;
 mod rules;
 mod store;
+mod ygraph;
 
 use std::path::PathBuf;
 
@@ -94,6 +95,8 @@ fn main() {
         // `gnorm --real SPEC [--dump STAGE]`: compile and normalise the spec's repository plans
         // only (no exports read): the refusals, and the IR of the named stages.
         "gnorm" => gen::real::check(&PathBuf::from(arg(&args, "--real").expect("--real")), arg(&args, "--dump").as_deref()),
+        // `ygraph parity|replay …`: Y1's maintained reference graph (src/ygraph).
+        "ygraph" => ygraph::main(args.clone()),
         _ => {
             eprintln!("usage: facts-b extract --run-dir DIR [--corpus DIR] [--threads N] | dump FILE");
             std::process::exit(2);
