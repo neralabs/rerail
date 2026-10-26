@@ -1161,3 +1161,67 @@ The default-feature library check passes. Focused capture tests, the catalog, an
 The unchanged qualification checker rejects only the cold CPU ratio: 1.788 exceeds 1.30.
 The separate `sql-native-capture-cohort-rejected` report and compressed inputs retain that evidence.
 The accepted `sql-native-wave` baseline is unchanged. Further work targets utility activation frames.
+
+Utility frame reuse is now implemented for unparameterized cache misses.
+A lane stores compact utility resumes and reuses its current frame for the body.
+All completion paths apply the body transaction before utility accounting, memo publication, and the caller transaction.
+Parameterized calls keep their capture mapping and use the same utility completion helper.
+
+Review also found a failure-path depth bug in the previous executor.
+Frontier cancellation absorbed a completed utility body's peak without adding the caller's utility level.
+The shared completion helper now includes that level for both call forms, without double-counting work or caching failures.
+All 54 focused tests pass, including four new groups for nested resumes, capture transactions, limits, and cancellation.
+
+The unchanged build-27 full rerun uses 176.706 SQL CPU seconds and 96.783 native CPU seconds, a ratio of 1.826.
+This differs materially from the earlier absolute timings. New comparisons must use paired runs and exact operation counts.
+The 500-file rerun uses 8.733 SQL CPU seconds and 5.760 native CPU seconds, a ratio of 1.516.
+The utility spike still needs measured acceptance. Resume byte counters describe occupied entries, not allocated vector capacity.
+
+The first utility-reuse build removes 44,178,292 full utility frames and corresponding return steps on the full workload.
+Findings still match. However, SQL CPU is 180.634 seconds against 98.021 native seconds, a ratio of 1.843.
+The nearby unchanged run has a ratio of 1.826. The initial spike therefore demonstrates no CPU improvement.
+Alternating 500-file runs also show no stable win.
+
+The profile exposes new overhead in the shared completion helpers.
+Every physical frame now calls `complete_frame` and `apply_transaction`, including frames without a utility resume.
+The next revision keeps ordinary completion inline and separates utility unwinding from that common path.
+It retains one physical-pop site and the reviewed transaction order.
+
+The inline-completion revision also fails to improve CPU in alternating slice runs.
+Its ratios are 1.909 and 1.770, against 1.733 for the intervening unchanged build.
+Utility frame reuse is rejected and removed, including its added resume stack and counters.
+The discovered frontier depth correction remains, with focused regression coverage.
+The rejected implementations remain in `/tmp/rerail-cohort-utility-fusion-29.rs` and `/tmp/rerail-cohort-utility-fusion-30.rs`.
+
+Review identifies two more direct sources of request-copy overhead.
+Both `Frame::child` and `leaf_request` clone the input environment before replacing it with the intended environment.
+Direct request construction removes those redundant reference-count operations without changing frame ownership or scheduling.
+
+The next layout spike removes the redundant record slice from `TapeNode`.
+Every node's slice equals its immutable document's record array; the sole constructor and all derived handles preserve this invariant.
+The handle can therefore retain only the document reference and ordinal.
+This reduces handle size but adds a record-access indirection. Both native and SQL execution must be measured.
+
+The compact-node build passes 51 focused cohort tests and 36 tape tests.
+The continuation frame falls from 144 to 128 bytes; its action payload falls from 88 to 72 bytes.
+The paired 500-file run uses 10.591 SQL CPU seconds and 7.217 native CPU seconds, a ratio of 1.468.
+Findings and edit results match. Full-workload measurement remains required.
+
+The next migration removes immutable root metadata from continuations.
+Each lane will own its context, truth mode, and binding history once.
+Internal inputs will carry only program, node, capture environment, and exclusion state.
+Completion will reconstruct the original source request by moving its saved input and lane metadata.
+
+Pure atomic operations will consume borrowed leaf inputs instead of temporary owned requests.
+Only semantic, comparison, and navigation boundaries will construct their required owned payloads.
+File and memo eligibility callbacks will receive the current context and actual node directly.
+Eligibility cannot be cached per root: constraints can select captures from another document.
+Capture ownership, weak cache identities, clause order, and resource semantics remain unchanged.
+
+The full compact-node run preserves 97,798 findings and all three edits.
+SQL CPU is 150.963 seconds; native CPU is 92.021 seconds, a ratio of 1.641.
+The nearby unchanged build has a ratio of 1.826. This improvement is useful but still fails the 1.30 ceiling.
+SQL wall time is 42.159 seconds; peak RSS is 1,393,819,648 bytes.
+The median edit CPU ratio is 1.173. Matching still uses 23 SQL executions and 25,216,565 VM instructions.
+Both scalar-call audits remain zero. The catalog preserves all 87,162 comparisons, and the default-feature library check passes.
+The updated rejected report retains these measurements and compressed inputs. The accepted baseline remains unchanged.

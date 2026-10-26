@@ -1321,10 +1321,15 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Frame<
     }
     fn leaf_request(&self, p: &Programs) -> Request<'t, D> {
         let (program, env) = self.leaf_parts(p);
-        let mut request = self.request.clone();
-        request.program = program;
-        request.env = env.clone();
-        request
+        Request {
+            program,
+            context: self.request.context,
+            node: self.request.node.clone(),
+            env: env.clone(),
+            three: self.request.three,
+            each: self.request.each.clone(),
+            following: self.request.following.clone(),
+        }
     }
     fn rollback_env(&self) -> &Arc<MetaVarEnv<'t, D>> {
         if let State::Search(search) = &self.state {
@@ -1359,6 +1364,13 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Frame<
         self.levels = self.levels.max(r.levels);
         self.clause_state_read |= r.clause_state_read;
     }
+    fn absorb_failure(&mut self, r: &Result<'t, D>) {
+        self.absorb(r);
+        // A utility body reports its peak relative to the entered utility.
+        if matches!(self.state, State::Util { .. }) {
+            self.levels = self.levels.max(1 + r.levels);
+        }
+    }
     fn child(
         &self,
         program: u32,
@@ -1366,15 +1378,20 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Frame<
         env: Arc<MetaVarEnv<'t, D>>,
         suspend: bool,
     ) -> PendingChild<'t, D> {
-        let mut r = self.request.clone();
-        r.program = program;
-        r.node = node;
-        r.env = env;
-        if suspend {
-            r.each = None;
-        }
         PendingChild {
-            request: r,
+            request: Request {
+                program,
+                context: self.request.context,
+                node,
+                env,
+                three: self.request.three,
+                each: if suspend {
+                    None
+                } else {
+                    self.request.each.clone()
+                },
+                following: self.request.following.clone(),
+            },
             depth: self.depth,
         }
     }
@@ -1717,7 +1734,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     if let Some(failure) = failure {
                         let frame = lane.stack.last_mut().unwrap();
                         if let Some(r) = lane.returned.take() {
-                            frame.absorb(&r);
+                            frame.absorb_failure(&r);
                         }
                         let mut r = frame.result(0, None);
                         r.failure = Some(failure);
@@ -2701,10 +2718,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         self.program_advances.record(f.request.program);
         if let Some(r) = &returned {
             if r.failure.is_some() {
-                f.absorb(r);
-                if matches!(f.state, State::Util { .. }) {
-                    f.levels = f.levels.max(1 + r.levels);
-                }
+                f.absorb_failure(r);
                 let mut out = f.result(0, None);
                 out.failure = r.failure;
                 return Action::Finish(out);
@@ -3625,6 +3639,42 @@ mod tests {
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::{AstGrep as Root, language::Language, matcher::KindMatcher};
     use std::{borrow::Cow, collections::HashMap, sync::OnceLock};
+    #[test]
+    fn utility_frontier_failure_retains_completed_body_relative_peak() {
+        let doc = Root::str("a;", GrammarDialect::JavaScript);
+        let input = Arc::new(MetaVarEnv::new());
+        let mut frame = Frame::new(
+            Request {
+                program: 0,
+                context: 0,
+                node: doc.root(),
+                env: input.clone(),
+                three: true,
+                each: None,
+                following: Arc::new(Vec::new()),
+            },
+            0,
+        );
+        frame.state = State::Util { key: None };
+        frame.work = 1;
+        frame.replay = 1;
+        frame.levels = 1;
+        // The frontier can observe cancellation after a successful body returns,
+        // before the utility continuation consumes its relative peak.
+        let mut body = Result::new(2, input.clone());
+        body.work = 7;
+        body.replay_work = 2;
+        body.levels = 3;
+        body.clause_state_read = true;
+        frame.absorb_failure(&body);
+        let mut failed = frame.result(0, None);
+        failed.failure = Some(Failure::Cancelled);
+        assert_eq!((failed.work, failed.replay_work, failed.levels), (8, 3, 4));
+        assert!(failed.clause_state_read);
+        assert_eq!(failed.truth, 0);
+        assert_eq!(failed.failure, Some(Failure::Cancelled));
+        assert!(Arc::ptr_eq(&failed.env, &input));
+    }
     struct SyntaxHost;
     impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Host<'t, D>
         for SyntaxHost

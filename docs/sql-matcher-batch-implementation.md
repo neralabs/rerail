@@ -161,7 +161,7 @@ The batch execution model is real, but these numbers do not demonstrate a whole-
 At that baseline, scalar work remained substantial. Binding, scope, capture, and mixed semantic rules accounted for most residual CPU.
 The largest residuals include B023, F405, B007, and B615.
 The current conversion replaces those residuals with typed semantic facts and capture operations.
-It remains unqualified: the latest full paired run uses 198.09 SQL CPU seconds versus 110.82 native CPU seconds.
+It remains unqualified: the latest full paired run uses 150.96 SQL CPU seconds versus 92.02 native CPU seconds.
 Findings and edits match, but the 1.30 CPU ceiling fails. The journal records subsequent changes and measurements.
 The [rejected qualification](../benchmark/sql-native-capture-cohort-rejected.json) records that failure and the passing gates.
 Its raw [catalog](../benchmark/sql-native-capture-cohort-rejected-catalog.json.gz),

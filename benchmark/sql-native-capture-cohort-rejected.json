@@ -23,35 +23,18 @@
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)"
   },
   "provenance": {
-    "baseCommit": "14306e6890aa7f1436cf6dd2d7c233a764f706e6",
+    "baseCommit": "b2ebf9014b1a81df46e6ca09632b21bddf727b50",
     "corpusCommit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
     "corpusInventorySha256": "4525032ac7cf058a9134aad9250fd3a400eb4df78c69bfdd89d608057e1b9773",
     "changedRustSources": {
-      "native/src/code_rule_dsl/budget.rs": "4f6de25d393dac9a982d56c444771c747bf22a72d34ee39b049d2e4e41b98318",
-      "native/src/code_rule_dsl/matcher/cohort.rs": "0d0aa65bae08c696a0879f998a922e48df118125bd7d5c0bc49fa5e1336b3d26",
-      "native/src/code_rule_dsl/matcher/cohort_host.rs": "a89159af270fc9df7f045119d51a6d0e68046059612398b429a237fc5efd23a9",
-      "native/src/code_rule_dsl/matcher/cohort_host/bindings.rs": "e1a705d3698ebb8db1da72105deb9b74e57c9fed094773082a7706cb0460efd8",
-      "native/src/code_rule_dsl/matcher/cohort_host/navigation.rs": "ed4f6995a03df80740bdc06ad6b407b168067823f625b2c75a2f99c4d6bd17f1",
-      "native/src/code_rule_dsl/matcher/cohort_host/parsed.rs": "0f9ea9f5db642e08674c69625aa7110dbab3d64b19884a1eb1ade85c7912c1bd",
-      "native/src/code_rule_dsl/matcher/cohort_memo.rs": "35de9c0c8609fa41ead75737719c55d72c739120dfb41d7bf245572e99e7e156",
-      "native/src/code_rule_dsl/matcher/each.rs": "57c82d6a1dee6d186f330f87f6a7b964deff267fabd3fcee2d073cd70646ed88",
-      "native/src/code_rule_dsl/matcher/memo.rs": "58f79516a37110dd7db94accf9fc6e31c9a857e9ecb0abe7740387ad0d36cf56",
-      "native/src/code_rule_dsl/matcher/mod.rs": "21cbeb161a2d6dea555feea8100dc21f07e0bef829e3330e5374e36e4580c7ae",
-      "native/src/code_rule_dsl/matcher/pattern_batch.rs": "0c8a89efd14073a6c3a6ee5ec175f8ddaf0e8a5426f9b9195fabda05c32e142e",
-      "native/src/code_rule_dsl/matcher/relation.rs": "3f18d57fc8c6c823f648536830a5ecc05c6bb696e60431d67261048eaa049223",
-      "native/src/code_rule_dsl/matcher/semantic_batch.rs": "2220ac68805e503a7ff30dcd19b3e4df2160ecfb97e874297b3f49a30dcad3c7",
-      "native/src/code_rule_dsl/matcher/wave.rs": "12b4f1cac58c56cfc3d8eabe1e8caff9f166b81a1f1e0d05ed901cfc9a05a26c",
-      "native/src/code_rule_dsl/sql/engine/tests.rs": "711ba0da4cca09e63d87516594f28a777d839a2a280a930af8b8fb6abc8815ff",
-      "native/src/code_rule_dsl/sql/fragments/batch.rs": "f682d5289173ba19151ec02434d86c0538b53dd03f9840bf3b54df8ea4326cb3",
-      "native/src/code_rule_dsl/sql/fragments/cohorts.rs": "6942f21f5e912f108281df24ff487e809d687a3c569b3412e4fc2646de974df7",
-      "native/src/code_rule_dsl/sql/fragments/mod.rs": "581f5de7420abe25e1e517bfc7f6fc19ec5f1c06e8dcd042103d19bdaca6e73a",
-      "native/src/code_rule_dsl/tape.rs": "9372f67a2db852e2440b453b33a7b7e3cc1a9fde30b15b7649442e3a9b100493"
+      "native/src/code_rule_dsl/matcher/cohort.rs": "cc7f7ff80e61f5469419094dda46d4cc3e6a9fe6a3195c8abf5c082a2fa94c56",
+      "native/src/code_rule_dsl/tape.rs": "971d83c2041cd5bd0a26d7f28e4fce2e1d2f82a16bff6d5aa8665f51163e0c57"
     },
-    "binarySha256": "499718f9e7736c14f62ce5dc3f2aeb12fcc528bb6074168a8b2ea21850699aa4",
+    "binarySha256": "bd1da6dbc522efaabd26af3ed9c812a4168c33380e8373a96f793703494a2fbc",
     "rawReportsSha256": {
-      "catalog": "f52fa7e149578655a9cab9891bf0f6dd9857844e9713d2154b4c96f508295b73",
-      "native": "be4a3b21f9ce8c1b5a54d57a22c8652d1ad5d15c18b736085422aef7ea85a240",
-      "sql": "dc60aee9a237e7d47e438e7d83f3042e37d0071645f04c6e7cbee1c6e74f63e7"
+      "catalog": "3bb3b98f5d1d0d6f75494acc3021e164d04c1892cc455f6cbdc97c1e2bd0bc6d",
+      "native": "1eb893b4e771a42914e1a2337b5cff687fd6d6e2c2f629c51a14b4d826557d7b",
+      "sql": "031bf55e5b1553d9fd1a2052b85e7666140966daab08df488764d4917651e55e"
     }
   },
   "workload": {
@@ -62,13 +45,13 @@
   },
   "native": {
     "compile": {
-      "cpuNs": 164845000,
-      "wallNs": 291371042
+      "cpuNs": 71698000,
+      "wallNs": 71811167
     },
     "cold": {
-      "cpuNs": 110819431000,
-      "peakRssBytes": 903495680,
-      "wallNs": 31649751292
+      "cpuNs": 92020902000,
+      "peakRssBytes": 904101888,
+      "wallNs": 24650845625
     },
     "findings": 97798,
     "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -76,9 +59,9 @@
     "edits": [
       {
         "time": {
-          "cpuNs": 152573000,
-          "peakRssBytes": 967573504,
-          "wallNs": 158861875
+          "cpuNs": 127675000,
+          "peakRssBytes": 968228864,
+          "wallNs": 127969875
         },
         "findings": 97799,
         "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
@@ -86,9 +69,9 @@
       },
       {
         "time": {
-          "cpuNs": 166720000,
-          "peakRssBytes": 981237760,
-          "wallNs": 176317917
+          "cpuNs": 130211000,
+          "peakRssBytes": 981893120,
+          "wallNs": 130378708
         },
         "findings": 97801,
         "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
@@ -96,9 +79,9 @@
       },
       {
         "time": {
-          "cpuNs": 168962000,
-          "peakRssBytes": 994754560,
-          "wallNs": 182246458
+          "cpuNs": 131728000,
+          "peakRssBytes": 995409920,
+          "wallNs": 132081125
         },
         "findings": 97798,
         "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -108,13 +91,13 @@
   },
   "sql": {
     "compile": {
-      "cpuNs": 127872000,
-      "wallNs": 136935500
+      "cpuNs": 73373000,
+      "wallNs": 73460208
     },
     "cold": {
-      "cpuNs": 198092712000,
-      "peakRssBytes": 1455046656,
-      "wallNs": 56953777125
+      "cpuNs": 150963150000,
+      "peakRssBytes": 1393819648,
+      "wallNs": 42158947083
     },
     "findings": 97798,
     "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -122,9 +105,9 @@
     "edits": [
       {
         "time": {
-          "cpuNs": 222443000,
-          "peakRssBytes": 1455046656,
-          "wallNs": 233467750
+          "cpuNs": 157174000,
+          "peakRssBytes": 1393819648,
+          "wallNs": 157363250
         },
         "findings": 97799,
         "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
@@ -132,9 +115,9 @@
       },
       {
         "time": {
-          "cpuNs": 205334000,
-          "peakRssBytes": 1455046656,
-          "wallNs": 215273291
+          "cpuNs": 152788000,
+          "peakRssBytes": 1393819648,
+          "wallNs": 153279458
         },
         "findings": 97801,
         "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
@@ -142,9 +125,9 @@
       },
       {
         "time": {
-          "cpuNs": 207966000,
-          "peakRssBytes": 1455046656,
-          "wallNs": 212834750
+          "cpuNs": 149398000,
+          "peakRssBytes": 1393819648,
+          "wallNs": 149658083
         },
         "findings": 97798,
         "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -152,24 +135,24 @@
       }
     ]
   },
-  "coldCpuRatio": 1.7875268823569397,
-  "medianEditCpuRatio": 1.2473968330134357,
+  "coldCpuRatio": 1.6405310828185535,
+  "medianEditCpuRatio": 1.1733878090176713,
   "matchingStatements": 23,
   "sqlCompilePhases": {
     "emitCpuMilliseconds": 0.0,
     "emitMilliseconds": 0.0,
-    "finishCpuMilliseconds": 2.114583,
-    "finishMilliseconds": 2.486291,
-    "lowerCpuMilliseconds": 1.32963,
-    "lowerMilliseconds": 1.423963,
+    "finishCpuMilliseconds": 1.204375,
+    "finishMilliseconds": 1.206625,
+    "lowerCpuMilliseconds": 0.65837,
+    "lowerMilliseconds": 0.67325,
     "planCpuMilliseconds": 0.0,
     "planMilliseconds": 0.0
   },
   "sqlSessions": {
     "count": 4,
     "prepared": 4,
-    "setupCpuMilliseconds": 9.824335,
-    "setupMilliseconds": 13.867209,
+    "setupCpuMilliseconds": 7.1885,
+    "setupMilliseconds": 7.318958,
     "tables": 0,
     "texts": 4
   },
@@ -184,11 +167,11 @@
     "texts": 1
   },
   "vmInstructions": 25216565,
-  "matchingCpuNs": 170360582586,
-  "nativeBoundaryCpuNs": 165437068629,
-  "nativeResidualCpuNs": 151172159047,
-  "nativePrefixCpuNs": 14264909582,
-  "sqlAndBoundaryOverheadCpuNs": 4923513957,
+  "matchingCpuNs": 128027273001,
+  "nativeBoundaryCpuNs": 124130030708,
+  "nativeResidualCpuNs": 112023721584,
+  "nativePrefixCpuNs": 12106309124,
+  "sqlAndBoundaryOverheadCpuNs": 3897242293,
   "largestNativeFragments": [
     {
       "rule": "bandit-b101-assert-used:assert-used",
@@ -383,10 +366,10 @@
     "kind_guard_alternative_skips": 24416864,
     "kind_guard_checks": 136074370,
     "kind_guard_rejects": 49364276,
-    "max_action_bytes": 88,
+    "max_action_bytes": 72,
     "max_control_programs_touched": 638,
     "max_documents": 60,
-    "max_frame_bytes": 144,
+    "max_frame_bytes": 128,
     "max_memo_entries": 32768,
     "max_program_pool_entries": 7350,
     "max_programs": 84,
@@ -1061,10 +1044,10 @@
         "compared": 87162,
         "matches": 2477,
         "mismatches": [],
-        "nativeCpuNs": 778496375,
-        "nativeWallNs": 794859250,
-        "sqlCpuNs": 1442220542,
-        "sqlWallNs": 1484660917,
+        "nativeCpuNs": 778640792,
+        "nativeWallNs": 804942459,
+        "sqlCpuNs": 1372850958,
+        "sqlWallNs": 1429236416,
         "unknownNative": 0,
         "unknownSql": 0
       }

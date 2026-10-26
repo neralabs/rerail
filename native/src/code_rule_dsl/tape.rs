@@ -1622,14 +1622,13 @@ impl TapeDoc {
 
 #[derive(Clone, Copy)]
 pub(super) struct TapeNode<'a> {
-    nodes: &'a [Rec],
     doc: &'a TapeDoc,
     index: u32,
 }
 
 impl<'a> TapeNode<'a> {
     fn rec(&self) -> &Rec {
-        &self.nodes[self.index as usize]
+        &self.doc.data[self.index as usize]
     }
     fn at(&self, index: u32) -> Self {
         Self { index, ..*self }
@@ -1693,7 +1692,7 @@ impl<'a> Iterator for Children<'a> {
             return None;
         }
         let index = self.next;
-        self.next = self.node.nodes[index as usize].next;
+        self.next = self.node.doc.data[index as usize].next;
         self.remaining -= 1;
         Some(self.node.at(index))
     }
@@ -1839,7 +1838,6 @@ impl Doc for TapeDoc {
     }
     fn root_node(&self) -> Self::Node<'_> {
         TapeNode {
-            nodes: &self.data,
             doc: self,
             index: 0,
         }
