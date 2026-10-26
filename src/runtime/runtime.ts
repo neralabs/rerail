@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, chmod, mkdir, readFile, truncate, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   ADAPTER_CAPABILITIES,
@@ -482,11 +482,13 @@ function sessionDirectory(root: string, sessionId: string): string {
 /**
  * Session records hold what the person typed, and the storage root defaults to `<checkout>/.rerail/sessions`. A
  * `.gitignore` of `*` keeps them out of `git status` and `git add -A`, as `.pytest_cache` does, without touching the
- * repository's own ignores. An existing one is left as it is.
+ * repository's own ignores. Only a root inside a `.rerail` folder is Rerail's alone: a custom one
+ * (`RERAIL_STORAGE_ROOT`) may hold the person's own files, so it is left as it is, as is an existing `.gitignore`.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
+  if (basename(dirname(storageRoot)) !== ".rerail") return;
   try {
-    await writeFile(join(storageRoot, ".gitignore"), "# Created by Rerail: session records stay out of Git.\n*\n", { flag: "wx" });
+    await writeFile(join(storageRoot, ".gitignore"), "# Created by Rerail: session records stay out of Git.\n*\n", { flag: "wx", mode: 0o600 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
