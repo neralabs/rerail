@@ -51,7 +51,9 @@ class SharedSqlTests(unittest.TestCase):
             'SELECT __path,id,id FROM (' + roots + ') UNION SELECT w.__path,w.root,e.dst FROM walk w '
             'JOIN edges e ON e.__path=w.__path AND e.src=w.node) SELECT * FROM walk')
         db.execute('ANALYZE')
-        query = 'WITH import_ranges AS MATERIALIZED (' + stages['import_ranges']['query'] + ') ' + stages['import_identifiers']['query']
+        query = stages['import_identifiers']['query']
+        if 'import_ranges' in stages:
+            query = 'WITH import_ranges AS MATERIALIZED (' + stages['import_ranges']['query'] + ') ' + query
         steps = 0
 
         def limit():
@@ -151,6 +153,33 @@ class SharedSqlTests(unittest.TestCase):
         actual, new_steps = evaluate(candidate)
         self.assertEqual(actual, expected)
         self.assertLess(new_steps, old_steps)
+
+    def test_conditional_ordinals_materialize_only_demanded_parent_partitions(self):
+        policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
+        plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'quality-conditional-1')
+        stages = {stage['name']: stage for stage in plan['stages']}
+        db = sqlite3.connect(':memory:')
+        self.addCleanup(db.close)
+        for name, source in plan['inputs'].items():
+            fields = ['__path', '__start', '__end', *source['evidence']['project']]
+            db.execute('CREATE TABLE "' + name + '" (' + ','.join('"' + field + '"' for field in fields) + ')')
+        parents = ['typed_parameter', 'default_parameter', 'typed_default_parameter', 'conditional_expression']
+        data = [('a.py', i, i+1, 'identifier', 'module', 0, 1000000) for i in range(5000)]
+        expected = []
+        for group, parent in enumerate(parents):
+            for ordinal in range(3):
+                start = 10000 + group*100 + ordinal
+                data.append(('a.py', start, start+1, 'identifier', parent, 10000+group*100, 10099+group*100))
+                expected.append((start, ordinal))
+        db.executemany('INSERT INTO syntax_0(__path,__start,__end,kind,parent_kind,parent_start,parent_end) VALUES(?,?,?,?,?,?,?)', data)
+        for stage in plan['stages']:
+            if stage['name'].startswith('syntax_rows_'):
+                db.execute('CREATE VIEW "' + stage['name'] + '" AS ' + stage['query'])
+        db.execute('CREATE TABLE node_ordinals AS ' + stages['node_ordinals']['query'])
+        self.assertEqual(db.execute('SELECT __start,ordinal FROM node_ordinals ORDER BY __start').fetchall(), expected)
+        db.execute('CREATE TABLE nodes AS ' + stages['nodes']['query'])
+        self.assertEqual(db.execute('SELECT count(*) FROM nodes').fetchone()[0], len(data))
+        self.assertEqual(db.execute('SELECT count(*) FROM nodes WHERE __start<10000 AND ordinal IS NOT NULL').fetchone()[0], 0)
 
     def test_shared_syntax_eliminates_reconstruction_and_preserves_gates(self):
         clause = relational("quality-contracts-1", [S("calls", "SELECT n.*,f.id AS callee FROM nodes n JOIN nodes f ON f.id=n.function_kind||':'||n.function_start||':'||n.function_end"), S("descendants", "unused")], "SELECT * FROM calls")
