@@ -12,15 +12,16 @@ the way a user meets it. CI runs it after every push to `main` that can change w
 | -- | -- | -- |
 | `ubuntu-24.04-x64`, `ubuntu-24.04-arm64` | Ubuntu Server 24.04 LTS | pass |
 | `debian-13-x64`, `debian-13-arm64` | Debian 13 | pass |
-| `ubuntu-22.04-x64` | Ubuntu Server 22.04 LTS | set-up fails: glibc 2.35 |
-| `debian-12-x64` | Debian 12 | set-up fails: glibc 2.36 |
-| `rhel-9-x64` | Red Hat Enterprise Linux 9 | set-up fails: glibc 2.34 |
+| `ubuntu-22.04-x64` | Ubuntu Server 22.04 LTS | pass |
+| `debian-12-x64` | Debian 12 | pass |
+| `rhel-9-x64` | Red Hat Enterprise Linux 9 | pass |
 | `windows-11-x64`, `windows-11-arm64` | Windows 11 Pro 25H2 | pass |
 
-The Linux engines are built on Ubuntu 24.04 and need glibc 2.39, so older distributions are expected to refuse
-set-up. An environment marked `"expect": "setup-fails"` passes when set-up fails there and fails when set-up starts
-succeeding: then support has changed, and the entry moves to `"expect": "pass"`. macOS is not here: Azure has no
-macOS VMs.
+The Linux engines are built against glibc 2.17, older than the glibc 2.28 Node 24 itself needs, so every glibc
+distribution Node 24 runs on is expected to pass. An environment where set-up is known to fail is marked
+`"expect": "setup-fails"`, with the text the failure prints (`failsWith`) and the reason (`because`): it passes when
+set-up fails that way and fails when set-up starts succeeding, and then support has changed and the entry moves to
+`"expect": "pass"`. macOS is not here: Azure has no macOS VMs.
 
 Each VM gets the newest Node release of the major in `environments.json` (`"node"`, overridable per environment)
 from nodejs.org, and Git from the distribution or, on Windows, Git for Windows in its default folder: what a user
