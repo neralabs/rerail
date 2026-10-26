@@ -138,7 +138,7 @@ Upstream matches by name only (an identifier named process / require), with no s
 
 Upstream selectors `CallExpression > MemberExpression.callee Identifier[name=/Sync$/]` and `CallExpression > Identifier[name=/Sync$/]`, reported at the identifier's ESTree parent: a call with a /Sync$/ identifier as callee or argument, or a node inside (or being) a call's member callee with a /Sync$/ identifier child. So a `…Sync` identifier passed as an argument is also reported.
 
-### `n-prefer-global-*` (buffer, console, process, text-decoder, text-encoder, url, url-search-params)
+### `n-prefer-global-*` (buffer, console, crypto, process, text-decoder, text-encoder, timers, url, url-search-params)
 
 Default "always". References are found as ReferenceTracker (legacy mode) does: `require('<mod>')`/`require('node:<mod>')` with the global require, `process.getBuiltinModule(…)` with the global process, through constant aliases, member reads, object-pattern properties, import/export specifiers and `export *`. For console and process, the module itself and every ESM import/export declaration from it are reported.
 
@@ -169,3 +169,29 @@ eslint-plugin-n 18.4.1 n/no-unpublished-bin (default options). Reports, at the s
 ### `n-no-top-level-await`
 
 eslint-plugin-n 18.4.1 n/no-top-level-await (default options: `ignoreBin` false). Reports each `await` expression, `for await (…)` and `await using` declaration outside every function (ESLint's `:function`: function declarations and expressions, arrows, and a method's parameters and body; its key and decorators, class fields and static blocks are outside), in a file npm publishes (`file.package.published: true`): a file without a package.json, or one the package's `files`, `.npmignore` or `.gitignore` leaves out, is not checked. Not ported: the `ignoreBin` and `convertPath` options and the `convertPath` setting.
+
+### `n-prefer-import-assert-strict`
+
+eslint-plugin-n 18.4.1 n/prefer-import/assert-strict. Reports the string literal `"node:assert"` (exactly: no template, no bare `"assert"`) as the source of an import, export or `import()`, or the first argument of a call of any function named `require`, unless only `strict` is taken from it: import or export specifiers that all name `strict`; a require read as `.strict`/`["strict"]` (through parentheses), destructured into properties that are all `strict` (a string key is not), or assigned to a `.strict` member.
+
+### `n-prefer-process-get-builtin-module`
+
+eslint-plugin-n 18.4.1 n/prefer-process-get-builtin-module, where the configured Node range is within `^20.16.0 || >=22.3.0`. Reports `require(M)` (one argument, not optional; `require` unshadowed, or a `const` made by `createRequire` imported from `module`/`node:module`) and `await import(M)` (no options), M a constant naming a built-in module (Node's `isBuiltin`: the plugin's list with and without `node:`, and `module.builtinModules` of the Node.js running the generator), unless a binding named `process` is in scope. Process shadowing is read structurally: a declaration in an enclosing block or the program, a `var` anywhere in an enclosing function, a parameter of an enclosing function or catch clause.
+
+### `n-no-unsupported-features-node-builtins` / `n-no-unsupported-features-es-builtins`
+
+eslint-plugin-n 18.4.1 n/no-unsupported-features/node-builtins and es-builtins (default options: no `ignores`, `allowExperimental` off). Every reference eslint-utils' ReferenceTracker finds in legacy mode (require, `process.getBuiltinModule`, import and export, globals, `import.meta` for node-builtins) to an entry of the rule's trace map whose `supported` versions do not cover the configured Node range (the range is a subset of `^v` for each supported version or `>=` the latest), one clause per supported-version list, gated on `file.package.nodeVersion.notSubsetOf`; an entry with no supported version is reported everywhere. node-builtins' map lists each module with and without `node:`, whose own versions differ: the members are traced once for both names and each name's module read apart. A global is traced only where globals.node declares it. node-builtins is 933 clauses (about 2.4 MB), which takes the engine about 3 s to compile.
+
+### `n-no-unsupported-features-es-syntax`
+
+eslint-plugin-n 18.4.1 n/no-unsupported-features/es-syntax (default options: no `ignores`). One clause per eslint-plugin-es-x 7.8.0 rule es-syntax.json lists (199 features; their AST rules in `scripts/generate/packs/node_es_syntax/`), gated on the configured Node range not being a subset of the feature's supported range (`<0` or none: always); a feature with a `strictMode` range (block-scoped functions and variables, classes) runs where the range is not within that range and reports in strict code (a class, a `"use strict"` prologue, a module) only where it is not within the supported range either. Utilities several clauses carry verbatim are shared through one define. Against ESLint the port reports nothing ESLint does not on es-x's own tests, about 1,850 edge cases, 2,829 real JavaScript files and 181 real TypeScript files; each module's `LIMITS` names what it misses: files tree-sitter cannot parse (a tagged template with an invalid escape), escapes after an identifier's start, keys only constant folding resolves, and, in TypeScript, the prototype-method features (`Array.prototype.includes` and the like), whose receivers es-x types with the TypeScript checker.
+
+### `n-no-restricted-import` / `n-no-restricted-require`
+
+eslint-plugin-n 18.4.1 n/no-restricted-import and no-restricted-require, whose default restricts nothing. The targets are the plugin's: an import or export declaration's source, an `import()` string, and the first argument of the global `require` or `require.resolve` (any constant it folds to). The restrictions are the port's `restricted` option, regular expressions each matching a whole module name (the specifier up to its first `!`), where eslint-plugin-n takes globs and a message per entry; without any, nothing is reported.
+
+## Not ported
+
+- `n/process-exit-as-throw`: it reports nothing; it marks `process.exit()` as the end of a code path for ESLint's other rules, which Rerail's queries do not share.
+- The deprecated `n/no-hide-core-modules` and `n/shebang` (renamed `n/hashbang`, which is ported).
+
