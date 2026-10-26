@@ -63,6 +63,12 @@ INCLUDE = ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx",
 
 # ---- pinned data -------------------------------------------------------------------------------------------------
 
+def tools_dir():
+    """The toolchain this run reads: the --tools main() was given (it exports it, so modules this one imports read the
+    same), else the nearest .rerail/tools/node."""
+    return os.environ.get("RERAIL_NODE_POLICIES_TOOLS") or nearest_tools()
+
+
 def nearest_tools():
     directory = REPOSITORY
     while True:
@@ -124,7 +130,8 @@ console.log(JSON.stringify({ node, es: { modules: conv(traceMap.modules, []), gl
 ''', utils_module)
     # Node's isBuiltin, which n/prefer-process-get-builtin-module calls, reads the running Node's builtinModules.
     node_builtins = node_json(tools, tools, 'import { builtinModules } from "node:module"; console.log(JSON.stringify(builtinModules))')
-    return builtins, globals_node, trace, node_builtins, node_builtin_maps
+    es_syntax = json.load(open(os.path.join(plugin, "lib", "rules", "no-unsupported-features", "es-syntax.json")))
+    return builtins, globals_node, trace, node_builtins, node_builtin_maps, es_syntax
 
 
 # ---- documents ---------------------------------------------------------------------------------------------------
@@ -165,6 +172,47 @@ def hoist(doc):
     return doc
 
 
+def hoist_common(doc):
+    """Utilities that two or more clauses carry verbatim, under one id, move to one define, as far as each moved utility
+    names only moved ones (a shared utility sees no clause's own); an id whose clauses carry different bodies stays."""
+    forbid = [c for c in doc["clauses"] if "forbid" in c]
+    bodies, counts = {}, {}
+    for check in forbid:
+        for uid_, body in check["forbid"]["ast"].get("utils", {}).items():
+            text = json.dumps(body, sort_keys=True)
+            bodies.setdefault(uid_, set()).add(text)
+            counts[uid_] = counts.get(uid_, 0) + 1
+    shared = {u for u in counts if counts[u] >= 2 and len(bodies[u]) == 1}
+
+    def named(value):
+        if isinstance(value, dict):
+            yield from ([value["matches"]] if isinstance(value.get("matches"), str) else [])
+            for item in value.values():
+                yield from named(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from named(item)
+
+    texts = {u: json.loads(next(iter(bodies[u]))) for u in shared}
+    while True:
+        stay = {u for u in shared if any(n not in shared for n in named(texts[u]))}
+        if not stay:
+            break
+        shared -= stay
+    if not shared:
+        return doc
+    for check in forbid:
+        utils = check["forbid"]["ast"].get("utils")
+        if utils:
+            for u in shared & set(utils):
+                del utils[u]
+            if not utils:
+                del check["forbid"]["ast"]["utils"]
+    define = {"id": "shared", "define": {"language": "typescript", "utils": {u: texts[u] for u in sorted(shared)}}}
+    doc["clauses"] = [define] + [c for c in doc["clauses"] if "forbid" not in c] + forbid
+    return doc
+
+
 # ---- shared rule fragments -----------------------------------------------------------------------------------------
 
 NOT_TAGGED = {"not": {"has": {"field": "arguments", "kind": "template_string"}}}
@@ -196,7 +244,10 @@ DESCRIPTIONS = {
     "n-no-top-level-await": "Avoid top-level await in modules npm publishes; require() cannot load an ES module that uses it, so move the await into an async function the module exports or calls.",
     "n-no-unpublished-bin": "Publish every file package.json lists as a bin executable: keep it in package.json's files field and out of .npmignore, or npm leaves the command out of the package.",
     "n-prefer-global-buffer": "Use the global Buffer instead of importing or requiring it from the buffer module; it is always available in Node.js.",
+    "n-no-restricted-import": "Do not import the modules this repository restricts (the restricted option).",
+    "n-no-restricted-require": "Do not require the modules this repository restricts (the restricted option).",
     "n-no-unsupported-features-es-builtins": "Use only the ECMAScript built-ins that every Node.js version in the package's engines.node range provides, or raise that range.",
+    "n-no-unsupported-features-es-syntax": "Use only the ECMAScript syntax that every Node.js version in the package's engines.node range supports, or raise that range.",
     "n-no-unsupported-features-node-builtins": "Use only the Node.js built-in APIs that every Node.js version in the package's engines.node range provides, or raise that range.",
     "n-prefer-global-crypto": "Use the global crypto object instead of reading webcrypto from the crypto module; Node.js provides it as a global.",
     "n-prefer-global-timers": "Use the global timer functions, such as setTimeout, instead of reading them from the timers module.",
@@ -479,6 +530,40 @@ def prefer_node_protocol_doc(builtins):
         {"id": "import-export-source", "ast": {"file": esm, "rule": {**builtin, "inside": {"field": "source", "any": [{"kind": "import_statement"}, {"kind": "export_statement"}]}}}, "message": message},
         {"id": "import-expression", "ast": {"file": esm, "rule": {**builtin, **first_argument_of(import_call)}}, "message": message}]
     return policy("n-prefer-node-protocol", "n/prefer-node-protocol", DESCRIPTIONS["n-prefer-node-protocol"], checks)
+
+
+# visitImport's targets: the string source of an import or export declaration, or of an import() (a string literal).
+IMPORT_SOURCE = {"kind": "string", "any": [
+    {"inside": {"field": "source", "any": [{"kind": "import_statement"}, {"kind": "export_statement"}]}},
+    {"nthChild": FIRST, "inside": {"kind": "arguments", "inside": {"field": "arguments", "kind": "call_expression", "has": {"field": "function", "kind": "import"}}}}]}
+# visitRequire's targets: the first argument of a call of the global require or require.resolve (ReferenceTracker),
+# whatever constant it folds to.
+REQUIRE_ARGUMENT = {"nthChild": FIRST, "inside": {"kind": "arguments", "inside": {"field": "arguments", "kind": "call_expression", **NOT_TAGGED, "has": {"field": "function", "any": [
+    {"matches": "require-callee"},
+    {"kind": "member_expression", "all": [{"has": {"field": "object", "matches": "require-callee"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": "^resolve$"}}]}]}}}}
+REQUIRE_CALLEE_UTILS = {"require-callee": {"any": [{"kind": "identifier", "regex": "^require$", "resolves": {"global": ["require"]}},
+                                                   {"kind": "parenthesized_expression", "has": {"matches": "require-callee"}}]}}
+
+
+def no_restricted_docs():
+    """n/no-restricted-import and n/no-restricted-require: a target whose name (the specifier up to its first `!`) a
+    restriction matches. Upstream's default restricts nothing; the restrictions are this port's `restricted` option,
+    regular expressions over the name where eslint-plugin-n takes globs (and a message per entry, which this port has
+    not), so a repository sets them for its own modules. With none, nothing is reported."""
+    options = {"id": "options", "define": {"options": {"restricted": {
+        "type": "array", "items": "string", "default": [],
+        "description": "Modules to restrict: regular expressions, each matching a whole module name (the specifier up to its first !)."}}}}
+    name = {"value": {"regex": {"$option": "restricted", "map": "(?:{})", "join": "|", "template": "^(?:{})(?:!.*)?$"}},
+            "not": {"value": {"regex": "^(?:!.*)?$"}}}
+    docs = []
+    for kind, rule, utils in (("import", {**IMPORT_SOURCE, **name}, None),
+                              ("require", {**REQUIRE_ARGUMENT, **name}, REQUIRE_CALLEE_UTILS)):
+        doc = policy(f"n-no-restricted-{kind}", f"n/no-restricted-{kind}", DESCRIPTIONS[f"n-no-restricted-{kind}"], [
+            {"id": "restricted", "ast": {"languageOptions": FILE_LO, **({"utils": utils} if utils else {}), "rule": rule},
+             "message": f"This module is restricted in this repository; do not {kind} it."}])
+        doc["clauses"] = [options] + doc["clauses"]
+        docs.append(doc)
+    return docs
 
 
 def prefer_import_assert_strict_doc():
@@ -893,6 +978,59 @@ def unsupported_builtins_doc(maps, globals_node, name, es=False):
             "description": DESCRIPTIONS[f"n-no-unsupported-features-{name}"], "scope": {"include": INCLUDE, "exclude": []}, "clauses": checks}
 
 
+# eslint-scope's isStrict at a node (es-syntax's normalizeScope: a class or function's own node reads the scope around
+# it): inside a class, or below a "use strict" directive prologue of the program or an enclosing function. A module is
+# strict throughout, which the clauses' `when.sourceType` reads instead.
+USE_STRICT_PROLOGUE = {"kind": "expression_statement", "has": {"kind": "string", "regex": "^(?:'use strict'|\"use strict\")$"},
+                       "not": {"follows": {"stopBy": "end", "not": {"any": [{"kind": "comment"}, {"kind": "expression_statement", "has": {"kind": "string"}}]}}}}
+STRICT_CODE = {"inside": {"stopBy": "end", "any": [
+    {"kind": "class_body"}, {"kind": "class_heritage"},
+    {"kind": "program", "has": USE_STRICT_PROLOGUE},
+    {"any": [{"kind": k} for k in ("function_declaration", "function_expression", "arrow_function", "method_definition", "generator_function", "generator_function_declaration")],
+     "has": {"field": "body", "kind": "statement_block", "has": USE_STRICT_PROLOGUE}}]}}
+
+
+def es_syntax_doc(features):
+    """n/no-unsupported-features/es-syntax (default options: no ignores): each eslint-plugin-es-x rule es-syntax.json lists
+    runs where the configured Node range is not a subset of its supported range (`<0`: always); one with a strictMode
+    range runs where the range is not within that one, and reports in strict code only where it is not within the
+    supported range either. One clause per feature (three for a strictMode one: sloppy and strict scripts, modules)."""
+    # Imported here: the feature modules may import this module's helpers (tracker, str_const, ...).
+    from node_es_syntax import FEATURES as ES_SYNTAX_FEATURES
+    checks = []
+    for rule_id, meta in features.items():
+        specs = ES_SYNTAX_FEATURES.get(rule_id)
+        if specs is None:
+            continue
+        # A feature is one spec, or a list of them (one clause each: where the rule differs by the file's language).
+        specs = specs if isinstance(specs, list) else [specs]
+        feature = rule_id.removeprefix("no-")
+        supported = meta.get("supported") or "<0"
+        message = (f"ECMAScript feature `{feature}` is not supported by any Node.js release yet." if supported == "<0" else
+                   f"ECMAScript feature `{feature}` is not supported until Node.js {supported}, and the configured Node range (engines.node) includes earlier versions.")
+        for index, spec in enumerate(specs):
+            base = {"language": "typescript", "languageOptions": {**FILE_LO, **spec.get("languageOptions", {})}, **({"utils": spec["utils"]} if spec.get("utils") else {})}
+            suffix = "" if index == 0 else f"-{index + 1}"
+
+            def clause(cid, shown, rule, when=None):
+                file = {**spec.get("file", {}), **({} if shown == "<0" else {"package": {"nodeVersion": {"notSubsetOf": shown}}})}
+                text = message if shown == supported else message.replace(f"until Node.js {supported}", f"until Node.js {shown}")
+                checks.append({"id": cid, "forbid": {"ast": {**base, **({"file": file} if file else {}), **({"when": when} if when else {}), "rule": rule}},
+                               "violation": {"anchor": "witness.span", "code": "n/no-unsupported-features/es-syntax", "message": text,
+                                             "suppress": suppress("n/no-unsupported-features/es-syntax")}})
+
+            if "strictMode" not in meta:
+                clause(feature + suffix, supported, spec["rule"], spec.get("when"))
+                continue
+            assert "when" not in spec, f"{rule_id}: a strictMode feature's clauses set their own when"
+            script = {"sourceType": ["script", "commonjs"]}
+            clause(f"{feature}{suffix}-sloppy", meta["strictMode"], {"all": [spec["rule"], {"not": STRICT_CODE}]}, script)
+            clause(f"{feature}{suffix}-strict", supported, {"all": [spec["rule"], STRICT_CODE]}, script)
+            clause(f"{feature}{suffix}-module", supported, spec["rule"], {"sourceType": "module"})
+    return hoist_common({"format": "rerail.policy/v1", "id": "n-no-unsupported-features-es-syntax", "revision": 1, "mode": "steer",
+                         "description": DESCRIPTIONS["n-no-unsupported-features-es-syntax"], "scope": {"include": INCLUDE, "exclude": []}, "clauses": checks})
+
+
 # n-no-deprecated-api: the message of the clause reporting each root of the trace map (a module, or `global <name>`).
 DEPRECATED_API_MESSAGES = {
     "_linklist": "Replace the removed internal _linklist module with your own linked list or an npm package.",
@@ -1092,14 +1230,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--tools")
     parser.add_argument("--root", default=REPOSITORY)
+    parser.add_argument("--es-syntax-out", help="write only n-no-unsupported-features-es-syntax, to this path")
     args = parser.parse_args()
-    builtins, globals_node, trace, node_builtins, node_builtin_maps = load_data(os.path.abspath(args.tools or nearest_tools()))
+    os.environ["RERAIL_NODE_POLICIES_TOOLS"] = os.path.abspath(args.tools or nearest_tools())
+    builtins, globals_node, trace, node_builtins, node_builtin_maps, es_syntax = load_data(tools_dir())
+    if args.es_syntax_out:
+        with open(args.es_syntax_out, "w") as out:
+            json.dump(es_syntax_doc(es_syntax), out)
+        return
     for doc in syntax_docs() + prefer_global_docs() + prefer_promises_docs() + [no_path_concat_doc(), prefer_node_protocol_doc(builtins),
-                                                                            prefer_import_assert_strict_doc(), prefer_process_get_builtin_module_doc(builtins, node_builtins)]:
+                                                                            prefer_import_assert_strict_doc(), prefer_process_get_builtin_module_doc(builtins, node_builtins)] + no_restricted_docs():
         write_port(args.root, doc)
     write_port(args.root, no_deprecated_api_doc(trace), compact=True)
     write_port(args.root, unsupported_builtins_doc(node_builtin_maps["node"], globals_node, "node-builtins"), compact=True)
     write_port(args.root, unsupported_builtins_doc(node_builtin_maps["es"], globals_node, "es-builtins", es=True), compact=True)
+    write_port(args.root, es_syntax_doc(es_syntax), compact=True)
     write_port(args.root, hashbang_doc())
     write_port(args.root, no_unpublished_bin_doc())
     write_port(args.root, no_top_level_await_doc())

@@ -467,6 +467,51 @@
         "suppression"
       ],
       "match": "line+column"
+    },
+    {
+      "id": "n-no-unsupported-features-es-syntax",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unsupported-features/es-syntax"
+      },
+      "policy": "candidates/rules/n-no-unsupported-features-es-syntax.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-restricted-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-restricted-import"
+      },
+      "policy": "candidates/rules/n-no-restricted-import.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-restricted-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-restricted-require"
+      },
+      "policy": "candidates/rules/n-no-restricted-require.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
     }
   ]
 }

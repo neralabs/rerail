@@ -1,0 +1,110 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-restricted-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Do not import the modules this repository restricts (the restricted option).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "restricted": {
+            "type": "array",
+            "items": "string",
+            "default": [],
+            "description": "Modules to restrict: regular expressions, each matching a whole module name (the specifier up to its first !)."
+          }
+        }
+      }
+    },
+    {
+      "id": "restricted",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
+          "rule": {
+            "kind": "string",
+            "any": [
+              {
+                "inside": {
+                  "field": "source",
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "export_statement"
+                    }
+                  ]
+                }
+              },
+              {
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "field": "arguments",
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "kind": "import"
+                    }
+                  }
+                }
+              }
+            ],
+            "value": {
+              "regex": {
+                "$option": "restricted",
+                "map": "(?:{})",
+                "join": "|",
+                "template": "^(?:{})(?:!.*)?$"
+              }
+            },
+            "not": {
+              "value": {
+                "regex": "^(?:!.*)?$"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-restricted-import",
+        "message": "This module is restricted in this repository; do not import it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-restricted-import"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
