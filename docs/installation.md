@@ -42,8 +42,10 @@ Set-up follows the same steps in a terminal and from a coding agent. Nothing
 in a repository, its Git metadata, or the database is written before the
 person says yes.
 
-0. **Node check** — on a Node major below 24 set-up stops before changing
-   anything and says how to upgrade.
+0. **Checks** — on a Node major below 24, on a computer Rerail has no engine
+   for (musl Linux such as Alpine, glibc older than 2.28, another system or
+   processor), or without Git, set-up stops before changing anything and says
+   what to do.
 1. **Install** — `ManagedUpdater.install()` runs `npm install @neralabs/rerail@<this version>`
    into `versions/<version>` (a staging directory until validation passes),
    checks the package identity, loads the native kernel and runs a real
@@ -380,31 +382,39 @@ expired; sign in again with `npm login`. Rerail redacts `_authToken` and
 Supported:
 
 - **Operating systems**: macOS on arm64 and x64 (x64 Node under Rosetta works too); Linux on arm64 and x64 with
-  glibc 2.39 or newer (Ubuntu 24.04 and later, Debian 13 and later, Fedora 40 and later); Windows 11 on x64 and arm64.
-- **Node.js** 24 or newer, however it is installed (nodejs.org, Homebrew, nvm, fnm, Volta, NodeSource). After
-  upgrading or removing the Node that ran set-up, run `rerail install --refresh`.
-- **Git** at `/usr/bin/git`, `/usr/local/bin/git` or `/opt/homebrew/bin/git`, or on Windows Git for Windows in
-  `C:\Program Files\Git` (or `C:\Program Files (x86)\Git`). Rerail does not look for Git on `PATH`.
-- **Shells** set-up puts `rerail` on `PATH` for: zsh, bash and fish, any other shell through `~/.profile`, and on
-  Windows PowerShell and Command Prompt through the user `Path` (in Git Bash, type `rerail.cmd`).
+  glibc 2.28 or newer, which every distribution Node 24 runs on has (Debian 10 and later, Ubuntu 20.04 and later,
+  RHEL 8 and later and their rebuilds, Amazon Linux 2023, Fedora); Windows 11 on x64 and arm64, profile folders whose
+  name has a space or a non-ASCII letter included.
+- **Node.js** 24 or newer, however it is installed (nodejs.org, Homebrew, nvm, fnm, Volta, NodeSource). Homebrew's
+  Node is recorded by the link `brew upgrade` keeps; after removing the Node that ran set-up, run
+  `rerail install --refresh` with Node 24 or newer first on `PATH`.
+- **Git** at `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, Linuxbrew's `/home/linuxbrew/.linuxbrew/bin`, or a
+  Nix profile (`/run/current-system/sw/bin`, `~/.nix-profile/bin`); on Windows Git for Windows in
+  `C:\Program Files\Git`, `C:\Program Files (x86)\Git` or, installed for one user, `%LOCALAPPDATA%\Programs\Git`,
+  and scoop's (`~\scoop\apps\git\current`). Rerail does not look for Git on `PATH`.
+- **Shells** set-up puts `rerail` on `PATH` for: zsh, bash and fish (interactive shells; `zsh -c` and ssh need the
+  full path or `~/.zshenv`), any other shell through `~/.profile`, and on Windows PowerShell, Command Prompt and Git
+  Bash through the user `Path`.
 - **Coding agents**: Claude Code as the CLI, in the VS Code extension (whose panel shows no status line) and in the
   JetBrains plugin; on Windows, Claude Code 2.1.139 or newer. Codex CLI (trust the hook once with `/hooks`). Cursor's
   IDE agent and its CLI (`cursor-agent`). OMP and Pi. Each is found by its config folder in your home folder
-  (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.omp/agent`, `~/.pi/agent`).
-- **Containers and devcontainers** with a glibc 2.39 image (such as `node:24-trixie-slim`) and an init process.
+  (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.omp/agent`, `~/.pi/agent`; on Windows the profile folder, `USERPROFILE`),
+  and one installed after set-up is connected by running `rerail setup` again.
+- **Containers and devcontainers** with a glibc image, the default `node:24` and `node:24-slim` included, with or
+  without an init process.
 - **WSL 2**, as Linux, with the coding agent running in WSL too.
 - **A registry mirror or proxy** set in `~/.npmrc`.
 
 Not supported:
 
-- Linux with glibc older than 2.39: Debian 12 (and the default `node:24` and `node:24-slim` images), Ubuntu 22.04,
-  RHEL 9 and its rebuilds, Amazon Linux 2023. Alpine and other musl distributions. Other operating systems.
+- Linux with glibc older than 2.28 (Amazon Linux 2, Ubuntu 18.04, CentOS 7), where Node 24 does not run either.
+  Alpine and other musl distributions (`node:24-alpine`). Other operating systems and processors.
 - Node.js 23 or older.
-- A Git only on `PATH` somewhere else (Nix, Linuxbrew, scoop, a per-user Git for Windows), or no Git.
+- A Git only somewhere else on `PATH`, or no Git.
 - Other coding agents and editors: GitHub Copilot, Windsurf, Gemini CLI, Cline, Roo Code, Zed's agent, Aider,
   Continue, OpenCode, Amp and the rest. Cursor's cloud agents, which run no user hooks.
-- Agent config folders moved with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, and agent config files that are not strict
-  JSON (comments, trailing commas).
+- Agent config folders moved with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. An agent config file that is not strict JSON
+  (comments, trailing commas) is left as it is, and that coding agent stays unconnected until the file is fixed.
 - A coding agent on Windows with Rerail in WSL, or the other way round.
 - Installing offline: set-up, `rerail update` and rule packs need the npm registry.
 
