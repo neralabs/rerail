@@ -1,0 +1,168 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-st08-structure-distinct",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't put parentheses after DISTINCT in SQL as if it were a function; DISTINCT is a keyword, and the parentheses mislead about what it applies to.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "distinct-select-parentheses",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "parenthesized_expression",
+            "inside": {
+              "kind": "term",
+              "field": "value",
+              "nthChild": 1,
+              "inside": {
+                "kind": "select_expression",
+                "follows": {
+                  "kind": "keyword_distinct"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ST08",
+        "message": "DISTINCT used with parentheses.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST08",
+              "L015",
+              "all",
+              "core",
+              "structure",
+              "structure.distinct"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "distinct-before-parenthesized-operand",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "keyword_distinct",
+            "inside": {
+              "kind": "select",
+              "regex": "^(?is:select\\s+distinct\\()"
+            },
+            "precedes": {
+              "kind": "select_expression",
+              "has": {
+                "kind": "term",
+                "nthChild": 1,
+                "has": {
+                  "field": "value",
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "left",
+                    "kind": "parenthesized_expression"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ST08",
+        "message": "DISTINCT used with parentheses.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST08",
+              "L015",
+              "all",
+              "core",
+              "structure",
+              "structure.distinct"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "distinct-function-parentheses",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "keyword_distinct",
+            "inside": {
+              "kind": "invocation"
+            },
+            "precedes": {
+              "kind": "term",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "field": "alias",
+                      "regex": "(?s)."
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                ]
+              },
+              "has": {
+                "field": "value",
+                "kind": "parenthesized_expression",
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "subquery"
+                      },
+                      {
+                        "kind": "select"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ST08",
+        "message": "DISTINCT used with parentheses.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "ST08",
+              "L015",
+              "all",
+              "core",
+              "structure",
+              "structure.distinct"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

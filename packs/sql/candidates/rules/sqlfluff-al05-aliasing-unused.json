@@ -3,7 +3,7 @@
   "id": "sqlfluff-al05-aliasing-unused",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's AL05 (aliasing.unused) with default settings: flag a table alias that is never used in its SELECT statement, except where the alias is required (a derived table or VALUES list) or the same table is referenced more than once.",
+  "description": "Remove SQL table aliases the query never uses, unless the alias is required, as for a subquery, a VALUES list or a table joined to itself.",
   "scope": {
     "include": [
       "**/*.sql"
@@ -38,6 +38,19 @@
                     "has": {
                       "kind": "values",
                       "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "invocation",
+                      "stopBy": {
+                        "kind": "subquery"
+                      },
+                      "has": {
+                        "kind": "object_reference",
+                        "stopBy": "neighbor",
+                        "regex": "(?i)^(?:unnest|generate_series)$"
+                      }
                     }
                   },
                   {
@@ -318,6 +331,28 @@
             },
             "binds": {
               "used": false
+            },
+            "not": {
+              "inside": {
+                "kind": "from",
+                "stopBy": {
+                  "kind": "from"
+                },
+                "inside": {
+                  "has": {
+                    "kind": "object_reference",
+                    "stopBy": "end",
+                    "inside": {
+                      "kind": "relation",
+                      "stopBy": "neighbor"
+                    },
+                    "has": {
+                      "field": "schema",
+                      "pattern": "$ALIAS"
+                    }
+                  }
+                }
+              }
             }
           }
         }

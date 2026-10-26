@@ -3,7 +3,7 @@
   "id": "ruff-sim221-expr-or-not-expr",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM221 (expr-or-not-expr): an `or` expression (one run of the operator; parentheses start a new one) with a value `not A` and a value `A`, the same plain name (through parentheses), and no side effect anywhere in it (Ruff's `contains_effect`). Reported on the whole `or` expression, once per such pair.",
+  "description": "Replace an or expression that combines a name with its own negation by True; it is always true.",
   "scope": {
     "include": [
       "**/*"

@@ -1,5 +1,11 @@
 # @neralabs/rerail-pack-complexity
 
+## 0.1.3
+
+### Patch Changes
+
+- e06db22: Complexity pack: every rule description now says in one plain sentence what the rule wants; the exact matching detail moved to the pack README.
+
 ## 0.1.2
 
 ### Patch Changes

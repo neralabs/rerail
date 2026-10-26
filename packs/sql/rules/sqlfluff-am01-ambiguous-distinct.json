@@ -1,0 +1,53 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-am01-ambiguous-distinct",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid DISTINCT in a SQL SELECT that already has GROUP BY; the grouping already makes the rows unique.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "distinct-with-group-by",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "keyword_distinct",
+            "inside": {
+              "kind": "select",
+              "stopBy": "neighbor",
+              "precedes": {
+                "kind": "from",
+                "has": {
+                  "kind": "group_by"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "AM01",
+        "message": "Remove DISTINCT from this SELECT; its GROUP BY already makes the rows unique.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "AM01",
+              "L021",
+              "all",
+              "ambiguous",
+              "ambiguous.distinct",
+              "core"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

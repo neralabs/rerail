@@ -1,1 +1,0 @@
-var test = (error) => {if(error){/* do nothing */}};

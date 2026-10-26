@@ -1,0 +1,281 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-use-before-define",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare TypeScript variables, functions and classes before using them; a use earlier in the file can read an undefined or uninitialized binding.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "use-before-define",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "scope-edge": {
+              "any": [
+                {"kind": "function_declaration"},
+                {"kind": "generator_function_declaration"},
+                {"kind": "function_expression"},
+                {"kind": "generator_function"},
+                {"kind": "arrow_function"},
+                {"kind": "method_definition"},
+                {"kind": "class_body"},
+                {"kind": "class_heritage"},
+                {"kind": "class_static_block"},
+                {"kind": "internal_module"},
+                {"kind": "module"},
+                {"kind": "ambient_declaration"}
+              ]
+            },
+            "block-scope": {
+              "any": [
+                {"kind": "statement_block", "not": {"inside": {"matches": "scope-edge"}}},
+                {"kind": "switch_statement"},
+                {"kind": "with_statement"},
+                {
+                  "kind": "for_statement",
+                  "has": {"field": "initializer", "kind": "lexical_declaration"}
+                },
+                {"kind": "for_in_statement", "has": {"field": "kind", "not": {"regex": "^var$"}}}
+              ]
+            },
+            "before-r": {"layout": {"after": {"to": "capture.R", "breaks": {"min": 0}}}},
+            "holds-def": {
+              "has": {
+                "stopBy": "end",
+                "pattern": "$D",
+                "compare": {"left": "D", "op": "eq", "right": "DEF", "text": "node"}
+              }
+            },
+            "first-def": {"resolves": {"binding": {"occurrence": {"binds": {}, "pattern": "$DEF"}}}},
+            "in-init": {
+              "all": [
+                {"matches": "first-def"},
+                {
+                  "any": [
+                    {
+                      "inside": {
+                        "field": "value",
+                        "stopBy": {"matches": "scope-edge"},
+                        "any": [
+                          {"kind": "variable_declarator"},
+                          {"kind": "required_parameter"},
+                          {"kind": "optional_parameter"}
+                        ],
+                        "matches": "holds-def"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "field": "right",
+                        "stopBy": {"matches": "scope-edge"},
+                        "any": [
+                          {"kind": "assignment_pattern"},
+                          {"kind": "object_assignment_pattern"},
+                          {"kind": "for_in_statement"}
+                        ],
+                        "matches": "holds-def"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "resolves": {"binding": {"scope": ["global", "module", "function", "namespace"]}},
+                    "inside": {"stopBy": {"matches": "scope-edge"}, "matches": "block-scope"}
+                  }
+                }
+              ]
+            },
+            "decorated-def": {
+              "any": [{"kind": "class_declaration"}, {"kind": "abstract_class_declaration"}],
+              "has": {
+                "field": "name",
+                "pattern": "$N",
+                "compare": {"left": "N", "op": "eq", "right": "DEF", "text": "node"}
+              }
+            },
+            "fn-type": {
+              "any": [
+                {"kind": "function_type"},
+                {"kind": "constructor_type"},
+                {"kind": "call_signature"},
+                {"kind": "construct_signature"},
+                {"kind": "method_signature", "not": {"inside": {"kind": "class_body"}}}
+              ]
+            },
+            "scope-stop": {
+              "any": [
+                {"matches": "fn-type"},
+                {"matches": "scope-edge"},
+                {
+                  "kind": "computed_property_name",
+                  "inside": {"kind": "method_signature", "field": "name"}
+                },
+                {"kind": "index_signature", "has": {"kind": "mapped_type_clause"}},
+                {
+                  "inside": {"kind": "conditional_type"},
+                  "not": {"inside": {"kind": "conditional_type", "field": "alternative"}}
+                }
+              ]
+            },
+            "in-fn-type": {"inside": {"stopBy": {"matches": "scope-stop"}, "matches": "fn-type"}},
+            "sig-param": {
+              "any": [{"kind": "required_parameter"}, {"kind": "optional_parameter"}],
+              "inside": {"kind": "formal_parameters", "inside": {"matches": "fn-type"}}
+            }
+          },
+          "rule": {
+            "any": [
+              {"kind": "identifier"},
+              {"kind": "shorthand_property_identifier"},
+              {"kind": "shorthand_property_identifier_pattern"}
+            ],
+            "pattern": "$R",
+            "all": [
+              {
+                "not": {
+                  "inside": {
+                    "any": [{"kind": "type_query"}, {"kind": "nested_type_identifier"}],
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {"kind": "member_expression"},
+                          {"kind": "nested_identifier"},
+                          {"kind": "instantiation_expression"}
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "export_statement",
+                    "not": {"has": {"regex": "^as$"}},
+                    "stopBy": {"not": {"kind": "parenthesized_expression"}}
+                  }
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {"inside": {"stopBy": "end", "field": "value", "matches": "sig-param"}},
+                    {"inside": {"stopBy": "end", "field": "pattern", "matches": "sig-param"}},
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {"inside": {"stopBy": "end", "kind": "computed_property_name"}},
+                            {"inside": {"any": [{"kind": "type_predicate"}, {"kind": "asserts"}]}}
+                          ]
+                        },
+                        {
+                          "any": [
+                            {"matches": "in-fn-type"},
+                            {
+                              "inside": {
+                                "stopBy": {"matches": "scope-stop"},
+                                "kind": "computed_property_name",
+                                "inside": {
+                                  "kind": "method_signature",
+                                  "field": "name",
+                                  "matches": "in-fn-type"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "matches": "first-def",
+                  "inside": {
+                    "kind": "decorator",
+                    "stopBy": "end",
+                    "inside": {
+                      "any": [
+                        {"matches": "decorated-def"},
+                        {"has": {"field": "declaration", "matches": "decorated-def"}}
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {"not": {"inside": {"kind": "export_statement", "has": {"regex": "^as$"}}}},
+                  {
+                    "resolves": {
+                      "binding": {
+                        "occurrence": {
+                          "binds": {},
+                          "not": {
+                            "inside": {
+                              "field": "name",
+                              "any": [
+                                {"kind": "interface_declaration"},
+                                {"kind": "type_alias_declaration"}
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {"kind": "export_specifier", "field": "name"},
+                    "resolves": {"unresolved": true}
+                  },
+                  {
+                    "any": [
+                      {"matches": "first-def"},
+                      {
+                        "resolves": {"binding": {"site": {"has": {"field": "name", "pattern": "$_"}}}}
+                      }
+                    ],
+                    "not": {
+                      "any": [
+                        {
+                          "resolves": {"binding": {"occurrence": {"binds": {}, "matches": "before-r"}}}
+                        },
+                        {
+                          "resolves": {"binding": {"site": {"has": {"field": "name", "matches": "before-r"}}}}
+                        },
+                        {
+                          "matches": "first-def",
+                          "inside": {
+                            "kind": "formal_parameters",
+                            "stopBy": "end",
+                            "inside": {"has": {"field": "body", "matches": "holds-def"}}
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {"matches": "in-init"}
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-use-before-define",
+        "message": "Move the declaration of '$R' above this use.",
+        "suppress": {"eslint": {"rules": ["@typescript-eslint/no-use-before-define"]}, "biome": {"rules": ["lint/correctness/noInvalidUseBeforeDeclaration"]}}
+      }
+    }
+  ]
+}

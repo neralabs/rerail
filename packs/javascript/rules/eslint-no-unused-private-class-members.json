@@ -3,7 +3,7 @@
   "id": "eslint-no-unused-private-class-members",
   "revision": 2,
   "mode": "steer",
-  "description": "ESLint 10.11.0 no-unused-private-class-members, default options. Port of ESLint's `no-unused-private-class-members` rule (https://eslint.org/docs/latest/rules/no-unused-private-class-members). A private field, method or accessor that no reference in its class body uses (`binds.used: false` on the private name: writes only count for fields and methods, any reference for accessors), reported at its last declaration.",
+  "description": "Remove private class fields, methods and accessors that are never used inside the class; assignments alone don't count as use.",
   "scope": {
     "include": [
       "**/*.ts",

@@ -1,1 +1,0 @@
-var emitter = require('events').EventEmitter, fs = require('fs')

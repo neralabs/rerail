@@ -1,1 +1,0 @@
-type A = { x: number } & B & C;

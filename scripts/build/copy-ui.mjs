@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 //
 // The page is plain HTML, CSS, and ES modules; "building" it is a copy into the directory
-// the daemon serves. Removing the destination first makes deletions in `ui/` propagate, so
+// the daemon serves, keeping `ui/`'s layout (`index.html`, `app.js` and the shared modules at
+// the top, `css/` with one sheet per view, `views/`, `frame/`, `render/`), since the page loads
+// them by those paths. Removing the destination first makes deletions in `ui/` propagate, so
 // a stale asset can never outlive the source it came from. Only page assets ship: dotfiles
 // (`.DS_Store`, editor state) and any stray `node_modules` are filtered out of the copy.
 

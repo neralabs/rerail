@@ -3,7 +3,7 @@
  "id": "ruff-async250-blocking-input-in-async-function",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC250 (blocking-input-in-async-function): a call to the builtin `input` (the unshadowed name, or `builtins.input`) inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Don't call input() inside async functions; it blocks the event loop while waiting for the user.",
  "scope": {
   "include": [
    "**/*"
@@ -129,7 +129,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC250",
-    "message": "Blocking call to `input()` in async context",
+    "message": "Read input in a worker thread, such as `await asyncio.to_thread(input)`, instead of calling `input()` directly.",
     "suppress": {
       "noqa": {
         "codes": [

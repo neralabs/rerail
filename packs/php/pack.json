@@ -3,7 +3,7 @@
   "id": "php",
   "name": "PHP",
   "category": "language",
-  "covers": "No rules yet: its 18 PHP_CodeSniffer, PHPStan and Psalm ports are candidates until they pass the V1 rule validation gates.",
+  "covers": "7 PHP_CodeSniffer, PHPStan and Psalm rules ported to Rerail, 3 of them on and 4 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches PHP",
   "match": {
     "any": [
@@ -18,5 +18,62 @@
       }
     ]
   },
-  "rules": []
+  "rules": [
+    {
+      "id": "phpcs-generic-code-analysis-empty-statement",
+      "document": "rules/phpcs-generic-code-analysis-empty-statement.json",
+      "title": "PHP_CodeSniffer Generic.CodeAnalysis.EmptyStatement: Empty statement",
+      "group": "PHP_CodeSniffer",
+      "on": false
+    },
+    {
+      "id": "phpcs-generic-php-backtick-operator",
+      "document": "rules/phpcs-generic-php-backtick-operator.json",
+      "title": "PHP_CodeSniffer Generic.PHP.BacktickOperator: Backtick operator",
+      "group": "PHP_CodeSniffer",
+      "on": false
+    },
+    {
+      "id": "phpcs-generic-php-lower-case-constant",
+      "document": "rules/phpcs-generic-php-lower-case-constant.json",
+      "title": "PHP_CodeSniffer Generic.PHP.LowerCaseConstant: Lower-case constant",
+      "group": "PHP_CodeSniffer"
+    },
+    {
+      "id": "phpcs-squiz-php-eval",
+      "document": "rules/phpcs-squiz-php-eval.json",
+      "title": "PHP_CodeSniffer Squiz.PHP.Eval: Eval",
+      "group": "PHP_CodeSniffer",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "app/render.php",
+          "text": "<?php\n\nfunction render(string $template): void\n{\n    eval($template);\n}\n"
+        },
+        "passes": {
+          "path": "app/render.php",
+          "text": "<?php\n\nfunction render(string $template): void\n{\n    echo htmlspecialchars($template);\n}\n"
+        }
+      }
+    },
+    {
+      "id": "phpstan-argument-sscanf",
+      "document": "rules/phpstan-argument-sscanf.json",
+      "title": "PHPStan argument.sscanf: sscanf() argument count",
+      "group": "PHPStan"
+    },
+    {
+      "id": "phpstan-missing-function-return-type",
+      "document": "rules/phpstan-missing-function-return-type.json",
+      "title": "PHPStan missingType.return: Missing function return type",
+      "group": "PHPStan",
+      "on": false
+    },
+    {
+      "id": "psalm-forbidden-code",
+      "document": "rules/psalm-forbidden-code.json",
+      "title": "Psalm ForbiddenCode: Forbidden code",
+      "group": "Psalm"
+    }
+  ]
 }

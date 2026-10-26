@@ -3,7 +3,7 @@
   "id": "ruff-b026-star-arg-unpacking-after-keyword-arg",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B026 (star-arg-unpacking-after-keyword-arg): a `*` unpacking argument of a call that comes after the call's first keyword argument (`name=value` or `**mapping`). Reported on the starred argument.",
+  "description": "Put star-argument unpacking before keyword arguments in calls; placing it after is legal but misleading about argument order.",
   "scope": {
     "include": [
       "**/*"

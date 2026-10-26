@@ -3,7 +3,7 @@
   "id": "ruff-f841-unused-variable",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F841 (unused-variable), on the engine's usedness (M10a `binds`): the latest binding of a name in a function or lambda scope made by `=` (plain or annotated), `+=`, `:=`, `with ... as name`, a match capture or a `type` alias (Ruff's Assignment, NamedExprAssignment and WithItemVar) that nothing reads, not under `global`/`nonlocal`, not an unpacked assignment (Ruff's is_unpacking_assignment: a name in a tuple-like target whose value is no display, or in a chain with a non-tuple target, a walrus in the value of an all-tuple unpacking, a `with` tuple target), not a dummy (Ruff's option `dummy-variable-rgx`) or traceback name; and any `except ... as name` nothing reads, not a dummy name. A `locals()` call in the function leaves its assignments' usedness unknown (Ruff's USES_LOCALS; not the `except` names'). Names in strings Ruff parses as type definitions are reads (M11a). Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F841.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Remove local variables and except-as names that are assigned but never read; they are dead code or hide a bug.",
   "scope": {
     "include": [
       "**/*"

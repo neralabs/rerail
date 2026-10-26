@@ -7,6 +7,7 @@ import type { AdapterDelivery } from "../src/engine/index.js";
 import { runShowMeCommand, SHOW_ME_FILE, SHOW_ME_FIXED, SHOW_ME_MESSAGE, SHOW_ME_RULE_ID, SHOW_ME_VIOLATING } from "../src/cli/index.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 import { awaitCodeRulesOpen } from "./support/code-rules-open.js";
+import { escapeRegExp } from "./support/steer-text.js";
 
 const originalRerailHome = process.env.RERAIL_HOME;
 let isolatedRerailHome: string;
@@ -57,7 +58,7 @@ describe("/rerail-show-me in a running session", () => {
       expect(showMe(["--repo", root, "--json"])).toBe(0);
       const broken = [...await write(SHOW_ME_VIOLATING), ...await endTurn()];
       expect(demoSteers(broken)).toEqual([
-        expect.objectContaining({ content: expect.stringContaining(`${SHOW_ME_MESSAGE} (${SHOW_ME_FILE}:2:`) }),
+        expect.objectContaining({ content: expect.stringMatching(new RegExp(`^- ${escapeRegExp(SHOW_ME_FILE)}:2:\\d+ — ${escapeRegExp(SHOW_ME_MESSAGE)} \\[${escapeRegExp(SHOW_ME_RULE_ID)}\\]$`, "mu")) }),
       ]);
 
       expect(demoSteers([...await write(SHOW_ME_FIXED), ...await endTurn()])).toEqual([]);

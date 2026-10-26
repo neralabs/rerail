@@ -110,7 +110,7 @@ describe("repository start state", () => {
     const setUp = await startRerail(main, first, answered(databasePath, "start"));
     // No pack core ships has a match definition, so set-up adds none.
     expect(setUp).toMatchObject({ previous: "stopped", setUpRan: true, repositoryName: "acme-web", ruleCount: 0 });
-    expect(first.lines[0]).toBe("Rerail is on in acme-web. Connected to Claude Code and Cursor.");
+    expect(first.lines.join("\n")).toContain("● Rerail is on in acme-web · no rule packs on yet");
     expect(attachedPacks(main, databasePath)).toEqual([]);
     expect(workspaceStartState(main, databasePath)).toBe("started");
     expect(readOnlyStartState(main, databasePath)).toBe("started");
@@ -168,7 +168,7 @@ describe("repository start state", () => {
 
     const io = recorder();
     expect(await startRerail(main, io, answered(databasePath, "pick-myself"))).toMatchObject({ setUpRan: true, ruleCount: 0 });
-    expect(io.lines.join("\n")).toContain("Rerail is on in acme-web. No rule packs are on yet.");
+    expect(io.lines.join("\n")).toContain("Rerail is on in acme-web · no rule packs on yet");
     expect(workspaceStartState(main, databasePath)).toBe("started");
 
     stopRerail(main, recorder(), { databasePath });
@@ -198,7 +198,7 @@ describe("repository start state", () => {
     // Set-up from a worktree starts the repository as a whole.
     const setUp = recorder();
     await startRerail(outer, setUp, answered(databasePath, "start"));
-    expect(setUp.lines[0]).toBe("Rerail is on in acme-web. Connected to Claude Code and Cursor.");
+    expect(setUp.lines.join("\n")).toContain("● Rerail is on in acme-web · no rule packs on yet");
     expect(states()).toEqual({ main: "started", beside: "started", outer: "started", inner: "started" });
 
     // A checkout stop reaches the worktrees inside it, not the ones beside it.

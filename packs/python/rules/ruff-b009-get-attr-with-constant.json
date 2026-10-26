@@ -3,7 +3,7 @@
   "id": "ruff-b009-get-attr-with-constant",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B009 (getattr-with-constant): `getattr(obj, \"name\")` with exactly two positional arguments and no keyword arguments, `obj` not starred, the second a str literal (not bytes, an f- or t-string; escapes decoded, implicit concatenations joined) whose value is a Python identifier (Unicode XID, not a keyword) and not a mangled private name (`__x` without a trailing `__`). The callee (parentheses transparent) resolves to the builtin `getattr` (Ruff's `match_builtin_expr`): the unshadowed name, or `getattr` of the `builtins` module through the file's imports. Reported on the call.",
+  "description": "Use plain attribute access instead of getattr() with a constant attribute name; it is no safer and harder to read.",
   "scope": {
     "include": [
       "**/*"

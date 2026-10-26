@@ -3,11 +3,12 @@
 Test support that scores rule packs against the tools they port. It is never published (it is outside package.json
 `files`), and `src/` never imports it.
 
-- `pack-validation.ts`: the pack validation contract, checks 1 to 6 of [docs/pack-format.md](../docs/pack-format.md).
+- `pack-validation.ts`: the pack validation contract, checks 1 to 8 of [docs/pack-format.md](../docs/pack-format.md).
   `test/engine/catalog/packs.test.ts` runs it for every `packs/<id>/`.
 - `languages/`: the common conformance runner. It scores each ported rule TP/FP/FN through the production workspace,
-  against the pack's upstream recording (`packs/<id>/upstream/<tool>/`) and its declared divergences. The CLI is
-  `npm run conformance:languages`, with `-- --check` as CI's gate (`npm run test:conformance`).
+  against the pack's upstream recording (`packs/<id>/upstream/<tool>/`, pack test data that `npm run fixtures:pull`
+  fetches from the archive the tool-pack's `test-data.lock` names) and its declared divergences. The CLI
+  is `npm run conformance:languages`, with `-- --check` as CI's gate (`npm run test:conformance`).
   `identifier-rename.ts` is the overfitting guard: a port must score the same when the tests' own identifiers are
   renamed.
 - `recorders/`: the shared ESLint recorder the ECMA packs' upstream generators use.

@@ -1,2 +1,0 @@
-<App />;
-// features: [], parser: default

@@ -258,8 +258,8 @@ Mirrors: tree-sitter/tree-sitter-typescript#364 (open), with the follow-up its r
 
 Why: TypeScript 4.7 allows `in`, `out` and `in out` before a type parameter (`interface Producer<out T>`,
 `class Box<in out T>`), after `const` when both appear. Upstream's `type_parameter` has only `const`, so every
-annotated parameter is a parse error that takes its whole interface, class or type alias with it (NER-1791;
-botpress's `packages/zui/src/z/typings.ts` declares `interface IZodObject<…, out T extends ZodRawShape = …>`).
+annotated parameter is a parse error that takes its whole interface, class or type alias with it (botpress's
+`packages/zui/src/z/typings.ts` declares `interface IZodObject<…, out T extends ZodRawShape = …>`).
 With only #364's change, `out` becomes a keyword at the start of a type parameter and `type F<out> = out[]` stops
 parsing, so the name also accepts `out`, as TypeScript reads it before `>`, `,` or `=`.
 
@@ -295,7 +295,7 @@ Why: TypeScript reads `(any) => void` as a function type with one parameter name
 `symbol` and `undefined`: the precedences `[literal_type, pattern]` and `[predefined_type, pattern]` decide `(kw)`
 before the `)` is past, and `unknown` and `never` are missing from the words a parameter may be named by. So
 `Record<number, (any) => void>`, `(unknown, x) => void` and `interface I { n: (string) => void }` are parse errors
-(NER-1804); `(bigint) => void` parsed only because `bigint` is no keyword of the grammar.
+as well; `(bigint) => void` parsed only because `bigint` is no keyword of the grammar.
 
 ```diff
 --- a/common/define-grammar.js
@@ -437,7 +437,7 @@ Why: JSX text may hold `&` as text. TypeScript and Babel decode a complete chara
 `&#x26;`) and read any other `&` literally, as React renders it. Upstream's `jsx_text` is an external token that stops
 at every `&`, and the only other token there, `html_character_reference`, needs the closing `;`. So
 `<span>Help & Support</span>`, `<h2>{a} & {b}</h2>`, `<p>a&b</p>` and `<p>&nbsp</p>` are parse errors, and the
-element around them is lost (NER-1764; resume-matcher's settings page writes
+element around them is lost (resume-matcher's settings page writes
 `{t('settings.uiLanguage')} & {t('settings.contentLanguage')}`). These were the 82 syntax-error files Patch 3 left on
 shadcn-ui@0e3abd6.
 
@@ -542,7 +542,7 @@ in `grammars/tree-sitter-javascript/PATCHES.md`.
 Why: ECMAScript 2025 and TypeScript allow import attributes on `export … from`, as on `import`:
 `export { default as x } from './x.json' with { type: 'json' }`, `export * from 'y' with { type: 'json' }`. Upstream
 takes them only on `import`, so a re-export with them is a parse error whose remainder reads as a label `export:`, and
-`no-labels` reports a false positive at the `with {` (NER-1764, NER-1777).
+`no-labels` reports a false positive at the `with {`.
 
 ```diff
 --- a/common/define-grammar.js
@@ -1761,7 +1761,7 @@ every other tree is unchanged; every hono file parses.
 
 ## Patch 25: a class declares a static index signature
 
-Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`). Rerail: NER-1875.
+Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`).
 
 Why: TypeScript 4.3 allows `static [k: string]: number;` in a class, and upstream's `index_signature` has no
 `static`. An interface or an object type may not declare one, so only the class body accepts it.
@@ -1806,7 +1806,7 @@ fields stay on the `index_signature`.
 
 ## Patch 26: `global { … }` without `declare` is a global augmentation
 
-Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`). Rerail: NER-1875.
+Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`).
 WillBooster/tree-sitter-typescript reads it as an `internal_module` named `global`, the shape used here.
 
 Why: inside `declare module 'x' { … }`, TypeScript accepts `global { interface String {} }` without `declare`,

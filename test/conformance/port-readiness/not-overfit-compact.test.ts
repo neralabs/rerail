@@ -449,9 +449,29 @@ test("javascriptRegex runs Rust's class intersection and difference in unicodeSe
   assert.equal(blankLine!.test(" x\n"), false);
   assert.equal(javascriptRegex("^[[a-z]--[aeiou]]$")!.test("b"), true);
   assert.equal(javascriptRegex("^[[a-z]--[aeiou]]$")!.test("a"), false);
-  // A bare range as an operand is Rust's spelling only; JavaScript's unicodeSets mode wants it bracketed.
-  assert.equal(javascriptRegex("^[a-z--[aeiou]]$"), undefined);
   assert.equal(javascriptRegex("[[a-z]~~[aeiou]]"), undefined);
+});
+
+test("javascriptRegex reads a Rust class operand as the union before the operator, applying operators left to right", () => {
+  // Rust binds union tighter than `--` and `&&`; unicodeSets mode takes single operands, so the translation brackets them.
+  const lowerStart = javascriptRegex(String.raw`^"[\p{L}_--\p{Lu}--\p{Lt}][\p{L}\p{N}_$--\p{Lu}--\p{Lt}]*"$`)!;
+  assert.equal(lowerStart.source, String.raw`^"[[\p{L}_]--\p{Lu}--\p{Lt}][[\p{L}\p{N}_\$]--\p{Lu}--\p{Lt}]*"$`);
+  assert.equal(lowerStart.flags, "v");
+  for (const [text, matches] of [['"foo"', true], ['"_a$1"', true], ['"élan"', true], ['"Foo"', false], ['"fǅ"', false], ['"1a"', false], ['"$a"', false]] as const) {
+    assert.equal(lowerStart.test(text), matches, text);
+  }
+  const vowelless = javascriptRegex("^[a-z--[aeiou]]$")!;
+  assert.equal(vowelless.source, "^[[a-z]--[aeiou]]$");
+  assert.equal(vowelless.test("b"), true);
+  assert.equal(vowelless.test("a"), false);
+  // A change of operator applies to everything before it.
+  const mixed = javascriptRegex(String.raw`^[a-z--[aeiou]&&[a-f]]$`)!;
+  assert.equal(mixed.source, "^[[[a-z]--[aeiou]]&&[a-f]]$");
+  assert.deepEqual(["a", "b", "c", "d", "e", "f", "g"].filter((char) => mixed.test(char)), ["b", "c", "d", "f"]);
+  // Punctuation unicodeSets mode reads as syntax stays literal, and negation applies to the whole expression.
+  const punctuation = javascriptRegex(String.raw`^[^(|)\-[:digit:]--[5]]$`)!;
+  assert.equal(punctuation.source, String.raw`^[^[\(\|\)\-[0-9]]--[5]]$`);
+  assert.deepEqual(["(", "|", "-", "3", "5", "a"].filter((char) => punctuation.test(char)), ["5", "a"]);
 });
 
 /** A regex of every one-edit variant of each name, as a port writes upstream's edit distance 1 out (Next.js's no-typos). */

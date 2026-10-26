@@ -57,14 +57,9 @@ async function connection(root: string, home: string, id: Harness): Promise<Pick
   }
 }
 
-/** The coding agents Rerail is connected to now, as `codingAgentStates` checks them. */
-export async function connectedCodingAgents(root: string, home: string): Promise<Harness[]> {
-  return (await codingAgentStates(root, home)).filter(state => state.connected).map(state => state.id);
-}
-
 /**
  * Whether coding agent `id` holds any registration of `root`: a dry run of removing Rerail from it would change
- * something. Unlike `connectedCodingAgents`, an agent missing part of what this version registers (a command added
+ * something. An agent missing part of what this version registers (a command added
  * since) counts, and one the person never connected, or connected to another root, does not. Changes nothing; a
  * configuration that cannot be read throws.
  */

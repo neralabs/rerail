@@ -3,7 +3,7 @@
   "id": "bandit-b612-logging-config-insecure-listen",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect logging configuration listeners without verification",
+  "description": "Pass a verify callback to logging.config.listen; otherwise anyone who can reach the port can push logging config that runs code.",
   "scope": {
     "include": [
       "**/*.py"

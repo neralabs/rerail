@@ -3,7 +3,7 @@
   "id": "ruff-sim208-double-negation",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM208 (double-negation): `not` applied to another `not` expression, through any parentheses, reported on the outer `not` expression (each outer `not` of a longer chain).",
+  "description": "Remove double negation with not not; use the value itself, or bool() if you need a real boolean.",
   "scope": {
     "include": [
       "**/*"

@@ -1,1 +1,0 @@
-class C { field = function() { this; }.bind(b); }

@@ -37,6 +37,7 @@ export {
   type AdapterSession,
   type RerailEventLoop,
   type RerailHost,
+  type SteerRule,
 } from "./engine/adapter-contract.js";
 export { claudeHookEvents, createClaudeEventHandler, type ClaudeHookInput } from "./hosts/claude/claude-event-adapter.js";
 export { codexHookEvents, createCodexEventHandler, type CodexHookInput } from "./hosts/codex/codex-event-adapter.js";

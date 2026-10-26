@@ -1,8 +1,6 @@
 {
-  "format": "rerail.port-readiness-recording-lock/v1",
+  "format": "rerail.port-readiness-recording-lock/v2",
   "tool": "eslint",
-  "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/eslint/eslint",
     "commit": "3c0b7c6e1fe2dec778b97a996018126f22d437ae",
@@ -21,14 +19,12 @@
     "recording.json": {
       "sha256": "91737b29ce59b707fad751c10bff8b04dd1805a81ccaf1fb927e48898d343c9d",
       "size": 15725388,
-      "format": "rerail.port-readiness-recording/v2",
-      "asset": "javascript-eslint-recording-91737b29ce59b707fad751c10bff8b04dd1805a81ccaf1fb927e48898d343c9d.json.gz"
+      "format": "rerail.port-readiness-recording/v2"
     },
     "corpus.json": {
       "sha256": "4e955069b420e258c368e99c0cba326b987ade51c0232c19fca8cbef2bb2cee4",
       "size": 3205,
-      "format": "rerail.port-readiness-corpus/v2",
-      "asset": "javascript-eslint-corpus-4e955069b420e258c368e99c0cba326b987ade51c0232c19fca8cbef2bb2cee4.json.gz"
+      "format": "rerail.port-readiness-corpus/v2"
     }
   }
 }

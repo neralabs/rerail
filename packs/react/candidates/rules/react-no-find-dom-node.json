@@ -3,7 +3,7 @@
   "id": "react-no-find-dom-node",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/no-find-dom-node: a call whose callee is `findDOMNode` or a member `.findDOMNode`.",
+  "description": "Use refs instead of findDOMNode(); it is deprecated, fails in StrictMode and doesn't work with function components.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -53,7 +53,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-find-dom-node",
-        "message": "Do not use findDOMNode. It doesn’t work with function components and is deprecated in StrictMode. See https://reactjs.org/docs/react-dom.html#finddomnode",
+        "message": "Replace findDOMNode() with a ref on the element you need; findDOMNode is deprecated and fails in StrictMode.",
         "suppress": {
           "eslint": {
             "rules": [

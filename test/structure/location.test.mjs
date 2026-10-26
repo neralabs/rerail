@@ -63,15 +63,103 @@ describe("#2 rule document location", () => {
 });
 
 describe("#3 fixture data location", () => {
+  const lock = (fields = {}) => JSON.stringify({ format: 1, sha256: "a".repeat(64), files: 2, bytes: 10, ...fields });
+  const push = (pack, tool) => `npm run fixtures:push -- --pack ${pack} --tool ${tool}`;
+  const tracked = (pack, tool) =>
+    `the tool-pack's archive holds pack test data: before merge a maintainer runs \`${push(pack, tool)}\` and \`git rm --cached\` it`;
+  const unpinned = (pack, tool) => `the tool-pack's test data archive is unpinned: \`${push(pack, tool)}\` writes it`;
+
   it("flags recordings outside fixtures/ and packs/<id>/upstream/", () => {
     const result = fixtureDataLocation(
       memoryRepo({
         "fixtures/php/scope/a.expected.json": "{}",
-        "packs/php/upstream/phpcs/fixtures.expected.json": "{}",
+        "packs/php/upstream/notes.expected.json": "{}",
         "test/data/b.expected.json": "{}",
       }),
     );
     expect(paths(result)).toEqual(["test/data/b.expected.json"]);
+  });
+
+  it("flags every tracked pack test data file with one message and passes the rest of upstream/<tool>/", () => {
+    const result = fixtureDataLocation(
+      memoryRepo({
+        "packs/php/upstream/phpcs/fixtures/Generic/a.inc": "",
+        "packs/php/upstream/phpcs/fixtures.expected.json": "{}",
+        "packs/php/upstream/phpcs/gates.yaml": "",
+        "packs/php/upstream/phpcs/generate.py": "",
+        "packs/php/upstream/phpcs/recording.lock": "{}",
+        "packs/php/upstream/phpcs/goldens.tsv": "",
+        "packs/php/upstream/phpcs/UPSTREAM.md": "",
+        "packs/php/upstream/phpcs/test-data.lock": lock(),
+        "packs/complexity/upstream/lizard/lizard-1.24.0.tsv": "",
+        "packs/complexity/upstream/lizard/fixtures/python/simple.py": "",
+        "packs/complexity/upstream/lizard/UPSTREAM.md": "| File | Origin |\n|---|---|\n| `upstream/lizard/fixtures/python/simple.py` | written by Rerail |\n",
+        "packs/complexity/upstream/lizard/test-data.lock": lock(),
+        "packs/node/upstream/eslint-plugin-n/authored/corpus/a.js": "",
+        "packs/node/upstream/eslint-plugin-n/test-data.lock": lock(),
+        "fixtures/packs/valid/upstream/tool/fixtures.expected.json": "{}",
+      }),
+    );
+    expect(result.actual).toBe("5");
+    expect(result.findings).toEqual([
+      { path: "packs/complexity/upstream/lizard/fixtures/python/simple.py", message: tracked("complexity", "lizard") },
+      { path: "packs/complexity/upstream/lizard/lizard-1.24.0.tsv", message: tracked("complexity", "lizard") },
+      { path: "packs/node/upstream/eslint-plugin-n/authored/corpus/a.js", message: tracked("node", "eslint-plugin-n") },
+      { path: "packs/php/upstream/phpcs/fixtures.expected.json", message: tracked("php", "phpcs") },
+      { path: "packs/php/upstream/phpcs/fixtures/Generic/a.inc", message: tracked("php", "phpcs") },
+    ]);
+  });
+
+  it("flags a tool directory without a tracked test-data.lock, but not a file directly under upstream/", () => {
+    const result = fixtureDataLocation(
+      memoryRepo({
+        "packs/python/upstream/common.py": "",
+        "packs/php/upstream/phpcs/generate.py": "",
+      }),
+    );
+    expect(result.findings).toEqual([{ path: "packs/php/upstream/phpcs/test-data.lock", message: unpinned("php", "phpcs") }]);
+    expect(fixtureDataLocation(memoryRepo({ "packs/python/upstream/common.py": "" })).findings).toEqual([]);
+  });
+
+  it("passes a well-formed lock", () => {
+    const result = fixtureDataLocation(
+      memoryRepo({ "packs/php/upstream/phpcs/generate.py": "", "packs/php/upstream/phpcs/test-data.lock": `${lock()}\n` }),
+    );
+    expect(result.findings).toEqual([]);
+    expect(result.actual).toBe("0");
+  });
+
+  const lockPath = "packs/php/upstream/phpcs/test-data.lock";
+  it.each([
+    ["bad JSON", "{", `${lockPath} is not JSON (`],
+    ["a missing key", JSON.stringify({ format: 1, sha256: "a".repeat(64), files: 2 }), `${lockPath} is malformed: its keys are files, format, sha256,`],
+    ["format 2", lock({ format: 2 }), `${lockPath} is malformed: its format is 2, not 1`],
+    ["a short sha256", lock({ sha256: "a".repeat(63) }), `${lockPath} is malformed: its sha256 is not 64 lowercase hex digits`],
+    ["negative files", lock({ files: -1 }), `${lockPath} is malformed: its files is not a non-negative integer`],
+  ])("flags a lock with %s, carrying parseLock's message", (_, text, message) => {
+    const result = fixtureDataLocation(memoryRepo({ [lockPath]: text }));
+    expect(paths(result)).toEqual([lockPath]);
+    expect(result.findings[0].message).toContain(message);
+  });
+
+  it("sorts findings by path across kinds", () => {
+    const result = fixtureDataLocation(
+      memoryRepo({
+        "test/data/b.expected.json": "{}",
+        "packs/b/upstream/tool/test-data.lock": lock({ format: 2 }),
+        "packs/a/upstream/tool/tests/x.js": "",
+        "packs/c/upstream/tool/tests/y.js": "",
+        "packs/c/upstream/tool/test-data.lock": lock(),
+      }),
+    );
+    expect(paths(result)).toEqual([
+      "packs/a/upstream/tool/test-data.lock",
+      "packs/a/upstream/tool/tests/x.js",
+      "packs/b/upstream/tool/test-data.lock",
+      "packs/c/upstream/tool/tests/y.js",
+      "test/data/b.expected.json",
+    ]);
+    expect(result.actual).toBe("5");
   });
 });
 

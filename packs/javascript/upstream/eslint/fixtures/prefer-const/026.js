@@ -1,1 +1,0 @@
-let a; for (const x of [1,2,3]) { if (a) {} a = foo(); }

@@ -25,6 +25,15 @@ export type DeliveryMechanism =
   | "additional-context"
   | "deferred-context";
 
+/**
+ * How a code-rule steer reaches the coding agent, set per checkout in its audit settings (`steerStrategy`):
+ * `message` sends it as its own message, as Rerail always has; `rewind` rolls the violating edit back to its captured
+ * preimage and puts the steer into that tool call's result; `subagent` sends the message with an instruction to hand
+ * the fix to a subagent and keep to the agent's own task.
+ */
+export const STEER_STRATEGIES = ["message", "rewind", "subagent"] as const;
+export type SteerStrategy = (typeof STEER_STRATEGIES)[number];
+
 export interface AdapterCapabilityProfile {
   host: RerailHost;
   assistantObservation: AssistantObservation;
@@ -252,8 +261,39 @@ export interface AdapterDelivery {
   requested: RuleMode;
   mechanism: DeliveryMechanism;
   content: string;
-  /** Distinct rule ids whose violations were rendered into `content`, first-seen order; empty when the delivery is not a code-rule steer. */
+  /** Distinct rule ids whose violations (or guidance) were rendered into `content`, first-seen order; empty when none was. */
   ruleIds: readonly string[];
+  /** The rules behind `content`, first-seen order: what the person's one line per rule is built from, never the text. */
+  rules: readonly SteerRule[];
+  /** The steer strategy that shaped a code-rule steer; absent for every other delivery. */
+  strategy?: SteerStrategy;
+  /**
+   * The tool call whose result carries this steer where the host can put it there (Pi, OMP): set for a code-rule steer
+   * from that call's own edit check while its result is ingested. With `rewound` (the paths `rewind` rolled back), the
+   * result is replaced by `content` and marked an error; otherwise `content` follows the result's own.
+   */
+  toolCallId?: string;
+  rewound?: readonly string[];
+}
+
+/** One rule a delivery steered (or logged) about, for the person's line and the dashboard; the coding agent never reads it. */
+export interface SteerRule {
+  readonly id: string;
+  readonly state: "steered" | "logged";
+  /** Where the rule comes from (`steerOrigin`'s sentence); absent when unknown. */
+  readonly origin?: string | undefined;
+  /** The rule's dashboard page, once a coding agent's adapter knows the dashboard (`linkDeliveries`). */
+  readonly url?: string | undefined;
+}
+
+/** Whether `value`, read back from a file or a host's transcript, is a `SteerRule`. */
+export function isSteerRule(value: unknown): value is SteerRule {
+  if (value === null || typeof value !== "object") return false;
+  const rule = value as Partial<SteerRule>;
+  return typeof rule.id === "string"
+    && (rule.state === "steered" || rule.state === "logged")
+    && (rule.origin === undefined || typeof rule.origin === "string")
+    && (rule.url === undefined || typeof rule.url === "string");
 }
 
 /** The `customType` every host records Rerail rule guidance under in its own session transcript. */
@@ -263,29 +303,38 @@ type NativeRuleMessage = {
   customType: typeof RULE_MESSAGE_TYPE;
   content: string;
   display: true;
-  details: Pick<AdapterDelivery, "requested" | "mechanism" | "sessionId">;
+  details: Pick<AdapterDelivery, "requested" | "mechanism" | "sessionId" | "rules">;
 };
 
+/**
+ * Sends each steer as a `rerail.rule` message and records its receipt. A steer for a tool call (`toolCallId`) that
+ * `place` claims goes into that call's result instead, and is recorded the same way; one it does not claim is sent.
+ */
 export async function sendNativeDeliveries(
   deliveries: readonly AdapterDelivery[],
   send: (message: NativeRuleMessage, options: { deliverAs: "steer" }) => void | Promise<void>,
   record: (sessionId: string, receiptId: string, ruleIds: readonly string[]) => void | Promise<void>,
+  place?: (toolCallId: string, delivery: AdapterDelivery) => boolean,
 ): Promise<void> {
   for (const delivery of deliveries) {
     if (!steers(delivery.requested)) continue;
-    await send(
-      {
-        customType: RULE_MESSAGE_TYPE,
-        content: delivery.content,
-        display: true,
-        details: {
-          requested: delivery.requested,
-          mechanism: delivery.mechanism,
-          sessionId: delivery.sessionId,
+    const placed = delivery.toolCallId !== undefined && place?.(delivery.toolCallId, delivery) === true;
+    if (!placed) {
+      await send(
+        {
+          customType: RULE_MESSAGE_TYPE,
+          content: delivery.content,
+          display: true,
+          details: {
+            requested: delivery.requested,
+            mechanism: delivery.mechanism,
+            sessionId: delivery.sessionId,
+            rules: delivery.rules,
+          },
         },
-      },
-      { deliverAs: "steer" },
-    );
+        { deliverAs: "steer" },
+      );
+    }
     if (delivery.content.trim() === "") continue;
     try {
       await record(delivery.sessionId, randomUUID(), delivery.ruleIds);
@@ -294,6 +343,22 @@ export async function sendNativeDeliveries(
       console.error("rerail steering receipt:", error);
     }
   }
+}
+
+/**
+ * What a tool result says once the steers `placed` in it ride it: a rolled-back edit's steers (`rewound`) replace the
+ * result and mark it an error, and every other steer follows as its own text after what the result already says.
+ * Undefined when none was placed.
+ */
+export function resultWithSteers<Block>(
+  content: readonly Block[],
+  placed: readonly Pick<AdapterDelivery, "content" | "rewound">[],
+): { content: Array<Block | { type: "text"; text: string }>; isError?: true } | undefined {
+  if (placed.length === 0) return undefined;
+  const rewound = placed.filter(delivery => delivery.rewound !== undefined).map(delivery => delivery.content);
+  const following = placed.filter(delivery => delivery.rewound === undefined).map(delivery => ({ type: "text" as const, text: delivery.content }));
+  if (rewound.length === 0) return { content: [...content, ...following] };
+  return { content: [{ type: "text", text: rewound.join("\n\n") }, ...following], isError: true };
 }
 
 export interface RerailEventLoop {

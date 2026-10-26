@@ -1,1 +1,0 @@
-async function foo() { for (var bar in baz) { await bar; } }

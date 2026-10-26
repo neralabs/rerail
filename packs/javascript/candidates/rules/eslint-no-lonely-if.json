@@ -3,7 +3,7 @@
  "id": "eslint-no-lonely-if",
  "revision": 1,
  "mode": "steer",
- "description": "Port of ESLint's `no-lonely-if` rule (https://eslint.org/docs/latest/rules/no-lonely-if). Flags an if that is the only statement of an else block whose braces are not necessary; fixes to `else if` under ESLint's comment and ASI guards (the ASI guard is approximated conservatively).",
+ "description": "Use else if instead of an if that is the only statement inside an else block.",
  "scope": {
   "include": [
    "**/*"
@@ -295,7 +295,7 @@
    "violation": {
     "anchor": "capture.IF",
     "code": "no-lonely-if",
-    "message": "Unexpected if as the only statement in an else block.",
+    "message": "Turn this if, the only statement in its else block, into an else if.",
     "fix": "$IF",
     "suppress": {
      "eslint": {
@@ -598,7 +598,7 @@
    "violation": {
     "anchor": "capture.IF",
     "code": "no-lonely-if",
-    "message": "Unexpected if as the only statement in an else block.",
+    "message": "Turn this if, the only statement in its else block, into an else if.",
     "fix": " $IF",
     "suppress": {
      "eslint": {
@@ -896,7 +896,7 @@
    "violation": {
     "anchor": "capture.IF",
     "code": "no-lonely-if",
-    "message": "Unexpected if as the only statement in an else block.",
+    "message": "Turn this if, the only statement in its else block, into an else if.",
     "suppress": {
      "eslint": {
       "rules": [

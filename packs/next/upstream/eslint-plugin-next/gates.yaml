@@ -1,5 +1,5 @@
 adapter: eslint
-# @next/eslint-plugin-next's documents in rerail's next pack (NER-1741).
+# @next/eslint-plugin-next's documents in rerail's next pack.
 rerail:
   pack: next
   project: next.js
@@ -89,7 +89,6 @@ eslint:
     path: packages/eslint-plugin-next/src
     installed: "@next/eslint-plugin-next/dist"
     verbatim: false
-  license: license.md
   implementation: packages/eslint-plugin-next/src/rules/{rule}.ts
   tests: ["test/unit/eslint-plugin-next/*.test.ts"]
   test_fixtures: ["test/unit/eslint-plugin-next/*/**"]

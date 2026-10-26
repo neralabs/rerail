@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadEarlier, loadMoreFindings, loadSession, loadSessionFindings, refresh, refreshNow } from "../../ui/poll.js";
+import { loadEarlier, loadMoreFindings, loadSession, loadSessionFindings, refresh, refreshNow, setNeeds } from "../../ui/poll.js";
 import { placeCorrections, sessionCorrections, sessionTurns } from "../../ui/sessions-model.js";
 import { data, pagedList, setScope, ui, type Violation } from "../../ui/state.js";
+import { currentNeeds } from "../../ui/views/index.js";
 
 /** How the test daemon answers one GET: the body, a `Response` (another status), or a promise of either. */
 type Answer = (url: URL) => unknown;
@@ -31,6 +32,8 @@ beforeEach(() => {
   data.sessionDetail.clear();
   ui.panel = null;
   ui.selectedSession = null;
+  ui.actRule = null;
+  setNeeds(currentNeeds);
 });
 
 afterEach(() => {
@@ -58,32 +61,62 @@ const paths = () => [...new Set(requested.map(url => url.pathname))].sort();
 describe("a poll", () => {
   beforeEach(() => { answer = emptyDaemon; });
 
-  it("reads only what Activity shows, besides the shared reads", async () => {
-    ui.view = "activity";
+  it("reads the shown rule's violations in range and the rules' activity on History, besides the shared reads", async () => {
+    ui.view = "history";
+    ui.actRule = "r";
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/violations", "/healthz"]);
+    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/rules/activity", "/api/violations", "/healthz"]);
+    expect(requested.filter(url => url.pathname === "/api/violations").map(url => url.searchParams.get("ruleId"))).toEqual(["r"]);
   });
 
-  it("reads only the sessions list and the selected session on Sessions", async () => {
+  it("reads no violations on History while no rule has any to show", async () => {
+    ui.view = "history";
+
+    await refresh();
+
+    expect(paths()).not.toContain("/api/violations");
+  });
+
+  it("reads only the sessions list and the selected session on Sessions, besides the sidebar's rules and packs", async () => {
     ui.view = "sessions";
     ui.selectedSession = "s1";
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/sessions", "/api/sessions/s1", "/api/sessions/s1/events", "/api/violations", "/healthz"]);
+    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/sessions", "/api/sessions/s1", "/api/sessions/s1/events", "/api/violations", "/healthz"]);
     const violations = requested.find(url => url.pathname === "/api/violations")!;
     expect(violations.searchParams.get("sessionId")).toBe("s1");
     expect(violations.searchParams.get("since")).toBe("0");
   });
 
-  it("reads nothing beyond the shared reads on Settings", async () => {
+  it("reads nothing beyond the shared reads and the sidebar's rules and packs on Settings", async () => {
     ui.view = "settings";
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/healthz"]);
+    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/healthz"]);
+  });
+
+  it("reads only the shared reads without a repository, whatever the view", async () => {
+    setScope(null);
+    ui.view = "history";
+
+    await refresh();
+
+    expect(paths()).toEqual(["/api/repositories", "/healthz"]);
+  });
+
+  it("loads an open rule sheet's violations in range, once, on a view that needs none of its own", async () => {
+    ui.view = "settings";
+    ui.panel = { kind: "rule", id: "r" };
+
+    await refresh();
+
+    const violations = requested.filter(url => url.pathname === "/api/violations");
+    expect(violations.map(url => url.searchParams.get("ruleId"))).toEqual(["r"]);
+    expect(requested.filter(url => url.pathname === "/api/repository/rules")).toHaveLength(1);
   });
 
   it("is not scheduled while the tab is hidden, and is while it shows", async () => {
@@ -106,7 +139,8 @@ describe("a poll", () => {
 
 describe("Load more on a paged list", () => {
   it("appends the next cursor page without duplicates, and a first-page refresh keeps the loaded tail and its cursor", async () => {
-    ui.view = "activity";
+    ui.view = "history";
+    ui.actRule = "r";
     let first = { violations: [violation(1), violation(2)], total: 3, nextCursor: "c2" };
     answer = url => {
       if (url.pathname !== "/api/violations") return emptyDaemon(url);
@@ -131,7 +165,8 @@ describe("Load more on a paged list", () => {
   });
 
   it("starts over from the fresh first page when more rows arrived than it reaches, and takes a complete page whole", async () => {
-    ui.view = "activity";
+    ui.view = "history";
+    ui.actRule = "r";
     let first: { violations: Violation[]; total: number; nextCursor: string | null } = { violations: [violation(5), violation(6)], total: 4, nextCursor: "c6" };
     answer = url => {
       if (url.pathname !== "/api/violations") return emptyDaemon(url);

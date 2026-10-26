@@ -10,6 +10,7 @@
 - [code-rule-dsl-reference.html](code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` code-rule
   DSL. Hand-written prose with generated regions; see `scripts/generate/README.md`.
 - [in-session-surfaces.md](in-session-surfaces.md): what Rerail shows inside a coding-agent session
+- [privacy.md](privacy.md): what Rerail sends over the network, what it stores locally, and how to delete it
 
 ## Rules, packs and languages
 - [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, and the shipped packs

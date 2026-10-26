@@ -1,1 +1,0 @@
-/*globals Math: off*/ new Math();

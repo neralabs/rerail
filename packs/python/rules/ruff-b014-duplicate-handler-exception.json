@@ -3,7 +3,7 @@
   "id": "ruff-b014-duplicate-handler-exception",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B014 (duplicate-handler-exception): the type of an `except` (or `except*`) handler is a tuple in which the same dotted name (a name or an attribute chain of names, Ruff's `UnqualifiedName`) occurs more than once (parentheses around an element are transparent). Reported once on the tuple, whatever the number of duplicates.",
+  "description": "Remove duplicate exception types from an except clause's tuple; naming one twice adds nothing.",
   "scope": {
     "include": [
       "**/*"

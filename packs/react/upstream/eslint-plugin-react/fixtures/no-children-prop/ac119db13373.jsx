@@ -1,2 +1,0 @@
-<MyComponent />
-// features: [], parser: default

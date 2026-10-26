@@ -3,7 +3,7 @@
   "id": "ruff-b016-raise-literal",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B016 (raise-literal): the exception of a `raise` statement is a literal (Ruff's `is_literal_expr`: string, bytes, number, `True`/`False`, `None`, `...`; not an f-string or t-string, including an implicit concatenation with one; parentheses transparent). Reported on the literal.",
+  "description": "Raise an exception instance instead of a literal like a string or number; raising a literal fails with a TypeError.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

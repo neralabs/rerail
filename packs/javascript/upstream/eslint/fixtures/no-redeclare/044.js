@@ -1,1 +1,0 @@
-var a; var {a = 0, b: Object = 0} = {};

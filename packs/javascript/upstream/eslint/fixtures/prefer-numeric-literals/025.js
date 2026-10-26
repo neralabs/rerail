@@ -1,1 +1,0 @@
-class C { #parseInt; foo() { Number.#parseInt("111110111", 2); } }

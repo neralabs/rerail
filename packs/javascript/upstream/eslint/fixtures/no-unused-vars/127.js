@@ -1,1 +1,0 @@
-function* foo(cb) { cb = yield function(a) { cb(1 + a); }; } foo();

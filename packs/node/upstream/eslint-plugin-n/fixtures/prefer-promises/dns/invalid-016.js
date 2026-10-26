@@ -1,1 +1,0 @@
-const dns = require('dns'); dns.resolve6()

@@ -1,12 +1,12 @@
 /**
- * next-no-img-element's message must say what switching to `next/image` takes (NER-1946).
+ * next-no-img-element's message must say what switching to `next/image` takes.
  *
  * Upstream's message (@next/eslint-plugin-next no-img-element) only says to consider `<Image />`. For a remote image,
  * such as a GitHub avatar, the switch also needs `width` and `height` (or `fill`) and a matching
  * `images.remotePatterns` entry; without them `next/image` throws. Agents given upstream's text often kept `<img>`
- * after the steer. The message now names both requirements, and that an `eslint-disable-next-line` with a reason is the
- * way to keep `<img>` for images from arbitrary hosts. What the rule reports is unchanged; this test also checks that
- * the suppression forms the message names do suppress it.
+ * after the steer. The message now says what `<Image />` needs. What the rule reports is unchanged; this test also
+ * checks that an `eslint-disable-next-line` with a reason, the way to keep `<img>` for images from arbitrary hosts,
+ * suppresses it.
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -65,10 +65,10 @@ describe("next-no-img-element", () => {
     expect(findings(AVATAR).map(finding => finding.line)).toEqual([4]);
   });
 
-  it("says what next/image needs and how to keep <img> for images from arbitrary hosts", () => {
+  it("says what next/image needs", () => {
     const [finding] = findings(AVATAR);
     expect(finding?.message).toBe(
-      "Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. `<Image />` needs `width` and `height` (or `fill`) unless `src` is a static import, and a remote `src` needs a matching `images.remotePatterns` entry in next.config. To keep `<img>`, e.g. for images from arbitrary hosts, put `// eslint-disable-next-line @next/next/no-img-element -- <reason>` on the line above (as `{/* ... */}` among JSX children). See: https://nextjs.org/docs/messages/no-img-element",
+      "Replace this img with Image from next/image, giving it width and height or fill unless src is a static import.",
     );
   });
 
@@ -95,7 +95,7 @@ describe("next-no-img-element", () => {
         "}",
       ),
     ],
-  ])("is suppressed by the comment the message names: %s", (_name, source) => {
+  ])("is suppressed by an eslint-disable-next-line comment: %s", (_name, source) => {
     expect(findings(source)).toEqual([]);
   });
 });

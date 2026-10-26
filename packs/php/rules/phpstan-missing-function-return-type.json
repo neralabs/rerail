@@ -1,0 +1,67 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-missing-function-return-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare a return type on PHP functions, natively or with a @return doc tag; methods and closures are not checked.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "function_definition",
+            "not": {
+              "has": {
+                "field": "return_type",
+                "regex": "."
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    },
+                    "kind": "comment",
+                    "parse": {
+                      "grammar": "phpDoc",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "return_tag_value"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "missingType.return",
+        "message": "Function has no return type specified.",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "missingType.return"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

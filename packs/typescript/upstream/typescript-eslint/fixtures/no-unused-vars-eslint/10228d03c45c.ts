@@ -1,6 +1,0 @@
-
-function foo(a) {
-  a = a + 1;
-}
-foo();
-      

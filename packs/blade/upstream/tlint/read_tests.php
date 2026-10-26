@@ -1,6 +1,7 @@
 <?php
 // Runs one tlint 9.7.0 linter test (tests/Linting/Linters/<Lint>Test.php) with every template it hands the linter
-// captured (../capture.php: the argument of `new <Lint>(...)`), and prints, as JSON, per test method in declaration
+// captured (conformance/recorders/port-readiness/adapters/blade_capture.php: the argument of `new <Lint>(...)`), and
+// prints, as JSON, per test method in declaration
 // order: its templates and its assertions ({"equals": <expected>} or {"empty": true}). PHPUnit's TestCase is
 // stubbed by the assertions these tests make; each is checked against the real linter's output exactly as PHPUnit
 // checks it (assertEquals: ==), and a failed or unsupported assertion, or a test asserting nothing, fails the run.
@@ -44,7 +45,7 @@ namespace {
     use PHPUnit\Framework\TestCase;
 
     require $argv[1].'/vendor/autoload.php';
-    require __DIR__.'/../capture.php';
+    require __DIR__.'/../../../../conformance/recorders/port-readiness/adapters/blade_capture.php';
 
     [, , $testFile, $lint] = $argv;
     $before = get_declared_classes();

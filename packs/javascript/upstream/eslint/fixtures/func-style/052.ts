@@ -1,1 +1,0 @@
-const expression: Fn = function () {}

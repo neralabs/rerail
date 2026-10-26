@@ -3,7 +3,7 @@
   "id": "typescript-eslint-prefer-enum-initializers",
   "revision": 4,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `prefer-enum-initializers` rule (https://typescript-eslint.io/rules/prefer-enum-initializers). Flags enum members without an initializer.",
+  "description": "Give every TypeScript enum member an explicit value; implicit numbering shifts when members are added or reordered.",
   "scope": { "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"], "exclude": [] },
   "clauses": [
     {

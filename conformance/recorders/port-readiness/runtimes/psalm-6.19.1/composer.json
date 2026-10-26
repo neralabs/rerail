@@ -1,0 +1,12 @@
+{
+  "name": "rerail/port-readiness-upstream-psalm",
+  "description": "Psalm as the port readiness gates run it: the release the PHP pack's ported issues name, with the parsers its analysis reads source and docblocks with pinned too.",
+  "license": "Apache-2.0",
+  "require": {
+    "vimeo/psalm": "6.19.1",
+    "nikic/php-parser": "5.9.0",
+    "phpdocumentor/reflection-docblock": "6.0.3",
+    "phpdocumentor/type-resolver": "2.1.0",
+    "phpstan/phpdoc-parser": "2.3.6"
+  }
+}

@@ -1,5 +1,0 @@
-
-class Foo {
-  override method() {}
-}
-      

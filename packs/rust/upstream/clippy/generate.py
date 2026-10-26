@@ -1,6 +1,7 @@
 """Records clippy 0.1.99 (Rust 1.99.0) for the Rust pack's ported lints (packs/rust/conformance.json),
-each one checked only by an `EarlyLintPass` (AST, no types). Run offline, never in CI, with the pinned toolchain
-(upstream/common.py pins it and refuses any other; Python 3.9 standard library only):
+each one checked only by an `EarlyLintPass` (AST, no types). Run by `npm run fixtures:derive` (a maintainer, or the
+bump workflow for an upstream release; never pull request CI), with the pinned toolchain (upstream/common.py pins it
+and refuses any other; Python 3.9 standard library only):
 
     python3 generate.py fixtures <rust-clippy checkout at tag rust-1.99.0> <scratch directory>
     python3 generate.py corpus <cargo target root> <name>=<corpus checkout> [...]
@@ -21,7 +22,8 @@ only the level). That run is compared, per test, with the upstream `.stderr` (ea
 line:column) and the `//~` annotations (lint and line); every difference is written to fixtures.upstream-check.json.
 The recording, fixtures.expected.json, is a second run with `-W clippy::<lint>` for every ported lint added, so each
 lint is recorded over every test (in-source `allow`/`expect` still apply): each finding is the lint, test path, and
-the primary span's 1-based line and column (code points), deduplicated.
+the primary span's 1-based line and column (code points), one per distinct primary span (start and end): two
+diagnostics that start at one point, like precedence_bits' outer and nested `^`, are two findings.
 
 `corpus` runs `cargo +1.99.0 clippy --keep-going --locked --workspace --all-targets --all-features
 --message-format=json -- -W clippy::<lint>...` with CARGO_TARGET_DIR=<cargo target root>/clippy-<name> (RUSTFLAGS
@@ -449,8 +451,8 @@ def diagnostics(stderr: str) -> list[dict]:
         code = (message.get("code") or {}).get("code") or "?"
         found.append({"code": code[len("clippy::"):] if code.startswith("clippy::") else code,
                       "file": primary[0]["file_name"], "line": primary[0]["line_start"],
-                      "column": primary[0]["column_start"], "level": message["level"],
-                      "message": message["message"]})
+                      "column": primary[0]["column_start"], "end": (primary[0]["line_end"], primary[0]["column_end"]),
+                      "level": message["level"], "message": message["message"]})
     return found
 
 
@@ -664,7 +666,7 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
             check[test] = differences
         for d in builder.test(test, record_flags):
             if d["code"] in ported and d["file"] == test:
-                key = (d["code"], test, d["line"], d["column"])
+                key = (d["code"], test, d["line"], d["column"], d["end"])
                 findings[key] = {"rule": d["code"], "path": test, "line": d["line"], "column": d["column"]}
     common.write(HERE / "fixtures.expected.json",
                  {"kind": "fixtures", "origin": common.CLIPPY_ORIGIN, "rules": lints, "files": tests},
@@ -672,6 +674,7 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
     (HERE / "fixtures.upstream-check.json").write_text(json.dumps(
         {"clippy": common.CLIPPY_VERSION, "origin": common.CLIPPY_ORIGIN,
          "differences": check}, indent=1, sort_keys=True) + "\n")
+    common.pack_fixtures.written(HERE / "fixtures.upstream-check.json")
     print(f"{len(tests)} tests ({len(probes)} ours), {len(copies)} files copied, {len(findings)} findings; per lint:")
     for lint, count in sorted(Counter(key[0] for key in findings).items()):
         print(f"  {lint}: {count}")

@@ -3,7 +3,7 @@
   "id": "eslint-no-delete-var",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of ESLint's `no-delete-var` rule (https://eslint.org/docs/latest/rules/no-delete-var). Reports `delete` applied to a bare identifier (through parentheses).",
+  "description": "Don't use delete on a plain variable; delete only removes object properties and is a syntax error on variables in strict mode.",
   "scope": {
     "include": [
       "**/*"
@@ -44,7 +44,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-delete-var",
-        "message": "Variables should not be deleted.",
+        "message": "Remove this delete; to clear the variable, assign undefined to it instead.",
         "suppress": {
           "eslint": {
             "rules": [

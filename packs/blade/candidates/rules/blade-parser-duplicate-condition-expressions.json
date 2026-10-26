@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "blade-parser-duplicate-condition-expressions",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "stillat/blade-parser 2.1.0 DuplicateConditionExpressionsValidator: the first @elseif of an @if chain whose condition, as written, is an earlier branch's (read from the view, where the chain is one if statement); a later duplicate in the same chain is not reported, as blade-parser stops at the first.",
+  "description": "Avoid repeating an earlier condition of the same chain in a Blade @elseif; that branch can never run.",
   "scope": {
     "include": [
       "**/*.blade.php"
@@ -18,102 +18,63 @@
           "language": "blade",
           "embedded": "compiled-view",
           "rule": {
-            "kind": "else_if_clause",
-            "all": [
-              {
-                "has": {
-                  "field": "condition",
-                  "pattern": "($C)"
+            "kind": "if_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "else_if_clause",
+              "pattern": "$D",
+              "all": [
+                {
+                  "has": {
+                    "field": "condition",
+                    "pattern": "($C)"
+                  }
                 },
-                "any": [
-                  {
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "kind": "if_statement",
-                      "has": {
-                        "field": "condition",
-                        "pattern": "($P)"
-                      },
-                      "compare": {
-                        "left": "P",
-                        "op": "eq",
-                        "right": "C",
-                        "text": "source"
+                {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "if_statement",
+                        "has": {
+                          "field": "condition",
+                          "pattern": "($P)"
+                        },
+                        "compare": {
+                          "left": "P",
+                          "op": "eq",
+                          "right": "C",
+                          "text": "source"
+                        }
                       }
-                    }
-                  },
-                  {
-                    "follows": {
-                      "stopBy": "end",
-                      "kind": "else_if_clause",
-                      "has": {
-                        "field": "condition",
-                        "pattern": "($P)"
-                      },
-                      "compare": {
-                        "left": "P",
-                        "op": "eq",
-                        "right": "C",
-                        "text": "source"
-                      }
-                    }
-                  }
-                ]
-              },
-              {
-                "not": {
-                  "follows": {
-                    "stopBy": "end",
-                    "kind": "else_if_clause",
-                    "has": {
-                      "field": "condition",
-                      "pattern": "($C2)"
                     },
-                    "any": [
-                      {
-                        "inside": {
-                          "stopBy": "neighbor",
-                          "kind": "if_statement",
-                          "has": {
-                            "field": "condition",
-                            "pattern": "($P2)"
-                          },
-                          "compare": {
-                            "left": "P2",
-                            "op": "eq",
-                            "right": "C2",
-                            "text": "source"
-                          }
-                        }
-                      },
-                      {
-                        "follows": {
-                          "stopBy": "end",
-                          "kind": "else_if_clause",
-                          "has": {
-                            "field": "condition",
-                            "pattern": "($P2)"
-                          },
-                          "compare": {
-                            "left": "P2",
-                            "op": "eq",
-                            "right": "C2",
-                            "text": "source"
-                          }
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "else_if_clause",
+                        "has": {
+                          "field": "condition",
+                          "pattern": "($P)"
+                        },
+                        "compare": {
+                          "left": "P",
+                          "op": "eq",
+                          "right": "C",
+                          "text": "source"
                         }
                       }
-                    ]
-                  }
+                    }
+                  ]
                 }
-              }
-            ]
+              ]
+            }
           }
         }
       },
       "violation": {
-        "anchor": "witness.start",
+        "anchor": "capture.D",
         "code": "DuplicateConditionExpressionsValidator",
-        "message": "Duplicate expression in [@elseif]"
+        "message": "Change or remove this @elseif; its condition ($C) already appears earlier in the chain, so the branch never runs."
       }
     }
   ]

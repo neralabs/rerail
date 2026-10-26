@@ -21,7 +21,6 @@ import { SOURCE_LANGUAGES } from "../../../src/engine/code-rule/code-rule-langua
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
-import { steerBlock } from "../../../src/engine/code-rule/rerail-steer.js";
 import type {
   NativeBinding,
   NativeCodeRuleDslWorkspace,
@@ -921,6 +920,67 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   }, 60_000);
 
+  it("never evaluates a spooled edit a newer edit of its file superseded while the pump was running", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ scope: "ai-output", audits: recorder });
+    const spoolReads: string[] = [];
+    // The queue reads the superseded edit back from its spool: held until the pump has read it too (it took it out of
+    // the queue to evaluate it) or gone idle without it.
+    const reads = vi.spyOn(fsPromises, "readFile").mockImplementation(async (...args: Parameters<typeof fsPromises.readFile>) => {
+      const path = String(args[0]);
+      if (path.includes("rerail-policy-")) {
+        spoolReads.push(path);
+        while (spoolReads.length === 1 && enforcer.snapshotStatus().pending) await new Promise(resolve => queueHostTurn(resolve));
+      }
+      const handle = await fsPromises.open(path, "r");
+      try {
+        return await handle.readFile(args[1] as Parameters<typeof handle.readFile>[0]);
+      } finally {
+        await handle.close();
+      }
+    });
+    try {
+      await enforcer.openWorkspace("superseded-spool");
+      // Eight megabytes held in memory, so the next edit of api/late.py goes to the spool.
+      const held = Array.from({ length: 8 }, (_, index) => ({ path: `api/held-${index}.py`, language: "python" as const, generatedText: "x".repeat(1_000_000) }));
+      const first = `NEEDLE\n${"x".repeat(400_000)}\n`;
+      await enforcer.auditGeneratedEdits("superseded-spool", {
+        revision: 1, checkpoints: ["edit"], edits: [...held, { path: "api/late.py", language: "python", generatedText: first }],
+      });
+      await enforcer.auditGeneratedEdits("superseded-spool", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/late.py", language: "python", previousText: first, generatedText: `${first}NEEDLE\n` }],
+      });
+      await settled(enforcer);
+      const late = [...audits.values()].filter(audit => audit.paths.includes("api/late.py"));
+      // The first edit's audit stays superseded; the second reports both edits' lines, since the first was never reported.
+      expect(late.map(audit => [audit.revision, audit.result?.status, audit.result?.violations?.length])).toEqual([[1, "superseded", 0], [2, "completed", 2]]);
+    } finally {
+      reads.mockRestore();
+      await enforcer.close();
+    }
+  }, 60_000);
+
+  it("reports the whole file when the edit it overtook had no known earlier text", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ scope: "ai-output", audits: recorder });
+    try {
+      await enforcer.openWorkspace("unknown-overtaken");
+      // A shell write whose earlier text is unknown, superseded before it was checked by an edit that knows its own.
+      const written = "NEEDLE\nsafe()\n";
+      await enforcer.auditGeneratedEdits("unknown-overtaken", {
+        revision: 1, checkpoints: ["edit"], edits: [{ path: "api/shell.py", language: "python", previousReadError: "Source changed outside a tool", generatedText: written }],
+      });
+      await enforcer.auditGeneratedEdits("unknown-overtaken", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/shell.py", language: "python", previousText: written, generatedText: `${written}ok()\n` }],
+      });
+      await settled(enforcer);
+      const shell = [...audits.values()].filter(audit => audit.paths.includes("api/shell.py"));
+      expect(shell.map(audit => [audit.revision, audit.result?.status, audit.result?.violations?.length])).toEqual([[1, "superseded", 0], [2, "completed", 1]]);
+    } finally {
+      await enforcer.close();
+    }
+  });
+
   it("evaluates TypeScript AST rules against React files with the JSX grammar", async () => {
     const { recorder, audits } = recordingAudits();
     const { enforcer } = await fixture({ audits: recorder, codeRules: [consoleCodeRule(1)] });
@@ -971,10 +1031,17 @@ describe("mechanical code rule regressions", () => {
       await settled(enforcer);
 
       expect(requestSteer).toHaveBeenCalledTimes(1);
-      expect(requestSteer.mock.calls[0]![2]).toBe(steerBlock("test:logger", [
-        "Log user through the logger (web/App.tsx:2:15)",
-        "  Suggested fix: replace 2:3-2:20 with `logger.info(user)`",
-      ].join("\n"), { mode: "block", origin: "From your rule library." }));
+      expect(requestSteer.mock.calls[0]![2]).toBe([
+        "Rerail found 1 problem in your last edit:",
+        "- web/App.tsx:2:15 — Log user through the logger [test:logger]",
+        "  Suggested fix: replace 2:3–2:20 with `logger.info(user)`",
+        "Fix it, or tell the user in one line why you won't.",
+      ].join("\n"));
+      // Where the rule comes from is for the person's line, never the agent's text.
+      expect(requestSteer.mock.calls[0]![3]).toMatchObject({
+        ruleIds: ["test:logger"],
+        rules: [{ id: "test:logger", state: "steered", origin: "From your rule library." }],
+      });
       expect(auditForPath(audits, "web/App.tsx")?.result).toMatchObject({
         violations: [expect.objectContaining({ fix: { span: expect.objectContaining({ startLine: 1, startColumn: 2 }), text: "logger.info(user)" } })],
       });

@@ -1,4 +1,0 @@
-
-declare enum Foo {}
-export {};
-      

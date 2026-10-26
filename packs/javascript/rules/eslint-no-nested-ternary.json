@@ -3,7 +3,7 @@
   "id": "eslint-no-nested-ternary",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-nested-ternary` rule (https://eslint.org/docs/latest/rules/no-nested-ternary). Reports a conditional expression whose consequent or alternate (through parentheses) is itself a conditional expression.",
+  "description": "Avoid nesting ternary expressions inside each other; use if-else or intermediate variables for readability.",
   "scope": {
     "include": [
       "**/*"

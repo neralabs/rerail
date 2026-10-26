@@ -1,1 +1,0 @@
-const number = 3

@@ -1,0 +1,61 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "tlint-spaces-around-blade-render-content",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Write single-line Blade echoes, escaped or raw, with exactly one space inside each delimiter.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "any": [
+              {
+                "kind": "echo"
+              },
+              {
+                "kind": "raw_echo"
+              }
+            ],
+            "all": [
+              {
+                "regex": "^(\\{\\{[^\\n]*\\}\\}|\\{!![^\\n]*!!\\})$"
+              },
+              {
+                "not": {
+                  "regex": "^\\{\\{ [^ \\n]([^\\n]*[^ \\n])? \\}\\}$"
+                }
+              },
+              {
+                "not": {
+                  "regex": "^\\{!! [^ \\n]([^\\n]*[^ \\n])? !!\\}$"
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "@$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "SpacesAroundBladeRenderContent",
+        "message": "Spaces around blade rendered content: `{{1 + 1}}` -> `{{ 1 + 1 }}`"
+      }
+    }
+  ]
+}

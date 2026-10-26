@@ -3,7 +3,7 @@
   "id": "react-self-closing-comp",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/self-closing-comp (component: true, html: true): an element with a closing tag and no children but whitespace containing a line break; namespaced tags only when lower-case (DOM).",
+  "description": "Write elements without children as self-closing tags instead of an empty opening and closing pair.",
   "scope": {
     "include": [
       "**/*.ts",

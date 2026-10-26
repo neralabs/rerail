@@ -3,7 +3,7 @@
   "id": "n-no-sync",
   "revision": 2,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/no-sync (default options): upstream's selectors `CallExpression > MemberExpression.callee Identifier[name=/Sync$/]` and `CallExpression > Identifier[name=/Sync$/]`, reported at the identifier's ESTree parent: a call with a /Sync$/ identifier as callee or argument, or a node inside (or being) a call's member callee with a /Sync$/ identifier child (tree-sitter's arguments node is no ESTree parent: its identifiers belong to the call).",
+  "description": "Avoid calling methods whose name ends in Sync, such as readFileSync; they block the Node.js event loop.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -70,7 +70,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-sync",
-        "message": "Unexpected sync method.",
+        "message": "Replace this Sync call with its async or promise-based version, such as fs.promises.readFile() for readFileSync().",
         "suppress": {
           "eslint": {
             "rules": [
@@ -188,7 +188,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-sync",
-        "message": "Unexpected sync method.",
+        "message": "Replace this Sync call with its async or promise-based version, such as fs.promises.readFile() for readFileSync().",
         "suppress": {
           "eslint": {
             "rules": [

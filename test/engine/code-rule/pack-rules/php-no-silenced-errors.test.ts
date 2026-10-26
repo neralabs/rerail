@@ -1,6 +1,6 @@
 /**
  * phpcs-generic-php-no-silenced-errors (packs/php/, candidate) must not steer an agent into removing an @ that the code needs
- * (NER-1811). PHP_CodeSniffer's sniff reports every @ operator and its message only says silencing is discouraged, so
+ *. PHP_CodeSniffer's sniff reports every @ operator and its message only says silencing is discouraged, so
  * an agent removes the @. Two idioms need it:
  *
  * - The race-safe directory or file call, `!@mkdir($d) && !is_dir($d)`: when another process creates the directory
@@ -56,8 +56,10 @@ function findings(compiled: NativeCompiledCodeRuleDsl, source: string): { line: 
 
 const php = (...lines: string[]) => ["<?php", ...lines, ""].join("\n");
 
-const MESSAGE =
-  "The @ operator hides every warning and notice this expression raises. Remove it and handle the failure explicitly (check the return value, or convert warnings with set_error_handler). If the failure is expected, keep @ only where a check right after it decides the outcome, as in `!@mkdir($dir) && !is_dir($dir)`.";
+const UPSTREAM_MESSAGE =
+  "Remove the @ and handle the failure explicitly, by checking the return value or converting warnings with set_error_handler().";
+const FILESYSTEM_CALL_MESSAGE =
+  "Recheck the outcome right after this silenced call, as in `!@mkdir($dir) && !is_dir($dir)`, or drop the @ and check the result.";
 
 /**
  * An @ whose failure nothing checks: the rule reports it on line 2, from the clause named. A silenced mkdir(), rmdir()
@@ -87,7 +89,7 @@ const REPORTED: ReadonlyArray<[string, string, string]> = [
 /** An @ the code needs, followed by the check that decides the outcome: the rule stays silent. */
 const SILENT: ReadonlyArray<[string, string]> = [
   [
-    "the race-safe mkdir idiom from Laravel-Excel's TemporaryFileFactory (NER-1811)",
+    "the race-safe mkdir idiom from Laravel-Excel's TemporaryFileFactory",
     php("if (!is_dir($d) && !@mkdir($d) && !is_dir($d)) { throw new RuntimeException(); }"),
   ],
   ["mkdir re-checked with is_dir", php("if (!@mkdir($dir, 0o777, true) && !is_dir($dir)) {", "    throw new RuntimeException();", "}")],
@@ -105,7 +107,7 @@ const SILENT: ReadonlyArray<[string, string]> = [
   ["unlink re-checked with is_file", php("if (!@unlink($f) && is_file($f)) {}")],
   ["unlink re-checked inside a larger expression", php("$pruned = (@unlink($file) || !file_exists($file)) && $pruned;")],
   ["rmdir re-checked with is_dir", php("if (!@rmdir($dir) && is_dir($dir)) { throw new RuntimeException(); }")],
-  ["Symfony's deprecation notice (NER-1811)", php("@trigger_error('X is deprecated', E_USER_DEPRECATED);")],
+  ["Symfony's deprecation notice", php("@trigger_error('X is deprecated', E_USER_DEPRECATED);")],
   ["a deprecation notice built with sprintf and a fully qualified constant", php("@trigger_error(sprintf('The \"%s\" class is deprecated.', Foo::class), \\E_USER_DEPRECATED);")],
   ["a fully qualified trigger_error deprecation", php("@\\trigger_error('X is deprecated', E_USER_DEPRECATED);")],
   ["a deprecation notice with a named level", php("@trigger_error('X is deprecated', error_level: E_USER_DEPRECATED);")],
@@ -149,7 +151,7 @@ describe(RULE_ID, () => {
   });
 
   it("names the alternatives to removing @ in its message, from either clause", () => {
-    expect(findings(compile(), php("$data = @file_get_contents($path);"))).toEqual([{ line: 2, clauseId: "upstream", message: MESSAGE }]);
-    expect(findings(compile(), php("@unlink($file);"))).toEqual([{ line: 2, clauseId: "filesystem-call", message: MESSAGE }]);
+    expect(findings(compile(), php("$data = @file_get_contents($path);"))).toEqual([{ line: 2, clauseId: "upstream", message: UPSTREAM_MESSAGE }]);
+    expect(findings(compile(), php("@unlink($file);"))).toEqual([{ line: 2, clauseId: "filesystem-call", message: FILESYSTEM_CALL_MESSAGE }]);
   });
 });

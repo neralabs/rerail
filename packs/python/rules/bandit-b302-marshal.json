@@ -3,7 +3,7 @@
   "id": "bandit-b302-marshal",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect dangerous marshal deserialization calls",
+  "description": "Avoid marshal.load() and marshal.loads(); marshal is not safe against malicious or malformed data, so never use it on untrusted input.",
   "scope": {
     "include": [
       "**/*.py"
@@ -34,7 +34,7 @@
       "violation": {
         "code": "B302",
         "anchor": "witness.span",
-        "message": "Deserialization with the marshal module is possibly dangerous.",
+        "message": "Load this data with json or another data-only format instead of marshal, which is unsafe on untrusted input.",
         "suppress": {
           "nosec": {
             "codes": [

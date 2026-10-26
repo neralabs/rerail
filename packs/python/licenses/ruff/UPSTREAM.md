@@ -387,8 +387,8 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/syntax_errors/yield_scope.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/yield_scope.py` | verbatim |
 
 > `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
-> It carries excerpts of this upstream's tests (`crates/ruff_linter/src/rules/*/mod.rs`,
+> table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
+> git (docs/port-readiness.md). It carries excerpts of this upstream's tests (`crates/ruff_linter/src/rules/*/mod.rs`,
 > `crates/ruff_linter/src/linter.rs`: their test modules' string literals), redistributed under the licence above,
-> together with Rerail's Apache-2.0; the LICENSE beside this file is this upstream's own, at the pinned commit.
+> together with Rerail's Apache-2.0; `LICENSE` beside this file is this upstream's own, at the pinned commit.
 

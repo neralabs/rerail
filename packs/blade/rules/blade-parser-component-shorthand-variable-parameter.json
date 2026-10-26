@@ -1,0 +1,73 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "blade-parser-component-shorthand-variable-parameter",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Fix malformed shorthand variable attributes on Blade components: a $: prefix that should be :$, or a :$ shorthand that is also given a value.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "rule": {
+            "kind": "attribute",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "component"
+                },
+                {
+                  "kind": "slot"
+                }
+              ],
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "element_name",
+                "regex": "^x-"
+              }
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "attribute_name",
+                  "regex": "^\\$:"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "attribute_name",
+                      "regex": "^:\\$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "attribute_value"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "ComponentShorthandVariableParameterValidator",
+        "message": "Write this shorthand attribute as :\\$name with no value, or bind a value with a regular :name=\"...\" attribute."
+      }
+    }
+  ]
+}

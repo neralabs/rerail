@@ -1,1 +1,0 @@
-class Foo { set [2](value) {} }

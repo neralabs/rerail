@@ -1,1 +1,0 @@
-var min = {min: 1}

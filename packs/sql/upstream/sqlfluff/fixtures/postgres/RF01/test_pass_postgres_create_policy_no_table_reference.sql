@@ -1,3 +1,0 @@
-CREATE POLICY policy_1 ON table_1
-FOR SELECT TO PUBLIC
-USING (true)
