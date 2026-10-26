@@ -1,0 +1,77 @@
+name: Rule misfire
+description: A rule flags code that is fine, misses code it should flag, or steers the agent badly.
+title: "[rule] "
+labels: [rule-misfire, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The fix for a misfire is a test: the code that triggers it. The smaller the code below, the faster it's fixed.
+        We reply within 5 business days ([response times](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#response-times)).
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - False positive (it flagged code that is fine)
+        - False negative (it missed code it should flag)
+        - The steer was wrong or unhelpful
+    validations:
+      required: true
+  - type: input
+    id: rule-id
+    attributes:
+      label: Rule id
+      description: As the steer or the dashboard shows it.
+      placeholder: eslint-eqeqeq
+    validations:
+      required: true
+  - type: input
+    id: pack
+    attributes:
+      label: Pack and version
+      description: "`rerail packs list` prints `<pack>@<version>`. Write `own rule` for a rule you or your team wrote."
+      placeholder: typescript@0.1.4
+    validations:
+      required: true
+  - type: input
+    id: rerail-version
+    attributes:
+      label: Rerail version
+      description: The `Current:` line of `rerail update status`.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: The rule's mode
+      options:
+        - steer
+        - log
+        - I don't know
+  - type: textarea
+    id: code
+    attributes:
+      label: Code
+      description: The smallest file that shows it. Paste it inside a code fence with its language (```ts).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen, and why
+      description: For a ported rule, what the original linter says about this code helps a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: steer
+    attributes:
+      label: The steer the agent got
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send it
+      options:
+        - label: The code above is mine to share and holds no secrets.
+          required: true
