@@ -51,7 +51,13 @@ impl Lower {
         let guard = self.value_kind_guard(domain.as_ref(), "c");
         let uncovered = self.relation(format!("SELECT c.fid,p.pre FROM cf CROSS JOIN vcov c ON c.fid=cf.fid CROSS JOIN nera_postings(c.missing) p WHERE length(c.missing)>0{guard}"), true)?;
         self.indexed.insert(uncovered.name.clone());
-        let fallback = self.value_within(scope, &uncovered, bare)?;
+        // Uncovered nodes are often every node of a kind (any node with an interior), so the scope,
+        // within the same kinds, is the smaller side: iterate it and probe the indexed postings.
+        let fallback = if bare {
+            self.value_within(scope, &uncovered, bare)?
+        } else {
+            self.relation(format!("SELECT s.fid,s.pre FROM {} s WHERE EXISTS(SELECT 1 FROM {} u WHERE u.fid=s.fid AND u.pre=s.pre)", scope.name, uncovered.name), scope.exact)?
+        };
         let expression = self.parameter(expression.to_owned());
         let spans = self.decoded(&fallback, Property::Span);
         let predicate = if literal {
