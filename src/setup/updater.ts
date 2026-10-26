@@ -21,7 +21,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
-import { runNpm } from "../runtime/npm.js";
+import { checkRegistry, runNpm } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
@@ -160,6 +160,10 @@ export class NpmPackageRegistry implements PackageRegistry {
   }
 
   async installVersion(version: string, prefix: string): Promise<void> {
+    const spec = `${RERAIL_PACKAGE_NAME}@${version}`;
+    // npm installs without a word, and a large package on a slow line takes a while: say what is coming first.
+    process.stderr.write(`Downloading ${spec} from npm…\n`);
+    await checkRegistry(spec);
     await runNpm([
       "install",
       "--prefix",
@@ -167,7 +171,7 @@ export class NpmPackageRegistry implements PackageRegistry {
       "--omit=dev",
       "--no-audit",
       "--no-fund",
-      `${RERAIL_PACKAGE_NAME}@${version}`,
+      spec,
     ]);
   }
 }
