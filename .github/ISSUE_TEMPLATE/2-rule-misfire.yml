@@ -2,6 +2,7 @@ name: Rule misfire
 description: A rule flags code that is fine, misses code it should flag, or steers the agent badly.
 title: "[rule] "
 labels: [rule-misfire, needs-triage]
+type: Bug
 body:
   - type: markdown
     attributes:
@@ -31,7 +32,7 @@ body:
     attributes:
       label: Pack and version
       description: "`rerail packs list` prints `<pack>@<version>`. Write `own rule` for a rule you or your team wrote."
-      placeholder: typescript@0.1.4
+      placeholder: javascript@0.1.4
     validations:
       required: true
   - type: input
