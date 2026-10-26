@@ -241,3 +241,5 @@ Full corpus (9,021 files), execution CPU in seconds, at `be03e110`:
 | public_api_triples | 2.1 | 41.0 (was 100.8) | 6.7 | 36.8 | 0 failures |
 
 Anchor selection is still the largest execution cost; matching never exceeds 16 s.
+
+**Next: kind-less inner scopes.** The heaviest stage left in internal_dead_code (15 s of 49 s of stage CPU, traced) is linear, not quadratic. An inner plan with no kind is evaluated over every node: `all_nodes EXCEPT …`, followed by an inside walk that decodes the parent of nearly every node. Every top-level query in the rule has a kind. The kind-less plan is nested, where `related()` falls back to `self.all()` as the inner scope: `has` without a field, and recursive relations. Narrowing that scope to the outer scope's children needs a children lookup. `decoded_properties` has no parent index, so the lookup would either decode every node or use preorder intervals. That choice is still open.
