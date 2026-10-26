@@ -14,9 +14,10 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "windows-host.ps1")
 $Tarball = (Resolve-Path $Tarball).Path
 $base = Join-Path ([IO.Path]::GetTempPath()) ("rerail-windows-smoke-" + [guid]::NewGuid())
-# An accented profile folder, as a person's name gives it: cmd.exe reads the batch launcher in the console's code
-# page, so a path written out in UTF-8 would come back garbled.
-$sandbox = Join-Path $base ("Jos" + [char]0x00E9)
+# A profile folder as a person's name gives it, accented and with a space: cmd.exe reads the batch launcher in the
+# console's code page, so a path written out in UTF-8 would come back garbled, and PowerShell, which runs the Codex
+# hook, splits a command at a space its quoting does not cover.
+$sandbox = Join-Path $base ("Jos" + [char]0x00E9 + " Garc" + [char]0x00ED + "a")
 $project = Join-Path $sandbox "proj"
 $rerailHome = Join-Path $sandbox ".rerail"
 $launcher = Join-Path $rerailHome "bin\rerail.cmd"
