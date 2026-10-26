@@ -26,6 +26,7 @@ import {
 } from "../setup/harness-registration.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { pinnedNodePath } from "../setup/node-path.js";
+import { setupPreflight, wslNote } from "../setup/preflight.js";
 import { addLauncherToPath, describeLauncherPath, launcherPathMarker, recordLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
 import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
@@ -563,6 +564,12 @@ function setupRequest(context: SetupContext, parsed: SetupArguments, place: Setu
   };
 }
 
+/** T2w for the folder this run is for, once: on the first run and when a folder is named, not on every answer. */
+function setupWslNote(place: SetupPlace, parsed: SetupArguments, lane: SetupLane): string | undefined {
+  if (parsed.answer !== undefined) return undefined;
+  return wslNote(resolve(place.cwd, parsed.repo ?? "."), lane)?.replace(/\n$/u, "");
+}
+
 async function setupText(args: readonly string[], context: SetupContext, io: SetupIo, nodeVersion: string): Promise<number> {
   // E2 before anything else: an older Node changes nothing on this machine.
   const node = checkNodeVersion(nodeVersion, io.lane);
@@ -570,10 +577,18 @@ async function setupText(args: readonly string[], context: SetupContext, io: Set
     io.say(node.message.replace(/\n$/u, ""));
     return 1;
   }
+  // E7 and E8: an engine that cannot load here, or no Git, stop set-up before it installs anything.
+  const stop = setupPreflight(io.lane);
+  if (stop !== undefined) {
+    io.say(stop.replace(/\n$/u, ""));
+    return 1;
+  }
   const parsed = setupArguments(args);
   const banner = renderBanner({ version: context.updater.packageVersionLabel, depth: colourDepth() }, io.lane);
   if (banner !== "") io.say(banner.replace(/\n$/u, ""));
   const place = machinePlace(context);
+  const wsl = setupWslNote(place, parsed, io.lane);
+  if (wsl !== undefined) io.say(wsl);
   const installedLine = await install(context, parsed, place.cwd, io.lane, "setup");
   if (installedLine !== undefined) io.say(installedLine);
   const pathLine = await launcherOnPath(context, io.lane);
@@ -591,11 +606,14 @@ async function jsonSetupStep(args: readonly string[], context: SetupContext, pla
   try {
     const node = checkNodeVersion(nodeVersion, "json");
     if (!node.ok) return errorStep(node.message.replace(/\n$/u, ""));
+    const stop = setupPreflight("json");
+    if (stop !== undefined) return errorStep(stop.replace(/\n$/u, ""));
     const parsed = setupArguments(args);
+    const wsl = setupWslNote(place, parsed, "json");
     const installedLine = await install(context, parsed, place.cwd, "json", origin);
     const pathLine = await launcherOnPath(context, "json");
     const step = await runSetupStep({ ...setupRequest(context, parsed, place, "json"), nextArgs: jsonNextArgs(carryOf(parsed, place)) });
-    const opening = [installedLine, pathLine].filter(line => line !== undefined);
+    const opening = [wsl, installedLine, pathLine].filter(line => line !== undefined);
     return opening.length === 0 ? step : { ...step, screen: [...opening, step.screen].join("\n") };
   } catch (error) {
     return errorStep(messageOf(error));
