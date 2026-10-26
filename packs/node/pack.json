@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "20 eslint-plugin-n rules ported to Rerail, 4 of them on and 16 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on the Node test set of real code.",
+  "covers": "21 eslint-plugin-n rules ported to Rerail, 4 of them on and 17 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on the Node test set of real code.",
   "reason": "matches Node.js",
   "match": {
     "any": [
@@ -57,6 +57,13 @@
     ]
   },
   "rules": [
+    {
+      "id": "n-callback-return",
+      "document": "rules/n-callback-return.json",
+      "title": "eslint-plugin-n callback-return: Require `return` statements after callbacks",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
     {
       "id": "n-exports-style",
       "document": "rules/n-exports-style.json",

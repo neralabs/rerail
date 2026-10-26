@@ -52,7 +52,7 @@ OXLINT_NODE_RULES = {"callback-return", "exports-style", "global-require", "hand
 # The ports that pass the pack's conformance check on eslint-plugin-n's tests and on the Node test set, written to
 # packs/node/rules/ (n-no-process-exit, hand-written, ships too); every other port is written to
 # packs/node/candidates/rules/. Each is removed from the other directory, so promoting a port moves its document.
-SHIPPED = {"n-exports-style", "n-global-require", "n-handle-callback-err", "n-hashbang", "n-no-callback-literal",
+SHIPPED = {"n-callback-return", "n-exports-style", "n-global-require", "n-handle-callback-err", "n-hashbang", "n-no-callback-literal",
            "n-no-deprecated-api", "n-no-exports-assign", "n-no-mixed-requires", "n-no-new-require", "n-no-process-env",
            "n-no-sync", "n-prefer-global-console", "n-prefer-global-text-decoder", "n-prefer-global-text-encoder",
            "n-prefer-global-url", "n-prefer-global-url-search-params", "n-prefer-node-protocol", "n-prefer-promises-dns",

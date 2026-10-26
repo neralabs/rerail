@@ -4,8 +4,9 @@
 the pack's conformance check on both of its sources, and in `candidates/rules/` until then. eslint-plugin-n has no port
 readiness gates ([docs/port-readiness.md](../../docs/port-readiness.md)); a pinned test set judges the pack instead
 (`TEST_SETS` in `scripts/s3/pack-fixtures.mjs`, [conformance/README.md](../../conformance/README.md)). Each port is
-scored through the engine's production workspace path, with every disagreement declared in `divergences.json` (one
-today, on both sources: `n-prefer-promises-fs` does not report `fs.watch`), against:
+scored through the engine's production workspace path, with every disagreement declared in `divergences.json`
+(`n-prefer-promises-fs` does not report `fs.watch`, on both sources; `n-callback-return` does not report a final
+`callback?.()`, on the test set), against:
 
 - **the plugin's own findings on its rule tests** (`fixtures`), and on two pinned corpora (fastify, prettier);
 - **the Node test set** (`node-test-set`): 239 real files from 46 MIT and Apache-2.0 repositories, each at the commit
@@ -13,14 +14,13 @@ today, on both sources: `n-prefer-promises-fs` does not report `fs.watch`), agai
   findings for that rule are expected, and the 222 copies with that rule's findings fixed by hand, where none is.
 
 The conformance check (`--check`, run in CI) scores the tests and the test set: it fails a port in `rules/` on any
-unexplained FP or FN on either, and reports the candidates without failing them. 20 ports ship, 4 of them on (the ones
+unexplained FP or FN on either, and reports the candidates without failing them. 21 ports ship, 4 of them on (the ones
 the plugin's recommended configurations turn on: `n-hashbang`, `n-no-deprecated-api`, `n-no-exports-assign`,
-`n-no-process-exit`) and the other 16 off until a repository turns them on. The 4 candidates, and what keeps each out:
+`n-no-process-exit`) and the other 17 off until a repository turns them on. The 3 candidates, and what keeps each out:
 
 | Candidate | Why it is a candidate |
 |---|---|
 | `n-no-path-concat` | misses `__dirname + …` in TypeScript files with `import` syntax under a package.json with no `type`, which the plugin reads as CommonJS (compiled by tsc) and Rerail as an ES module |
-| `n-callback-return` | misses optional calls, `callback?.()` |
 | `n-prefer-global-buffer` | misses `const { Buffer } = require('buffer')` inside a property getter (Electron's sandboxed preload) |
 | `n-prefer-global-process` | misses `const process = require('process')`, a local that shadows the global (Jest) |
 
@@ -91,7 +91,7 @@ All ports target eslint-plugin-n 18.4.1 with default options. No sourceType is p
 
 ### `n-callback-return`
 
-Default callback names: callback, cb, next. A call of one of those is allowed when its nearest block/return/arrow ancestor is a return or an arrow function, when it is the last statement of a function body (or the right side of a binary/logical expression statement there), or when it is the statement just before a block's final return. Calls with a template-string argument are not matched.
+Default callback names: callback, cb, next. A call of one of those is allowed when its nearest block/return/arrow ancestor is a return or an arrow function, when it is the last statement of a function body (or the right side of a binary/logical expression statement there), or when it is the statement just before a block's final return. Calls with a template-string argument are not matched. An optional call (`callback?.()`) gets the same exemptions; upstream reports one in those positions, because ESTree's ChainExpression around it defeats its `parentNode.expression === node` check (declared in `divergences.json`).
 
 ### `n-global-require`
 

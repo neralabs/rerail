@@ -14,5 +14,21 @@
     "line": 23,
     "kind": "upstream-wrong",
     "evidence": "The fs.watch divergence above, on real code: verdaccio keeps the FSWatcher fs.watch returns (watchers[filePath] = fs.watch(filePath, listener)) and later calls watchers[filePath]?.close(). Upstream steers to fs.promises.watch, which takes no listener and returns an AsyncIterator with no close(); following it breaks this code. Rerail does not report watch."
+  },
+  {
+    "rule": "n-callback-return",
+    "source": "node-test-set",
+    "path": "n-callback-return/nest-server-grpc-7568c3c34df6/server/server-grpc.ts",
+    "line": 146,
+    "kind": "upstream-wrong",
+    "evidence": "`callback?.();` is the last statement of `start(callback?)` (line 146), which n/callback-return exempts for a plain `callback();`: its isCallbackExpression accepts the statement only when `parentNode.expression === node`, and ESTree wraps an optional call in a ChainExpression, so the check fails for `callback?.()` alone and upstream reports a final call it accepts without `?.` (lib/rules/callback-return.js, eslint-plugin-n 18.4.1). Nothing runs after the call, so the steer to add return changes nothing. Rerail exempts the final statement either way."
+  },
+  {
+    "rule": "n-callback-return",
+    "source": "node-test-set",
+    "path": "n-callback-return/nest-server-grpc-c267a2b3c4c5/server/server-grpc.ts",
+    "line": 153,
+    "kind": "upstream-wrong",
+    "evidence": "`callback?.();` is the last statement of `start(callback?)` (line 153), which n/callback-return exempts for a plain `callback();`: its isCallbackExpression accepts the statement only when `parentNode.expression === node`, and ESTree wraps an optional call in a ChainExpression, so the check fails for `callback?.()` alone and upstream reports a final call it accepts without `?.` (lib/rules/callback-return.js, eslint-plugin-n 18.4.1). Nothing runs after the call, so the steer to add return changes nothing. Rerail exempts the final statement either way."
   }
 ]
