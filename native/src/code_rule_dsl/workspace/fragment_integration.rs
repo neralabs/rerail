@@ -29,9 +29,43 @@ fn rss() -> u64 {
         (usage.ru_maxrss as u64) * 1024
     }
 }
+#[cfg(target_os = "macos")]
+fn hardware_snapshot() -> Option<(u64, u64)> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
+    // SAFETY: RUSAGE_INFO_V4 writes one rusage_info_v4 into this aligned,
+    // correctly sized buffer. Despite its pointer-to-rusage_info_t signature,
+    // proc_pid_rusage accepts the structure's address, not a pointer to a pointer.
+    let status = unsafe {
+        libc::proc_pid_rusage(
+            libc::getpid(),
+            libc::RUSAGE_INFO_V4,
+            usage.as_mut_ptr().cast::<libc::rusage_info_t>(),
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    // SAFETY: the successful V4 call initialized the requested structure.
+    let usage = unsafe { usage.assume_init() };
+    (usage.ri_instructions != 0 && usage.ri_cycles != 0)
+        .then_some((usage.ri_instructions, usage.ri_cycles))
+}
+#[cfg(not(target_os = "macos"))]
+fn hardware_snapshot() -> Option<(u64, u64)> {
+    None
+}
+fn hardware_work(start: Option<(u64, u64)>, end: Option<(u64, u64)>) -> Option<Value> {
+    let (start, end) = start.zip(end)?;
+    let instructions = end.0.checked_sub(start.0)?;
+    let cycles = end.1.checked_sub(start.1)?;
+    (instructions != 0 && cycles != 0).then(|| {
+        json!({"instructions":instructions,"cycles":cycles,"source":"proc_pid_rusage/RUSAGE_INFO_V4"})
+    })
+}
 fn apply(w: &CodeRuleDslWorkspace, revision: u32, files: Vec<Value>) -> (Value, Value) {
     let wall = Instant::now();
     let started = cpu();
+    let hardware_started = hardware_snapshot();
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&w.state),
         closed: Arc::clone(&w.closed),
@@ -70,10 +104,11 @@ fn apply(w: &CodeRuleDslWorkspace, revision: u32, files: Vec<Value>) -> (Value, 
         evaluation["violations"] = violations.into();
         evaluation["failures"] = failures.into();
     }
-    (
-        evaluation,
-        json!({"cpuNs":cpu()-started,"wallNs":wall.elapsed().as_nanos() as u64,"peakRssBytes":rss()}),
-    )
+    let mut timing = json!({"cpuNs":cpu()-started,"wallNs":wall.elapsed().as_nanos() as u64,"peakRssBytes":rss()});
+    if let Some(work) = hardware_work(hardware_started, hardware_snapshot()) {
+        timing["hardwareWork"] = work;
+    }
+    (evaluation, timing)
 }
 fn keys(output: &Value) -> BTreeSet<String> {
     output["violations"]

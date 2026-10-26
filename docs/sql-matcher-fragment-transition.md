@@ -1250,3 +1250,158 @@ These counters have different populations: navigation requests are owned but do 
 Control steps, fingerprint builds, utility hits, SQL statements, and VM instructions remain identical to the preceding build.
 This improvement comes from cheaper execution of the same work, not reduced coverage or weakened resource accounting.
 Both scalar-call audits remain zero. The default-feature check passes; the updated rejected report retains the failing CPU gate.
+
+The next sharing spike targets derived capture fingerprints, not utility verdicts.
+The existing cache separates utility program IDs even when their exact capture scopes are equal.
+The compiler now interns exact optional scopes and uses their IDs in the derived-fingerprint cache.
+`None` remains distinct from an explicit empty scope. Parameterized calls retain their sorted caller capture names.
+Pool identity, weak environment validation, exclusion-name checks, and the cache bound remain unchanged.
+Utility memo identity and resource charges remain unchanged.
+
+The full workload currently builds 15,669,077 fingerprints. Empty input environments already share one fingerprint and provide no new opportunity.
+New counters report scope counts and reuse across programs. Such hits do not themselves prove avoided builds or CPU savings.
+Review found an invalid mutation in the new COW fixture: native capture insertion rejects conflicting node bindings.
+The fixture now changes a reserved transformed binding instead, exercising COW invalidation without violating native unification.
+
+The scope-sharing slice reduces fingerprint builds from 1,142,344 to 675,538, a 40.9% reduction.
+Its largest program pool has 984 utility entries but only 15 distinct optional capture scopes.
+Utility hits, evictions, control work, findings, and edits remain unchanged.
+The paired CPU ratio is 1.419, compared with 1.434 for the preceding slice.
+The 903,947 reported reuse hits across programs exceed the 466,806 avoided builds; they are different measurements.
+
+The next revision also returns the existing empty fingerprint for an explicit empty scope without an exclusion name.
+The shortcut runs after the existing empty-input check, so its counter measures only additional nonempty-input cases.
+No binding, including reserved transformed data, can enter that fingerprint.
+An absent scope or an active exclusion name still takes the normal path.
+All 55 focused tests now pass, including the corrected COW fixture.
+
+The full scope-sharing revision reduces fingerprint builds from 15,669,077 to 8,370,880.
+It preserves all findings, edits, catalog comparisons, utility hits, and control work. The default-feature check also passes.
+Its CPU ratio is 1.567. A subsequent unchanged build-32 run measures 1.926, versus its earlier 1.490.
+The scope revision's slice ratio is 1.693, versus 1.419 before the constant-empty shortcut.
+These timing differences do not establish a causal speedup or regression on this busy host.
+Other processes consume substantial CPU, and the machine has six performance cores and twelve efficiency cores.
+The exact work reduction is established; its CPU effect remains uncertain. The accepted baseline and 1.30 ceiling remain unchanged.
+
+Assembly inspection identifies a more substantial control cost.
+The build-32 `advance` function occupies 18,112 bytes and allocates a 1,024-byte stack frame on every call.
+It decodes continuation state and opcode even though the caller already supplies the operation family.
+List starts and returns account for 334,876,592 of 575,682,466 advances, or 58.17%.
+The chain also copies returned aggregates and action payloads across this call boundary.
+
+The next spike moves those list families into small inline handlers behind the existing family classification.
+All other families retain a separate heavy handler. Common metrics and failure handling still run exactly once.
+The list bodies are mechanically equivalent; scheduling, transactions, withheld captures, and the 64-step chain bound remain unchanged.
+Independent review checks all three callers, including atomic list returns and the shared search/closure family.
+Acceptance requires checking the generated assembly and whole-workload behavior, not assuming that extraction improves execution.
+
+The list-dispatch build passes all 55 focused tests.
+Assembly confirms that list paths bypass the heavy callee and its per-call frame.
+The resident chain frame grows from 320 to 560 bytes; its code grows from 1,912 to 5,520 bytes.
+The heavy fallback retains a 1,072-byte frame. Together, chain and fallback code grow by 1,668 bytes.
+List paths avoid staging a returned aggregate for that call and avoid its full opcode decode.
+The 56-byte action-buffer copy remains, as does the list state's local extraction.
+These remaining copies must not be reported as eliminated. Runtime benefit still requires measurement.
+
+The list split passes the slice CPU ceiling at 1.296 but fails the full job at 1.783.
+Hardware counters provide a better comparison under the observed scheduling noise.
+The same full workload, including setup and three edits, retires these process instruction counts:
+
+| Implementation | Retired instructions | Elapsed cycles |
+| --- | ---: | ---: |
+| Native, build 32 | 1,238,262,733,524 | 374,591,149,911 |
+| SQL, build 32 | 1,619,961,681,854 | 617,391,184,494 |
+| SQL with scope sharing, build 34 | 1,595,856,340,281 | 594,896,442,425 |
+| SQL with list split, build 35 | 1,610,055,535,960 | 600,322,274,114 |
+
+These are whole-process counters from `/usr/bin/time -l`, not counters isolated to the cold matching phase.
+All four runs preserve findings and edits. Raw reports and usage counters are under `/tmp/rerail-instructions-*`.
+Scope sharing reduces instructions by 1.49% and cycles by 3.64% relative to build 32.
+The list split increases both measures relative to scope sharing, despite removing the heavy list call frame.
+The split is rejected and removed. Its assembly and source remain in the temporary spike directory.
+
+The cycle gap exceeds the instruction gap. This suggests memory access and execution latency need direct attention, not just instruction counts.
+The next measurement change adds hardware counters at the existing cold-job and edit boundaries.
+The next execution spike tests one contiguous frame arena instead of a separate growable frame vector for each resident lane.
+Parent frame indices preserve the same continuation order. Free slots can be reused across lanes without copying suspended parent frames.
+This targets pointer chasing, unused per-lane capacity, and allocation layout while preserving the operation scheduler.
+
+The qualification harness now samples macOS process instructions and cycles around each apply and its result publication.
+It uses the system's V4 process-usage API and records valid nonzero deltas as optional `hardwareWork` values.
+Unsupported systems, failed reads, and invalid deltas omit those values. They do not report fabricated zeros.
+Cold-job and edit CPU, wall-time, RSS, and acceptance ceilings remain unchanged.
+These counters are diagnostic evidence; they do not replace the CPU gate.
+
+The first phase-counter slice reports valid nonzero values for both engines.
+Native cold work retires 90,022,660,335 instructions; SQL retires 115,834,457,588, a ratio of about 1.287.
+The corresponding cycle ratio is about 1.733. Core assignment can also affect cycles per instruction; these counters alone do not isolate cache misses.
+The arena spike therefore remains a testable memory-layout hypothesis, not a claimed explanation of the entire cycle gap.
+Vacant arena slots reuse their parent-index field as a free-list link, avoiding an extra allocation for small nested submissions.
+
+The full phase-counter baseline (build 36) retires 1,569,218,661,305 cold-job instructions for SQL plus native cohorts.
+Native retires 1,212,125,529,119, a ratio of 1.295.
+SQL consumes 595,040,157,611 cycles versus 363,374,775,863 for native.
+Cold CPU is 188.482 versus 114.289 seconds, a ratio of 1.649; the qualification ceiling remains unmet.
+These counters exclude compilation and the three edits, unlike the preceding whole-process measurements.
+
+The arena spike is installed for build 37 after source-hash verification and two independent reviews.
+Every former stack access now uses a stable frame index. All three completion paths release their frame.
+A growth-and-reuse test checks live parent chains, unrelated lanes, capture drops, and free-list integrity.
+Metrics report active slots, allocated slots, capacity, slot width, and reuse instead of assuming a memory benefit.
+Acceptance requires fewer measured instructions or cycles, native parity, and the unchanged whole-job gates.
+
+Build 37 passes all 56 focused tests, including arena relocation and slot reuse.
+The 500-file slice reuses 20,651,271 frame slots. Its largest arena holds 6,276 live slots, with capacity 8,192 and 120-byte slots.
+However, cold instructions increase from 115,834,457,588 (build 36) to 119,826,792,403, or 3.45%.
+Cycles increase from 44,887,296,352 to 49,422,552,713. CPU rises from 13.790 to 14.372 seconds.
+Native instructions decrease slightly in the paired controls, so normalization does not explain the SQL regression.
+The arena is rejected and removed before a full run. Its source, binary, and slice evidence remain under `/tmp`.
+
+The next spike targets frame work rather than storage layout.
+A statically incompatible child currently receives a frame, waits for the next frontier, then immediately returns false.
+There are 49,364,276 guard rejections in the full baseline, though only a subset can use this shortcut.
+Early parent execution is unsafe: the next frontier must still observe owner failure before consuming the rejection.
+The proposed shortcut retains the zero-work child result until that same frontier, without allocating a child frame.
+It must preserve failure priority, singleton transaction counts, parent continuation order, and the existing control-chain bound.
+
+The deferred-child spike (build 38) passes all 57 focused tests and preserves slice findings, edits, control work, and cache counts.
+It avoids 1,131,566 child frames, but introduces 3,744,465 static kind checks.
+Instructions rise from 115,834,457,588 to 117,600,927,301, or 1.53%.
+Cycles fall by 3.33%, while CPU is effectively unchanged: 13.820 versus 13.790 seconds.
+The evidence does not establish a benefit. The spike is removed; its source and measurements remain under `/tmp`.
+
+The next dispatch experiment uses the operation family already computed by the caller.
+The existing handler ignores that classification for dispatch, then decodes state and opcode again.
+Unlike the rejected list split, this experiment retains one non-inlined handler and its existing call boundary.
+Only dispatch topology may change. Operation bodies, scheduler order, resource accounting, and frame representation must remain identical.
+
+The single-family dispatch rewrite (build 39) passes all 55 focused tests and preserves every slice operation and cache counter.
+It retires 116,849,493,806 instructions versus 115,834,457,588, an increase of 0.88%.
+Cycles increase by 2.44%; CPU rises from 13.790 to 14.431 seconds.
+The rewrite is rejected. Removing source-level dispatch duplication did not reduce executed work in this build configuration.
+
+A separate measured hotspot remains in memo-key hashing.
+Sample 32 attributes 65 direct leaf samples to hashing `Arc<CaptureFingerprint>` and 74 to hashing the complete memo key.
+The fingerprint derives structural hashing over capture names, document/node identities, lists, and transformed bytes.
+Its construction cache avoids rebuilding these values, but each memo-key hash still traverses them.
+The next bounded experiment stores an immutable precomputed hash beside the full fingerprint.
+Equality must retain full-value comparison, including under forced hash collisions. No native-baseline code changes.
+The 37,101,502 fingerprint cache hits indicate reuse opportunities, not an exact count of expensive hashes.
+Empty fingerprints, empty maps, build-time hashing, and the extra stored word all affect the net result.
+
+The prehashed-fingerprint spike (build 40) passes all 56 focused tests and preserves slice findings, edits, and every operation counter.
+Against the earlier baseline it appears to reduce CPU and cycles, while increasing instructions.
+An adjacent unchanged-baseline run resolves that ambiguity: baseline instructions are 115,745,712,405 versus 116,537,747,543 for the spike.
+Baseline cycles are 42,122,925,323 versus 42,492,916,409; CPU is 12.988 versus 13.121 seconds.
+The spike increases instructions by 0.68% and cycles by 0.88%. It is rejected and removed.
+
+The retained checkpoint contains exact-scope fingerprint sharing and phase hardware counters.
+Its full build-36 evidence preserves 97,798 findings, three edits, and all 87,162 catalog comparisons.
+Only the cold CPU ceiling fails: 1.649 versus the allowed 1.30. Median edit CPU ratio is 1.135.
+It uses 23 matching SQL statements and 25,216,565 VM instructions, with both scalar-call audits at zero.
+No rejected storage, dispatch, guard, or hashing path remains enabled.
+
+The next ownership review targets immutable semantic and comparison descriptors in native request batches.
+Each lane currently clones an Arc to its compiled descriptor, although execution retains the program for the whole batch.
+Borrowing those descriptors could remove reference-count traffic without changing captures, scheduling, or cache semantics.
+Any effect from contention across the four workspace workers remains a hypothesis until measured.

@@ -354,6 +354,7 @@ enum Op {
         target: Option<u32>,
         args: Option<super::CallArgs>,
         scope: Option<Arc<[Arc<str>]>>,
+        scope_id: u32,
     },
     Constrained {
         rule: u32,
@@ -476,6 +477,8 @@ pub(in crate::code_rule_dsl) struct Programs {
     pattern_plans: pattern_batch::Plans,
     absorbed_kind_stages: usize,
     unexcluded: Option<u32>,
+    fingerprint_scopes: HashMap<Option<Arc<[Arc<str>]>>, u32>,
+    fingerprint_scope_programs: usize,
 }
 impl Default for Programs {
     fn default() -> Self {
@@ -490,10 +493,17 @@ impl Default for Programs {
             pattern_plans: pattern_batch::Plans::default(),
             absorbed_kind_stages: 0,
             unexcluded: None,
+            fingerprint_scopes: HashMap::new(),
+            fingerprint_scope_programs: 0,
         }
     }
 }
 impl Programs {
+    fn intern_fingerprint_scope(&mut self, scope: Option<Arc<[Arc<str>]>>) -> u32 {
+        let next = self.fingerprint_scopes.len() as u32;
+        *self.fingerprint_scopes.entry(scope).or_insert(next)
+    }
+
     fn operation_name(&self, program: u32) -> &'static str {
         match &self.entries[program as usize].op {
             Op::Pass => "Pass",
@@ -741,7 +751,7 @@ impl Programs {
             rollback_nontrue: false,
             guard: None,
         });
-        let op = match rule {
+        let mut op = match rule {
             AstMatcher::Pattern(p) => Op::Pattern(self.pattern_plans.compile(p.clone())),
             AstMatcher::Kind(k) => {
                 Op::Kind(k.potential_kinds().unwrap().iter().next().unwrap() as u16)
@@ -857,11 +867,13 @@ impl Programs {
                 target: u.with_target(|r| self.lower(r)),
                 args: None,
                 scope: u.scope().flatten(),
+                scope_id: 0,
             },
             AstMatcher::Call(c) => Op::Util {
                 memo_term: Some((std::ptr::from_ref(c.as_ref()) as usize, usize::MAX)),
                 target: c.util.with_target(|r| self.lower(r)),
                 args: Some(c.args.clone()),
+                scope_id: 0,
                 scope: Some(
                     c.args
                         .iter()
@@ -913,6 +925,13 @@ impl Programs {
             #[cfg(test)]
             AstMatcher::TestUnknown(r) => Op::TestUnknown(r.clone()),
         };
+        if let Op::Util {
+            scope, scope_id, ..
+        } = &mut op
+        {
+            *scope_id = self.intern_fingerprint_scope(scope.clone());
+            self.fingerprint_scope_programs += 1;
+        }
         self.entries[id as usize].pipeline = match &op {
             Op::Constrained { rule, constraints } => {
                 matches!(self.entries[*rule as usize].op, Op::Pattern(_))
@@ -1025,6 +1044,10 @@ pub(in crate::code_rule_dsl) struct Metrics {
     pub max_memo_entries: usize,
     pub fingerprint_builds: usize,
     pub fingerprint_hits: usize,
+    pub fingerprint_cross_program_hits: usize,
+    pub fingerprint_empty_scope_hits: usize,
+    pub max_fingerprint_scope_programs: usize,
+    pub max_fingerprint_scopes: usize,
     pub closure_hits: usize,
     pub closure_candidates: usize,
     pub navigation_batches: usize,
@@ -1119,6 +1142,14 @@ impl Metrics {
         self.max_memo_entries = self.max_memo_entries.max(other.max_memo_entries);
         self.fingerprint_builds += other.fingerprint_builds;
         self.fingerprint_hits += other.fingerprint_hits;
+        self.fingerprint_cross_program_hits += other.fingerprint_cross_program_hits;
+        self.fingerprint_empty_scope_hits += other.fingerprint_empty_scope_hits;
+        self.max_fingerprint_scope_programs = self
+            .max_fingerprint_scope_programs
+            .max(other.max_fingerprint_scope_programs);
+        self.max_fingerprint_scopes = self
+            .max_fingerprint_scopes
+            .max(other.max_fingerprint_scopes);
         self.closure_hits += other.closure_hits;
         self.closure_candidates += other.closure_candidates;
         self.navigation_batches += other.navigation_batches;
@@ -1243,6 +1274,7 @@ pub(in crate::code_rule_dsl) struct Bank<
             Weak<MetaVarEnv<'t, D>>,
             Option<Arc<str>>,
             Arc<CaptureFingerprint>,
+            u32,
         ),
     >,
     empty_fingerprint: Arc<CaptureFingerprint>,
@@ -1618,6 +1650,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
         env: &Arc<MetaVarEnv<'t, D>>,
         owner: u64,
         program: u32,
+        scope_id: u32,
         scope: Option<&[Arc<str>]>,
         excluded_name: Option<&str>,
     ) -> Arc<CaptureFingerprint> {
@@ -1625,13 +1658,21 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             self.metrics.fingerprint_hits += 1;
             return self.empty_fingerprint.clone();
         }
-        let key = (Arc::as_ptr(env) as usize, owner, program);
-        if let Some((weak, name, fingerprint)) = self.fingerprints.get(&key)
+        if scope.is_some_and(|names| names.is_empty()) && excluded_name.is_none() {
+            // An explicit empty scope selects no ordinary or reserved binding.
+            // Count only nonempty environments; empty inputs already share this value.
+            self.metrics.fingerprint_hits += 1;
+            self.metrics.fingerprint_empty_scope_hits += 1;
+            return self.empty_fingerprint.clone();
+        }
+        let key = (Arc::as_ptr(env) as usize, owner, scope_id);
+        if let Some((weak, name, fingerprint, first_program)) = self.fingerprints.get(&key)
             && name.as_deref() == excluded_name
             && let Some(held) = weak.upgrade()
             && Arc::ptr_eq(&held, env)
         {
             self.metrics.fingerprint_hits += 1;
+            self.metrics.fingerprint_cross_program_hits += usize::from(*first_program != program);
             return fingerprint.clone();
         }
         self.metrics.fingerprint_builds += 1;
@@ -1653,6 +1694,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                 Arc::downgrade(env),
                 excluded_name.map(Arc::from),
                 fingerprint.clone(),
+                program,
             ),
         );
         fingerprint
@@ -1731,6 +1773,14 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
             .absorbed_kind_stages
             .max(programs.absorbed_kind_stages);
         self.metrics.submissions += 1;
+        self.metrics.max_fingerprint_scope_programs = self
+            .metrics
+            .max_fingerprint_scope_programs
+            .max(programs.fingerprint_scope_programs);
+        self.metrics.max_fingerprint_scopes = self
+            .metrics
+            .max_fingerprint_scopes
+            .max(programs.fingerprint_scopes.len());
         let mut slots: Vec<Option<(S::Token, Input<'t, D>)>> = (0..width).map(|_| None).collect();
         let mut lanes: Vec<Lane<'t, D>> = (0..width)
             .map(|_| Lane {
@@ -3133,6 +3183,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                     target,
                     args,
                     scope,
+                    scope_id,
                 } => {
                     if f.depth >= super::util::MAX_UTIL_DEPTH {
                         let mut out = f.result(0, None);
@@ -3178,6 +3229,7 @@ impl<'t, D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>> Bank<'
                                     &f.request.env,
                                     p.identity,
                                     f.request.program,
+                                    *scope_id,
                                     scope.as_deref(),
                                     f.request.each.as_ref().map(|e| e.name.as_str()),
                                 ),
@@ -4081,6 +4133,131 @@ mod tests {
                     Request<'_, ast_grep_core::tree_sitter::StrDoc<GrammarDialect>>,
                 >()
         );
+    }
+
+    #[test]
+    fn fingerprint_scopes_share_across_distinct_call_programs() {
+        let table = Arc::new(super::super::UtilTable::new(
+            vec!["pair".into()],
+            vec![true],
+            vec![None],
+        ));
+        assert!(table.rules.set(vec![pattern("$P($Q)")]).is_ok());
+        let call = |args| {
+            AstMatcher::Call(Box::new(super::super::UtilCall {
+                util: super::super::UtilRef {
+                    table: Arc::downgrade(&table),
+                    index: 0,
+                },
+                args,
+            }))
+        };
+        let a = call(vec![("P".into(), "X".into()), ("Q".into(), "Y".into())]);
+        let b = call(vec![("P".into(), "Y".into()), ("Q".into(), "X".into())]);
+        let mut programs = Programs::default();
+        let pa = programs.lower(&a);
+        let pb = programs.lower(&b);
+        assert_ne!(pa, pb);
+        let scope = |program| {
+            let Op::Util {
+                scope, scope_id, ..
+            } = &programs.entries[program as usize].op
+            else {
+                panic!("call")
+            };
+            (scope.as_deref().unwrap(), *scope_id)
+        };
+        let (sa, ia) = scope(pa);
+        let (sb, ib) = scope(pb);
+        assert_eq!(sa, sb);
+        assert_eq!(ia, ib);
+        assert_eq!(
+            sa.iter().map(|n| n.as_ref()).collect::<Vec<_>>(),
+            vec!["X", "Y"]
+        );
+        let doc = Root::str("x;", GrammarDialect::JavaScript);
+        let mut env = MetaVarEnv::new();
+        env.insert("X", doc.root()).unwrap();
+        let env = Arc::new(env);
+        let mut bank = Bank::default();
+        let first = bank.fingerprint(&env, programs.identity, pa, ia, Some(sa), None);
+        let builds = bank.metrics.fingerprint_builds;
+        let second = bank.fingerprint(&env, programs.identity, pb, ib, Some(sb), None);
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(bank.metrics.fingerprint_builds, builds);
+        assert_eq!(bank.metrics.fingerprint_cross_program_hits, 1);
+        let other_pool = Programs::default();
+        let separate = bank.fingerprint(&env, other_pool.identity, pb, ib, Some(sb), None);
+        assert!(!Arc::ptr_eq(&first, &separate));
+        assert!(*first == *separate);
+    }
+
+    #[test]
+    fn fingerprint_scope_identity_preserves_empty_full_and_exclusion_selection() {
+        let doc = Root::str("x; y;", GrammarDialect::JavaScript);
+        let mut input = MetaVarEnv::new();
+        input.insert("X", doc.root().child(0).unwrap()).unwrap();
+        input.insert("Y", doc.root().child(1).unwrap()).unwrap();
+        let env = Arc::new(input);
+        let mut programs = Programs::default();
+        let scopes: Vec<Option<Arc<[Arc<str>]>>> = vec![
+            None,
+            Some(Arc::from([])),
+            Some(Arc::from([Arc::from("X")])),
+            Some(Arc::from([Arc::from("Y")])),
+        ];
+        let ids: Vec<_> = scopes
+            .iter()
+            .map(|scope| programs.intern_fingerprint_scope(scope.clone()))
+            .collect();
+        assert_eq!(ids.iter().collect::<BTreeSet<_>>().len(), 4);
+        let mut bank = Bank::default();
+        let mut values = Vec::new();
+        for (id, scope) in ids.iter().zip(&scopes) {
+            let value = bank.fingerprint(&env, programs.identity, 7, *id, scope.as_deref(), None);
+            assert!(*value == capture_fingerprint(&env, scope.as_deref()));
+            values.push(value);
+        }
+        assert!(*values[0] != *values[1]);
+        assert!(Arc::ptr_eq(&values[1], &bank.empty_fingerprint));
+        assert_eq!(bank.metrics.fingerprint_empty_scope_hits, 1);
+        assert!(*values[2] != *values[3]);
+        let excluded = bank.fingerprint(
+            &env,
+            programs.identity,
+            8,
+            ids[2],
+            scopes[2].as_deref(),
+            Some("Y"),
+        );
+        assert!(*excluded == *values[0]);
+        let unexcluded = bank.fingerprint(
+            &env,
+            programs.identity,
+            9,
+            ids[2],
+            scopes[2].as_deref(),
+            None,
+        );
+        assert!(*unexcluded == *values[2]);
+        assert!(!Arc::ptr_eq(&excluded, &unexcluded));
+        // In-place COW mutation dissociates Weak identity even if pointer storage is reused.
+        let mut env = env;
+        Arc::make_mut(&mut env).insert_transformation(
+            &MetaVariable::Multiple,
+            "\0X",
+            b"changed".to_vec(),
+        );
+        let changed = bank.fingerprint(
+            &env,
+            programs.identity,
+            9,
+            ids[2],
+            scopes[2].as_deref(),
+            None,
+        );
+        assert!(*changed == capture_fingerprint(&env, scopes[2].as_deref()));
+        assert!(*changed != *unexcluded);
     }
 
     #[test]

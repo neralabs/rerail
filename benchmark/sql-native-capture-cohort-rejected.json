@@ -23,18 +23,18 @@
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)"
   },
   "provenance": {
-    "baseCommit": "a8900db88ece00846066a1f1c0340aa9c94c9dcd",
+    "baseCommit": "0f7bc319bca70ee86ea8b2bb6071f791eb534acf",
     "corpusCommit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
     "corpusInventorySha256": "4525032ac7cf058a9134aad9250fd3a400eb4df78c69bfdd89d608057e1b9773",
     "changedRustSources": {
-      "native/src/code_rule_dsl/matcher/cohort.rs": "1aa363faf5bffe66e239c959cc4f1d445408dbbf89c880fc129a16a2d91f8ff3",
-      "native/src/code_rule_dsl/matcher/cohort_host.rs": "764e68580dbabd0d1c927e75339673bf06ed88f619631e34a9b7b2f83f8c5ff5"
+      "native/src/code_rule_dsl/matcher/cohort.rs": "812bb5aca3598747b497a8367e7c00cf34a1091222553b18e8a100b6d050d41f",
+      "native/src/code_rule_dsl/workspace/fragment_integration.rs": "79c1c12d64f62b9dd2645dcaa8051416cc022309fa032c3475482c3e7ac6551b"
     },
-    "binarySha256": "99c963b087387d5655b146dce528f2464a3f980b7b50725286091a14e1344e2c",
+    "binarySha256": "b1a2efcd62976454a2aa18e77ebc2b6df0d5e07a90d8e99905463d977da395fb",
     "rawReportsSha256": {
-      "catalog": "a1ee77f8bda361737681a5d85c4da42c8817ff20815a4bd689f53cedacb918d8",
-      "native": "f612b3131e6e7ddf2af07eb18f8fa6bb914b7bd77508426f8f0cef5640d96b7a",
-      "sql": "04124d71f649c48e298c5e673eb4606b98ca172f5bccc7e0431135b6bb368920"
+      "catalog": "b445dfd4dcd00c02b1ac49342f626c44c7bcf52669bf7468e319f76c3bce4dcb",
+      "native": "5bb368950256e1ce2ef1fec57ad1ae7f3d3aaa123b02fc23a9a70c69fca4ad2d",
+      "sql": "b39e925a1f960c0f66aa69ea9d202dac45c3102e2732c99f584e81e6df88ba13"
     }
   },
   "workload": {
@@ -45,13 +45,18 @@
   },
   "native": {
     "compile": {
-      "cpuNs": 76751000,
-      "wallNs": 90785584
+      "cpuNs": 142918000,
+      "wallNs": 188772500
     },
     "cold": {
-      "cpuNs": 82797446000,
-      "peakRssBytes": 903315456,
-      "wallNs": 22060693167
+      "cpuNs": 114289092000,
+      "hardwareWork": {
+        "cycles": 363374775863,
+        "instructions": 1212125529119,
+        "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+      },
+      "peakRssBytes": 957956096,
+      "wallNs": 43940769375
     },
     "findings": 97798,
     "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -59,9 +64,14 @@
     "edits": [
       {
         "time": {
-          "cpuNs": 135110000,
-          "peakRssBytes": 967327744,
-          "wallNs": 137045250
+          "cpuNs": 208227000,
+          "hardwareWork": {
+            "cycles": 642590108,
+            "instructions": 2330533448,
+            "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+          },
+          "peakRssBytes": 967557120,
+          "wallNs": 318331416
         },
         "findings": 97799,
         "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
@@ -69,9 +79,14 @@
       },
       {
         "time": {
-          "cpuNs": 131469000,
-          "peakRssBytes": 981024768,
-          "wallNs": 133639125
+          "cpuNs": 220994000,
+          "hardwareWork": {
+            "cycles": 667897620,
+            "instructions": 2336010662,
+            "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+          },
+          "peakRssBytes": 981204992,
+          "wallNs": 385638666
         },
         "findings": 97801,
         "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
@@ -79,9 +94,14 @@
       },
       {
         "time": {
-          "cpuNs": 127620000,
-          "peakRssBytes": 994525184,
-          "wallNs": 127725959
+          "cpuNs": 200230000,
+          "hardwareWork": {
+            "cycles": 671517564,
+            "instructions": 2336020628,
+            "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+          },
+          "peakRssBytes": 994721792,
+          "wallNs": 219040167
         },
         "findings": 97798,
         "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -91,13 +111,18 @@
   },
   "sql": {
     "compile": {
-      "cpuNs": 71253000,
-      "wallNs": 71431917
+      "cpuNs": 150417000,
+      "wallNs": 184972333
     },
     "cold": {
-      "cpuNs": 123337677000,
-      "peakRssBytes": 1380892672,
-      "wallNs": 34481808750
+      "cpuNs": 188481686000,
+      "hardwareWork": {
+        "cycles": 595040157611,
+        "instructions": 1569218661305,
+        "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+      },
+      "peakRssBytes": 1409941504,
+      "wallNs": 73572607292
     },
     "findings": 97798,
     "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -105,9 +130,14 @@
     "edits": [
       {
         "time": {
-          "cpuNs": 157489000,
-          "peakRssBytes": 1380892672,
-          "wallNs": 158191000
+          "cpuNs": 239672000,
+          "hardwareWork": {
+            "cycles": 783968731,
+            "instructions": 2669625688,
+            "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+          },
+          "peakRssBytes": 1409941504,
+          "wallNs": 247518042
         },
         "findings": 97799,
         "findingKeysSha256": "6f35187d14f9f09193d78d2c860bf2c94dfbc17ef832989b4651751540315fe4",
@@ -115,9 +145,14 @@
       },
       {
         "time": {
-          "cpuNs": 144465000,
-          "peakRssBytes": 1380892672,
-          "wallNs": 145087167
+          "cpuNs": 228857000,
+          "hardwareWork": {
+            "cycles": 712503256,
+            "instructions": 2504712891,
+            "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+          },
+          "peakRssBytes": 1409941504,
+          "wallNs": 239787333
         },
         "findings": 97801,
         "findingKeysSha256": "879410ce1b24bdfe7b00d06b405caed580138981a117e05e5d1b7f0c36d8ccce",
@@ -125,9 +160,14 @@
       },
       {
         "time": {
-          "cpuNs": 180826000,
-          "peakRssBytes": 1380892672,
-          "wallNs": 195035834
+          "cpuNs": 236284000,
+          "hardwareWork": {
+            "cycles": 733544676,
+            "instructions": 2500716945,
+            "source": "proc_pid_rusage/RUSAGE_INFO_V4"
+          },
+          "peakRssBytes": 1409941504,
+          "wallNs": 244675041
         },
         "findings": 97798,
         "findingKeysSha256": "f1c746f087f819725c033f7528c2711e325bab707a9d5959a0657ae5698950f5",
@@ -135,24 +175,24 @@
       }
     ]
   },
-  "coldCpuRatio": 1.4896314193073057,
-  "medianEditCpuRatio": 1.1979173797625295,
+  "coldCpuRatio": 1.6491660113985331,
+  "medianEditCpuRatio": 1.1347423725069274,
   "matchingStatements": 23,
   "sqlCompilePhases": {
     "emitCpuMilliseconds": 0.0,
     "emitMilliseconds": 0.0,
-    "finishCpuMilliseconds": 1.121542,
-    "finishMilliseconds": 1.121458,
-    "lowerCpuMilliseconds": 0.615624,
-    "lowerMilliseconds": 0.625882,
+    "finishCpuMilliseconds": 2.64775,
+    "finishMilliseconds": 4.18425,
+    "lowerCpuMilliseconds": 1.523127,
+    "lowerMilliseconds": 1.587697,
     "planCpuMilliseconds": 0.0,
     "planMilliseconds": 0.0
   },
   "sqlSessions": {
     "count": 4,
     "prepared": 4,
-    "setupCpuMilliseconds": 6.607667,
-    "setupMilliseconds": 6.759501,
+    "setupCpuMilliseconds": 10.699792,
+    "setupMilliseconds": 13.300416,
     "tables": 0,
     "texts": 4
   },
@@ -167,11 +207,11 @@
     "texts": 1
   },
   "vmInstructions": 25216565,
-  "matchingCpuNs": 103406021210,
-  "nativeBoundaryCpuNs": 100145697084,
-  "nativeResidualCpuNs": 90072073791,
-  "nativePrefixCpuNs": 10073623293,
-  "sqlAndBoundaryOverheadCpuNs": 3260324126,
+  "matchingCpuNs": 159945958081,
+  "nativeBoundaryCpuNs": 154447473042,
+  "nativeResidualCpuNs": 139674253999,
+  "nativePrefixCpuNs": 14773219043,
+  "sqlAndBoundaryOverheadCpuNs": 5498485039,
   "largestNativeFragments": [
     {
       "rule": "bandit-b101-assert-used:assert-used",
@@ -339,8 +379,10 @@
       44208279
     ],
     "dense_counter_submissions": 442,
-    "fingerprint_builds": 15669077,
-    "fingerprint_hits": 29803305,
+    "fingerprint_builds": 8370880,
+    "fingerprint_cross_program_hits": 12873098,
+    "fingerprint_empty_scope_hits": 2860441,
+    "fingerprint_hits": 37101502,
     "fused_control_family_lanes": [
       41847902,
       24514932,
@@ -370,6 +412,8 @@
     "max_action_bytes": 56,
     "max_control_programs_touched": 638,
     "max_documents": 60,
+    "max_fingerprint_scope_programs": 984,
+    "max_fingerprint_scopes": 15,
     "max_frame_bytes": 112,
     "max_memo_entries": 32768,
     "max_program_pool_entries": 7350,
@@ -1046,10 +1090,10 @@
         "compared": 87162,
         "matches": 2477,
         "mismatches": [],
-        "nativeCpuNs": 741450500,
-        "nativeWallNs": 758344375,
-        "sqlCpuNs": 1388689917,
-        "sqlWallNs": 1469303334,
+        "nativeCpuNs": 1090099292,
+        "nativeWallNs": 5076253125,
+        "sqlCpuNs": 1950304125,
+        "sqlWallNs": 8287503458,
         "unknownNative": 0,
         "unknownSql": 0
       }
