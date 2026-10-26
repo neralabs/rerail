@@ -2,7 +2,8 @@
 use super::{Plan, Stage, syntax};
 use crate::code_rule_dsl::model::{CompiledCodeRule, FileInput, Snapshot};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 #[cfg(feature = "code-rule-profile")]
@@ -13,8 +14,35 @@ pub(super) use capture::save as capture;
 type EvidenceVersion = (String, String, [u8; 32], Option<String>, Option<[u8; 32]>);
 
 /// Authoritative producer context is independent of whether source strings are resident.
-#[derive(Clone, Eq, PartialEq, Hash)]
-pub(in crate::code_rule_dsl) struct Versions(Arc<[EvidenceVersion]>);
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct Versions(Arc<VersionSet>);
+#[derive(Eq, PartialEq)]
+struct VersionSet {
+    files: Box<[EvidenceVersion]>,
+    fingerprint: [u8; 32],
+    bytes: usize,
+}
+impl PartialEq for Versions {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || self.0 == other.0
+    }
+}
+impl Eq for Versions {}
+impl Hash for Versions {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.fingerprint.hash(state);
+    }
+}
+#[derive(Default)]
+struct IdentityHasher(Sha256);
+impl Hasher for IdentityHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+    fn finish(&self) -> u64 {
+        u64::from_le_bytes(self.0.clone().finalize()[..8].try_into().unwrap())
+    }
+}
 impl Versions {
     pub fn new<'a>(files: impl Iterator<Item = (&'a FileInput, [u8; 32])>) -> Self {
         let mut versions = files
@@ -29,7 +57,23 @@ impl Versions {
             })
             .collect::<Vec<_>>();
         versions.sort();
-        Self(versions.into())
+        let bytes = versions
+            .iter()
+            .map(|(p, l, _, m, _)| {
+                p.len()
+                    + l.len()
+                    + m.as_ref().map_or(0, String::len)
+                    + std::mem::size_of::<EvidenceVersion>()
+            })
+            .sum::<usize>()
+            + std::mem::size_of::<VersionSet>();
+        let mut hash = IdentityHasher::default();
+        versions.hash(&mut hash);
+        Self(Arc::new(VersionSet {
+            files: versions.into(),
+            fingerprint: hash.0.finalize().into(),
+            bytes,
+        }))
     }
     pub fn snapshot(snapshot: &Snapshot) -> Self {
         Self::new(
@@ -41,7 +85,7 @@ impl Versions {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq)]
 enum Key {
     Syntax {
         family: u8,
@@ -75,9 +119,48 @@ enum Key {
         inputs: Vec<(String, usize)>,
     },
 }
+impl Hash for Key {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::Syntax {
+                family,
+                files,
+                excluded,
+                empty,
+                owners,
+            } => (family, files, excluded, empty, owners).hash(state),
+            Self::Evidence {
+                definition_digest,
+                clause,
+                name,
+                versions,
+                domain,
+                nonce,
+                ..
+            } => (definition_digest, clause, name, versions, domain, nonce).hash(state),
+            Self::Sql {
+                query,
+                schema,
+                deferred,
+                inputs,
+                regex_limit,
+                indexes,
+            } => (query, schema, deferred, inputs, regex_limit, indexes).hash(state),
+            Self::Reach {
+                roots,
+                edges,
+                forest,
+                expand,
+                inputs,
+            } => (roots, edges, forest, expand, inputs).hash(state),
+        }
+    }
+}
 #[derive(Default)]
 pub(super) struct Bindings {
     definitions: HashMap<Key, usize>,
+    retained: HashSet<(u8, usize)>,
     next_lease: usize,
     next_id: usize,
     bytes: usize,
@@ -88,92 +171,96 @@ impl Bindings {
     }
     pub fn forget(&mut self) {
         self.definitions.clear();
+        self.retained.clear();
         self.bytes = 0;
     }
     pub fn lease(&mut self) -> usize {
         self.next_lease += 1;
         self.next_lease
     }
+    fn owner(&mut self, tag: u8, pointer: usize, bytes: usize) -> usize {
+        if self.retained.insert((tag, pointer)) {
+            bytes + 48
+        } else {
+            0
+        }
+    }
     fn intern(&mut self, key: Key) -> usize {
         if let Some(id) = self.definitions.get(&key) {
             return *id;
         }
-        self.bytes = self.bytes.saturating_add(
-            match &key {
-                Key::Sql {
-                    query,
-                    schema,
-                    inputs,
-                    indexes,
-                    deferred,
-                    ..
-                } => {
-                    query.len()
-                        + schema.len()
-                        + inputs.iter().map(|(n, _)| n.len() + 48).sum::<usize>()
-                        + indexes
-                            .iter()
-                            .flatten()
-                            .map(|n| n.len() + 24)
-                            .sum::<usize>()
-                        + deferred
-                            .iter()
-                            .map(|(n, v)| n.len() + v.len() + 48)
-                            .sum::<usize>()
-                }
-                Key::Syntax {
-                    files,
-                    excluded,
-                    empty,
-                    owners,
-                    ..
-                } => {
-                    files.iter().map(|(n, _, _)| n.len() + 80).sum::<usize>()
-                        + excluded
-                            .iter()
-                            .chain(empty)
-                            .map(|n| n.len() + 24)
-                            .sum::<usize>()
-                        + owners
-                            .iter()
-                            .map(|(n, k, _)| n.len() + k.len() + 64)
-                            .sum::<usize>()
-                }
-                Key::Evidence {
-                    versions,
-                    domain,
-                    clause,
-                    name,
-                    definition,
-                    ..
-                } => {
-                    definition.len()
-                        + clause.len()
-                        + name.len()
-                        + domain
-                            .as_ref()
-                            .map_or(0, |paths| paths.iter().map(|p| p.len() + 24).sum::<usize>())
-                        + versions
-                            .0
-                            .iter()
-                            .map(|(p, l, _, m, _)| {
-                                p.len() + l.len() + m.as_ref().map_or(0, String::len) + 160
-                            })
-                            .sum::<usize>()
-                }
-                Key::Reach {
-                    roots,
-                    edges,
-                    inputs,
-                    ..
-                } => {
-                    roots.len()
-                        + edges.len()
-                        + inputs.iter().map(|(n, _)| n.len() + 48).sum::<usize>()
-                }
-            } + std::mem::size_of::<Key>()
-                + 64,
-        );
+        let added = match &key {
+            Key::Sql {
+                query,
+                schema,
+                inputs,
+                indexes,
+                deferred,
+                ..
+            } => {
+                self.owner(0, Arc::as_ptr(query) as *const () as usize, query.len())
+                    + self.owner(0, Arc::as_ptr(schema) as *const () as usize, schema.len())
+                    + inputs.iter().map(|(n, _)| n.len() + 48).sum::<usize>()
+                    + indexes
+                        .iter()
+                        .flatten()
+                        .map(|n| n.len() + 24)
+                        .sum::<usize>()
+                    + deferred
+                        .iter()
+                        .map(|(n, v)| n.len() + v.len() + 48)
+                        .sum::<usize>()
+            }
+            Key::Syntax {
+                files,
+                excluded,
+                empty,
+                owners,
+                ..
+            } => {
+                files.iter().map(|(n, _, _)| n.len() + 80).sum::<usize>()
+                    + excluded
+                        .iter()
+                        .chain(empty)
+                        .map(|n| n.len() + 24)
+                        .sum::<usize>()
+                    + owners
+                        .iter()
+                        .map(|(n, k, _)| n.len() + k.len() + 64)
+                        .sum::<usize>()
+            }
+            Key::Evidence {
+                versions,
+                domain,
+                clause,
+                name,
+                definition,
+                definition_digest,
+                ..
+            } => {
+                self.owner(
+                    0,
+                    Arc::as_ptr(definition) as *const () as usize,
+                    definition.len(),
+                ) + self.owner(1, Arc::as_ptr(&versions.0) as usize, versions.0.bytes)
+                    + definition_digest.len()
+                    + clause.len()
+                    + name.len()
+                    + domain
+                        .as_ref()
+                        .map_or(0, |paths| paths.iter().map(|p| p.len() + 24).sum::<usize>())
+            }
+            Key::Reach {
+                roots,
+                edges,
+                inputs,
+                ..
+            } => {
+                roots.len() + edges.len() + inputs.iter().map(|(n, _)| n.len() + 48).sum::<usize>()
+            }
+        } + std::mem::size_of::<Key>()
+            + 64;
+        self.bytes = self.bytes.saturating_add(added);
         self.next_id += 1;
         let id = self.next_id;
         self.definitions.insert(key, id);

@@ -4435,3 +4435,21 @@ Full definition equality must remain authoritative after cached hashes are intro
 
 The indexed-family diagnostic now interrupts earlier, in the surfaces stage.
 The repeated-reader boundary alone is therefore insufficient. Its live query plan will guide the next correction.
+
+The shared identity regressions now pass. Repository fingerprints are computed once per immutable version set.
+Evidence keys hash the existing rule digest, while full canonical equality still prevents collision-based sharing.
+Memory accounting charges shared owners once and retains charges for distinct allocations.
+The full-array versions and canonical definitions remain authoritative; no scope is weakened.
+
+The 120-consumer capacity regression fails at consumer 33 with the old global producer allowance.
+The correction keeps 100 native passes per logical consumer and records total launches separately.
+An additional dependent-consumer test requires failure beyond 100 passes without rejecting a shallow peer.
+
+The public-API live plan identifies a correlated scan of raw base classes inside the method loop.
+Owner indexes also use only `__path`, because dynamic owner columns lack integer affinity.
+A SQL regression reproduces the missing second seek column. Explicit casts of byte-offset owners make it pass.
+The port adds one indexed base-fact owner for its two consumers and gates method discovery to exported classes.
+The exported-class relation stays outside method expansion through an explicit SQL join order.
+These changes preserve the authored rule semantics and existing budgets.
+The closed SQL ladder passes both tests. Its lookup bound also passes before the change on the host SQLite planner.
+That bounded test is therefore a guard, not a reproduced performance failure.
