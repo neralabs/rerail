@@ -36,11 +36,10 @@ fn scope_selection_is_an_outer_gate_for_recursive_readers() -> Result<()> {
     let mut s = Storage::default();
     let slot = "__context_recursive_gate";
     s.bind_scope(&db, 1, BTreeMap::from([(slot.into(), 1)]))?;
-    s.declare(
+    s.declare_input(
         &db,
         slot,
         format!("CREATE TABLE {slot}(id INTEGER,parent INTEGER)"),
-        true,
     )?;
     let (table, _) = s.write_target(slot);
     db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO {table} SELECT 1,x,x-1 FROM n;INSERT INTO {table} VALUES(2,2,0)"))?;

@@ -202,7 +202,7 @@ pub(super) fn inspect_fields_recursive(
 pub(super) fn create_input(db: &Database, name: &str, fields: &[String]) -> Result<()> {
     db.storage
         .borrow_mut()
-        .declare(db, name, input_schema(name, fields), true)
+        .declare_input(db, name, input_schema(name, fields))
         .map_err(sql_error)?;
     Ok(())
 }

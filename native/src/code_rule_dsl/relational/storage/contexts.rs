@@ -28,6 +28,7 @@ struct Lifecycle {
     index_reuses: usize,
     analysis_requests: usize,
     analysis_batches: usize,
+    analyzed_relations: usize,
     owner_keys_visited: usize,
     rowset_deletions: usize,
     layout_drops: usize,
@@ -35,6 +36,7 @@ struct Lifecycle {
 struct Layout {
     key_column: String,
     definition: String,
+    outer_gate: bool,
     indexes: BTreeMap<String, String>,
     statistics_dirty: bool,
 }
@@ -90,11 +92,17 @@ impl Contexts {
     pub fn contains(&self, name: &str) -> bool {
         self.layouts.contains_key(name)
     }
-    pub fn declare(&mut self, db: &Connection, name: &str, definition: &str) -> Result<()> {
+    pub fn declare(
+        &mut self,
+        db: &Connection,
+        name: &str,
+        definition: &str,
+        outer_gate: bool,
+    ) -> Result<()> {
         if self
             .layouts
             .get(name)
-            .is_some_and(|l| l.definition == definition)
+            .is_some_and(|l| l.definition == definition && l.outer_gate == outer_gate)
         {
             self.lifecycle.declaration_reuses += 1;
             if let Some(key) = self.key(name)
@@ -144,12 +152,33 @@ impl Contexts {
             stmt.column_names()
                 .into_iter()
                 .skip(1)
-                .map(quote)
+                .map(|column| format!("r.{}", quote(column)))
                 .collect::<Vec<_>>()
                 .join(",")
         };
         let literal = name.replace('\'', "''");
-        db.execute_batch(&format!("CREATE TEMP VIEW {} AS SELECT {columns} FROM {} WHERE {key_column}=(SELECT binding FROM {BINDINGS} WHERE slot='{literal}')",quote(name),quote(&backing(name))))?;
+        let source = if outer_gate {
+            // Imported inputs have no authored lookup indexes. Keep the scope
+            // gate outside their scan, so a scope-only index cannot push a
+            // recursive frontier behind a Cartesian input scan.
+            format!(
+                "{BINDINGS} b CROSS JOIN {} r ON r.{}=b.binding WHERE b.slot='{literal}'",
+                quote(&backing(name)),
+                quote(&key_column)
+            )
+        } else {
+            // Indexed cuts retain the lookup chosen by their authored access
+            // paths. An extra join fence here can defeat selective readers.
+            format!(
+                "{} r WHERE r.{}=(SELECT binding FROM {BINDINGS} WHERE slot='{literal}')",
+                quote(&backing(name)),
+                quote(&key_column)
+            )
+        };
+        db.execute_batch(&format!(
+            "CREATE TEMP VIEW {} AS SELECT {columns} FROM {source}",
+            quote(name)
+        ))?;
         db.execute_batch(&format!(
             "CREATE INDEX {} ON {}({key_column})",
             quote(&format!("__binding_{name}")),
@@ -161,6 +190,7 @@ impl Contexts {
             Layout {
                 key_column,
                 definition: definition.into(),
+                outer_gate,
                 indexes: BTreeMap::new(),
                 statistics_dirty: false,
             },
@@ -211,15 +241,20 @@ impl Contexts {
         Ok(())
     }
     pub fn statistics_boundary(&mut self, db: &Connection) -> Result<()> {
-        if self.layouts.values().any(|l| l.statistics_dirty) {
-            // One complete TEMP publication batch, one schema statistics reload.
-            // Native frames and persistent corpus indexes are outside TEMP storage.
-            db.execute_batch("ANALYZE temp")?;
-            self.lifecycle.analysis_batches += 1;
-            for layout in self.layouts.values_mut() {
-                layout.statistics_dirty = false;
+        let mut refreshed = false;
+        for (slot, layout) in &mut self.layouts {
+            if !layout.statistics_dirty {
+                continue;
             }
+            // Stable contexts make the schema small. Refresh only the cuts
+            // changed by this publication; ANALYZE temp rescans every retained
+            // input and completed cut again at every dependent frontier.
+            db.execute_batch(&format!("ANALYZE temp.{}", quote(&backing(slot))))?;
+            self.lifecycle.analyzed_relations += 1;
+            layout.statistics_dirty = false;
+            refreshed = true;
         }
+        self.lifecycle.analysis_batches += usize::from(refreshed);
         Ok(())
     }
     pub fn populated(&mut self, name: &str, rows: usize) {

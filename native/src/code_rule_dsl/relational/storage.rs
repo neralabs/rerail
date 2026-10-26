@@ -55,7 +55,7 @@ impl Storage {
         table: bool,
     ) -> Result<()> {
         if contexts::managed(name) && table {
-            return self.contexts.declare(db, name, &definition);
+            return self.contexts.declare(db, name, &definition, false);
         }
         let name = &name.to_ascii_lowercase();
         if self
@@ -89,6 +89,12 @@ impl Storage {
             },
         );
         Ok(())
+    }
+    pub fn declare_input(&mut self, db: &Connection, name: &str, definition: String) -> Result<()> {
+        if contexts::managed(name) {
+            return self.contexts.declare(db, name, &definition, true);
+        }
+        self.declare(db, name, definition, true)
     }
     pub fn index(&mut self, db: &Connection, table: &str, name: &str, sql: String) -> Result<()> {
         if contexts::managed(table) {
