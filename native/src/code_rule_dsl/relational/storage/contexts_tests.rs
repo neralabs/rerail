@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn imported_span_lookup_does_not_scan_every_row_in_the_scope() -> Result<()> {
+    let db = Connection::open_in_memory()?;
+    let mut s = Storage::default();
+    let slot = "__context_input_span";
+    s.bind_scope(&db, 1, BTreeMap::from([(slot.into(), 1)]))?;
+    s.declare_input(
+        &db,
+        slot,
+        format!("CREATE TABLE {slot}(__path TEXT,__start INTEGER,__end INTEGER,value INTEGER)"),
+    )?;
+    let (table, _) = s.write_target(slot);
+    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO {table} SELECT 1,'target.py',x,x+1,x FROM n;INSERT INTO {table} SELECT 2,__path,__start,__end,value FROM {table} WHERE __execution_key=1"))?;
+    let mut stmt = db.prepare(&format!(
+        "SELECT sum(value) FROM {slot} WHERE __path='target.py' AND __start>=998 AND __end<=1000"
+    ))?;
+    assert_eq!(stmt.query_row([], |r| r.get::<_, i64>(0))?, 1997);
+    let work = stmt.get_status(rusqlite::StatementStatus::VmStep);
+    assert!(work < 1000, "selective span lookup used {work} VM steps");
+    Ok(())
+}
+
+#[test]
 fn statistics_boundary_does_not_rescan_unchanged_relations() -> Result<()> {
     let db = Connection::open_in_memory()?;
     let mut s = Storage::default();
