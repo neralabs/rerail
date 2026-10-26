@@ -154,3 +154,31 @@ it.skipIf(!required)("streams pure wide projections into narrow window consumers
   expect(found).toBe(true);
  }finally{rmSync(directory,{recursive:true,force:true});}
 },35_000);
+
+it.skipIf(!required)("preserves failed SQL inputs before workspace cleanup without enabling statement tracing", () => {
+ const directory=mkdtempSync(join(tmpdir(),"rerail-failed-relations-"));
+ try {
+  const program=`
+   import {readFileSync} from 'node:fs';import {loadNativeBinding} from ${JSON.stringify(engine)};
+   const n=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(caps)}),'utf8');
+   const relational={inputs:{events:{evidence:{as:'e',query:{ast:{language:'python',rule:{kind:'identifier',pattern:'$NAME'}}},project:{name:'capture.NAME'}}}},
+    stages:[{name:'bad',query:"SELECT __path,__start,__end,rx_extract(name,'(x)',9) AS bad FROM events",indexes:[['bad']]}],
+    query:'SELECT a.__path path,a.__start start_byte,a.__end end_byte FROM bad a JOIN bad b ON a.bad=b.bad'};
+   const w=new n.CodeRuleDslWorkspace();w.addCodeRule(n.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id:'failed-sql',revision:1,mode:'log',clauses:[{id:'rows',relational,violation:{code:'ROW',message:'Row',anchor:'witness.span'}}]}),'json',caps));
+   try {console.log(await w.applyAsync(JSON.stringify({revision:1,files:[{path:'a.py',language:'python',source:'éxx'}],removed:[]})));}finally{w.close();}
+  `;
+  const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30_000,env:{...process.env,RERAIL_SQL_PROFILE_DIR:undefined,RERAIL_SQL_FAILURE_DIR:directory}});
+  expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
+  const result=JSON.parse(child.stdout.trim()).evaluation;
+  expect(result.failures.some((f:{message:string})=>f.message.includes('regex group'))).toBe(true);
+  const files=readdirSync(directory),manifests=files.filter(f=>/^failure-.*\.json$/.test(f));
+  expect(manifests).toHaveLength(1);expect(files.filter(f=>/^profile-/.test(f))).toEqual([]);
+  const snapshot=JSON.parse(readFileSync(join(directory,manifests[0]!), 'utf8'));
+  expect(snapshot.context).toMatchObject({rule:'failed-sql',clause:'rows',stage:'bad'});
+  expect(snapshot.tempError).toBeNull();expect(snapshot.temp).toBeTypeOf('string');
+  const read=spawnSync('python3',['-c',`import sqlite3,sys,json
+c=sqlite3.connect(sys.argv[1]);tables=c.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%events'").fetchall();assert len(tables)==1,tables
+print(json.dumps(c.execute('SELECT name FROM "'+tables[0][0].replace('"','""')+'"').fetchall()))`,join(directory,snapshot.main)],{encoding:'utf8',timeout:5_000});
+  expect(read.status,read.stderr).toBe(0);expect(JSON.parse(read.stdout)).toEqual([['éxx']]);
+ }finally{rmSync(directory,{recursive:true,force:true});}
+},35_000);
