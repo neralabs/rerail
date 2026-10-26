@@ -748,7 +748,7 @@ Rerail's own toolchain is Node only. OMP remains an external Bun-hosted runtime;
 
 `scripts/generate/model/prepare_model.py` reproduces the bundled INT8 artifact from the revision and checksums recorded in `model/manifest.json`. Every generated file in the repository, with its generator and the command that rewrites it, is listed in [scripts/generate/README.md](scripts/generate/README.md).
 
-`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`) through the production workspace against the tool's recordings in the pack's `upstream/` and, with corpora checked out under `.rerail/corpora/<pack>/`, the linter's output on pinned corpora; `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the fixtures-only gate. Both it and the conformance tests (`test/conformance/`: the identifier-rename gate) run offline in `npm run test:conformance`, part of `test:all` in CI.
+`npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`) through the production workspace against the tool's recordings in the pack's `upstream/` and, with `--samples`, on the tool-packs' labelled real-code samples (`samples.lock`, [docs/port-readiness.md](docs/port-readiness.md#samples)); `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the gate over the fixtures and the samples. Both it and the conformance tests (`test/conformance/`: the identifier-rename gate) run offline in `npm run test:conformance`, part of `test:all` in CI.
 
 ### Operational commands (`just`)
 

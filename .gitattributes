@@ -8,6 +8,5 @@ native/grammars/*/src/parser.generated.c.gz filter=lfs diff=lfs merge=lfs -text
 # collapses in reviews and leaves out of language statistics.
 packs/*/upstream/**/*.expected.json linguist-generated=true
 packs/*/upstream/*/recording.lock linguist-generated=true
-packs/*/upstream/*/goldens.tsv linguist-generated=true
 packs/*/upstream/*/fixtures/** linguist-vendored=true
 packs/*/upstream/*/tests/** linguist-vendored=true

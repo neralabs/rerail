@@ -3,9 +3,11 @@
 22 code rules for SQL, ported from SQLFluff 4.4.0. 19 pass every blocking [port readiness](../../docs/port-readiness.md)
 gate and ship: they live in `rules/` and `pack.json` lists them, 17 on and PG01 and PG02 off. The other 3 (AL05, AM02
 and RF01) are candidates: they live in `candidates/rules/` and move to `rules/` and `pack.json` once they pass every
-blocking gate (see "Port readiness" below). Each port is scored against SQLFluff's own findings on SQLFluff's tests and
-on pinned public corpora (postgres, mattermost, anki, application-services), with every disagreement declared in
-`divergences.json`. The conformance check (`--check`, run in CI) gates the shipped rules and reports the candidates.
+blocking gate (see "Port readiness" below). Each port is scored against SQLFluff's own findings on SQLFluff's tests,
+and against the labelled lines of SQLFluff's real-code samples
+([docs/port-readiness.md](../../docs/port-readiness.md#samples)), with every disagreement declared in
+`divergences.json`. The conformance check (`--check`, run in CI) scores the tests and the samples: it gates the shipped
+rules and reports the candidates.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack sql"` and by
@@ -17,9 +19,9 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `pack.json` | The pack (`rerail.rule-pack/v1`): the 19 shipped rules, with PG01 and PG02 `"on": false` |
 | `rules/` | The 19 shipped code-rule documents (`rerail.policy/v1`), one per port, named for its id |
 | `candidates/rules/` | The 3 candidate code-rule documents: AL05, AM02 and RF01 |
-| `conformance.json` | Every port (shipped and candidate): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool and the pinned corpora |
+| `conformance.json` | Every port (shipped and candidate): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool |
 | `divergences.json` | Declared disagreements with SQLFluff |
-| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`); the port readiness gates' `gates.yaml`, `recording.lock` and `goldens.tsv`. The tests, Rerail's cases and the recordings are pack test data, not in git: one archive in S3, which `test-data.lock` names and `npm run fixtures:pull` fetches |
+| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`); the lock naming its real-code samples (`samples.lock`) with their sources and licences (`SAMPLES.md`); the port readiness gates' `gates.yaml` and `recording.lock`. The tests, Rerail's cases and the recordings are pack test data, not in git: one archive in S3, which `test-data.lock` names and `npm run fixtures:pull` fetches with the samples |
 | `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Rules that start off
@@ -44,36 +46,35 @@ dialect gates for PG01 and AM02) and 1 is `rerail-unknown` (a grammar gap in RF0
 
 ## Scores
 
-TP/FP/FN of each port against SQLFluff 4.4.0, from `node --import tsx conformance/languages/cli.ts --pack sql`; `div.` counts the
-findings a declared divergence explains. Every port has no false positive and no false negative on the fixtures outside
-its declared divergences, and no shipped rule has a false positive on the four pinned corpora (AM02, a candidate, has
-one on postgres); that says nothing about other SQL, and a port's reading is PostgreSQL's wherever the dialects differ.
-Corpus false negatives do not fail the gate.
+TP/FP/FN of each port against SQLFluff 4.4.0 on the fixtures, from `node --import tsx conformance/languages/cli.ts
+--pack sql --fixtures`; `div.` counts the findings a declared divergence explains. Every port has no false positive and
+no false negative on the fixtures outside its declared divergences; that says nothing about other SQL, and a port's
+reading is PostgreSQL's wherever the dialects differ.
 
-| Port | SQLFluff rule | Status | Fixtures | postgres | mattermost | anki | application-services | Skips files with syntax errors |
-|---|---|---|---|---|---|---|---|---|
-| `sqlfluff-al04-aliasing-unique-table` | AL04 | shipped | 9/0/0 | 3/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-al05-aliasing-unused` | AL05 | candidate | 9/0/0 (7 div.) | 61/0/0 | 0/0/0 | 1/0/0 | 0/0/0 | yes |
-| `sqlfluff-al08-aliasing-unique-column` | AL08 | shipped | 14/0/0 (1 div.) | 53/0/0 | 0/0/0 | 0/0/0 | 0/0/1 | yes |
-| `sqlfluff-al09-aliasing-self-alias-column` | AL09 | shipped | 18/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
-| `sqlfluff-am01-ambiguous-distinct` | AM01 | shipped | 1/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
-| `sqlfluff-am02-ambiguous-union` | AM02 | candidate | 5/0/0 (1 div.) | 0/1/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-am05-ambiguous-join` | AM05 | shipped | 14/0/0 | 34/0/0 | 5/0/0 | 2/0/0 | 0/0/2 | no |
-| `sqlfluff-am09-ambiguous-order-by-limit` | AM09 | shipped | 3/0/0 | 3/0/0 | 0/0/0 | 2/0/0 | 0/0/0 | yes |
-| `sqlfluff-cv02-convention-coalesce` | CV02 | shipped | 2/0/0 | 0/0/0 | 3/0/0 | 0/0/0 | 0/0/1 | no |
-| `sqlfluff-cv04-convention-count-rows` | CV04 | shipped | 3/0/0 | 0/0/0 | 0/0/0 | 1/0/0 | 0/0/0 | no |
-| `sqlfluff-cv05-convention-is-null` | CV05 | shipped | 7/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
-| `sqlfluff-cv08-convention-left-join` | CV08 | shipped | 9/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
-| `sqlfluff-pg01-postgres-excessive-locks` | PG01 | shipped, off | 10/0/0 (1 div.) | 111/0/0 | 266/0/0 | 0/0/0 (3 div.) | 0/0/0 | yes |
-| `sqlfluff-pg02-postgres-not-valid-foreign-key` | PG02 | shipped, off | 1/0/0 | 1/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-rf01-references-from` | RF01 | candidate | 27/0/0 (5 div.) | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/7 | yes |
-| `sqlfluff-rf04-references-keywords` | RF04 | shipped | 4/0/0 (3 div.) | 106/0/0 | 79/0/63 | 0/0/1 (1 div.) | 0/0/0 | yes |
-| `sqlfluff-rf05-references-special-chars` | RF05 | shipped | 10/0/0 (4 div.) | 9/0/0 | 0/0/0 | 10/0/0 | 0/0/0 | yes |
-| `sqlfluff-rf06-references-quoting` | RF06 | shipped | 19/0/0 (47 div.) | 36/0/0 | 4/0/1 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-st01-structure-else-null` | ST01 | shipped | 4/0/0 | 0/0/0 | 0/0/0 | 2/0/0 | 0/0/0 | no |
-| `sqlfluff-st02-structure-simple-case` | ST02 | shipped | 15/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-st08-structure-distinct` | ST08 | shipped | 7/0/0 | 1/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-st10-structure-constant-expression` | ST10 | shipped | 10/0/0 | 5/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
+| Port | SQLFluff rule | Status | Fixtures | Skips files with syntax errors |
+|---|---|---|---|---|
+| `sqlfluff-al04-aliasing-unique-table` | AL04 | shipped | 9/0/0 | yes |
+| `sqlfluff-al05-aliasing-unused` | AL05 | candidate | 9/0/0 (7 div.) | yes |
+| `sqlfluff-al08-aliasing-unique-column` | AL08 | shipped | 14/0/0 (1 div.) | yes |
+| `sqlfluff-al09-aliasing-self-alias-column` | AL09 | shipped | 18/0/0 | no |
+| `sqlfluff-am01-ambiguous-distinct` | AM01 | shipped | 1/0/0 | no |
+| `sqlfluff-am02-ambiguous-union` | AM02 | candidate | 5/0/0 (1 div.) | yes |
+| `sqlfluff-am05-ambiguous-join` | AM05 | shipped | 14/0/0 | no |
+| `sqlfluff-am09-ambiguous-order-by-limit` | AM09 | shipped | 3/0/0 | yes |
+| `sqlfluff-cv02-convention-coalesce` | CV02 | shipped | 2/0/0 | no |
+| `sqlfluff-cv04-convention-count-rows` | CV04 | shipped | 3/0/0 | no |
+| `sqlfluff-cv05-convention-is-null` | CV05 | shipped | 7/0/0 | no |
+| `sqlfluff-cv08-convention-left-join` | CV08 | shipped | 9/0/0 | no |
+| `sqlfluff-pg01-postgres-excessive-locks` | PG01 | shipped, off | 10/0/0 (1 div.) | yes |
+| `sqlfluff-pg02-postgres-not-valid-foreign-key` | PG02 | shipped, off | 1/0/0 | yes |
+| `sqlfluff-rf01-references-from` | RF01 | candidate | 27/0/0 (5 div.) | yes |
+| `sqlfluff-rf04-references-keywords` | RF04 | shipped | 4/0/0 (3 div.) | yes |
+| `sqlfluff-rf05-references-special-chars` | RF05 | shipped | 10/0/0 (4 div.) | yes |
+| `sqlfluff-rf06-references-quoting` | RF06 | shipped | 19/0/0 (47 div.) | yes |
+| `sqlfluff-st01-structure-else-null` | ST01 | shipped | 4/0/0 | no |
+| `sqlfluff-st02-structure-simple-case` | ST02 | shipped | 15/0/0 | yes |
+| `sqlfluff-st08-structure-distinct` | ST08 | shipped | 7/0/0 | yes |
+| `sqlfluff-st10-structure-constant-expression` | ST10 | shipped | 10/0/0 | no |
 
 RF06's 47 fixture divergences are ANSI and MySQL case folding, each line checked with `sqlfluff lint --dialect
 postgres`.
@@ -82,32 +83,21 @@ postgres`.
 
 A port with a clause that is unsound under syntax errors (`source-incomplete` in the
 [reference](../../docs/code-rule-dsl-reference.html)) skips every file in which the grammar finds an `ERROR` node; the
-others run around the errors (`source-partial`). Per source:
-
-| Source | Files | Left out (SQLFluff could not analyse them) | Scored | With a syntax error, skipped | Parsed cleanly |
-|---|---|---|---|---|---|
-| fixtures | 283 | 0 | 283 | 8 | 275 (97%) |
-| postgres | 629 | 342 | 287 | 0 | 287 (100%) |
-| mattermost | 560 | 0 | 560 | 191 | 369 (66%) |
-| anki | 112 | 15 | 97 | 29 | 68 (70%) |
-| application-services | 21 | 15 | 6 | 4 | 2 (33%) |
-
-The corpus false negatives are mostly these files: of the 63 the report lists (at most 50 per port and corpus), 59
-are in a file with a syntax error. `--rule <id>` prints each syntax-error file at its first error (`SYNTAX
-path:line:column`).
+others run around the errors (`source-partial`). Of the 283 fixtures, 8 have a syntax error and 275 (97%) parse
+cleanly. `--rule <id>` prints each syntax-error file at its first error (`SYNTAX path:line:column`).
 
 ## Port readiness
 
 `sql/sqlfluff` is gated (`upstream/sqlfluff/gates.yaml`). Upstream runs as `dialect: postgres`, `templater: raw` with
-the port's rule configuration on every SQLFluff YAML case and corpus file, because the engine reads every `.sql` file
-as PostgreSQL; a case SQLFluff's postgres dialect cannot read whole, a Jinja case and a case configured otherwise are
-skipped. From `npm run port-readiness -- --pack sql --tool sqlfluff`, 19 ports pass every blocking gate and ship, each
-agreeing with SQLFluff on every golden (`goldens.tsv`), and 3 stay candidates:
+the port's rule configuration on every SQLFluff YAML case, because the engine reads every `.sql` file as PostgreSQL; a
+case SQLFluff's postgres dialect cannot read whole, a Jinja case and a case configured otherwise are skipped. From
+`npm run port-readiness -- --pack sql --tool sqlfluff`, 19 ports pass every blocking gate and ship, and 3 stay
+candidates:
 
 | Port | Stops at | Why |
 |---|---|---|
 | `sqlfluff-al05-aliasing-unused` | matches-upstream-tests | 6 of its cases differ, each a file the engine cannot read whole and libpg_query rejects (BigQuery, Snowflake and T-SQL syntax); its 27 findings on the rest are all reproduced |
-| `sqlfluff-am02-ambiguous-union` | matches-upstream-tests | SQLFluff skips AM02 for PostgreSQL, so it reports nothing on its tests: the port's 7 findings are extra, it reproduces no upstream finding (`fires`), and 1 golden differs (`functional_deps.sql`, 181:1 extra) |
+| `sqlfluff-am02-ambiguous-union` | matches-upstream-tests | SQLFluff skips AM02 for PostgreSQL, so it reports nothing on its tests: the port's 7 findings are extra and it reproduces no upstream finding (`fires`) |
 | `sqlfluff-rf01-references-from` | matches-upstream-tests | 9 of its cases differ (55 of 70 findings reproduced): 8 the engine cannot read whole (DuckDB, BigQuery `UNNEST ... WITH OFFSET`, Snowflake `SEMANTIC_VIEW`, and the redundantly bracketed join `JOIN ((b JOIN c ON ...))`, which PostgreSQL accepts), and a Trino row reference, missed at 5:47 |
 
 The `CREATE POLICY` and `ALTER POLICY` known gaps are gone: the grammar reads both statements, and the scope binds the
@@ -118,8 +108,8 @@ are off in SQLFluff's default configuration (`force_enable = False`), so they sh
 
 Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
 ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/sql.ts`) runs `upstream/sqlfluff/generate.py`, in `fixtures` mode and then `corpus` mode,
-against the pinned SQLFluff 4.4.0, in the venv that `fixtures/sql/common.py` pins:
+(`scripts/pack-data/recipes/sql.ts`) runs `upstream/sqlfluff/generate.py` over the fixtures, against the pinned
+SQLFluff 4.4.0, in the venv that `fixtures/sql/common.py` pins:
 
 ```sh
 npm run fixtures:derive -- --pack sql

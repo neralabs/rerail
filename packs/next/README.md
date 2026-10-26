@@ -1,8 +1,9 @@
 # Rerail rule pack: Next.js
 
 21 code rules for Next.js projects, ported from `@next/eslint-plugin-next` 16.3.8. Each is scored against the
-plugin's own findings on the plugin's rule tests, through the engine's production workspace path; no disagreement is
-declared today, so the pack has no `divergences.json`.
+plugin's own findings on the plugin's rule tests, and against the labelled lines of real-code samples
+([docs/port-readiness.md](../../docs/port-readiness.md#samples)), through the engine's production workspace path; no
+disagreement is declared today, so the pack has no `divergences.json`.
 
 The pack follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack next"`.
@@ -11,8 +12,8 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 |---|---|
 | `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title and group; six rules carry examples |
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
-| `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises, the shipped rules first and then the candidates; the pinned plugin and the pinned corpora (shadcn-ui, next-examples, commerce) |
-| `upstream/eslint-plugin-next/` | The plugin's copied rule tests (`tests/`) and the cases extracted from them (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`, `fixtures.cases.json`) and the recorder (`generate.mjs`). All but the recorder are pack test data, derived from the pins (`npm run fixtures:derive`) and archived in S3: `npm run fixtures:pull` |
+| `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises, the shipped rules first and then the candidates; the pinned plugin |
+| `upstream/eslint-plugin-next/` | The plugin's copied rule tests (`tests/`) and the cases extracted from them (`fixtures/`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`), the recorder (`generate.mjs`), and the lock naming its real-code samples (`samples.lock`) with their sources and licences (`SAMPLES.md`). The tests, cases and recordings are pack test data, derived from the pins (`npm run fixtures:derive`) and archived in S3; `npm run fixtures:pull` fetches them and the samples |
 | `candidates/` | Ports that cannot pass their fixtures yet or that fail the port readiness gates (`rules/`, none today; scored through `conformance.json`, never gating), the Next fact model's probes (`probes/`), and the generators that write them and `rules/` (`build-policies.mjs`, `build-probes.mjs`) |
 | `licenses/next.js/` | Next.js's licence and `UPSTREAM.md`, listing every copied file |
 
@@ -25,8 +26,8 @@ node packs/next/candidates/build-probes.mjs
 
 Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
 ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/next.ts`) runs `upstream/eslint-plugin-next/generate.mjs` against the pinned plugin and
-corpora (Node 23.6 or later):
+(`scripts/pack-data/recipes/next.ts`) runs `upstream/eslint-plugin-next/generate.mjs` against the pinned plugin (Node
+23.6 or later):
 
 ```sh
 npm run fixtures:derive -- --pack next

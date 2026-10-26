@@ -56,18 +56,6 @@ export const RECORDING_TREE_ROOTS: readonly string[];
 export const AUTHORED_CORPUS_PATTERN: string;
 export const PACK_FIXTURE_PATTERNS: readonly string[];
 export const PULL_INSTRUCTION: string;
-/** A pinned ESLint test set: the zip's sha256, and the packs it scores. */
-export interface EslintTestSetPin {
-  sha256: string;
-  packs: readonly string[];
-}
-export const ESLINT_TEST_SET: EslintTestSetPin;
-export const ESLINT_TEST_SET_TREES: string;
-export function eslintTestSetKey(digest: string): string;
-export function eslintTestSetCachePath(root: string, digest: string): string;
-export function eslintTestSetZip(options?: { root?: string; set?: EslintTestSetPin; dryRun?: boolean; aws?: Aws; log?: (line: string) => void }): { path: string | undefined; source: "cache" | "S3" };
-/** The extracted tree of the pinned set (its manifest.json's directory). */
-export function eslintTestSet(options?: { root?: string; set?: EslintTestSetPin; aws?: Aws; log?: (line: string) => void }): string;
 export function isPackFixture(path: string): boolean;
 export function listedAuthored(record: string, text: string): string[];
 export function toolRecords(root?: string): string[];
@@ -101,14 +89,12 @@ export function verifiedRecording(compressed: Buffer, lock: Lock, key: string): 
 export const RECORDING_TREE_MARKER: string;
 export function recordingTreeReady(directory: string, lock: Pick<Lock, "sha256" | "files" | "bytes">): boolean;
 export function extractRecordingTree(directory: string, entries: readonly { path: string; bytes: Buffer }[], lock: Pick<Lock, "sha256" | "files" | "bytes">): void;
-export function pull(options?: CommandOptions & { testSet?: EslintTestSetPin }): {
+export function pull(options?: CommandOptions): {
   toolPacks: (ToolPack & { source: "cache" | "S3" })[];
   restored: number;
   kept: number;
   /** The selected tool-packs with a samples.lock, and where each one's samples archive came from. */
   samples: (ToolPack & { source: "cache" | "S3" })[];
-  /** Where the ESLint test set's zip came from, when a selected tool-pack's pack is one it scores. */
-  eslintTestSet?: "cache" | "S3";
 };
 /** `cache`: the recording cache directory to fill (RECORDING_CACHE under `root` by default; the recorder's `<--cache>/recordings`). */
 export function recordings(options?: CommandOptions & { cache?: string }): { kept: string[]; downloaded: string[]; missing: string[]; extracted: string[] };
@@ -137,5 +123,5 @@ export function push(options?: PushOptions): {
   script?: string;
 };
 /** Throws, listing each missing key with its lock and remedy, unless S3 holds every archive the locks name. */
-export function check(options?: Omit<CommandOptions, "dryRun"> & { testSet?: EslintTestSetPin }): { checked: string[] };
-export function archiveCache(options?: Omit<CommandOptions, "aws" | "dryRun" | "log"> & { testSet?: EslintTestSetPin }): { key: string; paths: string[] };
+export function check(options?: Omit<CommandOptions, "dryRun">): { checked: string[] };
+export function archiveCache(options?: Omit<CommandOptions, "aws" | "dryRun" | "log">): { key: string; paths: string[] };

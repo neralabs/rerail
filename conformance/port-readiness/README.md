@@ -112,6 +112,9 @@ packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manife
 packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording/store.ts)
 packs/<pack>/upstream/<tool>/test-data.lock     which archive of pack test data this commit holds (scripts/s3/pack-fixtures.mjs)
 packs/<pack>/upstream/<tool>/fixtures/          the case sources the recording names: pack test data, from that archive (npm run fixtures:pull)
+packs/<pack>/upstream/<tool>/samples.lock       which archive of real-code samples passes-conformance judges the rules on (scripts/s3/pack-fixtures.mjs)
+packs/<pack>/upstream/<tool>/SAMPLES.md         the samples' source repositories, licences, commits and file counts
+.rerail/pack-data/samples/<pack>/<tool>/<sha256>/   that samples archive extracted (scripts/samples/format.ts's layout)
 
 .rerail/port-readiness/recordings/                       the recordings themselves, recorded or fetched from S3, by digest
   <sha256>.tar.zst                              recording.tar.zst: every answer upstream gave the recorder (recording/archive.ts,
@@ -140,9 +143,10 @@ again from the verified archive otherwise. The gates read the recording at the o
 `recording-config` fails every rule when it is not this branch's.
 
 Each answer is named by everything it depends on, and only that, so it stays valid while its name does: `<config-id>`
-hashes upstream's pins, the runtimes' pin digests the lock records, the gates.yaml sections that say how upstream
-lints a file (`upstream`, and ESLint's plugin, release and environment), the recorder's code for the
-adapter (`ADAPTER_SOURCES`) and `RECORDING_FORMAT`, the version of the tree the recorder writes (bumped when it writes
+hashes upstream's pins (repository, commit, version, runtime), the runtimes' pin digests the lock records, every
+gates.yaml setting the adapter reads (the `upstream` section, the whole `eslint` section, and `rerail.in_scope`), the
+"Not copied" prefixes of the pack's `UPSTREAM.md` files, the recorder's code for the adapter (`ADAPTER_SOURCES`) and
+`RECORDING_FORMAT` (recording/archive.ts `answerConfig`), the version of the tree the recorder writes (bumped when it writes
 a different tree for the same upstream output, never for a refactor or a comment; `recording-format.test.ts` pins that
 tree); `<rule>` is the rule with `/` written `~`. A case answer's `<key>` is its source's sha256
 and a digest of the other inputs its adapter feeds upstream (recording/tree.ts `caseKey`: the path or file type, the

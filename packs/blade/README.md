@@ -7,9 +7,10 @@ Bladestan's `if.alwaysTrue` and `identical.alwaysTrue`. The two Bladestan rules 
 registers them at level 4 and Bladestan's recommended level is 0, so they are experimental. A port starts in
 `candidates/rules/` and moves to `rules/` and `pack.json` once it passes every blocking port readiness gate
 ([docs/port-readiness.md](../../docs/port-readiness.md)); each of the pack's three tools is gated. Every port is scored
-against the tool's own findings on the tool's test fixtures and on three pinned corpora, through the engine's
-production workspace path, with every disagreement declared in `divergences.json`. The conformance check (`--check`,
-run in CI) scores the fixtures: it gates the ports in `rules/` and reports the candidates without gating them.
+against the tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code
+samples ([docs/port-readiness.md](../../docs/port-readiness.md#samples)), through the engine's production workspace
+path, with every disagreement declared in `divergences.json`. The conformance check (`--check`, run in CI) scores the
+fixtures and the samples: it gates the ports in `rules/` and reports the candidates without gating them.
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack blade"` ([pack structure and validation
 contract](../../docs/pack-format.md)).
@@ -19,9 +20,9 @@ contract](../../docs/pack-format.md)).
 | `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, each rule's document, title, group and, for a rule that starts off, `on` |
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `candidates/rules/` | The candidates' code-rule documents (`rerail.policy/v1`), scored but never shipped |
-| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools, the pinned corpora (BookStack, Filament, Bagisto) and the `calls` exemption with its evidence |
+| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools and the `calls` exemption with its evidence |
 | `divergences.json` | Declared disagreements with the tools |
-| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`; both pack test data, derived from the pins and archived in S3: `npm run fixtures:pull`) and the recorder (`generate.py` with its PHP helpers, sharing `upstream/common.py`; the template capture tlint's and stillat/blade-parser's test readers run, and stillat/blade-parser's reader itself, are the port readiness recorder's, under `conformance/recorders/port-readiness/adapters/`) |
+| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recording (`fixtures.expected.json`; pack test data, derived from the pins and archived in S3: `npm run fixtures:pull`), the recorder (`generate.py` with its PHP helpers, sharing `upstream/common.py`; the template capture tlint's and stillat/blade-parser's test readers run, and stillat/blade-parser's reader itself, are the port readiness recorder's, under `conformance/recorders/port-readiness/adapters/`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
 | `upstream/<tool>/gates.yaml`, `recording.lock` | The port readiness gates' manifest for the tool and the lock naming its recordings (kept out of git, by sha256) ([docs/port-readiness.md](../../docs/port-readiness.md)) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
@@ -46,7 +47,7 @@ miss findings on real templates. The title is what
 
 The six Bladestan candidates fail `matches-upstream-tests` with `fires`: Bladestan's own test templates hold none of
 their findings (`variable.undefined`'s appear only when a template is rendered with its caller's data), so nothing
-upstream wrote proves them, and they wait for goldens. `blade-parser-duplicate-condition-expressions` is
+upstream wrote proves them. `blade-parser-duplicate-condition-expressions` is
 `source-incomplete` on two of blade-parser's `DebugDirectiveTest` templates, a malformed `@forelse` and `@foreach` that
 blade-parser accepts and Laravel's `BladeCompiler` rejects: the parsers disagree on them and no known engine gap
 excuses the rule.
@@ -219,9 +220,8 @@ Passes (`resources/views/profile.blade.php`):
 
 Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
 ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/blade.ts`) runs each tool's `generate.py`, in `fixtures` mode and then `corpus` mode over
-bookstack, filament and bagisto, against the pinned tool versions, with the pinned PHP 8.5.11 first on `PATH` (each
-recorder's docstring has the setup):
+(`scripts/pack-data/recipes/blade.ts`) runs each tool's `generate.py` over its fixtures, against the pinned tool
+versions, with the pinned PHP 8.5.11 first on `PATH` (each recorder's docstring has the setup):
 
 ```sh
 npm run fixtures:derive -- --pack blade                    # every tool

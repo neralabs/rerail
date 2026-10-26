@@ -58,7 +58,7 @@ rerail-smoke:
 rerail-guidance-review *args:
     @node --import tsx scripts/review/guidance-review.ts {{ args }}
 
-# Language-pack rule conformance: --pack <name> [--rule <id>] [--fixtures] [--corpus <name>] [--write] | --check.
+# Language-pack rule conformance: --pack <name> [--rule <id>] [--fixtures] [--samples] [--write] | --check.
 rerail-language-conformance *args:
     @node --import tsx conformance/languages/cli.ts {{ args }}
 

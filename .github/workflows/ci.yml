@@ -162,6 +162,7 @@ jobs:
               - '.github/actions/lfs/**'
               - '.github/actions/pack-test-data/**'
               - 'scripts/s3/**'
+              - 'scripts/samples/**'
             # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
             port-readiness:
               - 'packs/**'
@@ -177,6 +178,7 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/port-readiness.yml'
               - '.github/actions/**'
+              - 'scripts/samples/**'
               - 'scripts/s3/**'
 
   # Fills the Actions cache with every key the jobs below restore (.github/actions/pack-test-data, `fetch: "true"`): every

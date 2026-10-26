@@ -19,8 +19,8 @@ A rule pack's test data is not in git. Under each `packs/<id>/upstream/<tool>/` 
 (`fixtures/`, `tests/`, the case lists `cases.json` and `*.cases.json`, `fixtures.upstream-check.json`, the
 complexity pack's `lizard-*.tsv`), the tool's recorded answers on them (`*.expected.json`), and `authored/`. The
 patterns are `PACK_FIXTURE_PATTERNS` in [scripts/s3/pack-fixtures.mjs](scripts/s3/pack-fixtures.mjs); everything
-else under `upstream/<tool>/` (`gates.yaml`, the generators and recorders, `UPSTREAM.md`, `goldens.tsv`,
-`recording.lock`, `test-data.lock`) stays in git. The data is of two kinds:
+else under `upstream/<tool>/` (`gates.yaml`, the generators and recorders, `UPSTREAM.md`, `recording.lock`,
+`samples.lock`, `SAMPLES.md`, `test-data.lock`) stays in git. The data is of two kinds:
 
 - **Authored**: what Rerail wrote for the tool to score, which nothing can regenerate: the files the tool's own
   `upstream/<tool>/UPSTREAM.md` lists as Rerail's (pack check 6 reads the same list), and everything under
@@ -55,6 +55,16 @@ content (or keeps your working-tree edit of it). It never writes through a symbo
 directory or a directory an archive's file goes into is one, it stops before writing anything and says to make it a
 directory. `.gitignore` covers the patterns, so pulled data does not show in `git status`. Without the data, the pack
 tests (`npm test`, `npm run test:conformance`, `cargo test`) and the recorders fail saying to pull.
+
+A tool-pack with a `samples.lock` also has real-code samples: real files from open-source repositories, labelled per
+rule with the lines it should report or as clean for it, which the conformance check and the port readiness gates
+judge the rules on ([docs/port-readiness.md](docs/port-readiness.md#samples)). They are one archive in S3 too
+(`s3://nera-test-fixtures/rerail/archives/samples/<pack>/<tool>/<sha256>.tar.zst`), which `samples.lock` names in
+`test-data.lock`'s format and `SAMPLES.md` describes (sources, licences, commits). `fixtures:pull` fetches and
+verifies it with the test data and extracts it under `.rerail/pack-data/samples/`, never into the tool directory
+(`node scripts/s3/pack-fixtures.mjs samples` fetches the samples alone). Nothing derives them: a maintainer re-packs a
+set with `scripts/samples/pack.ts`, which writes the archive into `.rerail/pack-data/archives/samples/` and the lock
+and `SAMPLES.md`, and uploads it with `node scripts/s3/pack-fixtures.mjs samples push --pack <id> --tool <tool>`.
 
 CI pulls the same way, in two kinds of job (`.github/actions/pack-test-data`). A fetching job (`fetch: "true"`) only
 warms the Actions cache: it looks up the entry keyed by its tool-packs' locks (`node scripts/s3/pack-fixtures.mjs
@@ -184,9 +194,11 @@ bundle, which is data; the commit is amended to hold only the locks before anyth
 npm run fixtures:pull -- --pack <id> --tool <tool>
 
 # 2. In the sandbox, a clone checked out at the pull request, with that archive (the trusted worktree's
-#    .rerail/pack-data/archives/<id>/<tool>/<sha256>.tar.zst, the sha256 its test-data.lock names) copied in:
-mkdir -p .rerail/pack-data/archives/<id>/<tool>
+#    .rerail/pack-data/archives/<id>/<tool>/<sha256>.tar.zst, the sha256 its test-data.lock names) copied in, and the
+#    samples archive its samples.lock names, when it has one (.rerail/pack-data/archives/samples/<id>/<tool>/):
+mkdir -p .rerail/pack-data/archives/<id>/<tool> .rerail/pack-data/archives/samples/<id>/<tool>
 cp <path to>/<sha256>.tar.zst .rerail/pack-data/archives/<id>/<tool>/
+cp <path to>/<samples sha256>.tar.zst .rerail/pack-data/archives/samples/<id>/<tool>/
 npm ci
 npm run fixtures:pull -- --pack <id> --tool <tool>               # extracts the copied archive; reads no S3
 npm run fixtures:derive -- --pack <id> --tool <tool> --update    # the derived data, from the pins
@@ -194,7 +206,7 @@ npm run port-readiness:record -- --pack <id> --tool <tool>       # a gated tool-
 git add -f -- packs/<id>/upstream/<tool> packs/<id>/licenses
 git commit -m "Derive <id>/<tool>"
 git bundle create pr-<n>-derived.bundle HEAD
-# Copy out pr-<n>-derived.bundle, .rerail/port-readiness/recordings/*.json and .rerail/port-readiness/recordings/*.tar.zst.
+# Copy out pr-<n>-derived.bundle and .rerail/port-readiness/recordings/*.tar.zst.
 
 # 3. In the trusted worktree, with the recordings copied into .rerail/port-readiness/recordings/:
 git fetch <path to>/pr-<n>-derived.bundle HEAD:pr-<n>-derived
@@ -231,8 +243,7 @@ and merges it like any pull request; nothing merges itself. When one tool-pack's
 its commit; closing the pull request unmerged
 declines the releases it carried until newer ones appear ([docs/port-readiness.md](docs/port-readiness.md#bump-pull-requests)).
 The port readiness recordings are not pack test data and not in its archives: each tool-pack's is an object of its own
-in S3, written once — every answer upstream gave the recorder, on its own tests and on the goldens' corpus files, one
-file per answer, as one canonical archive at `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.tar.zst`
+in S3, written once — every answer upstream gave the recorder on its own tests, one file per answer, as one canonical archive at `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.tar.zst`
 — which `recording.lock` names by its tar's sha256, and the Actions cache holds copies for CI.
 `node scripts/s3/pack-fixtures.mjs recordings [--pack <id> [--tool <tool>]]` fetches the ones the checkout's locks name
 into `.rerail/port-readiness/recordings/` and extracts each archive's tree beside it
@@ -240,11 +251,9 @@ into `.rerail/port-readiness/recordings/` and extracts each archive's tree besid
 
 An answer is filed under the upstream configuration and what it depends on, so a record asks upstream only for what
 the archive lacks, and nothing when it lacks nothing: adding a port records that rule's answers (all the tool-pack's,
-for an adapter whose answers depend on the rules recorded together), and importing goldens, moving a corpus or
-editing `corpus-tasks.json` leaves every other answer valid. `npm run port-readiness:record -- --pack <id> --tool <tool>`
-records what is missing, `--corpus` only the corpus answers (the gates' `corpus-answers` check names them), `--full`
-everything from nothing, and `--prune` drops what no recorded rule and no golden names
-([docs/port-readiness.md](docs/port-readiness.md#goldens)). A pull request's CI asks upstream for everything again
+for an adapter whose answers depend on the rules recorded together) and leaves every other answer valid.
+`npm run port-readiness:record -- --pack <id> --tool <tool>` records what is missing, `--full` everything from nothing,
+and `--prune` drops what no recorded rule names ([docs/port-readiness.md](docs/port-readiness.md#the-recording)). A pull request's CI asks upstream for everything again
 (`--check`) and accepts whichever of these the lock was recorded with: an incremental record over the base's archive,
 `--full` or `--prune`. An answer the archive holds is never asked again by a record, so when the nightly `--check`
 finds upstream now answers otherwise, record with `--full`, as it says. A lock from before the one archive (v2 or v3,
@@ -252,9 +261,8 @@ naming `recording.json`) is refused: delete it and record the tool-pack again.
 
 A tool-pack's config id moves with its adapter's code (`ADAPTER_SOURCES` in
 `conformance/port-readiness/recording/archive.ts`), so a fix to an adapter asks every answer again. The rest of the
-recorder (`record.ts`, `recording/tree.ts`, `recording/schema.ts`, `recording/corpus-answers.ts`) moves it only
-through `RECORDING_FORMAT` in the same file: a refactor or a comment there asks nothing again, and a change to the
-tree it writes for the same upstream output fails `test/conformance/recorders/recording-format.test.ts` until you bump
+recorder (`record.ts`, `recording/tree.ts`, `recording/schema.ts`) moves it only through `RECORDING_FORMAT` in
+the same file: a refactor or a comment there asks nothing again, and a change to the tree it writes for the same upstream output fails `test/conformance/recorders/recording-format.test.ts` until you bump
 `RECORDING_FORMAT` and update the test's pin, after which every tool-pack records again.
 
 ## Licence of contributions

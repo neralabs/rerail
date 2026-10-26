@@ -17,16 +17,16 @@ name: Port readiness
 # lock names, and always when the pull request changes the tool-pack's recording.lock against its base: then the
 # test-data job does not fetch the recording the new lock names and the leg does not restore it, so the rules are
 # judged against what this commit's recorder made from the pinned upstream, never against bytes the pull request (or the
-# bump run that produced it) put in S3. The leg asks upstream for every answer the goldens need (`port-readiness:record
+# bump run that produced it) put in S3. The leg asks upstream for every answer on its own tests (`port-readiness:record
 # --check`), and the commit's lock must be what a record of them makes: incrementally over the base's archive, or with
 # --full or --prune. Its per-rule summary of what
 # upstream answers differently from the base's recording (recording-<pack>--<tool>.md, against the recording the
 # test-data job fetched for the base's lock) goes into the pull request comment. The tool-pack's legs upload the
 # recording archive as the artifact recordings-<pack>--<tool>, which a maintainer pushes to S3 before the pull request
 # merges: ci.yml's "Pack test data is in S3" check fails until it is there. A push to main or a nightly never records: its
-# leg fails when neither the cache nor S3 holds the recording. No rule runs over the real-code corpus (that is NRV's
-# real-code gate): only the pinned corpus files the goldens name and upstream's pinned test files are fetched, and they
-# are cached by their pins.
+# leg fails when neither the cache nor S3 holds the recording. Upstream runs on its own pinned tests alone, which are
+# fetched and cached by their pins; the rules' real-code samples (samples.lock) come with the test data from
+# .github/actions/pack-test-data, and the gates judge the rules on them through the pack's conformance check.
 #
 # The plan job builds the legs (conformance/port-readiness/plan.mjs, which also holds the shard counts), lists their
 # tool-packs once each for the test-data job, and marks the tool-packs whose recording.lock a pull request changes
@@ -452,11 +452,11 @@ jobs:
           toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
           components: clippy
 
-      # The recorder asks upstream for every answer the goldens need and holds the commit's lock to them (`--check`),
+      # The recorder asks upstream for every answer on its own tests and holds the commit's lock to them (`--check`),
       # writing nothing into the tree. The lock holds when its archive is one a record of those answers makes, which
       # needs none of its bytes: a `--full` or `--prune` record's, or an incremental record's over the archive the base's
       # lock names (`--base`, restored above); or else when the archive, from the cache, holds each of them identically,
-      # so answers no golden names never fail it. The case sources must be what it made. A check that holds puts the
+      # so answers no rule asks for never fail it. The case sources must be what it made. A check that holds puts the
       # recording archive the lock names into the cache the gates read below. No maintainer's recording run posts a
       # per-rule summary for this commit, so the leg writes one into its job summary and its report artifact, from which
       # the report job puts it in the pull request comment: against the recording the base's lock names, or as a first
@@ -495,8 +495,8 @@ jobs:
           fi
 
       # Only the recording archive (not the tree it extracts to), and only once the check held, so it is the one this
-      # commit's lock names: what upstream's code left anywhere else under .rerail/ is not saved (the corpus and results
-      # saves below skip this leg too). A `rerecord` leg saves nothing: no run restores the recording of a lock its pull
+      # commit's lock names: what upstream's code left anywhere else under .rerail/ is not saved (the upstream checkout
+      # and results saves below skip this leg too). A `rerecord` leg saves nothing: no run restores the recording of a lock its pull
       # request changes.
       - name: Save the recording
         if: steps.source.outputs.record == 'true' && !matrix.rerecord
@@ -520,17 +520,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # The corpus files the goldens name and upstream's pinned test files are keyed by their pins; a partial
-      # match is reused, since every checkout in them is keyed by commit.
-      - name: Restore the goldens' corpus files and upstream's test files
+      # Upstream's pinned test files are keyed by their pins (gates.yaml); a partial match is reused, since every
+      # checkout in them is keyed by commit.
+      - name: Restore upstream's test files
         uses: actions/cache/restore@v6
         with:
-          path: |
-            .rerail/port-readiness/corpus
-            .rerail/port-readiness/upstream
-          key: port-readiness-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/port-readiness/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
+          path: .rerail/port-readiness/upstream
+          key: port-readiness-upstream-${{ matrix.pack }}-${{ hashFiles(format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
           restore-keys: |
-            port-readiness-corpus-${{ matrix.pack }}-
+            port-readiness-upstream-${{ matrix.pack }}-
 
       # Each result is keyed by everything the rule's verdict depends on, so a stale entry is never read. The `-run-`
       # after the tool and shard keeps eslint-plugin-react's prefix from matching eslint-plugin-react-hooks' entries.
@@ -564,19 +562,17 @@ jobs:
           npm run port-readiness -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" ${REFRESH:+"$REFRESH"}
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
-      # Pull requests restore main's corpus (by exact key, or by prefix when the pull request changes a pin) and never
-      # save their own: it would duplicate main's unchanged corpora (hundreds of MB) into the pull request's own cache
-      # scope, where only its own later runs could use it. A leg that recorded its tool-pack saves no cache at all,
+      # Pull requests restore main's checkouts (by exact key, or by prefix when the pull request changes a pin) and never
+      # save their own: it would duplicate main's unchanged checkouts into the pull request's own cache scope, where only
+      # its own later runs could use it. A leg that recorded its tool-pack saves no cache at all,
       # whatever the event: the recorder ran upstream's code and the Composer packages it resolved, unlocked, which could
       # have rewritten anything under .rerail/, and on main the save would land where every pull request restores from.
-      - name: Save the corpus and upstream's test files
+      - name: Save upstream's test files
         if: ${{ always() && github.event_name != 'pull_request' && steps.recordings.outputs.cache-hit == 'true' }}
         uses: actions/cache/save@v6
         with:
-          path: |
-            .rerail/port-readiness/corpus
-            .rerail/port-readiness/upstream
-          key: port-readiness-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/port-readiness/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
+          path: .rerail/port-readiness/upstream
+          key: port-readiness-upstream-${{ matrix.pack }}-${{ hashFiles(format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
         continue-on-error: true
 
       # Pull request runs save theirs too: GitHub keeps them in the pull request's own cache scope, which main and

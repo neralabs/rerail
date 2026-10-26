@@ -2,7 +2,8 @@
 
 72 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
 22 start on; 50 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
-Each shipped rule is scored against ESLint's own findings on ESLint's test cases, through the engine's production
+Each shipped rule is scored against ESLint's own findings on ESLint's test cases, and against the labelled lines of
+real-code samples ([docs/port-readiness.md](../../docs/port-readiness.md#samples)), through the engine's production
 workspace path, with every disagreement declared in `divergences.json` (none today).
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack javascript"`, against the
@@ -14,10 +15,10 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack java
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's (and candidate's) upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with ESLint |
-| `upstream/eslint/` | ESLint's copied test cases (`fixtures/`) and its recording (`fixtures.expected.json`) |
+| `upstream/eslint/` | ESLint's copied test cases (`fixtures/`), its recording (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
 | `upstream/generate.mjs` | ESLint's recorder |
-| `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases, its recording and its recorder (`generate.mjs`) |
-| `upstream/<tool>/gates.yaml`, `recording.lock`, `goldens.tsv` | The port readiness gates' manifest for the tool, the lock naming its recording (one archive, `recording.tar.zst`, kept out of git, by sha256) and its goldens ([docs/port-readiness.md](../../docs/port-readiness.md)) |
+| `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases, its recording, its recorder (`generate.mjs`), and its real-code samples' `samples.lock` and `SAMPLES.md` |
+| `upstream/<tool>/gates.yaml`, `recording.lock` | The port readiness gates' manifest for the tool and the lock naming its recording (one archive, `recording.tar.zst`, kept out of git, by sha256) ([docs/port-readiness.md](../../docs/port-readiness.md)) |
 | `candidates/rules/` | Ports of ESLint and eslint-plugin-unicorn rules still being evaluated: listed in `conformance.json`, scored and reported, never gated, never shipped |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 

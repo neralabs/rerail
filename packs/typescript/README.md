@@ -2,12 +2,14 @@
 
 24 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
 options. 11 start off (`"on": false`): no approved typescript-eslint configuration turns them on, so they are
-experimental. Each is scored against the tool's own findings on the tool's test fixtures and on a pinned corpus
-(vscode), through the engine's production workspace path, with every disagreement declared in `divergences.json`:
-2 today, both `rerail-unknown`, each an upstream fixture the grammar reads with a syntax error. ESLint's core rules are in the [JavaScript pack](../javascript/README.md).
+experimental. Each is scored against the tool's own findings on the tool's test fixtures, and against the labelled
+lines of the tool's real-code samples ([docs/port-readiness.md](../../docs/port-readiness.md#samples)), through the
+engine's production workspace path, with every disagreement declared in `divergences.json`: 2 today, both
+`rerail-unknown`, each an upstream fixture the grammar reads with a syntax error. ESLint's core rules are in the
+[JavaScript pack](../javascript/README.md).
 
-Every typescript-eslint rule runs on `.ts`, `.tsx`, `.mts` and `.cts` files only, and the vscode corpus is scored on
-its TypeScript files only (`exclude` in `conformance.json`). On JavaScript a port steers CommonJS files away from
+Every typescript-eslint rule runs on `.ts`, `.tsx`, `.mts` and `.cts` files only. On JavaScript a port steers CommonJS
+files away from
 `require` (`no-require-imports` on `jest.config.js`), and with both packs added a port with an ESLint core twin would
 report the same violation as the twin, which runs on JavaScript files only.
 
@@ -18,17 +20,17 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 |---|---|
 | `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title, group and, for a rule that starts off, `on`; one rule carries examples |
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
-| `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools and the pinned corpus (vscode) |
+| `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with the tools |
-| `upstream/<tool>/` | The tool's copied tests (`fixtures/`) and its recordings (`fixtures.expected.json`, `corpus-vscode.expected.json`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the recorder holds and records like the copied ones |
+| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recording (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the recorder holds and records like the copied ones |
 | `upstream/generate.mjs` | typescript-eslint's recorder; `upstream/eslint-plugin-vitest/generate.mjs` records @vitest/eslint-plugin |
-| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a rule gate ([docs/port-readiness.md](../../docs/port-readiness.md)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) and `no-explicit-any` (the fixtures recording does not cover it yet) is listed in `conformance.json`, scored and reported on the fixtures, never gated; the vscode recording covers the shipped rules only. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
+| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a rule gate ([docs/port-readiness.md](../../docs/port-readiness.md)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) and `no-explicit-any` (the fixtures recording does not cover it yet) is listed in `conformance.json`, scored and reported, never gated. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
 Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
 ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/typescript.ts`) runs each tool's recorder against the pinned tool versions, the upstream
-checkouts and the vscode corpus (the recorder's header lists them). The fixtures Rerail wrote (`fixtures/*/rerail-*`)
+(`scripts/pack-data/recipes/typescript.ts`) runs each tool's recorder against the pinned tool versions and the upstream
+checkouts (the recorder's header lists them). The fixtures Rerail wrote (`fixtures/*/rerail-*`)
 are authored: a change to them goes in your pull request with `git add -f`.
 
 ```sh
@@ -50,23 +52,18 @@ Every typescript-eslint 8.70.1 rule that needs no type information has a port he
 default. At its default options it reports nothing, so there is nothing to port. A project that wants a type banned
 writes its own code rule.
 
-## `no-magic-numbers` passes the gates and stays a candidate
+## `no-magic-numbers` is a candidate
 
-It passes the blocking port readiness gates but `passes-conformance` ([docs/port-readiness.md](../../docs/port-readiness.md)) and agrees with typescript-eslint on every fixture and every vscode file. A shipped rule's vscode
-recording has to cover it, though, and at its default options it reports nearly every number literal: about 187,500
-findings in vscode's `src/`. That would grow `corpus-vscode.expected.json` from 4.5 MB to about 41 MB, so the rule
-stays in `candidates/` until the recording can hold it. It would start off anyway: no approved typescript-eslint
-configuration turns it on.
+It agrees with typescript-eslint on every fixture. At its default options it reports nearly every number literal, and
+no approved typescript-eslint configuration turns it on, so it would start off if it shipped.
 
 ## `init-declarations` can't match upstream's tests
 
 typescript-eslint declares `'always'` as `init-declarations`' default. Its wrapper around ESLint's core rule has no
 `meta.defaultOptions`, so with no options ESLint 10 passes the core rule no mode, and it reports nothing. Every upstream
 test that expects a finding sets the option, so upstream's own tests never notice. `matches-upstream-tests` runs each case at the rule's
-default options, sees no upstream finding at all, and fails the rule whatever its document says; on real code it
-differs from upstream throughout, so `gates.yaml` lists it under `real_code_gaps`. The candidate ports the
-declared default, `'always'`. With that option set, it agrees with typescript-eslint on every upstream test case and on
-the vscode corpus.
+default options, sees no upstream finding at all, and fails the rule whatever its document says. The candidate ports
+the declared default, `'always'`. With that option set, it agrees with typescript-eslint on every upstream test case.
 
 ## Rule details
 

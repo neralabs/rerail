@@ -181,7 +181,8 @@ jobs:
           set -euo pipefail
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           [ -f "$lock" ] || exit 0
-          archive="$(jq -r '.files["recording.tar.zst"].sha256' "$lock")"
+          archive="$(jq -r '.files["recording.tar.zst"].sha256 // empty' "$lock")"
+          [ -n "$archive" ] || exit 0
           {
             echo "key=port-readiness-recording-$PACK-$TOOL-$archive"
             echo "paths=.rerail/port-readiness/recordings/$archive.tar.zst"
@@ -237,9 +238,9 @@ jobs:
           path: ${{ steps.recording-lock.outputs.paths }}
           key: ${{ steps.recording-lock.outputs.key }}
 
-  # The drift check runs the recorder with --check: upstream on its own tests and on the corpus files the goldens name,
-  # never the rest of the corpus. It reports when upstream moved and writes nothing into the tree, so the night tells
-  # main without quietly re-recording main behind the maintainers. Read-only, and saving no cache once upstream has run: the
+  # The drift check runs the recorder with --check: upstream on its own tests, nothing else. It reports when upstream
+  # moved and writes nothing into the tree, so the night tells main without quietly re-recording main behind the
+  # maintainers. Read-only, and saving no cache once upstream has run: the
   # recorder runs upstream's code and unlocked Composer packages, and a save after that would hand main's scope
   # whatever that code wrote. For the same reason it holds no OIDC token, which any of its steps could use to assume the
   # test data read role: --check compares upstream's case sources with the derived ones the tool-pack's archive holds,
@@ -322,7 +323,8 @@ jobs:
         run: |
           set -euo pipefail
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
-          archive="$(jq -r '.files["recording.tar.zst"].sha256' "$lock")"
+          archive="$(jq -r '.files["recording.tar.zst"].sha256 // empty' "$lock")"
+          [ -n "$archive" ] || { echo "::error::$lock names no recording.tar.zst (a lock from before the one recording archive): run npm run port-readiness:record -- --pack $PACK --tool $TOOL and commit it"; exit 1; }
           {
             echo "key=port-readiness-recording-$PACK-$TOOL-$archive"
             echo "paths=.rerail/port-readiness/recordings/$archive.tar.zst"

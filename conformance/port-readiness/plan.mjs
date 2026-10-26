@@ -19,9 +19,8 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 /**
  * Legs per tool-pack too slow for one; every other gated tool-pack runs in one. Shard i of n judges the rules whose
  * sha256(id) mod n is i - 1, and the report job merges the shards (docs/port-readiness.md, "Sharding"). Cold,
- * javascript/eslint took over an hour, on upstream's tests alone. Since no rule runs over the real-code corpus, Ruff and
- * typescript-eslint each run in one leg: cold on a laptop, 7 min and 2 min. The leg's job name, report artifact and
- * results-cache key all carry the count.
+ * javascript/eslint took over an hour on upstream's tests alone. The leg's job name, report artifact and results-cache
+ * key all carry the count.
  */
 export const SHARDS = Object.freeze({ "javascript/eslint": 4 });
 
@@ -40,6 +39,7 @@ export const ROOTS = Object.freeze([
   ".github/workflows/ci.yml",
   ".github/workflows/port-readiness.yml",
   ".github/actions/**",
+  "scripts/samples/**",
   "scripts/s3/**",
 ]);
 

@@ -105,13 +105,13 @@ jobs:
       # as code differs between its commit and main's head (port-readiness-bump.yml's bump job):
       # - the bump workflow and the local actions it uses (lfs, pack-test-data, node-deps, php);
       # - npm ci's inputs (.npmrc, package.json, package-lock.json) and tsx's (tsconfig.json);
-      # - conformance/: port-readiness:bump, the recorder, its adapters, runtimes and corpus-tasks.json;
+      # - conformance/: port-readiness:bump, the recorder, its adapters and runtimes;
       # - scripts/: fixtures:derive and its recipes, and scripts/s3/pack-fixtures.mjs (`pack`);
       # - src/engine, which the recorder and the derivation import, and the engine source the Ruff adapter reads
       #   (DEFAULT_PYTHON_MINOR);
-      # - the packs' upstream/ directories (generators, gates.yaml, goldens, the locks naming the archives and recordings
+      # - the packs' upstream/ directories (generators, gates.yaml, the locks naming the archives and recordings
       #   the bump started from), licenses/ (UPSTREAM.md rows and licence texts the recorder reads and records) and
-      #   conformance manifests (the rules recorded, the corpora pinned).
+      #   conformance manifests (the rules recorded).
       # The build (npm run build:js) writes only dist/, which none of these read. When any of them moved, the whole run
       # is skipped, not failed: the next nightly bumps again from main's head.
       - id: code

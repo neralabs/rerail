@@ -111,20 +111,19 @@ Today's schemas from `conformance/languages/pack.ts`, moved next to the rules th
 recordings from `upstream/` unless `conformance.json` sets `oracles`:
 
 - `conformance.json`: the language family, the engine capabilities the pack declares (with exemptions and their
-  evidence), the pinned tools and public corpora, and for each ported rule the upstream tool and rule it reproduces,
+  evidence), the pinned tools, and for each ported rule the upstream tool and rule it reproduces,
   how findings compare (`line` or `line+column`) and the capabilities it exercises. `suppressionExemptions` lists the
   ports, by `id`, whose documents need not carry their tool's suppression comment yet, each with its `reason` (check
   4). A port whose document is under `candidates/` is scored and reported but never fails a check; it is scored on the
-  fixtures, whose recording must cover it, and on a corpus only where that corpus's recording covers it. A port may
+  fixtures, whose recording must cover it. A port may
   set `fixtures`, `path.matchesGlob` patterns over the tool's fixture paths: it is then evaluated and scored only on
   the fixtures they match, the tests its upstream configuration ran on. That is how a tool whose tests run each rule
   with several option sets is scored: one document per option set, each on its own tests.
-- `upstream/<tool>/fixtures.expected.json` and `corpus-<name>.expected.json`: what the tool reported on its own tests
-  and on each pinned corpus, produced by the recorder in the same directory. `npm run fixtures:derive` runs the
-  recorders against the pinned tool versions (each tool-pack's recipe in `scripts/pack-data/recipes/`); tools and
-  corpus checkouts live under `.rerail/` (gitignored). Where a tool's tests state their expected findings (as markup
-  in the test files), the recorder reads them instead of running the tool: the tool's own test suite requires it to
-  report exactly those.
+- `upstream/<tool>/fixtures.expected.json`: what the tool reported on its own tests, produced by the recorder in the
+  same directory. `npm run fixtures:derive` runs the recorders against the pinned tool versions (each tool-pack's
+  recipe in `scripts/pack-data/recipes/`); tools live under `.rerail/` (gitignored). Where a tool's tests state their
+  expected findings (as markup in the test files), the recorder reads them instead of running the tool: the tool's
+  own test suite requires it to report exactly those.
 - Pack test data: the tool's test cases (`fixtures/`, `tests/`, case lists such as `cases.json` and `*.cases.json`,
   `fixtures.upstream-check.json`, `lizard-*.tsv`), its recordings (`*.expected.json`) and `authored/` are not in git;
   the patterns are `PACK_FIXTURE_PATTERNS` (`scripts/s3/pack-fixtures.mjs`). What Rerail wrote for the tool to score
@@ -135,8 +134,13 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
   a maintainer archives it before merge from a trusted worktree of main (`npm run fixtures:push -- --from <ref>`;
   [CONTRIBUTING.md](../CONTRIBUTING.md#merging-maintainers), which also names the CI checks a changed lock must pass).
   Every consumer (checks 4 and 6, the conformance runner, the recorders, the Rust tests) says to pull when it is
-  absent. `gates.yaml`, `goldens.tsv`, `recording.lock`, `test-data.lock`, `UPSTREAM.md` and the recorders stay in
-  git.
+  absent. `gates.yaml`, `recording.lock`, `samples.lock`, `SAMPLES.md`, `test-data.lock`, `UPSTREAM.md` and the
+  recorders stay in git.
+- `upstream/<tool>/samples.lock` and `SAMPLES.md` (optional): the tool-pack's real-code samples, real files labelled
+  per rule with the lines it should report or as clean for it, one archive in S3 the lock names by sha256, which
+  `npm run fixtures:pull` fetches and the conformance runner scores (`--samples`, and in `--check`); `SAMPLES.md` lists
+  the sources and their licences. They are never published, and checks 1 to 8 do not read them
+  ([port readiness, "Samples"](port-readiness.md#samples)).
 - `upstream/<tool>/protected-identifiers.json` (optional, ECMA family): opts the pack into the identifier-rename gate,
   `test/conformance/identifier-rename.test.ts`, which scores every shipped port again on the fixtures with each
   user-chosen identifier renamed and fails when a score moves. It maps fixture paths or directories to the names and
@@ -211,7 +215,7 @@ These criteria are for reviewers and never block a merge: no check reads a messa
 
 ## The validation contract
 
-Implemented: `validatePack(directory, { corpora?, corpusRoot?, listed? })` in `conformance/pack-validation.ts` runs
+Implemented: `validatePack(directory, { listed? })` in `conformance/pack-validation.ts` runs
 checks 1 to 8 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
 `test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per rule, and has
 the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
@@ -224,12 +228,10 @@ CI for shipped rules and only report candidates.
 ```sh
 npx vitest run test/engine/catalog/packs.test.ts                         # every pack: checks 1 to 8, each rule's status
 npx vitest run test/engine/catalog/packs.test.ts -t "pack python"        # one pack
-RERAIL_PACK_CORPORA=1 npx vitest run test/engine/catalog/packs.test.ts   # check 4 on every pinned corpus too
 ```
 
-Check 4 always scores ported rules on the tools' fixtures. It scores a pinned corpus when its checkout is present
-under `.rerail/corpora/<id>/<corpus>` (the nearest ancestor checkout's); `RERAIL_PACK_CORPORA=1` scores every corpus
-and fails on a missing checkout, and `RERAIL_PACK_CORPORA=0` scores none. To see every false positive and false
+Check 4 scores ported rules on the tools' fixtures. The real-code samples are scored by the conformance check
+(`npm run test:conformance`) and the port readiness gates, not here. To see every false positive and false
 negative of one ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule <rule> --fixtures`.
 
 | # | Check | Fails when |
