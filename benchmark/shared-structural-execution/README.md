@@ -2,6 +2,8 @@
 
 This directory records the complete ASYNC210/221/222/230 reference family.
 It does not measure the whole catalog or qualify a production compiler.
+The latest measured source is `a55956e3`; see `reference-v5-full.json` and its manifest.
+Median generated execution is 350 ms CPU versus 1,342 ms native matching on the full negative corpus.
 The reference and generated SQL consume the same native facts.
 Neither uses an opaque rule-matcher callback. Native matching supplies the comparison oracle.
 

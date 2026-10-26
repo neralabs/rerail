@@ -192,3 +192,31 @@ The positive 24-document gate requires exactly 24 argument calls and 48 rows.
 Sixteen label copies must retain the same argument-call and argument-row counts.
 The receiver-only and irrelevant-input gates require zero argument calls.
 Full-corpus measurements follow after the changed producer passes these checks.
+
+The argument-demand implementation passes 30 focused checks and the full-corpus parity run.
+Source commit: `a55956e3`. Artifacts: `reference-v5-full.json` and `reference-v5-manifest.json`.
+
+Median reference execution CPU falls from 401 ms to 336 ms; structural collection falls from 254 ms to 198 ms.
+Generated SQL takes 350 ms median CPU, with a generated/reference per-run median ratio of 1.039.
+Native matching takes 1,342 ms median CPU. Both execution gates still pass.
+The negative corpus requests zero argument calls and rows, as required by its selected candidate branches.
+The positive fixture retains all 120 findings, with exactly 24 demanded argument calls and 48 rows.
+SQL still uses two executions: 1,887 reference VM instructions and 1,886 generated VM instructions.
+There are twelve semantic requests and five scope builds; neither increases.
+
+Median execution wall time is 344 ms for the reference and 359 ms for generated SQL.
+The report now includes wall time for common parsing and index construction, plus assembled family-job CPU and wall totals.
+Initial program compilation is charged to iteration zero. Later runs reuse that compiled output.
+These totals sum measured phases; they do not rerun common index construction for every sample.
+
+Common construction in this run costs 54.787 seconds CPU and 60.202 seconds wall time.
+The reference family job costs about 55.124 seconds CPU and 60.547 seconds wall time.
+Native with cached candidates costs 56.130–56.175 seconds CPU and 61.625–61.698 seconds wall time.
+Native first-use candidate selection adds 40.476 seconds CPU; that first job costs 96.613 seconds CPU and 108.428 seconds wall time.
+Index construction varied between runs on this shared host. This producer change does not alter index construction.
+The benchmark process peak RSS is 1,304,035,328 bytes, below the 1.5 GiB ceiling.
+
+The executable target and generated SQL-shape prototype are qualified for this complete four-rule family.
+The current producer still scans 19,007,630 tape rows for call/context facts.
+Selective index demands and generic grammar lowering are the next compiler work; they are not complete here.
+The production engine, full-catalog cutover, and final whole-apply gate remain unchanged.

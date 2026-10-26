@@ -1,0 +1,45 @@
+{
+  "base": "85098ee3",
+  "binary": "/tmp/rerail-data-layer-target/release/deps/rerail_engine-910f4dc49f69b5fb",
+  "binary_sha256": "da76ad761837882d09c4a014af07c23addd662ac07f09d6dd1f347698c505dfe",
+  "build": {
+    "opt_level": 3,
+    "local_codegen_units": 16,
+    "lto": false,
+    "dependencies": "release",
+    "sqlite_flags": "-DSQLITE_DEFAULT_MEMSTATUS=0 -USQLITE_ENABLE_MEMORY_MANAGEMENT",
+    "wrapper": "benchmark/shared-structural-execution/rustc-wrapper.py"
+  },
+  "source_sha256": {
+    "native/src/code_rule_dsl/query/plan/async_reference.rs": "eae2aa8e07b3d0ebed9f256b573243ffe3004f176c145933eecb4bf1e4fb3b23",
+    "native/src/code_rule_dsl/query/plan/async_reference/generated_shape.rs": "6ffa03b97a204b13f13a925eec5474870a99d1d0816d1a77e1fe65e946dde5ba",
+    "native/src/code_rule_dsl/query/plan/async_reference/native_oracle.rs": "2ce804b4720dbc72f1a34282560aa2ab665b90e6e41a2632e2da7086d5ad2e6a",
+    "native/src/code_rule_dsl/query/plan/async_reference/tests.rs": "84bfd6c22ff7dab38c1ad42d5ff0ef39828f9330c106ede15db70bea7c46b045",
+    "native/src/code_rule_dsl/query/plan/call_batch.rs": "58c0eaf52ce5bb6ad40b0573cf2bd1be1ed505dd6f6bb75c509484b015abf94c",
+    "native/src/code_rule_dsl/query/plan/contract.rs": "a846c968e721cf00f1fe1722a8f9d0d5238648076110da715a3eeb09be9b90cf",
+    "native/src/code_rule_dsl/query/plan/import_screen.rs": "6e9ce516203b7417f24daab22ace2d6caf339cb77727b029c780b329d1738ae7",
+    "native/src/code_rule_dsl/query/plan/python_structure.rs": "e9b25334cf04321f03f1f1bf80610f1d820dc04cb87ddabf7c5af07c3fcb01af",
+    "native/src/code_rule_dsl/query/plan/relation.rs": "b29f76024cb17495ce7aa61dd60478296bb89aa9e5246bdad0d314ff2876fe1e",
+    "native/src/code_rule_dsl/query/plan/sql_shape.rs": "23947616578c35a853badafeedaf4ae54ff4d393ab20f324f3bfe6b8e049e3d8",
+    "native/src/code_rule_dsl/query/plan.rs": "68dc43969898aed1b1edb328502b83272ce4f8e746869ae846ab8ecd519310af",
+    "native/src/code_rule_dsl/query/mod.rs": "cf2ca3e59675e1a21d977aeedf121236e20f77f989ea2d805588083279c83d59",
+    "native/src/code_rule_dsl/matcher/mod.rs": "397dd3de64400f7bc0bd154899a385c930f941967fc6757f9f284eb2fefe2874",
+    "native/src/code_rule_dsl/matcher/python_facts.rs": "cc79e0ce8b1b9ac2f96318e2fd6ce5641d7f2d8bac5b06b2221509ba8c613630",
+    "benchmark/shared-structural-execution/rustc-wrapper.py": "41328d22a15c864a6eeb175b2ffe6f2c6988f3581c2c03ebad36e5af6efbe496",
+    ".cargo/config.toml": "13ce2e5891eb020cf8daf090f777bc569c3a054330798c99e1f6c26c3ef648df",
+    "Cargo.lock": "8de501573f8d98e67b22947e317a642a00ab745a58b6698773b5973cd6759c22"
+  },
+  "corpus_commit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.8\n",
+  "artifacts": [
+    "reference-v5-full.json"
+  ],
+  "qualification": "30 focused tests pass. Full four-rule family only; zero corpus findings, positive fixtures separately. Generated SQL from a hand-built relational plan; grammar compiler not qualified. Three rotated comparisons; shared host, CPU primary; native first selection and cached matching separate.",
+  "source_commit": "a55956e3334864451e89c68ec7199beb38f5fc8d",
+  "full_benchmark_process": {
+    "wall_seconds": 116.15,
+    "maximum_rss_bytes": 1304035328,
+    "peak_memory_footprint_bytes": 1289979272,
+    "includes": "common construction plus all reference/generated/native runs; not a per-engine allocation measurement"
+  }
+}
