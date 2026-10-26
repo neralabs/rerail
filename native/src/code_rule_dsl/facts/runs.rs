@@ -1,384 +1,191 @@
-//! Immutable column batches for projected facts. JSON is built only at wire/JSON-semantic boundaries.
-use rusqlite::types::ValueRef;
-use serde::{Serialize, ser::SerializeMap};
-use serde_json::{Map, Value};
-use std::{
-    borrow::Cow,
-    cell::RefCell,
-    collections::HashMap,
-    ops::Range,
-    sync::{Arc, OnceLock},
-};
+//! Immutable column batches of interim facts (C18; docs/final-shape/03-architecture.md §4, §10.2),
+//! adapted from the data layer's projection batches (`violations/projection.rs`): a builder fills
+//! one column per field and seals into boxed columns that never grow, and memory is counted from
+//! the sealed columns. Here every cell is a u32 (an atom, a count, or one lane of a digest), a run
+//! holds one relation, and sealing sorts the rows by their key columns, keeping the last row
+//! pushed for a key, so a run is looked up by binary search and merged into SQLite in key order.
+//! A run encodes to a flat little-endian file when the overlay spills it.
 
-const CHUNK: usize = 256;
-#[derive(Clone, Debug)]
-enum Cell {
-    Null,
-    Integer(i64),
-    Text(u32, u32, u32),
-    Json(Arc<(Value, String)>),
-}
-#[derive(Debug)]
-struct Data {
-    names: Arc<[String]>,
+use std::cmp::Ordering;
+use std::io::{self, Read, Write};
+
+const MAGIC: &[u8; 8] = b"rrlrun01";
+
+/// One relation's rows: `arity` columns of u32, the first `key` of them the key, sorted, unique.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Run {
+    relation: u32,
+    key: usize,
     rows: usize,
-    raw: Option<Value>,
-    columns: Vec<Box<[Cell]>>,
-    sources: Vec<Arc<String>>,
-    owned: Vec<bool>,
-}
-#[derive(Clone, Debug)]
-pub(crate) struct Row {
-    data: Arc<OnceLock<Data>>,
-    row: usize,
+    columns: Box<[Box<[u32]>]>,
 }
 
-pub(crate) enum Input<'a> {
-    Null,
-    Integer(i64),
-    Text(Cow<'a, str>),
-    Source(&'a Arc<String>, Range<usize>),
+/// Rows pushed in any order; `seal` makes the run.
+pub(crate) struct Builder {
+    relation: u32,
+    key: usize,
+    columns: Vec<Vec<u32>>,
 }
-impl Input<'_> {
-    pub(crate) fn text(&self) -> Option<&str> {
-        match self {
-            Self::Text(v) => Some(v),
-            Self::Source(v, r) => v.get(r.clone()),
-            _ => None,
-        }
-    }
-    pub(crate) fn slice(self, range: Range<usize>) -> Self {
-        match self {
-            Self::Source(v, r) => Self::Source(v, r.start + range.start..r.start + range.end),
-            Self::Text(Cow::Borrowed(v)) => Self::Text(Cow::Borrowed(&v[range])),
-            Self::Text(Cow::Owned(v)) => Self::Text(Cow::Owned(v[range].to_owned())),
-            _ => Self::Null,
-        }
-    }
-}
-#[derive(Hash, PartialEq, Eq)]
-struct Interned(Arc<String>);
-impl std::borrow::Borrow<str> for Interned {
-    fn borrow(&self) -> &str {
-        self.0.as_str()
-    }
-}
-struct Builder {
-    names: Arc<[String]>,
-    rows: usize,
-    data: Arc<OnceLock<Data>>,
-    columns: Vec<Vec<Cell>>,
-    sources: Vec<Arc<String>>,
-    owned: Vec<bool>,
-    pointers: HashMap<usize, u32>,
-    strings: HashMap<Interned, u32>,
-}
+
 impl Builder {
-    fn new(names: Arc<[String]>) -> Self {
-        Self {
-            rows: 0,
-            columns: names.iter().map(|_| Vec::new()).collect(),
-            names,
-            data: Arc::default(),
-            sources: Vec::new(),
-            owned: Vec::new(),
-            pointers: HashMap::new(),
-            strings: HashMap::new(),
-        }
-    }
-    fn source(&mut self, value: &Arc<String>) -> u32 {
-        let ptr = Arc::as_ptr(value) as usize;
-        if let Some(&id) = self.pointers.get(&ptr) {
-            return id;
-        }
-        let id = u32::try_from(self.sources.len()).expect("bounded projection sources");
-        self.sources.push(Arc::clone(value));
-        self.owned.push(false);
-        self.pointers.insert(ptr, id);
-        id
-    }
-    fn string(&mut self, value: Cow<'_, str>) -> u32 {
-        if let Some(&id) = self.strings.get(value.as_ref()) {
-            return id;
-        }
-        let value = Arc::new(value.into_owned());
-        let id = u32::try_from(self.sources.len()).expect("bounded projection sources");
-        self.sources.push(Arc::clone(&value));
-        self.owned.push(true);
-        self.strings.insert(Interned(value), id);
-        id
-    }
-    fn push<'a>(&mut self, values: impl Iterator<Item = Input<'a>>) -> Row {
-        let row = self.rows;
-        self.rows += 1;
-        if row == 0 {
-            for column in &mut self.columns {
-                column.reserve(CHUNK);
-            }
-        }
-        for (column, value) in values.enumerate() {
-            let value = match value {
-                Input::Null => Cell::Null,
-                Input::Integer(v) => Cell::Integer(v),
-                Input::Source(source, range) => Cell::Text(
-                    self.source(source),
-                    range.start.try_into().expect("bounded source"),
-                    range.end.try_into().expect("bounded source"),
-                ),
-                Input::Text(v) => {
-                    let len = v.len().try_into().expect("bounded text");
-                    Cell::Text(self.string(v), 0, len)
-                }
-            };
-            self.columns[column].push(value);
-        }
-        assert!(self.columns.iter().all(|c| c.len() == row + 1));
-        let result = Row {
-            data: Arc::clone(&self.data),
-            row,
-        };
-        if row + 1 == CHUNK {
-            self.seal();
-        }
-        result
-    }
-    fn seal(&mut self) {
-        if self.rows == 0 {
-            return;
-        }
-        let data = Data {
-            raw: None,
-            rows: std::mem::take(&mut self.rows),
-            names: Arc::clone(&self.names),
-            // Published columns never grow. A partial processing batch must not
-            // retain storage for 256 rows in each column for the workspace lifetime.
-            columns: std::mem::replace(
-                &mut self.columns,
-                self.names.iter().map(|_| Vec::new()).collect(),
-            )
-            .into_iter()
-            .map(Vec::into_boxed_slice)
-            .collect(),
-            sources: std::mem::take(&mut self.sources),
-            owned: std::mem::take(&mut self.owned),
-        };
-        self.data.set(data).expect("one projection publication");
-        self.data = Arc::default();
-        self.pointers.clear();
-        self.strings.clear();
-    }
-}
-#[derive(Default)]
-struct Arena {
-    builders: HashMap<(usize, usize, usize), Builder>,
-}
-thread_local! {static CURRENT: RefCell<Option<Arena>>=const {RefCell::new(None)};}
-pub(crate) struct Scope(Option<Arena>);
-impl Scope {
-    pub(crate) fn enter() -> Self {
-        Self(CURRENT.replace(Some(Arena::default())))
-    }
-}
-impl Drop for Scope {
-    fn drop(&mut self) {
-        CURRENT.with_borrow_mut(|slot| {
-            if let Some(mut arena) = slot.take() {
-                for builder in arena.builders.values_mut() {
-                    builder.seal();
-                }
-            }
-            *slot = self.0.take();
-        });
-    }
-}
-pub(crate) fn append<'a>(
-    key: (usize, usize, usize),
-    names: impl FnOnce() -> Vec<String>,
-    values: impl Iterator<Item = Input<'a>>,
-) -> Row {
-    CURRENT.with_borrow_mut(|slot| {
-        if let Some(arena) = slot {
-            arena
-                .builders
-                .entry(key)
-                .or_insert_with(|| Builder::new(names().into()))
-                .push(values)
-        } else {
-            let mut builder = Builder::new(names().into());
-            let row = builder.push(values);
-            builder.seal();
-            row
-        }
-    })
-}
-impl Row {
-    fn data(&self) -> &Data {
-        self.data
-            .get()
-            .expect("projection scope publishes before consumption")
-    }
-    pub(crate) fn published(&self) -> bool {
-        self.data.get().is_some()
+    pub(crate) fn new(relation: u32, arity: usize, key: usize) -> Self {
+        assert!(key >= 1 && key <= arity, "a run's key is a non-empty prefix of its columns");
+        Self { relation, key, columns: (0..arity).map(|_| Vec::new()).collect() }
     }
 
-    pub(crate) fn identity(&self) -> usize {
-        Arc::as_ptr(&self.data) as usize
-    }
-    pub(crate) fn schema_identity(&self) -> usize {
-        self.data().names.as_ptr() as usize
-    }
-    pub(crate) fn index(&self, name: &str) -> Option<usize> {
-        self.data().names.iter().position(|n| n == name)
-    }
-    pub(crate) fn sql(&self, column: usize) -> ValueRef<'_> {
-        match &self.data().columns[column][self.row] {
-            Cell::Null => ValueRef::Null,
-            Cell::Integer(v) => ValueRef::Integer(*v),
-            Cell::Text(source, start, end) => ValueRef::Text(
-                &self.data().sources[*source as usize].as_bytes()[*start as usize..*end as usize],
-            ),
-            Cell::Json(v) => match &v.0 {
-                Value::Bool(b) => ValueRef::Integer(i64::from(*b)),
-                Value::Number(n) => ValueRef::Real(n.as_f64().unwrap()),
-                _ => ValueRef::Text(v.1.as_bytes()),
-            },
+    pub(crate) fn push(&mut self, row: &[u32]) {
+        assert_eq!(row.len(), self.columns.len(), "row arity");
+        for (column, value) in self.columns.iter_mut().zip(row) {
+            column.push(*value);
         }
     }
-    fn value(&self, column: usize) -> Value {
-        match &self.data().columns[column][self.row] {
-            Cell::Null => Value::Null,
-            Cell::Integer(v) => (*v).into(),
-            Cell::Text(source, start, end) => {
-                self.data().sources[*source as usize][*start as usize..*end as usize].into()
+
+    pub(crate) fn rows(&self) -> usize {
+        self.columns[0].len()
+    }
+
+    /// Sorts by key (stable, so the last row pushed for a key is the last of its equal run) and
+    /// keeps one row per key.
+    pub(crate) fn seal(self) -> Run {
+        let rows = self.rows();
+        let mut order = (0..rows).collect::<Vec<_>>();
+        let key = |row: usize| self.columns[..self.key].iter().map(move |c| c[row]);
+        order.sort_by(|&a, &b| key(a).cmp(key(b)));
+        let mut kept = Vec::with_capacity(rows);
+        for (index, &row) in order.iter().enumerate() {
+            if order.get(index + 1).is_some_and(|&next| key(next).eq(key(row))) {
+                continue;
             }
-            Cell::Json(v) => v.0.clone(),
+            kept.push(row);
         }
-    }
-    pub(crate) fn object(&self) -> Map<String, Value> {
-        self.data()
-            .names
+        // Published columns never grow: each is boxed at exactly its length.
+        let columns = self
+            .columns
             .iter()
-            .enumerate()
-            .map(|(c, n)| (n.clone(), self.value(c)))
-            .collect()
-    }
-    #[cfg(test)]
-    pub(crate) fn json(&self) -> Value {
-        self.data()
-            .raw
-            .clone()
-            .unwrap_or_else(|| Value::Object(self.object()))
-    }
-    pub(crate) fn from_json(value: Value) -> Self {
-        // Wire input can contain arbitrary JSON. Normal AST projections never use this path.
-        let Some(object) = value.as_object() else {
-            let data = OnceLock::from(Data {
-                names: Arc::from([]),
-                rows: 1,
-                raw: Some(value),
-                columns: Vec::new(),
-                sources: Vec::new(),
-                owned: Vec::new(),
-            });
-            return Self {
-                data: Arc::new(data),
-                row: 0,
-            };
-        };
-        let mut builder = Builder::new(object.keys().cloned().collect::<Vec<_>>().into());
-        for (c, value) in object.values().enumerate() {
-            let cell = match value {
-                Value::Null => Cell::Null,
-                Value::Number(n) if n.as_i64().is_some() => Cell::Integer(n.as_i64().unwrap()),
-                Value::String(s) => Cell::Text(
-                    builder.string(Cow::Borrowed(s)),
-                    0,
-                    s.len().try_into().unwrap(),
-                ),
-                other => Cell::Json(Arc::new((other.clone(), other.to_string()))),
-            };
-            builder.columns[c].push(cell);
-        }
-        let row = Self {
-            data: Arc::clone(&builder.data),
-            row: 0,
-        };
-        builder.rows = 1;
-        builder.seal();
-        row
-    }
-    pub(crate) fn memory(&self) -> (usize, usize, usize, usize) {
-        let d = self.data();
-        let bytes = d.columns.capacity() * std::mem::size_of::<Box<[Cell]>>()
-            + d.columns
-                .iter()
-                .map(|c| c.len() * std::mem::size_of::<Cell>())
-                .sum::<usize>()
-            + d.names.iter().map(String::capacity).sum::<usize>()
-            + d.sources
-                .iter()
-                .zip(&d.owned)
-                .filter(|(_, owned)| **owned)
-                .map(|(s, _)| s.capacity())
-                .sum::<usize>();
-        (
-            bytes,
-            d.rows,
-            d.columns.len(),
-            d.sources
-                .iter()
-                .zip(&d.owned)
-                .filter(|(_, owned)| !**owned)
-                .map(|(s, _)| s.len())
-                .sum(),
-        )
-    }
-}
-impl PartialEq for Row {
-    fn eq(&self, other: &Self) -> bool {
-        if Arc::ptr_eq(&self.data, &other.data) && self.row == other.row {
-            return true;
-        }
-        self.data().raw == other.data().raw
-            && self.data().names == other.data().names
-            && (0..self.data().columns.len()).all(|c| {
-                match (
-                    &self.data().columns[c][self.row],
-                    &other.data().columns[c][other.row],
-                ) {
-                    (Cell::Null, Cell::Null) => true,
-                    (Cell::Integer(a), Cell::Integer(b)) => a == b,
-                    (Cell::Text(..), Cell::Text(..)) => self.sql(c) == other.sql(c),
-                    _ => self.value(c) == other.value(c),
-                }
-            })
-    }
-}
-impl Serialize for Row {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if let Some(raw) = &self.data().raw {
-            return raw.serialize(serializer);
-        }
-        let mut map = serializer.serialize_map(Some(self.data().names.len()))?;
-        for (c, n) in self.data().names.iter().enumerate() {
-            map.serialize_entry(n, &Serialized(self, c))?;
-        }
-        map.end()
+            .map(|column| kept.iter().map(|&row| column[row]).collect::<Box<[u32]>>())
+            .collect();
+        Run { relation: self.relation, key: self.key, rows: kept.len(), columns }
     }
 }
 
-struct Serialized<'a>(&'a Row, usize);
-impl Serialize for Serialized<'_> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match &self.0.data().columns[self.1][self.0.row] {
-            Cell::Null => serializer.serialize_none(),
-            Cell::Integer(v) => serializer.serialize_i64(*v),
-            Cell::Text(source, start, end) => serializer.serialize_str(
-                &self.0.data().sources[*source as usize][*start as usize..*end as usize],
-            ),
-            Cell::Json(v) => v.0.serialize(serializer),
+impl Run {
+    pub(crate) fn relation(&self) -> u32 {
+        self.relation
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.rows
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.rows == 0
+    }
+
+    pub(crate) fn cell(&self, row: usize, column: usize) -> u32 {
+        self.columns[column][row]
+    }
+
+    /// The row's cells.
+    pub(crate) fn row(&self, row: usize) -> impl Iterator<Item = u32> + '_ {
+        self.columns.iter().map(move |column| column[row])
+    }
+
+    /// The row whose key starts with `prefix` (shorter than or equal to the key), first of them.
+    pub(crate) fn lower_bound(&self, prefix: &[u32]) -> usize {
+        let (mut low, mut high) = (0, self.rows);
+        while low < high {
+            let middle = (low + high) / 2;
+            if self.compare(middle, prefix) == Ordering::Less {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
         }
+        low
+    }
+
+    /// The rows whose key starts with `prefix`.
+    pub(crate) fn range(&self, prefix: &[u32]) -> std::ops::Range<usize> {
+        let start = self.lower_bound(prefix);
+        let mut end = start;
+        while end < self.rows && self.compare(end, prefix) == Ordering::Equal {
+            end += 1;
+        }
+        start..end
+    }
+
+    /// The row whose whole key is `key`.
+    pub(crate) fn find(&self, key: &[u32]) -> Option<usize> {
+        assert_eq!(key.len(), self.key, "a whole key");
+        let row = self.lower_bound(key);
+        (row < self.rows && self.compare(row, key) == Ordering::Equal).then_some(row)
+    }
+
+    fn compare(&self, row: usize, prefix: &[u32]) -> Ordering {
+        self.columns[..prefix.len()].iter().map(|c| c[row]).cmp(prefix.iter().copied())
+    }
+
+    /// Heap bytes the run holds.
+    pub(crate) fn bytes(&self) -> usize {
+        self.columns.len() * std::mem::size_of::<Box<[u32]>>() + self.columns.len() * self.rows * 4
+    }
+
+    /// Flat encoding: magic, relation, key, arity, rows (u32 each), then each column.
+    pub(crate) fn encode(&self, out: &mut impl Write) -> io::Result<()> {
+        out.write_all(MAGIC)?;
+        for value in [self.relation, self.key as u32, self.columns.len() as u32, self.rows as u32] {
+            out.write_all(&value.to_le_bytes())?;
+        }
+        for column in self.columns.iter() {
+            let bytes = column.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>();
+            out.write_all(&bytes)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn decode(input: &mut impl Read) -> io::Result<Self> {
+        let invalid = |what: &str| io::Error::new(io::ErrorKind::InvalidData, format!("run file: {what}"));
+        let mut magic = [0; 8];
+        input.read_exact(&mut magic)?;
+        if &magic != MAGIC {
+            return Err(invalid("bad magic"));
+        }
+        let mut word = || -> io::Result<u32> {
+            let mut bytes = [0; 4];
+            input.read_exact(&mut bytes)?;
+            Ok(u32::from_le_bytes(bytes))
+        };
+        let (relation, key, arity, rows) = (word()?, word()? as usize, word()? as usize, word()? as usize);
+        if key == 0 || key > arity {
+            return Err(invalid("bad key"));
+        }
+        let mut columns = Vec::with_capacity(arity);
+        for _ in 0..arity {
+            let mut bytes = vec![0; rows * 4];
+            input.read_exact(&mut bytes)?;
+            columns.push(bytes.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect());
+        }
+        Ok(Run { relation, key, rows, columns: columns.into() })
     }
 }
+
+/// A digest as eight u32 cells.
+pub(crate) fn lanes(digest: &[u8; 32]) -> [u32; 8] {
+    let mut lanes = [0; 8];
+    for (lane, chunk) in lanes.iter_mut().zip(digest.chunks_exact(4)) {
+        *lane = u32::from_le_bytes(chunk.try_into().expect("four bytes"));
+    }
+    lanes
+}
+
+/// The digest of eight u32 cells.
+pub(crate) fn digest(lanes: impl IntoIterator<Item = u32>) -> [u8; 32] {
+    let mut digest = [0; 32];
+    for (chunk, lane) in digest.chunks_exact_mut(4).zip(lanes) {
+        chunk.copy_from_slice(&lane.to_le_bytes());
+    }
+    digest
+}
+
 #[cfg(test)]
 mod tests;
