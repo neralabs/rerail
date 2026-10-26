@@ -312,3 +312,19 @@ Lab, 12 batches (1,984 Python files), `b327af45` against `88a48c18`:
 Rows are identical for every plan except tripwires plans 27 and 31. Both needed more than the 256-relation admission allowance and were broadened to every node of their root kind (43,731 and 1,984 rows). They now fit, in 193 relations for plan 31, and select 0 and 79 rows. The lab now lists broadened plans. Fourteen policies still broaden some: transaction_patterns broadens all 58 plans, and serverplan_quality 7. A broadened plan is sound but costs the matcher every root.
 
 What remains in serverplan_quality: about 430 stage statements per batch, with the top 5 holding 54% of their steps. The vocabulary fill (regex predicates against new terms) is next, but the lab overstates it: each capture starts with an empty vocabulary, while a corpus store fills it once per term.
+
+Full-corpus confirmation at `88a48c18`. Execution CPU in seconds against `1e707281` (§15); the machine was loaded:
+
+| Check | anchorSelect before | after | execution total before | after |
+|---|---:|---:|---:|---:|
+| internal_dead_code | 68.7 | 21.5 | 106.4 | 54.6 |
+| public_api_triples | 41.3 | 26.5 | 49.5 | 34.0 |
+| serverplan_target_architecture | 11.2 | 6.9 | 11.6 | 7.2 |
+| serverplan_state_tripwires | 29.5 | 23.5 | 77.7 | 69.3 |
+| serverplan_quality | 58.7 | 53.7 | 65.1 | 60.4 |
+| legacy_execution_surfaces | 4.3 | 4.0 | 6.5 | 6.2 |
+| type_safety_patterns | 5.6 | 5.9 | 5.7 | 5.9 |
+| backend_type_strings | 1.2 | 1.2 | 1.2 | 1.3 |
+| all60 (300 files) | 7.4 | 5.5 | 10.2 | 7.9 |
+
+Findings are unchanged: internal_dead_code is 4,931/4,931 exact, all60 has 1,653 actual and 1,052 false positives, and tripwires has the same 24 source-incomplete failures. serverplan_quality gains less on the corpus (−9%) than in the lab (−27% steps), so its remaining anchor time is not in the stages these rewrites touch.
