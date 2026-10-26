@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type * as ChildProcessModule from "node:child_process";
 import { EventEmitter, once } from "node:events";
-
+import { createServer, type AddressInfo } from "node:net";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,6 +25,7 @@ import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js
 import {
   type DaemonState,
   autostartDaemon,
+  DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   daemonUsesPackageRoot,
   findRunningDaemon,
@@ -171,6 +172,28 @@ describe("Rerail daemon control", () => {
     }
   }, 15_000);
 
+  it.runIf(process.platform === "linux")("counts a daemon nothing reaped as stopped, so stop returns in a container without init", async () => {
+    // `sh` backgrounds a child that exits at once, then becomes `sleep`, which never reaps it: the zombie a daemon
+    // becomes when PID 1 is `sleep infinity` rather than an init.
+    const parent = spawn("sh", ["-c", "true & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "ignore"] });
+    try {
+      if (parent.stdout === null) throw new Error("test parent did not start");
+      const [pidOutput] = await once(parent.stdout, "data") as [Buffer];
+      const zombie = Number(pidOutput.toString());
+      // The child exits on the OS's schedule and signals nothing this process can await, so its state is polled.
+      const deadline = Date.now() + 5_000;
+      while (processAlive(zombie) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+      expect(processAlive(zombie)).toBe(false);
+      expect(() => process.kill(zombie, 0)).not.toThrow();
+
+      await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: zombie, url: "http://127.0.0.1:1/" })));
+      expect(await stopDaemon(home)).toBe("not-running");
+      expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
+    } finally {
+      parent.kill("SIGKILL");
+    }
+  });
+
   it("reclaims a start lock whose owner is dead or whose lease has expired", async () => {
     const lockPath = join(home, "start.lock");
     await mkdir(lockPath, { recursive: true });
@@ -260,6 +283,25 @@ describe("Rerail daemon control", () => {
     )).rejects.toBe(failure);
     expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
     expect(existsSync(join(home, "start.lock"))).toBe(false);
+  });
+
+  it("shows only this start's output when the daemon exits before it is ready, not earlier runs' log", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    await writeFile(join(home, DAEMON_LOG_FILE), "rerail daemon 0.0.0-earlier listening at http://127.0.0.1:1/ (pid 1)\n");
+    const blocker = createServer();
+    blocker.listen(0, "127.0.0.1");
+    await once(blocker, "listening");
+    try {
+      const { port } = blocker.address() as AddressInfo;
+      const failure = await startDaemon(
+        { home, packageRoot, ensureSqlite: async root => ({ prefix: root, rebuilt: false }) },
+        { dev: true, port },
+      ).then(() => undefined, (error: unknown) => String(error));
+      expect(failure).toMatch(/EADDRINUSE/u);
+      expect(failure).not.toContain("0.0.0-earlier");
+    } finally {
+      blocker.close();
+    }
   });
 
   it("replaces a healthy daemon from the previous managed package before using the active package", async () => {

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadNativeBinding } from "../engine/native/native.js";
@@ -60,6 +60,7 @@ const START_LOCK_DIR = "start.lock";
 
 const START_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 10_000;
+const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 const PROBE_TIMEOUT_MS = 2_000;
 const START_LOCK_LEASE_MS = 60_000;
@@ -106,11 +107,28 @@ export interface StartDaemonResult {
 export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch (error) {
     // EPERM means the process exists but belongs to another user; it is still alive.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
   }
+  return !isZombie(pid);
+}
+
+/**
+ * A process that has exited but was never reaped still answers signal 0. In a container without an init process
+ * nothing reaps a detached daemon, so it stays a zombie for as long as the container runs: it holds no port and
+ * no socket, and counts as stopped.
+ */
+function isZombie(pid: number): boolean {
+  if (process.platform !== "linux") return false;
+  let stat: string;
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  } catch {
+    return false;
+  }
+  // `pid (comm) state …`: the command name may itself hold spaces and parentheses, so the state follows the last `)`.
+  return /^\s*[ZX]/u.test(stat.slice(stat.lastIndexOf(")") + 1));
 }
 
 function hasDaemonStateFields(value: unknown): value is Record<string, unknown> {
@@ -272,8 +290,9 @@ export async function withStartLock<T>(
   }
 }
 
-async function tailFile(path: string, lines: number): Promise<string> {
-  const text = await readFile(path, "utf8").catch(() => "");
+/** The last `lines` lines written to `path` from byte `offset` on: this launch's output, not earlier runs'. */
+async function tailFile(path: string, offset: number, lines: number): Promise<string> {
+  const text = await readFile(path).then(bytes => bytes.subarray(offset).toString("utf8"), () => "");
   return text.trimEnd().split("\n").slice(-lines).join("\n");
 }
 
@@ -427,13 +446,16 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions)
   const stateFile = join(control.home, DAEMON_STATE_FILE);
   const logFile = join(control.home, DAEMON_LOG_FILE);
   const env = { ...(options.env ?? process.env), RERAIL_HOME: control.home };
+  // The log is appended to across runs; a failure shows only what this launch wrote.
+  const logOffset = await stat(logFile).then(info => info.size, () => 0);
   const { pid, exitReason } = launchDaemonProcess(daemonArguments(control, options, stateFile), options, env, logFile);
 
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const exit = exitReason();
     if (exit !== undefined) {
-      throw new Error(`Rerail daemon ${exit} before it was ready:\n${await tailFile(logFile, 20)}`);
+      const output = await tailFile(logFile, logOffset, 20);
+      throw new Error(`Rerail daemon ${exit} before it was ready${output === "" ? "." : `:\n${output}`}`);
     }
     const state = await readDaemonState(stateFile);
     if (state !== undefined && state.pid === pid) {
@@ -500,7 +522,12 @@ export async function stopDaemon(home: string): Promise<StopDaemonResult> {
   while (processAlive(pid) && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
   if (processAlive(pid)) {
     process.kill(pid, "SIGKILL");
-    while (processAlive(pid)) await sleep(POLL_INTERVAL_MS);
+    const killDeadline = Date.now() + KILL_TIMEOUT_MS;
+    while (processAlive(pid) && Date.now() < killDeadline) await sleep(POLL_INTERVAL_MS);
+    // The state file stays, so a later stop can find the process again.
+    if (processAlive(pid)) {
+      throw new Error(`Rerail daemon pid ${pid} is still running ${KILL_TIMEOUT_MS / 1_000}s after SIGKILL; check it with ps -p ${pid}, then run rerail daemon stop again.`);
+    }
   }
   // The daemon removes its own state file on a clean shutdown; a killed one leaves it behind.
   await rm(join(home, DAEMON_STATE_FILE), { force: true });
