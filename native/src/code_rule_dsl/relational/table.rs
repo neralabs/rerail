@@ -75,6 +75,26 @@ impl Shared {
         self.binding.current.read().clone()
     }
 }
+pub(super) fn plan_signature(sources: &std::collections::BTreeMap<String, Arc<dyn Source>>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    fn bucket(n: usize) -> u32 {
+        usize::BITS - n.leading_zeros()
+    }
+    for (name, source) in sources {
+        name.hash(&mut hash);
+        bucket(source.estimated_len()).hash(&mut hash);
+        for column in 0..source.columns().len() {
+            source.indexed(column).hash(&mut hash);
+            source.range_indexed(column).hash(&mut hash);
+            if source.indexed(column) {
+                bucket(source.estimated_matches(column, false)).hash(&mut hash);
+                bucket(source.estimated_matches(column, true)).hash(&mut hash);
+            }
+        }
+    }
+    hash.finish()
+}
 pub(super) fn bind(db: &super::Database, name: &str, source: Arc<dyn Source>) -> Result<()> {
     let mut bindings = db.modules.borrow_mut();
     if let Some(binding) = bindings.get(name) {

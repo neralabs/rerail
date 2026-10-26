@@ -44,7 +44,7 @@ pub(super) struct Stage {
     pub(super) inputs: BTreeSet<String>,
     pub(super) reads_source: bool,
     pub(super) recursive: bool,
-    pub(super) query: String,
+    pub(super) query: Arc<str>,
     pub(super) indexes: Vec<Vec<String>>,
     pub(super) reachability: Option<Reachability>,
     pub(super) deferred: BTreeMap<String, String>,
@@ -76,6 +76,7 @@ pub(super) struct Plan {
     pub(super) locations: BTreeSet<String>,
     pub(super) inputs: Vec<(String, FactQuery)>,
     pub(super) stages: Vec<Stage>,
+    pub(super) cuts: Vec<pipeline::Cut>,
     pub(super) query: String,
     pub(super) key: Vec<String>,
     pub(super) code: Option<String>,
@@ -198,21 +199,6 @@ pub(super) fn inspect_fields_recursive(
     result
 }
 
-/// Only compiled, engine-resolved queries reach this path. Authored SQL is checked
-/// by `inspect_fields_recursive` before physical names or internal bindings exist.
-fn runtime_columns(
-    db: &Connection,
-    query: &str,
-    _tables: &BTreeSet<String>,
-) -> Result<Vec<String>> {
-    let statement = db.prepare_cached(query).map_err(sql_error)?;
-    Ok(statement
-        .column_names()
-        .into_iter()
-        .map(str::to_owned)
-        .collect())
-}
-
 pub(super) fn create_input(db: &Database, name: &str, fields: &[String]) -> Result<()> {
     db.storage
         .borrow_mut()
@@ -255,7 +241,7 @@ pub(super) fn create_stage(
                 .collect()
         })();
         span.detail(|| match plan {
-            Ok(rows) => json!({"query":stage.query,"plan":rows}),
+            Ok(rows) => json!({"query":stage.query.as_ref(),"plan":rows}),
             Err(error) => json!({"error":error.to_string()}),
         });
     }
@@ -280,7 +266,7 @@ pub(super) fn create_stage(
             stage.query
         )
     } else {
-        stage.query.clone()
+        stage.query.to_string()
     };
     let sql = if materialize {
         db.storage
@@ -302,7 +288,7 @@ pub(super) fn create_stage(
             quote(&physical)
         )
     };
-    let mut statement = db.prepare_cached(&sql).map_err(sql_error)?;
+    let mut statement = db.prepare_execution(&sql).map_err(sql_error)?;
     let binding = materialize
         .then(|| db.storage.borrow().write_target(&physical).1)
         .flatten();
@@ -437,11 +423,12 @@ struct Session<'a> {
     tables: BTreeSet<String>,
     next: usize,
     aliases: BTreeMap<String, String>,
-    physical_stages: Vec<Stage>,
+    physical_stages: Arc<Vec<Stage>>,
     needed: BTreeSet<String>,
     visible: Snapshot,
     scope_bindings: BTreeMap<String, usize>,
     native_sources: BTreeMap<String, Arc<dyn syntax::Source>>,
+    plan_signature: u64,
 }
 impl<'a> Session<'a> {
     fn new(
@@ -490,6 +477,26 @@ impl<'a> Session<'a> {
             .borrow_mut()
             .bind_scope(&db, db.id, scope_bindings.clone())
             .map_err(sql_error)?;
+        // Schemas belong to the context, not the input transaction. A failed
+        // import must roll back data without undoing cached declarations.
+        for (name, input) in &plan.inputs {
+            let fields = input
+                .project
+                .iter()
+                .map(|p| p.field.clone())
+                .collect::<Vec<_>>();
+            create_input(&db, &aliases[name], &fields)?;
+        }
+        if plan.references.is_some() {
+            create_input(
+                &db,
+                &aliases["reference_edges"],
+                &REFERENCE_FIELDS
+                    .iter()
+                    .map(|f| (*f).to_owned())
+                    .collect::<Vec<_>>(),
+            )?;
+        }
         db.execute_batch("BEGIN").map_err(sql_error)?;
         let gate_slot = plan.require_nonempty.filter(|_| inputs.gate.is_some());
         if let (Some(rows), Some(slot)) = (&mut inputs.rows, gate_slot) {
@@ -812,18 +819,42 @@ impl<'a> Session<'a> {
             }
             aliases.insert(stage.name.clone(), name);
         }
-        let physical_stages = plan
-            .stages
+        let program_key = aliases
             .iter()
-            .map(|stage| {
-                let inputs = stage
-                    .inputs
-                    .iter()
-                    .map(|n| (n.clone(), aliases[n].clone()))
-                    .collect();
-                shared::stage(stage, &aliases[&stage.name], &inputs)
-            })
+            .map(|(a, b)| (a.clone(), b.clone()))
             .collect::<Vec<_>>();
+        let cached = db.programs.borrow().get(&program_key).cloned();
+        let physical_stages = if let Some(program) = cached {
+            program
+        } else {
+            let program = Arc::new(
+                plan.stages
+                    .iter()
+                    .map(|stage| {
+                        let inputs = stage
+                            .inputs
+                            .iter()
+                            .map(|n| (n.clone(), aliases[n].clone()))
+                            .collect();
+                        shared::stage(stage, &aliases[&stage.name], &inputs)
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let bytes = program
+                .iter()
+                .map(|s| s.query.len() + s.declaration.len() + 256)
+                .sum::<usize>()
+                + program_key
+                    .iter()
+                    .map(|(a, b)| a.len() + b.len() + 64)
+                    .sum::<usize>();
+            db.program_bytes
+                .set(db.program_bytes.get().saturating_add(bytes));
+            db.programs
+                .borrow_mut()
+                .insert(program_key, program.clone());
+            program
+        };
         db.storage
             .borrow_mut()
             .bind_scope(&db, db.id, scope_bindings.clone())
@@ -840,7 +871,7 @@ impl<'a> Session<'a> {
                 .filter(|s| s.reachability.is_some())
                 .map(|s| s.name.clone()),
         );
-        for (logical, physical) in plan.stages.iter().zip(&physical_stages).rev() {
+        for (logical, physical) in plan.stages.iter().zip(physical_stages.iter()).rev() {
             if needed.contains(&logical.name) {
                 db.pin(&physical.name);
                 if !db.storage.borrow().ready(&physical.name) {
@@ -865,6 +896,7 @@ impl<'a> Session<'a> {
             needed,
             visible,
             scope_bindings,
+            plan_signature: table::plan_signature(&native_sources),
             native_sources,
         })
     }
@@ -887,6 +919,7 @@ impl<'a> Session<'a> {
         if changed && self.plan.reads_source {
             source::bind(&self.db, Some(&self.visible), Arc::clone(&self.work))?;
         }
+        self.db.plan_signature.set(self.plan_signature);
         #[cfg(feature = "code-rule-profile")]
         self.db.context(json!({"scope":"relational","ruleId":self.code_rule.id,"clauseId":self.clause.id,"path":(self.visible.files.len()==1).then(||self.visible.files[0].path.as_str())}));
         let guard = Arc::clone(&self.work);
@@ -908,17 +941,12 @@ impl<'a> Session<'a> {
             )
             .map_err(sql_error)
     }
-    fn query(
-        &self,
-        query: &str,
-        inputs: impl Iterator<Item = String>,
-    ) -> (String, BTreeSet<String>) {
+    fn query(&self, query: &str, inputs: impl Iterator<Item = String>) -> String {
         let aliases = inputs
             .filter(|n| self.tables.contains(n))
             .map(|n| (n.clone(), self.aliases[&n].clone()))
             .collect::<BTreeMap<_, _>>();
-        let tables = aliases.values().cloned().collect();
-        (shared::resolve(query, &aliases), tables)
+        shared::resolve(query, &aliases)
     }
     fn release(&mut self) -> Result<()> {
         #[cfg(feature = "code-rule-profile")]
@@ -933,6 +961,33 @@ impl<'a> Session<'a> {
             .filter(|(_, last)| **last == self.next)
         {
             self.tables.remove(name);
+            let physical = &self.aliases[name];
+            let slot = self
+                .physical_stages
+                .iter()
+                .find(|s| s.name == *physical)
+                .map_or_else(|| physical.clone(), deferred::physical_name);
+            // Recording retains the complete input snapshot until capture. Cold
+            // acceptance runs disable capture and retire each final reader here.
+            if !self.db.record_relations
+                && let Some(id) = self.scope_bindings.remove(&slot)
+            {
+                // Physical cleanup is owner maintenance, outside the statement's VM budget.
+                self.db
+                    .progress_handler(0, None::<fn() -> bool>)
+                    .map_err(sql_error)?;
+                self.db
+                    .storage
+                    .borrow_mut()
+                    .release_binding(&self.db, self.db.id, &slot, id)
+                    .map_err(sql_error)?;
+                self.activate()?;
+            }
+            if !self.db.record_relations && self.native_sources.remove(physical).is_some() {
+                self.db.clear_module(physical);
+                self.plan_signature = table::plan_signature(&self.native_sources);
+                self.db.plan_signature.set(self.plan_signature);
+            }
         }
         self.next += 1;
         Ok(())
@@ -948,8 +1003,8 @@ impl<'a> Session<'a> {
             }
             #[cfg(feature = "code-rule-profile")]
             self.db.stage(&logical.name);
-            let (_, allowed) = self.query(&logical.query, logical.inputs.iter().cloned());
-            runtime_columns(&self.db, &stage.query, &allowed)?;
+            // The compiler validated the complete logical query. Stable native
+            // bindings enforce its schema; prepare only the actual execution.
             if let Some(spec) = stage.reachability.as_ref().filter(|s| s.syntax.is_some()) {
                 return Ok(Some(syntax::demand(
                     &self.db,
@@ -971,7 +1026,7 @@ impl<'a> Session<'a> {
                     &self.db,
                     json!({
                         "rule":self.code_rule.id,"clause":self.clause.id,"stage":logical.name,
-                        "query":stage.query,"error":error.reason,
+                        "query":stage.query.as_ref(),"aliases":self.aliases,"cuts":self.plan.cuts,"error":error.reason,
                         "budget":{"sqlRemaining":self.work.load(Ordering::Relaxed),"clause":super::budget::profile()},
                     }),
                 ) {
@@ -1006,6 +1061,8 @@ impl<'a> Session<'a> {
         table::bind(&self.db, &stage.name, source.clone()).map_err(sql_error)?;
         self.db.module(stage.name.clone());
         self.native_sources.insert(stage.name.clone(), source);
+        self.plan_signature = table::plan_signature(&self.native_sources);
+        self.db.plan_signature.set(self.plan_signature);
         #[cfg(feature = "code-rule-profile")]
         operation.into_iter().for_each(|op| op.finish_unobserved());
         self.release()
@@ -1014,11 +1071,11 @@ impl<'a> Session<'a> {
         let result = self.finish_rows();
         #[cfg(feature = "code-rule-profile")]
         if let Err(error) = &result {
-            let (query, _) = self.query(&self.plan.query, self.tables.iter().cloned());
+            let query = self.query(&self.plan.query, self.tables.iter().cloned());
             if let Err(snapshot_error) = super::profile::sql::snapshot::capture(
                 &self.db,
                 json!({
-                    "rule":self.code_rule.id,"clause":self.clause.id,"stage":"result","query":query,"error":error.reason,
+                    "rule":self.code_rule.id,"clause":self.clause.id,"stage":"result","query":query,"aliases":self.aliases,"cuts":self.plan.cuts,"error":error.reason,
                     "budget":{"sqlRemaining":self.work.load(Ordering::Relaxed),"clause":super::budget::profile()},
                 }),
             ) {
@@ -1049,9 +1106,13 @@ impl<'a> Session<'a> {
         } = self;
         #[cfg(feature = "code-rule-profile")]
         let _span = super::profile::trace::Span::start("sql-result", "query");
-        let (query, allowed) = self.query(&plan.query, tables.iter().cloned());
-        let names = runtime_columns(db, &query, &allowed)?;
-        let mut statement = db.prepare_cached(&query).map_err(sql_error)?;
+        let query = self.query(&plan.query, tables.iter().cloned());
+        let mut statement = db.prepare_execution(&query).map_err(sql_error)?;
+        let names = statement
+            .column_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
         let mut query = statement.query([]).map_err(sql_error)?;
         let mut findings = Vec::new();
         let mut identities = BTreeSet::new();

@@ -186,7 +186,7 @@ mod tests {
             recursive: false,
             inputs: Default::default(),
             name: "reachable".into(),
-            query: String::new(),
+            query: Arc::from(""),
             indexes: vec![],
             reachability: Some(spec.clone()),
             deferred: Default::default(),

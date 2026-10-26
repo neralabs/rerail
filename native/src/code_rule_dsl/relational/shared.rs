@@ -85,6 +85,29 @@ impl Versions {
     }
 }
 
+#[derive(Clone)]
+struct Schema {
+    declaration: Arc<str>,
+    start: usize,
+}
+impl Schema {
+    fn new(declaration: &Arc<str>) -> Self {
+        Self {
+            declaration: declaration.clone(),
+            start: declaration.find('(').expect("generated declaration") + 1,
+        }
+    }
+    fn text(&self) -> &str {
+        &self.declaration[self.start..]
+    }
+}
+impl PartialEq for Schema {
+    fn eq(&self, other: &Self) -> bool {
+        (Arc::ptr_eq(&self.declaration, &other.declaration) && self.start == other.start)
+            || self.text() == other.text()
+    }
+}
+impl Eq for Schema {}
 #[derive(Clone, Eq, PartialEq)]
 enum Key {
     Layout(String),
@@ -106,7 +129,8 @@ enum Key {
     },
     Sql {
         query: Arc<str>,
-        schema: Arc<str>,
+        schema: Schema,
+        fingerprint: u64,
         deferred: Vec<(String, String)>,
         inputs: Vec<(String, usize)>,
         regex_limit: usize,
@@ -142,13 +166,13 @@ impl Hash for Key {
                 ..
             } => (definition_digest, clause, name, versions, domain, nonce).hash(state),
             Self::Sql {
-                query,
-                schema,
+                fingerprint,
                 deferred,
                 inputs,
                 regex_limit,
                 indexes,
-            } => (query, schema, deferred, inputs, regex_limit, indexes).hash(state),
+                ..
+            } => (fingerprint, deferred, inputs, regex_limit, indexes).hash(state),
             Self::Reach {
                 roots,
                 edges,
@@ -159,9 +183,11 @@ impl Hash for Key {
         }
     }
 }
+type Fingerprints = HashMap<(usize, usize), (Arc<str>, Arc<str>, u64)>;
 #[derive(Default)]
 pub(super) struct Bindings {
     templates: Option<Box<Bindings>>,
+    fingerprints: Fingerprints,
     definitions: HashMap<Key, usize>,
     retained: HashSet<(u8, usize)>,
     next_lease: usize,
@@ -177,6 +203,7 @@ impl Bindings {
     }
     pub fn forget(&mut self) {
         self.definitions.clear();
+        self.fingerprints.clear();
         self.retained.clear();
         self.bytes = 0;
     }
@@ -206,7 +233,11 @@ impl Bindings {
                 ..
             } => {
                 self.owner(0, Arc::as_ptr(query) as *const () as usize, query.len())
-                    + self.owner(0, Arc::as_ptr(schema) as *const () as usize, schema.len())
+                    + self.owner(
+                        0,
+                        Arc::as_ptr(&schema.declaration) as *const () as usize,
+                        schema.declaration.len(),
+                    )
                     + inputs.iter().map(|(n, _)| n.len() + 48).sum::<usize>()
                     + indexes
                         .iter()
@@ -346,14 +377,31 @@ impl Bindings {
                 }
             } else {
                 Key::Sql {
-                    query: Arc::from(stage.query.as_str()),
-                    schema: Arc::from(
-                        stage
-                            .declaration
-                            .split_once('(')
-                            .expect("generated declaration")
-                            .1,
-                    ),
+                    query: stage.query.clone(),
+                    schema: Schema::new(&stage.declaration),
+                    fingerprint: {
+                        let pointers = (
+                            stage.query.as_ptr() as usize,
+                            stage.declaration.as_ptr() as usize,
+                        );
+                        if let Some((_, _, fingerprint)) = self.fingerprints.get(&pointers) {
+                            *fingerprint
+                        } else {
+                            let mut hash = std::collections::hash_map::DefaultHasher::new();
+                            stage.query.hash(&mut hash);
+                            Schema::new(&stage.declaration).text().hash(&mut hash);
+                            let fingerprint = hash.finish();
+                            let added = self.owner(0, pointers.0, stage.query.len())
+                                + self.owner(0, pointers.1, stage.declaration.len())
+                                + 96;
+                            self.bytes = self.bytes.saturating_add(added);
+                            self.fingerprints.insert(
+                                pointers,
+                                (stage.query.clone(), stage.declaration.clone(), fingerprint),
+                            );
+                            fingerprint
+                        }
+                    },
                     deferred: stage
                         .deferred
                         .iter()
@@ -451,7 +499,7 @@ pub(super) fn resolve(query: &str, aliases: &BTreeMap<String, String>) -> String
 pub(super) fn stage(stage: &Stage, name: &str, aliases: &BTreeMap<String, String>) -> Stage {
     let mut out = stage.clone();
     out.name = name.into();
-    out.query = resolve(&stage.query, aliases);
+    out.query = resolve(&stage.query, aliases).into();
     let columns = stage
         .declaration
         .split_once('(')

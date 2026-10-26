@@ -98,7 +98,7 @@ it.skipIf(!required)("keeps one indexed owner for a stage read repeatedly inside
    const catalogue=JSON.parse(readFileSync(join(directory,file),'utf8'));
    const queries=new Map<number,string>(catalogue.queries.map((q:{id:number;sql:string})=>[q.id,q.sql]));
    const events=readFileSync(join(directory,file.replace(/\.json$/,'.jsonl')),'utf8').split('\n').filter(Boolean).map(l=>JSON.parse(l));
-   indexes+=events.filter(e=>e.kind==='sql' && /^CREATE INDEX/.test(queries.get(e.query)??'') && /\("name"\)/.test(queries.get(e.query)??'')).length;
+   indexes+=events.filter(e=>e.kind==='sql' && /^CREATE INDEX/.test(queries.get(e.query)??'') && /\("__execution_key","name"\)/.test(queries.get(e.query)??'')).length;
   }
   expect(indexes,'one authored lookup index must serve every reader of this producer').toBe(1);
  }finally{rmSync(directory,{recursive:true,force:true});}
@@ -180,8 +180,8 @@ it.skipIf(!required)("preserves failed SQL inputs before workspace cleanup witho
   expect(snapshot.context.budget.clause.spent).toBeTypeOf('number');
   expect(snapshot.tempError).toBeNull();expect(snapshot.temp).toBeTypeOf('string');
   const read=spawnSync('python3',['-c',`import sqlite3,sys,json
-c=sqlite3.connect(sys.argv[1]);tables=c.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%events'").fetchall();assert len(tables)==1,tables
-print(json.dumps(c.execute('SELECT name FROM "'+tables[0][0].replace('"','""')+'"').fetchall()))`,join(directory,snapshot.main)],{encoding:'utf8',timeout:5_000});
+c=sqlite3.connect(sys.argv[1]);alias=sys.argv[2]
+print(json.dumps(c.execute('SELECT name FROM "'+alias.replace('"','""')+'"').fetchall()))`,join(directory,snapshot.temp),snapshot.context.aliases.events],{encoding:'utf8',timeout:5_000});
   expect(read.status,read.stderr).toBe(0);expect(JSON.parse(read.stdout)).toEqual([['éxx']]);
  }finally{rmSync(directory,{recursive:true,force:true});}
 },35_000);

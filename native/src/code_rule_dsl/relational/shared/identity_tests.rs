@@ -99,3 +99,25 @@ fn metadata_charges_shared_definition_and_versions_once() {
     bindings.forget();
     assert_eq!(bindings.bytes(), 0);
 }
+
+#[test]
+fn data_identity_hashing_uses_a_cached_program_fingerprint_and_checks_full_text_on_collisions() {
+    let key = |text: &str| Key::Sql {
+        query: Arc::from(text),
+        schema: Schema::new(&Arc::from("CREATE TABLE x(v)")),
+        fingerprint: 7,
+        deferred: vec![],
+        inputs: vec![("input".into(), 1)],
+        regex_limit: 100,
+        indexes: vec![],
+    };
+    let small = key("SELECT 1");
+    let large = key(&"SELECT ".repeat(100000));
+    assert_eq!(hashed_bytes(&small), hashed_bytes(&large));
+    let mut bindings = Bindings::default();
+    assert_ne!(
+        bindings.intern(small),
+        bindings.intern(large),
+        "fingerprint collision established data equality"
+    );
+}

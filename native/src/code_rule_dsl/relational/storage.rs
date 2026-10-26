@@ -26,7 +26,13 @@ fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 impl Storage {
-    pub fn statistics_boundary(&mut self,_db:&Connection)->Result<()> {Ok(())}
+    #[cfg(feature = "code-rule-profile")]
+    pub fn inventory(&self) -> serde_json::Value {
+        self.contexts.inventory()
+    }
+    pub fn statistics_boundary(&mut self, db: &Connection) -> Result<()> {
+        self.contexts.statistics_boundary(db)
+    }
     pub fn bind_scope(
         &mut self,
         db: &Connection,
@@ -192,6 +198,15 @@ impl Storage {
             }
         }
     }
+    pub fn release_binding(
+        &mut self,
+        db: &Connection,
+        owner: usize,
+        slot: &str,
+        id: usize,
+    ) -> Result<()> {
+        self.contexts.release(db, owner, slot, id)
+    }
     pub fn clear_owner(&mut self, db: &Connection, owner: usize) -> Result<()> {
         self.contexts.clear_owner(db, owner)?;
         let owned = self
@@ -217,6 +232,20 @@ impl Storage {
     }
     pub fn evict(&mut self, db: &Connection, capacity: usize) -> Result<()> {
         self.contexts.evict(db, capacity)?;
+        let orphan_views = self
+            .objects
+            .iter()
+            .filter(|(name, object)| {
+                !object.table
+                    && contexts::managed(name)
+                    && !self.contexts.contains(&format!("__stage_{name}"))
+                    && !self.pins.contains_key(*name)
+            })
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        for name in orphan_views {
+            self.discard(db, &name)?;
+        }
         // Admission owns the capacity. Only completed, unpinned producers can leave it.
         let names = self
             .objects

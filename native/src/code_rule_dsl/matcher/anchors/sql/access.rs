@@ -44,12 +44,16 @@ impl Lower {
             let lang = self.parameter(i64::from(self.lang));
             let guard = self.value_kind_guard(domain.as_ref(), "v");
             let rows = if literal {
-                format!("SELECT v.fid,p.pre FROM {terms} t CROSS JOIN cf CROSS JOIN vidx v ON v.fid=cf.fid CROSS JOIN nera_postings(v.postings) p WHERE v.lang={lang} AND v.term=t.term{guard}")
+                format!(
+                    "SELECT v.fid,p.pre FROM {terms} t CROSS JOIN cf CROSS JOIN vidx v ON v.fid=cf.fid CROSS JOIN nera_postings(v.postings) p WHERE v.lang={lang} AND v.term=t.term{guard}"
+                )
             } else {
                 // The cached regex vocabulary belongs to the complete retained corpus.
                 // Enumerate admitted file postings once, then seek predicate membership;
                 // do not probe every global matching term against every requested file.
-                format!("SELECT v.fid,p.pre FROM cf CROSS JOIN vidx v INDEXED BY vidx_file ON v.fid=cf.fid CROSS JOIN {terms} t ON t.term=v.term CROSS JOIN nera_postings(v.postings) p WHERE v.lang={lang}{guard}")
+                format!(
+                    "SELECT v.fid,p.pre FROM cf CROSS JOIN vidx v INDEXED BY vidx_file ON v.fid=cf.fid CROSS JOIN {terms} t ON t.term=v.term CROSS JOIN nera_postings(v.postings) p WHERE v.lang={lang}{guard}"
+                )
             };
             let set = self.relation(rows, true)?;
             self.preferred.insert(set.name.clone());

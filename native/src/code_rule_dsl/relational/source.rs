@@ -82,7 +82,7 @@ fn install_bound(db: &Connection, binding: SharedBinding) -> Result<()> {
             let binding = binding.read();
             let work = &binding.work;
             let files = &binding.files;
-            charge(&work, 1).map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
+            charge(work, 1).map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
             let path = match ctx.get_raw(0) {
                 ValueRef::Null => None,
                 ValueRef::Text(bytes) => Some(
@@ -104,7 +104,7 @@ fn install_bound(db: &Connection, binding: SharedBinding) -> Result<()> {
             let source = path.and_then(|p| files.get(p));
             let text = source.and_then(|s| s.get(start?..end?));
             if let Some(text) = text {
-                charge(&work, text.len().div_ceil(256))
+                charge(work, text.len().div_ceil(256))
                     .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
             }
             Ok(text.map(|_| Slice {

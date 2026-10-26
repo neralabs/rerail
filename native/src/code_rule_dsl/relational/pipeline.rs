@@ -2,20 +2,19 @@
 use super::{Plan, Stage, quote};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Clone, serde::Serialize)]
+pub(in crate::code_rule_dsl) struct Cut {
+    pub name: String,
+    pub mode: &'static str,
+    pub reason: &'static str,
+    pub readers: Vec<String>,
+}
+
 const SQL_BYTES: usize = 1024 * 1024;
 
-fn occurrences(query: &str, name: &str) -> usize {
-    static IDENTIFIER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"[A-Za-z_][A-Za-z_0-9]*").expect("SQL identifiers")
-    });
-    // The authorizer supplies the actual read set. Textual counts can overestimate
-    // references in literals or local aliases, which only adds a conservative cut.
-    IDENTIFIER
-        .find_iter(query)
-        .filter(|token| token.as_str().eq_ignore_ascii_case(name))
-        .count()
-        .max(1)
-}
+#[path = "pipeline/readers.rs"]
+mod readers;
+use readers::occurrences;
 
 fn closure(
     needed: &BTreeSet<String>,
@@ -123,6 +122,25 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
         })
         .map(|s| s.name.clone())
         .collect::<BTreeSet<_>>();
+    let mut reasons = plan
+        .stages
+        .iter()
+        .filter(|s| retained.contains(&s.name))
+        .map(|s| {
+            let reason = if s.reachability.is_some() {
+                "native readiness or recursive graph boundary"
+            } else if !s.deferred.is_empty() {
+                "deferred columns remain lazy"
+            } else if s.recursive {
+                "recursive SQL scope"
+            } else if s.query.to_ascii_uppercase().contains("COLLATE") {
+                "collation semantics"
+            } else {
+                "authored index with repeated references; token count is conservative"
+            };
+            (s.name.clone(), reason)
+        })
+        .collect::<BTreeMap<_, _>>();
     loop {
         let mut scopes = Vec::new();
         let mut changed = false;
@@ -137,6 +155,7 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
                     .find(|n| stages.contains_key(*n) && !retained.contains(*n))
             {
                 retained.insert(name.clone());
+                reasons.insert(name.clone(), "producer demand depends on this SQL boundary");
                 changed = true;
                 break;
             }
@@ -149,7 +168,7 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
                 &mut inline,
                 &mut external,
             );
-            scopes.push((stage.query.as_str(), inline, &stage.inputs));
+            scopes.push((stage.query.as_ref(), inline, &stage.inputs));
         }
         if changed {
             continue;
@@ -171,6 +190,10 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
             .find(|s| uses.get(&s.name).is_some_and(|&n| n > 1))
         {
             retained.insert(stage.name.clone());
+            reasons.insert(
+                stage.name.clone(),
+                "same producer is read by multiple SQL families",
+            );
             continue;
         }
         // AS MATERIALIZED controls execution, but SQLite still expands CTE references
@@ -226,11 +249,43 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
                 .max_by_key(|s| costs[&s.name].saturating_mul(*weights.get(&s.name).unwrap_or(&0)))
             {
                 retained.insert(stage.name.clone());
+                reasons.insert(
+                    stage.name.clone(),
+                    "internal SQL expansion must remain below 1 MiB",
+                );
                 continue;
             }
         }
         break;
     }
+    plan.cuts = plan
+        .stages
+        .iter()
+        .map(|stage| {
+            let mut readers = plan
+                .stages
+                .iter()
+                .filter(|s| s.inputs.contains(&stage.name))
+                .map(|s| s.name.clone())
+                .collect::<Vec<_>>();
+            if final_reads.contains(&stage.name) {
+                readers.push("<result>".into());
+            }
+            Cut {
+                name: stage.name.clone(),
+                mode: if retained.contains(&stage.name) {
+                    "physical"
+                } else {
+                    "fused"
+                },
+                reason: reasons
+                    .get(&stage.name)
+                    .copied()
+                    .unwrap_or("producer and its readers remain within one SQL family"),
+                readers,
+            }
+        })
+        .collect();
     let mut physical = Vec::new();
     let mut last = BTreeMap::new();
     for stage in &plan.stages {
@@ -248,7 +303,7 @@ pub(in crate::code_rule_dsl) fn lower(plan: &mut Plan, final_reads: BTreeSet<Str
         );
         let mut stage = stage.clone();
         stage.reads_source |= inline.iter().any(|n| stages[n].reads_source);
-        stage.query = render(&plan.stages, &inline, &stage.query, &barriers);
+        stage.query = render(&plan.stages, &inline, &stage.query, &barriers).into();
         stage.inputs = external;
         for input in &stage.inputs {
             last.insert(input.clone(), physical.len());

@@ -66,8 +66,8 @@ pub(in crate::code_rule_dsl::relational) fn save(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let stages=plan.stages.iter().zip(stages).map(|(logical,physical)|serde_json::json!({"name":logical.name,"physical":physical.name,"inputs":logical.inputs,"query":physical.query,"declaration":physical.declaration.as_ref()})).collect::<Vec<_>>();
-    let report = serde_json::json!({"format":"rerail.relational-capture/v1","rule":rule,"clause":clause,"aliases":aliases,"inputs":inputs,"stages":stages,"database":format!("{stem}.sqlite")});
+    let stages=plan.stages.iter().zip(stages).map(|(logical,physical)|serde_json::json!({"name":logical.name,"physical":physical.name,"inputs":logical.inputs,"query":physical.query.as_ref(),"declaration":physical.declaration.as_ref()})).collect::<Vec<_>>();
+    let report = serde_json::json!({"format":"rerail.relational-capture/v1","rule":rule,"clause":clause,"aliases":aliases,"inputs":inputs,"stages":stages,"cuts":plan.cuts,"database":format!("{stem}.sqlite")});
     std::fs::write(
         directory.join(format!("{stem}.json")),
         serde_json::to_vec_pretty(&report).expect("serializable producer capture"),

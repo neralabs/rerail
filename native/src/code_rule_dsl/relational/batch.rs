@@ -275,7 +275,52 @@ fn run_prepared(
             continue;
         }
         stats.partitions += 1;
+        if let Err(error) = pool.statistics_boundary() {
+            for ready in cohort {
+                self::error(
+                    &mut results[ready.index],
+                    ready.clause,
+                    "relational-failed",
+                    &error.reason,
+                );
+            }
+            continue;
+        }
+        let cohort_ids = cohort
+            .iter()
+            .map(|r| (r.index, r.clause))
+            .collect::<Vec<_>>();
         execute(cohort, &mut results, &mut allowance, input_limit);
+        if let Err(maintenance) = pool.statistics_boundary() {
+            pool.invalidate();
+            for (index, clause) in cohort_ids {
+                results[index].violations.clear();
+                results[index].metrics.witnesses = 0;
+                error(
+                    &mut results[index],
+                    clause,
+                    "relational-failed",
+                    &maintenance.reason,
+                );
+            }
+            for (index, job) in jobs.drain(..) {
+                error(
+                    &mut results[index],
+                    job.clause,
+                    "relational-failed",
+                    &maintenance.reason,
+                );
+            }
+            if let Some(ready) = deferred.take() {
+                error(
+                    &mut results[ready.index],
+                    ready.clause,
+                    "relational-failed",
+                    &maintenance.reason,
+                );
+            }
+            break;
+        }
     }
     #[cfg(feature = "code-rule-profile")]
     trace.detail(|| serde_json::json!({"emptyAdmissions":stats.skipped_empty,"capacityPartitions":stats.partitions,"peakSuspendedSessions":stats.peak_sessions,"peakSuspendedSqlBytes":stats.peak_sql_bytes,"inputCapacityBytes":input_limit,"sqlAdmissionBytes":sql_limit}));

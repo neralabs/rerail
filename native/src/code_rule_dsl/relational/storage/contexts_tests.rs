@@ -224,12 +224,25 @@ fn final_reader_releases_only_its_binding_before_consumer_completion() -> Result
 
 #[test]
 fn public_column_names_cannot_collide_with_the_private_scope_key() -> Result<()> {
-    let db=Connection::open_in_memory()?;let mut s=Storage::default();let slot="__context_collision";
-    s.bind_scope(&db,1,BTreeMap::from([(slot.into(),42)]))?;
-    s.declare(&db,slot,format!("CREATE TABLE {slot}(\"__EXECUTION_KEY\" INTEGER,value TEXT)"),true)?;
-    let (table,key)=s.write_target(slot);
-    db.execute(&format!("INSERT INTO {table} VALUES(?1,17,'first')"),[key.unwrap()])?;s.written(slot,true);
-    let value:(i64,String)=db.query_row(&format!("SELECT * FROM {slot}"),[],|r|Ok((r.get(0)?,r.get(1)?)))?;
-    assert_eq!(value,(17,"first".into()));
+    let db = Connection::open_in_memory()?;
+    let mut s = Storage::default();
+    let slot = "__context_collision";
+    s.bind_scope(&db, 1, BTreeMap::from([(slot.into(), 42)]))?;
+    s.declare(
+        &db,
+        slot,
+        format!("CREATE TABLE {slot}(\"__EXECUTION_KEY\" INTEGER,value TEXT)"),
+        true,
+    )?;
+    let (table, key) = s.write_target(slot);
+    db.execute(
+        &format!("INSERT INTO {table} VALUES(?1,17,'first')"),
+        [key.unwrap()],
+    )?;
+    s.written(slot, true);
+    let value: (i64, String) = db.query_row(&format!("SELECT * FROM {slot}"), [], |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })?;
+    assert_eq!(value, (17, "first".into()));
     Ok(())
 }

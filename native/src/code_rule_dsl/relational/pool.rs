@@ -54,11 +54,24 @@ impl Drop for Scope {
             let _ = super::source::bind(&db, None, Arc::new(AtomicUsize::new(0)));
             super::functions::rebind(&db.regex_binding, 0, Arc::new(AtomicUsize::new(0)));
             let bounded = db.bindings.borrow().data_bytes() <= 4 * 1024 * 1024;
-            let clean = bounded || db.storage.borrow_mut().evict(&db, 0).is_ok();
+            let clean = db
+                .storage
+                .borrow_mut()
+                .evict(&db, if bounded { 4 * 1024 * 1024 } else { 0 })
+                .is_ok();
             if !bounded {
                 db.bindings.borrow_mut().forget();
             }
-            if clean && db.healthy.get() && db.is_autocommit() {
+            #[cfg(feature = "code-rule-profile")]
+            db.observe_context("owner-close");
+            if clean
+                && db.storage.borrow().bounded()
+                && db.bindings.borrow().bytes() <= 4 * 1024 * 1024
+                && db.modules.borrow().len() <= 128
+                && db.program_bytes.get() <= 4 * 1024 * 1024
+                && db.healthy.get()
+                && db.is_autocommit()
+            {
                 *self.backing = Some(db);
             }
         }
@@ -71,6 +84,29 @@ pub(super) struct Lease {
     pins: RefCell<Vec<String>>,
 }
 impl Pool {
+    pub fn invalidate(&self) {
+        if let Some(db) = self.0.db.get() {
+            db.healthy.set(false);
+        }
+    }
+    pub fn statistics_boundary(&self) -> Result<()> {
+        if let Some(db) = self.0.db.get() {
+            db.progress_handler(0, None::<fn() -> bool>)
+                .map_err(super::sql_error)?;
+            #[cfg(feature = "code-rule-profile")]
+            let _span = crate::code_rule_dsl::profile::trace::Span::start(
+                "sql-statistics-boundary",
+                "publication",
+            );
+            db.storage
+                .borrow_mut()
+                .statistics_boundary(db)
+                .map_err(super::sql_error)?;
+            #[cfg(feature = "code-rule-profile")]
+            db.observe_context("publication");
+        }
+        Ok(())
+    }
     pub fn trim(&self, capacity: usize) {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-pool-trim", "admission");
@@ -86,6 +122,7 @@ impl Pool {
             let _ = self.0.db.set(connection(max_pattern, work.clone())?);
         }
         let db = self.0.db.get().unwrap();
+        db.ensure_idle().map_err(super::sql_error)?;
         configure_in_place(db, max_pattern, work)?;
         let id = db.bindings.borrow_mut().lease();
         for binding in db.modules.borrow().values() {
@@ -107,6 +144,11 @@ impl Lease {
     ) -> std::cell::Ref<'_, std::collections::BTreeMap<String, super::table::Binding>> {
         self.deref().modules.borrow()
     }
+    pub fn clear_module(&self, name: &str) {
+        if let Some(binding) = self.modules_registry().get(name) {
+            binding.clear();
+        }
+    }
     pub fn private(&self, name: &str) -> String {
         format!("__private_{}_{}", self.id, name)
     }
@@ -119,6 +161,7 @@ impl Lease {
     }
     pub fn activate(&self, max: usize, work: Arc<AtomicUsize>) -> Result<()> {
         if self.active.get() != self.id {
+            self.ensure_idle().map_err(super::sql_error)?;
             for binding in self.modules_registry().values() {
                 binding.clear();
             }
@@ -237,6 +280,70 @@ mod tests {
         );
         assert_eq!(old.load(std::sync::atomic::Ordering::Relaxed), 0);
         assert!(work.load(std::sync::atomic::Ordering::Relaxed) < 100);
+    }
+    #[test]
+    fn rebinding_functions_preserves_prepared_statements_and_isolates_source_and_work() {
+        use crate::code_rule_dsl::model::{FileInput, Snapshot};
+        let snapshot = |source: &str| Snapshot {
+            revision: 1,
+            files: vec![
+                FileInput::new(
+                    "active.py".into(),
+                    "python".into(),
+                    Arc::new(source.into()),
+                    None,
+                    None,
+                    "test",
+                )
+                .unwrap(),
+            ],
+        };
+        let pool = Pool::default();
+        let old = Arc::new(AtomicUsize::new(100));
+        let first = pool.take(1024, old.clone()).unwrap();
+        super::super::source::bind(&first, Some(&snapshot("one")), old.clone()).unwrap();
+        let sql = "SELECT source_text('active.py',0,3),rx_matches('one','one')";
+        let mut statement = first.prepare_cached(sql).unwrap();
+        assert_eq!(
+            statement.query_row([], |r| r.get::<_, String>(0)).unwrap(),
+            "one"
+        );
+        let previous = old.load(std::sync::atomic::Ordering::Relaxed);
+        let current = Arc::new(AtomicUsize::new(100));
+        let second = pool.take(1024, current.clone()).unwrap();
+        super::super::source::bind(&second, Some(&snapshot("two")), current.clone()).unwrap();
+        assert_eq!(
+            statement.query_row([], |r| r.get::<_, String>(0)).unwrap(),
+            "two"
+        );
+        assert_eq!(
+            statement.get_status(rusqlite::StatementStatus::RePrepare),
+            0
+        );
+        assert_eq!(old.load(std::sync::atomic::Ordering::Relaxed), previous);
+        assert!(current.load(std::sync::atomic::Ordering::Relaxed) < 100);
+        first.activate(1024, old.clone()).unwrap();
+        super::super::source::bind(&first, Some(&snapshot("one")), old).unwrap();
+        assert_eq!(
+            statement.query_row([], |r| r.get::<_, String>(0)).unwrap(),
+            "one"
+        );
+    }
+    #[test]
+    fn an_open_sql_cursor_prevents_switching_its_execution_binding() {
+        let pool = Pool::default();
+        let first = pool.take(1024, Arc::new(AtomicUsize::new(100))).unwrap();
+        first
+            .execute_batch("CREATE TABLE frame(v);INSERT INTO frame VALUES(1),(2)")
+            .unwrap();
+        let mut statement = first.prepare("SELECT v FROM frame").unwrap();
+        let mut rows = statement.query([]).unwrap();
+        assert!(rows.next().unwrap().is_some());
+        assert!(pool.take(1024, Arc::new(AtomicUsize::new(100))).is_err());
+        assert_eq!(rows.next().unwrap().unwrap().get::<_, i64>(0).unwrap(), 2);
+        drop(rows);
+        drop(statement);
+        assert!(pool.take(1024, Arc::new(AtomicUsize::new(100))).is_ok());
     }
     #[test]
     fn incomplete_or_failed_consumers_cannot_recycle_partial_rows() {

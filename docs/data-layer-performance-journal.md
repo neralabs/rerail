@@ -5082,3 +5082,56 @@ This commit does not establish completion or a CPU improvement.
 Statistics freshness, retained-cut inventory, cleanup, original observations, and full resource acceptance remain in progress.
 The first complete native DSL invocation reached its 110-second deadline without a reported assertion failure.
 The focused relational suite completes in 0.11 seconds after loading the test binary.
+
+
+### Schema lifecycle: family reuse, statistics, and retained data (2026-10-26)
+
+The implementation now separates reusable layouts from exact source-dependent data identity.
+Suspended consumers share physical programs and immutable SQL text.
+Data-key hashing uses a cached program fingerprint and still compares full definitions on collisions.
+Native source sizes and access paths form bounded planning signatures.
+An empty binding cannot freeze the prepared plan for a later populated binding.
+Functions preserve their registrations while source and work bindings change.
+The executor refuses to change scope while an SQL cursor is active.
+
+Red commit `f40b4148` shows stale statistics after an equal-size distribution change.
+Both populations retain the old `100 100 100` index estimate before the fix.
+The selected implementation refreshes TEMP statistics at complete publication boundaries.
+One `ANALYZE temp` reloads statistics for that batch.
+It replaces per-consumer, per-cut analysis in managed backing.
+Persistent corpus indexes retain their existing statistics and index shapes.
+Repeated reads with no population change require no refresh.
+
+Red commit `705af45b` shows four apparent reads for one table read with three column qualifiers.
+The family compiler now excludes qualifiers, comments, and definite string literals from repeated-read counts.
+It conservatively retains possible quoted table references.
+Actual joins and correlated second reads still retain their authored index boundary.
+The existing compiler continues to compose the complete validated clause.
+Each capture now reports every logical stage, its retained or fused status, its reason, and its readers.
+Remaining token-count uncertainty is identified explicitly.
+No policy-only overlay or general SQL partition rewrite is used.
+
+Red commit `b2e9e98a` exposes a collision between a public column and the private execution key.
+Backing now chooses a distinct private column with SQLite-checked public metadata.
+The public schema and stored values remain unchanged.
+The storage ladder passes six tests, including final-reader cleanup and pinned empty completion.
+Context layouts, completed bindings, native modules, and physical programs have bounded retention.
+Input declarations remain outside input transactions, so rollback cannot remove a cached schema.
+Last readers release their data pins; other suspended consumers retain theirs.
+Recording retains its complete input snapshot until capture; acceptance disables recording.
+
+The SQL executor also removed an unused metadata-only preparation before each stage execution.
+Original SQL and composed SQL already pass compiler validation.
+Native bindings enforce their schemas before execution.
+Final result columns now come from the statement that actually executes.
+This removes duplicate preparation without expanding the statement-cache allowance.
+
+Before the final metadata cleanup, the complete native DSL passes 1,554 tests with 23 existing ignores.
+The final addon passes all 192 original quality observations: 130 positive and 62 clean.
+There are zero false positives, false negatives, engine failures, or execution-path differences.
+The initial shape run requires two test updates for the changed backing format.
+Snapshot checks now use the recorded logical alias in the TEMP snapshot.
+Index checks require the private scope key before the authored lookup column.
+All 77 laboratory tests and static and profiling checks pass at the preceding checkpoint.
+Final source checks and matching full-repository cold measurements follow.
+These checks do not establish a CPU or RSS improvement.

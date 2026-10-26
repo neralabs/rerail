@@ -58,3 +58,29 @@ fn rebinding_preserves_open_cursor_schema_and_releases_old_payloads() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn cached_execution_plans_distinguish_empty_and_populated_native_estimates() -> Result<()> {
+    use std::collections::BTreeMap;
+    let db = super::super::Database::open()?;
+    let sources =
+        |values| BTreeMap::from([("native".into(), Arc::new(Rows(values)) as Arc<dyn Source>)]);
+    let empty = sources(vec![]);
+    let populated = sources(vec![1, 2, 3, 4]);
+    assert_ne!(plan_signature(&empty), plan_signature(&populated));
+    bind(&db, "native", empty["native"].clone())?;
+    db.plan_signature.set(plan_signature(&empty));
+    assert_eq!(
+        db.prepare_execution("SELECT count(*) FROM native")?
+            .query_row([], |r| r.get::<_, i64>(0))?,
+        0
+    );
+    bind(&db, "native", populated["native"].clone())?;
+    db.plan_signature.set(plan_signature(&populated));
+    assert_eq!(
+        db.prepare_execution("SELECT count(*) FROM native")?
+            .query_row([], |r| r.get::<_, i64>(0))?,
+        4
+    );
+    Ok(())
+}

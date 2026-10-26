@@ -346,6 +346,12 @@ fn hundreds_of_suspended_consumers_reuse_one_layout_and_restore_exact_input_doma
         assert!(session.advance().unwrap().is_some());
         sessions.push(session);
     }
+    for session in &sessions[1..] {
+        assert!(
+            Arc::ptr_eq(&sessions[0].physical_stages, &session.physical_stages),
+            "a pending consumer copied its complete physical program"
+        );
+    }
     let db = &sessions[0].db;
     let count: i64 = db
         .query_row("SELECT count(*) FROM temp.sqlite_schema", [], |r| r.get(0))
@@ -369,4 +375,15 @@ fn hundreds_of_suspended_consumers_reuse_one_layout_and_restore_exact_input_doma
             assert_eq!(path, format!("f{i:03}.py"));
         }
     }
+}
+
+#[test]
+fn a_failed_input_transaction_does_not_remove_the_next_consumers_reusable_schema() {
+    let rule = rule();
+    let mut pending = jobs(&rule, files(2));
+    pending[0].budget = Context::work(&Arc::new(AtomicBool::new(false)), 0);
+    let (results, _) = run(pending, producer::MAX_RESIDENT_BYTES, usize::MAX);
+    assert!(!results[0].failures.is_empty());
+    assert!(results[1].failures.is_empty(), "{:?}", results[1].failures);
+    assert_eq!(results[1].violations.len(), 1);
 }

@@ -11,6 +11,7 @@ fn backing(name: &str) -> String {
 }
 #[derive(Default)]
 pub(super) struct Contexts {
+    lifecycle: Lifecycle,
     initialized: bool,
     owner: usize,
     active: BTreeMap<String, usize>,
@@ -19,10 +20,23 @@ pub(super) struct Contexts {
     owners: BTreeMap<usize, BTreeSet<(String, usize)>>,
     completed: VecDeque<(String, usize)>,
 }
+#[derive(Default, serde::Serialize)]
+struct Lifecycle {
+    declarations: usize,
+    declaration_reuses: usize,
+    index_builds: usize,
+    index_reuses: usize,
+    analysis_requests: usize,
+    analysis_batches: usize,
+    owner_keys_visited: usize,
+    rowset_deletions: usize,
+    layout_drops: usize,
+}
 struct Layout {
+    key_column: String,
     definition: String,
     indexes: BTreeMap<String, String>,
-    analyzed: bool,
+    statistics_dirty: bool,
 }
 #[derive(Default)]
 struct Data {
@@ -80,14 +94,19 @@ impl Contexts {
             .get(name)
             .is_some_and(|l| l.definition == definition)
         {
-            if let Some(key) = self.key(name) {
-                if self.data.get(&key).is_some_and(|d| d.dirty && !d.ready) {
-                    db.execute(
-                        &format!("DELETE FROM {} WHERE {KEY}=?1", quote(&backing(name))),
-                        [key.1 as i64],
-                    )?;
-                    self.data.get_mut(&key).unwrap().dirty = false;
-                }
+            self.lifecycle.declaration_reuses += 1;
+            if let Some(key) = self.key(name)
+                && self.data.get(&key).is_some_and(|d| d.dirty && !d.ready)
+            {
+                db.execute(
+                    &format!(
+                        "DELETE FROM {} WHERE {}=?1",
+                        quote(&backing(name)),
+                        quote(&self.layouts[name].key_column)
+                    ),
+                    [key.1 as i64],
+                )?;
+                self.data.get_mut(&key).unwrap().dirty = false;
             }
             return Ok(());
         }
@@ -98,8 +117,24 @@ impl Contexts {
             .split_once('(')
             .ok_or(rusqlite::Error::InvalidQuery)?
             .1;
+        let mut key_column = KEY.to_owned();
+        if body.to_ascii_lowercase().contains(KEY) {
+            let fields = super::super::schema::register(
+                db,
+                "__scope_key_schema",
+                definition.replacen("CREATE TEMP TABLE", "CREATE TABLE", 1),
+            )?;
+            let mut suffix = 0;
+            while fields
+                .iter()
+                .any(|field| field.name.eq_ignore_ascii_case(&key_column))
+            {
+                suffix += 1;
+                key_column = format!("{KEY}_{suffix}");
+            }
+        }
         db.execute_batch(&format!(
-            "CREATE TEMP TABLE {}({KEY} INTEGER NOT NULL,{body}",
+            "CREATE TEMP TABLE {}({key_column} INTEGER NOT NULL,{body}",
             quote(&backing(name))
         ))?;
         let columns = {
@@ -112,18 +147,20 @@ impl Contexts {
                 .join(",")
         };
         let literal = name.replace('\'', "''");
-        db.execute_batch(&format!("CREATE TEMP VIEW {} AS SELECT {columns} FROM {} WHERE {KEY}=(SELECT binding FROM {BINDINGS} WHERE slot='{literal}')",quote(name),quote(&backing(name))))?;
+        db.execute_batch(&format!("CREATE TEMP VIEW {} AS SELECT {columns} FROM {} WHERE {key_column}=(SELECT binding FROM {BINDINGS} WHERE slot='{literal}')",quote(name),quote(&backing(name))))?;
         db.execute_batch(&format!(
-            "CREATE INDEX {} ON {}({KEY})",
+            "CREATE INDEX {} ON {}({key_column})",
             quote(&format!("__binding_{name}")),
             quote(&backing(name))
         ))?;
+        self.lifecycle.declarations += 1;
         self.layouts.insert(
             name.into(),
             Layout {
+                key_column,
                 definition: definition.into(),
                 indexes: BTreeMap::new(),
-                analyzed: false,
+                statistics_dirty: false,
             },
         );
         Ok(())
@@ -145,6 +182,7 @@ impl Contexts {
             .get_mut(slot)
             .ok_or(rusqlite::Error::InvalidQuery)?;
         if layout.indexes.get(name).is_some_and(|s| s == sql) {
+            self.lifecycle.index_reuses += 1;
             return Ok(());
         }
         if layout.indexes.contains_key(name) {
@@ -152,23 +190,33 @@ impl Contexts {
         }
         let fields = sql.split_once('(').ok_or(rusqlite::Error::InvalidQuery)?.1;
         db.execute_batch(&format!(
-            "CREATE INDEX {} ON {}({KEY},{fields}",
+            "CREATE INDEX {} ON {}({},{fields}",
             quote(name),
-            quote(&backing(slot))
+            quote(&backing(slot)),
+            quote(&layout.key_column)
         ))?;
+        self.lifecycle.index_builds += 1;
         layout.indexes.insert(name.into(), sql.into());
         Ok(())
     }
-    pub fn analyze(&mut self, db: &Connection, name: &str, rows: usize) -> Result<()> {
-        let Some(layout) = self.layouts.get_mut(name) else {
-            return Err(rusqlite::Error::InvalidQuery);
-        };
-        // A context contains multiple bindings. Reanalyzing its complete backing for
-        // each binding creates quadratic work. The first populated index supplies
-        // an initial estimate; completed publication batches refresh it explicitly.
-        if rows > 0 && !layout.analyzed {
-            db.execute_batch(&format!("ANALYZE temp.{}", quote(&backing(name))))?;
-            layout.analyzed = true;
+    pub fn analyze(&mut self, _db: &Connection, name: &str, rows: usize) -> Result<()> {
+        let layout = self
+            .layouts
+            .get_mut(name)
+            .ok_or(rusqlite::Error::InvalidQuery)?;
+        self.lifecycle.analysis_requests += 1;
+        layout.statistics_dirty |= rows > 0;
+        Ok(())
+    }
+    pub fn statistics_boundary(&mut self, db: &Connection) -> Result<()> {
+        if self.layouts.values().any(|l| l.statistics_dirty) {
+            // One complete TEMP publication batch, one schema statistics reload.
+            // Native frames and persistent corpus indexes are outside TEMP storage.
+            db.execute_batch("ANALYZE temp")?;
+            self.lifecycle.analysis_batches += 1;
+            for layout in self.layouts.values_mut() {
+                layout.statistics_dirty = false;
+            }
         }
         Ok(())
     }
@@ -199,27 +247,51 @@ impl Contexts {
     }
     fn remove(&mut self, db: &Connection, key: &(String, usize)) -> Result<()> {
         if self.data.get(key).is_some_and(|d| d.dirty) {
+            self.lifecycle.rowset_deletions += 1;
             db.execute(
-                &format!("DELETE FROM {} WHERE {KEY}=?1", quote(&backing(&key.0))),
+                &format!(
+                    "DELETE FROM {} WHERE {}=?1",
+                    quote(&backing(&key.0)),
+                    quote(&self.layouts[&key.0].key_column)
+                ),
                 [key.1 as i64],
             )?;
+        }
+        if let Some(layout) = self.layouts.get_mut(&key.0) {
+            layout.statistics_dirty |= !layout.indexes.is_empty();
         }
         self.data.remove(key);
         Ok(())
     }
+    pub fn release(&mut self, db: &Connection, owner: usize, slot: &str, id: usize) -> Result<()> {
+        let key = (slot.to_owned(), id);
+        if self
+            .owners
+            .get_mut(&owner)
+            .is_some_and(|keys| keys.remove(&key))
+        {
+            self.unpin(db, key)?;
+        }
+        Ok(())
+    }
+    fn unpin(&mut self, db: &Connection, key: (String, usize)) -> Result<()> {
+        self.lifecycle.owner_keys_visited += 1;
+        let Some(data) = self.data.get_mut(&key) else {
+            return Ok(());
+        };
+        data.pins = data.pins.saturating_sub(1);
+        if data.pins == 0 {
+            if data.ready {
+                self.completed.push_back(key);
+            } else {
+                self.remove(db, &key)?;
+            }
+        }
+        Ok(())
+    }
     pub fn clear_owner(&mut self, db: &Connection, owner: usize) -> Result<()> {
         for key in self.owners.remove(&owner).unwrap_or_default() {
-            let Some(data) = self.data.get_mut(&key) else {
-                continue;
-            };
-            data.pins = data.pins.saturating_sub(1);
-            if data.pins == 0 {
-                if data.ready {
-                    self.completed.push_back(key);
-                } else {
-                    self.remove(db, &key)?;
-                }
-            }
+            self.unpin(db, key)?;
         }
         Ok(())
     }
@@ -233,7 +305,20 @@ impl Contexts {
             }
         }
         // Only idle layouts can be evicted. Never drop a suspended consumer's schema.
-        if self.layouts.len() > 128 || self.bytes() > capacity.min(4 * 1024 * 1024) {
+        let layout_bytes = self
+            .layouts
+            .iter()
+            .map(|(n, l)| {
+                n.len()
+                    + l.definition.len()
+                    + l.indexes
+                        .iter()
+                        .map(|(n, q)| n.len() + q.len() + 64)
+                        .sum::<usize>()
+                    + 128
+            })
+            .sum::<usize>();
+        if self.layouts.len() > 128 || layout_bytes > capacity.min(4 * 1024 * 1024) {
             let live = self
                 .data
                 .keys()
@@ -260,9 +345,15 @@ impl Contexts {
             quote(name),
             quote(&backing(name))
         ))?;
+        self.lifecycle.layout_drops += 1;
         self.layouts.remove(name);
         self.data.retain(|(slot, _), _| slot != name);
         Ok(())
+    }
+    #[cfg(feature = "code-rule-profile")]
+    pub fn inventory(&self) -> serde_json::Value {
+        serde_json::json!({"layouts":self.layouts.len(),"dataBindings":self.data.len(),"pendingOwners":self.owners.len(),
+            "dataPins":self.data.values().map(|d|d.pins).sum::<usize>(),"idleCompletions":self.completed.len(),"lifecycle":self.lifecycle})
     }
     pub fn bytes(&self) -> usize {
         self.layouts
@@ -278,6 +369,6 @@ impl Contexts {
             })
             .sum::<usize>()
             + self.data.len() * 128
-            + self.active.iter().map(|(n, _)| n.len() + 48).sum::<usize>()
+            + self.active.keys().map(|n| n.len() + 48).sum::<usize>()
     }
 }

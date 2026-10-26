@@ -1,7 +1,7 @@
 # SQL schema lifecycle: implementation plan
 
 Date: 2026-10-26.
-Status: implementation design. The measurements describe completed experiments, not completed production changes.
+Status: executor implementation and semantic validation are in progress. Full resource acceptance is pending.
 
 This plan expands Delivery 2 of the [cold CPU recovery plan](cold-cpu-recovery-plan.md).
 The [spike results](cold-cpu-spike-results.md) and their receipts supply the evidence.
