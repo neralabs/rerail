@@ -1,7 +1,8 @@
 # Cold CPU recovery: workplan and spike ledger
 
 Date: 2026-10-26.
-Status: design complete. Spikes are next. Production promotion remains separate.
+Status: all planned aspects have completed experiments. Production implementation remains separate.
+The [results](cold-cpu-spike-results.md) rank the work below from the complete diagnostic.
 
 ## Problem and acceptance boundary
 
@@ -205,13 +206,147 @@ All spikes live in tools or the isolated replay host. No production algorithm fl
 
 | Spike | Status | Evidence | Decision |
 | --- | --- | --- | --- |
-| S0 attribution and scaling | Pending | — | — |
-| S1 exact demand and anchor choice | Pending | — | — |
-| S2 fusion and materialization ownership | Pending | — | — |
-| S3 native typed batch boundary | Pending | — | — |
-| S4 publication and statistics | Pending | — | — |
-| S5 planning and metadata reuse | Pending | — | — |
-| S6 composed execution | Pending | — | — |
+| S0 attribution and scaling | Complete, with explicit residual | Full 9,021-file diagnostic; supplemental Node samples; ownership census | Schema analysis, materialization, admission, and cleanup lead |
+| S1 exact demand and anchor choice | Complete | Four-scope exact rows; reversed statistics; failing empty-demand inner arm | Emit one statistics-selected arm before construction |
+| S2 fusion and materialization ownership | Complete | Structural controls; actual policy overlay; 192 original observations | Fuse after validation; retain justified cuts |
+| S3 native typed batch boundary | Complete | 80,000 requests; two waves; one xFilter; exact SQL/scalar/native rows | Keep batch contract; native child implementation has no CPU win |
+| S4 publication and statistics | Complete | 1,024-file publication; controlled 1-MiB cache; rollback and replacement | Keep 32-file transactions, triggers, and current cache budget |
+| S5 planning and metadata reuse | Complete | Schema scaling; real compiler replay; preparation versus execution guard | Reduce live schemas; retain existing bounded metadata cache |
+| S6 composed execution | Complete | Preparation-inclusive variants; empty demand; production policy control | Remove construction first; do not extrapolate component ratios |
+
+## Evidence-ranked implementation deliveries
+
+These are complete deliveries, not a sequence of optional production experiments.
+Each delivery includes its regression ladder and complete cold measurements.
+Statement counts remain diagnostic.
+The intermediate requirement is less cold CPU without a peak-RSS regression against the preceding uninstrumented result.
+Recovery completion additionally requires the first-50 CPU target and exact full-corpus findings.
+
+### Carry the missing measurements with the first delivery
+
+The full run exposes 792 suspended SQL consumers.
+Analysis calls consume 679 measured CPU seconds; trimming and release consume another 323 seconds.
+The existing spans identify the operations but do not identify every retained object.
+
+Add coarse counters at admission, producer completion, family completion, and workspace closure.
+Record active consumers, schema objects, pinned producers, metadata bytes, and rows retained by each owner.
+Separate attempted analysis from executed ANALYZE, index reuse from index creation, and trimming scans from actual drops.
+Keep allocator enumeration outside CPU measurements.
+Keep attribution residuals and timestamp-overlap flags visible.
+Do not make a new owner-index project from a mixed cleanup span alone.
+
+### Delivery 1: cold candidate selection and packet publication
+
+**Bounded scope:** the shared Python candidate path used by the ported rules and its existing kind/value publication path.
+Keep the authoritative matcher and logical rule definitions.
+
+1. Gather exact file, source-version, range, root-kind, value, and column demand before constructing producer relations.
+2. Read SQL-owned statistics once per planning batch.
+3. Choose conjunction discovery order and the physical anchor from those statistics.
+4. Keep compiler-complexity limits independent from execution estimates.
+5. Emit only the selected discovery arm. Refine its keys instead of rebuilding broad alternative sets.
+6. Gate empty demand before posting iteration, field decoding, source matching, or temporary construction.
+7. Publish up to 32 validated file images per transaction, with bounded parameter packets.
+8. Retain positional FTS, current value triggers, SQL statistics, and current cache budgets.
+
+The principal integration points are candidate lowering, source-wave preparation, and `Store::put_known` publication.
+Physical template identity includes the chosen arm and structural definition.
+Counts can change without changing that identity.
+Source versions and candidate domains still determine data validity.
+
+**Regression ladder:** wrong-arm tripwire; reversed statistics; empty demand; overlapping scopes; missing coverage; source replacement; rollback and retry.
+Add a packet failure case that preserves the existing per-file failure behavior.
+Retain the exact kind/value index and original positive observations.
+Measure both full workloads before calling this delivery successful.
+
+**Exclusions:** replacing the matcher, building a second in-memory rule engine, raising allowances, or tuning caches upward.
+
+### Delivery 2: one physical quality pipeline without hundreds of private schemas
+
+**Bounded scope:** the complete 54-stage `quality-contracts-1` program and the generic family compiler needed to execute it.
+The diagnostic observes 889 consumers of this clause and 776.922 measured clause CPU seconds.
+Do not ship a two-terminal-stage policy edit as this delivery.
+
+1. Keep logical SQL validation and the 16-KiB authoring limit.
+2. Resolve options, types, deferred columns, names, and producer dependencies before physical composition.
+3. Gather lightweight request descriptors without opening one SQL schema per suspended consumer.
+4. Partition the validated program at native readiness boundaries, recursive operator boundaries, and existing SQLite statement limits.
+5. Emit one narrow statement per physical family and demand batch.
+6. Carry consumer and source-domain IDs as data. Preserve each correlated request.
+7. Use a CTE cut only for an observed second consumer in the same domain.
+8. Pass result rows directly to finding consolidation when no subsequent SQL consumer needs them.
+9. Remove the corresponding CTAS/index/ANALYZE/release lifecycle.
+
+Deferred source expressions must remain lazy after fusion.
+Projection demand must reach the producer before it creates capture columns.
+A syntactic SELECT of fewer columns is insufficient if the producer already built the full row.
+Native bindings must receive the complete demand frame through one xFilter and return completed typed columns.
+Keep the SQL binding for cheap operations where native transport does not win.
+
+Use the existing linear stage program and typed producer barriers.
+This requires a specialized family executor, not a generic graph scheduler.
+No compiler branch should recognize a data-layer rule ID.
+
+**Regression ladder:** complete operator rows; SQLite affinity and NULLs; deferred expressions; all authored options; repeated consumers; original positive and clean observations.
+Test identical-scope sharing, unequal-scope separation, name conflicts, complete empty results, and source-version changes.
+Run the 192 original quality observations before the broader corpus.
+
+**Budget and failure requirement:** preserve each consumer's existing remaining allowance.
+A shared statement can use the minimum remaining allowance as a conservative batch cap.
+If it trips, discard uncommitted results and subdivide complete consumer domains with the same caps.
+Never multiply a rule allowance by batch size.
+Never split one repository-wide consumer into independent file analyses.
+Test one failing consumer beside successful consumers, including cancellation and rollback.
+The retry policy needs implementation proof before promotion.
+
+**Completion:** complete cold 50/60 results, exact findings, lower aggregate CPU, and no RSS regression.
+The quality clause must no longer pay the old repeated stage lifecycle.
+
+### Delivery 3: apply the same family lowering to the remaining expensive clauses
+
+**Bounded scope:** `state-flow-1`, `authority-sites`, and `legacy-execution-graphs`.
+They account for approximately 611 measured clause CPU seconds in the diagnostic.
+Reuse Delivery 2's executor and contracts.
+
+Preserve the current batched recursive SQL and its cycle semantics.
+Keep global candidate domains complete.
+Use native algorithm relations only when complete construction-inclusive measurements justify them.
+The first-field-child spike does not justify a general switch to native execution.
+
+**Regression ladder:** complete recorded observations; cyclic and shared graphs; independent domains; budget isolation; empty results; source edits.
+Repeat both full repository resource measurements.
+Do not leave runtime optimization flags or parallel rule implementations.
+
+### Delivery 4: close the memory ownership gap and stabilize reuse
+
+**Bounded scope:** live syntax documents, typed projections, source graphs, SQL owners, and completed producer backing in this execution path.
+Retain the existing bounded compiler schema cache.
+Its favorable no-sharing comparison describes an asset already present in production.
+
+1. Compare ownership after input publication, deferred completion, result paging, and workspace closure.
+2. Track source, document, capture-column, graph, SQL-cache, schema, and metadata bytes separately.
+3. Count shared storage once and report unassigned memory explicitly.
+4. Pin syntax and producer frames only through their final dependent family.
+5. Release parser state after demanded typed facts are complete when later work can use the immutable tape.
+6. Reuse stable templates and empty schema backing without retaining source-dependent rows across domains.
+7. Add owner postings or cached byte totals only if the new operation counters show a material repeated scan.
+
+The 128-file census already reports zero JSON projection fields.
+Do not reopen JSON removal as an unexplained blanket rewrite.
+The full snapshot contains substantial swapped memory; current RSS alone cannot validate a memory improvement.
+Compare live allocations, physical footprint, and OS peak RSS separately.
+
+**Regression ladder:** bounded live owners; unchanged execution; repeated edits; pinned old versions; empty completion; release and cancellation.
+Reject cache policies that save memory by causing harmful repeated cold parsing.
+Finish with the complete 50/60 workloads and the existing CPU target.
+
+### Completion record for each delivery
+
+Journal source, native, policy, workload, and driver identities.
+Record compile CPU separately from cold CPU, wall time, and OS peak RSS.
+Preserve complete expected and actual finding identities.
+Use diagnostic SQL counters to explain the result, not to substitute for it.
+If the implementation does not improve complete execution, keep that failure visible and revise the design.
 
 ## Prior evidence and design constraints
 

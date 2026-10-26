@@ -1,0 +1,3282 @@
+{
+  "format": "rerail.cold-cpu-architecture/v1",
+  "sourceRevision": "9195e3a5d86a8e3c3bfb0f9dadc8379d7fef0859",
+  "rawDirectory": ".rerail/profiles/cold-cpu-spikes-20261026",
+  "experiments": [
+    {
+      "name": "selected-anchor-4",
+      "experiment": "anchor",
+      "scale": 4,
+      "captureSha256": "3a95786e45eea0ec2997882d58d0702176bfc43aa37ab8ab1df07c56cd97b206",
+      "binarySha256": "2b6bf5bcf84ad9fbe6187a282fc9e729e55922249b55ee2b8f6ddaa7fe85d600",
+      "sourceBundleSha256": "bf26d407bee12e6fcd0ed575cf9435c3b317eba4f28a7eca8459c717b001fb87",
+      "summarySha256": "826a26745046d5d8b85d107092acc442d9d9819f515be2c8e95051677e14d157",
+      "variants": [
+        {
+          "variant": "broad",
+          "trials": 4,
+          "rowCount": 333,
+          "rowSha256": "25791923b62a3d242c4b01121dd62997cef4d0dc275ae755a39bcbba787fe48d",
+          "cpuMs": [
+            67.65099999999998,
+            69.51499999999999,
+            67.106,
+            67.063
+          ],
+          "kernelCpuMs": [
+            1.0159999999999911,
+            0.9919999999999902,
+            0.9080000000000013,
+            0.9170000000000016
+          ],
+          "peakRssBytes": [
+            7340032,
+            8585216,
+            7405568,
+            7372800
+          ],
+          "wallSeconds": [
+            0.3266327920136973,
+            0.13174870796501637,
+            0.0865045830141753,
+            0.08705562504474074
+          ],
+          "sql": {
+            "autoindex_rows": 301,
+            "execute_cpu_ms": 0.8990000000000151,
+            "fullscan_steps": 17,
+            "preparations": 4,
+            "prepare_cpu_ms": 0.09899999999997533,
+            "sorts": 1,
+            "sql_bytes": 442,
+            "statements": 4,
+            "vm_steps": 15787
+          },
+          "medianCpuMs": 67.37849999999999,
+          "medianKernelCpuMs": 0.9544999999999959,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "child",
+          "trials": 4,
+          "rowCount": 333,
+          "rowSha256": "25791923b62a3d242c4b01121dd62997cef4d0dc275ae755a39bcbba787fe48d",
+          "cpuMs": [
+            74.143,
+            73.30000000000001,
+            69.37899999999999,
+            73.03600000000002
+          ],
+          "kernelCpuMs": [
+            8.475999999999999,
+            8.213999999999999,
+            8.408000000000001,
+            8.582000000000008
+          ],
+          "peakRssBytes": [
+            8437760,
+            7356416,
+            7405568,
+            7372800
+          ],
+          "wallSeconds": [
+            0.165625708992593,
+            0.16396024997811764,
+            0.08897954202257097,
+            0.11529220803640783
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 8.379000000000005,
+            "fullscan_steps": 6,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.07900000000000773,
+            "sorts": 1,
+            "sql_bytes": 361,
+            "statements": 2,
+            "vm_steps": 232245
+          },
+          "medianCpuMs": 73.168,
+          "medianKernelCpuMs": 8.442,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "chosen",
+          "trials": 4,
+          "rowCount": 333,
+          "rowSha256": "25791923b62a3d242c4b01121dd62997cef4d0dc275ae755a39bcbba787fe48d",
+          "cpuMs": [
+            67.32500000000002,
+            67.073,
+            62.97,
+            65.333
+          ],
+          "kernelCpuMs": [
+            0.8410000000000082,
+            0.9549999999999983,
+            0.7680000000000007,
+            0.8100000000000023
+          ],
+          "peakRssBytes": [
+            8421376,
+            7372800,
+            7323648,
+            8437760
+          ],
+          "wallSeconds": [
+            0.12380658404435962,
+            0.12172837497200817,
+            0.08490258303936571,
+            0.11644012504257262
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 0.7369999999999948,
+            "fullscan_steps": 6,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.08800000000000807,
+            "sorts": 1,
+            "sql_bytes": 365,
+            "statements": 2,
+            "vm_steps": 6640
+          },
+          "medianCpuMs": 66.203,
+          "medianKernelCpuMs": 0.8255000000000052,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "parent",
+          "trials": 4,
+          "rowCount": 333,
+          "rowSha256": "25791923b62a3d242c4b01121dd62997cef4d0dc275ae755a39bcbba787fe48d",
+          "cpuMs": [
+            62.739999999999995,
+            64.64399999999999,
+            68.25399999999999,
+            63.314
+          ],
+          "kernelCpuMs": [
+            0.8659999999999997,
+            0.7879999999999967,
+            0.9449999999999932,
+            0.8059999999999974
+          ],
+          "peakRssBytes": [
+            7471104,
+            7356416,
+            7503872,
+            7372800
+          ],
+          "wallSeconds": [
+            0.10311679099686444,
+            0.0930998750263825,
+            0.17234195792116225,
+            0.08195837493985891
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 0.7830000000000013,
+            "fullscan_steps": 6,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.07100000000001216,
+            "sorts": 1,
+            "sql_bytes": 365,
+            "statements": 2,
+            "vm_steps": 6640
+          },
+          "medianCpuMs": 63.979,
+          "medianKernelCpuMs": 0.8359999999999985,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "selected-fusion-256",
+      "experiment": "fusion",
+      "scale": 256,
+      "captureSha256": "3a95786e45eea0ec2997882d58d0702176bfc43aa37ab8ab1df07c56cd97b206",
+      "binarySha256": "2b6bf5bcf84ad9fbe6187a282fc9e729e55922249b55ee2b8f6ddaa7fe85d600",
+      "sourceBundleSha256": "bf26d407bee12e6fcd0ed575cf9435c3b317eba4f28a7eca8459c717b001fb87",
+      "summarySha256": "7888e481eca19c472a02ec4f7e737d44bac15e741989f3e822a21a0fcc7308d8",
+      "variants": [
+        {
+          "variant": "fused",
+          "trials": 4,
+          "rowCount": 17033,
+          "rowSha256": "5586e839d77a7950edc26ccc65a5f4033af77969bbc7bcc3382385f01dbe5be2",
+          "cpuMs": [
+            98.2,
+            94.30199999999999,
+            97.632,
+            105.661
+          ],
+          "kernelCpuMs": [
+            30.328000000000003,
+            32.95299999999999,
+            34.741,
+            38.405
+          ],
+          "peakRssBytes": [
+            8962048,
+            9764864,
+            8994816,
+            9388032
+          ],
+          "wallSeconds": [
+            0.19841145805548877,
+            0.12281783297657967,
+            0.12934308301191777,
+            0.1697988329688087
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 30.21199999999999,
+            "fullscan_steps": 21066,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.09700000000000841,
+            "sorts": 1,
+            "sql_bytes": 567,
+            "statements": 2,
+            "vm_steps": 652355
+          },
+          "medianCpuMs": 97.916,
+          "medianKernelCpuMs": 33.846999999999994,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "inline",
+          "trials": 4,
+          "rowCount": 17033,
+          "rowSha256": "5586e839d77a7950edc26ccc65a5f4033af77969bbc7bcc3382385f01dbe5be2",
+          "cpuMs": [
+            116.953,
+            121.05900000000001,
+            128.83800000000002,
+            129.248
+          ],
+          "kernelCpuMs": [
+            55.673,
+            56.363000000000014,
+            60.36200000000001,
+            65.336
+          ],
+          "peakRssBytes": [
+            8552448,
+            8650752,
+            8732672,
+            9682944
+          ],
+          "wallSeconds": [
+            0.15350408293306828,
+            0.16653379192575812,
+            0.1654286669800058,
+            0.18076816701795906
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 55.542,
+            "fullscan_steps": 765,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.1110000000000042,
+            "sorts": 1,
+            "sql_bytes": 556,
+            "statements": 2,
+            "vm_steps": 771710
+          },
+          "medianCpuMs": 124.94850000000002,
+          "medianKernelCpuMs": 58.36250000000001,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "materialized",
+          "trials": 4,
+          "rowCount": 17033,
+          "rowSha256": "5586e839d77a7950edc26ccc65a5f4033af77969bbc7bcc3382385f01dbe5be2",
+          "cpuMs": [
+            102.773,
+            102.43599999999999,
+            99.17200000000001,
+            99.767
+          ],
+          "kernelCpuMs": [
+            35.340999999999994,
+            40.010999999999996,
+            37.35300000000001,
+            33.04599999999999
+          ],
+          "peakRssBytes": [
+            10092544,
+            10010624,
+            9961472,
+            9535488
+          ],
+          "wallSeconds": [
+            0.13815370795782655,
+            0.1415669999551028,
+            0.13993891701102257,
+            0.1334244579775259
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 35.225999999999985,
+            "fullscan_steps": 41620,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.09600000000000364,
+            "sorts": 1,
+            "sql_bytes": 552,
+            "statements": 2,
+            "vm_steps": 714022
+          },
+          "medianCpuMs": 101.10149999999999,
+          "medianKernelCpuMs": 36.347,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "staged",
+          "trials": 4,
+          "rowCount": 17033,
+          "rowSha256": "5586e839d77a7950edc26ccc65a5f4033af77969bbc7bcc3382385f01dbe5be2",
+          "cpuMs": [
+            104.953,
+            110.65100000000001,
+            111.989,
+            109.184
+          ],
+          "kernelCpuMs": [
+            43.197,
+            47.92400000000001,
+            42.772999999999996,
+            45.021
+          ],
+          "peakRssBytes": [
+            10108928,
+            9977856,
+            9814016,
+            8568832
+          ],
+          "wallSeconds": [
+            0.14106379100121558,
+            0.14135479100514203,
+            0.15809133392758667,
+            0.13945383403915912
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 42.92699999999999,
+            "fullscan_steps": 41657,
+            "preparations": 6,
+            "prepare_cpu_ms": 0.2150000000000034,
+            "sorts": 2,
+            "sql_bytes": 615,
+            "statements": 6,
+            "vm_steps": 1187061
+          },
+          "medianCpuMs": 109.9175,
+          "medianKernelCpuMs": 44.109,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "selected-native-256",
+      "experiment": "native",
+      "scale": 256,
+      "captureSha256": "3a95786e45eea0ec2997882d58d0702176bfc43aa37ab8ab1df07c56cd97b206",
+      "binarySha256": "2b6bf5bcf84ad9fbe6187a282fc9e729e55922249b55ee2b8f6ddaa7fe85d600",
+      "sourceBundleSha256": "bf26d407bee12e6fcd0ed575cf9435c3b317eba4f28a7eca8459c717b001fb87",
+      "summarySha256": "de0e301bde3ef16a96bc2da1c00ad36b25d3bed3f40042eed1bf1cd56fe386e8",
+      "variants": [
+        {
+          "variant": "batch",
+          "trials": 4,
+          "rowCount": 20556,
+          "rowSha256": "e733523468851f9d037a1f1079153cc78464e41d2fde5a4059edd6b009faed3a",
+          "cpuMs": [
+            108.345,
+            111.50499999999998,
+            101.493,
+            103.21600000000001
+          ],
+          "kernelCpuMs": [
+            43.488,
+            41.62299999999999,
+            37.900999999999996,
+            41.32300000000001
+          ],
+          "peakRssBytes": [
+            13369344,
+            12894208,
+            13156352,
+            13582336
+          ],
+          "wallSeconds": [
+            0.3309607090195641,
+            0.3002193329157308,
+            0.1671452500158921,
+            0.2708576249424368
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 42.81400000000001,
+            "fullscan_steps": 42246,
+            "preparations": 6,
+            "prepare_cpu_ms": 0.19900000000001228,
+            "sorts": 3,
+            "sql_bytes": 606,
+            "statements": 6,
+            "vm_steps": 1683752
+          },
+          "medianCpuMs": 105.7805,
+          "medianKernelCpuMs": 41.473,
+          "operator": {
+            "columnCallbacks": 82224,
+            "estimatedRows": 25914,
+            "filters": 1,
+            "inputLayout": "five contiguous i64 columns; correlated request IDs via sqlite3_vtab_in",
+            "maxBufferedOutputRows": 20556,
+            "outputRows": 20556,
+            "requests": 20556,
+            "visitedDirectChildren": 42392,
+            "waveRows": 65536,
+            "waves": 1
+          },
+          "native": {
+            "blob_opens": 6,
+            "bytes": [
+              639300,
+              0,
+              0,
+              106550,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 1,
+            "reads": [
+              417,
+              0,
+              0,
+              417,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "scalar",
+          "trials": 4,
+          "rowCount": 20556,
+          "rowSha256": "e733523468851f9d037a1f1079153cc78464e41d2fde5a4059edd6b009faed3a",
+          "cpuMs": [
+            103.092,
+            108.62,
+            94.584,
+            98.45400000000001
+          ],
+          "kernelCpuMs": [
+            36.718999999999994,
+            39.32599999999999,
+            33.980000000000004,
+            35.10900000000001
+          ],
+          "peakRssBytes": [
+            9650176,
+            9666560,
+            8765440,
+            10174464
+          ],
+          "wallSeconds": [
+            0.25621279201004654,
+            0.35847641597501934,
+            0.20365929207764566,
+            0.18815387494396418
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 36.50900000000003,
+            "fullscan_steps": 42246,
+            "preparations": 5,
+            "prepare_cpu_ms": 0.17100000000000648,
+            "sorts": 2,
+            "sql_bytes": 700,
+            "statements": 5,
+            "vm_steps": 1601517
+          },
+          "medianCpuMs": 100.773,
+          "medianKernelCpuMs": 35.914,
+          "operator": {
+            "estimatedRows": 25914
+          },
+          "native": {
+            "blob_opens": 6,
+            "bytes": [
+              891528,
+              0,
+              0,
+              148588,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 42392,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 1,
+            "reads": [
+              582,
+              0,
+              0,
+              582,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "sql",
+          "trials": 4,
+          "rowCount": 20556,
+          "rowSha256": "e733523468851f9d037a1f1079153cc78464e41d2fde5a4059edd6b009faed3a",
+          "cpuMs": [
+            108.81599999999999,
+            115.72099999999999,
+            104.84800000000001,
+            102.416
+          ],
+          "kernelCpuMs": [
+            43.92099999999999,
+            46.676,
+            41.953,
+            40.944
+          ],
+          "peakRssBytes": [
+            9224192,
+            8257536,
+            9715712,
+            8667136
+          ],
+          "wallSeconds": [
+            0.5109781250357628,
+            0.30274254200048745,
+            0.2537805420579389,
+            0.1602435839595273
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 43.67799999999998,
+            "fullscan_steps": 21691,
+            "preparations": 5,
+            "prepare_cpu_ms": 0.20699999999999363,
+            "sorts": 2,
+            "sql_bytes": 740,
+            "statements": 5,
+            "vm_steps": 2033187
+          },
+          "medianCpuMs": 106.832,
+          "medianKernelCpuMs": 42.937,
+          "operator": {
+            "estimatedRows": 25914
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "controlled-publication-1024",
+      "experiment": "publication",
+      "scale": 1024,
+      "captureSha256": "3a95786e45eea0ec2997882d58d0702176bfc43aa37ab8ab1df07c56cd97b206",
+      "binarySha256": "d050f83ced8d22b256089e024eadd04b3c84f274c9c1a683b829e948e4304802",
+      "sourceBundleSha256": "24e8f5ff77ec5de2da4224018be706d2477d93c5bc23ddc5e87bab8d0b9c12e2",
+      "summarySha256": "a241180e6aef7f7c51ce02c2a7a350d58b1e8690f690db33b8eff3de500321f1",
+      "variants": [
+        {
+          "variant": "file",
+          "trials": 3,
+          "rowCount": 232,
+          "rowSha256": "9dd9cf7b447c4c7e67781bdbb6e4c63227c322677dded6c1de1eeaf363a6c109",
+          "cpuMs": [
+            4202.892000000001,
+            3209.67,
+            3458.821
+          ],
+          "kernelCpuMs": [
+            4127.263000000001,
+            3136.893,
+            3386.757
+          ],
+          "peakRssBytes": [
+            15941632,
+            14663680,
+            15138816
+          ],
+          "wallSeconds": [
+            10.499373500002548,
+            7.376833291957155,
+            7.80236741702538
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 3984.048000000015,
+            "fullscan_steps": 2095104,
+            "preparations": 7168,
+            "prepare_cpu_ms": 117.26100000001352,
+            "sorts": 1024,
+            "sql_bytes": 703488,
+            "statements": 7168,
+            "vm_steps": 25899588
+          },
+          "medianCpuMs": 3458.821,
+          "medianKernelCpuMs": 3386.757,
+          "cacheBefore": {
+            "bytes": 1847936,
+            "hits": 8270,
+            "misses": 1485,
+            "spills": 1735,
+            "writes": 3025
+          },
+          "cacheAfter": {
+            "bytes": 2801024,
+            "hits": 725669,
+            "misses": 750641,
+            "spills": 1792,
+            "writes": 104298
+          },
+          "cacheKiB": 1024,
+          "packetFiles": 1,
+          "transactions": 1024,
+          "diagnosticExecutions": {
+            "commented_profile_events": 0,
+            "profile_events": 519,
+            "trigger_entries": 2336
+          },
+          "diagnosticSqliteInternalExecutions": 295,
+          "diagnosticHost": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 98.81099999999515,
+            "fullscan_steps": 65472,
+            "preparations": 224,
+            "prepare_cpu_ms": 3.3450000000038926,
+            "sorts": 32,
+            "sql_bytes": 21984,
+            "statements": 224,
+            "vm_steps": 872960
+          },
+          "rollback": true,
+          "replacement": true,
+          "pinnedSqlSnapshot": true
+        },
+        {
+          "variant": "file-eight-cache",
+          "trials": 3,
+          "rowCount": 232,
+          "rowSha256": "9dd9cf7b447c4c7e67781bdbb6e4c63227c322677dded6c1de1eeaf363a6c109",
+          "cpuMs": [
+            3319.428,
+            2668.7259999999997,
+            4702.893
+          ],
+          "kernelCpuMs": [
+            3253.123,
+            2610.727,
+            4616.072
+          ],
+          "peakRssBytes": [
+            55083008,
+            53329920,
+            60391424
+          ],
+          "wallSeconds": [
+            7.8847259590402246,
+            6.382796167046763,
+            10.572711166925728
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 3124.00199999998,
+            "fullscan_steps": 2095104,
+            "preparations": 7168,
+            "prepare_cpu_ms": 105.04099999998651,
+            "sorts": 1024,
+            "sql_bytes": 703488,
+            "statements": 7168,
+            "vm_steps": 25899588
+          },
+          "medianCpuMs": 3319.428,
+          "medianKernelCpuMs": 3253.123,
+          "cacheBefore": {
+            "bytes": 9398656,
+            "hits": 9605,
+            "misses": 150,
+            "spills": 192,
+            "writes": 3021
+          },
+          "cacheAfter": {
+            "bytes": 17902464,
+            "hits": 1474425,
+            "misses": 1885,
+            "spills": 192,
+            "writes": 104294
+          },
+          "cacheKiB": 8192,
+          "packetFiles": 1,
+          "transactions": 1024,
+          "diagnosticExecutions": {
+            "commented_profile_events": 0,
+            "profile_events": 519,
+            "trigger_entries": 2336
+          },
+          "diagnosticSqliteInternalExecutions": 295,
+          "diagnosticHost": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 79.5869999999959,
+            "fullscan_steps": 65472,
+            "preparations": 224,
+            "prepare_cpu_ms": 3.329000000007909,
+            "sorts": 32,
+            "sql_bytes": 21984,
+            "statements": 224,
+            "vm_steps": 872960
+          },
+          "rollback": true,
+          "replacement": true,
+          "pinnedSqlSnapshot": true
+        },
+        {
+          "variant": "packet-large-cache",
+          "trials": 3,
+          "rowCount": 232,
+          "rowSha256": "9dd9cf7b447c4c7e67781bdbb6e4c63227c322677dded6c1de1eeaf363a6c109",
+          "cpuMs": [
+            393.96000000000004,
+            471.908,
+            449.56300000000005
+          ],
+          "kernelCpuMs": [
+            353.39500000000004,
+            429.452,
+            408.54900000000004
+          ],
+          "peakRssBytes": [
+            87113728,
+            92323840,
+            90521600
+          ],
+          "wallSeconds": [
+            2.2463312500622123,
+            2.953127041924745,
+            3.2121326670749113
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 345.9669999999998,
+            "fullscan_steps": 65472,
+            "preparations": 320,
+            "prepare_cpu_ms": 6.140999999999629,
+            "sorts": 128,
+            "sql_bytes": 38656,
+            "statements": 320,
+            "vm_steps": 10738606
+          },
+          "medianCpuMs": 449.56300000000005,
+          "medianKernelCpuMs": 408.54900000000004,
+          "cacheBefore": {
+            "bytes": 13672320,
+            "hits": 9609,
+            "misses": 150,
+            "spills": 0,
+            "writes": 59
+          },
+          "cacheAfter": {
+            "bytes": 25270400,
+            "hits": 493941,
+            "misses": 150,
+            "spills": 0,
+            "writes": 8497
+          },
+          "cacheKiB": 32768,
+          "packetFiles": 32,
+          "transactions": 32,
+          "diagnosticExecutions": {
+            "commented_profile_events": 0,
+            "profile_events": 56,
+            "trigger_entries": 0
+          },
+          "diagnosticSqliteInternalExecutions": 46,
+          "diagnosticHost": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 10.123000000000047,
+            "fullscan_steps": 2046,
+            "preparations": 10,
+            "prepare_cpu_ms": 0.19900000000006912,
+            "sorts": 4,
+            "sql_bytes": 1208,
+            "statements": 10,
+            "vm_steps": 337670
+          },
+          "rollback": true,
+          "replacement": true,
+          "pinnedSqlSnapshot": true
+        },
+        {
+          "variant": "packet-set",
+          "trials": 3,
+          "rowCount": 232,
+          "rowSha256": "9dd9cf7b447c4c7e67781bdbb6e4c63227c322677dded6c1de1eeaf363a6c109",
+          "cpuMs": [
+            429.59999999999997,
+            431.765,
+            454.764
+          ],
+          "kernelCpuMs": [
+            370.234,
+            370.129,
+            394.6
+          ],
+          "peakRssBytes": [
+            52264960,
+            55181312,
+            53673984
+          ],
+          "wallSeconds": [
+            3.2267300840467215,
+            2.7496414579218253,
+            3.0794824169715866
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 361.3229999999998,
+            "fullscan_steps": 65472,
+            "preparations": 320,
+            "prepare_cpu_ms": 7.387999999999636,
+            "sorts": 128,
+            "sql_bytes": 38656,
+            "statements": 320,
+            "vm_steps": 10738606
+          },
+          "medianCpuMs": 431.765,
+          "medianKernelCpuMs": 370.234,
+          "cacheBefore": {
+            "bytes": 9398656,
+            "hits": 9609,
+            "misses": 150,
+            "spills": 192,
+            "writes": 3023
+          },
+          "cacheAfter": {
+            "bytes": 17902464,
+            "hits": 491217,
+            "misses": 1850,
+            "spills": 192,
+            "writes": 11461
+          },
+          "cacheKiB": 8192,
+          "packetFiles": 32,
+          "transactions": 32,
+          "diagnosticExecutions": {
+            "commented_profile_events": 0,
+            "profile_events": 56,
+            "trigger_entries": 0
+          },
+          "diagnosticSqliteInternalExecutions": 46,
+          "diagnosticHost": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 9.50400000000036,
+            "fullscan_steps": 2046,
+            "preparations": 10,
+            "prepare_cpu_ms": 0.2580000000002656,
+            "sorts": 4,
+            "sql_bytes": 1208,
+            "statements": 10,
+            "vm_steps": 337670
+          },
+          "rollback": true,
+          "replacement": true,
+          "pinnedSqlSnapshot": true
+        },
+        {
+          "variant": "packet-small-cache",
+          "trials": 3,
+          "rowCount": 232,
+          "rowSha256": "9dd9cf7b447c4c7e67781bdbb6e4c63227c322677dded6c1de1eeaf363a6c109",
+          "cpuMs": [
+            588.2810000000001,
+            484.1,
+            489.23499999999996
+          ],
+          "kernelCpuMs": [
+            507.15000000000003,
+            418.783,
+            426.066
+          ],
+          "peakRssBytes": [
+            14942208,
+            13860864,
+            16007168
+          ],
+          "wallSeconds": [
+            3.4399198750033975,
+            3.607375666964799,
+            4.4073933330364525
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 497.79100000000017,
+            "fullscan_steps": 65472,
+            "preparations": 320,
+            "prepare_cpu_ms": 7.799000000000618,
+            "sorts": 128,
+            "sql_bytes": 38656,
+            "statements": 320,
+            "vm_steps": 10738606
+          },
+          "medianCpuMs": 489.23499999999996,
+          "medianKernelCpuMs": 426.066,
+          "cacheBefore": {
+            "bytes": 1847936,
+            "hits": 8274,
+            "misses": 1485,
+            "spills": 1735,
+            "writes": 3027
+          },
+          "cacheAfter": {
+            "bytes": 2801024,
+            "hits": 462335,
+            "misses": 30732,
+            "spills": 3574,
+            "writes": 11551
+          },
+          "cacheKiB": 1024,
+          "packetFiles": 32,
+          "transactions": 32,
+          "diagnosticExecutions": {
+            "commented_profile_events": 0,
+            "profile_events": 56,
+            "trigger_entries": 0
+          },
+          "diagnosticSqliteInternalExecutions": 46,
+          "diagnosticHost": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 10.119000000000142,
+            "fullscan_steps": 2046,
+            "preparations": 10,
+            "prepare_cpu_ms": 0.23000000000047294,
+            "sorts": 4,
+            "sql_bytes": 1208,
+            "statements": 10,
+            "vm_steps": 337670
+          },
+          "rollback": true,
+          "replacement": true,
+          "pinnedSqlSnapshot": true
+        },
+        {
+          "variant": "packet-triggers",
+          "trials": 3,
+          "rowCount": 232,
+          "rowSha256": "9dd9cf7b447c4c7e67781bdbb6e4c63227c322677dded6c1de1eeaf363a6c109",
+          "cpuMs": [
+            532.4730000000001,
+            482.739,
+            529.826
+          ],
+          "kernelCpuMs": [
+            450.64000000000004,
+            421.652,
+            461.477
+          ],
+          "peakRssBytes": [
+            14663680,
+            14663680,
+            14991360
+          ],
+          "wallSeconds": [
+            3.928105124970898,
+            3.4157151660183445,
+            3.9532776250271127
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 444.31500000000005,
+            "fullscan_steps": 65472,
+            "preparations": 224,
+            "prepare_cpu_ms": 5.225999999999829,
+            "sorts": 32,
+            "sql_bytes": 21984,
+            "statements": 224,
+            "vm_steps": 15274276
+          },
+          "medianCpuMs": 529.826,
+          "medianKernelCpuMs": 450.64000000000004,
+          "cacheBefore": {
+            "bytes": 1847936,
+            "hits": 8270,
+            "misses": 1485,
+            "spills": 1735,
+            "writes": 3025
+          },
+          "cacheAfter": {
+            "bytes": 2801024,
+            "hits": 683693,
+            "misses": 30857,
+            "spills": 3597,
+            "writes": 11577
+          },
+          "cacheKiB": 1024,
+          "packetFiles": 32,
+          "transactions": 32,
+          "diagnosticExecutions": {
+            "commented_profile_events": 0,
+            "profile_events": 53,
+            "trigger_entries": 2336
+          },
+          "diagnosticSqliteInternalExecutions": 46,
+          "diagnosticHost": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 12.46599999999944,
+            "fullscan_steps": 2046,
+            "preparations": 7,
+            "prepare_cpu_ms": 0.17300000000068394,
+            "sorts": 1,
+            "sql_bytes": 687,
+            "statements": 7,
+            "vm_steps": 479415
+          },
+          "rollback": true,
+          "replacement": true,
+          "pinnedSqlSnapshot": true
+        }
+      ]
+    },
+    {
+      "name": "selected-planning-256",
+      "experiment": "planning",
+      "scale": 256,
+      "captureSha256": "3a95786e45eea0ec2997882d58d0702176bfc43aa37ab8ab1df07c56cd97b206",
+      "binarySha256": "2b6bf5bcf84ad9fbe6187a282fc9e729e55922249b55ee2b8f6ddaa7fe85d600",
+      "sourceBundleSha256": "bf26d407bee12e6fcd0ed575cf9435c3b317eba4f28a7eca8459c717b001fb87",
+      "summarySha256": "c7bac04b2c4bb2b4e1cc8085ff68726c02bd1c09ea09c45547d9cbf9620f0f4d",
+      "variants": [
+        {
+          "variant": "batch",
+          "trials": 4,
+          "rowCount": 20556,
+          "rowSha256": "e733523468851f9d037a1f1079153cc78464e41d2fde5a4059edd6b009faed3a",
+          "cpuMs": [
+            97.74600000000001,
+            90.521,
+            99.00699999999999,
+            93.652
+          ],
+          "kernelCpuMs": [
+            29.939999999999998,
+            26.753,
+            32.44199999999999,
+            29.423999999999992
+          ],
+          "peakRssBytes": [
+            8732672,
+            8208384,
+            8224768,
+            8257536
+          ],
+          "wallSeconds": [
+            0.14065474993549287,
+            0.12275924999266863,
+            0.13246150000486523,
+            0.12800779205281287
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 29.863000000000014,
+            "fullscan_steps": 510,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.056000000000011596,
+            "sorts": 1,
+            "sql_bytes": 365,
+            "statements": 2,
+            "vm_steps": 406249
+          },
+          "medianCpuMs": 95.69900000000001,
+          "medianKernelCpuMs": 29.681999999999995,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "private-schema",
+          "trials": 4,
+          "rowCount": 20556,
+          "rowSha256": "e733523468851f9d037a1f1079153cc78464e41d2fde5a4059edd6b009faed3a",
+          "cpuMs": [
+            125.85499999999999,
+            123.004,
+            114.25999999999999,
+            114.269
+          ],
+          "kernelCpuMs": [
+            62.19999999999999,
+            58.111999999999995,
+            53.230999999999995,
+            50.28200000000001
+          ],
+          "peakRssBytes": [
+            9453568,
+            9011200,
+            9469952,
+            9388032
+          ],
+          "wallSeconds": [
+            0.16079912497662008,
+            0.17316691693849862,
+            0.14485041704028845,
+            0.1492577079916373
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 48.49000000000022,
+            "fullscan_steps": 3071,
+            "preparations": 769,
+            "prepare_cpu_ms": 11.850999999999743,
+            "sorts": 1,
+            "sql_bytes": 92603,
+            "statements": 769,
+            "vm_steps": 429278
+          },
+          "medianCpuMs": 118.63650000000001,
+          "medianKernelCpuMs": 55.671499999999995,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "reprepare",
+          "trials": 4,
+          "rowCount": 20556,
+          "rowSha256": "e733523468851f9d037a1f1079153cc78464e41d2fde5a4059edd6b009faed3a",
+          "cpuMs": [
+            108.475,
+            114.929,
+            105.351,
+            111.11599999999999
+          ],
+          "kernelCpuMs": [
+            45.625,
+            47.91199999999999,
+            37.788,
+            47.52499999999999
+          ],
+          "peakRssBytes": [
+            9289728,
+            8192000,
+            8273920,
+            8749056
+          ],
+          "wallSeconds": [
+            0.1566771250218153,
+            0.1787200840190053,
+            0.13686624995898455,
+            0.13966383296065032
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 38.30999999999986,
+            "fullscan_steps": 255,
+            "preparations": 257,
+            "prepare_cpu_ms": 6.366,
+            "sorts": 1,
+            "sql_bytes": 92165,
+            "statements": 257,
+            "vm_steps": 409054
+          },
+          "medianCpuMs": 109.79549999999999,
+          "medianKernelCpuMs": 46.574999999999996,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "reuse",
+          "trials": 4,
+          "rowCount": 20556,
+          "rowSha256": "e733523468851f9d037a1f1079153cc78464e41d2fde5a4059edd6b009faed3a",
+          "cpuMs": [
+            99.79799999999999,
+            101.41,
+            104.32500000000002,
+            99.002
+          ],
+          "kernelCpuMs": [
+            35.394999999999996,
+            32.792,
+            31.39200000000001,
+            33.923
+          ],
+          "peakRssBytes": [
+            9224192,
+            8601600,
+            8617984,
+            8077312
+          ],
+          "wallSeconds": [
+            0.14737649995367974,
+            0.1459115829784423,
+            0.13882070896215737,
+            0.12751770799513906
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 35.275999999999996,
+            "fullscan_steps": 255,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.09299999999998931,
+            "sorts": 1,
+            "sql_bytes": 474,
+            "statements": 257,
+            "vm_steps": 409566
+          },
+          "medianCpuMs": 100.60399999999998,
+          "medianKernelCpuMs": 33.3575,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "selected-metadata-128",
+      "experiment": "metadata",
+      "scale": 128,
+      "captureSha256": "3a95786e45eea0ec2997882d58d0702176bfc43aa37ab8ab1df07c56cd97b206",
+      "binarySha256": "2b6bf5bcf84ad9fbe6187a282fc9e729e55922249b55ee2b8f6ddaa7fe85d600",
+      "sourceBundleSha256": "24e8f5ff77ec5de2da4224018be706d2477d93c5bc23ddc5e87bab8d0b9c12e2",
+      "summarySha256": "d3e357a8743d0902b3b130cf5e253ca353c7f1bb81e215925fa145f002c3fbba",
+      "variants": [
+        {
+          "variant": "analyze-each",
+          "trials": 3,
+          "rowCount": 64,
+          "rowSha256": "1bac9f0a678f8ddfee600181aa1f5e002e6e852fa22059830d79fbe0315721d1",
+          "cpuMs": [
+            107.832,
+            113.53399999999999,
+            114.19799999999998
+          ],
+          "kernelCpuMs": [
+            47.788,
+            51.931,
+            47.53899999999999
+          ],
+          "peakRssBytes": [
+            9093120,
+            9191424,
+            8077312
+          ],
+          "wallSeconds": [
+            0.14306270889937878,
+            0.13677004200872034,
+            0.1400687909917906
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 42.247999999999905,
+            "fullscan_steps": 105087,
+            "preparations": 834,
+            "prepare_cpu_ms": 3.958999999999776,
+            "sorts": 193,
+            "sql_bytes": 29720,
+            "statements": 834,
+            "vm_steps": 2921222
+          },
+          "medianCpuMs": 113.53399999999999,
+          "medianKernelCpuMs": 47.788,
+          "operator": {
+            "consumerCpuMs": 15.299999999999997,
+            "consumers": 64,
+            "objectsAfterRelease": 0,
+            "retainedCleanupCpuMs": 4.492999999999995,
+            "retainedObjects": 256,
+            "retainedSetupCpuMs": 27.763000000000005,
+            "scope": "SQLite schema/statistics scaling control; does not infer production owner object counts."
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          },
+          "consumerCpuMs": [
+            15.299999999999997,
+            19.316000000000003,
+            17.209000000000003
+          ]
+        },
+        {
+          "variant": "fused",
+          "trials": 3,
+          "rowCount": 64,
+          "rowSha256": "1bac9f0a678f8ddfee600181aa1f5e002e6e852fa22059830d79fbe0315721d1",
+          "cpuMs": [
+            92.85900000000001,
+            93.741,
+            93.70500000000001
+          ],
+          "kernelCpuMs": [
+            30.622,
+            33.147999999999996,
+            32.078
+          ],
+          "peakRssBytes": [
+            8224768,
+            7979008,
+            8044544
+          ],
+          "wallSeconds": [
+            0.11532033304683864,
+            0.10953849996440113,
+            0.1255989579949528
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 27.113000000000213,
+            "fullscan_steps": 44799,
+            "preparations": 515,
+            "prepare_cpu_ms": 2.4909999999997297,
+            "sorts": 129,
+            "sql_bytes": 18899,
+            "statements": 515,
+            "vm_steps": 2728977
+          },
+          "medianCpuMs": 93.70500000000001,
+          "medianKernelCpuMs": 32.078,
+          "operator": {
+            "consumerCpuMs": 0.06300000000000239,
+            "consumers": 64,
+            "objectsAfterRelease": 0,
+            "retainedCleanupCpuMs": 4.463999999999999,
+            "retainedObjects": 256,
+            "retainedSetupCpuMs": 25.897999999999996,
+            "scope": "SQLite schema/statistics scaling control; does not infer production owner object counts."
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          },
+          "consumerCpuMs": [
+            0.06300000000000239,
+            0.04399999999999693,
+            0.0519999999999925
+          ]
+        },
+        {
+          "variant": "no-analyze",
+          "trials": 3,
+          "rowCount": 64,
+          "rowSha256": "1bac9f0a678f8ddfee600181aa1f5e002e6e852fa22059830d79fbe0315721d1",
+          "cpuMs": [
+            102.374,
+            106.451,
+            110.76599999999999
+          ],
+          "kernelCpuMs": [
+            39.11,
+            38.872,
+            40.66799999999999
+          ],
+          "peakRssBytes": [
+            8896512,
+            8290304,
+            8011776
+          ],
+          "wallSeconds": [
+            0.1298987080808729,
+            0.18149570794776082,
+            0.19859645899850875
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 33.624999999999915,
+            "fullscan_steps": 83519,
+            "preparations": 770,
+            "prepare_cpu_ms": 3.9860000000000326,
+            "sorts": 193,
+            "sql_bytes": 28568,
+            "statements": 770,
+            "vm_steps": 2852294
+          },
+          "medianCpuMs": 106.451,
+          "medianKernelCpuMs": 39.11,
+          "operator": {
+            "consumerCpuMs": 5.926000000000002,
+            "consumers": 64,
+            "objectsAfterRelease": 0,
+            "retainedCleanupCpuMs": 4.992000000000004,
+            "retainedObjects": 256,
+            "retainedSetupCpuMs": 27.983000000000004,
+            "scope": "SQLite schema/statistics scaling control; does not infer production owner object counts."
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          },
+          "consumerCpuMs": [
+            5.926000000000002,
+            5.760999999999996,
+            5.586999999999989
+          ]
+        },
+        {
+          "variant": "reuse",
+          "trials": 3,
+          "rowCount": 64,
+          "rowSha256": "1bac9f0a678f8ddfee600181aa1f5e002e6e852fa22059830d79fbe0315721d1",
+          "cpuMs": [
+            111.352,
+            93.27100000000002,
+            95.187
+          ],
+          "kernelCpuMs": [
+            32.165000000000006,
+            32.06,
+            32.53399999999999
+          ],
+          "peakRssBytes": [
+            8110080,
+            8273920,
+            8208384
+          ],
+          "wallSeconds": [
+            0.195791625068523,
+            0.11242849996779114,
+            0.12661879090592265
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 27.974000000000004,
+            "fullscan_steps": 45404,
+            "preparations": 709,
+            "prepare_cpu_ms": 2.795000000000016,
+            "sorts": 130,
+            "sql_bytes": 24012,
+            "statements": 709,
+            "vm_steps": 2731649
+          },
+          "medianCpuMs": 95.187,
+          "medianKernelCpuMs": 32.165000000000006,
+          "operator": {
+            "consumerCpuMs": 0.9479999999999933,
+            "consumers": 64,
+            "objectsAfterRelease": 0,
+            "retainedCleanupCpuMs": 4.234999999999999,
+            "retainedObjects": 256,
+            "retainedSetupCpuMs": 26.795999999999992,
+            "scope": "SQLite schema/statistics scaling control; does not infer production owner object counts."
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          },
+          "consumerCpuMs": [
+            0.9479999999999933,
+            1.0379999999999967,
+            0.9879999999999995
+          ]
+        }
+      ]
+    },
+    {
+      "name": "selected-metadata-1024",
+      "experiment": "metadata",
+      "scale": 1024,
+      "captureSha256": "3a95786e45eea0ec2997882d58d0702176bfc43aa37ab8ab1df07c56cd97b206",
+      "binarySha256": "2b6bf5bcf84ad9fbe6187a282fc9e729e55922249b55ee2b8f6ddaa7fe85d600",
+      "sourceBundleSha256": "bf26d407bee12e6fcd0ed575cf9435c3b317eba4f28a7eca8459c717b001fb87",
+      "summarySha256": "e328677a5b93880c397c5bd5aba6020c603c3d698205824dd8c03ae6f02f7476",
+      "variants": [
+        {
+          "variant": "analyze-each",
+          "trials": 3,
+          "rowCount": 64,
+          "rowSha256": "1bac9f0a678f8ddfee600181aa1f5e002e6e852fa22059830d79fbe0315721d1",
+          "cpuMs": [
+            458.75,
+            458.98400000000004,
+            432.995
+          ],
+          "kernelCpuMs": [
+            382.13100000000003,
+            380.086,
+            362.625
+          ],
+          "peakRssBytes": [
+            9732096,
+            9633792,
+            10534912
+          ],
+          "wallSeconds": [
+            0.9363617500057444,
+            0.7807090830756351,
+            0.6011018329299986
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 346.5500000000001,
+            "fullscan_steps": 2597759,
+            "preparations": 4418,
+            "prepare_cpu_ms": 26.60699999999818,
+            "sorts": 1089,
+            "sql_bytes": 165160,
+            "statements": 4418,
+            "vm_steps": 10603526
+          },
+          "medianCpuMs": 458.75,
+          "medianKernelCpuMs": 380.086,
+          "operator": {
+            "consumerCpuMs": 102.27699999999999,
+            "consumers": 64,
+            "objectsAfterRelease": 0,
+            "retainedCleanupCpuMs": 103.61699999999996,
+            "retainedObjects": 2048,
+            "retainedSetupCpuMs": 175.64,
+            "scope": "SQLite schema/statistics scaling control; does not infer production owner object counts."
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          },
+          "consumerCpuMs": [
+            102.27699999999999,
+            107.70399999999998,
+            100.061
+          ]
+        },
+        {
+          "variant": "fused",
+          "trials": 3,
+          "rowCount": 64,
+          "rowSha256": "1bac9f0a678f8ddfee600181aa1f5e002e6e852fa22059830d79fbe0315721d1",
+          "cpuMs": [
+            346.82300000000004,
+            348.253,
+            331.84399999999994
+          ],
+          "kernelCpuMs": [
+            276.47,
+            273.395,
+            263.775
+          ],
+          "peakRssBytes": [
+            9273344,
+            10354688,
+            9601024
+          ],
+          "wallSeconds": [
+            0.5394266250077635,
+            0.5999809169443324,
+            0.455415292060934
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 244.51399999999975,
+            "fullscan_steps": 2193407,
+            "preparations": 4099,
+            "prepare_cpu_ms": 23.889000000000394,
+            "sorts": 1025,
+            "sql_bytes": 154339,
+            "statements": 4099,
+            "vm_steps": 9379089
+          },
+          "medianCpuMs": 346.82300000000004,
+          "medianKernelCpuMs": 273.395,
+          "operator": {
+            "consumerCpuMs": 0.055999999999983174,
+            "consumers": 64,
+            "objectsAfterRelease": 0,
+            "retainedCleanupCpuMs": 107.37300000000002,
+            "retainedObjects": 2048,
+            "retainedSetupCpuMs": 168.461,
+            "scope": "SQLite schema/statistics scaling control; does not infer production owner object counts."
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          },
+          "consumerCpuMs": [
+            0.055999999999983174,
+            0.0630000000000166,
+            0.060000000000002274
+          ]
+        },
+        {
+          "variant": "no-analyze",
+          "trials": 3,
+          "rowCount": 64,
+          "rowSha256": "1bac9f0a678f8ddfee600181aa1f5e002e6e852fa22059830d79fbe0315721d1",
+          "cpuMs": [
+            366.31699999999995,
+            367.443,
+            358.86100000000005
+          ],
+          "kernelCpuMs": [
+            297.50399999999996,
+            300.25,
+            289.689
+          ],
+          "peakRssBytes": [
+            10354688,
+            10321920,
+            9551872
+          ],
+          "wallSeconds": [
+            0.8013747920049354,
+            0.6291315830312669,
+            0.5485614159842953
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 262.05000000000166,
+            "fullscan_steps": 2461503,
+            "preparations": 4354,
+            "prepare_cpu_ms": 26.520999999999887,
+            "sorts": 1089,
+            "sql_bytes": 164008,
+            "statements": 4354,
+            "vm_steps": 10190534
+          },
+          "medianCpuMs": 366.31699999999995,
+          "medianKernelCpuMs": 297.50399999999996,
+          "operator": {
+            "consumerCpuMs": 22.593999999999994,
+            "consumers": 64,
+            "objectsAfterRelease": 0,
+            "retainedCleanupCpuMs": 109.45299999999997,
+            "retainedObjects": 2048,
+            "retainedSetupCpuMs": 164.875,
+            "scope": "SQLite schema/statistics scaling control; does not infer production owner object counts."
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          },
+          "consumerCpuMs": [
+            22.593999999999994,
+            22.220000000000027,
+            20.910000000000025
+          ]
+        },
+        {
+          "variant": "reuse",
+          "trials": 3,
+          "rowCount": 64,
+          "rowSha256": "1bac9f0a678f8ddfee600181aa1f5e002e6e852fa22059830d79fbe0315721d1",
+          "cpuMs": [
+            348.235,
+            341.68600000000004,
+            328.154
+          ],
+          "kernelCpuMs": [
+            278.101,
+            271.574,
+            262.125
+          ],
+          "peakRssBytes": [
+            10305536,
+            10469376,
+            9568256
+          ],
+          "wallSeconds": [
+            0.7541045410325751,
+            0.5399998750071973,
+            0.44661599991377443
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 244.22599999999804,
+            "fullscan_steps": 2197596,
+            "preparations": 4293,
+            "prepare_cpu_ms": 24.798000000000982,
+            "sorts": 1026,
+            "sql_bytes": 159452,
+            "statements": 4293,
+            "vm_steps": 9392513
+          },
+          "medianCpuMs": 341.68600000000004,
+          "medianKernelCpuMs": 271.574,
+          "operator": {
+            "consumerCpuMs": 1.5900000000000034,
+            "consumers": 64,
+            "objectsAfterRelease": 0,
+            "retainedCleanupCpuMs": 106.38199999999998,
+            "retainedObjects": 2048,
+            "retainedSetupCpuMs": 169.535,
+            "scope": "SQLite schema/statistics scaling control; does not infer production owner object counts."
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          },
+          "consumerCpuMs": [
+            1.5900000000000034,
+            1.365000000000009,
+            1.2270000000000039
+          ]
+        }
+      ]
+    },
+    {
+      "name": "selected-composed-256",
+      "experiment": "composed",
+      "scale": 256,
+      "captureSha256": "3a95786e45eea0ec2997882d58d0702176bfc43aa37ab8ab1df07c56cd97b206",
+      "binarySha256": "2b6bf5bcf84ad9fbe6187a282fc9e729e55922249b55ee2b8f6ddaa7fe85d600",
+      "sourceBundleSha256": "bf26d407bee12e6fcd0ed575cf9435c3b317eba4f28a7eca8459c717b001fb87",
+      "summarySha256": "c3e7593de37b0acce2caf189b2cb279bcfbb06d5ccc13e91dbcefb9a3a15a4be",
+      "variants": [
+        {
+          "variant": "direct-native",
+          "trials": 4,
+          "rowCount": 17033,
+          "rowSha256": "5586e839d77a7950edc26ccc65a5f4033af77969bbc7bcc3382385f01dbe5be2",
+          "cpuMs": [
+            31.958999999999996,
+            30.532000000000004,
+            30.994999999999997,
+            30.507
+          ],
+          "kernelCpuMs": [
+            31.346999999999998,
+            29.862000000000002,
+            30.534999999999997,
+            29.923000000000002
+          ],
+          "peakRssBytes": [
+            14073856,
+            13697024,
+            14008320,
+            13598720
+          ],
+          "wallSeconds": [
+            0.09835437498986721,
+            0.06509741698391736,
+            0.06547287490684539,
+            0.07356308295857161
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 28.808999999999997,
+            "fullscan_steps": 83101,
+            "preparations": 6,
+            "prepare_cpu_ms": 0.32400000000000073,
+            "sorts": 3,
+            "sql_bytes": 1184,
+            "statements": 6,
+            "vm_steps": 2077282
+          },
+          "medianCpuMs": 30.7635,
+          "medianKernelCpuMs": 30.229,
+          "operator": {
+            "columnCallbacks": 82224,
+            "estimatedRows": 25914,
+            "filters": 1,
+            "inputLayout": "five contiguous i64 columns; correlated request IDs via sqlite3_vtab_in",
+            "maxBufferedOutputRows": 20556,
+            "outputRows": 20556,
+            "requests": 20556,
+            "visitedDirectChildren": 42392,
+            "waveRows": 65536,
+            "waves": 1
+          },
+          "native": {
+            "blob_opens": 6,
+            "bytes": [
+              891528,
+              0,
+              0,
+              148588,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 1,
+            "reads": [
+              582,
+              0,
+              0,
+              582,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "direct-scalar",
+          "trials": 4,
+          "rowCount": 17033,
+          "rowSha256": "5586e839d77a7950edc26ccc65a5f4033af77969bbc7bcc3382385f01dbe5be2",
+          "cpuMs": [
+            23.723,
+            23.609,
+            24.066000000000003,
+            24.584999999999997
+          ],
+          "kernelCpuMs": [
+            23.209,
+            23.106,
+            23.578000000000003,
+            24.057
+          ],
+          "peakRssBytes": [
+            9469952,
+            9568256,
+            8978432,
+            9355264
+          ],
+          "wallSeconds": [
+            0.06345766689628363,
+            0.08771325007546693,
+            0.05378529196605086,
+            0.06916570896282792
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 22.887999999999998,
+            "fullscan_steps": 62546,
+            "preparations": 5,
+            "prepare_cpu_ms": 0.26500000000000146,
+            "sorts": 2,
+            "sql_bytes": 1204,
+            "statements": 5,
+            "vm_steps": 1830592
+          },
+          "medianCpuMs": 23.8945,
+          "medianKernelCpuMs": 23.393500000000003,
+          "operator": {
+            "estimatedRows": 25914
+          },
+          "native": {
+            "blob_opens": 6,
+            "bytes": [
+              891528,
+              0,
+              0,
+              148588,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 42392,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 1,
+            "reads": [
+              582,
+              0,
+              0,
+              582,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "fused",
+          "trials": 4,
+          "rowCount": 17033,
+          "rowSha256": "5586e839d77a7950edc26ccc65a5f4033af77969bbc7bcc3382385f01dbe5be2",
+          "cpuMs": [
+            101.112,
+            102.17800000000001,
+            91.78900000000002,
+            98.73800000000001
+          ],
+          "kernelCpuMs": [
+            34.233999999999995,
+            34.992000000000004,
+            30.241,
+            35.915000000000006
+          ],
+          "peakRssBytes": [
+            8962048,
+            9732096,
+            9863168,
+            9388032
+          ],
+          "wallSeconds": [
+            0.18882512499112636,
+            0.2608299170387909,
+            0.12153512495569885,
+            0.20155954197980464
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 34.101,
+            "fullscan_steps": 21066,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.10999999999999943,
+            "sorts": 1,
+            "sql_bytes": 567,
+            "statements": 2,
+            "vm_steps": 652355
+          },
+          "medianCpuMs": 99.92500000000001,
+          "medianKernelCpuMs": 34.613,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "native",
+          "trials": 4,
+          "rowCount": 17033,
+          "rowSha256": "5586e839d77a7950edc26ccc65a5f4033af77969bbc7bcc3382385f01dbe5be2",
+          "cpuMs": [
+            114.65100000000001,
+            110.35400000000001,
+            106.18299999999999,
+            108.39299999999999
+          ],
+          "kernelCpuMs": [
+            48.107,
+            46.21100000000001,
+            42.84899999999999,
+            47.09299999999999
+          ],
+          "peakRssBytes": [
+            13844480,
+            14647296,
+            14647296,
+            13762560
+          ],
+          "wallSeconds": [
+            0.21529708406887949,
+            0.2803047080524266,
+            0.23275541607290506,
+            0.21720287506468594
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 47.352000000000004,
+            "fullscan_steps": 83357,
+            "preparations": 6,
+            "prepare_cpu_ms": 0.25600000000001444,
+            "sorts": 3,
+            "sql_bytes": 791,
+            "statements": 6,
+            "vm_steps": 2094313
+          },
+          "medianCpuMs": 109.3735,
+          "medianKernelCpuMs": 46.652,
+          "operator": {
+            "columnCallbacks": 82224,
+            "estimatedRows": 25914,
+            "filters": 1,
+            "inputLayout": "five contiguous i64 columns; correlated request IDs via sqlite3_vtab_in",
+            "maxBufferedOutputRows": 20556,
+            "outputRows": 20556,
+            "requests": 20556,
+            "visitedDirectChildren": 42392,
+            "waveRows": 65536,
+            "waves": 1
+          },
+          "native": {
+            "blob_opens": 6,
+            "bytes": [
+              639300,
+              0,
+              0,
+              106550,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 1,
+            "reads": [
+              417,
+              0,
+              0,
+              417,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "staged",
+          "trials": 4,
+          "rowCount": 17033,
+          "rowSha256": "5586e839d77a7950edc26ccc65a5f4033af77969bbc7bcc3382385f01dbe5be2",
+          "cpuMs": [
+            109.901,
+            114.48299999999999,
+            101.35,
+            108.10899999999998
+          ],
+          "kernelCpuMs": [
+            44.666,
+            47.379999999999995,
+            40.900999999999996,
+            45.97999999999999
+          ],
+          "peakRssBytes": [
+            9666560,
+            9961472,
+            9715712,
+            8863744
+          ],
+          "wallSeconds": [
+            0.4643117910018191,
+            0.2545116670662537,
+            0.14875141705852002,
+            0.19528391596395522
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 44.414,
+            "fullscan_steps": 41657,
+            "preparations": 6,
+            "prepare_cpu_ms": 0.19300000000002626,
+            "sorts": 2,
+            "sql_bytes": 615,
+            "statements": 6,
+            "vm_steps": 1187061
+          },
+          "medianCpuMs": 109.005,
+          "medianKernelCpuMs": 45.32299999999999,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "selected-composed-empty",
+      "experiment": "composed",
+      "scale": 0,
+      "captureSha256": "3a95786e45eea0ec2997882d58d0702176bfc43aa37ab8ab1df07c56cd97b206",
+      "binarySha256": "2b6bf5bcf84ad9fbe6187a282fc9e729e55922249b55ee2b8f6ddaa7fe85d600",
+      "sourceBundleSha256": "24e8f5ff77ec5de2da4224018be706d2477d93c5bc23ddc5e87bab8d0b9c12e2",
+      "summarySha256": "6e86c835f276709798e700cbbf1605f17cdf4d19d0eeb0080b93dc88791361b7",
+      "variants": [
+        {
+          "variant": "direct-native",
+          "trials": 1,
+          "rowCount": 0,
+          "rowSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "cpuMs": [
+            0.6639999999999997
+          ],
+          "kernelCpuMs": [
+            0.3550000000000004
+          ],
+          "peakRssBytes": [
+            4636672
+          ],
+          "wallSeconds": [
+            0.012436666060239077
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 0.15900000000000158,
+            "fullscan_steps": 623,
+            "preparations": 5,
+            "prepare_cpu_ms": 0.17899999999999938,
+            "sorts": 3,
+            "sql_bytes": 907,
+            "statements": 5,
+            "vm_steps": 2021
+          },
+          "medianCpuMs": 0.6639999999999997,
+          "medianKernelCpuMs": 0.3550000000000004,
+          "operator": {
+            "columnCallbacks": 0,
+            "estimatedRows": 0,
+            "filters": 0,
+            "outputRows": 0,
+            "requests": 0,
+            "visitedDirectChildren": 0
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "direct-scalar",
+          "trials": 1,
+          "rowCount": 0,
+          "rowSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "cpuMs": [
+            0.8860000000000001
+          ],
+          "kernelCpuMs": [
+            0.5940000000000003
+          ],
+          "peakRssBytes": [
+            4784128
+          ],
+          "wallSeconds": [
+            0.012556292000226676
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 0.3119999999999994,
+            "fullscan_steps": 623,
+            "preparations": 5,
+            "prepare_cpu_ms": 0.24700000000000077,
+            "sorts": 2,
+            "sql_bytes": 1204,
+            "statements": 5,
+            "vm_steps": 2029
+          },
+          "medianCpuMs": 0.8860000000000001,
+          "medianKernelCpuMs": 0.5940000000000003,
+          "operator": {
+            "estimatedRows": 0
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "fused",
+          "trials": 1,
+          "rowCount": 0,
+          "rowSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "cpuMs": [
+            59.17200000000001
+          ],
+          "kernelCpuMs": [
+            0.12100000000000932
+          ],
+          "peakRssBytes": [
+            8470528
+          ],
+          "wallSeconds": [
+            0.08609129209071398
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 0.00999999999999801,
+            "fullscan_steps": 0,
+            "preparations": 2,
+            "prepare_cpu_ms": 0.09599999999999653,
+            "sorts": 1,
+            "sql_bytes": 567,
+            "statements": 2,
+            "vm_steps": 31
+          },
+          "medianCpuMs": 59.17200000000001,
+          "medianKernelCpuMs": 0.12100000000000932,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "native",
+          "trials": 1,
+          "rowCount": 0,
+          "rowSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "cpuMs": [
+            58.370999999999995
+          ],
+          "kernelCpuMs": [
+            0.32399999999999807
+          ],
+          "peakRssBytes": [
+            8437760
+          ],
+          "wallSeconds": [
+            0.07548225007485598
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 0.14400000000000546,
+            "fullscan_steps": 626,
+            "preparations": 5,
+            "prepare_cpu_ms": 0.15099999999999625,
+            "sorts": 3,
+            "sql_bytes": 514,
+            "statements": 5,
+            "vm_steps": 2016
+          },
+          "medianCpuMs": 58.370999999999995,
+          "medianKernelCpuMs": 0.32399999999999807,
+          "operator": {
+            "columnCallbacks": 0,
+            "estimatedRows": 0,
+            "filters": 0,
+            "outputRows": 0,
+            "requests": 0,
+            "visitedDirectChildren": 0
+          },
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        },
+        {
+          "variant": "staged",
+          "trials": 1,
+          "rowCount": 0,
+          "rowSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "cpuMs": [
+            64.94800000000001
+          ],
+          "kernelCpuMs": [
+            0.3190000000000026
+          ],
+          "peakRssBytes": [
+            7471104
+          ],
+          "wallSeconds": [
+            0.12627137498930097
+          ],
+          "sql": {
+            "autoindex_rows": 0,
+            "execute_cpu_ms": 0.12199999999999989,
+            "fullscan_steps": 14,
+            "preparations": 6,
+            "prepare_cpu_ms": 0.15200000000000102,
+            "sorts": 2,
+            "sql_bytes": 615,
+            "statements": 6,
+            "vm_steps": 243
+          },
+          "medianCpuMs": 64.94800000000001,
+          "medianKernelCpuMs": 0.3190000000000026,
+          "operator": null,
+          "native": {
+            "blob_opens": 0,
+            "bytes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "child_steps": 0,
+            "decoded_nodes": 0,
+            "decoded_spans": 0,
+            "handle_clears": 0,
+            "reads": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "regex_compiles": 0,
+            "source_batches": 0,
+            "source_input_rows": 0,
+            "source_output_rows": 0,
+            "texts": 0
+          }
+        }
+      ]
+    }
+  ],
+  "productionSchemaReplay": {
+    "format": "rerail.cold-plan-reuse/v1",
+    "programs": [
+      "profile-88485-28:state-signatures-1",
+      "profile-88485-29:state-flow-1",
+      "profile-88485-30:state-projection-recovery-2",
+      "profile-88485-31:state-flow-project-1",
+      "profile-88485-65:state-flow-1"
+    ],
+    "repeats": 128,
+    "scope": "Actual recorded production SQL, authorizer, type inference and 128-entry/4-MiB cache. Complete schema comparison. Includes fresh per-program declaration contexts and metadata output retention. No rule execution, rows or engine scheduler. Tests unchanged decisions; does not prove source-version result reuse.",
+    "trials": [
+      {
+        "completeSchemasMatch": true,
+        "cpuMs": 2672.436,
+        "inferenceStatements": 4480,
+        "trial": 0,
+        "variant": "isolated-cache"
+      },
+      {
+        "completeSchemasMatch": true,
+        "cpuMs": 1470.9299999999998,
+        "inferenceStatements": 35,
+        "trial": 0,
+        "variant": "shared-cache"
+      },
+      {
+        "completeSchemasMatch": true,
+        "cpuMs": 1407.0659999999998,
+        "inferenceStatements": 35,
+        "trial": 1,
+        "variant": "shared-cache"
+      },
+      {
+        "completeSchemasMatch": true,
+        "cpuMs": 2712.5509999999995,
+        "inferenceStatements": 4480,
+        "trial": 1,
+        "variant": "isolated-cache"
+      },
+      {
+        "completeSchemasMatch": true,
+        "cpuMs": 2773.303,
+        "inferenceStatements": 4480,
+        "trial": 2,
+        "variant": "isolated-cache"
+      },
+      {
+        "completeSchemasMatch": true,
+        "cpuMs": 1506.737000000001,
+        "inferenceStatements": 35,
+        "trial": 2,
+        "variant": "shared-cache"
+      }
+    ],
+    "binarySha256": "eb3e9f07bc5e55262264bf462ea09f38fd4caad941e360cae399f45b5fe5ee80",
+    "inputSha256": "c814fe5b4b8948153c1621637b420500ac924af06feccd3ba31660b9d1b11055",
+    "sourceSha256": "2b41241d33fe004fdd90150bccbea3de1ac69b69729fb155f8c4a701f9828342"
+  },
+  "originalQualityParity": {
+    "replayedCalls": 192,
+    "nativeCalls": 192,
+    "positiveCalls": 130,
+    "cleanCalls": 62,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "missingCoverage": [],
+    "recordingSha256": "291f5963b662a495a673aec44de2eaf47ea0671a5b06a91f764464d0de99b4ad",
+    "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518",
+    "overlayManifest": {
+      "format": "rerail.terminal-family-overlay/v1",
+      "sourceSha256": "d1ad882170e7a577cde80cbfdd6f7c538261b2ea40ac6690a7c1d45dd6c1d966",
+      "overlaySha256": "b6f61c53c8003d79b98237b11dbd3850cda19e2e75ec0171fe218823d7b4b2e3",
+      "removedCuts": [
+        "diagnostics_0",
+        "diagnostics_6"
+      ],
+      "retainedCuts": [
+        "diagnostics_1",
+        "diagnostics_2",
+        "diagnostics_3",
+        "diagnostics_4",
+        "diagnostics_5"
+      ],
+      "preservedOptions": {
+        "oracleAnalyzer": [
+          "false",
+          "true"
+        ],
+        "entryPoint": [
+          "_check_batched_step_construction_sets_batching_hint",
+          "_check_branch_fetch_batchability_helper",
+          "_check_can_batch_lock_snapshot_policy",
+          "_check_compile_direct_io",
+          "_check_conditional_dialect_test_compiler_seam",
+          "_check_conditional_serverplan_fallback",
+          "_check_conditional_sql_compile_ownership",
+          "_check_contract_first_relationship_runtime",
+          "_check_control_flow_child_compile_calls",
+          "_check_duck_typed_context",
+          "_check_dynamic_child_steps",
+          "_check_executor_execute_runtime_bypass",
+          "_check_executor_python_execution",
+          "_check_forbidden_sqlcompoundwrite_usage",
+          "_check_graphql_serverplan_boundary",
+          "_check_imperative_lazy_resolution",
+          "_check_imperative_preop_execution",
+          "_check_include_through_shared_lowering",
+          "_check_intent_boilerplate",
+          "_check_lifecycle_entanglement",
+          "_check_materialized_row_semantics_fallback",
+          "_check_order_by_compile_helper_escape_hatches",
+          "_check_plan_analysis_field_reassignment",
+          "_check_plan_analysis_object_id_cache",
+          "_check_postop_hydration",
+          "_check_projection_helper_execution_fallback",
+          "_check_result_resolution_duplication",
+          "_check_runtime_replay_batching_uses_structured_analysis",
+          "_check_runtime_result_compiled_steps",
+          "_check_runtime_sequential_step_optins",
+          "_check_runtime_sequential_strategies",
+          "_check_serverplan_cleanup_ratchets",
+          "_check_serverplan_quality_source",
+          "_check_serverplan_runtime_state_ingress",
+          "_check_sql_statement_batch_requires_category",
+          "_check_sync_async_duplication",
+          "_check_unused_raw_data",
+          "_check_vector_scope_filters_use_expressions",
+          "_check_versioned_forking",
+          "all"
+        ]
+      },
+      "authoredQueryByteLimit": 16384,
+      "scope": "Actual terminal diagnostic SQL producers under the existing query-size limit. Authored options and defaults preserved. Same input domain, predicates, row multiplicity, deferred and native producer cuts. No shipped policy or engine alternative changes."
+    },
+    "overlayToolSha256": "af5234ac743984e57a889a12d59c0b428b1510fbba4b41bd15f70ca0408a4a42"
+  },
+  "terminalFamilyControls": [
+    {
+      "name": "terminal-baseline-frozen",
+      "phaseCpuMs": {
+        "compile": {
+          "userMs": 747.42,
+          "systemMs": 54.124
+        },
+        "cold": {
+          "userMs": 8703.563,
+          "systemMs": 1675.03
+        }
+      },
+      "coldMs": 25151.617749999998,
+      "peakRssBytes": 675135488,
+      "actual": 30,
+      "findingsDigest": "64484fbcc20051f312bb352869c0d2fafef3cbbce6e9f18488531f1158d1ce26",
+      "failures": 0,
+      "qualification": "One uncontrolled small-repository trial. Default configuration. Both have the same 30 open-cross-file findings; no speedup established."
+    },
+    {
+      "name": "terminal-16k-frozen",
+      "phaseCpuMs": {
+        "compile": {
+          "userMs": 500.524,
+          "systemMs": 18.448
+        },
+        "cold": {
+          "userMs": 8894.867,
+          "systemMs": 1599.629
+        }
+      },
+      "coldMs": 25147.393917,
+      "peakRssBytes": 637272064,
+      "actual": 30,
+      "findingsDigest": "64484fbcc20051f312bb352869c0d2fafef3cbbce6e9f18488531f1158d1ce26",
+      "failures": 0,
+      "qualification": "One uncontrolled small-repository trial. Default configuration. Both have the same 30 open-cross-file findings; no speedup established."
+    }
+  ],
+  "decisions": {
+    "anchors": "Use persisted SQL cardinalities, one emitted arm, and an outer demand gate.",
+    "fusion": "Fuse physical families after validation. Materialize only justified same-scope shared cuts. Policy-only fusion has no proven CPU win.",
+    "native": "Keep whole-demand typed-column contract. Do not promote the native child operator as a CPU optimization; the scalar control remains faster.",
+    "publication": "Batch 32 files with current FTS layout, triggers and 1-MiB cache. Grouped statistics and larger caches have no clear reason for promotion.",
+    "planning": "Use one family batch and stable prepared templates. Preserve the existing bounded schema cache; its no-sharing control is not the current engine.",
+    "memory": "Remove schema fan-out; measure source/AST, projections, SQL and graph ownership before setting cache policies.",
+    "acceptance": "No production speedup claimed. Measure complete uninstrumented 50/60 workloads after an implementation delivery."
+  },
+  "attributionReceipt": "cold-cpu-attribution-20261026.json",
+  "attributionReceiptSha256": "5ec42bc1163e700a9be01ab69f84558f9aaab17358247bef7f53cdd2ae6c2f90",
+  "artifactSources": {
+    "finalLab": {
+      "sourceRevision": "9195e3a5",
+      "sourceDifference": "The packet-triggers publication control uses cacheKiB=8192 instead of 1024. The selected anchor, fusion, native, planning, metadata and composed experiments do not execute publication."
+    },
+    "publicationControls": {
+      "sourceRevision": "9195e3a5",
+      "sourceDifference": null
+    }
+  },
+  "validation": {
+    "nativeDslPassed": 1540,
+    "nativeDslIgnored": 23,
+    "productionShapePassed": 51,
+    "laboratoryPassed": 70,
+    "pythonProfilerPassed": 30,
+    "staticCheck": "pass",
+    "profilingSuite": "pass",
+    "nativeClippy": "pass",
+    "laboratoryClippy": "pass"
+  }
+}

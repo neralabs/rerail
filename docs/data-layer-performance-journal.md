@@ -4957,3 +4957,71 @@ The native child prototype now fills bounded typed output columns in broad waves
 A regression covers 40,000 correlated requests and 80,000 output rows: one xFilter, two waves, at most 65,536 buffered rows.
 The next measurement retains this shape; xNext serves completed columns.
 No production execution alternative is added.
+
+
+### Complete cold CPU attribution and architectural spikes (2026-10-26)
+
+The [spike report](cold-cpu-spike-results.md) records decisions for every aspect of the [workplan](cold-cpu-recovery-plan.md).
+The plan now contains four bounded implementation deliveries, their regression ladders, budget isolation requirements, and full-resource gates.
+The [attribution receipt](../fixtures/host/data-layer-port/profiling/cold-cpu-attribution-20261026.json) and [experiment receipt](../fixtures/host/data-layer-port/profiling/cold-cpu-architectural-spikes-20261026.json) preserve identities and measured trials.
+Raw evidence remains under `.rerail/profiles/cold-cpu-spikes-20261026/`.
+
+The complete traced all-60 run passes across 9,021 files: 24,993 expected and actual findings, with zero FP, FN, or failures.
+Compile CPU is 1.958 seconds. Cold CPU is 3,586.594 seconds; cold wall time is 4,308.203 seconds.
+OS peak RSS is 7,530,659,840 bytes. This is diagnostic, with tracing and overlapping laboratory work.
+It is not a replacement for the frozen uninstrumented 50/60 baseline or an isolated profiling-overhead measurement.
+
+Exclusive attribution observes 3,204.752 CPU seconds. Shared or incomplete clause attribution accounts for 1,527.242 seconds.
+The capture retains 103 overlap flags and seven CPU-overdraw flags among 1,953,732 events.
+Analysis calls account for 679.109 measured seconds, candidate materialization 619.630, relational materialization 455.858, and relational indexes 341.870.
+Trimming accounts for 190.128 seconds and release for 132.883. Span counts are not statement-submission counts.
+The batch executor reaches 792 suspended SQL consumers in four partitions.
+`quality-contracts-1` accounts for 776.922 measured clause seconds; state flow, authority sites, and legacy graphs follow.
+
+Supplemental Node samples corroborate statistics reload and schema lookup overhead.
+SQLite's bundled `sqlite3AnalysisLoad` reloads complete schema statistics after table analysis.
+The automatically scheduled samples targeted the timing wrapper and remain invalid engine evidence.
+The corrected sampler selects and records the workload child.
+A full deferred vmmap snapshot shows substantial swapped allocator pages; falling current RSS is not memory recovery.
+The separate 128-file ownership census records zero JSON projection fields and 6,977,240 typed projection bytes.
+It does not explain every full-repository allocation.
+
+The SQL controls preserve complete row multisets, including overlapping and empty scopes.
+Stored statistics avoid the wrong anchor, while broad construction still dominates small-query total CPU.
+Fusion wins over repeated inline work and the CTAS/index/ANALYZE lifecycle in the structural control.
+The native first-field-child operator now fills completed typed columns in broad waves.
+Its regression covers 80,000 requests and outputs, one xFilter, two waves, and a 65,536-row buffer bound.
+Its complete CPU does not beat the scalar control; no native child CPU optimization is promoted.
+
+The publication control isolates transaction shape at the production 1-MiB cache setting.
+Median CPU changes from 3,458.821 ms per-file publication to 529.826 ms with 32-file packets and existing triggers.
+Grouped statistics take 489.235 ms, with overlapping variation. The selected design retains current triggers and cache budgets.
+Rollback, replacement, complete posting/statistic checks, and a pinned SQLite reader pass.
+A separate 32-file trace records seven host submissions and 46 internal SQLite completions for packet publication.
+Its 2,336 trigger entries are not additional host submissions.
+
+The actual policy overlay first fails the existing 16-KiB authoring limit when broad fusion moves into authored SQL.
+The bounded overlay retains that limit and preserves every authored option and default.
+All 192 original quality observations pass, including 130 positive and 62 clean observations.
+A small repository timing pair establishes no useful improvement from this policy-only cut removal.
+Broad fusion therefore belongs after logical validation in the physical planner.
+
+The real schema replay retains the existing bounded production cache. Its no-sharing control is not an unimplemented engine opportunity.
+The composed model shows that removing laboratory fact reconstruction matters more than swapping the final operator.
+That model is not an end-to-end production speedup and its component ratios are not multiplied.
+
+The chosen implementation order is candidate demand/statistics and packet publication, the full quality pipeline, the next three expensive clauses, then measured ownership and reuse cleanup.
+Demand gathering must precede private SQL schema creation.
+No production algorithm flags, alternate rule interpreter, allowance increase, or Linear issue is added.
+Full uninstrumented 50/60 resource acceptance remains required after implementation.
+
+Native DSL validation passes 1,540 tests with 23 explicit ignores; all 51 shape tests pass.
+The final laboratory suite passes 70 tests; the profiler passes 30.
+The first combined native build/test command hits its 110-second deadline; the cached direct test binary then completes in 60 seconds.
+Static checks and the profiling suite pass after moving analysis helpers under their own directory.
+Final checks below confirm the last tooling changes.
+
+Final static checks, the complete profiling suite, all 70 laboratory tests, and laboratory Clippy pass on the final tooling.
+Native source is unchanged after the successful native DSL, shape, and all-target Clippy checks.
+The final packet-trigger comparison uses the same 1-MiB cache as the per-file control.
+Frozen primitive and publication-control binaries remain separate, with their one control-setting difference recorded in the receipt.

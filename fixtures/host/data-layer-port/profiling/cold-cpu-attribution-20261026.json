@@ -1,0 +1,1375 @@
+{
+  "fullDiagnostic": {
+    "files": 9021,
+    "bytes": 137924324,
+    "expected": 24993,
+    "actual": 24993,
+    "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518",
+    "workloadSha256": "71e61b64127b3eaec1ec694a8f80af6d25f78f342b0626107355a005f71dcb1c",
+    "policyDigests": {
+      "data-layer-admin-async-purity": "sha256:28deddcad1b387ac3b546cca10895436e0c72fd351e7b2b500ca8192e3a4987e",
+      "data-layer-async-executor": "sha256:3bf76b24b1acd4c18e88904fc9c732f4fb30ce800c331499952d0c1dcf769154",
+      "data-layer-async-patterns": "sha256:555668ec0ddc233376e61b1c68258877a8c7f3304ae7cfc794fa3fd390be3d30",
+      "data-layer-async-sync-boundary": "sha256:8387d16fdbb47ca400d878ca97be6d1c42a48defe7e0b9909ff9b15b496ef82e",
+      "data-layer-backend-type-strings": "sha256:9a767dadcfe52ec2b2801588f36919e74f6a793cb0a072cc6af21f24288b5faf",
+      "data-layer-classvar-check": "sha256:f492d76f3f686b430c649080c9be8420d375e1be023d639cf5d6c7613acb03b4",
+      "data-layer-conn-or-txn-union": "sha256:deb16c1381ad2414041c981a4c56ff6990008093f05722c74ba10baf5d01258b",
+      "data-layer-connection-caches": "sha256:33bd67e8e1ca9a9ef6f3ba78442ee2338a4fbf8392ec5dd482310e674a195c8b",
+      "data-layer-dynamic-module-loading": "sha256:a877158fd13f016a1eaecc9cb229d08b82288cdea1bb297f6479feaf9b18c387",
+      "data-layer-error-handling": "sha256:148c2913f29d34155412e24ba97b9dcdfb08cf470d5c237f54059e5014b8fccf",
+      "data-layer-forwardref": "sha256:23e61b16ea5970188473c10aa8d47857b65e49a2e9a81d82c9fe4251467af585",
+      "data-layer-grammar-allowlist-burndown": "sha256:9951b7cc2804ae4f089bce9159c59b57f07327be51e513a0e9ad0a014df25936",
+      "data-layer-grammar-callable-constructors": "sha256:4a25209ac52a2007b8ad8287191cd4949a78e6cd0c303681d4ce626b229a8045",
+      "data-layer-grammar-fragment-usage": "sha256:dd0bdb3bc70bb59ebf9e3bcba037008b01d075a00dfc1bc4f24c44de9022cba3",
+      "data-layer-grammar-render-methods": "sha256:02daf674754c08edb1cafcceee3d5ebeb4b02f94f6ebb5b318addab65804dc4f",
+      "data-layer-grammar-str-params": "sha256:c8d6ccba2cea149b130f57ff72248c4313622babd4b8dabe5cf20f492fb97903",
+      "data-layer-hasattr-async": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
+      "data-layer-lazy-result-usage": "sha256:861c4ce42ec168a6437789375ae80a05869654dde9d2d424a5da84ea646d4a1f",
+      "data-layer-module-level-caches": "sha256:c823d10e3d198b68284904d503860e04bf190e0e3e3dca19f7f96597288f490d",
+      "data-layer-no-api-root-imports": "sha256:ef339f54cbb5b61d815448ca08c6db8d1715d325663c711c43c22f50621f0cbc",
+      "data-layer-no-blanket-grammar-bypass": "sha256:0d6e692f4a48ed34de5928d35d05fefa5fd6f9d7181607084102b43389af48e5",
+      "data-layer-no-source-inspection": "sha256:cfedb7e006ea6b12e84cb9d960e0658cf7134067724181a5d8a212e25222ccfc",
+      "data-layer-permission-error": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
+      "data-layer-plan-scope-ownership": "sha256:2a251ae3d8d16f86a4297f3e499bbed943d878f41142fa2248434c31e7a828eb",
+      "data-layer-plan-scope-side-effects": "sha256:3c95c904567737c074afa6479d5aa55276be1afd311e37e1d22d8ab85162b10f",
+      "data-layer-regex-sql-parsing": "sha256:610b522e4adf244cc3ae294863be09628ebeb3955a4b9e66be6b810ba78ccaa0",
+      "data-layer-removed-compat-surfaces": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
+      "data-layer-render-fstrings": "sha256:38600be3e0d5679decfe7f1b8297f21ec3374e4e551c288b066ba0a2f20acf54",
+      "data-layer-render-raw-strings": "sha256:636e02995bf3eeef4ca8d4a41224a04b65aeed5fbb81ced3d1e75c5d465ab870",
+      "data-layer-serverplan-grammar-surface": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
+      "data-layer-serverplan-name-inference": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
+      "data-layer-sql-grammar-escape-hatches": "sha256:51c459be9f1186f88174ac44a7ac9f4981704bf7aaecb2bf8c668c20383a48c0",
+      "data-layer-swallowed-exceptions": "sha256:b3fb96fa63706e2a7725795531374944218108708fd77da95368d9717ac3d53c",
+      "data-layer-transaction-callback-wrappers": "sha256:ec450b584c2d34983aae73770dd03bbb36488ab0de8e8f71fd2bb30c834c7697",
+      "data-layer-transaction-closures": "sha256:888f738714f199e81fbe0e0b34e51dc4109e0b9b4d7016a7444f60b6236b449a",
+      "data-layer-transaction-patterns": "sha256:cb8ed48327845bd31df6d4c2306f055705f28812f39ec9f8b08e95869c9b8968",
+      "data-layer-type-safety-patterns": "sha256:13a97ae41a7e1ebbee159bc9b7c693206b02740698bc5d479f05c8cc45f156ab",
+      "data-layer-unresolved-forward-refs": "sha256:86cdf97aa17812e9cc8b0d4f3edc65e099a7de3fc831426f1d5826ef37b2f94b",
+      "data-layer-versioned-lifecycle-legacy-surfaces": "sha256:579c7656724ba5a24b5ee0733b65f5561881a3df1160d4c48b5d14a63b518a46",
+      "data-layer-rust-sql-grammar-boundary": "sha256:2bb8339680ef9c152f8245bac1499d3938c47dc130609d326b85560fbfa3cbcc",
+      "data-layer-async-sync-delegation": "sha256:854ef36424c9717ede05c769aa7e14708fc5a414c02225d990a9d405123915ee",
+      "data-layer-backend-coupling": "sha256:7bd4e209cba4a6012f8553980ef36833214c7ea649963db7ec6b75efd837f63e",
+      "data-layer-data-layer-compat-aliases": "sha256:e3a56226f0e2e3777817dce9f48a503303bd9d6cbeafd7e5d21231bd719c5860",
+      "data-layer-data-layer-facade-purity": "sha256:7aad3045ddf5c9d66eca850e455ec9763062bfe412f9db3af92328d72f553158",
+      "data-layer-imperative-private-functions": "sha256:bf3a6ba7e6b7e2c750ae8317594777a001e24318935c491f77a0d149fde02afe",
+      "data-layer-internal-dead-code": "sha256:5a00b45c2aa4f39ab90f9505efd8714abd156fb99d77ba0f3e71d0c595469892",
+      "data-layer-layer-violations": "sha256:8c3d2a6473f033969ed5b46bd90b11986f4e4441f13402e9c4cf95d926a03449",
+      "data-layer-missing-async-pairs": "sha256:ebf3bdbcb97a9db2aed181733bb3c2c57f7b54fa418cc2fa4f558a18bc5dcff6",
+      "data-layer-public-api-triples": "sha256:264698ea635d43af27e10217d1cfc3d14659b637b2a4b2c4208ec37c5ec96963",
+      "data-layer-sync-async-signatures": "sha256:7b6c45edbd81a4c4ecf04fcfe97fbb0e31856c5f41c0fe35257fd7c432d62ddb",
+      "data-layer-execution-authority-bypass": "sha256:0bc1b6415b39f4867108efd14051f652c745e5f0531b8417005cf08d98490478",
+      "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708",
+      "data-layer-legacy-execution-surfaces": "sha256:376593f8255b6a72a45b4c6f06180668ae0d2f8492f479c9514026349cc85714",
+      "data-layer-raw-execute-regression": "sha256:e7906ab4289b8ea6c7e0cc97dea0d2e0eb33c04daeb26e857ec908a6bcd4c35f",
+      "data-layer-serverplan-bypass": "sha256:bd11d189d06488a9cea1392b65d0d8571e9a2e30fe6e0ad2f63bbe0d708e0ff7",
+      "data-layer-serverplan-dispatch-architecture": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8",
+      "data-layer-serverplan-quality": "sha256:901e890fd5781ecc565b67198afdd6889fd70fa9c46f33075db363d5f81fa01e",
+      "data-layer-serverplan-state-tripwires": "sha256:d5d8f9e222f527d87a002e41381fac52270ba49e551d8bd3f0f30aef95674d12",
+      "data-layer-serverplan-steps": "sha256:1adf862c5ead8f71320eebbf8facfbd9fcc04a0f160339660b41164af8976b85",
+      "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198"
+    },
+    "policyCompilationMs": {
+      "data-layer-admin-async-purity": 5.688750000000027,
+      "data-layer-async-executor": 1.8813749999999345,
+      "data-layer-async-patterns": 45.96804099999986,
+      "data-layer-async-sync-boundary": 22.615208000000166,
+      "data-layer-backend-type-strings": 17.54608300000018,
+      "data-layer-classvar-check": 8.905207999999902,
+      "data-layer-conn-or-txn-union": 12.738000000000056,
+      "data-layer-connection-caches": 33.258166000000074,
+      "data-layer-dynamic-module-loading": 10.10270800000012,
+      "data-layer-error-handling": 1.6434580000000096,
+      "data-layer-forwardref": 4.661375000000135,
+      "data-layer-grammar-allowlist-burndown": 5.933708999999908,
+      "data-layer-grammar-callable-constructors": 14.279667000000018,
+      "data-layer-grammar-fragment-usage": 20.43987500000003,
+      "data-layer-grammar-render-methods": 11.59808299999986,
+      "data-layer-grammar-str-params": 42.40370900000016,
+      "data-layer-hasattr-async": 9.41229199999998,
+      "data-layer-lazy-result-usage": 7.769959000000199,
+      "data-layer-module-level-caches": 27.287250000000085,
+      "data-layer-no-api-root-imports": 7.1443749999998545,
+      "data-layer-no-blanket-grammar-bypass": 7.394542000000001,
+      "data-layer-no-source-inspection": 1.5585829999999987,
+      "data-layer-permission-error": 0.992415999999821,
+      "data-layer-plan-scope-ownership": 15.617375000000038,
+      "data-layer-plan-scope-side-effects": 7.143041000000039,
+      "data-layer-regex-sql-parsing": 375.5340000000001,
+      "data-layer-removed-compat-surfaces": 3.0048329999999623,
+      "data-layer-render-fstrings": 0.8017909999998665,
+      "data-layer-render-raw-strings": 4.265249999999924,
+      "data-layer-serverplan-grammar-surface": 1.9428749999997308,
+      "data-layer-serverplan-name-inference": 2.0567080000000715,
+      "data-layer-sql-grammar-escape-hatches": 34.11570900000015,
+      "data-layer-swallowed-exceptions": 5.787667000000056,
+      "data-layer-transaction-callback-wrappers": 6.431332999999995,
+      "data-layer-transaction-closures": 21.405750000000353,
+      "data-layer-transaction-patterns": 180.82758400000012,
+      "data-layer-type-safety-patterns": 9.882000000000062,
+      "data-layer-unresolved-forward-refs": 2.6912090000000717,
+      "data-layer-versioned-lifecycle-legacy-surfaces": 0.9606659999999465,
+      "data-layer-rust-sql-grammar-boundary": 1.1056249999996908,
+      "data-layer-async-sync-delegation": 186.9396670000001,
+      "data-layer-backend-coupling": 3.7910000000001673,
+      "data-layer-data-layer-compat-aliases": 3.051042000000052,
+      "data-layer-data-layer-facade-purity": 3.2257089999998243,
+      "data-layer-imperative-private-functions": 18.069167000000107,
+      "data-layer-internal-dead-code": 18.814000000000306,
+      "data-layer-layer-violations": 7.472291999999925,
+      "data-layer-missing-async-pairs": 12.378957999999784,
+      "data-layer-public-api-triples": 18.389250000000175,
+      "data-layer-sync-async-signatures": 11.301040999999714,
+      "data-layer-execution-authority-bypass": 4.611709000000246,
+      "data-layer-impl-direct-execution": 11.054625000000215,
+      "data-layer-legacy-execution-surfaces": 31.8420000000001,
+      "data-layer-raw-execute-regression": 9.810750000000098,
+      "data-layer-serverplan-bypass": 8.448915999999826,
+      "data-layer-serverplan-dispatch-architecture": 45.00583299999971,
+      "data-layer-serverplan-quality": 555.827875,
+      "data-layer-serverplan-state-tripwires": 90.39424999999983,
+      "data-layer-serverplan-steps": 103.9925830000002,
+      "data-layer-serverplan-target-architecture": 12.908249999999953
+    },
+    "compilationMs": 2169.5802080000003,
+    "coldMs": 4308202.832958,
+    "phaseCpuMs": {
+      "compile": {
+        "userMs": 1833.166,
+        "systemMs": 125.17
+      },
+      "cold": {
+        "userMs": 2432674.116,
+        "systemMs": 1153919.901
+      }
+    },
+    "peakRssBytes": 7530659840,
+    "acceptance": false,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "recordingSha256": "5ede2971ed87b1e64bd7fd125281410e3c527f5d7f756934e82f93d0828c9585",
+    "resource": "real 4325.08\nuser 2437.77\nsys 1156.61\n          7530659840  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n             1626785  page reclaims\n                 107  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n             2812154  voluntary context switches\n             6368040  involuntary context switches\n      25668563415422  instructions retired\n      11631801943217  cycles elapsed\n          7906637232  peak memory footprint\n",
+    "attribution": {
+      "format": "rerail.full-cold-attribution-summary/v1",
+      "acceptance": false,
+      "traceEvents": 1953732,
+      "coverage": {
+        "observedCpuNs": 3204751860406,
+        "unattributedCpuNs": 1527241716416,
+        "missingCpuEvents": 0,
+        "unplacedEvents": 0,
+        "partialOverlapEvents": 103,
+        "cpuOverdrawEvents": 7,
+        "accounting": "Measured spans only. Self CPU excludes nested spans on the same thread. Untraced work and ambiguous overlaps are not inferred."
+      },
+      "clauses": [
+        {
+          "rule": "",
+          "clause": "",
+          "selfCpuNs": 1527241716416,
+          "calls": 1414478
+        },
+        {
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "selfCpuNs": 776922144061,
+          "calls": 123166
+        },
+        {
+          "rule": "data-layer-serverplan-state-tripwires",
+          "clause": "state-flow-1",
+          "selfCpuNs": 305015546056,
+          "calls": 62560
+        },
+        {
+          "rule": "data-layer-execution-authority-bypass",
+          "clause": "authority-sites",
+          "selfCpuNs": 192103142010,
+          "calls": 173206
+        },
+        {
+          "rule": "data-layer-legacy-execution-surfaces",
+          "clause": "legacy-execution-graphs",
+          "selfCpuNs": 114152744502,
+          "calls": 63872
+        },
+        {
+          "rule": "data-layer-serverplan-steps",
+          "clause": "step-contracts-1",
+          "selfCpuNs": 47222152086,
+          "calls": 23571
+        },
+        {
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-2",
+          "selfCpuNs": 34969957498,
+          "calls": 14501
+        },
+        {
+          "rule": "data-layer-serverplan-steps",
+          "clause": "step-contracts-5",
+          "selfCpuNs": 34969481159,
+          "calls": 15133
+        },
+        {
+          "rule": "data-layer-serverplan-steps",
+          "clause": "step-contracts-2",
+          "selfCpuNs": 32226390170,
+          "calls": 16951
+        },
+        {
+          "rule": "data-layer-internal-dead-code",
+          "clause": "unreachable-internal-symbols",
+          "selfCpuNs": 28127887542,
+          "calls": 82
+        },
+        {
+          "rule": "data-layer-serverplan-steps",
+          "clause": "step-contracts-3",
+          "selfCpuNs": 23099445338,
+          "calls": 12502
+        },
+        {
+          "rule": "data-layer-serverplan-state-tripwires",
+          "clause": "state-signatures-1",
+          "selfCpuNs": 20394213739,
+          "calls": 3580
+        },
+        {
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-conditional-1",
+          "selfCpuNs": 19260708125,
+          "calls": 113
+        },
+        {
+          "rule": "data-layer-serverplan-steps",
+          "clause": "runtime-reference-summaries",
+          "selfCpuNs": 18463938584,
+          "calls": 14492
+        },
+        {
+          "rule": "data-layer-serverplan-steps",
+          "clause": "step-contracts-4",
+          "selfCpuNs": 17477130875,
+          "calls": 11926
+        },
+        {
+          "rule": "data-layer-public-api-triples",
+          "clause": "exported-families",
+          "selfCpuNs": 5311048625,
+          "calls": 65
+        },
+        {
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-3",
+          "selfCpuNs": 4599638668,
+          "calls": 1845
+        },
+        {
+          "rule": "data-layer-serverplan-dispatch-architecture",
+          "clause": "executor-provenance",
+          "selfCpuNs": 1766996000,
+          "calls": 178
+        },
+        {
+          "rule": "data-layer-serverplan-state-tripwires",
+          "clause": "state-projection-recovery-2",
+          "selfCpuNs": 756281416,
+          "calls": 432
+        },
+        {
+          "rule": "data-layer-impl-direct-execution",
+          "clause": "direct-execution-lines",
+          "selfCpuNs": 272081538,
+          "calls": 941
+        },
+        {
+          "rule": "data-layer-serverplan-steps",
+          "clause": "step-contracts-6",
+          "selfCpuNs": 229080708,
+          "calls": 100
+        },
+        {
+          "rule": "data-layer-serverplan-target-architecture",
+          "clause": "required-contracts",
+          "selfCpuNs": 169607791,
+          "calls": 30
+        },
+        {
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-project-taxonomy",
+          "selfCpuNs": 461916,
+          "calls": 5
+        },
+        {
+          "rule": "data-layer-serverplan-state-tripwires",
+          "clause": "state-flow-project-1",
+          "selfCpuNs": 65583,
+          "calls": 3
+        }
+      ],
+      "phases": [
+        {
+          "phase": "sql-analyze",
+          "selfCpuNs": 679109192868,
+          "calls": 110742
+        },
+        {
+          "phase": "anchor-materialize",
+          "selfCpuNs": 619629505030,
+          "calls": 198648
+        },
+        {
+          "phase": "sql-materialize",
+          "selfCpuNs": 455857853716,
+          "calls": 110780
+        },
+        {
+          "phase": "sql-index",
+          "selfCpuNs": 341869986688,
+          "calls": 132500
+        },
+        {
+          "phase": "sql-pool-trim",
+          "selfCpuNs": 190128482928,
+          "calls": 22098
+        },
+        {
+          "phase": "anchor-prepare",
+          "selfCpuNs": 161016218825,
+          "calls": 203989
+        },
+        {
+          "phase": "anchor-results",
+          "selfCpuNs": 145747858720,
+          "calls": 5341
+        },
+        {
+          "phase": "sql-consumer-release",
+          "selfCpuNs": 132882817301,
+          "calls": 11045
+        },
+        {
+          "phase": "consumer-execute",
+          "selfCpuNs": 88805561898,
+          "calls": 14055
+        },
+        {
+          "phase": "anchor-render",
+          "selfCpuNs": 77923887988,
+          "calls": 2483
+        },
+        {
+          "phase": "anchor-ownership",
+          "selfCpuNs": 59750531708,
+          "calls": 2483
+        },
+        {
+          "phase": "sql-result",
+          "selfCpuNs": 51483130927,
+          "calls": 11045
+        },
+        {
+          "phase": "anchor-compose",
+          "selfCpuNs": 43794335225,
+          "calls": 368974
+        },
+        {
+          "phase": "input-stream",
+          "selfCpuNs": 27608761901,
+          "calls": 60707
+        },
+        {
+          "phase": "anchor-fact-preparation",
+          "selfCpuNs": 24030285508,
+          "calls": 3085
+        },
+        {
+          "phase": "anchor-batch",
+          "selfCpuNs": 22930900339,
+          "calls": 3237
+        },
+        {
+          "phase": "anchor-layout",
+          "selfCpuNs": 19009806695,
+          "calls": 2483
+        },
+        {
+          "phase": "sql-resident-accounting",
+          "selfCpuNs": 17013409068,
+          "calls": 2121
+        },
+        {
+          "phase": "producer-prepare",
+          "selfCpuNs": 16773581176,
+          "calls": 11046
+        },
+        {
+          "phase": "anchor-lower",
+          "selfCpuNs": 7641005378,
+          "calls": 2483
+        },
+        {
+          "phase": "sql-input",
+          "selfCpuNs": 7126936751,
+          "calls": 39262
+        },
+        {
+          "phase": "input-preparation",
+          "selfCpuNs": 5626476432,
+          "calls": 11880
+        },
+        {
+          "phase": "input-kind-index",
+          "selfCpuNs": 1628217079,
+          "calls": 32652
+        },
+        {
+          "phase": "producer-publish",
+          "selfCpuNs": 1601671010,
+          "calls": 3010
+        },
+        {
+          "phase": "anchor-fragment",
+          "selfCpuNs": 1451077610,
+          "calls": 368974
+        },
+        {
+          "phase": "anchor-release",
+          "selfCpuNs": 815457268,
+          "calls": 99257
+        },
+        {
+          "phase": "sql-reach-prepare",
+          "selfCpuNs": 673174500,
+          "calls": 1
+        },
+        {
+          "phase": "syntax-prepare",
+          "selfCpuNs": 653496882,
+          "calls": 1463
+        },
+        {
+          "phase": "relational-batch",
+          "selfCpuNs": 522552909,
+          "calls": 1
+        },
+        {
+          "phase": "anchor-index",
+          "selfCpuNs": 413350001,
+          "calls": 6899
+        },
+        {
+          "phase": "producer-stage",
+          "selfCpuNs": 386793666,
+          "calls": 24
+        },
+        {
+          "phase": "syntax-owners",
+          "selfCpuNs": 366904119,
+          "calls": 4389
+        },
+        {
+          "phase": "anchor-storage",
+          "selfCpuNs": 238740676,
+          "calls": 3237
+        },
+        {
+          "phase": "anchor-explain",
+          "selfCpuNs": 101181468,
+          "calls": 102494
+        },
+        {
+          "phase": "sql-reach-walk",
+          "selfCpuNs": 86640583,
+          "calls": 1
+        },
+        {
+          "phase": "producer-wave",
+          "selfCpuNs": 49445628,
+          "calls": 8
+        },
+        {
+          "phase": "input-admission",
+          "selfCpuNs": 1450896,
+          "calls": 834
+        },
+        {
+          "phase": "sql-reach-index",
+          "selfCpuNs": 1179041,
+          "calls": 1
+        }
+      ],
+      "topRows": [
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "sql-pool-trim",
+          "name": "admission",
+          "calls": 22098,
+          "selfCpuNs": 190128482928,
+          "inclusiveCpuNs": 190128482928
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-results",
+          "name": "results",
+          "calls": 5341,
+          "selfCpuNs": 145747858720,
+          "inclusiveCpuNs": 145747866554
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "sql-consumer-release",
+          "name": "lease",
+          "calls": 11045,
+          "selfCpuNs": 132882817301,
+          "inclusiveCpuNs": 132882817301
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-render",
+          "name": "families",
+          "calls": 2483,
+          "selfCpuNs": 77923887988,
+          "inclusiveCpuNs": 77923887988
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-prepare",
+          "name": "results",
+          "calls": 5341,
+          "selfCpuNs": 60094094006,
+          "inclusiveCpuNs": 60094094006
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-ownership",
+          "name": "schedule",
+          "calls": 2483,
+          "selfCpuNs": 59750531708,
+          "inclusiveCpuNs": 59750531708
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "consumer-execute",
+          "name": "quality-contracts-1",
+          "calls": 2667,
+          "selfCpuNs": 52702428309,
+          "inclusiveCpuNs": 770617506553
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-compose",
+          "name": "intern",
+          "calls": 368974,
+          "selfCpuNs": 43794335225,
+          "inclusiveCpuNs": 43794381559
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-result",
+          "name": "query",
+          "calls": 889,
+          "selfCpuNs": 36156054956,
+          "inclusiveCpuNs": 36156054956
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-materialize",
+          "name": "vocabulary_fill",
+          "calls": 3236,
+          "selfCpuNs": 29474506303,
+          "inclusiveCpuNs": 29474506303
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-fact-preparation",
+          "name": "structural",
+          "calls": 3085,
+          "selfCpuNs": 24030285508,
+          "inclusiveCpuNs": 24030285508
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-batch",
+          "name": "candidates",
+          "calls": 3237,
+          "selfCpuNs": 22930900339,
+          "inclusiveCpuNs": 950892441160
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "py_names",
+          "calls": 889,
+          "selfCpuNs": 21351569478,
+          "inclusiveCpuNs": 21351569478
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "scope_owners",
+          "calls": 889,
+          "selfCpuNs": 21328669454,
+          "inclusiveCpuNs": 21328669454
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "call_paths",
+          "calls": 889,
+          "selfCpuNs": 21300386710,
+          "inclusiveCpuNs": 21300386710
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "scope_chain",
+          "calls": 889,
+          "selfCpuNs": 21150903699,
+          "inclusiveCpuNs": 21150903699
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "scopes",
+          "calls": 889,
+          "selfCpuNs": 21140456814,
+          "inclusiveCpuNs": 21140456814
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "scoped_nodes",
+          "calls": 889,
+          "selfCpuNs": 21070475416,
+          "inclusiveCpuNs": 21070475416
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "strings",
+          "calls": 889,
+          "selfCpuNs": 21050496215,
+          "inclusiveCpuNs": 21050496215
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "scope_imports",
+          "calls": 889,
+          "selfCpuNs": 20862408074,
+          "inclusiveCpuNs": 20862408074
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "statements",
+          "calls": 889,
+          "selfCpuNs": 20824841252,
+          "inclusiveCpuNs": 20824841252
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-execution-authority-bypass",
+          "clause": "authority-sites",
+          "phase": "sql-analyze",
+          "name": "frames",
+          "calls": 6769,
+          "selfCpuNs": 19417661210,
+          "inclusiveCpuNs": 19417661210
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-execution-authority-bypass",
+          "clause": "authority-sites",
+          "phase": "sql-analyze",
+          "name": "parents",
+          "calls": 6769,
+          "selfCpuNs": 19175483246,
+          "inclusiveCpuNs": 19175483246
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-execution-authority-bypass",
+          "clause": "authority-sites",
+          "phase": "sql-analyze",
+          "name": "contexts",
+          "calls": 6769,
+          "selfCpuNs": 19064232277,
+          "inclusiveCpuNs": 19064232277
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "last_module_functions",
+          "calls": 889,
+          "selfCpuNs": 19051653023,
+          "inclusiveCpuNs": 19051653023
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "module_functions",
+          "calls": 889,
+          "selfCpuNs": 19023830176,
+          "inclusiveCpuNs": 19023830176
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-layout",
+          "name": "canonical-order",
+          "calls": 2483,
+          "selfCpuNs": 19009806695,
+          "inclusiveCpuNs": 19009806695
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-execution-authority-bypass",
+          "clause": "authority-sites",
+          "phase": "sql-analyze",
+          "name": "private_exceptions",
+          "calls": 6196,
+          "selfCpuNs": 18930342916,
+          "inclusiveCpuNs": 18930342916
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-execution-authority-bypass",
+          "clause": "authority-sites",
+          "phase": "sql-index",
+          "name": "frames",
+          "calls": 13538,
+          "selfCpuNs": 18447012718,
+          "inclusiveCpuNs": 18447012718
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-execution-authority-bypass",
+          "clause": "authority-sites",
+          "phase": "sql-index",
+          "name": "parents",
+          "calls": 13538,
+          "selfCpuNs": 18423876159,
+          "inclusiveCpuNs": 18423876159
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-internal-dead-code",
+          "clause": "unreachable-internal-symbols",
+          "phase": "sql-materialize",
+          "name": "reachable",
+          "calls": 1,
+          "selfCpuNs": 18212988166,
+          "inclusiveCpuNs": 18212988166
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "sql-resident-accounting",
+          "name": "admission",
+          "calls": 2121,
+          "selfCpuNs": 17013409068,
+          "inclusiveCpuNs": 17013409068
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-materialize",
+          "name": "r3",
+          "calls": 2683,
+          "selfCpuNs": 15973813341,
+          "inclusiveCpuNs": 15973813341
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-legacy-execution-surfaces",
+          "clause": "legacy-execution-graphs",
+          "phase": "sql-materialize",
+          "name": "nodes",
+          "calls": 430,
+          "selfCpuNs": 15011716796,
+          "inclusiveCpuNs": 15011716796
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "annotation_atoms",
+          "calls": 889,
+          "selfCpuNs": 14884313409,
+          "inclusiveCpuNs": 14884313409
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "resolved_atoms",
+          "calls": 889,
+          "selfCpuNs": 14688348178,
+          "inclusiveCpuNs": 14688348178
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-quality",
+          "clause": "quality-contracts-1",
+          "phase": "sql-analyze",
+          "name": "annotations",
+          "calls": 889,
+          "selfCpuNs": 14639767492,
+          "inclusiveCpuNs": 14639767492
+        },
+        {
+          "runPhase": "cold",
+          "rule": "",
+          "clause": "",
+          "phase": "anchor-materialize",
+          "name": "source_input_wave_1",
+          "calls": 3236,
+          "selfCpuNs": 14326182092,
+          "inclusiveCpuNs": 14326221759
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-serverplan-state-tripwires",
+          "clause": "state-flow-1",
+          "phase": "consumer-execute",
+          "name": "state-flow-1",
+          "calls": 1474,
+          "selfCpuNs": 13586583801,
+          "inclusiveCpuNs": 299058935478
+        },
+        {
+          "runPhase": "cold",
+          "rule": "data-layer-legacy-execution-surfaces",
+          "clause": "legacy-execution-graphs",
+          "phase": "sql-materialize",
+          "name": "ownership",
+          "calls": 430,
+          "selfCpuNs": 13162585670,
+          "inclusiveCpuNs": 13162585670
+        }
+      ]
+    },
+    "admission": {
+      "peakSuspendedSessions": 792,
+      "capacityPartitions": 4,
+      "peakSuspendedSqlBytes": 249905204,
+      "inputCapacityBytes": 67108864,
+      "sqlAdmissionBytes": 268435456
+    },
+    "qualification": "Full traced diagnostic overlaps laboratory development. Do not compare its timing with uninstrumented acceptance or treat span calls as SQL submissions. Scheduled samples targeted time and are invalid; only supplemental Node samples support native stacks.",
+    "command": [
+      "/usr/bin/time",
+      "-lp",
+      "-o",
+      "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/cold-cpu-spikes-20261026/attribution-full/resource.txt",
+      "node",
+      "--import",
+      "tsx",
+      "conformance/data-layer/suite.ts",
+      "--recording",
+      ".rerail/profiles/full-repository-20261021/all-60-recording.json",
+      "--policies",
+      "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/cold-cpu-spikes-20261026/artifact/policies",
+      "--output",
+      "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/profiles/cold-cpu-spikes-20261026/attribution-full/parity.json",
+      "--cold-only",
+      "--progress"
+    ],
+    "nativeWorkers": 4,
+    "nativeSourceRevision": "f7f34b90",
+    "allocator": "System malloc via the existing jemalloc check shim",
+    "allocatorShimSha256": "73c2e8b400bb7540b03f9e68712cdd45f2756ef31893d890ce2ea6696dc931a9"
+  },
+  "supplementalSamples": [
+    {
+      "name": "deferred-node-sample-1",
+      "targetPid": 17694,
+      "rawSha256": "b95331a0b26f494c7f59437562baa43cbc7d602f2a0cb4de029708f1d8281058",
+      "activeNativeSamples": 722,
+      "self": [
+        {
+          "symbol": "pread (libsystem_kernel.dylib)",
+          "samples": 218,
+          "percent": 30.19
+        },
+        {
+          "symbol": "sqlite3FindIndex (engine.node)",
+          "samples": 113,
+          "percent": 15.65
+        },
+        {
+          "symbol": "sqlite3FindTable (engine.node)",
+          "samples": 97,
+          "percent": 13.43
+        },
+        {
+          "symbol": "sqlite3VdbeExec (engine.node)",
+          "samples": 34,
+          "percent": 4.71
+        },
+        {
+          "symbol": "sqlite3FkClearTriggerCache (engine.node)",
+          "samples": 29,
+          "percent": 4.02
+        },
+        {
+          "symbol": "sqlite3AnalysisLoad (engine.node)",
+          "samples": 26,
+          "percent": 3.6
+        },
+        {
+          "symbol": "_platform_memmove (libsystem_platform.dylib)",
+          "samples": 22,
+          "percent": 3.05
+        },
+        {
+          "symbol": "_xzm_free (libsystem_malloc.dylib)",
+          "samples": 19,
+          "percent": 2.63
+        },
+        {
+          "symbol": "pwrite (libsystem_kernel.dylib)",
+          "samples": 14,
+          "percent": 1.94
+        },
+        {
+          "symbol": "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)",
+          "samples": 10,
+          "percent": 1.39
+        },
+        {
+          "symbol": "decodeIntArray (engine.node)",
+          "samples": 7,
+          "percent": 0.97
+        },
+        {
+          "symbol": "sqlite3VdbeRecordCompareWithSkip (engine.node)",
+          "samples": 7,
+          "percent": 0.97
+        }
+      ],
+      "samplingBasis": "Wall-time stack observations; I/O syscall frames may be executing or blocked. Percentages are not CPU-time shares."
+    },
+    {
+      "name": "deferred-node-sample-2",
+      "targetPid": 17694,
+      "rawSha256": "277a11b2c93e0ba3c48a1556abea4e35a797d8bd26a1f39d3ab2abcbf9993965",
+      "activeNativeSamples": 807,
+      "self": [
+        {
+          "symbol": "pread (libsystem_kernel.dylib)",
+          "samples": 206,
+          "percent": 25.53
+        },
+        {
+          "symbol": "sqlite3FindTable (engine.node)",
+          "samples": 173,
+          "percent": 21.44
+        },
+        {
+          "symbol": "sqlite3FindIndex (engine.node)",
+          "samples": 164,
+          "percent": 20.32
+        },
+        {
+          "symbol": "sqlite3FkClearTriggerCache (engine.node)",
+          "samples": 46,
+          "percent": 5.7
+        },
+        {
+          "symbol": "sqlite3VdbeExec (engine.node)",
+          "samples": 22,
+          "percent": 2.73
+        },
+        {
+          "symbol": "sqlite3AnalysisLoad (engine.node)",
+          "samples": 22,
+          "percent": 2.73
+        },
+        {
+          "symbol": "_xzm_free (libsystem_malloc.dylib)",
+          "samples": 14,
+          "percent": 1.73
+        },
+        {
+          "symbol": "_platform_memmove (libsystem_platform.dylib)",
+          "samples": 11,
+          "percent": 1.36
+        },
+        {
+          "symbol": "pwrite (libsystem_kernel.dylib)",
+          "samples": 9,
+          "percent": 1.12
+        },
+        {
+          "symbol": "btreeParseCellPtr (engine.node)",
+          "samples": 8,
+          "percent": 0.99
+        },
+        {
+          "symbol": "sqlite3BtreeNext (engine.node)",
+          "samples": 7,
+          "percent": 0.87
+        },
+        {
+          "symbol": "resolveExprStep (engine.node)",
+          "samples": 7,
+          "percent": 0.87
+        }
+      ],
+      "samplingBasis": "Wall-time stack observations; I/O syscall frames may be executing or blocked. Percentages are not CPU-time shares."
+    }
+  ],
+  "memory": {
+    "fullVmmap": {
+      "tool": "vmmap",
+      "file": "deferred-vmmap-1.txt",
+      "startUnixUs": 1793016536789057,
+      "wallSeconds": 3.090468168258667,
+      "exitCode": 0,
+      "summary": {
+        "roundedValues": true,
+        "regions": {
+          "MALLOC guard page": {
+            "virtualBytesApprox": 3686400,
+            "residentBytesApprox": 0,
+            "dirtyBytesApprox": 0,
+            "swappedBytesApprox": 0
+          },
+          "MALLOC metadata": {
+            "virtualBytesApprox": 30408704,
+            "residentBytesApprox": 25585254,
+            "dirtyBytesApprox": 25270681,
+            "swappedBytesApprox": 4669440
+          },
+          "MALLOC_LARGE": {
+            "virtualBytesApprox": 737568358,
+            "residentBytesApprox": 130442854,
+            "dirtyBytesApprox": 130442854,
+            "swappedBytesApprox": 588041420
+          },
+          "MALLOC_LARGE (empty)": {
+            "virtualBytesApprox": 75287756,
+            "residentBytesApprox": 71408025,
+            "dirtyBytesApprox": 71408025,
+            "swappedBytesApprox": 16384
+          },
+          "MALLOC_REALLOC": {
+            "virtualBytesApprox": 1949696,
+            "residentBytesApprox": 1949696,
+            "dirtyBytesApprox": 1949696,
+            "swappedBytesApprox": 0
+          },
+          "MALLOC_REALLOC (empty)": {
+            "virtualBytesApprox": 33764147,
+            "residentBytesApprox": 10800332,
+            "dirtyBytesApprox": 10800332,
+            "swappedBytesApprox": 0
+          },
+          "MALLOC_REALLOC (reserved)": {
+            "virtualBytesApprox": 524288,
+            "residentBytesApprox": 0,
+            "dirtyBytesApprox": 0,
+            "swappedBytesApprox": 0
+          },
+          "MALLOC_SMALL": {
+            "virtualBytesApprox": 7301444403,
+            "residentBytesApprox": 3328599654,
+            "dirtyBytesApprox": 3006477107,
+            "swappedBytesApprox": 3650722201
+          },
+          "MALLOC_SMALL (empty)": {
+            "virtualBytesApprox": 201326592,
+            "residentBytesApprox": 197866291,
+            "dirtyBytesApprox": 36805017,
+            "swappedBytesApprox": 901120
+          },
+          "MALLOC_TINY": {
+            "virtualBytesApprox": 4194304,
+            "residentBytesApprox": 180224,
+            "dirtyBytesApprox": 180224,
+            "swappedBytesApprox": 114688
+          }
+        },
+        "allocatorZones": [
+          {
+            "name": "DefaultMallocZone_0x102198000",
+            "virtualBytesApprox": 8267812044,
+            "residentBytesApprox": 3650722201,
+            "dirtyBytesApprox": 3221225472,
+            "swappedBytesApprox": 4187593113,
+            "allocationCount": 36089076,
+            "allocatedBytesApprox": 7408818585
+          }
+        ],
+        "physicalFootprintBytesApprox": 7730941132,
+        "peakPhysicalFootprintBytesApprox": 7838315315,
+        "recognized": true
+      }
+    },
+    "boundedOwnership": [
+      {
+        "phase": "inputs-retained",
+        "revision": 4,
+        "workspace": {
+          "accounting": "Explicit census; Arc projections counted once across files and evidence. Heap estimates exclude allocator overhead; legacy estimates can double-count shared payloads.",
+          "allocator": {
+            "allocatedBytes": 456130560,
+            "inUseBytes": 132943760,
+            "peakRssBytes": 696598528,
+            "rssBytes": 696631296
+          },
+          "anchorCorpus": {
+            "candidateBytes": 630136,
+            "files": 128,
+            "fragments": {
+              "compilations": 174,
+              "entries": 174,
+              "hits": 1912,
+              "retainedSqlBytes": 826742,
+              "sqlBudgetBytes": 33554432
+            },
+            "graphBytes": 4001656,
+            "idleBytesEstimate": 0,
+            "plans": 174,
+            "retainedTemplateSqlBytes": 13678430,
+            "sqlBytes": 9669814,
+            "templateSqlBudgetBytes": 67108864,
+            "templates": 29
+          },
+          "estimatedBytes": 28175422,
+          "residentDocumentBytes": 0,
+          "ownership": {
+            "ownedBytesEstimate": 5440596,
+            "projection": {
+              "heapBytesEstimate": 0,
+              "keyBytes": 0,
+              "objectEntries": 0,
+              "stringBytes": 0,
+              "values": 0
+            },
+            "projectionReferences": 22998,
+            "sharedSourceBytesReferenced": 10471564,
+            "typedProjectionBatches": 583,
+            "typedProjectionBytes": 6977240,
+            "typedProjectionFields": 401364,
+            "uniqueProjections": 11499,
+            "witnesses": 23982
+          },
+          "witnesses": 11991
+        },
+        "censusWallMs": 26.597916000000623,
+        "censusCpuMs": 26.121
+      },
+      {
+        "phase": "global-complete",
+        "revision": 5,
+        "workspace": {
+          "accounting": "Explicit census; Arc projections counted once across files and evidence. Heap estimates exclude allocator overhead; legacy estimates can double-count shared payloads.",
+          "allocator": {
+            "allocatedBytes": 481296384,
+            "inUseBytes": 160858656,
+            "peakRssBytes": 718487552,
+            "rssBytes": 665141248
+          },
+          "anchorCorpus": {
+            "candidateBytes": 630136,
+            "files": 128,
+            "fragments": {
+              "compilations": 174,
+              "entries": 174,
+              "hits": 1912,
+              "retainedSqlBytes": 826742,
+              "sqlBudgetBytes": 33554432
+            },
+            "graphBytes": 4001656,
+            "idleBytesEstimate": 0,
+            "plans": 174,
+            "retainedTemplateSqlBytes": 13678430,
+            "sqlBytes": 9669814,
+            "templateSqlBudgetBytes": 67108864,
+            "templates": 29
+          },
+          "estimatedBytes": 51952300,
+          "residentDocumentBytes": 23776878,
+          "ownership": {
+            "ownedBytesEstimate": 5440596,
+            "projection": {
+              "heapBytesEstimate": 0,
+              "keyBytes": 0,
+              "objectEntries": 0,
+              "stringBytes": 0,
+              "values": 0
+            },
+            "projectionReferences": 22998,
+            "sharedSourceBytesReferenced": 10471564,
+            "typedProjectionBatches": 583,
+            "typedProjectionBytes": 6977240,
+            "typedProjectionFields": 401364,
+            "uniqueProjections": 11499,
+            "witnesses": 23982
+          },
+          "witnesses": 11991
+        },
+        "censusWallMs": 31.67491599999994,
+        "censusCpuMs": 29.399
+      },
+      {
+        "phase": "results-paged",
+        "revision": 5,
+        "workspace": {
+          "accounting": "Explicit census; Arc projections counted once across files and evidence. Heap estimates exclude allocator overhead; legacy estimates can double-count shared payloads.",
+          "allocator": {
+            "allocatedBytes": 481296384,
+            "inUseBytes": 160906480,
+            "peakRssBytes": 718487552,
+            "rssBytes": 665157632
+          },
+          "anchorCorpus": {
+            "candidateBytes": 630136,
+            "files": 128,
+            "fragments": {
+              "compilations": 174,
+              "entries": 174,
+              "hits": 1912,
+              "retainedSqlBytes": 826742,
+              "sqlBudgetBytes": 33554432
+            },
+            "graphBytes": 4001656,
+            "idleBytesEstimate": 0,
+            "plans": 174,
+            "retainedTemplateSqlBytes": 13678430,
+            "sqlBytes": 9669814,
+            "templateSqlBudgetBytes": 67108864,
+            "templates": 29
+          },
+          "estimatedBytes": 51952300,
+          "residentDocumentBytes": 23776878,
+          "ownership": {
+            "ownedBytesEstimate": 5440596,
+            "projection": {
+              "heapBytesEstimate": 0,
+              "keyBytes": 0,
+              "objectEntries": 0,
+              "stringBytes": 0,
+              "values": 0
+            },
+            "projectionReferences": 22998,
+            "sharedSourceBytesReferenced": 10471564,
+            "typedProjectionBatches": 583,
+            "typedProjectionBytes": 6977240,
+            "typedProjectionFields": 401364,
+            "uniqueProjections": 11499,
+            "witnesses": 23982
+          },
+          "witnesses": 11991
+        },
+        "censusWallMs": 31.51050000000032,
+        "censusCpuMs": 31.19
+      },
+      {
+        "phase": "workspace-closed",
+        "revision": 5,
+        "workspace": {
+          "accounting": "Explicit census; Arc projections counted once across files and evidence. Heap estimates exclude allocator overhead; legacy estimates can double-count shared payloads.",
+          "allocator": {
+            "allocatedBytes": 478150656,
+            "inUseBytes": 14461872,
+            "peakRssBytes": 718487552,
+            "rssBytes": 665190400
+          },
+          "anchorCorpus": {
+            "candidateBytes": 0,
+            "graphBytes": 0,
+            "sqlBytes": 0,
+            "templates": 0
+          },
+          "estimatedBytes": 0,
+          "residentDocumentBytes": 0,
+          "ownership": {
+            "ownedBytesEstimate": 0,
+            "projection": {
+              "heapBytesEstimate": 0,
+              "keyBytes": 0,
+              "objectEntries": 0,
+              "stringBytes": 0,
+              "values": 0
+            },
+            "projectionReferences": 0,
+            "sharedSourceBytesReferenced": 0,
+            "typedProjectionBatches": 0,
+            "typedProjectionBytes": 0,
+            "typedProjectionFields": 0,
+            "uniqueProjections": 0,
+            "witnesses": 0
+          },
+          "witnesses": 0
+        },
+        "censusWallMs": 0.5442499999990105,
+        "censusCpuMs": 0.529
+      }
+    ],
+    "qualification": "Memory census and vmmap are diagnostic. Allocator reservation, live bytes, footprint, and RSS are separate views. Do not extrapolate 128-file ownership to the full repository."
+  },
+  "format": "rerail.cold-cpu-attribution/v1",
+  "sourceRevision": "9195e3a5d86a8e3c3bfb0f9dadc8379d7fef0859",
+  "rawDirectory": ".rerail/profiles/cold-cpu-spikes-20261026",
+  "artifactIdentity": {
+    "nativeSha256": "4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518",
+    "sourceDiffSha256": "d6c5f9e7bae950ed732be89f485e2821873e4297c87775e4c91783d3f56d74fb"
+  }
+}
