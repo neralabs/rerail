@@ -11,6 +11,7 @@ import {
   realpath,
   rename,
   rm,
+  rmdir,
   symlink,
   unlink,
   writeFile,
@@ -746,7 +747,15 @@ export class ManagedUpdater {
    */
   async install(version = this.packageVersion): Promise<UpdateResult> {
     parseSemver(version);
-    return await this.withLock(async () => await this.adopt(await this.materializeVersion(version)));
+    // A failed install leaves no folder of its own behind (set-up says nothing was changed): `versions/`, and the
+    // home itself on a first install, go again when this run made them and they are still empty.
+    const created = [this.versionsRoot, this.home].filter(path => !existsSync(path));
+    try {
+      return await this.withLock(async () => await this.adopt(await this.materializeVersion(version)));
+    } catch (error) {
+      for (const path of created) await rmdir(path).catch(() => undefined);
+      throw error;
+    }
   }
 
   /**
