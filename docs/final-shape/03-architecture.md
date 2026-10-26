@@ -168,6 +168,25 @@ matcher rule ──► datalog rules (relations to other facts)
 5. **Repository-fact cold cost.** Estimated at 1.5–2.5 s (A), against the 1–2 s audit target. Measure it on this path.
 6. **One interner** for `tid`, fact atoms and paths (s0 D4). It needs a measured choice between CAS `strings` and a dense append-only table.
 
+### Answers (user, 2026-10-26)
+
+1. **Pinned cache.**
+   - Pre-filtering and memoised facts mean incremental work needs very few files.
+   - A full scan runs in chunks, preparing the cache for chunk k+1 while chunk k computes.
+2. **Interim facts.**
+   - Write-back cannot fall arbitrarily far behind.
+   - Interim facts need an efficient in-memory format.
+   - Proposed format, to be confirmed:
+     - append-only columnar runs per relation, using u32 atoms;
+     - spill to a flat file when the overlay reaches its cap;
+     - the writer merges the runs into SQLite in bulk.
+3. **Per-file lattices.** Re-asked in a concrete form; still open.
+4. **Cutoff granularity.**
+   - Coarse is acceptable, as long as spurious invalidations do not greatly increase the work. This is a practical question and should be checked with a counter of re-runs against actual changes.
+   - A recomputed fact (or partition) that is exactly the same as last time stops further evaluation.
+5. **Repository-fact cost.** Explained in detail; still open: is the 1–2 s target for a cold audit or a warm one?
+6. **One interner.** Yes.
+
 ## 11. What changes from `02-shape.md`
 
 | 02 | Now |
