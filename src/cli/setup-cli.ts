@@ -25,6 +25,7 @@ import {
   type RegistrationReport,
 } from "../setup/harness-registration.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { pinnedNodePath } from "../setup/node-path.js";
 import { addLauncherToPath, describeLauncherPath, launcherPathMarker, recordLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
 import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
@@ -180,9 +181,10 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
 
 /**
  * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
- * install, so commands it added arrive and ones it retired go; `rerail update` runs it from the version it activated.
- * Coding agents never connected stay untouched, and one whose configuration cannot be read to tell is named and left
- * alone. Exits 1 only when a connected coding agent could not be refreshed.
+ * install, so commands it added arrive and ones it retired go, and write the launcher again; `rerail update` runs it
+ * from the version it activated. Both then name the node it runs on. Coding agents never connected stay untouched, and
+ * one whose configuration cannot be read to tell is named and left alone. Exits 1 only when a connected coding agent
+ * could not be refreshed.
  */
 async function runRefresh(context: SetupContext): Promise<number> {
   const root = registrationRoot(context);
@@ -198,6 +200,11 @@ async function runRefresh(context: SetupContext): Promise<number> {
   }
   for (const { agent, message } of result.unchecked) {
     process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);
+  }
+  // The hooks above now name the node this runs on; the launcher names it too, or it would keep the one an earlier
+  // set-up recorded and, once that is upgraded or removed, fall back to whichever `node` PATH has.
+  if (await context.updater.refreshLauncher()) {
+    process.stdout.write(`Launcher: ${context.updater.launcherPath} now runs ${pinnedNodePath()}\n`);
   }
   // An install made by a version whose set-up never wrote PATH keeps the launcher off it until something puts it
   // on: the refresh every update ends with is that something, once. A set-up that handled PATH leaves a record, and

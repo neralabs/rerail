@@ -1,7 +1,5 @@
 import { renderNodeTooOld, type SetupLane } from "../harness/setup-screens.js";
-
-/** The oldest Node major Rerail runs on; matches `engines.node` in package.json. */
-export const REQUIRED_NODE_MAJOR = 24;
+import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 
 export type NodeVersionCheck =
   | { readonly ok: true; readonly major: number }

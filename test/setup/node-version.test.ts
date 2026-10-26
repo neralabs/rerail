@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { checkNodeVersion, REQUIRED_NODE_MAJOR } from "../../src/setup/node-version.js";
+import { checkNodeVersion } from "../../src/setup/node-version.js";
+import { REQUIRED_NODE_MAJOR } from "../../src/engine/index.js";
 
 const ANSI = /\u001b\[/;
 
