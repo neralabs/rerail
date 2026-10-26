@@ -321,10 +321,24 @@ Code, Codex and Cursor relay the questions as text.
   nothing, and the status line says `needs Node 24 or newer`. After moving to
   another Node, run `rerail install --refresh` with it first on `PATH` to
   record it for all of them.
+- Git. Rerail reads every repository through it, and runs it only from fixed
+  locations, never from `PATH`, so a repository cannot put its own `git` first:
+  `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`,
+  `/home/linuxbrew/.linuxbrew/bin`, `/run/current-system/sw/bin` and
+  `~/.nix-profile/bin`; on Windows `C:\Program Files\Git\cmd`,
+  `C:\Program Files (x86)\Git\cmd`, `%LOCALAPPDATA%\Programs\Git\cmd` (Git for
+  Windows installed for one user) and `~\scoop\apps\git\current\cmd`.
 - macOS, Linux with glibc 2.28 or newer (what Node 24 needs), or Windows MSVC on
   arm64/x64. The package carries prebuilt native kernels for those; nothing is
-  compiled on the user's machine.
+  compiled on the user's machine. Alpine and other musl Linux are not supported.
+- Under WSL, install Rerail on the same side as the coding agent (both in WSL,
+  or both on Windows). A repository on the Windows drive (`/mnt/c/…`) works but
+  is slow from WSL; set-up says so.
 - Read access to `@neralabs/rerail` on npmjs (see "Registry access").
+
+Set-up checks Node, the platform and Git before it installs anything. When one
+is missing it stops, says what to do, and changes nothing; an install that
+fails later removes the empty folders it made.
 
 ## Registry access
 
