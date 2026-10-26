@@ -23,6 +23,43 @@ def resolve(value, entry, oracle=False):
 
 
 class SharedSqlTests(unittest.TestCase):
+    def test_module_string_binding_scans_identifier_text_once(self):
+        policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json').read_text())
+        plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'state-projection-recovery-2')
+        query = next(s['query'] for s in plan['stages'] if s['name'] == 'string_values')
+        db = sqlite3.connect(':memory:')
+        self.addCleanup(db.close)
+        db.executescript("""
+            CREATE TABLE assignments(__path,id,parent,right_start,right_end,target_text,target_kind);
+            CREATE TABLE raw_strings_0(__path,__start,__end,value);
+            CREATE TABLE raw_strings_1(__path,__start,__end,value);
+            CREATE TABLE raw_strings_2(__path,__start,__end,value);
+            CREATE TABLE payload(data);
+        """)
+        nodes = [{'__path':'a.py','id':0,'kind':'module','parent':None,'text':'','__start':0,'__end':100000}]
+        for i in range(80):
+            nodes.append({'__path':'a.py','id':i+1,'kind':'expression_statement','parent':0,'text':'','__start':i,'__end':i+1})
+        nodes += [{'__path':'a.py','id':1000+i,'kind':'identifier','parent':0,'text':'K'+str(i%80),'__start':1000+i,'__end':1001+i} for i in range(800)]
+        db.execute('INSERT INTO payload VALUES(?)', (json.dumps(nodes),))
+        reads = 0
+        def text(value):
+            nonlocal reads
+            reads += 1
+            return value
+        db.create_function('node_text', 1, text)
+        cols = ['__path','id','kind','parent','__start','__end']
+        db.execute('CREATE VIEW nodes AS SELECT '+','.join("json_extract(j.value,'$."+c+"') AS "+c for c in cols)+",node_text(json_extract(j.value,'$.text')) AS text FROM payload,json_each(payload.data) j")
+        db.executemany('INSERT INTO assignments VALUES(?,?,?,?,?,?,?)', [('a.py',2000+i,i+1,i,i+1,'K'+str(i),'identifier') for i in range(80)])
+        db.executemany('INSERT INTO raw_strings_0 VALUES(?,?,?,?)', [('a.py',i,i+1,'row' if i%2 else 'rows') for i in range(80)])
+        # Same identifier spelling in a different file must not inherit the constant.
+        nodes.append({'__path':'b.py','id':9000,'kind':'identifier','parent':None,'text':'K0','__start':0,'__end':1})
+        db.execute('UPDATE payload SET data=?',(json.dumps(nodes),))
+        rows = set(db.execute(query))
+        expected = {('a.py',i,i+1,'row' if i%2 else 'rows') for i in range(80)}
+        expected |= {('a.py',1000+i,1001+i,'row' if i%80%2 else 'rows') for i in range(800)}
+        self.assertEqual(rows, expected)
+        self.assertLess(reads, 2000, 'module constants must not rescan every identifier for each binding')
+
     def test_import_identifiers_bound_work_to_exact_subtrees_and_preserve_file_scope(self):
         policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
         plan = next(c['relational'] for c in policy['clauses'] if c['id'] == 'quality-contracts-1')
@@ -128,7 +165,7 @@ class SharedSqlTests(unittest.TestCase):
         from data_layer_six.ast_relations import ast_stages, narrow_ast_ordinals
         original = {'relational': {'stages': ast_stages()[:1]}}
         candidate = copy.deepcopy(original)
-        narrow_ast_ordinals(candidate)
+        narrow_ast_ordinals(candidate, ['block'])
         columns = ['__path', '__start', '__end', 'kind', 'parent_start', 'parent_end', 'parent_kind', 'ancestor_start', 'ancestor_end', 'ancestor_kind']
         columns += ['payload_' + str(i) for i in range(40)]
         rows = [('a.py', i, i + 1, 'identifier', i // 10, 10000, 'block', i // 10, 10000, 'block', *['payload'] * 40) for i in range(1000)]
