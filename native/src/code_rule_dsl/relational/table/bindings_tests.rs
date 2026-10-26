@@ -27,6 +27,41 @@ impl Source for Rows {
     }
 }
 #[test]
+fn completed_lease_releases_native_payloads_and_preserves_other_active_owners() -> Result<()> {
+    use super::super::pool::Pool;
+    use std::sync::atomic::AtomicUsize;
+    let pool = Pool::default();
+    let first = pool.take(1024, Arc::new(AtomicUsize::new(100))).unwrap();
+    let second = pool.take(1024, Arc::new(AtomicUsize::new(100))).unwrap();
+    let payload = Arc::new(Rows(vec![8]));
+    let weak = Arc::downgrade(&payload);
+    bind(&second, "__context_payload", payload.clone())?;
+    drop(payload);
+    let schema: i64 = second.query_row("PRAGMA temp.schema_version", [], |r| r.get(0))?;
+    drop(first);
+    assert_eq!(
+        second.query_row("SELECT value FROM __context_payload", [], |r| r
+            .get::<_, i64>(0))?,
+        8
+    );
+    drop(second);
+    assert!(
+        weak.upgrade().is_none(),
+        "completed owner retained native rows in the reusable module"
+    );
+    let third = pool.take(1024, Arc::new(AtomicUsize::new(100))).unwrap();
+    assert_eq!(
+        third.query_row("PRAGMA temp.schema_version", [], |r| r.get::<_, i64>(0))?,
+        schema
+    );
+    assert_eq!(
+        third.query_row("SELECT count(*) FROM __context_payload", [], |r| r
+            .get::<_, i64>(0))?,
+        0
+    );
+    Ok(())
+}
+#[test]
 fn rebinding_preserves_open_cursor_schema_and_releases_old_payloads() -> Result<()> {
     let db = super::super::Database::open()?;
     let first = Arc::new(Rows(vec![1, 2]));
