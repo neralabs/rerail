@@ -185,3 +185,28 @@ print(json.dumps(c.execute('SELECT name FROM "'+alias.replace('"','""')+'"').fet
   expect(read.status,read.stderr).toBe(0);expect(JSON.parse(read.stdout)).toEqual([['éxx']]);
  }finally{rmSync(directory,{recursive:true,force:true});}
 },35_000);
+
+it.skipIf(!required)("refreshes populated families before an indexed reader after a native barrier",()=>{
+ const program=`
+  import {readFileSync} from 'node:fs';import {loadNativeBinding} from ${JSON.stringify(engine)};
+  const n=loadNativeBinding(),cap=readFileSync(new URL(${JSON.stringify(caps)}),'utf8');
+  const relational={inputs:{gate:{evidence:{as:'g',query:{ast:{language:'python',syntax:'valid',rule:{kind:'module'}}},project:{path:'file.path'}}}},
+   syntax:{name:'nodes',gate:'gate',columns:['__path','__start','__end','id','kind','text']},
+   stages:[{name:'calls',query:"SELECT __path,id,__start,__end,id+0 AS callee_id,text AS callee,NULL AS raw FROM nodes WHERE kind='identifier'",deferred:{raw:'source_text(__path,__start,__end)'},indexes:[['__path','id'],['__path','callee']]},
+    {name:'descendants',reachability:{syntax:'nodes',roots:"SELECT __path,id FROM nodes WHERE kind='module'"}},
+    {name:'paths',query:"SELECT __path,id,text AS path FROM nodes",indexes:[['__path','id']]},
+    {name:'built',query:'SELECT c.__path,c.id,c.__start,c.__end FROM calls c JOIN paths p ON p.__path=c.__path AND p.id=c.callee_id'}],
+   query:'SELECT b.__path path,b.__start start_byte,b.__end end_byte,b.id FROM built b WHERE EXISTS(SELECT 1 FROM paths p WHERE p.__path=b.__path AND p.id=b.id)',key:['id']};
+  const policy={format:'rerail.policy/v1',id:'statistics-readiness',revision:1,mode:'log',clauses:[{id:'rows',relational,violation:{code:'ROW',message:'Row',anchor:'witness.span'}}]};
+  const w=new n.CodeRuleDslWorkspace();w.addCodeRule(n.CodeRuleDslRuntime.compile(JSON.stringify(policy),'json',cap));
+  try {const result=JSON.parse(await w.applyAsync(JSON.stringify({revision:1,files:[{path:'a.py',language:'python',source:Array.from({length:5000},(_,i)=>'v'+i).join(String.fromCharCode(10))}],removed:[]}))).evaluation;console.log(JSON.stringify({failures:result.failures,findings:result.violations.length}));}finally{w.close();}
+ `;
+ const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30_000,maxBuffer:8*1024*1024,env:{...process.env,RERAIL_PROFILE:'1'}});
+ expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
+ const result=JSON.parse(child.stdout.trim());expect(result.failures).toEqual([]);expect(result.findings).toBe(5000);
+ const spans=child.stderr.split('\n').filter(line=>line.startsWith('RERAIL_TRACE ')).map(line=>JSON.parse(line.slice('RERAIL_TRACE '.length)));
+ const populated=spans.find(span=>span.phase==='sql-materialize'&&span.name==='paths');
+ const reader=spans.find(span=>span.phase==='sql-result');
+ expect(populated).toBeDefined();expect(reader).toBeDefined();
+ expect(spans.some(span=>span.phase==='sql-statistics-boundary'&&span.startUnixUs>populated.startUnixUs&&span.startUnixUs<reader.startUnixUs),'publish the complete family and refresh its statistics before preparing its reader').toBe(true);
+},35_000);
