@@ -63,6 +63,15 @@ class ProcessMonitor:
                 "treeCpuSecondsLowerBound": sum(self.cpu.values()), "errors": self.errors,
                 "note": "Sampled CPU is a lower bound: short-lived workers and final intervals can be missed. Summed RSS counts shared pages in each process. Use driver phase CPU and resource high-water RSS for exact single-process totals."}
 
+    def profile_pid(self):
+        """Select the largest live workload process, including children of wrappers.
+
+        A sample covers one PID. Preserve the choice in each capture; multi-process
+        workloads still require separate captures of other significant workers.
+        """
+        live=self.rows[-1]['processes'] if self.rows else []
+        return max(live,key=lambda row:(row['rssBytes'],row['cpuSeconds']))['pid'] if live else self.pid
+
 
 def vmmap_summary(source):
     """Preserve separate rounded region and allocator views; neither is an owner census."""

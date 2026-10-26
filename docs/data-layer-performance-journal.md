@@ -4935,3 +4935,25 @@ Native addon SHA-256 is `4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10eb
 It enables CPU tracing and external samples, and disables allocator enumeration and SQL snapshots on success.
 Laboratory development can overlap it. Its time is diagnostic and cannot replace uninstrumented acceptance.
 The new replay experiments use captured tapes and generic operators. They do not add production feature flags.
+
+
+### Whole-demand operator and sampler corrections (2026-10-26)
+
+The first architectural host and its comparisons are committed as `4208662f`.
+All 68 laboratory tests pass. The native DSL passes 1,540 tests with 23 explicit ignores.
+All 51 production-shape tests pass. Native and laboratory Clippy pass with warnings denied.
+Static checks exposed a flat-directory limit; analysis helpers now live in `scripts/profiling/analysis/`.
+
+The timing wrapper exposed an external sampler bug: it attaches to the launch PID instead of the workload child.
+The full diagnostic's scheduled samples therefore describe `/usr/bin/time`, not engine execution.
+They are invalid engine evidence and must not enter the CPU diagnosis.
+Red commit `40f27d6b` reproduces this target-selection error.
+The corrected sampler chooses the largest live workload process and records its PID.
+All 30 Python profiler tests pass. Supplemental samples target Node PID 17694 directly.
+The first supplemental capture shows SQLite schema/statistics work during deferred execution.
+Its wall-time stack weights cannot be interpreted as CPU shares.
+
+The native child prototype now fills bounded typed output columns in broad waves.
+A regression covers 40,000 correlated requests and 80,000 output rows: one xFilter, two waves, at most 65,536 buffered rows.
+The next measurement retains this shape; xNext serves completed columns.
+No production execution alternative is added.

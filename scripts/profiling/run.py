@@ -114,7 +114,7 @@ def execute(args, command, output, deadline):
                     monitor.sample(remaining)
                     next_process_sample = time.monotonic() + args.process_every
                 if args.memory_tool != "none" and len(memory) < args.memory_count and time.monotonic() >= next_memory and remaining > 12:
-                    memory.append(memory_snapshot(process.pid, args.memory_tool,
+                    memory.append(memory_snapshot(monitor.profile_pid(), args.memory_tool,
                         output / f"{args.memory_tool}-{len(memory) + 1}.txt", remaining))
                     next_memory = time.monotonic() + args.memory_every
                     remaining = deadline - time.monotonic()
@@ -122,8 +122,9 @@ def execute(args, command, output, deadline):
                     raw = output / f"sample-{len(samples) + 1}.txt"
                     started = time.time()
                     sample_timed_out = False
+                    target_pid=monitor.profile_pid()
                     with (output / "sampler.log").open("a") as log:
-                        sampler = subprocess.Popen(["/usr/bin/sample", str(process.pid), str(args.sample_seconds), "1", "-file", str(raw)],
+                        sampler = subprocess.Popen(["/usr/bin/sample", str(target_pid), str(args.sample_seconds), "1", "-file", str(raw)],
                                                    stdout=log, stderr=log, start_new_session=True)
                         try:
                             # Collection and report processing share the command's
@@ -138,7 +139,7 @@ def execute(args, command, output, deadline):
                         converted = bottom_up(raw.read_text(), args.sample_module or ["rerail_engine"]) if raw.exists() else {}
                     except ValueError as error:
                         converted = {"parseError": str(error)}
-                    samples.append({"file": raw.name, "startUnixUs": int(started * 1e6),
+                    samples.append({"file": raw.name, "targetPid":target_pid,"startUnixUs": int(started * 1e6),
                                     "captureSeconds": args.sample_seconds,
                                     "elapsedSeconds": time.time() - started, "timedOut": sample_timed_out,
                                     "exitCode": sampler.returncode, **converted})
