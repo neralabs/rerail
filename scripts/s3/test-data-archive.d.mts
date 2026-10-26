@@ -1,4 +1,4 @@
-// Types of test-data-archive.mjs, for its TypeScript consumers (conformance/port-readiness/recording/corpus-answers.ts).
+// Types of test-data-archive.mjs, for its TypeScript consumers (conformance/port-readiness/recording/archive.ts, scripts/samples/pack.ts).
 export interface ArchiveEntry {
   path: string;
   bytes: Buffer;

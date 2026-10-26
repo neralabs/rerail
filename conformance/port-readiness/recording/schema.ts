@@ -5,9 +5,8 @@
  *
  * The recording is one archive per tool-pack (archive.ts), a tree of one file per answer that tree.ts reads into the
  * `GatesRecording` this module describes: identity, tool-pack checks, the license digest, the words and names
- * `not-overfit` reads, and every upstream rule's facts, name sources, span parts and cases. Upstream's answers on the
- * corpus and the independent parsers' verdicts stay in the tree, where the gates look each one up by name
- * (corpus-answers.ts).
+ * `not-overfit` reads, and every upstream rule's facts, name sources, span parts and cases. The independent parsers'
+ * verdicts stay in the tree, where the gates look each one up by name (verdicts.ts).
  *
  * Each PackAdapter member and where its recorded answer is:
  *   identity → `identity`; packChecks → `packChecks`; licenseText → `licenseText` and its digest `licenseSha256` (the kept
@@ -17,9 +16,8 @@
  *   pinned commit (each checked against its sha256) and the inline texts, or, in a recording without it, the
  *   committed source of every case (`cases[].file`); keywords → `keywords`;
  *   commentVocabulary → `commentVocabulary`; inScopeSamples → `inScopeSamples`; cases(name) → `rules[name].cases`,
- *   each source read from its `file` and checked against its `sha256`; toSpan(name) → span-units/<adapter>.ts with `rules[name].spanParts`; inCorpus →
- *   `corpus`; lintCorpus → the archive's `answers/`; parserVerdicts → the archive's `verdicts/`, by the source's
- *   sha256, file type and script.
+ *   each source read from its `file` and checked against its `sha256`; toSpan(name) → span-units/<adapter>.ts with
+ *   `rules[name].spanParts`; parserVerdicts → the archive's `verdicts/`, by the source's sha256, file type and script.
  *
  * A verdict file is there for every source the recorder asked the parsers about, `[]` when they were all silent: a
  * source with no verdict file was never recorded, for which the gates have no verdict and draw no conclusion.
@@ -296,13 +294,6 @@ export const gatesRecordingSchema = z.strictObject({
   licenseText: z.string().min(1).optional(),
   /** inScopeSamples: one path per file type upstream lints, which a ported rule must be in scope for. */
   inScopeSamples: z.array(relativePath).min(1),
-  /** inCorpus as data: the file extensions upstream lints in a corpus, and whether they are matched case-sensitively. */
-  corpus: z.strictObject({
-    /** Extensions with their dot (`.py`, `.pyi`; a dialect's whole suffix, `.blade.php`, as engine.ts's fileTypeOf reads it), sorted. */
-    extensions: sortedStrings(z.string().regex(/^(?:\.[A-Za-z0-9]+)+$/u)),
-    /** True when a path's extension must be written as listed (Ruff, Bandit); false when any letter case matches (ESLint). */
-    caseSensitive: z.boolean(),
-  }),
   /** keywords: the upstream language's keywords, sorted. */
   keywords: sortedStrings(nonEmpty),
   /** commentVocabulary: words the language and the linter give meaning to inside comments, sorted. */

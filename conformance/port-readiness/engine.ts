@@ -491,8 +491,8 @@ function dialectForPath(path: string): string | undefined {
 
 /**
  * A path's file type: the longest dialect suffix of the language registry it ends with when that is longer than its
- * extension (`.blade.php`, a Blade template rather than PHP, as the engine routes it), or else its extension. A recorded
- * adapter's inCorpus reads a corpus file's type by it, so a tool-pack that lints `.php` never takes a template for one.
+ * extension (`.blade.php`, a Blade template rather than PHP, as the engine routes it), or else its extension. A parser
+ * verdict is named by it (recording/verdicts.ts), so a template's verdict is never a PHP file's.
  */
 export function fileTypeOf(path: string): string {
   const name = path.slice(path.lastIndexOf("/") + 1);

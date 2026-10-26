@@ -30,7 +30,6 @@ export interface Summary {
   shipped: { rules: number; pass: number };
   candidates: { rules: number; pass: number };
   blocking: BlockingRow[];
-  engineGaps: { pack: string; rule: string; detail: string }[];
   ungated: UngatedResult;
   missingReports: string[];
   /** Gated tool-packs the plan left out: nothing they read changed against the base, so main's verdict stands. */
@@ -125,11 +124,6 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
   }
   for (const check of ungated.checks.filter((item) => !item.ok)) blocking.push({ pack: check.id.split(":")[1] ?? "", rule: "-", stoppedAt: "Not gated / pending", check: check.id.split(":")[0]!, why: check.detail });
 
-  const engineGaps = reports.flatMap((report) => report.rules
-    .filter((rule) => rule.location === "shipped" && rule.stoppedAt === "matches-upstream-tests")
-    .filter((rule) => rule.gates["matches-upstream-tests"].checks.filter((check) => !check.ok).every((check) => check.id === "engine-reads-goldens"))
-    .map((rule) => ({ pack: report.toolPack, rule: rule.id, detail: rule.gates["matches-upstream-tests"].checks.find((check) => check.id === "engine-reads-goldens")!.detail })));
-
   const candidateFunnel: Summary["candidateFunnel"] = {};
   const candidateRows: Summary["candidateRows"] = [];
   const promotable: Summary["promotable"] = [];
@@ -151,7 +145,6 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
     shipped,
     candidates,
     blocking,
-    engineGaps,
     ungated,
     missingReports,
     notJudged,
@@ -201,10 +194,6 @@ export function renderSummary(summary: Summary): string {
           "",
           ...table(["Tool-pack", "Rule", "Upstream rule", "Starts", "Why"], summary.promotable.map((row) => [row.toolPack, row.rule, row.upstreamRule, row.startsOn ? "on" : "off", row.startReason])),
         ]),
-    "",
-    "## Blocked by engine gaps",
-    "",
-    ...(summary.engineGaps.length === 0 ? ["None."] : table(["Pack", "Rule", "Files"], summary.engineGaps.map((row) => [row.pack, row.rule, row.detail]))),
     "",
     "## Not gated",
     "",

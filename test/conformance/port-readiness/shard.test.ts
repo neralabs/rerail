@@ -23,7 +23,7 @@ function passingGates(): RuleReport["gates"] {
     loads: ok,
     "not-overfit": { ...ok, flagged: [], words: {}, uncheckedRegexes: [] },
     compact: { ...ok, metrics: null },
-    "matches-upstream-tests": { ...ok, totals: null, cases: {}, silentCases: 0, differences: [], goldens: { count: 1, differing: { count: 0, first: [] }, engineGaps: { count: 0, first: [] } } },
+    "matches-upstream-tests": { ...ok, totals: null, cases: {}, silentCases: 0, differences: [] },
     "passes-conformance": ok,
   };
 }
@@ -46,7 +46,7 @@ function shardReport(shard: Shard, ids: string[], options: { total?: number; exc
     engine: { sha256: "e" }, gates: [], method: {} as GatesReport["method"], toolPackChecks: { pass: true, checks: [] },
     integrity: options.integrity ?? [], knownGaps: [{ id: "gap", proven: true, kind: "valid-source", excused: options.excused ?? 0 }],
     gapCandidates: [{ gate: "matches-upstream-tests", file: "t/a.ts", engine: "parse", verdict: "valid-source", parsers: [] }],
-    corpus: { tasks: [], files: 3, excluded: 0 }, unmapped: [], listedWithoutDocument: 0,
+    unmapped: [], listedWithoutDocument: 0,
     cache: { rules: rules.length, hits: 1 },
     shard: { ...shard, rules: options.total ?? ids.length },
     summary: summarizeRules(rules),
@@ -119,19 +119,8 @@ describe("merge", () => {
     moved[to]!.rules.push(moved[from]!.rules.pop()!);
     assert.throws(() => mergeShards(moved), /is in shard-\d+of3, not in shard \d+/u);
     assert.throws(() => mergeShards([parts[0]!, { ...parts[1]!, engine: { sha256: "other" } }, parts[2]!]), /disagree on engine: shard-2of3 differ from shard-1of3/u);
-    assert.throws(() => mergeShards([parts[0]!, parts[1]!, { ...parts[2]!, corpus: { tasks: [], files: 2, excluded: 0 } }]), /disagree on corpus: shard-3of3 differ.*failed to fetch or apply/u);
     const { shard: _shard, ...whole } = parts[0]!;
     assert.throws(() => mergeShards([whole as GatesReport, parts[1]!, parts[2]!]), /not a shard's/u);
-  });
-
-  it("a shard that took every result from the cache merges with one that judged: both carry the same corpus-complete", () => {
-    const complete = { id: "corpus-complete", ok: true, detail: "all 3 recorded corpus file(s) were fetched with their recorded sha256" };
-    const withCheck = (part: GatesReport, check: typeof complete) => ({ ...part, toolPackChecks: { pass: true, checks: [check] } });
-    const [judged, cached] = shards(2);
-    assert.deepEqual(mergeShards([withCheck(judged!, complete), withCheck({ ...cached!, cache: { rules: cached!.rules.length, hits: cached!.rules.length } }, complete)]).toolPackChecks.checks, [complete]);
-    // Before the cached check was replayed, a fully cached shard wrote its own detail and no merge took place.
-    const notFetched = { ...complete, detail: "not fetched on this run: every result is cached from a run that fetched every recorded corpus file" };
-    assert.throws(() => mergeShards([withCheck(judged!, complete), withCheck(cached!, notFetched)]), /disagree on toolPackChecks: shard-2of2 differ from shard-1of2/u);
   });
 
   it("merge writes the tool-pack report the summary reads, and the summary never reads a shard's", async () => {

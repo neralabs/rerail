@@ -15,8 +15,6 @@
 //   provideData), analysed as the test analyses it, with the test's expectation; `templates`: every template of the
 //   test's application (tests/skeleton/resources), rendered alone with no view data (`view('<name>')`, from a caller
 //   of its own under callers/), with view null for one no view name addresses.
-// - {"op": "corpus", "checkout": <dir>, "root": <dir>, "stub": <file>, "templates": [<file under root>]}: each
-//   template rendered alone, the root its only view location, and a view it cannot find the empty stub.
 // An error is {identifier, message, line, template, templateLine}: `template` (absolute) and `templateLine` are
 // Bladestan's metadata (template_file_path, template_line), null for an error Bladestan reports on the caller alone (a
 // template that does not compile, a view it cannot find) or at a template it cannot place. A render that throws is
@@ -31,7 +29,6 @@ use Bladestan\Tests\Rules\BladeRuleTest;
 use Bladestan\TemplateCompiler\PHPStan\FileAnalyserProvider;
 use Composer\Autoload\ClassLoader;
 use Illuminate\Contracts\View\Factory as ViewFactory;
-use Illuminate\View\FileViewFinder;
 use PHPStan\Analyser\Error;
 use PHPStan\DependencyInjection\ContainerFactory;
 
@@ -39,24 +36,6 @@ define('RUNTIME_VENDOR', $argv[1] . '/vendor');
 /** @var ClassLoader $loader */
 $loader = require RUNTIME_VENDOR . '/autoload.php';
 $request = json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);
-
-/** The finder a corpus template is rendered with: its root the only view location, and a view it cannot find the empty stub. */
-final class StubbingViewFinder extends FileViewFinder
-{
-    public function __construct(FileViewFinder $finder, string $root, private readonly string $stub)
-    {
-        parent::__construct($finder->getFilesystem(), [$root], $finder->getExtensions());
-    }
-
-    public function find($name)
-    {
-        try {
-            return parent::find($name);
-        } catch (InvalidArgumentException) {
-            return $this->stub;
-        }
-    }
-}
 
 /** The classes, interfaces, traits and enums a PHP file declares, fully qualified, as Composer's classmap reads them. */
 function declared_classes(string $path): array
@@ -307,21 +286,6 @@ function facts(array $request): array
     ];
 }
 
-function corpus(array $request): array
-{
-    $test = rule_test();
-    $factory = resolve(ViewFactory::class);
-    $factory->setFinder(new StubbingViewFinder($factory->getFinder(), $request['root'], $request['stub']));
-    $templates = [];
-    foreach ($request['templates'] as $index => $path) {
-        $view = view_name($path);
-        $templates[] = ['path' => $path, 'view' => $view]
-            + ($view === null ? [] : render($test, $view, $index));
-    }
-
-    return ['templates' => $templates];
-}
-
 if ($request['op'] === 'levels') {
     $response = levels($request);
 } else {
@@ -329,7 +293,6 @@ if ($request['op'] === 'levels') {
     test_application($request['checkout']);
     $response = match ($request['op']) {
         'facts' => facts($request),
-        'corpus' => corpus($request),
     };
 }
 echo json_encode($response, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE), "\n";

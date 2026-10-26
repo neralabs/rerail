@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { availableParallelism } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
@@ -152,10 +152,10 @@ export async function createPhpstanAdapter(pack: PackManifest, names: string[], 
   const environment: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !AGENT_VARIABLES.includes(key)));
   /**
    * PHPStan's JSON report over `paths` at `level`, run from its command line in a directory of its own. What it says it
-   * could not analyse names no directory of this machine's: not the run's, not `scratch` (where the caller wrote
-   * `paths`), the checkout, the runtime or the cache root, so the recording reads the same on every machine.
+   * could not analyse names no directory of this machine's: not the run's, the checkout, the runtime or the cache root,
+   * so the recording reads the same on every machine.
    */
-  const analyse = async (paths: string[], level: string, scanFiles: string[] = [], scratch: string[] = []): Promise<Report> => {
+  const analyse = async (paths: string[], level: string, scanFiles: string[]): Promise<Report> => {
     const directory = await mkdtemp(resolve(cacheRoot, "tmp", "phpstan-run-"));
     try {
       const config = join(directory, "phpstan.neon");
@@ -168,7 +168,7 @@ export async function createPhpstanAdapter(pack: PackManifest, names: string[], 
       // PHPStan names a file by the path it analysed, resolved, and a trait's file once per class that uses it
       // (`<path> (in context of class X)`): key every one by the path it was given, a trait's errors in each context included.
       const given = new Map(paths.map((path) => [realpathSync(path), path]));
-      const machine = [directory, ...scratch, upstream.directory, runtime.directory, cacheRoot];
+      const machine = [directory, upstream.directory, runtime.directory, cacheRoot];
       const files: Report["files"] = {};
       for (const [name, file] of Object.entries(report.files)) {
         const real = realpathSync(name.replace(/ \(in context of .*\)$/u, ""));
@@ -231,7 +231,7 @@ export async function createPhpstanAdapter(pack: PackManifest, names: string[], 
     return Object.fromEntries(set.map((option) => [option, facts.levels[level]!.parameters[option] ?? null]));
   };
 
-  // A rule no level registers is absent upstream, as its cases are skipped: it has no answer on the corpus either.
+  // A rule no level registers is absent upstream, as its cases are skipped.
   const rule = (name: string): UpstreamRule | undefined => {
     if (!ported.includes(name) || !existsSync(ruleFile(name)) || !levelOf.has(name)) return undefined;
     const config = recommendedBy.get(name);
@@ -346,57 +346,6 @@ export async function createPhpstanAdapter(pack: PackManifest, names: string[], 
 
     toSpan(_name: string, source: string, startByte: number, endByte: number): Span {
       return phpstanSpan(source, startByte, endByte, PHPSTAN_SPAN_PARTS);
-    },
-
-    // PHPStan analyses .php files; a Blade template (`.blade.php`) is the blade pack's, as the php pack's match excludes it.
-    inCorpus: (path: string) => path.endsWith(".php") && !path.endsWith(".blade.php"),
-
-    async lintCorpus(files, ruleNames) {
-      if (files.length === 0) return [];
-      const directory = await mkdtemp(resolve(cacheRoot, "tmp", "phpstan-corpus-"));
-      try {
-        const paths = files.map((file) => join(directory, file.task, file.path));
-        await Promise.all(files.map(async (file, index) => {
-          await mkdir(dirname(paths[index]!), { recursive: true });
-          await writeFile(paths[index]!, file.source);
-        }));
-        // The corpus is one project per level its rules run at. A file PHPStan cannot parse or reflect leaves its answer
-        // incomplete: it is excluded, and the rest analysed again without it.
-        const excluded = new Map<string, string>();
-        const found = new Map<string, Map<string, PhpstanError[]>>();
-        for (const level of [...new Set(ruleNames.flatMap((name) => levelOf.get(name) ?? []))].sort()) {
-          for (;;) {
-            const report = await analyse(paths.filter((path) => !excluded.has(path)), level, [], [directory]);
-            const severe = Object.entries(report.files).flatMap(([path, file]) => {
-              const internal = file.messages.find(isInternal);
-              return internal === undefined ? [] : [[path, internal.message] as const];
-            });
-            if (report.errors.length > 0 && severe.length === 0) throw new Error(`PHPStan could not analyse the corpus: ${report.errors[0]!}`);
-            if (severe.length === 0) {
-              found.set(level, new Map(Object.entries(report.files).map(([path, file]) => [path, file.messages])));
-              break;
-            }
-            for (const [path, message] of severe) excluded.set(path, message);
-          }
-        }
-        return files.map((file, index) => {
-          const path = paths[index]!;
-          const reason = excluded.get(path);
-          // This machine's directories are no part of the answer (analyse strips them): the recording reads the same on every machine.
-          if (reason !== undefined) return { file, excluded: `upstream could not analyse it: ${reason}`, findings: new Map() };
-          return {
-            file,
-            excluded: null,
-            findings: new Map(ruleNames.map((name) => {
-              const level = levelOf.get(name);
-              const messages = level === undefined ? [] : found.get(level)?.get(path) ?? [];
-              return [name, messages.filter((error) => error.identifier === name && RULES[name]?.message.test(error.message) === true).map(errorSpan)];
-            })),
-          };
-        });
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
     },
 
     parserVerdicts: (files) => php.verdicts(files),

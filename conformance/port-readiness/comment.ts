@@ -153,12 +153,6 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
           ...(blocking > blockerLimit ? ["", `${blocking - blockerLimit} more: see the job summary.`] : []),
           "",
         ]),
-    ...(summary.engineGaps.length === 0
-      ? []
-      : details(
-          `${summary.engineGaps.length} of them blocked only by engine gaps (the fix is the engine's)`,
-          summary.engineGaps.slice(0, blockerLimit).map((row) => `- ${row.pack} \`${row.rule}\`: ${trim(row.detail)}`),
-        )),
     ...recordingSections(context.recordings ?? []),
     "### Ready to promote",
     "",

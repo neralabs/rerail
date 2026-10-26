@@ -1,13 +1,12 @@
-import type { CorpusFile } from "./corpus.js";
 import type { GatesManifest } from "./manifest.js";
 
-export type { EslintUpstream, KnownGap, RealCodeGap } from "./manifest.js";
+export type { EslintUpstream, KnownGap } from "./manifest.js";
 
 /**
  * The gates in the order a rule meets them. `loads` to `passes-conformance` decide whether a rule ships (`blocking`);
  * `upstream-status` only decides whether it ships on or off. `passes-conformance` is the pack contract's own check
  * (`test:conformance`), so the gates are a superset of it; it comes last, after V1's gates. V1's Gate 6 (real code) is
- * NRV's alone: rerail judges the goldens it imports from NRV, in `matches-upstream-tests`.
+ * the pack's real-code samples, judged in `passes-conformance`.
  */
 export const GATES = [
   { id: "upstream-status", title: "Upstream status (decides on or off)", blocking: false },
@@ -98,7 +97,7 @@ export interface UpstreamRule {
   deprecation: string | null;
   /** The first approved configuration that turns the rule on, with the options it sets; null when none does. */
   recommended: { config: string; options: unknown[] } | null;
-  /** Why upstream cannot lint real code for the rule (a type-checked rule), or null when it can: its corpus answers are empty. */
+  /** Why upstream cannot lint real code for the rule (a type-checked rule), or null when it can. */
   notOnRealCode: string | null;
 }
 
@@ -143,25 +142,6 @@ export interface UpstreamCase {
   markup: Span[] | null;
 }
 
-/** One corpus file with upstream's verdict for every rule of the pack, computed once per run. */
-export interface UpstreamFile {
-  file: CorpusFile;
-  /** Why upstream gives no ground truth for the file (its own parser rejects it), or null. */
-  excluded: string | null;
-  /**
-   * Where the recorded answers of the file's rules disagree about it (a recorded adapter's; a live one excludes a file
-   * for every rule or none): the rules whose answer excludes it, by reason. Such a rule has no expected answer, while
-   * the others keep theirs and `excluded` is null.
-   */
-  excludedFor?: ReadonlyMap<string, string>;
-  findings: Map<string, Span[]>;
-  /**
-   * The asked rules whose answer on the file a recording lacks (a recorded adapter's; a live one answers every rule):
-   * the file has no expected answer for them, which is never read as upstream being silent.
-   */
-  unanswered?: ReadonlySet<string>;
-}
-
 /** Everything the gates need from one upstream linter: a live adapter (recorders/port-readiness/adapters/) or its recording. */
 export interface PackAdapter {
   /** Upstream identity recorded in the report. */
@@ -202,13 +182,6 @@ export interface PackAdapter {
   cases(name: string): UpstreamCase[];
   /** Convert an engine byte span to upstream's coordinates and to the precision upstream reports for the rule. */
   toSpan(name: string, source: string, startByte: number, endByte: number): Span;
-  /** Whether a corpus file is of a type upstream lints, so a golden can name it. */
-  inCorpus(path: string): boolean;
-  /**
-   * Upstream's findings on each corpus file for every named rule, configured as upstream recommends; a file
-   * upstream's own parser rejects is excluded, with the reason.
-   */
-  lintCorpus(files: CorpusFile[], names: string[]): Promise<UpstreamFile[]>;
   /** Independent parsers' verdicts on each file, to tell invalid source from a gap in the engine's parser. */
   parserVerdicts(files: { path: string; source: string; script?: boolean }[]): Promise<ParserVerdict[][]>;
 }

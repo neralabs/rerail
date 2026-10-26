@@ -5,7 +5,7 @@
  * that the directory lacks. It records incrementally: upstream is asked only for what the locked archive lacks under
  * this branch's config (archive.ts says what names an answer) — the whole-tool facts when they are missing, the rules
  * without a complete record (all of them, for an adapter whose answers depend on the recorded rules, when those
- * changed: tree.ts's RECORDS_PER_RULE), and the corpus answers no file holds yet — so a record with nothing missing
+ * changed: tree.ts's RECORDS_PER_RULE), and the parsers' verdicts no file holds yet — so a record with nothing missing
  * runs no upstream at all.
  */
 import { createHash } from "node:crypto";
@@ -14,28 +14,24 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { missingPackFixture, recordings as fetchRecordings } from "../../../scripts/s3/pack-fixtures.mjs";
 
-import { buildCorpus, buildRerailCorpora, conformancePaths, failedTasksMessage, readCorpusTasks, readRerailCorpora, wantedKey, wantedPlaces, type CorpusFile, type RerailCorpus } from "../../port-readiness/corpus.js";
-import { readGoldens, type Golden } from "../../port-readiness/goldens.js";
+import { conformancePaths } from "../../port-readiness/corpus.js";
 import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "../../port-readiness/manifest.js";
 import type { CommandRunner } from "../../port-readiness/process.js";
 import {
   answerConfig, cacheArchive, cachedTree, configId, configPath, memoryTree, notCopiedPrefixes, packTree, parsersId, RECORDING_ARCHIVE, treeConfigs, treeFiles, type PackedArchive,
 } from "../../port-readiness/recording/archive.js";
-import {
-  answerText, ASKS_EVERY_RULE, BATCHED_ADAPTERS, CONTEXT_FILES, corpusCommits, fetchedContext, missingAnswers, neededAnswers, rulesDigest, verdictPath, verdictText,
-  type NeededAnswer, type NeededAnswers,
-} from "../../port-readiness/recording/corpus-answers.js";
+import { rulesDigest, verdictPath, verdictText } from "../../port-readiness/recording/verdicts.js";
 import {
   canonicalText, cleanVerdicts, compareSpans, gatesRecordingSchema, recordedParsers, spanTuple,
   type GatesRecording, type RecordedCase, type RecordedRule, type RecordedSpan,
 } from "../../port-readiness/recording/schema.js";
-import { diffRecordings, type RecordedPair, type RecordingChanges, type ResolvedRuntime, type UnreadRecording } from "../../port-readiness/recording/diff.js";
+import { diffRecordings, type RecordingChanges, type ResolvedRuntime, type UnreadRecording } from "../../port-readiness/recording/diff.js";
 import { buildRecordingLock, readRecordingLock, RECORDING_LOCK, recordingLockSchema, recordingLockText, type RecordingLock } from "../../port-readiness/recording/store.js";
 import {
   loadRecording, loadRule, loadTool, nameSetPath, recordedRuleNames, RECORDS_PER_RULE, ruleDirectory, ruleFiles, textDigest, textPath, toolFiles, toolPath,
 } from "../../port-readiness/recording/tree.js";
-import { decodeSource, licenseFiles, rebuildFixtureTexts, recordedInCorpus, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../port-readiness/recorded-adapter.js";
-import type { PackAdapter, PackManifest, ParserVerdict, Span, UpstreamCase, UpstreamFile } from "../../port-readiness/types.js";
+import { decodeSource, licenseFiles, rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../port-readiness/recorded-adapter.js";
+import type { PackAdapter, PackManifest, ParserVerdict, Span, UpstreamCase } from "../../port-readiness/types.js";
 import { createBanditAdapter } from "./adapters/bandit.js";
 import { createBladeParserAdapter } from "./adapters/blade-parser.js";
 import { createBladestanAdapter } from "./adapters/bladestan.js";
@@ -272,12 +268,6 @@ export function listedCopies(text: string, tool: string): string[] {
   });
 }
 
-/**
- * Extensions a corpus could hold, probed against the adapter's inCorpus. `.blade.php` is a type of its own (a Blade
- * template), which a tool-pack that lints `.php` leaves out.
- */
-const PROBED_EXTENSIONS = [".blade.php", ".cjs", ".cts", ".inc", ".ipynb", ".js", ".jsx", ".mjs", ".mts", ".php", ".py", ".pyi", ".rs", ".sql", ".ts", ".tsx", ".vue"];
-
 /** A case source the recording needs committed: upstream's bytes, and where they go. */
 export interface CaseCopy {
   /** Relative to the tool-pack directory. */
@@ -294,10 +284,8 @@ export interface Recorded {
   /** The tree read back at its config, as the gates read it. */
   recording: GatesRecording;
   configId: string;
-  /** The corpus answers and verdicts the goldens need at this config. */
-  needed: NeededAnswers;
-  /** What upstream was asked this time: the rules recorded, and the corpus answers and verdicts the tree lacked. */
-  asked: { rules: string[]; answers: number; verdicts: number };
+  /** What upstream was asked this time: the rules recorded, and the parsers' verdicts the tree lacked. */
+  asked: { rules: string[]; verdicts: number };
   /** Every file this record wrote from upstream's answers, by path: for --check to compare with the locked tree's. */
   written: Map<string, Buffer>;
   /** Cases filed under an answer file another case of their rule has. */
@@ -309,13 +297,11 @@ export interface Recorded {
 }
 
 /**
- * How a record is made. By default upstream is asked only for what the locked archive lacks. `corpus` records only the
- * corpus answers, over the locked tests part (`--corpus`); `full` starts from an empty tree, so everything is asked
- * again (`--full`, and `--check`, which compares it with the locked archive); `prune` drops the files no recorded rule
- * and no golden names (`--prune`).
+ * How a record is made. By default upstream is asked only for what the locked archive lacks. `full` starts from an
+ * empty tree, so everything is asked again (`--full`, and `--check`, which compares it with the locked archive);
+ * `prune` drops the files no recorded rule names (`--prune`).
  */
 export interface RecordMode {
-  corpus?: boolean;
   full?: boolean;
   prune?: boolean;
 }
@@ -331,11 +317,6 @@ export interface RecordOptions {
   adapters?: Partial<Record<GatesManifest["adapter"], AdapterFactory>>;
   /** Upstream's bytes of a test file, when the adapter's checkout has it; defaults to the checkout under the cache root. */
   upstreamBytes?: (fixture: string) => Buffer | undefined;
-  /**
-   * The golden corpus files to ask upstream about, each its own golden; defaults to the files the tool-pack's goldens
-   * name, and the context files beside them, fetched into the cache.
-   */
-  corpusFiles?: (inCorpus: (path: string) => boolean) => Promise<CorpusFile[]>;
   /** Pin file digests of a runtime; defaults to the committed pin files'. */
   runtimeDigests?: (runtime: string) => Record<string, string>;
 }
@@ -372,23 +353,6 @@ const spans = (found: Span[]): RecordedSpan[] => found.map(spanTuple).sort(compa
 
 /** A set id from its content, so a set several rules share is stored once and named the same on every machine. */
 const setId = (kind: string, value: unknown): string => `${kind}:${sha256(JSON.stringify(value)).slice(0, 16)}`;
-
-/**
- * The corpus files the tool-pack's goldens name, and the context files upstream's answer on them depends on
- * (CONTEXT_FILES), and no others: the gates read upstream's answers on goldens alone, so upstream never runs over the
- * rest of the corpus (that is NRV's real-code gate). `goldens` are the goldens whose fetched file is their sha256, the
- * ones the gates judge. A task that could not be fetched throws: the recording would lack its answers.
- */
-async function goldenCorpus(directory: string, cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, corpora: RerailCorpus[], context: (path: string) => string[]): Promise<{ files: CorpusFile[]; goldens: Golden[] }> {
-  const named = [...(await readGoldens(directory)).values()].flat();
-  const wanted = wantedPlaces([...named, ...named.flatMap((entry) => context(entry.path).map((path) => ({ task: entry.task, path })))]);
-  const catalog = await buildCorpus(cacheRoot, inCorpus, runner, wanted);
-  const failed = catalog.tasks.filter((task) => task.status === "failed");
-  if (failed.length > 0) throw new Error(`${failedTasksMessage(failed)}: the recording would lack their answers; record again`);
-  const files = [...catalog.files, ...(await buildRerailCorpora(corpora, cacheRoot, inCorpus, runner, wanted)).files];
-  const fetched = new Map(files.map((file) => [wantedKey(file.task, file.path), file.sha256]));
-  return { files, goldens: named.filter((golden) => fetched.get(wantedKey(golden.task, golden.path)) === golden.sha256) };
-}
 
 /** A tool-pack's live adapter over some of its rules, and where their cases' sources go: `place` gives a case's file (null: not copied) and keeps its source. */
 interface CasePlacement {
@@ -442,7 +406,7 @@ async function casePlacement(options: RecordOptions, manifest: PackManifest, nam
 
 /**
  * The case sources a recording of the tool-pack names, with upstream's bytes, sorted by file: what a full record's
- * `sources` would be, without asking upstream about any corpus file or parser. `npm run fixtures:derive` writes them
+ * `sources` would be, without asking upstream's parsers about anything. `npm run fixtures:derive` writes them
  * after the tool-pack's generators.
  */
 export async function recordCaseSources(options: RecordOptions): Promise<CaseCopy[]> {
@@ -553,7 +517,6 @@ function liveToolFacts(options: RecordOptions, manifest: GatesManifest, placemen
   const { adapter, notCopied } = placement;
   // fixtureTexts by origin, rebuilt from upstream's checkout exactly as the gates will, and checked against the live list.
   const fixtureTexts = recordFixtureTexts(adapter, options.cacheRoot, manifest.upstream, notCopied);
-  const extensions = PROBED_EXTENSIONS.filter((extension) => adapter.inCorpus(`src/example${extension}`));
   return {
     tool: options.tool,
     adapter: manifest.adapter,
@@ -564,10 +527,6 @@ function liveToolFacts(options: RecordOptions, manifest: GatesManifest, placemen
     licenseSha256: sha256(adapter.licenseText),
     licenseText: adapter.licenseText,
     inScopeSamples: adapter.inScopeSamples,
-    corpus: {
-      extensions,
-      caseSensitive: extensions.length === 0 || !adapter.inCorpus(`src/example${extensions[0]!.toUpperCase()}`),
-    },
     keywords: sortedUnique(adapter.keywords),
     commentVocabulary: sortedUnique(adapter.commentVocabulary),
     fixtureWords: sortedUnique(adapter.fixtureWords()),
@@ -633,8 +592,7 @@ const fileText = (value: unknown): Buffer => Buffer.from(canonicalText(value), "
  * Upstream is asked about the rest: for an adapter that records per rule (tree.ts's RECORDS_PER_RULE), the rules the
  * pack names without a complete record, with the whole-tool facts kept; for any other, every rule and the whole-tool
  * facts, once anything is missing or the recorded rules are not the ones the pack names. A rule the pack no longer
- * names is dropped; the parsers are asked only about the sources and known-gap probes with no verdict yet. Then the
- * corpus answers, which upstream is asked only for where no file holds them (recordCorpus).
+ * names is dropped; the parsers are asked only about the sources and known-gap probes with no verdict yet.
  */
 export async function recordToolPack(options: RecordOptions): Promise<Recorded> {
   const { root, pack, tool, cacheRoot } = options;
@@ -644,12 +602,10 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const config = answerConfig(root, manifest, currentRuntimes(options, manifest));
   const id = configId(config);
   const label = `packs/${pack}/upstream/${tool}/${RECORDING_ARCHIVE}`;
-  const whole = `record the tool-pack whole (npm run port-readiness:record -- --pack ${pack} --tool ${tool})`;
   const directory = toolPackDirectory(root, pack, tool);
   const previous = mode.full === true ? new Map<string, Buffer>() : lockedTree(root, cacheRoot, pack, tool);
   const before = memoryTree(previous);
   const lockedTool = loadTool(before, id);
-  if (mode.corpus === true && lockedTool === undefined) throw new Error(`${label} holds no recording at this branch's config (its pins, runtime pins, gates.yaml, not-copied prefixes, adapter code or recording format moved, or it was never recorded): ${whole}`);
   const lockedParsers = lockedTool === undefined ? undefined : parsersId(manifest.adapter, lockedTool.parsers);
   const lockedRules = new Set(recordedRuleNames(before, id));
   const lockedAbsent = new Set(lockedTool?.absent ?? []);
@@ -672,14 +628,13 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   }
   const sameRules = canonicalText([...lockedRules, ...lockedAbsent].sort(byText)) === canonicalText(names);
   let toRecord: string[];
-  if (mode.corpus === true) toRecord = [];
-  else if (lockedTool === undefined) toRecord = names;
+  if (lockedTool === undefined) toRecord = names;
   else if (perRule) toRecord = names.filter((name) => !lockedAbsent.has(name) && !kept.has(name));
   else toRecord = sameRules && names.every((name) => lockedAbsent.has(name) || kept.has(name)) ? [] : names;
   const rewriteTool = lockedTool === undefined || (!perRule && toRecord.length > 0);
 
-  // The live adapter, made once for the rules asked (every rule, for an adapter that does not record per rule); the
-  // corpus part makes it again only when it needs rules this one was not made for.
+  // The live adapter, made once for the rules asked (every rule, for an adapter that does not record per rule), and
+  // again only when the parsers are asked about rules it was not made for.
   let placement: CasePlacement | undefined;
   const live = async (asked: readonly string[]): Promise<CasePlacement> => {
     const wanted = perRule ? sortedUnique(asked) : names;
@@ -689,13 +644,13 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const fresh: RecordedRules = toRecord.length === 0 ? { rules: {}, nameSets: {}, absent: [], verdictInputs: [] } : recordRules(await live(toRecord), toRecord);
   const sources = placement === undefined ? [] : [...(placement as CasePlacement).sources.values()].sort((a, b) => byText(a.file, b.file));
 
-  // The rules the archive records: in corpus-only mode the locked ones as they are, otherwise every rule the pack names that upstream has.
+  // The rules the archive records: every rule the pack names that upstream has.
   const rules: Record<string, RecordedRule> = {};
-  for (const name of mode.corpus === true ? [...lockedRules] : names) {
-    const rule = fresh.rules[name] ?? (toRecord.includes(name) ? undefined : kept.get(name) ?? (mode.corpus === true ? loadRule(before, id, manifest.adapter, name) : undefined));
+  for (const name of names) {
+    const rule = fresh.rules[name] ?? (toRecord.includes(name) ? undefined : kept.get(name));
     if (rule !== undefined) rules[name] = rule;
   }
-  const absent = mode.corpus === true ? [...lockedAbsent] : sortedUnique([...names.filter((name) => lockedAbsent.has(name) && !toRecord.includes(name)), ...fresh.absent]);
+  const absent = sortedUnique([...names.filter((name) => lockedAbsent.has(name) && !toRecord.includes(name)), ...fresh.absent]);
 
   // The parsers' verdicts: on every source and probe when the whole tool is recorded, else on those without one.
   const probes = probeInputs(manifest, rules);
@@ -727,30 +682,25 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   }
 
   // The locked files still current: this config's, but not the whole-tool files when they were recorded again, nor
-  // the directory of a rule recorded again or no longer recorded; the corpus answers and verdicts under these parsers.
+  // the directory of a rule recorded again or no longer recorded; the verdicts under these parsers.
   const keptRules = new Set(Object.keys(rules).filter((name) => fresh.rules[name] === undefined).map((name) => ruleDirectory(id, name)));
   const current = (path: string): boolean => {
     if (path.startsWith(`tool/${id}/`) || path.startsWith("texts/")) return !rewriteTool;
     if (path.startsWith(`rules/${id}/`)) return keptRules.has(path.slice(0, path.indexOf("/", `rules/${id}/`.length) + 1));
-    return path.startsWith(`answers/${id}/`) || path.startsWith(`verdicts/${verdictsId}/`);
+    return path.startsWith(`verdicts/${verdictsId}/`);
   };
-  const testsTree = new Map([...[...previous].filter(([path]) => current(path)), ...written]);
-  recording = loadRecording(memoryTree(testsTree), id, label);
-
-  const corpus = await recordCorpus(options, manifest, recording, testsTree, live);
-  for (const [path, bytes] of corpus.written) written.set(path, bytes);
-  let tree = new Map([...testsTree, ...corpus.written]);
+  let tree = new Map([...[...previous].filter(([path]) => current(path)), ...written]);
+  recording = loadRecording(memoryTree(tree), id, label);
   if (mode.prune === true) {
     for (const input of [...fresh.verdictInputs, ...probes]) caseVerdicts.add(verdictPath(verdictsId, input));
-    tree = prunedTree(tree, id, recording, new Set([...caseVerdicts, ...corpus.needed.answers.map((answer) => answer.path), ...corpus.needed.verdicts.map((verdict) => verdict.path)]));
+    tree = prunedTree(tree, id, recording, caseVerdicts);
   }
   return {
     tree,
     packed: packTree(tree),
     recording,
     configId: id,
-    needed: corpus.needed,
-    asked: { rules: toRecord, answers: corpus.asked.answers, verdicts: asked.length + corpus.asked.verdicts },
+    asked: { rules: toRecord, verdicts: asked.length },
     written,
     deduplicated,
     sources,
@@ -759,9 +709,8 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
 }
 
 /**
- * `--prune`: the tree without what no recorded rule and no golden names: rule.json's answers it does not index, name
- * sets no rule names, texts the tool facts do not list, corpus answers and verdicts not in `wanted` (the case sources'
- * and probes' verdicts, and what the goldens need).
+ * `--prune`: the tree without what no recorded rule names: rule.json's answers it does not index, name sets no rule
+ * names, texts the tool facts do not list, and verdicts not in `wanted` (the case sources' and probes').
  */
 function prunedTree(tree: ReadonlyMap<string, Buffer>, id: string, recording: GatesRecording, wanted: ReadonlySet<string>): Map<string, Buffer> {
   const files = memoryTree(tree);
@@ -778,91 +727,6 @@ function prunedTree(tree: ReadonlyMap<string, Buffer>, id: string, recording: Ga
   return new Map([...tree].filter(([path]) => named.has(path) || wanted.has(path)));
 }
 
-/** What the corpus part of a record wrote and asked. */
-interface RecordedCorpus {
-  needed: NeededAnswers;
-  written: Map<string, Buffer>;
-  asked: { answers: number; verdicts: number };
-}
-
-/**
- * Upstream's answers on the golden corpus files, recorded incrementally: the needed answers (every golden's file for
- * every recorded rule at this config, and the parsers' verdicts on each) the tree lacks are asked of upstream. Upstream
- * is handed only those files, with the context files beside them, and asked for each only its missing rules (every
- * recorded rule, and every answer on the file written again, for an adapter that ASKS_EVERY_RULE); for an adapter
- * whose answers depend on the batch (BATCHED_ADAPTERS), every fetched file of each task that lacks an answer is handed
- * at once, for every recorded rule, and every answer of the task is written again, as a full record writes it. The
- * live adapter is made only when something is missing.
- */
-async function recordCorpus(options: RecordOptions, manifest: GatesManifest, recording: GatesRecording, tree: ReadonlyMap<string, Buffer>, live: (rules: readonly string[]) => Promise<CasePlacement>): Promise<RecordedCorpus> {
-  const { root, pack, tool, cacheRoot, runner } = options;
-  const inCorpus = recordedInCorpus(recording);
-  const corpora = await readRerailCorpora(root, pack);
-  const fetched = options.corpusFiles !== undefined
-    ? await options.corpusFiles(inCorpus).then((files) => ({ files, goldens: files }))
-    : await goldenCorpus(toolPackDirectory(root, pack, tool), cacheRoot, inCorpus, runner, corpora, CONTEXT_FILES[manifest.adapter]);
-  const byPlace = new Map(fetched.files.map((file) => [wantedKey(file.task, file.path), file]));
-  const rules = Object.keys(recording.rules).sort(byText);
-  const context = fetchedContext([...byPlace.values()], corpusCommits(corpora, readCorpusTasks()), rules);
-  const needed = neededAnswers({ root, manifest, runtimes: recording.runtimes, parsers: recording.parsers, rules, files: fetched.goldens, context });
-  const missing = missingAnswers(memoryTree(tree), needed);
-  const written = new Map<string, Buffer>();
-  let askedAnswers = 0;
-
-  // Upstream lints `linted` for `asked` rules, and each of `answers` is written from its answer on its file.
-  const ask = async (linted: CorpusFile[], asked: string[], answers: readonly NeededAnswer[]): Promise<void> => {
-    const { adapter } = await live(asked);
-    const upstream = new Map<string, UpstreamFile>((await adapter.lintCorpus(linted, asked)).map((answer) => [wantedKey(answer.file.task, answer.file.path), answer]));
-    for (const { rule, file, path } of answers) {
-      const answer = upstream.get(wantedKey(file.task, file.path));
-      if (answer === undefined) throw new Error(`${pack}/${tool}: upstream gave no answer for corpus file ${file.task}/${file.path}`);
-      written.set(path, Buffer.from(answerText({ excluded: answer.excluded, findings: answer.findings.get(rule) ?? [] }), "utf8"));
-    }
-    askedAnswers += answers.length;
-  };
-
-  if (BATCHED_ADAPTERS[manifest.adapter]) {
-    for (const task of sortedUnique(missing.answers.map((answer) => answer.file.task))) {
-      const linted = [...byPlace.values()].filter((file) => file.task === task).sort((a, b) => byText(a.path, b.path));
-      await ask(linted, rules, needed.answers.filter((answer) => answer.file.task === task));
-    }
-  } else {
-    // Each file is asked for only its missing rules (all of them, for an adapter that ASKS_EVERY_RULE): files that lack
-    // the same rules are asked together.
-    const neededAt = (answer: NeededAnswer) => wantedKey(answer.file.task, answer.file.path);
-    const missingByPlace = new Map<string, NeededAnswer[]>();
-    for (const answer of missing.answers) missingByPlace.set(neededAt(answer), [...(missingByPlace.get(neededAt(answer)) ?? []), answer]);
-    if (ASKS_EVERY_RULE[manifest.adapter]) {
-      const lacking = new Set(missing.answers.map((answer) => answer.path));
-      for (const answer of needed.answers) if (!lacking.has(answer.path)) missingByPlace.get(neededAt(answer))?.push(answer);
-      for (const answers of missingByPlace.values()) answers.sort((a, b) => byText(a.rule, b.rule));
-    }
-    const groups = new Map<string, { rules: string[]; places: string[] }>();
-    for (const [place, answers] of missingByPlace) {
-      const lacking = answers.map((answer) => answer.rule);
-      const group = groups.get(lacking.join("\0")) ?? { rules: lacking, places: [] };
-      group.places.push(place);
-      groups.set(lacking.join("\0"), group);
-    }
-    for (const group of groups.values()) {
-      const asked = group.places.map((place) => byPlace.get(place)!);
-      // Upstream reads the context files beside the goldens' files, as it read them in the whole corpus.
-      const contextFiles = asked.flatMap((file) => CONTEXT_FILES[manifest.adapter](file.path).map((path) => byPlace.get(wantedKey(file.task, path)))).filter((file): file is CorpusFile => file !== undefined);
-      const linted = [...new Map([...asked, ...contextFiles].map((file) => [wantedKey(file.task, file.path), file])).values()].sort((a, b) => byText(a.task, b.task) || byText(a.path, b.path));
-      await ask(linted, group.rules, group.places.flatMap((place) => missingByPlace.get(place)!));
-    }
-  }
-
-  if (missing.verdicts.length > 0) {
-    const { adapter } = await live([]);
-    const verdicts = await adapter.parserVerdicts(missing.verdicts.map(({ file }) => ({ path: file.path, source: byPlace.get(wantedKey(file.task, file.path))!.source, script: false })));
-    // One recorder run asks one set of parsers about cases and corpus files alike: the tool's parsers name them.
-    recordedParsers([cleanVerdicts(recording.parsers), ...verdicts]);
-    missing.verdicts.forEach(({ path }, index) => written.set(path, Buffer.from(verdictText(verdicts[index]!), "utf8")));
-  }
-  return { needed, written, asked: { answers: askedAnswers, verdicts: missing.verdicts.length } };
-}
-
 /** What differs between a fresh recording and what the tool-pack's committed `recording.lock` names. */
 export interface RecordingDiff {
   /** True when the lock names another archive that does not hold every file just recorded identically, or no lock is committed. */
@@ -877,8 +741,8 @@ export interface RecordingDiff {
 
 /**
  * A fresh recording against the committed lock, file by file: the locked archive holds while it has every file the
- * record just wrote from upstream's answers, with the same content (files no rule or golden names any more do not
- * make it stale).
+ * record just wrote from upstream's answers, with the same content (files no rule names any more do not make it
+ * stale).
  */
 export function diffRecording(root: string, pack: string, tool: string, recorded: Recorded, cacheRoot: string): RecordingDiff {
   const directory = toolPackDirectory(root, pack, tool);
@@ -927,10 +791,10 @@ export interface RecordingCheck extends RecordingDiff {
 /**
  * `--check`: a recording that asked everything again (`full`) against the committed lock. It holds when the committed
  * archive is one a record of these answers makes, which needs none of its bytes: the fresh tree itself, as a `--full`
- * or `--prune` record leaves it, or the fresh files over the corpus answers and verdicts of the tree the `base` lock
- * names, as an incremental record on that lock leaves them (the answers no golden needs kept). Failing both, it holds
- * when the committed archive, read and verified from the cache or S3, has every fresh file identically
- * (diffRecording), so extra answers no golden names never make it stale. `base` is the lock the commit's was recorded
+ * or `--prune` record leaves it, or the fresh files over the verdicts of the tree the `base` lock names, as an
+ * incremental record on that lock leaves them. Failing both, it holds when the committed archive, read and verified
+ * from the cache or S3, has every fresh file identically (diffRecording), so extra files no rule names never make it
+ * stale. `base` is the lock the commit's was recorded
  * on (a pull request's base's), null when the base has none, and its archive is read from the cache alone.
  */
 export function checkRecording(root: string, pack: string, tool: string, recorded: Recorded, options: { cacheRoot: string; base?: RecordingLock | null | undefined }): RecordingCheck {
@@ -951,7 +815,7 @@ export function checkRecording(root: string, pack: string, tool: string, recorde
     }
     if (directory !== undefined) {
       const verdictsId = parsersId(recorded.recording.adapter, recorded.recording.parsers);
-      const keep = (path: string) => path.startsWith(`answers/${recorded.configId}/`) || path.startsWith(`verdicts/${verdictsId}/`);
+      const keep = (path: string) => path.startsWith(`verdicts/${verdictsId}/`);
       tree = new Map([...[...treeFiles(directory)].filter(([path]) => keep(path)), ...recorded.tree]);
       packed = packTree(tree);
     } else {
@@ -966,7 +830,7 @@ export function checkRecording(root: string, pack: string, tool: string, recorde
     changed = false;
     note = `the locked ${RECORDING_ARCHIVE} is the ${recorded.written.size} file(s) just recorded over the base's archive (sha256 ${base!.files[RECORDING_ARCHIVE].sha256.slice(0, 12)}), as an incremental record on it makes them`;
   }
-  const before = base === undefined ? readLockedPair(root, cacheRoot, pack, tool) : base === null ? null : readPair(cacheRoot, base, label);
+  const before = base === undefined ? readLockedRecording(root, cacheRoot, pack, tool) : base === null ? null : readRecording(cacheRoot, base, label);
   return {
     ...diff,
     changed,
@@ -974,7 +838,7 @@ export function checkRecording(root: string, pack: string, tool: string, recorde
     lock: buildRecordingLock(tool, recorded.recording.pins, recorded.recording.runtimes, packed),
     packed,
     committed: madeBy,
-    changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: tree }, recorded.resolved),
+    changes: diffRecordings(pack, tool, before, recorded.recording, recorded.resolved),
   };
 }
 
@@ -1106,7 +970,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
 
   // The summary compares against the recording the committed lock named, where it is still in the cache. Without a
   // lock the report says it is a first recording; with one whose recording cannot be read, that what moved is unknown.
-  const before = readLockedPair(root, options.cacheRoot, pack, tool);
+  const before = readLockedRecording(root, options.cacheRoot, pack, tool);
   const lock = buildRecordingLock(tool, recorded.recording.pins, recorded.recording.runtimes, recorded.packed);
   cacheArchive(options.cacheRoot, recorded.packed);
   await writeFile(join(directory, RECORDING_LOCK), recordingLockText(lock));
@@ -1124,7 +988,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
     if (inline > 0) text = withRecordingNote(text, inlineTextsSource(manifest), licenseFiles(dirname(upstreamMd)));
     await writeFile(upstreamMd, text);
   }
-  return { ...diff, lock, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.tree }, recorded.resolved) };
+  return { ...diff, lock, changes: diffRecordings(pack, tool, before, recorded.recording, recorded.resolved) };
 }
 
 /**
@@ -1133,16 +997,16 @@ export async function writeRecording(root: string, pack: string, tool: string, r
  * cache and S3 lacked it; or a lock of another format), which is not a first recording. It is what a re-record is
  * summarized against; a maintainer re-recording has usually just run the gates on it.
  */
-export function readLockedPair(root: string, cacheRoot: string, pack: string, tool: string): RecordedPair | UnreadRecording | null {
+export function readLockedRecording(root: string, cacheRoot: string, pack: string, tool: string): GatesRecording | UnreadRecording | null {
   const lockPath = join(toolPackDirectory(root, pack, tool), RECORDING_LOCK);
   if (!existsSync(lockPath)) return null;
   const lock = recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8")));
   if (!lock.success) return { unavailable: `${RECORDING_LOCK} does not match its schema` };
-  return readPair(cacheRoot, lock.data, `packs/${pack}/upstream/${tool}/${RECORDING_ARCHIVE}`);
+  return readRecording(cacheRoot, lock.data, `packs/${pack}/upstream/${tool}/${RECORDING_ARCHIVE}`);
 }
 
-/** The recording `lock` names, from the cache alone, read at the config it holds, or why it cannot be read (readLockedPair). */
-function readPair(cacheRoot: string, lock: RecordingLock, label: string): RecordedPair | UnreadRecording {
+/** The recording `lock` names, from the cache alone, read at the config it holds, or why it cannot be read (readLockedRecording). */
+function readRecording(cacheRoot: string, lock: RecordingLock, label: string): GatesRecording | UnreadRecording {
   const pin = lock.files[RECORDING_ARCHIVE];
   let directory: string | undefined;
   try {
@@ -1151,12 +1015,11 @@ function readPair(cacheRoot: string, lock: RecordingLock, label: string): Record
     return { unavailable: `the locked ${RECORDING_ARCHIVE} does not verify (${error instanceof Error ? error.message : String(error)})` };
   }
   if (directory === undefined) return { unavailable: `the locked ${RECORDING_ARCHIVE} (sha256 ${pin.sha256.slice(0, 12)}) is not in the cache` };
-  const files = treeFiles(directory);
-  const tree = memoryTree(files);
+  const tree = memoryTree(treeFiles(directory));
   const configs = treeConfigs(tree);
   try {
     if (configs.length !== 1) throw new Error(`it holds ${configs.length} configs`);
-    return { recording: loadRecording(tree, configs[0]!, label), corpus: files };
+    return loadRecording(tree, configs[0]!, label);
   } catch (error) {
     return { unavailable: `the locked ${RECORDING_ARCHIVE} does not read as a recording (${error instanceof Error ? error.message : String(error)})` };
   }

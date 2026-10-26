@@ -30,7 +30,7 @@ import { fileTypeOf } from "../engine.js";
 import type { GatesManifest } from "../manifest.js";
 import { eslintSpanParts } from "../span-units/eslint.js";
 import { configPath, type RecordingTree } from "./archive.js";
-import { parseJson } from "./corpus-answers.js";
+import { parseJson } from "./verdicts.js";
 import {
   canonicalText, caseSchema, checkSchema, gatesRecordingSchema, nameSetSchema, nameSourceSchema, parserSchema, recordedSpanSchema, ruleFactsSchema, spanPartsSchema,
   type GatesRecording, type RecordedCase, type RecordedRule,
@@ -45,7 +45,7 @@ const KEY_DIGITS = 12;
 
 /** The whole-tool facts, one file each. `license` is licenseSha256 with licenseText; `fixtureTexts` names its inline texts by digest. */
 export const TOOL_FIELDS = [
-  "tool", "adapter", "pins", "runtimes", "identity", "packChecks", "license", "inScopeSamples", "corpus", "keywords", "commentVocabulary", "fixtureWords", "fixtureTexts", "absent", "parsers",
+  "tool", "adapter", "pins", "runtimes", "identity", "packChecks", "license", "inScopeSamples", "keywords", "commentVocabulary", "fixtureWords", "fixtureTexts", "absent", "parsers",
 ] as const;
 type ToolField = (typeof TOOL_FIELDS)[number];
 
@@ -66,7 +66,7 @@ export const textDigest = (text: string): string => sha256(canonicalText(text));
 
 /**
  * Adapters whose answer on a case depends on the other rules recorded with it, so a case key carries the digest of the
- * recorded rules (corpus-answers.ts's rulesDigest): stillat/blade-parser leaves a template out for every validator when
+ * recorded rules (verdicts.ts's rulesDigest): stillat/blade-parser leaves a template out for every validator when
  * one throws, PHPStan picks a data file's test method and levels among the ported rules, SQLFluff lints with every
  * recorded code selected, and PHP_CodeSniffer's and tlint's skips come from linting the ported group at once.
  */
@@ -203,7 +203,6 @@ const TOOL_SCHEMAS: Record<ToolField, z.ZodType> = {
   packChecks: z.array(checkSchema),
   license: z.strictObject({ sha256: sha256Schema, text: z.string().min(1).optional() }),
   inScopeSamples: gatesRecordingSchema.shape.inScopeSamples,
-  corpus: gatesRecordingSchema.shape.corpus,
   keywords: gatesRecordingSchema.shape.keywords,
   commentVocabulary: gatesRecordingSchema.shape.commentVocabulary,
   fixtureWords: gatesRecordingSchema.shape.fixtureWords,
@@ -265,7 +264,6 @@ export function toolFiles(config: string, recording: GatesRecording): Map<string
     packChecks: recording.packChecks,
     license: { sha256: recording.licenseSha256, ...(recording.licenseText === undefined ? {} : { text: recording.licenseText }) },
     inScopeSamples: recording.inScopeSamples,
-    corpus: recording.corpus,
     keywords: recording.keywords,
     commentVocabulary: recording.commentVocabulary,
     fixtureWords: recording.fixtureWords,
@@ -345,7 +343,6 @@ export function loadTool(tree: RecordingTree, config: string): RecordedTool | un
     licenseSha256: license.sha256,
     ...(license.text === undefined ? {} : { licenseText: license.text }),
     inScopeSamples: get("inScopeSamples"),
-    corpus: get("corpus"),
     keywords: get("keywords"),
     commentVocabulary: get("commentVocabulary"),
     fixtureWords: get("fixtureWords"),
@@ -405,10 +402,10 @@ export function loadRecording(tree: RecordingTree, config: string, label: string
 
 /**
  * The digest of what one rule's verdict reads of a tree at a config: the config, the whole-tool facts (not the name
- * sets other rules name), the name sets the rule names, its own directory (rule.json and its answers), its answers on
- * the corpus, and `extra`, the verdict files of its case sources and goldens, which the caller names. A file the tree
- * lacks counts as missing, so adding it changes the digest too. Adding another rule changes none of it, except for
- * an adapter whose answers are keyed by the recorded rules, where the rule's own answer files move.
+ * sets other rules name), the name sets the rule names, its own directory (rule.json and its answers), and `extra`, the
+ * verdict files of its case sources, which the caller names. A file the tree lacks counts as missing, so adding it
+ * changes the digest too. Adding another rule changes none of it, except for an adapter whose answers are keyed by the
+ * recorded rules, where the rule's own answer files move.
  */
 export function ruleTreeDigest(tree: RecordingTree, config: string, recording: GatesRecording, rule: string, extra: readonly string[]): string {
   const sets = recording.rules[rule] === undefined ? [] : [...recording.rules[rule].names.implementation.sets, ...recording.rules[rule].names.shared.sets];
@@ -417,7 +414,6 @@ export function ruleTreeDigest(tree: RecordingTree, config: string, recording: G
     ...TOOL_FIELDS.map((field) => toolPath(config, field)),
     ...sets.map((id) => nameSetPath(config, id)),
     ...tree.list(ruleDirectory(config, rule)),
-    ...tree.list(`answers/${config}/${rule.replaceAll("/", "~")}/`),
     ...extra,
   ];
   return sha256([...new Set(paths)].sort(byText).map((path) => {

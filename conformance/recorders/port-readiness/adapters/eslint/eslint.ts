@@ -10,7 +10,7 @@ import ts from "typescript";
 import { runChecked, type CommandRunner } from "../../../../port-readiness/process.js";
 import { upstreamLicenseText } from "../../../../port-readiness/recorded-adapter.js";
 import { eslintSpan, eslintSpanParts, messageSpan } from "../../../../port-readiness/span-units/eslint.js";
-import type { Check, EslintUpstream, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../../port-readiness/types.js";
+import type { Check, EslintUpstream, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../../port-readiness/types.js";
 import {
   commentVocabulary, keywords, literalNames, literalRegexes, parserVerdicts, sourceWords, words,
   type BabelParser, type DocumentationNode, type TypeScript,
@@ -25,8 +25,7 @@ import type { MessagePosition } from "./eslint-upstream.js";
  * every case of every upstream test file of the rule, loaded with upstream's own RuleTester, is linted with the rule
  * as the first approved configuration sets it (its own options aside), in the language the case sets (parser, parser
  * options, ecmaVersion, sourceType) and without the globals and settings it or its RuleTester declares, which the
- * approved configuration does not, at the file upstream names for it. Corpus files are linted as upstream's approved
- * configuration lints a project's files.
+ * approved configuration does not, at the file upstream names for it.
  */
 
 const DRIVER = fileURLToPath(new URL("./eslint-driver.mjs", import.meta.url));
@@ -71,7 +70,6 @@ interface Tests {
   testFiles: Record<string, string[]>;
   cases: Record<string, DriverCase[]>;
 }
-interface Linted { excluded: string | null; findings: Record<string, MessagePosition[]> }
 
 /** What a recording writes for the recorder's cache root wherever upstream's test code names a path under it. */
 export const CACHE_ROOT_IN_RECORDINGS = "/rerail-gates-cache";
@@ -529,7 +527,6 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
     release: { path: setup.release.path, installed: setup.release.installed, defaultExport: setup.release.default_export === true, sources: setup.release.sources === true },
     fixtureParsers: setup.fixture_parsers ?? {}, namedParsers: setup.parsers ?? {}, eslintPackage, esmTests: setup.esm_tests === true,
     environment: environmentRuntime === null ? null : { runtime: environmentRuntime, package: setup.environment!.package },
-    vue: setup.vue === undefined ? null : { scriptParsers: setup.vue.script_parsers, directiveRules: setup.vue.directive_rules },
     // gates.yaml's narrowing: a script case of a type it leaves out is recorded as a component where it covers them.
     inScope: pack.rerail.in_scope ?? null,
   };
@@ -677,7 +674,6 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
 
   /** Whether upstream reports end positions for the rule: every finding on its own tests carries both ends. */
   const endsReported = new Map(ruleNames.map((name) => [name, (tests.cases[name] ?? []).every((testCase) => testCase.findings.every(([, , endLine, endColumn]) => endLine !== null && endColumn !== null))]));
-  const extensions = new Set(facts.extensions);
 
   return {
     identity: {
@@ -707,7 +703,7 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
         deprecation: fact?.deprecated ?? null,
         recommended: fact?.recommended ?? null,
         notOnRealCode: fact?.requiresTypeChecking === true
-          ? "upstream runs it only with type information from a TypeScript project, and corpus files are linted one at a time without one"
+          ? "upstream runs it only with type information from a TypeScript project, which a file linted on its own does not have"
           : null,
       };
     },
@@ -758,23 +754,6 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
 
     toSpan(name: string, source: string, startByte: number, endByte: number): Span {
       return eslintSpan(source, startByte, endByte, eslintSpanParts(endsReported.get(bare(name)) ?? true));
-    },
-
-    // The file types upstream's approved configurations lint; a declaration file is a TypeScript file.
-    inCorpus: (path: string) => extensions.has(extname(path).toLowerCase()),
-
-    async lintCorpus(files, ruleNamesToLint): Promise<UpstreamFile[]> {
-      if (files.length === 0) return [];
-      const linted = await ask<Linted[]>({ op: "lint", names: [...new Set(ruleNamesToLint.map(bare))].sort(), files: files.map((file) => ({ path: `${file.task}/${file.path}`, source: file.source })) });
-      return files.map((file, index) => {
-        const result = linted[index]!;
-        if (result.excluded !== null) return { file, excluded: result.excluded, findings: new Map() };
-        return {
-          file,
-          excluded: null,
-          findings: new Map(ruleNamesToLint.map((name) => [name, (result.findings[bare(name)] ?? []).map((position) => messageSpan(position, endsReported.get(bare(name)) ?? true))])),
-        };
-      });
     },
 
     async parserVerdicts(files) {

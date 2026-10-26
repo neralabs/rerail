@@ -278,19 +278,6 @@ export async function createBladeParserAdapter(pack: PackManifest, names: string
       return bladeParserSpan(source, startByte, endByte, BLADE_PARSER_SPAN_PARTS);
     },
 
-    inCorpus: (path: string) => path.endsWith(".blade.php"),
-
-    async lintCorpus(files, ruleNames) {
-      const validators = ruleNames.filter((name) => facts.validators[name] !== undefined).map((name) => ({ name, options: facts.validators[name]!.options }));
-      const keyOf = (index: number) => `${files[index]!.task}/${files[index]!.path}`;
-      const result = files.length === 0 ? { findings: {}, errors: {} } : await lint({ validators, files: files.map((file, index) => ({ path: keyOf(index), source: file.source })) });
-      return files.map((file, index) => {
-        const error = result.errors[keyOf(index)];
-        if (error !== undefined) return { file, excluded: `upstream could not analyse it: ${error}`, findings: new Map() };
-        return { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, findingsOf(result, keyOf(index), name)])) };
-      });
-    },
-
     parserVerdicts: (files) => blade.verdicts(files),
   };
 }

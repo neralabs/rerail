@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { annotatedLints, cfgHolds, compileError, crateType, declaredLints, deprecatedLints, earlyPassLints, innerCfgPredicates, namedLint, testEdition } from "../../../conformance/recorders/port-readiness/adapters/clippy.js";
+import { annotatedLints, compileError, crateType, declaredLints, deprecatedLints, earlyPassLints, namedLint, testEdition } from "../../../conformance/recorders/port-readiness/adapters/clippy.js";
 import { parseRustToolchainPin } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { clippySpan, rustcPosition, rustcSpan } from "../../../conformance/port-readiness/span-units/clippy.js";
 
@@ -66,21 +66,4 @@ test("a rust-toolchain.toml pin names an exact release, its components and profi
   assert.deepEqual(parseRustToolchainPin('[toolchain]\nchannel = "1.99.0"\ncomponents = ["clippy"]\nprofile = "minimal"\n', "pin"), { channel: "1.99.0", components: ["clippy"], profile: "minimal" });
   assert.throws(() => parseRustToolchainPin('[toolchain]\nchannel = "stable"\ncomponents = ["clippy"]\nprofile = "minimal"\n', "pin"), /exact release/u);
   assert.throws(() => parseRustToolchainPin('[toolchain]\nchannel = "1.99.0"\ncomponents = ["clippy"]\nprofile = "minimal"\ntargets = ["wasm32-unknown-unknown"]\n', "pin"), /not targets/u);
-});
-
-test("a file's leading #![cfg] predicates decide whether rustc kept anything of it, under the options a unit sets", () => {
-  const source = "//! Tests.\n#![warn(rust_2018_idioms)]\n#![cfg(all(\n    feature = \"full\",\n    tokio_unstable,\n    not(target_os = \"wasi\"),\n))]\n#![cfg(any())]\n\nuse std::sync::Arc;\n#![cfg(windows)]\n";
-  const predicates = innerCfgPredicates(source);
-  // Only the inner attributes before the first item; `#![cfg_attr]` and other attributes are not predicates.
-  assert.equal(predicates.length, 2);
-  const macos = new Set(['target_os="macos"', "unix", 'feature="full"', "clippy"]);
-  assert.equal(cfgHolds(predicates[0]!, macos), false);
-  assert.equal(cfgHolds(predicates[0]!, new Set([...macos, "tokio_unstable"])), true);
-  assert.equal(cfgHolds(predicates[1]!, macos), false, "any() of nothing is false");
-  assert.deepEqual(innerCfgPredicates("#![cfg_attr(docsrs, feature(doc_cfg))]\nfn main() {}\n"), []);
-  const [notClippy] = innerCfgPredicates("#![cfg(not(clippy))]\n");
-  assert.equal(cfgHolds(notClippy!, macos), false);
-  // What is not a configuration predicate cannot be evaluated, so it drops nothing.
-  const [unknown] = innerCfgPredicates("#![cfg(feature(x))]\n");
-  assert.equal(cfgHolds(unknown!, macos), undefined);
 });

@@ -64,7 +64,7 @@
 //
 // The consumers (the conformance runner, pack validation, the recorders and generators, the Rust tests) report a
 // missing file with missingPackFixture, so a checkout without the data says to pull instead of failing on ENOENT.
-// packs/<id>/upstream/<tool>/ keeps the rest in git: gates.yaml, recorders, UPSTREAM.md, goldens.tsv, recording.lock,
+// packs/<id>/upstream/<tool>/ keeps the rest in git: gates.yaml, recorders, UPSTREAM.md, recording.lock,
 // samples.lock, test-data.lock.
 
 import { spawnSync } from "node:child_process";
@@ -102,7 +102,7 @@ export const RECORDING_ARCHIVE = "recording.tar.zst";
 /** The format the lock's entry declares for the tree its archive holds. */
 export const RECORDING_ARCHIVE_FORMAT = "rerail.port-readiness-recording-archive/v1";
 /** Every path in a recording archive is under one of these (the tree's layout, conformance/port-readiness/recording/). */
-export const RECORDING_TREE_ROOTS = Object.freeze(["answers/", "config/", "rules/", "texts/", "tool/", "verdicts/"]);
+export const RECORDING_TREE_ROOTS = Object.freeze(["config/", "rules/", "texts/", "tool/", "verdicts/"]);
 
 /**
  * The ESLint test set: real files from open-source history, each at the commit that introduced a violation of one

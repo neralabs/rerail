@@ -7,7 +7,6 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { byText } from "./goldens.js";
 import { renderMarkdown } from "./report.js";
 import { REPORT_FORMAT, summarizeRules, unusedGapLine, type GatesReport } from "./run.js";
 import { SHARD_DIRECTORY, shardName, shardOf } from "./shard.js";
@@ -17,9 +16,11 @@ const REPORT_FILE = /^(?<name>[a-z0-9-]+--[A-Za-z0-9._-]+)\.json$/u;
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
  * The tool-pack report of every shard together. Throws when the shards are not exactly 1..n of one count, disagree on
- * what they share (engine, upstream, tool-pack checks, corpus, unmapped documents), or do not add up to the tool-pack's
+ * what they share (engine, upstream, tool-pack checks, unmapped documents), or do not add up to the tool-pack's
  * rules.
  */
 export function mergeShards(reports: GatesReport[]): GatesReport {
@@ -33,9 +34,9 @@ export function mergeShards(reports: GatesReport[]): GatesReport {
   if (reports.some((report) => report.shard!.count !== count) || !same(indices, expected)) {
     throw new Error(`${label}: shards ${indices.map((index) => `${index}/${reports.find((report) => report.shard!.index === index)!.shard!.count}`).join(", ")} are not 1/${count} to ${count}/${count}`);
   }
-  for (const key of ["format", "pack", "tool", "upstream", "engine", "gates", "method", "toolPackChecks", "corpus", "unmapped", "listedWithoutDocument"] as const) {
+  for (const key of ["format", "pack", "tool", "upstream", "engine", "gates", "method", "toolPackChecks", "unmapped", "listedWithoutDocument"] as const) {
     const differing = reports.filter((report) => !same(report[key], first[key])).map((report) => shardName(report.shard!));
-    if (differing.length > 0) throw new Error(`${label}: the shards disagree on ${key}: ${differing.join(", ")} differ from ${shardName(first.shard!)}${key === "corpus" ? " (a corpus task failed to fetch or apply in one of them; see each report's corpus.tasks)" : ""}`);
+    if (differing.length > 0) throw new Error(`${label}: the shards disagree on ${key}: ${differing.join(", ")} differ from ${shardName(first.shard!)}`);
   }
   if (reports.some((report) => report.shard!.rules !== first.shard!.rules)) throw new Error(`${label}: the shards disagree on how many rules the tool-pack has`);
   const rules = reports.flatMap((report) => report.rules).sort((a, b) => byText(a.file, b.file));

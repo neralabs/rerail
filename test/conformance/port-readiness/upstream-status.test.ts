@@ -25,8 +25,6 @@ function adapter(rules: Record<string, UpstreamRule> = {}): PackAdapter {
     inScopeSamples: [],
     cases: () => [],
     toSpan: () => ({ startLine: 0, startCol: 0, endLine: 0, endCol: 0 }),
-    inCorpus: () => true,
-    lintCorpus: async () => [],
     parserVerdicts: async () => [],
   };
 }

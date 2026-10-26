@@ -1,8 +1,8 @@
 /**
- * The licence of every source repository a sample is taken from (D1). A sample carries its repository's SPDX licence,
+ * The licence of every source repository a sample is taken from. A sample carries its repository's SPDX licence,
  * read from the repository's licence file at the sample's commit; the archive's `LICENSES.md` carries those licence
- * texts and the files taken under them. Copyleft sources are never taken: the six golden sources found strong copyleft
- * at their pinned commits (copyleft-goldens.md), and the one pinned corpus under MPL-2.0.
+ * texts and the files taken under them. Copyleft sources are never taken: the six source repositories found strong
+ * copyleft at their pinned commits, and the one pinned corpus under MPL-2.0.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
@@ -255,30 +254,6 @@ export async function createPhpcsAdapter(pack: PackManifest, names: string[], ca
 
     toSpan(_name: string, source: string, startByte: number, endByte: number): Span {
       return phpcsSpan(source, startByte, endByte, PHPCS_SPAN_PARTS);
-    },
-
-    // PHP_CodeSniffer checks .php and .inc files; a Blade template (`.blade.php`) is the blade pack's, as the php pack's match excludes it.
-    inCorpus: (path: string) => (path.endsWith(".php") && !path.endsWith(".blade.php")) || path.endsWith(".inc"),
-
-    async lintCorpus(files, ruleNames) {
-      await mkdir(resolve(cacheRoot, "tmp"), { recursive: true });
-      const directory = await mkdtemp(resolve(cacheRoot, "tmp", "phpcs-corpus-"));
-      try {
-        const paths = files.map((file) => join(directory, file.task, file.path));
-        await Promise.all(files.map(async (file, index) => {
-          await mkdir(dirname(paths[index]!), { recursive: true });
-          await writeFile(paths[index]!, file.source);
-        }));
-        const result = files.length === 0 ? { messages: {}, internal: {} } : await ask<LintResult>({ op: "lint", groups, files: paths.map((path) => ({ path })) });
-        return files.map((file, index) => {
-          const internal = result.internal[paths[index]!];
-          // This machine's directories are no part of the answer: the recording must read the same on every machine.
-          if (internal !== undefined) return { file, excluded: `upstream could not analyse it: ${withoutMachinePaths(internal, [directory, upstream.directory, runtime.directory, cacheRoot])}`, findings: new Map() };
-          return { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, findingsOf(result, paths[index]!, name)])) };
-        });
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
     },
 
     parserVerdicts: (files) => php.verdicts(files),

@@ -48,20 +48,6 @@ const knownGapSchema = z.strictObject({
  */
 export type KnownGap = z.infer<typeof knownGapSchema>;
 
-const realCodeGapSchema = z.strictObject({
-  /** The document id of a rule of this tool-pack. */
-  rule: nonEmpty,
-  /** How many of NRV's goldens for the rule it differs on, engine gaps included, when the entry was written: what it stands for. */
-  differing_files: z.number().int().positive(),
-});
-
-/**
- * A rule that differs from upstream on real code throughout, as NRV's real-code gate found: one entry in place of a
- * golden per differing file. The rule fails `matches-upstream-tests` until it agrees there and its goldens are imported
- * (docs/port-readiness.md, "Goldens").
- */
-export type RealCodeGap = z.infer<typeof realCodeGapSchema>;
-
 /**
  * An ESLint-family upstream: ESLint's own rules (no plugin; eslint:recommended comes from @eslint/js) or one plugin's.
  * Paths are relative to upstream's repository at the pinned commit.
@@ -112,7 +98,7 @@ const eslintSchema = z.strictObject({
   /**
    * The shareable configuration whose environment the pack is linted in, when the approved configurations are only the
    * plugin's rules (eslint-config-next for the Next.js and React packs): its file globs, parsers and globals come before
-   * the approved configurations for upstream's test cases and the corpus; its plugins, rules and settings are not the
+   * the approved configurations for upstream's test cases; its plugins, rules and settings are not the
    * pack's. `runtime` pins it by package.json; `source` is where the published package is built from.
    */
   environment: z.strictObject({
@@ -174,19 +160,6 @@ const eslintSchema = z.strictObject({
      * its parse errors, and its script blocks read by runtimes/parsers' TypeScript and Babel.
      */
     runtime: runtimeDirectory,
-    /**
-     * vue-eslint-parser's `parserOptions.parser` for the corpus's `.vue` files, by `<script lang>`: the npm package,
-     * resolved in the pinned runtime, that parses that language's script blocks, as upstream's user guide has a
-     * TypeScript project set it. Any other lang is read by espree, as the approved configurations read it. Upstream's
-     * test cases set their own.
-     */
-    script_parsers: z.record(z.string().regex(/^[a-z]+$/u), npmPackage),
-    /**
-     * Rules of the approved configurations that stay on, at their approved setting, when the corpus is linted: they
-     * are how upstream reads a file rather than findings (eslint-plugin-vue's comment-directive, which its processor
-     * reads to honour `<!-- eslint-disable -->` in templates). Their own messages are never recorded.
-     */
-    directive_rules: unique(nonEmpty),
   }).optional(),
   /**
    * Checkout modules of upstream's own rule testers besides ESLint's and typescript-eslint's RuleTester
@@ -229,7 +202,7 @@ export const gatesManifestSchema = z.strictObject({
     /**
      * The upstream configurations that count as recommended, in order. A rule starts on when one turns it on
      * (`upstream-status`), and `matches-upstream-tests` checks it with the options of the first that does, on
-     * upstream's tests and on its goldens.
+     * upstream's tests.
      */
     recommended_configs: unique(nonEmpty).min(1),
     /** The directory under conformance/recorders/port-readiness/runtimes/ that pins the runtime upstream is run with. */
@@ -241,7 +214,6 @@ export const gatesManifestSchema = z.strictObject({
     evidence: z.array(nonEmpty).min(1),
   }),
   known_gaps: z.array(knownGapSchema),
-  real_code_gaps: z.array(realCodeGapSchema).default([]),
   eslint: eslintSchema.optional(),
 }).superRefine((manifest, context) => {
   if ((manifest.adapter === "eslint") !== (manifest.eslint !== undefined)) {
@@ -250,9 +222,6 @@ export const gatesManifestSchema = z.strictObject({
   const ids = manifest.known_gaps.map((gap) => gap.id);
   const repeated = ids.find((id, index) => ids.indexOf(id) !== index);
   if (repeated !== undefined) context.addIssue({ code: "custom", path: ["known_gaps"], message: `lists the known gap ${repeated} twice` });
-  const rules = manifest.real_code_gaps.map((gap) => gap.rule);
-  const twice = rules.find((rule, index) => rules.indexOf(rule) !== index);
-  if (twice !== undefined) context.addIssue({ code: "custom", path: ["real_code_gaps"], message: `lists ${twice} twice` });
 });
 
 export type GatesManifest = z.infer<typeof gatesManifestSchema>;

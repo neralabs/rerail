@@ -183,7 +183,6 @@ describe("isPackFixture", () => {
       "packs/python/upstream/ruff/gates.yaml",
       "packs/python/upstream/ruff/generate.py",
       "packs/python/upstream/ruff/UPSTREAM.md",
-      "packs/python/upstream/ruff/goldens.tsv",
       "packs/python/upstream/ruff/recording.lock",
       "packs/python/upstream/ruff/test-data.lock",
       "packs/python/upstream/ruff/recording.json",
@@ -668,8 +667,8 @@ const ANSWERS = {
   "rules/c0/no-null/rule.json": '{\n  "cases": []\n}\n',
   "rules/c0/no-null/texts.json": "[]\n",
   "texts/0f.json": '"a"\n',
-  "answers/c0/no-null/rerail~vscode/src/a.js@0f.json": '{\n  "findings": [\n    [1, 1, 1, 5]\n  ]\n}\n',
-  "answers/c0/no-null/rerail~vscode/src/b.js@1e.json": '{\n  "findings": []\n}\n',
+  "rules/c0/no-null/cases/a0f.json": '{\n  "findings": [\n    [1, 1, 1, 5]\n  ]\n}\n',
+  "rules/c0/no-null/cases/b1e.json": '{\n  "findings": []\n}\n',
   "verdicts/v0/0f.js.json": "[]\n",
 };
 
@@ -698,7 +697,7 @@ function lockRecordings(write, toolPack = T, answers = ANSWERS, archive = buildA
  */
 function caseCollidingArchive() {
   const content = Buffer.from('{\n  "findings": []\n}\n');
-  const [upper, lower] = ["A", "a"].map((name) => buildArchive([{ path: `answers/c0/no-null/rerail~vscode/src/${name}.js@0f.json`, bytes: content }]).tar);
+  const [upper, lower] = ["A", "a"].map((name) => buildArchive([{ path: `rules/c0/no-null/cases/${name}0f.json`, bytes: content }]).tar);
   const tar = Buffer.concat([upper.subarray(0, upper.length - 1024), lower]);
   return { tar, sha256: sha256(tar), files: 2, bytes: 2 * content.length };
 }
@@ -770,12 +769,12 @@ describe("recordings", () => {
     putFile(recording.local(root), recording.bytes);
     recordings({ root, aws, log: quiet });
     // A finding's coordinate moved: the same file count and bytes, other content.
-    const answer = join(recording.tree(root), "answers/c0/no-null/rerail~vscode/src/a.js@0f.json");
-    writeFileSync(answer, ANSWERS["answers/c0/no-null/rerail~vscode/src/a.js@0f.json"].replace("[1, 1, 1, 5]", "[2, 1, 1, 5]"));
+    const answer = join(recording.tree(root), "rules/c0/no-null/cases/a0f.json");
+    writeFileSync(answer, ANSWERS["rules/c0/no-null/cases/a0f.json"].replace("[1, 1, 1, 5]", "[2, 1, 1, 5]"));
     expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, recording)]);
     expect(extractedTree(root, recording)).toEqual(ANSWERS);
     // An answer filed under another name.
-    renameSync(answer, answer.replace("a.js@0f", "c.js@0f"));
+    renameSync(answer, answer.replace("a0f", "c0f"));
     expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, recording)]);
     expect(extractedTree(root, recording)).toEqual(ANSWERS);
     // An untouched tree is kept, its archive unread.

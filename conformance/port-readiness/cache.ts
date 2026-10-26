@@ -8,8 +8,8 @@ import { shardName, type Shard } from "./shard.js";
 
 /**
  * The gate layer's own code, hashed from the working tree: part of every rule's key, except the files below, which
- * decide no cached verdict. The key covers what a cached result can depend on: run.ts's import graph, the files that
- * graph reads by path (corpus-tasks.json), and cli.ts, which chooses the run's options. Left out is what no cached
+ * decide no cached verdict. The key covers what a cached result can depend on: run.ts's import graph and cli.ts,
+ * which chooses the run's options. Left out is what no cached
  * verdict depends on: what only the report job runs or reads (the summary, the pull request comment, the shard merge,
  * the not-gated and pending lists), report rendering (a leg renders report.md from a finished report), what only the
  * recorder runs (recording/diff.ts), the leg plan (plan.mjs, which picks the legs, not what they find) and the README,
@@ -43,7 +43,7 @@ export const GATE_CODE = [
  * here leaves a stale verdict, the opposite of FAMILY_SOURCES (engine.ts), where a missing entry only costs a
  * re-judge; cache.test.ts therefore checks the list against a bundle of run.ts.
  */
-export const GATE_PACKAGES = ["apache-arrow", "better-sqlite3", "diff", "drizzle-orm", "semver", "tsx", "yaml", "zod"] as const;
+export const GATE_PACKAGES = ["better-sqlite3", "diff", "drizzle-orm", "semver", "tsx", "yaml", "zod"] as const;
 
 /** Tags every cached entry, so an entry written by another layout of the cache is a miss. */
 export const CACHE_FORMAT = "rerail.port-readiness-cache/v1";
@@ -160,8 +160,6 @@ export interface SharedKeyInputs {
    * read under, so moving it can leave a rule unanswered.
    */
   adapterSources: string;
-  corpusTasks: string;
-  corpora: string;
 }
 
 /** The inputs one rule adds. */
@@ -170,28 +168,25 @@ export interface RuleKeyInputs {
   engine: string;
   document: string;
   conformanceEntry: string;
-  goldens: string;
   caseSources: string[];
   /**
    * What the rule's verdict reads of the recording archive (tree.ts's ruleTreeDigest: the config, the whole-tool facts,
-   * the rule's own files and corpus answers, and the verdicts on its sources and goldens), of every rule's cases a
-   * known gap names, which provenGaps proves the gaps on, and, for PHPStan and Psalm, the batch its goldens' answers
-   * are keyed by (run.ts's goldenBatches), which every rule's goldens in those tasks make. Another rule added or
-   * re-recorded changes none of the rest.
+   * the rule's own files, and the verdicts on its sources), and of every rule's cases a known gap names, which
+   * provenGaps proves the gaps on. Another rule added or re-recorded changes none of the rest.
    */
   recording: string;
 }
 
 /**
  * A rule's result key: sha256 over the gate code and its dependencies, the tool-pack's manifest, the recorder's adapter
- * code, the corpus pins, and the rule's own engine key, document, conformance entry, goldens, case sources and what it
- * reads of the recording, each digested in that order. The engine is the rule's own input rather than the tool-pack's
- * because it is only the part of the engine the rule's language family reads.
+ * code, and the rule's own engine key, document, conformance entry, case sources and what it reads of the recording,
+ * each digested in that order. The engine is the rule's own input rather than the tool-pack's because it is only the
+ * part of the engine the rule's language family reads.
  */
 export function ruleKey(shared: SharedKeyInputs, rule: RuleKeyInputs): string {
   const parts = [
-    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.adapterSources, shared.corpusTasks, shared.corpora,
-    rule.engine, rule.document, rule.conformanceEntry, rule.goldens, rule.recording, ...rule.caseSources,
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.adapterSources,
+    rule.engine, rule.document, rule.conformanceEntry, rule.recording, ...rule.caseSources,
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));
 }
@@ -202,23 +197,21 @@ export interface ToolPackKeyInputs {
   engine: string;
   /** Every rule's upstream name: the known gaps are proven on their cases. */
   names: string[];
-  /** Every rule's goldens, as `<id>\0<goldens>`: the corpus and corpus-complete cover them all. */
-  goldens: string[];
   /** Every committed case source, as `<file>\0<sha256>`: the gap proofs read them. */
   caseSources: string[];
 }
 
 /**
- * The key of a run's tool-pack checks (the corpus, corpus-complete and the known gaps): the shared inputs, what the
- * checks read of every rule, and the judged rules' keys, whose results the gap counts come from. A shard judges only
- * its own rules, but these checks read all of them, so a shard's cached checks miss when another shard's rule changes
- * what they read; otherwise one shard replays the old checks, another computes new ones, and the merge refuses them.
+ * The key of a run's tool-pack checks (the known gaps): the shared inputs, what the checks read of every rule, and the
+ * judged rules' keys, whose results the gap counts come from. A shard judges only its own rules, but these checks read
+ * all of them, so a shard's cached checks miss when another shard's rule changes what they read; otherwise one shard
+ * replays the old checks, another computes new ones, and the merge refuses them.
  */
 export function toolPackKey(shared: SharedKeyInputs, pack: ToolPackKeyInputs, judgedKeys: readonly string[]): string {
   const sorted = (values: readonly string[]) => [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join("\n");
   const parts = [
-    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingArchive, shared.adapterSources, shared.corpusTasks, shared.corpora,
-    pack.engine, sorted(pack.names), sorted(pack.goldens), sorted(pack.caseSources), sorted(judgedKeys),
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingArchive, shared.adapterSources,
+    pack.engine, sorted(pack.names), sorted(pack.caseSources), sorted(judgedKeys),
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));
 }

@@ -6,8 +6,6 @@ One JSON request on stdin, one JSON response on stdout:
 - {"op": "cases", "checkout": dir, "codes": [...]}: every case of every rule's YAML test file
   (test/fixtures/rules/std_rule_cases/<CODE>.yml) at the pinned checkout: the SQL texts and configuration words of all
   of them, and for each requested rule its own cases with SQLFluff's findings on them.
-- {"op": "lint", "texts": [...], "codes": [...]}: SQLFluff's findings of the named rules on each text, or why it does
-  not read the text whole.
 - {"op": "verdicts", "texts": [...]}: libpg_query's (pglast) verdict on each text, the independent PostgreSQL parser,
   on the SQL psql would send for the text read as a psql script (psql_sent_sql).
 
@@ -477,8 +475,6 @@ def main():
         response = facts(request["codes"])
     elif request["op"] == "cases":
         response = cases(request["checkout"], request["codes"])
-    elif request["op"] == "lint":
-        response = lint_texts(request["texts"], request["codes"], merged_port_rules(request["codes"]))
     elif request["op"] == "verdicts":
         response = verdicts(request["texts"])
     else:

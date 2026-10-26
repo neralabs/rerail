@@ -10,8 +10,7 @@
  *   rules/<config-id>/<rule>/rule.json              a rule's facts, names and case index (tree.ts)
  *   rules/<config-id>/<rule>/cases/<key>.json       upstream's answer on one of its cases (tree.ts)
  *   texts/<sha256>.json                             one upstream test text (tree.ts)
- *   answers/<config-id>/<rule>/<task>/<path>@<key>.json   upstream's answer on one golden corpus file (corpus-answers.ts)
- *   verdicts/<parsers-id>/<sha256><type>[.script].json    independent parsers' verdicts on one source (corpus-answers.ts)
+ *   verdicts/<parsers-id>/<sha256><type>[.script].json    independent parsers' verdicts on one case source or probe (verdicts.ts)
  *
  * `<config-id>` is the sha256 of `config/<config-id>.json` (answerConfig): upstream's pins (repository, commit, version,
  * runtime), the recorder's runtime pin digests as recording.lock records them, every gates.yaml setting the adapter
@@ -89,14 +88,14 @@ export const ADAPTER_SOURCES: Record<GatesManifest["adapter"], readonly string[]
 /**
  * The version of the tree the recorder writes for the same upstream output: the files it writes from upstream's
  * answers (record.ts's case layouts, not-copied skip, rule records and spans; tree.ts's case keys and rule and tool
- * files; schema.ts's spans and canonical text; corpus-answers.ts's answer and verdict files). Bump it whenever the
+ * files; schema.ts's spans and canonical text; verdicts.ts's verdict files). Bump it whenever the
  * recorder writes a different tree for the same upstream output (its keys, file layout, encodings, span handling, or
  * what is recorded), so every tool-pack records again rather than mixing files the old recorder wrote under names a
  * new one would write otherwise; never for a refactor or a comment. It is part of the config id and the parsers id,
  * and test/conformance/recorders/recording-format.test.ts pins the tree the recorder writes for a fixture tool-pack,
  * so a change to it fails until this is bumped and the pin updated.
  */
-export const RECORDING_FORMAT = 1;
+export const RECORDING_FORMAT = 2;
 
 const sourcesDigests = new Map<GatesManifest["adapter"], string>();
 
@@ -133,7 +132,7 @@ export function notCopiedPrefixes(root: string, pack: string): string[] {
  * (the module comment lists them). Every gates.yaml setting an adapter reads is here: the upstream block, the whole
  * ESLint block (which tests are read and how: tests, test_fixtures, case_testers, fixture_parsers, parsers, test_cwd,
  * esm_tests, implementation, helpers and the rest) and rerail.in_scope (how the ESLint driver handles components);
- * the other sections (popularity, known_gaps, real_code_gaps) shape no answer. `root` is the checkout whose pack's
+ * the other sections (popularity, known_gaps) shape no answer. `root` is the checkout whose pack's
  * UPSTREAM.md files name the not-copied prefixes.
  */
 export function answerConfig(root: string, manifest: GatesManifest, runtimes: RuntimeDigests): Record<string, unknown> {

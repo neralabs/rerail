@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
@@ -94,7 +93,6 @@ export async function createBanditAdapter(pack: PackManifest, names: string[], c
     sha256: createHash("sha256").update(text).digest("hex"),
   }));
   const fixtureWords = new Set((await python.words(fixtureTexts)).flat());
-  const nameSet = new Set(names.map(idOf));
 
   const rule = (name: string): UpstreamRule | undefined => {
     const id = idOf(name);
@@ -190,34 +188,6 @@ export async function createBanditAdapter(pack: PackManifest, names: string[], c
 
     toSpan(name: string, source: string, startByte: number, endByte: number): Span {
       return banditSpan(source, startByte, endByte, banditSpanParts(idOf(name)));
-    },
-
-    // Bandit lints .py (and .pyw, which Rerail has no dialect for) when given a directory.
-    inCorpus: (path: string) => path.endsWith(".py"),
-
-    async lintCorpus(files, ruleNames) {
-      await mkdir(resolve(cacheRoot, "tmp"), { recursive: true });
-      const directory = await mkdtemp(resolve(cacheRoot, "tmp", "bandit-corpus-"));
-      try {
-        const paths = files.map((file) => join(directory, file.task, file.path));
-        await Promise.all(files.map(async (file, index) => {
-          await mkdir(dirname(paths[index]!), { recursive: true });
-          await writeFile(paths[index]!, file.source);
-        }));
-        const result = await ask<LintResult>({ op: "lint", files: paths });
-        return files.map((file, index) => {
-          const skipped = result.skipped[paths[index]!];
-          if (skipped !== undefined) return { file, excluded: `upstream skips it: ${skipped}`, findings: new Map() };
-          const issues = (result.issues[paths[index]!] ?? []).filter((issue) => nameSet.has(issue.test_id));
-          return {
-            file,
-            excluded: null,
-            findings: new Map(ruleNames.map((name) => [name, issues.filter((issue) => issue.test_id === idOf(name)).map((issue) => toUpstreamSpan(idOf(name), file.source, issue))])),
-          };
-        });
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
     },
 
     parserVerdicts: (files) => python.verdicts(files),

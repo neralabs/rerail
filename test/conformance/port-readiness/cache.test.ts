@@ -62,8 +62,8 @@ describe("the gate code a rule's key covers", () => {
     }
   });
 
-  test("the run's options and the files run.ts reads by path stay in the key", () => {
-    for (const path of ["conformance/port-readiness/cli.ts", "conformance/port-readiness/corpus-tasks.json"]) assert.ok(keyed.has(path), `${path} is out of the key`);
+  test("the run's options stay in the key", () => {
+    assert.ok(keyed.has("conformance/port-readiness/cli.ts"), "conformance/port-readiness/cli.ts is out of the key");
   });
 
   // A misspelt exclusion excludes nothing, and the file it meant stays in every key without anyone noticing.
@@ -172,8 +172,8 @@ describe("the npm side of a rule's key", () => {
       scripts: { "port-readiness": "node --import tsx conformance/port-readiness/cli.ts", test: "vitest run --dir test" },
     };
     const packages: Packages = Object.fromEntries(GATE_PACKAGES.map((name) => [`node_modules/${name}`, { version: "1.0.0", integrity: `sha512-${name}` }]));
-    packages["node_modules/apache-arrow"]!.dependencies = { x: "^1.0.0" };
-    packages["node_modules/apache-arrow/node_modules/x"] = { version: "1.0.0", integrity: "sha512-x" };
+    packages["node_modules/yaml"]!.dependencies = { x: "^1.0.0" };
+    packages["node_modules/yaml/node_modules/x"] = { version: "1.0.0", integrity: "sha512-x" };
     packages["node_modules/left-pad"] = { version: "1.0.0", integrity: "sha512-left-pad" };
     edit(manifest, packages);
     writeFileSync(join(root, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -200,7 +200,7 @@ describe("the npm side of a rule's key", () => {
   test("a gate package's version or integrity, or a nested dependency's, moves the key", () => {
     assert.notEqual(digest((_, packages) => Object.assign(packages["node_modules/zod"]!, { version: "1.0.1" })), before);
     assert.notEqual(digest((_, packages) => Object.assign(packages["node_modules/zod"]!, { integrity: "sha512-zod-2" })), before);
-    assert.notEqual(digest((_, packages) => Object.assign(packages["node_modules/apache-arrow/node_modules/x"]!, { version: "1.0.1" })), before);
+    assert.notEqual(digest((_, packages) => Object.assign(packages["node_modules/yaml/node_modules/x"]!, { version: "1.0.1" })), before);
   });
 });
 

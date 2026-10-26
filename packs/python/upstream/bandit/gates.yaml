@@ -23,7 +23,7 @@ upstream:
     - default
   # Positions are compared exactly as Bandit reports them (ADR 0006, "Bandit's keyword lines"). bandit:B602 differs on
   # real code only on such positions: its four Gate 6 cases (iterative-dvc's dvc/stage.py 672, 745 and 784 and
-  # dvc/remote/hdfs.py 77) have the port at the call's first line with Bandit's columns, and are goldens. It also
+  # dvc/remote/hdfs.py 77) have the port at the call's first line with Bandit's columns. It also
   # differs on its own tests (`# nosec` lines, `shell=[]` and `shell={}`, and line 7 of examples/new_candidates-all.py
   # and new_candidates-some.py), so the reading decides no verdict. bandit:b106 meets the same positions (examples/pyghmi.py 5, dask's
   # multi-line keyword calls) but reports the keyword rather than its value, so it differs there either way.

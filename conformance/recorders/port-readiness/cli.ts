@@ -1,9 +1,8 @@
 /**
- * `npm run port-readiness:record`: record a tool-pack's recording archive (upstream's answers on its own tests and on
- * the goldens' corpus files) into the cache, the recording.lock naming it, and missing case sources. A record asks
- * upstream only for what the locked archive lacks at this branch's config, and nothing when it lacks nothing:
- * `--corpus` records only the corpus answers, `--full` asks everything again, `--prune` drops what no recorded rule and
- * no golden names. `--check` asks everything again, writes nothing into the tree and exits 1 when the committed lock is
+ * `npm run port-readiness:record`: record a tool-pack's recording archive (upstream's answers on its own tests) into
+ * the cache, the recording.lock naming it, and missing case sources. A record asks upstream only for what the locked
+ * archive lacks at this branch's config, and nothing when it lacks nothing: `--full` asks everything again, `--prune`
+ * drops what no recorded rule names. `--check` asks everything again, writes nothing into the tree and exits 1 when the committed lock is
  * not what a record of it names (checkRecording): `--base <lock>` is the lock the commit's was recorded on (a missing
  * file: the base has none), and `--recorded <dir>` gets, when it fails, the lock and the archive a record would commit.
  * A check that holds puts the archive the committed lock names into the cache, where the gates read it.
@@ -23,7 +22,7 @@ import { parseRecordingLock, RECORDING_LOCK, recordingLockText } from "../../por
 import { checkRecording, recordToolPack, writeRecording } from "./record.js";
 
 const USAGE = `usage:
-  npm run port-readiness:record -- --pack <id> --tool <tool> [--corpus] [--full] [--prune] [--cache dir] [--changes file]
+  npm run port-readiness:record -- --pack <id> --tool <tool> [--full] [--prune] [--cache dir] [--changes file]
   npm run port-readiness:record -- --pack <id> --tool <tool> --check [--base lock] [--recorded dir] [--cache dir] [--changes file]
 `;
 
@@ -47,7 +46,6 @@ async function main(): Promise<number> {
       check: { type: "boolean", default: false },
       base: { type: "string" },
       recorded: { type: "string" },
-      corpus: { type: "boolean", default: false },
       full: { type: "boolean", default: false },
       prune: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
@@ -58,7 +56,7 @@ async function main(): Promise<number> {
   const root = PACKAGE_ROOT;
   const cacheRoot = resolve(values.cache ?? DEFAULT_CACHE_ROOT);
   const checkOnly = values.base !== undefined || values.recorded !== undefined;
-  if (values.help === true || positionals.length > 0 || values.pack === undefined || values.tool === undefined || (values.check && (values.corpus || values.prune)) || (checkOnly && !values.check)) {
+  if (values.help === true || positionals.length > 0 || values.pack === undefined || values.tool === undefined || (values.check && values.prune) || (checkOnly && !values.check)) {
     process.stderr.write(USAGE);
     return values.help === true ? 0 : 2;
   }
@@ -79,13 +77,13 @@ async function main(): Promise<number> {
     tool,
     cacheRoot,
     runner: new ProcessCommandRunner(),
-    mode: { corpus: values.corpus, full: values.full || values.check, prune: values.prune },
+    mode: { full: values.full || values.check, prune: values.prune },
   });
   const label = `packs/${pack}/upstream/${tool}`;
   const cases = Object.values(recorded.recording.rules).flatMap((rule) => rule.cases);
   const summary = `${Object.keys(recorded.recording.rules).length} rules (${recorded.recording.absent.length} absent upstream; ${recorded.asked.rules.length} asked of upstream), ${cases.length} cases `
     + `(${cases.filter((testCase) => testCase.skipped === "not-copied").length} not copied, ${recorded.deduplicated} sharing an answer), ${recorded.sources.length} case sources, `
-    + `${recorded.needed.answers.length} corpus answers and ${recorded.needed.verdicts.length} verdicts needed (${recorded.asked.answers} answers and ${recorded.asked.verdicts} verdicts asked), ${((Date.now() - started) / 1000).toFixed(0)} s`;
+    + `${recorded.asked.verdicts} verdicts asked, ${((Date.now() - started) / 1000).toFixed(0)} s`;
 
   // The per-rule summary replaces the recording's own diff, which is not in the tree to read.
   const reportChanges = async (changes: RecordingChanges): Promise<void> => {

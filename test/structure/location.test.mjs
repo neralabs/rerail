@@ -88,7 +88,6 @@ describe("#3 fixture data location", () => {
         "packs/php/upstream/phpcs/gates.yaml": "",
         "packs/php/upstream/phpcs/generate.py": "",
         "packs/php/upstream/phpcs/recording.lock": "{}",
-        "packs/php/upstream/phpcs/goldens.tsv": "",
         "packs/php/upstream/phpcs/UPSTREAM.md": "",
         "packs/php/upstream/phpcs/test-data.lock": lock(),
         "packs/complexity/upstream/lizard/lizard-1.24.0.tsv": "",

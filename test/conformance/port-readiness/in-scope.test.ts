@@ -12,6 +12,7 @@ import { test } from "vitest";
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { inScopeSamples, toolPackChecks } from "../../../conformance/port-readiness/recorded-adapter.js";
 import { gatesRecordingSchema } from "../../../conformance/port-readiness/recording/schema.js";
+import { memoryTree } from "../../../conformance/port-readiness/recording/archive.js";
 
 const SAMPLES = ["src/example.js", "src/example.mjs", "src/example.cjs", "src/example.ts", "src/example.mts", "src/example.cts", "src/example.tsx"];
 
@@ -45,7 +46,6 @@ const recording = gatesRecordingSchema.parse({
   packChecks: [],
   licenseSha256: "0".repeat(64),
   inScopeSamples: SAMPLES,
-  corpus: { extensions: [".ts"], caseSensitive: true },
   keywords: [],
   commentVocabulary: [],
   fixtureWords: [],
@@ -62,7 +62,7 @@ function narrowing(inScope: string[] | undefined) {
     mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
     writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), manifest(inScope));
     const parsed = readGatesManifest(root, "demo", "bandit");
-    const checks = toolPackChecks({ root, manifest: parsed, lock: null, recording, config: "c".repeat(64), corpus: null, tools: [{ name: "bandit", version: "1.0.0" }], names: [] });
+    const checks = toolPackChecks({ root, manifest: parsed, lock: null, recording, config: "c".repeat(64), tree: memoryTree(new Map()), tools: [{ name: "bandit", version: "1.0.0" }], names: [] });
     return { inScope: parsed.rerail.in_scope, check: checks.find((check) => check.id === "in-scope-narrowing") };
   } finally {
     rmSync(root, { recursive: true, force: true });

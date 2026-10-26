@@ -6,9 +6,8 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { CorpusFile } from "../../../../conformance/port-readiness/corpus.js";
 import { recordingLockSchema } from "../../../../conformance/port-readiness/recording/store.js";
-import type { PackAdapter, UpstreamFile } from "../../../../conformance/port-readiness/types.js";
+import type { PackAdapter } from "../../../../conformance/port-readiness/types.js";
 import type { AdapterFactory, RecordOptions } from "../../../../conformance/recorders/port-readiness/record.js";
 
 export const MANIFEST = `adapter: bandit
@@ -53,8 +52,6 @@ export const fakeAdapter: AdapterFactory = async () => ({
   inScopeSamples: ["src/example.py"],
   cases: () => [{ fixture: "examples/pickle_deserialize.py", variant: "default", path: "pickle_deserialize.py", source: SOURCE, skipped: null, expected: [span], markup: null }],
   toSpan: (_name, _source, start) => ({ startLine: 0, startCol: start, endLine: null, endCol: 3 }),
-  inCorpus: (path) => path.endsWith(".py"),
-  lintCorpus: async (files: CorpusFile[]): Promise<UpstreamFile[]> => files.map((file) => ({ file, excluded: null, findings: new Map([["B301", [span]]]) })),
   parserVerdicts: async (files) => files.map(() => [{ parser: "cpython 3.14.0", syntax: [], grammar: [] }]),
 }) satisfies PackAdapter;
 
@@ -82,15 +79,12 @@ export function nameRules(root: string, rules: string[]): void {
   writeFileSync(join(root, "packs/demo/conformance.json"), JSON.stringify({ rules: rules.map((rule) => ({ id: `bandit-${rule}`, upstream: { tool: "bandit", rule }, policy: `rules/${rule}.json` })) }));
 }
 
-export const corpusFile = (path: string, sha: string, task = "demo-task"): CorpusFile => ({ task, repository: "demo/demo", path, source: SOURCE, sha256: sha.repeat(64) });
-
-export function optionsFor(root: string, factory: AdapterFactory, goldens: () => CorpusFile[], adapter = "bandit"): RecordOptions {
+export function optionsFor(root: string, factory: AdapterFactory, adapter = "bandit"): RecordOptions {
   return {
     root, pack: "demo", tool: "bandit", cacheRoot: join(root, "cache"), runner: { run: () => Promise.reject(new Error("no commands")) },
     adapters: { [adapter]: factory },
     // Upstream's bytes of a test file: twoRules' cases name the rule in their source.
     upstreamBytes: (fixture: string) => Buffer.from(/B30\d/u.test(fixture) ? `${SOURCE}# ${/B30\d/u.exec(fixture)![0]}\n` : SOURCE, "utf8"),
-    corpusFiles: async () => goldens(),
     runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
   };
 }

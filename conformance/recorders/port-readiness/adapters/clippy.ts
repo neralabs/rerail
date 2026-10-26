@@ -1,17 +1,14 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
 
-import { PACKAGE_ROOT } from "../../../../src/engine/index.js";
-import type { CorpusFile } from "../../../port-readiness/corpus.js";
-import { checkoutPinned, readRerailCorpora, rerailCorpusId, type RerailCorpus } from "../../../port-readiness/corpus.js";
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
 import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { clippySpan, rustcSpan, type RustcSpan } from "../../../port-readiness/span-units/clippy.js";
-import type { FixtureTextSource, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
-import { closingIndex, lexRust, rustLiterals, rustRegex, splitTopLevel, withoutTestItems, type RustLiterals, type RustToken } from "../languages/rust.js";
+import type { FixtureTextSource, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
+import { closingIndex, lexRust, rustLiterals, rustRegex, withoutTestItems, type RustLiterals } from "../languages/rust.js";
 import { checkoutUpstream, filesUnder, rustupRuntime } from "../runtimes.js";
 import { useTarget } from "./ruff.js";
 
@@ -102,17 +99,9 @@ interface RustcDiagnostic {
 
 interface CargoMessage {
   reason: string;
-  package_id?: string;
-  manifest_path?: string;
   filenames?: string[];
-  message?: RustcDiagnostic;
-  target?: { name: string; kind: string[]; crate_types: string[]; src_path: string };
+  target?: { name: string; crate_types: string[] };
   linked_paths?: string[];
-  /** compiler-artifact: the features the unit was compiled with, and its profile. */
-  features?: string[];
-  profile?: { test: boolean; debug_assertions: boolean };
-  /** build-script-executed: the `--cfg` options the package's build script sets on its units. */
-  cfgs?: string[];
 }
 
 interface DeclaredLint {
@@ -277,73 +266,6 @@ function parseErrors(stderr: string): string[] {
     const span = primarySpan(diagnostic);
     return span === undefined ? diagnostic.message : `${diagnostic.message} (line ${span.line_start})`;
   });
-}
-
-/**
- * The corpus-relative `.rs` files the dep-info beside a cargo artifact lists (common.py's dep_info_sources):
- * `deps/lib<crate>-<hash>.rmeta` reads `deps/<crate>-<hash>.d`; a build script `build/<pkg>-<hash>/build-script-build`
- * reads `build/<pkg>-<hash>/build_script_build-<hash>.d`.
- */
-function depInfoSources(artifact: string, root: string): string[] {
-  const name = basename(artifact);
-  const directory = dirname(artifact);
-  const depInfo = name.startsWith("build-script-")
-    ? join(directory, `build_script_${name.slice("build-script-".length).replaceAll("-", "_")}-${basename(directory).split("-").pop()!}.d`)
-    : join(directory, `${(name.includes(".") && name.startsWith("lib") ? name.slice(3) : name).split(".")[0]!}.d`);
-  if (!existsSync(depInfo)) throw new Error(`no dep-info ${depInfo} for ${artifact}`);
-  const sources: string[] = [];
-  for (const line of readFileSync(depInfo, "utf8").split("\n")) {
-    const separator = line.indexOf(": ");
-    if (line === "" || line.startsWith("#") || separator < 0 || !line.slice(0, separator).endsWith(".d")) continue;
-    for (const file of line.slice(separator + 2).trim().split(/(?<!\\) /u)) {
-      const path = file.endsWith(".rs") ? relativeTo(file.replaceAll("\\ ", " "), root) : undefined;
-      if (path !== undefined) sources.push(path);
-    }
-  }
-  return sources;
-}
-
-/** A path rustc or cargo names (relative to the workspace root, or absolute) relative to `root`, or undefined outside it. */
-function relativeTo(file: string, root: string): string | undefined {
-  const path = relative(root, resolve(root, file)).split(sep).join("/");
-  return path === "" || path.startsWith("../") || posix.isAbsolute(path) ? undefined : path;
-}
-
-/** A unit's configuration options, each `name` or `name="value"` as `--print cfg` writes them. */
-export type CfgOptions = ReadonlySet<string>;
-
-/**
- * The predicates of a file's leading inner `#![cfg(…)]` attributes (the inner attributes before its first item), each
- * as its tokens: when one is false, rustc drops everything the file holds before any lint runs.
- */
-export function innerCfgPredicates(source: string): RustToken[][] {
-  const tokens = lexRust(source);
-  const predicates: RustToken[][] = [];
-  let index = 0;
-  while (tokens[index]?.text === "#" && tokens[index + 1]?.text === "!" && tokens[index + 2]?.text === "[") {
-    const close = closingIndex(tokens, index + 2);
-    const inner = tokens.slice(index + 3, close);
-    if (inner[0]?.kind === "ident" && inner[0].text === "cfg" && inner[1]?.text === "(" && closingIndex(inner, 1) === inner.length - 1) predicates.push(inner.slice(2, -1));
-    index = close + 1;
-  }
-  return predicates;
-}
-
-/**
- * Whether a configuration predicate holds under `options`, as the pinned release's Rust Reference defines one
- * (https://doc.rust-lang.org/1.99.0/reference/conditional-compilation.html): an option `name` or `name = "value"`,
- * `all(…)`, `any(…)`, `not(…)`, `true` or `false`; undefined for tokens that are none of them.
- */
-export function cfgHolds(tokens: readonly RustToken[], options: CfgOptions): boolean | undefined {
-  const [head, ...rest] = tokens;
-  if (head?.kind !== "ident") return undefined;
-  if (rest.length === 0) return head.text === "true" ? true : head.text === "false" ? false : options.has(head.text);
-  if (rest.length === 2 && rest[0]!.text === "=" && rest[1]!.kind === "string") return options.has(`${head.text}="${rest[1]!.value}"`);
-  if (!["all", "any", "not"].includes(head.text) || rest[0]?.text !== "(" || closingIndex(rest, 0) !== rest.length - 1) return undefined;
-  const operands = splitTopLevel(rest.slice(1, -1), ",").map((operand) => cfgHolds(operand, options));
-  if (operands.some((value) => value === undefined)) return undefined;
-  if (head.text === "not") return operands.length === 1 ? !operands[0] : undefined;
-  return head.text === "all" ? operands.every(Boolean) : operands.some(Boolean);
 }
 
 export async function createClippyAdapter(pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner): Promise<PackAdapter> {
@@ -564,118 +486,7 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
       };
     };
 
-    // Each corpus crate's edition, by file, from the corpus runs; the parser reads a corpus file in its crate's edition.
-    const corpusEditions = new Map<string, string>();
-    const editionOf = (file: { path: string; source: string }) => corpusEditions.get(`${file.path}\0${sha256(file.source)}`)
-      ?? directives(file.source).find(([key]) => key === "edition")?.[1] ?? DEFAULT_EDITION;
-    const corpora = await readRerailCorpora(PACKAGE_ROOT, pack.rerail.pack);
     const parserName = `rustc ${runtime.pin.channel} -Zparse-crate-root-only`;
-
-    // The configuration options every corpus unit compiles under before its own (features, test profile, debug
-    // assertions, its build script's cfgs): the host's, as the driver prints them, and `clippy`, which clippy-driver
-    // sets while it compiles but does not print, so a probe that compiles only with it set must compile.
-    let hostOptions: Promise<Set<string>> | undefined;
-    const unitBaseOptions = (): Promise<Set<string>> => (hostOptions ??= (async () => {
-      const printed = await runChecked(runner, [runtime.driver, "--print", "cfg"], { cwd: tmpdir(), env: runtime.env });
-      const options = new Set(printed.split("\n").map((line) => line.trim()).filter((line) => line !== "" && line !== "debug_assertions"));
-      const out = realpathSync(await mkdtemp(join(tmpdir(), "rerail-clippy-cfg-")));
-      try {
-        const probe = await runner.run([runtime.driver, "-", "--crate-type=lib", "--crate-name=cfg_probe", "--emit=metadata", "--out-dir", out], {
-          cwd: out, env: runtime.env, input: "#[cfg(not(clippy))]\ncompile_error!(\"no cfg clippy\");\n",
-        });
-        if (probe.exitCode !== 0) throw new Error(`clippy-driver does not set cfg clippy:\n${probe.stderr}`);
-      } finally {
-        await rm(out, { recursive: true, force: true });
-      }
-      return options.add("clippy");
-    })());
-
-    /**
-     * `cargo clippy` over one pinned corpus at its commit, as packs/rust/upstream/common.py's run_corpus runs it: the
-     * files some unit read (its dep-info), each with why Clippy compiled none of it when it did not, and the findings.
-     */
-    const lintCorpusCrate = async (corpus: RerailCorpus, root: string): Promise<{ read: Map<string, string | null>; findings: Map<string, Map<string, Span[]>>; failures: string[] }> => {
-      const env: NodeJS.ProcessEnv = { ...runtime.env, CARGO_TARGET_DIR: resolve(cacheRoot, "clippy", "corpus", corpus.name, corpus.commit), CARGO_TERM_COLOR: "never" };
-      const tracked = (await runChecked(runner, ["git", "-C", root, "ls-files", "--", "Cargo.lock"])).trim() !== "";
-      if (!tracked) {
-        // A corpus that commits no Cargo.lock (tokio) is resolved as crates.io stood at its commit, so `--locked` holds.
-        if ((await runner.run(["git", "-C", root, "check-ignore", "-q", "Cargo.lock"])).exitCode !== 0) {
-          throw new Error(`${corpus.name} commits no Cargo.lock and does not ignore one: resolving it would modify the pinned checkout`);
-        }
-        const committed = (await runChecked(runner, ["git", "-C", root, "log", "-1", "--format=%ct", corpus.commit])).trim();
-        const publishTime = new Date(Number(committed) * 1000).toISOString().replace(/\.\d{3}Z$/u, "Z");
-        await rm(join(root, "Cargo.lock"), { force: true });
-        await runChecked(runner, ["cargo", toolchain, "generate-lockfile", "-Zunstable-options", "--publish-time", publishTime], { cwd: root, env: { ...env, RUSTC_BOOTSTRAP: "1" } });
-      }
-      const metadata = JSON.parse(await runChecked(runner, ["cargo", toolchain, "metadata", "--locked", "--format-version=1", "--no-deps"], { cwd: root, env })) as {
-        packages: { manifest_path: string; edition: string; targets: { src_path: string; edition: string }[] }[];
-      };
-      const packageDirectories = metadata.packages.map((entry) => ({ directory: relativeTo(dirname(entry.manifest_path), root) ?? "", edition: entry.edition })).sort((a, b) => b.directory.length - a.directory.length);
-      const run = await runner.run(["cargo", toolchain, "clippy", "--keep-going", "--locked", "--workspace", "--all-targets", "--all-features", "--message-format=json", "--", ...recordFlags], { cwd: root, env });
-      // Each file some unit read, with the configuration options of every unit that read it, and each unit's root.
-      const readers = new Map<string, CfgOptions[]>();
-      const crateRoots = new Set<string>();
-      const scriptOptions = new Map<string, string[]>();
-      const baseOptions = await unitBaseOptions();
-      const findings = new Map<string, Map<string, Span[]>>(ported.map((name) => [name, new Map()]));
-      const seen = new Set<string>();
-      const failures = new Set<string>();
-      for (const line of run.stdout.split("\n").filter((text) => text.startsWith("{"))) {
-        const message = JSON.parse(line) as CargoMessage;
-        // A build script runs before the units of its package compile, and its cfgs are set on each of them.
-        if (message.reason === "build-script-executed" && message.package_id !== undefined) scriptOptions.set(message.package_id, message.cfgs ?? []);
-        if (message.manifest_path === undefined || relativeTo(message.manifest_path, root) === undefined) continue;
-        if (message.reason === "compiler-artifact") {
-          const options = new Set([
-            ...baseOptions,
-            ...(message.features ?? []).map((feature) => `feature="${feature}"`),
-            ...(message.profile?.test === true ? ["test"] : []),
-            ...(message.profile?.debug_assertions === true ? ["debug_assertions"] : []),
-            ...(message.package_id === undefined ? [] : scriptOptions.get(message.package_id) ?? []),
-          ]);
-          for (const artifact of message.filenames ?? []) for (const path of depInfoSources(artifact, root)) readers.set(path, [...(readers.get(path) ?? []), options]);
-          const crateRoot = message.target === undefined ? undefined : relativeTo(message.target.src_path, root);
-          if (crateRoot !== undefined) crateRoots.add(crateRoot);
-          continue;
-        }
-        if (message.reason !== "compiler-message" || message.message === undefined) continue;
-        const diagnostic = message.message;
-        const code = diagnostic.code?.code ?? "";
-        if (diagnostic.level === "error" && !code.startsWith("clippy::") && !diagnostic.message.startsWith("aborting due to")) {
-          failures.add(`${relativeTo(message.manifest_path, root)} ${message.target?.kind.join("/")} ${message.target?.name}: ${diagnostic.message}`);
-        }
-        const byFile = code.startsWith("clippy::") ? findings.get(code.slice("clippy::".length)) : undefined;
-        const span = primarySpan(diagnostic);
-        const path = span === undefined ? undefined : relativeTo(span.file_name, root);
-        if (byFile === undefined || span === undefined || path === undefined) continue;
-        const key = `${code}\0${path}\0${span.line_start}:${span.column_start}-${span.line_end}:${span.column_end}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        byFile.set(path, [...(byFile.get(path) ?? []), rustcSpan(span, CLIPPY_SPAN_PARTS)]);
-      }
-      if (run.exitCode !== 0 && failures.size === 0) throw new Error(`cargo clippy failed on ${corpus.name} with status ${run.exitCode} and no compile error:\n${run.stderr.split("\n").slice(-20).join("\n")}`);
-      const read = new Map<string, string | null>();
-      for (const [path, units] of readers) {
-        const file = join(root, path);
-        if (!existsSync(file)) continue;
-        const source = await readFile(file, "utf8");
-        const owner = packageDirectories.find(({ directory }) => directory === "" || path.startsWith(`${directory}/`));
-        if (owner !== undefined) corpusEditions.set(`${path}\0${sha256(source)}`, owner.edition);
-        // A module file is read and dropped whole in a unit where one of its leading `#![cfg(…)]` is false: rustc
-        // strips the module, its inner attributes with it, before any lint runs. When that holds in every unit that
-        // read it, Clippy's silence on it is no answer. A crate root keeps its crate attributes, which Clippy still
-        // lints (`#![allow]` before a false `#![cfg]`), so it is not dropped; nor is a file whose predicate this cannot
-        // evaluate.
-        const predicates = innerCfgPredicates(source);
-        const dropped = !crateRoots.has(path) && predicates.length > 0 && units.every((options) => predicates.some((predicate) => cfgHolds(predicate, options) === false));
-        const attributes = predicates.map((predicate) => `\`#![cfg(${predicate.map((token) => token.text).join("")})]\``).join(", ");
-        read.set(path, dropped
-          ? `Clippy compiled none of it: of its ${attributes}, one is false in each of the ${units.length} unit(s) \`cargo clippy --workspace --all-targets --all-features\` read it in, so rustc dropped its contents before any lint ran`
-          : null);
-        if (dropped && ported.some((name) => findings.get(name)?.has(path))) throw new Error(`${corpus.name}: Clippy reports on ${path}, which every unit that read it dropped by its #![cfg]`);
-      }
-      return { read, findings, failures: [...failures].sort(byText) };
-    };
 
     return {
       identity: {
@@ -685,9 +496,8 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
         runtime: `${runtime.clippy}, from the rustup toolchain ${runtime.pin.channel} (\`${runtime.rustc}\`)`,
         invocation: "clippy-driver on each UI test as tests/compile-test.rs (ui_test 0.30.7) runs it: edition 2024 unless //@edition, //@compile-flags, //@aux-build crates and clippy_test_deps passed with --extern, ui_test's crate type, --emit=metadata -Aunused -Ainternal_features -Zui-testing -Zdeduplicate-diagnostics=no, RUSTC_BOOTSTRAP=1, without -Dwarnings",
         configuration: `Clippy's default lint levels, with -W clippy::<lint> for every ported lint; CLIPPY_CONF_DIR=tests (${DEFAULT_CONF}); a tests/ui-toml test with another clippy.toml is skipped, and so is a test rustc rejects with a compile error, for every lint when -Zno-analysis rejects it too and for the lints of late passes otherwise`,
-        corpus: `cargo ${toolchain} clippy --keep-going --locked --workspace --all-targets --all-features --message-format=json -- -W clippy::<lint>… in each pinned corpus (RUSTFLAGS unset); a corpus that commits no Cargo.lock is resolved with cargo generate-lockfile --publish-time <its commit's time>; a file no compiled unit read (dep-info) is excluded, and so is one whose leading #![cfg(…)] is false in every unit that read it (the unit's host, feature, test, debug_assertions, build-script and clippy options)`,
         positions: "the primary span of each diagnostic: rustc's 1-based lines and character columns, start and end",
-        parsers: `${parserName} (rustc's parser alone: syntax errors, no grammar checks), in the test's or the corpus crate's edition`,
+        parsers: `${parserName} (rustc's parser alone: syntax errors, no grammar checks), in the test's edition`,
       },
       packChecks: [
         ...upstream.checks,
@@ -737,33 +547,11 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
 
       toSpan: (_name, source, startByte, endByte) => clippySpan(source, startByte, endByte, CLIPPY_SPAN_PARTS),
 
-      inCorpus: (path: string) => path.endsWith(".rs"),
-
-      async lintCorpus(files: CorpusFile[], ruleNames: string[]): Promise<UpstreamFile[]> {
-        const answers = new Map<string, UpstreamFile>();
-        for (const corpus of corpora) {
-          const task = rerailCorpusId(corpus);
-          const mine = files.filter((file) => file.task === task);
-          if (mine.length === 0) continue;
-          // The gates fetch only the files goldens name; cargo builds the whole workspace, so it gets the corpus whole.
-          const root = await checkoutPinned(corpus.repository, corpus.commit, resolve(cacheRoot, "clippy", "checkout", corpus.name, corpus.commit), ["/*"], runner);
-          const result = await lintCorpusCrate(corpus, root);
-          for (const file of mine) {
-            const dropped = result.read.get(file.path);
-            answers.set(`${task}\0${file.path}`, dropped === undefined
-              ? { file, excluded: "no unit `cargo clippy --workspace --all-targets --all-features` compiled reads it (its dep-info): Clippy lints a file only as part of a crate", findings: new Map() }
-              : dropped !== null
-                ? { file, excluded: dropped, findings: new Map() }
-                : { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, result.findings.get(name)?.get(file.path) ?? []])) });
-          }
-        }
-        return files.map((file) => answers.get(`${file.task}\0${file.path}`)
-          ?? { file, excluded: "Clippy lints crates, not single files: this file is not built as part of a pinned crate", findings: new Map() });
-      },
-
       async parserVerdicts(files): Promise<ParserVerdict[][]> {
         return mapLimit(files, 8, async (file) => {
-          const run = await runner.run(["rustc", toolchain, "-Zparse-crate-root-only", "--edition", editionOf(file), "--error-format=json", "--crate-name", "parsed", "-"], {
+          // The parser reads a file in the edition its `//@edition` directive names, else the default.
+          const edition = directives(file.source).find(([key]) => key === "edition")?.[1] ?? DEFAULT_EDITION;
+          const run = await runner.run(["rustc", toolchain, "-Zparse-crate-root-only", "--edition", edition, "--error-format=json", "--crate-name", "parsed", "-"], {
             cwd: tmpdir(), env: { ...runtime.env, RUSTC_BOOTSTRAP: "1" }, input: file.source,
           });
           return [{ parser: parserName, syntax: run.exitCode === 0 ? [] : parseErrors(run.stderr), grammar: null }];

@@ -4,11 +4,10 @@ import { createHash } from "node:crypto";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 
 import { PACKAGE_ROOT } from "../../../../src/engine/index.js";
-import type { CorpusFile } from "../../../port-readiness/corpus.js";
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
 import { notebookCodeCells, upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { diagnosticSpan, RUFF_SPAN_PARTS, ruffSpan } from "../../../port-readiness/span-units/ruff.js";
-import type { Check, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
+import type { Check, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPythonToolkit } from "../languages/python.js";
 import { closingIndex, lexRust, rustLiterals, rustRegex, withoutTestItems, type RustLiterals, type RustToken } from "../languages/rust.js";
 import { checkoutUpstream, filesUnder, uvRuntime, type PythonRuntime } from "../runtimes.js";
@@ -259,9 +258,9 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
   const ruffBinary = join(runtime.directory, ".venv", "bin", "ruff");
   const linterDirectory = join(upstream.directory, LINTER);
   const environment = scrubbedEnvironment();
-  const ruff = async (args: string[], cwd: string, accept: number[] = [0]): Promise<string> => {
+  const ruff = async (args: string[], cwd: string): Promise<string> => {
     const result = await runner.run([ruffBinary, ...args], { cwd, env: environment });
-    if (!accept.includes(result.exitCode)) throw new Error(`ruff ${args.slice(0, 6).join(" ")} exited ${result.exitCode}: ${result.stderr.trim().split("\n").slice(-5).join("\n")}`);
+    if (result.exitCode !== 0) throw new Error(`ruff ${args.slice(0, 6).join(" ")} exited ${result.exitCode}: ${result.stderr.trim().split("\n").slice(-5).join("\n")}`);
     return result.stdout;
   };
 
@@ -320,18 +319,6 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
     const codes = [...new Set(names)].filter((code) => ruleByCode.has(code)).sort();
     const fixturesOf = (code: string) => [...(testsOf.get(code)?.keys() ?? [])].sort();
     const caseFixtures = [...new Set(codes.flatMap(fixturesOf))].sort();
-
-    /** Files Ruff's own parser rejects, read from `ruff format --check` (which reports parse errors only), with the first error. */
-    const parseFailures = async (paths: string[], cwd: string): Promise<Map<string, string>> => {
-      const failures = new Map<string, string>();
-      if (paths.length === 0) return failures;
-      const diagnostics = JSON.parse(await ruff(["format", "--isolated", "--no-cache", "--check", "--output-format", "json", ...paths], cwd, [0, 1, 2])) as RuffDiagnostic[];
-      for (const diagnostic of diagnostics) {
-        if (diagnostic.code !== "invalid-syntax" || failures.has(diagnostic.filename)) continue;
-        failures.set(diagnostic.filename, `${diagnostic.message} (line ${diagnostic.location?.row ?? "?"})`);
-      }
-      return failures;
-    };
 
     /** Ruff's findings with the given codes selected, by code and then by the file's real path. */
     const lint = async (selected: string[], paths: string[], cwd: string): Promise<Map<string, Map<string, Span[]>>> => {
@@ -453,7 +440,6 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
       };
     };
 
-    const corpusDirectory = resolve(cacheRoot, "tmp");
     return {
       identity: {
         repository: pack.upstream.repository,
@@ -514,40 +500,6 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
 
       toSpan(_name: string, source: string, startByte: number, endByte: number): Span {
         return ruffSpan(source, startByte, endByte, RUFF_SPAN_PARTS);
-      },
-
-      // Ruff lints .py and .pyi files, and notebooks, which Rerail has no dialect for.
-      inCorpus: (path: string) => /\.pyi?$/u.test(path),
-
-      async lintCorpus(files, ruleNames): Promise<UpstreamFile[]> {
-        const directory = realpathSync(await mkdtemp(join(corpusDirectory, "ruff-corpus-")));
-        try {
-          // Each task's files sit at their repository paths under one directory per task, and Ruff runs from it, so the
-          // project root Ruff resolves module paths against is the task's repository root, as the engine reads the path.
-          const location = (file: CorpusFile) => join(directory, file.task, file.path);
-          await Promise.all(files.map(async (file) => {
-            await mkdir(dirname(location(file)), { recursive: true });
-            await writeFile(location(file), file.source);
-          }));
-          const selected = [...new Set(ruleNames)].filter((code) => ruleByCode.has(code)).sort();
-          const rejected = new Map<string, string>();
-          const findings = new Map<string, Map<string, Span[]>>(selected.map((code) => [code, new Map()]));
-          for (const task of [...new Set(files.map((file) => file.task))].sort()) {
-            const taskDirectory = join(directory, task);
-            const paths = files.filter((file) => file.task === task).map((file) => file.path);
-            for (const [path, failure] of await parseFailures(paths, taskDirectory)) rejected.set(path, failure);
-            for (const [code, byFile] of await lint(selected, paths, taskDirectory)) {
-              for (const [path, spans] of byFile) findings.get(code)!.set(path, spans);
-            }
-          }
-          return files.map((file) => {
-            const failure = rejected.get(location(file));
-            if (failure !== undefined) return { file, excluded: `upstream's parser rejects it: ${failure}`, findings: new Map() };
-            return { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, findings.get(name)?.get(location(file)) ?? []])) };
-          });
-        } finally {
-          await rm(directory, { recursive: true, force: true });
-        }
       },
 
       parserVerdicts: (files) => python.verdicts(files),

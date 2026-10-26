@@ -2,9 +2,7 @@ import { extname } from "node:path";
 
 import type { CompiledPolicy, Engine, EngineEvaluation } from "../engine.js";
 import { formatSpan, spanKey, startKey, unmatched } from "../spans.js";
-import type { CorpusFile } from "../corpus.js";
-import { SYSTEMATIC_FILES, type Golden } from "../goldens.js";
-import type { Check, KnownGap, PackAdapter, ParserVerdict, RealCodeGap, Span, SpanParts, UpstreamCase } from "../types.js";
+import type { Check, KnownGap, PackAdapter, ParserVerdict, Span, SpanParts, UpstreamCase } from "../types.js";
 
 /** How matches-upstream-tests judges, recorded in every report so a reader knows what "identical" and "excused" meant on that run. */
 export const MATCHES_UPSTREAM_TESTS_METHOD = {
@@ -15,17 +13,8 @@ export const MATCHES_UPSTREAM_TESTS_METHOD = {
   evaluation: "stateless CompiledCodeRuleDsl.evaluate in report mode, one file per snapshot, with no wall-clock budget; production evaluates through the workspace path with a 500 ms per-file budget",
   excused: "a differing file is excused only when a listed known gap that holds names it and the engine reported a parse failure on it; a gap holds when its probe occurs in every file it names, the engine still fails to parse the probe, and independent parsers read the probe as valid source; a listed gap that does not hold, or excuses nothing, fails the run; nothing else excuses a difference",
   fires: "at least one upstream finding reproduced in an upstream test file that agrees: the golden test that proves a shipped rule fires, so a rule without one does not ship",
-  "stays silent": "at least one case where upstream reports nothing and the rule agrees, from an upstream test file or a golden: the golden test that proves a shipped rule stays silent, so a rule without one does not ship",
-  goldens: "the rule produces exactly what the pinned upstream reports on every golden of the tool-pack's goldens.tsv, compared as upstream's test files are; a golden is a real-code file read from the pinned corpus and checked against its sha256, and its expected answer is upstream's in the tool-pack's corpus answers archive, one file per rule and golden file filed by the upstream configuration and the file's content, which the recorder writes for the files goldens name and no other; goldens.tsv is a reviewed list the gates never write: the files a real-code run found a rule differing on, the run named on the file's source line (NRV's real-code gate, imported for candidates too, or rerail's own for the tool-packs NRV pins no tool of, so a candidate held back by a golden stays held until it agrees there), and for a shipped rule no upstream test file proves silent, a file where upstream reports nothing; a golden whose corpus file is gone from the pinned corpus, or whose answer is not recorded, fails",
-  "real-code gaps": `a candidate that differs from upstream on more than ${SYSTEMATIC_FILES} of its goldens differs throughout, not on cases: gates.yaml lists it under real_code_gaps in place of its goldens, and it fails no-real-code-gap until it agrees there and its goldens are imported; a shipped rule cannot be listed`,
-  "engine gaps": "a golden that differs where the engine could not fully read the file (it reported source-partial, source-incomplete or budget-exceeded) is an engine gap: identical-on-goldens judges only the goldens the engine read fully, and engine-reads-goldens fails the rule on every engine gap, since the rule must not ship until the engine reads the file; the fix belongs in the engine, and once the engine reads the file the golden is judged like any other",
   "gap candidates": "every file the engine cannot fully parse is read by independent parsers, each reporting syntax errors and grammar errors (what the language forbids in a tree the parser built): invalid source when every parser reports one, valid source (the engine's parser is wrong) when none does, and parsers disagree otherwise",
 } as const;
-
-/** What a golden or tool-pack without upstream's recorded answer tells the reader to do: record just those answers. */
-export function recordMissingAnswers(pack: string, tool: string): string {
-  return `record the missing answers: npm run port-readiness:record -- --pack ${pack} --tool ${tool} --corpus`;
-}
 
 function gapNote(results: CaseResult[]): string {
   const excused = results.filter((result) => result.status === "excused").length;
@@ -43,20 +32,17 @@ export function readPath(testCase: { path: string; parsedAs?: string | undefined
 /** Engine failure codes that mean the file did not fully parse. */
 export const PARSE_FAILURE_CODES = new Set(["source-partial", "source-incomplete"]);
 
-/** Engine failure codes that mean the engine did not fully read the file: a parse failure, or its work budget exceeded. */
-export const ENGINE_GAP_CODES = new Set([...PARSE_FAILURE_CODES, "budget-exceeded"]);
-
 export type CaseStatus = "agree" | "mismatch" | "excused" | "not-scored";
 
 /**
- * A file the engine could not fully parse (an upstream test file no listed gap covers, or a corpus file), with
+ * A file the engine could not fully parse (an upstream test file no listed gap covers), with
  * independent parsers' verdicts. `invalid-source`: every parser reports a syntax or grammar error, so the file is not
  * valid source and the failure is the file's. `valid-source`: no parser reports any, so the engine's parser is wrong.
  * `parsers-disagree`: some do and some do not.
  */
 export interface GapCandidate {
   gate: "matches-upstream-tests";
-  /** The upstream test file, or `<task>/<path>` for a corpus file. */
+  /** The upstream test file. */
   file: string;
   engine: string;
   verdict: "invalid-source" | "valid-source" | "parsers-disagree";
@@ -354,142 +340,3 @@ export function matchesUpstreamTestsGate(
   };
 }
 
-/** One golden of the rule, judged by matches-upstream-tests. */
-export interface GoldenResult {
-  task: string;
-  path: string;
-  status: "agree" | "mismatch" | "engine-gap";
-  reason: string;
-  expected: number;
-  actual: number;
-  missing: Span[];
-  extra: Span[];
-  failures: string[];
-}
-
-/**
- * matches-upstream-tests's identical-on-goldens check: on every golden, the rule must report exactly what the pinned
- * upstream reports there, in both directions, with no blocking engine failure, as on upstream's own test files. `file` is the golden's
- * corpus file in the pinned corpus and `expected` upstream's findings on it; a golden the corpus no longer has with
- * its sha256 (`file` undefined), or that upstream's own parser now rejects (`expected` null), fails, since it can no
- * longer be checked. A golden that differs where the engine could not fully read the file is an engine gap: it does not
- * fail the rule, since the difference is the engine's, and it is judged again on every run.
- */
-export function goldensGate(
-  engine: Engine,
-  adapter: PackAdapter,
-  name: string,
-  compiled: CompiledPolicy,
-  goldens: { golden: Golden; file: CorpusFile | undefined; expected: Span[] | null; excluded?: string | null }[],
-): { check: Check; engineCheck: Check; results: GoldenResult[]; unparsed: UnparsedFile[] } {
-  const unparsed: UnparsedFile[] = [];
-  const results = goldens.map(({ golden, file, expected: findings, excluded }): GoldenResult => {
-    const base = { task: golden.task, path: golden.path, expected: findings?.length ?? 0 };
-    if (file === undefined) {
-      return { ...base, status: "mismatch", reason: `the pinned corpus has no ${golden.task}/${golden.path} with sha256 ${golden.sha256}`, actual: 0, missing: [], extra: [], failures: [] };
-    }
-    if (findings === null) {
-      // The recorded answer gives the reason: upstream's own parser rejected the file, or no answer is recorded for it.
-      return { ...base, status: "mismatch", reason: `it has no expected answer: ${excluded ?? "upstream's own parser rejects it at the pinned upstream"}`, actual: 0, missing: [], extra: [], failures: [] };
-    }
-    const language = engine.rerail.dialectForPath(file.path);
-    if (language === undefined || !compiled.inScope(file.path)) {
-      const unreachable = language === undefined ? `RERAIL has no dialect for ${extname(file.path) || "files without an extension"}` : "the file is outside the shipped document's scope";
-      return findings.length === 0
-        ? { ...base, status: "agree", reason: `${unreachable}, and upstream reports nothing in it`, actual: 0, missing: [], extra: [], failures: [] }
-        : { ...base, status: "mismatch", reason: `${unreachable}, but upstream reports ${findings.length} finding(s) in it`, actual: 0, missing: findings, extra: [], failures: [] };
-    }
-    const evaluation = compiled.evaluateFile(file.path, language, file.source);
-    const actual = evaluation.violations.map((violation) => adapter.toSpan(name, file.source, violation.span.startByte, violation.span.endByte));
-    const missing = unmatched(findings, actual);
-    const extra = unmatched(actual, findings);
-    const blocking = evaluation.failures.filter((failure) => failure.code !== "source-partial");
-    const failures = evaluation.failures.map((failure) => `${failure.code}: ${failure.message}`);
-    const parseFailure = evaluation.failures.find((failure) => PARSE_FAILURE_CODES.has(failure.code));
-    if (parseFailure !== undefined) {
-      unparsed.push({ gate: "matches-upstream-tests", file: `${file.task}/${file.path}`, path: file.path, source: file.source, script: false, engine: `${parseFailure.code}: ${parseFailure.message}` });
-    }
-    const result = { ...base, actual: actual.length, missing, extra, failures };
-    if (missing.length === 0 && extra.length === 0 && blocking.length === 0) return { ...result, status: "agree", reason: "identical findings" };
-    const difference = [
-      ...missing.slice(0, 3).map((span) => `missing ${formatSpan(span)}`),
-      ...extra.slice(0, 3).map((span) => `extra ${formatSpan(span)}`),
-      ...blocking.slice(0, 1).map((failure) => `engine ${failure.code}`),
-    ].join(", ");
-    if (evaluation.failures.some((failure) => ENGINE_GAP_CODES.has(failure.code))) return { ...result, status: "engine-gap", reason: `engine gap: ${difference}` };
-    return { ...result, status: "mismatch", reason: difference };
-  });
-  const mismatches = results.filter((result) => result.status === "mismatch");
-  const engineGaps = results.filter((result) => result.status === "engine-gap").length;
-  return {
-    check: {
-      id: "identical-on-goldens",
-      ok: mismatches.length === 0,
-      detail: results.length === 0
-        ? "the rule has no goldens"
-        : mismatches.length > 0
-          ? `${mismatches.length} of ${results.length} golden(s) differ, e.g. ${mismatches[0]!.task}/${mismatches[0]!.path}: ${mismatches[0]!.reason}${engineGaps === 0 ? "" : `; ${engineGaps} engine gap(s)`}`
-          : engineGaps === 0
-            ? `identical on all ${results.length} golden(s)`
-            : `identical on ${results.length - engineGaps} of ${results.length} golden(s); the engine could not fully read the other ${engineGaps} (engine gaps)`,
-    },
-    engineCheck: engineReadsGoldensCheck(results),
-    results,
-    unparsed,
-  };
-}
-
-/** How many engine-gap goldens engine-reads-goldens names in its detail. */
-const ENGINE_GAP_SAMPLE = 3;
-
-/**
- * matches-upstream-tests's engine-reads-goldens check: a golden that differs where the engine could not fully read the
- * file (an engine gap) fails the rule. The difference is the engine's to fix, but the rule cannot ship until it is.
- */
-export function engineReadsGoldensCheck(results: Pick<GoldenResult, "task" | "path" | "status">[]): Check {
-  const gaps = results.filter((result) => result.status === "engine-gap");
-  if (gaps.length === 0) {
-    return { id: "engine-reads-goldens", ok: true, detail: results.length === 0 ? "the rule has no goldens" : `the engine fully read every differing golden of ${results.length}` };
-  }
-  const first = gaps.slice(0, ENGINE_GAP_SAMPLE).map((gap) => `${gap.task}/${gap.path}`).join(", ");
-  return {
-    id: "engine-reads-goldens",
-    ok: false,
-    detail: `${gaps.length} of ${results.length} golden(s) differ where the engine could not fully read the file (${first}${gaps.length > ENGINE_GAP_SAMPLE ? ", …" : ""}): the engine could not fully read it; the fix belongs in the engine, and the rule cannot ship until then`,
-  };
-}
-
-/** A judged case reduced to what stays-silent reads: how many findings upstream reports, and whether the rule agrees. */
-interface JudgedCase {
-  expected: number;
-  status: string;
-}
-
-/**
- * matches-upstream-tests's stays-silent check, the counterpart of fires: the golden test proving a shipped rule stays
- * silent. At least one case where upstream reports nothing and the rule agrees, from upstream's own test files or the
- * rule's goldens. A rule whose upstream test files all have findings (Ruff's do) needs a golden where upstream reports
- * nothing.
- */
-export function staysSilentCheck(upstreamTests: JudgedCase[], goldens: JudgedCase[]): Check {
-  const silent = (cases: JudgedCase[]) => cases.filter((testCase) => testCase.expected === 0 && testCase.status === "agree").length;
-  const counts = { tests: silent(upstreamTests), goldens: silent(goldens) };
-  const total = counts.tests + counts.goldens;
-  return {
-    id: "stays-silent",
-    ok: total > 0,
-    detail: total > 0
-      ? `${total} case(s) where upstream reports nothing and the rule agrees: ${counts.tests} upstream test file(s), ${counts.goldens} golden(s)`
-      : "no case where upstream reports nothing and the rule agrees, in upstream's test files or the rule's goldens: add a golden, a pinned corpus file where upstream reports nothing (docs/port-readiness.md, \"Goldens\")",
-  };
-}
-
-/**
- * matches-upstream-tests's no-real-code-gap check: a rule gates.yaml lists under `real_code_gaps` differs from upstream
- * on real code throughout, so it fails until it agrees there and the entry gives way to its imported goldens.
- */
-export function realCodeGapCheck(gap: RealCodeGap | undefined): Check {
-  return gap === undefined
-    ? { id: "no-real-code-gap", ok: true, detail: "gates.yaml lists no real-code gap for the rule" }
-    : { id: "no-real-code-gap", ok: false, detail: `gates.yaml lists a real-code gap: the rule differs from upstream on ${gap.differing_files} of NRV's goldens for it; it cannot ship until it agrees there and those goldens are imported in place of the entry` };
-}

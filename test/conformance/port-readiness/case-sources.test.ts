@@ -13,6 +13,7 @@ import { test } from "vitest";
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { staleMessage, toolPackChecks } from "../../../conformance/port-readiness/recorded-adapter.js";
 import { gatesRecordingSchema } from "../../../conformance/port-readiness/recording/schema.js";
+import { memoryTree } from "../../../conformance/port-readiness/recording/archive.js";
 
 const MANIFEST = `adapter: bandit
 rerail:
@@ -48,7 +49,6 @@ function recording(caseDigest: string | undefined) {
     packChecks: [],
     licenseSha256: "0".repeat(64),
     inScopeSamples: ["src/example.py"],
-    corpus: { extensions: [".py"], caseSensitive: true },
     keywords: [],
     commentVocabulary: [],
     fixtureWords: [],
@@ -79,7 +79,7 @@ function caseSources(committed: string | null, caseDigest: string | undefined) {
       lock: null,
       recording: recording(caseDigest),
       config: "c".repeat(64),
-      corpus: null,
+      tree: memoryTree(new Map()),
       tools: [{ name: "bandit", version: "1.9.4" }],
       names: ["B301"],
     });

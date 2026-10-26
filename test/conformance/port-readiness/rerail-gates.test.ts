@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "vitest";
 
 import { CACHE_FORMAT, readCached, resultPath, ruleKey, toolPackKey, writeCached, type SharedKeyInputs } from "../../../conformance/port-readiness/cache.js";
-import { engineReadsGoldensCheck } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
 import { sparseDirectoryPattern } from "../../../conformance/port-readiness/recorded-adapter.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/port-readiness/process.js";
 import { renderMarkdown } from "../../../conformance/port-readiness/report.js";
@@ -49,7 +48,7 @@ function passingGates(): RuleReport["gates"] {
     loads: ok,
     "not-overfit": { ...ok, flagged: [], words: {}, uncheckedRegexes: [] },
     compact: { ...ok, metrics: null },
-    "matches-upstream-tests": { ...ok, totals: null, cases: {}, silentCases: 0, differences: [], goldens: { count: 0, differing: { count: 0, first: [] }, engineGaps: { count: 0, first: [] } } },
+    "matches-upstream-tests": { ...ok, totals: null, cases: {}, silentCases: 0, differences: [] },
     "passes-conformance": ok,
   };
 }
@@ -72,12 +71,11 @@ function report(rules: RuleReport[], unmapped: GatesReport["unmapped"] = []): Ga
     format: "rerail.port-readiness/v1", pack: "python", tool: "bandit", toolPack: "python/bandit",
     upstream: { name: "", repository: "", commit: "", version: "", license: "", recommended_configs: [], runtime: "", identity: {} },
     engine: { sha256: "" }, gates: [], method: {} as GatesReport["method"], toolPackChecks: { pass: true, checks: [] }, integrity: [], knownGaps: [], gapCandidates: [],
-    corpus: null, unmapped, listedWithoutDocument: 0, cache: { rules: rules.length, hits: 0 },
+    unmapped, listedWithoutDocument: 0, cache: { rules: rules.length, hits: 0 },
     summary: {
       shipped: { rules: rules.filter((r) => r.location === "shipped").length, pass: rules.filter((r) => r.location === "shipped" && r.pass).length },
       candidates: { rules: rules.filter((r) => r.location === "candidate").length, pass: rules.filter((r) => r.location === "candidate" && r.pass).length },
       stoppedAt: { shipped: { ...zero }, candidate: { ...zero } }, failedGate: { ...zero },
-      goldens: { count: 0, differing: 0, engineGaps: 0 },
     },
     rules,
   };
@@ -205,37 +203,11 @@ describe("the report", () => {
   });
 });
 
-describe("engine-reads-goldens", () => {
-  it("fails on any golden the engine could not fully read, naming the files and sending the fix to the engine", () => {
-    const check = engineReadsGoldensCheck([
-      { task: "t", path: "a.py", status: "agree" },
-      { task: "t", path: "b.py", status: "engine-gap" },
-      { task: "rerail:django", path: "c.py", status: "mismatch" },
-    ]);
-    assert.equal(check.id, "engine-reads-goldens");
-    assert.equal(check.ok, false);
-    assert.match(check.detail, /^1 of 3 golden/u);
-    assert.match(check.detail, /t\/b\.py/u);
-    assert.match(check.detail, /the fix belongs in the engine/u);
-  });
-
-  it("passes when the engine read every golden, and on a rule without goldens", () => {
-    assert.equal(engineReadsGoldensCheck([{ task: "t", path: "a.py", status: "mismatch" }]).ok, true);
-    assert.equal(engineReadsGoldensCheck([]).ok, true);
-  });
-
-  it("a shipped rule whose only failure is engine-reads-goldens is listed as blocked by an engine gap", () => {
-    const summary = summarize([report([rule("a", "shipped", { "matches-upstream-tests": "engine-reads-goldens" })])], noUngated, []);
-    assert.deepEqual(summary.engineGaps.map((row) => row.rule), ["a"]);
-    assert.equal(summary.pass, false);
-  });
-});
-
 describe("cache keys", () => {
-  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingArchive: "r", adapterSources: "a", corpusTasks: "t", corpora: "[]" };
+  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingArchive: "r", adapterSources: "a" };
   const rules = {
-    a: { engine: "e", document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"], recording: "ra" },
-    b: { engine: "e", document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"], recording: "rb" },
+    a: { engine: "e", document: '{"id":"a"}', conformanceEntry: "{}", caseSources: ["fixtures/a.py\0aa"], recording: "ra" },
+    b: { engine: "e", document: '{"id":"b"}', conformanceEntry: "{}", caseSources: ["fixtures/b.py\0bb"], recording: "rb" },
   };
 
   it("a changed document changes only its own key", () => {
@@ -245,8 +217,7 @@ describe("cache keys", () => {
     assert.equal(after.b, before.b);
   });
 
-  it("a changed golden or case source changes only that rule's key", () => {
-    assert.notEqual(ruleKey(shared, { ...rules.a, goldens: '[{"task":"t"}]' }), ruleKey(shared, rules.a));
+  it("a changed case source changes only that rule's key", () => {
     assert.notEqual(ruleKey(shared, { ...rules.a, caseSources: ["fixtures/a.py\0ab"] }), ruleKey(shared, rules.a));
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
@@ -272,13 +243,12 @@ describe("cache keys", () => {
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
 
-  // Shard 1 judges a and shard 2 judges b, but both shards' tool-pack checks read the goldens and cases of a and b.
+  // Shard 1 judges a and shard 2 judges b, but both shards' tool-pack checks read the cases of a and b.
   it("a shard's tool-pack key moves with what its checks read of another shard's rules", () => {
-    const pack = { engine: "e", names: ["A", "B"], goldens: ['a\0[]', 'b\0[{"task":"t","path":"x.js","sha256":"1"}]'], caseSources: ["fixtures/a.py\0aa", "fixtures/b.py\0bb"] };
+    const pack = { engine: "e", names: ["A", "B"], caseSources: ["fixtures/a.py\0aa", "fixtures/b.py\0bb"] };
     const shardOne = (inputs: typeof pack) => toolPackKey(shared, inputs, [ruleKey(shared, rules.a)]);
     const before = shardOne(pack);
-    assert.equal(shardOne({ ...pack, goldens: [...pack.goldens].reverse(), caseSources: [...pack.caseSources].reverse() }), before);
-    assert.notEqual(shardOne({ ...pack, goldens: ['a\0[]', 'b\0[{"task":"t","path":"x.js","sha256":"2"}]'] }), before);
+    assert.equal(shardOne({ ...pack, caseSources: [...pack.caseSources].reverse() }), before);
     assert.notEqual(shardOne({ ...pack, caseSources: ["fixtures/a.py\0aa", "fixtures/b.py\0bc"] }), before);
     assert.notEqual(shardOne({ ...pack, names: ["A", "B", "C"] }), before);
     assert.notEqual(shardOne({ ...pack, engine: "changed" }), before);
@@ -313,17 +283,10 @@ describe("cached results", () => {
     }
   });
 
-  it("a tool-pack entry replays the corpus-complete and corpus-answers checks it was cached with; one without them is a miss", () => {
-    const complete = { id: "corpus-complete", ok: true, detail: "all 3 recorded corpus file(s) were fetched with their recorded sha256" };
-    const answers = { id: "corpus-answers", ok: false, detail: "lacks 1 of 6 answer(s)" };
-    const pack = { integrity: [], knownGaps: [], corpus: { tasks: [], files: 3, excluded: 0 }, corpusComplete: complete, corpusAnswers: answers };
-    assert.ok(isCachedPack(pack));
-    const { corpusComplete: _complete, ...older } = pack;
-    assert.equal(isCachedPack(older), false);
-    // An entry cached before the corpus answers archive has no corpus-answers check to replay.
-    const { corpusAnswers: _answers, ...beforeArchive } = pack;
-    assert.equal(isCachedPack(beforeArchive), false);
-    assert.equal(isCachedPack({ ...pack, corpusComplete: { ...complete, ok: false } }), false);
+  it("a tool-pack entry needs its integrity lines and known gaps; one without them is a miss", () => {
+    assert.ok(isCachedPack({ integrity: [], knownGaps: [] }));
+    assert.equal(isCachedPack({ integrity: [] }), false);
+    assert.equal(isCachedPack({ integrity: "none", knownGaps: [] }), false);
   });
 });
 

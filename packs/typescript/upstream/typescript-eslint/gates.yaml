@@ -6,7 +6,7 @@ rerail:
   project: typescript-eslint
   # Since #52 a typescript rule runs on TypeScript files only, and JavaScript files are the javascript pack's.
   # typescript-eslint's approved configurations also lint .js, .mjs and .cjs, so the ports are held to the TypeScript
-  # types alone. Upstream's tests have no JavaScript file, and the pack's corpus excludes them.
+  # types alone. Upstream's tests have no JavaScript file.
   in_scope:
     - .ts
     - .mts
@@ -37,32 +37,6 @@ popularity:
     - "npm: 112,639,766 downloads of typescript-eslint in the same week"
     - "GitHub: typescript-eslint/typescript-eslint has 16,410 stars and is not archived"
 known_gaps: []
-# Candidates that differ from upstream on real code throughout (docs/port-readiness.md, "Goldens"): each differs on more
-# than 500 of its goldens in NRV's validation/goldens/typescript-typescript-eslint.tsv (NRV e8727c7), so one entry
-# stands in place of its goldens. differing_files counts those it differed on, engine gaps included, in rerail CI run
-# 38969340726. A listed rule fails no-real-code-gap; once it agrees there, import its NRV goldens into goldens.tsv in
-# place of its entry.
-real_code_gaps:
-  - rule: typescript-eslint-class-methods-use-this
-    differing_files: 2928
-  - rule: typescript-eslint-consistent-type-imports
-    differing_files: 6898
-  - rule: typescript-eslint-explicit-function-return-type
-    differing_files: 4200
-  - rule: typescript-eslint-explicit-member-accessibility
-    differing_files: 4343
-  # Counted in NRV 7f933d9: typescript-eslint 8.70.1 reports nothing at the
-  # rule's default options, and the port runs it as `always` (packs/typescript/README.md).
-  - rule: typescript-eslint-init-declarations
-    differing_files: 2693
-  - rule: typescript-eslint-max-params
-    differing_files: 3479
-  - rule: typescript-eslint-member-ordering
-    differing_files: 2124
-  - rule: typescript-eslint-method-signature-style
-    differing_files: 1539
-  - rule: typescript-eslint-no-inferrable-types
-    differing_files: 734
 # Decisions for the team to confirm (the eslint adapter's literal readings):
 # - Gate 5 runs every case of packages/eslint-plugin/tests/rules/**/*.test.ts through upstream's own RuleTester, as
 #   the approved configuration configures a project: with the rule at the options of its first approved

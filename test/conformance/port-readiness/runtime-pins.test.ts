@@ -14,6 +14,7 @@ import { readGatesManifest } from "../../../conformance/port-readiness/manifest.
 import { RUNTIMES_DIRECTORY, staleMessage, toolPackChecks } from "../../../conformance/port-readiness/recorded-adapter.js";
 import { gatesRecordingSchema } from "../../../conformance/port-readiness/recording/schema.js";
 import type { RecordingLock } from "../../../conformance/port-readiness/recording/store.js";
+import { memoryTree } from "../../../conformance/port-readiness/recording/archive.js";
 
 const MANIFEST = `adapter: bandit
 rerail:
@@ -54,7 +55,6 @@ function recording(runtimes: Runtimes) {
     packChecks: [],
     licenseSha256: "0".repeat(64),
     inScopeSamples: ["src/example.py"],
-    corpus: { extensions: [".py"], caseSensitive: true },
     keywords: [],
     commentVocabulary: [],
     fixtureWords: [],
@@ -89,7 +89,7 @@ function runtimeChecks(runtimes: Runtimes, committed: Record<string, string> = {
       lock: lockOf(runtimes),
       recording: recording(runtimes),
       config: "c".repeat(64),
-      corpus: null,
+      tree: memoryTree(new Map()),
       tools: [{ name: "bandit", version: "1.9.4" }],
       names: [],
     });

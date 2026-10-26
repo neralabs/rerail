@@ -1,9 +1,9 @@
 /**
  * The recording's parser verdicts: one file per source the recorder asked the independent parsers about, named by the
- * source's sha256, file type and script (a case source and a golden with the same text share it), `[]` when every parser
- * was silent. What the gates must keep telling apart is a file that says every parser was silent from no file at all
- * (a source nobody recorded, on which the gates draw no conclusion) — the second is what a golden whose text changed
- * looks like.
+ * source's sha256, file type and script (two sources with the same text share it), `[]` when every parser was silent.
+ * What the gates must keep telling apart is a file that says every parser was silent from no file at all (a source
+ * nobody recorded, on which the gates draw no conclusion) — the second is what a case source whose text changed looks
+ * like.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -15,7 +15,7 @@ import { test } from "vitest";
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { createRecordedAdapter } from "../../../conformance/port-readiness/recorded-adapter.js";
 import { answerConfig, configId, memoryTree, parsersId } from "../../../conformance/port-readiness/recording/archive.js";
-import { answerPath, answerText, parseVerdicts, verdictPath, verdictText } from "../../../conformance/port-readiness/recording/corpus-answers.js";
+import { parseVerdicts, verdictPath, verdictText } from "../../../conformance/port-readiness/recording/verdicts.js";
 import { canonicalText, cleanVerdicts, gatesRecordingSchema, isCleanVerdict, recordedParsers } from "../../../conformance/port-readiness/recording/schema.js";
 
 const MANIFEST = `adapter: bandit
@@ -46,7 +46,7 @@ const digest = (text: string): string => createHash("sha256").update(text).diges
 const PARSERS = [{ parser: "cpython 3.14.8", grammar: true }, { parser: "libcst 1.9.0", grammar: false }];
 const OBJECTING = [{ parser: "cpython 3.14.8", syntax: ["invalid syntax"], grammar: [] }, { parser: "libcst 1.9.0", syntax: ["parse error"], grammar: null }];
 
-function recording(rules: Record<string, unknown> = {}): unknown {
+function recording(): unknown {
   return {
     tool: "bandit",
     adapter: "bandit",
@@ -56,25 +56,23 @@ function recording(rules: Record<string, unknown> = {}): unknown {
     packChecks: [],
     licenseSha256: "0".repeat(64),
     inScopeSamples: ["src/example.py"],
-    corpus: { extensions: [".py"], caseSensitive: true },
     keywords: ["import"],
     commentVocabulary: ["nosec"],
     fixtureWords: ["os"],
     nameSets: {},
-    rules,
+    rules: {},
     absent: [],
     parsers: PARSERS,
   };
 }
 
 /** A tree holding the parsers' verdict on each of `files`' content, read at its path. */
-function corpus(files: { path: string; source: string; script?: boolean; verdicts: Parameters<typeof verdictText>[0] }[]) {
-  const tree = new Map(files.map((file) => [verdictPath(parsersId("bandit", PARSERS), { path: file.path, sha256: digest(file.source), script: file.script === true }), Buffer.from(verdictText(file.verdicts), "utf8")]));
-  return { tree: memoryTree(tree), commitOf: (task: string): string => { throw new Error(`no commit for ${task}`); } };
+function verdictTree(files: { path: string; source: string; script?: boolean; verdicts: Parameters<typeof verdictText>[0] }[]) {
+  return memoryTree(new Map(files.map((file) => [verdictPath(parsersId("bandit", PARSERS), { path: file.path, sha256: digest(file.source), script: file.script === true }), Buffer.from(verdictText(file.verdicts), "utf8")])));
 }
 
 /** A recorded adapter over the recording and the verdict files, with a tool-pack directory the checks can look at. */
-function adapterOver(files: Parameters<typeof corpus>[0]) {
+function adapterOver(files: Parameters<typeof verdictTree>[0]) {
   const root = mkdtempSync(join(tmpdir(), "gates-verdicts-"));
   mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
   writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST);
@@ -86,7 +84,7 @@ function adapterOver(files: Parameters<typeof corpus>[0]) {
     lock: null,
     recording: gatesRecordingSchema.parse(recording()),
     config: configId(answerConfig(root, manifest, {})),
-    corpus: corpus(files),
+    tree: verdictTree(files),
     tools: [{ name: "bandit", version: "1.9.4" }],
     names: [],
   });
@@ -152,46 +150,4 @@ test("the recorder's parser list is the one every source was asked about, and a 
   assert.deepEqual(recordedParsers([[], OBJECTING]), PARSERS);
   assert.throws(() => recordedParsers([OBJECTING, [OBJECTING[0]!]]), /independent parsers differ between sources/u);
   assert.throws(() => recordedParsers([]), /no independent parser ran/u);
-});
-
-const recordedRule = (name: string) => ({
-  facts: { name, implementation: ["bandit/blacklists/calls.py"], tests: ["examples/pickle.py"], deprecation: null, recommended: null, notOnRealCode: null },
-  names: { implementation: { sets: [], names: [], regexes: [] }, shared: { sets: [], names: [], regexes: [] } },
-  spanParts: { endLine: true, endCol: true },
-  cases: [],
-});
-
-test("a rule whose recorded answer excludes a corpus file hides no other rule's answer on it", async () => {
-  const root = mkdtempSync(join(tmpdir(), "gates-excluded-"));
-  try {
-    mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
-    writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST);
-    const manifest = readGatesManifest(root, "demo", "bandit");
-    const config = configId(answerConfig(root, manifest, {}));
-    const file = { task: "demo", repository: "demo/demo", path: "app.py", source: SILENT, sha256: digest(SILENT) };
-    const answer = (rule: string, text: string): [string, Buffer] => [answerPath(config, rule, file, file.sha256), Buffer.from(text, "utf8")];
-    const adapterWith = (answers: [string, Buffer][]) => createRecordedAdapter({
-      root,
-      manifest,
-      lock: null,
-      recording: gatesRecordingSchema.parse(recording({ B301: recordedRule("B301"), B302: recordedRule("B302"), B303: recordedRule("B303") })),
-      config,
-      corpus: { tree: memoryTree(new Map(answers)), commitOf: () => "0".repeat(40) },
-      tools: [{ name: "bandit", version: "1.9.4" }],
-      names: [],
-    });
-    const excluded = answerText({ excluded: "upstream could not analyse it", findings: [] });
-    const mixed = adapterWith([answer("B301", excluded), answer("B302", answerText({ excluded: null, findings: [{ startLine: 1, startCol: 0, endLine: null, endCol: 3 }] }))]);
-    const [split] = await mixed.lintCorpus([file], ["B301", "B302", "B303"]);
-    assert.equal(split!.excluded, null);
-    assert.deepEqual([...split!.excludedFor!], [["B301", "upstream could not analyse it"]]);
-    assert.deepEqual(split!.findings.get("B302"), [{ startLine: 1, startCol: 0, endLine: null, endCol: 3 }]);
-    assert.deepEqual([...split!.unanswered!], ["B303"]);
-    // Every answered rule excluding it, for one reason, is the file excluded.
-    const [whole] = await adapterWith([answer("B301", excluded), answer("B302", excluded)]).lintCorpus([file], ["B301", "B302"]);
-    assert.equal(whole!.excluded, "upstream could not analyse it");
-    assert.equal(whole!.excludedFor, undefined);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
 });

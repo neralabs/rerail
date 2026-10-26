@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 
 import type { CompiledPolicy, Engine, EngineEvaluation } from "../../../conformance/port-readiness/engine.js";
-import { classifyParsers, staysSilentCheck, provenGaps, matchesUpstreamTestsGate, outsideInScope, type ProvenGap } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
+import { classifyParsers, provenGaps, matchesUpstreamTestsGate, outsideInScope, type ProvenGap } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
 import type { KnownGap, PackAdapter, ParserVerdict, Span, UpstreamCase } from "../../../conformance/port-readiness/types.js";
 
 // Sources are single lines of ASCII, so a byte offset is the column.
@@ -149,10 +149,9 @@ test("a case of a file type outside the tool-pack's rerail.in_scope is not score
   assert.deepEqual(result.checks.map((check) => check.ok), [true, true]);
   assert.equal(result.checks[0]!.detail, "identical on 2 scored file(s); 3 case(s) outside the tool-pack's rerail.in_scope not scored");
 
-  // fires and stays-silent count in-scope cases alone: out-of-scope agreement is no evidence.
+  // fires counts in-scope cases alone: out-of-scope agreement is no evidence.
   const outOnly = matchesUpstreamTestsGate(engine, narrowed, "r", compiled({}), cases.slice(0, 3), new Map());
   assert.equal(outOnly.checks[1]!.ok, false);
-  assert.equal(staysSilentCheck(outOnly.cases, []).ok, false);
 
   // Without in_scope, the same .js case is the difference it always was.
   const unnarrowed = matchesUpstreamTestsGate(engine, adapter, "r", compiled({}), cases.slice(0, 1), new Map());
@@ -256,18 +255,4 @@ test("a case upstream's parser read in another language than its path's is evalu
   };
   matchesUpstreamTestsGate(dialects, adapter, "r", recording, [upstreamCase("pages/index.ts", [], { parsedAs: ".jsx" }), upstreamCase("src/a.ts", [])], new Map());
   assert.deepEqual(seen, [["pages/index.ts", "javascript"], ["src/a.ts", "typescript"]]);
-});
-
-test("negative evidence needs one case where upstream reports nothing and the rule agrees, from its tests or its goldens", () => {
-  const agree = (expected: number) => ({ expected, status: "agree" });
-  const none = staysSilentCheck([agree(2)], []);
-  assert.equal(none.ok, false);
-  assert.match(none.detail, /^no case where upstream reports nothing and the rule agrees.*add a golden/u);
-  assert.equal(staysSilentCheck([agree(2), { expected: 0, status: "mismatch" }], [{ expected: 0, status: "mismatch" }]).ok, false);
-  assert.equal(staysSilentCheck([agree(0)], []).ok, true);
-  // A rule whose upstream test files all have findings (Ruff's) stays silent on a golden where upstream reports nothing.
-  const check = staysSilentCheck([agree(1)], [agree(0), agree(3)]);
-  assert.equal(check.id, "stays-silent");
-  assert.equal(check.ok, true);
-  assert.equal(check.detail, "1 case(s) where upstream reports nothing and the rule agrees: 0 upstream test file(s), 1 golden(s)");
 });

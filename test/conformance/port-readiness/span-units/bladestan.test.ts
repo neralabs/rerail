@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 
 import { bladestanSpan, templateLineSpan, BLADESTAN_SPAN_PARTS } from "../../../../conformance/port-readiness/span-units/bladestan.js";
-import { CONTEXT_FILES } from "../../../../conformance/port-readiness/recording/corpus-answers.js";
 import { CASE_LAYOUTS } from "../../../../conformance/recorders/port-readiness/record.js";
 
 // A multibyte character on line 1, a CRLF line end, a lone CR inside line 2, then an `@if` on line 3 of the template.
@@ -23,5 +22,4 @@ test("Bladestan's test templates are committed as fixtures/skeleton/resources/<p
   assert.equal(place("tests/skeleton/resources/views/foo.blade.php"), "fixtures/skeleton/resources/views/foo.blade.php");
   assert.equal(place("tests/skeleton/resources/namespace/Test/namespacedView.blade.php"), "fixtures/skeleton/resources/namespace/Test/namespacedView.blade.php");
   assert.equal(place("tests/Rules/Fixture/once.php"), null);
-  assert.deepEqual(CONTEXT_FILES.bladestan("resources/views/a.blade.php"), []);
 });

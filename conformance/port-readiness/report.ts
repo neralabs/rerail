@@ -64,9 +64,6 @@ function failuresFor(report: GatesReport, gate: BlockingGateId): string[] {
       const failures = rule.gates["matches-upstream-tests"].checks.filter((check) => !check.ok);
       for (const check of failures.slice(1)) lines.push(`  - ${check.id}: ${cell(check.detail)}`);
       for (const difference of rule.gates["matches-upstream-tests"].differences.slice(0, 4)) lines.push(`  - ${difference.status} \`${difference.fixture}\`: ${cell(difference.reason)}`);
-      const goldens = rule.gates["matches-upstream-tests"].goldens;
-      for (const golden of goldens.differing.first) lines.push(`  - golden \`${golden.task}/${golden.path}\`: upstream ${golden.expected}, rule ${golden.actual}: ${cell(golden.reason)}`);
-      for (const golden of goldens.engineGaps.first) lines.push(`  - engine gap \`${golden.task}/${golden.path}\`: upstream ${golden.expected}, rule ${golden.actual}: ${cell(golden.reason)}`);
     }
   }
   return lines;
@@ -108,27 +105,15 @@ function gapCandidateTable(report: GatesReport): string[] {
   ];
 }
 
-function goldensSection(report: GatesReport): string[] {
-  const { goldens } = report.summary;
-  return [
-    `matches-upstream-tests judges each rule on its goldens: real-code files a real-code run found, listed in goldens.tsv with that run named on its source line, whose expected answer is upstream's on the pinned corpus. Rerail's CI does not run the rules over the corpus. The rules have ${goldens.count} golden(s), differ on ${goldens.differing} the engine read fully, and ${goldens.engineGaps} are engine gaps.`,
-    "",
-    report.corpus === null ? "The corpus was not read on this run." : `The corpus is ${report.corpus.files} file(s) from ${report.corpus.tasks.filter((task) => task.status === "applied").length} applied task(s) and corpora; ${report.corpus.files - report.corpus.excluded} have upstream's answer.`,
-  ];
-}
-
 function ruleTable(report: GatesReport): string[] {
   const rows = [
-    "| Rule | Location | Verdict | Starts | pack.json on | Bytes | Upstream tests matched | Goldens |",
-    "| --- | --- | --- | --- | --- | ---: | --- | --- |",
+    "| Rule | Location | Verdict | Starts | pack.json on | Bytes | Upstream tests matched |",
+    "| --- | --- | --- | --- | --- | ---: | --- |",
   ];
   for (const rule of report.rules) {
     const totals = rule.gates["matches-upstream-tests"].totals;
     const upstream = totals === null ? "not run" : `${totals.matched}/${totals.expected}, ${totals.extra} extra`;
-    const goldens = rule.gates["matches-upstream-tests"].goldens;
-    const agreeing = goldens.count - goldens.differing.count - goldens.engineGaps.count;
-    const goldenCell = goldens.count === 0 ? "none" : `${agreeing}/${goldens.count} agree${goldens.engineGaps.count === 0 ? "" : `, ${goldens.engineGaps.count} engine gap(s)`}`;
-    rows.push(`| \`${rule.id}\` | ${rule.location} | ${stoppedLabel(rule)} | ${rule.defaultOn ? "on" : "off"} | ${rule.on === null ? "-" : rule.on ? "on" : "off"} | ${rule.bytes} | ${upstream} | ${goldenCell} |`);
+    rows.push(`| \`${rule.id}\` | ${rule.location} | ${stoppedLabel(rule)} | ${rule.defaultOn ? "on" : "off"} | ${rule.on === null ? "-" : rule.on ? "on" : "off"} | ${rule.bytes} | ${upstream} |`);
   }
   return rows;
 }
@@ -175,10 +160,6 @@ export function renderMarkdown(report: GatesReport): string {
     `## ${gateTitle("upstream-status")}`,
     "",
     ...list(report.rules.filter((rule) => !rule.defaultOn).map((rule) => `\`${rule.id}\` (${rule.location}): ${cell(rule.defaultOnReason)}`), "Every rule exists upstream, is stable and is recommended."),
-    "",
-    "## Goldens",
-    "",
-    ...goldensSection(report),
     "",
     "## Run integrity",
     "",

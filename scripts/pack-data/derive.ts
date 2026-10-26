@@ -31,7 +31,7 @@ import { authoredListing, isPackFixture, packFixtureKind } from "../s3/pack-fixt
 import { DEFAULT_CACHE_ROOT } from "../../conformance/port-readiness/corpus.js";
 import { readGatesManifest } from "../../conformance/port-readiness/manifest.js";
 import { ProcessCommandRunner } from "../../conformance/port-readiness/process.js";
-import { CASE_LAYOUTS, hasRecordingNote, inlineTextsSource, listedCopies, readLockedPair, recordCaseSources, withRecordingNote, withUpstreamRows } from "../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, hasRecordingNote, inlineTextsSource, listedCopies, readLockedRecording, recordCaseSources, withRecordingNote, withUpstreamRows } from "../../conformance/recorders/port-readiness/record.js";
 import { licenseFiles } from "../../conformance/port-readiness/recorded-adapter.js";
 import { createContext, type DeriveRecipe } from "./context.js";
 import { RECIPES } from "./recipes/index.js";
@@ -164,12 +164,12 @@ export async function deriveToolPack(recipe: DeriveRecipe, options: DeriveOption
     options.log(`${label}: ${sources.length} case source(s), ${missing.length} not written by the generator`);
 
     // The recording the lock names, when the recorder's cache holds it, names every case source by sha256.
-    const locked = readLockedPair(ROOT, options.recorderCache, recipe.pack, recipe.tool);
+    const locked = readLockedRecording(ROOT, options.recorderCache, recipe.pack, recipe.tool);
     if (locked === null) notes.push("no recording.lock: the case sources are not checked against a recording");
     else if ("unavailable" in locked) notes.push(`the case sources are not checked against the recording: ${locked.unavailable}`);
     else {
       const wrong = new Set<string>();
-      for (const rule of Object.values(locked.recording.rules)) {
+      for (const rule of Object.values(locked.rules)) {
         for (const testCase of rule.cases) {
           if (testCase.file === null || testCase.sha256 === undefined) continue;
           const path = join(ROOT, label, testCase.file);

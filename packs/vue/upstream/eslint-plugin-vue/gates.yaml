@@ -49,10 +49,6 @@ known_gaps: []
 # - Independent parsers: @vue/compiler-sfc 3.5.43 (runtimes/vue-parsers) splits a .vue file; its parse errors are
 #   syntax errors, its checks of the component grammar errors, and TypeScript and Babel read its script blocks in their
 #   lang. Other files are read by TypeScript and Babel alone.
-# - Corpus files are linted with flat/recommended and every named rule at its approved setting, plus comment-directive
-#   (`vue.directive_rules`), so `<!-- eslint-disable -->` in a template works as it does for the plugin's users, and
-#   @typescript-eslint/parser for `<script lang="ts">` and `lang="tsx"` (`vue.script_parsers`), as the user guide's
-#   TypeScript setup sets parserOptions.parser; other scripts are read by espree, as flat/recommended reads them.
 # - A rule's end positions are compared only when every finding upstream reports on its own tests carries one.
 # - Gate 3's upstream code for a rule is lib/rules/<rule>.js or .ts, the modules it imports by relative path (lib/utils/),
 #   followed transitively, and the modules of @eslint-community/eslint-utils it imports, the helper library of scope
@@ -87,7 +83,3 @@ eslint:
   checkout: ["/lib/", "/tests/", "/LICENSE", "/package.json"]
   vue:
     runtime: vue-parsers
-    script_parsers:
-      ts: "@typescript-eslint/parser"
-      tsx: "@typescript-eslint/parser"
-    directive_rules: ["vue/comment-directive"]

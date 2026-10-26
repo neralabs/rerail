@@ -5,10 +5,9 @@ import { dirname, join } from "node:path";
 import { test, vi } from "vitest";
 
 import type * as Cache from "../../../conformance/port-readiness/cache.js";
-import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import { packTree } from "../../../conformance/port-readiness/recording/archive.js";
 import { decodeSource, upstreamCheckoutDirectory } from "../../../conformance/port-readiness/recorded-adapter.js";
-import type { ParserVerdict, UpstreamCase, UpstreamFile } from "../../../conformance/port-readiness/types.js";
+import type { ParserVerdict, UpstreamCase } from "../../../conformance/port-readiness/types.js";
 import { recordToolPack, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
 import { demoToolPack, fakeAdapter, MANIFEST, nameRules, optionsFor, span } from "./support/demo-tool-pack.js";
 
@@ -25,7 +24,7 @@ vi.mock("../../../conformance/port-readiness/cache.js", async (importOriginal) =
  * recorder writes a different tree for the same upstream output, or RECORDING_FORMAT moves (the config id is in every
  * path).
  */
-const PINNED_TREE = "71a872efcdf5dfcc9809597f0d4d258d0637f7fc7d954054f8b9b4932adcaab7";
+const PINNED_TREE = "f89b977a7e4ca11c22c153947c8fead0a580e4f223707a4048c7e53887e96c81";
 
 const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
 const RUFF_FIXTURES = "crates/ruff_linter/resources/test/fixtures";
@@ -87,11 +86,6 @@ const ruffAdapter: AdapterFactory = async (...args) => ({
   commentVocabulary: new Set(["noqa", "type"]),
   cases: (name) => RUFF_CASES[name] ?? [],
   toSpan: (_name, _source, start, end) => ({ startLine: 1, startCol: start, endLine: 1, endCol: end }),
-  lintCorpus: async (files: CorpusFile[], names: string[]): Promise<UpstreamFile[]> => files.map((file) => ({
-    file,
-    excluded: file.path.endsWith("broken.py") ? "upstream's parser rejects it" : null,
-    findings: new Map(names.map((name) => [name, file.path === "pkg/mod.py" ? [span, { startLine: 3, startCol: 1, endLine: null, endCol: null }] : []])),
-  })),
   parserVerdicts: verdictsOn("cpython 3.14.0"),
 });
 
@@ -105,25 +99,18 @@ const phpstanAdapter: AdapterFactory = async (...args) => ({
     { fixture: "tests/PHPStan/Rules/data/keys.php", variant: "testRule", path: "keys.php", source: "<?php [1 => 1, 1 => 2];\n", skipped: null, expected: name === "array.duplicateKey" ? [{ startLine: 1, startCol: null, endLine: null, endCol: null }] : [], markup: null },
   ],
   toSpan: () => ({ startLine: 1, startCol: null, endLine: null, endCol: null }),
-  inCorpus: (path) => path.endsWith(".php"),
-  // The answer depends on the batch: a finding on the first line for every file handed with another.
-  lintCorpus: async (files: CorpusFile[], names: string[]): Promise<UpstreamFile[]> => files.map((file) => ({
-    file, excluded: null, findings: new Map(names.map((name) => [name, files.length > 1 && name === "variable.undefined" ? [{ startLine: 1, startCol: null, endLine: null, endCol: null }] : []])),
-  })),
   parserVerdicts: verdictsOn("nikic/php-parser 5.9.0"),
 });
 
-const place = (path: string, digit: string, task = "demo-task", source = "x = 1\n"): CorpusFile => ({ task, repository: "demo/demo", path, source, sha256: digit.repeat(64) });
-
 /** The tree the recorder writes for one fixture tool-pack of `adapter`, recorded from nothing. */
-async function recordedTree(adapter: "ruff" | "phpstan", rules: string[], factory: AdapterFactory, goldens: CorpusFile[], notCopied: string | null, bytes: (fixture: string) => Buffer | undefined): Promise<Map<string, Buffer>> {
+async function recordedTree(adapter: "ruff" | "phpstan", rules: string[], factory: AdapterFactory, notCopied: string | null, bytes: (fixture: string) => Buffer | undefined): Promise<Map<string, Buffer>> {
   const root = demoToolPack(rules);
   try {
     writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST.replace("adapter: bandit", `adapter: ${adapter}`));
     const upstreamMd = join(root, "packs/demo/licenses/bandit/UPSTREAM.md");
     if (notCopied !== null) writeFileSync(upstreamMd, `${readFileSync(upstreamMd, "utf8")}\n- Not copied: \`${notCopied}\` — a copyleft project\n`);
     nameRules(root, rules);
-    const options = { ...optionsFor(root, factory, () => goldens, adapter), upstreamBytes: bytes };
+    const options = { ...optionsFor(root, factory, adapter), upstreamBytes: bytes };
     // The fixture text file, at the pinned commit's checkout the gates rebuild the texts from.
     const checkout = upstreamCheckoutDirectory(options.cacheRoot, { repository: "https://github.com/PyCQA/bandit", commit: "a".repeat(40) });
     mkdirSync(dirname(join(checkout, FIXTURE_FILE.path)), { recursive: true });
@@ -135,14 +122,10 @@ async function recordedTree(adapter: "ruff" | "phpstan", rules: string[], factor
 }
 
 test("the recorder writes the pinned tree for a fixture tool-pack that exercises every file it writes", async () => {
-  // Ruff: per-rule records; a corpus answer keyed by the __init__.py files above its file; findings, silence and an exclusion.
-  const ruff = await recordedTree("ruff", ["F401", "SIM105", "X999"], ruffAdapter, [
-    place("pkg/__init__.py", "1"), place("pkg/mod.py", "2"), place("pkg/empty.py", "3"), place("pkg/broken.py", "4"), place("top.py", "5"),
-  ], `${RUFF_FIXTURES}/pylint/`, (fixture) => RUFF_BYTES[fixture]);
-  // PHPStan: case keys carry the recorded rules; corpus answers are keyed by the task's batch and the rules.
-  const phpstan = await recordedTree("phpstan", ["array.duplicateKey", "variable.undefined"], phpstanAdapter, [
-    place("src/a.php", "6", "t1", "<?php echo $a;\n"), place("src/b.php", "7", "t1", "<?php\n"), place("src/c.php", "8", "t2", "<?php\n"),
-  ], null, () => undefined);
+  // Ruff: per-rule records.
+  const ruff = await recordedTree("ruff", ["F401", "SIM105", "X999"], ruffAdapter, `${RUFF_FIXTURES}/pylint/`, (fixture) => RUFF_BYTES[fixture]);
+  // PHPStan: case keys carry the recorded rules.
+  const phpstan = await recordedTree("phpstan", ["array.duplicateKey", "variable.undefined"], phpstanAdapter, null, () => undefined);
   const tree = new Map([...ruff, ...phpstan]);
   assert.equal(tree.size, ruff.size + phpstan.size, "the two fixture tool-packs share no path");
   const paths = [...tree.keys()];
@@ -163,8 +146,6 @@ test("the recorder writes the pinned tree for a fixture tool-pack that exercises
     ["rule.json", /^rules\/[0-9a-f]{64}\/F401\/rule\.json$/u],
     ["case answers", /^rules\/[0-9a-f]{64}\/F401\/cases\/[0-9a-f]{64}\+[0-9a-f]{12}\.json$/u],
     ["texts", /^texts\/[0-9a-f]{64}\.json$/u],
-    ["corpus answers", /^answers\/[0-9a-f]{64}\/F401\/demo-task\/pkg\/mod\.py@2{64}\+[0-9a-f]{12}\.json$/u],
-    ["batched corpus answers", /^answers\/[0-9a-f]{64}\/variable\.undefined\/t1\/src\/a\.php@6{64}\+[0-9a-f]{12}\.json$/u],
     ["verdicts", /^verdicts\/[0-9a-f]{64}\/[0-9a-f]{64}\.py\.json$/u],
     ["script verdicts", /^verdicts\/[0-9a-f]{64}\/[0-9a-f]{64}\.pyi\.script\.json$/u],
   ] as const) assert.ok(paths.some((path) => pattern.test(path)), `the fixture tree has no ${kind} file`);
@@ -173,8 +154,6 @@ test("the recorder writes the pinned tree for a fixture tool-pack that exercises
   assert.ok(text(/^rules\/.*\/cases\//u).some((answer) => answer.includes("\"skipped\": \"upstream does not lint notebooks here\"")), "no skipped case answer");
   assert.ok(text(/^rules\/.*\/cases\//u).some((answer) => answer.includes("\"expected\": []")), "no empty case answer");
   assert.ok(text(/^texts\//u).includes("\"x = '\\ud800'\\n\"\n"), "no text with a lone surrogate");
-  assert.ok(text(/^answers\//u).includes('{\n  "excluded": "upstream\'s parser rejects it"\n}\n'), "no excluded corpus answer");
-  assert.ok(text(/^answers\//u).includes('{\n  "findings": []\n}\n'), "no silent corpus answer");
   // The parsers' verdicts on the byte-order-marked and the Latin-1 case sources, keyed by their decoded text.
   for (const source of [BOM, LATIN1]) assert.ok(paths.some((path) => path.includes(`/${sha256(source)}.py.json`)), `no verdict on ${JSON.stringify(source)}`);
 }, 60_000);

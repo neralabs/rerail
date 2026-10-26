@@ -279,19 +279,6 @@ export async function createTlintAdapter(pack: PackManifest, names: string[], ca
       return tlintSpan(source, startByte, endByte, TLINT_SPAN_PARTS);
     },
 
-    // `tlint lint <directory>` lints its .php files, and the Blade linters those whose path holds `.blade.php`.
-    inCorpus: (path: string) => path.endsWith(".blade.php"),
-
-    async lintCorpus(files, ruleNames) {
-      const paths = files.map((file) => `${file.task}/${file.path}`);
-      const result = await lintFiles(files.map((file, index) => ({ path: paths[index]!, source: file.source })));
-      return files.map((file, index) => {
-        const internal = result.internal[paths[index]!];
-        if (internal !== undefined) return { file, excluded: `upstream could not analyse it: ${internal}`, findings: new Map() };
-        return { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, findingsOf(result, paths[index]!, name)])) };
-      });
-    },
-
     parserVerdicts: (files) => blade.verdicts(files),
   };
 }

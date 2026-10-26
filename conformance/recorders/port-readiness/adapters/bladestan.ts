@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
@@ -89,22 +89,21 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
   const fromCheckout = (path: string) => relative(upstream.directory, path).split(sep).join("/");
 
   /**
-   * The driver's answer, run in a scratch directory of its own (the test application and TMPDIR live there) that
-   * `prepare` may fill first. Every machine's path is stripped from the answer, the longest first: the scratch
+   * The driver's answer, run in a scratch directory of its own (the test application and TMPDIR live there). Every
+   * machine's path is stripped from the answer, the longest first: the scratch
    * directory, upstream's checkout, the runtime and anything else under the cache root, each as given and resolved. The
    * recording must read the same on every machine, so a template's or test file's path in the answer is relative to the
    * checkout, the package's and the phar's to the runtime, and a message (a crash, a Laravel `(View: …)` suffix) names
    * no cache root. `register_argc_argv` is the CLI's default, set explicitly since php.ini files differ on it and
    * PHPStan reads it (DefinedVariableRule's $argc and $argv).
    */
-  async function ask<T>(request: (directory: string) => object, prepare: (directory: string) => Promise<void> = async () => {}): Promise<T> {
+  async function ask<T>(request: object): Promise<T> {
     await mkdir(resolve(cacheRoot, "tmp"), { recursive: true });
     const directory = realpathSync(await mkdtemp(resolve(cacheRoot, "tmp", "bladestan-")));
     try {
       await mkdir(join(directory, "tmp"));
-      await prepare(directory);
       const command = [runtime.php, ...PHP_INI, "-d", "register_argc_argv=1", DRIVER, runtime.directory];
-      const output = await runChecked(runner, command, { input: JSON.stringify(request(directory)), cwd: directory, env: { ...process.env, TMPDIR: join(directory, "tmp") } });
+      const output = await runChecked(runner, command, { input: JSON.stringify(request), cwd: directory, env: { ...process.env, TMPDIR: join(directory, "tmp") } });
       return JSON.parse(withoutMachinePaths(output, [directory, upstream.directory, runtime.directory, cacheRoot])) as T;
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -113,8 +112,8 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
 
   const ported = names.filter((name) => PORTED[name] !== undefined).sort();
   const ruleClasses = [...new Set(ported.map((name) => PORTED[name]!.rule))].sort();
-  const levels = await ask<Record<string, number | null>>(() => ({ op: "levels", rules: ruleClasses }));
-  const facts = await ask<Facts>(() => ({ op: "facts", checkout: upstream.directory, rules: ruleClasses, packages: PACKAGES }));
+  const levels = await ask<Record<string, number | null>>({ op: "levels", rules: ruleClasses });
+  const facts = await ask<Facts>({ op: "facts", checkout: upstream.directory, rules: ruleClasses, packages: PACKAGES });
   // The driver's paths are machine-free (ask): the runtime's are resolved against it again where a file is read.
   const installedPackage = resolve(runtime.directory, facts.package);
 
@@ -293,38 +292,6 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
 
     toSpan(_name: string, source: string, startByte: number, endByte: number): Span {
       return bladestanSpan(source, startByte, endByte, BLADESTAN_SPAN_PARTS);
-    },
-
-    inCorpus: (path: string) => path.endsWith(".blade.php"),
-
-    async lintCorpus(files, ruleNames) {
-      if (files.length === 0) return [];
-      // Each template under root/<task>/<path>, rendered as the view that path names with root its only view location;
-      // a view the corpus's application or packages would register (an `@include`, an `<x-...>` component) is the
-      // empty stub, as Bladestan does not compile a template one of whose components it cannot locate at all.
-      const paths = files.map((file) => `root/${file.task}/${file.path}`);
-      const result = await ask<{ templates: Rendered[] }>(
-        (directory) => ({ op: "corpus", checkout: upstream.directory, root: join(directory, "root"), stub: join(directory, "stub.blade.php"), templates: paths.map((path) => join(directory, path)) }),
-        async (directory) => {
-          await writeFile(join(directory, "stub.blade.php"), "");
-          await Promise.all(files.map(async (file, index) => {
-            await mkdir(dirname(join(directory, paths[index]!)), { recursive: true });
-            await writeFile(join(directory, paths[index]!), file.source);
-          }));
-        },
-      );
-      return files.map((file, index) => {
-        const rendered = result.templates[index]!;
-        const placed = (rendered.errors ?? []).filter((error) => error.template === null);
-        const excluded = rendered.view === null
-          ? "no view name addresses it: its path holds a dot besides .blade.php"
-          : rendered.crash !== undefined
-            ? `upstream could not analyse it: ${rendered.crash}`
-            : placed.length > 0 ? `upstream could not analyse it: ${[...new Set(placed.map((error) => error.message))].join("; ")}` : null;
-        if (excluded !== null) return { file, excluded, findings: new Map() };
-        const own = (rendered.errors ?? []).filter((error) => error.template === paths[index]);
-        return { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, findingsOf(own, name)])) };
-      });
     },
 
     parserVerdicts: (files) => blade.verdicts(files),

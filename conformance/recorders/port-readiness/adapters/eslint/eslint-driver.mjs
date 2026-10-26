@@ -13,8 +13,6 @@
 //   test configuration and expected reports (for not-overfit), and each case of each named rule linted by the pinned
 //   ESLint with the rule as its first approved configuration sets it and without the globals and settings the case or
 //   its RuleTester declares (for matches-upstream-tests).
-// - {op: "lint", files}: each corpus file linted as upstream recommends, with every named rule on (the corpus answers, the
-//   expected answer on a golden).
 //
 // A pack whose manifest names an environment (`eslint.environment`, a shareable configuration such as
 // eslint-config-next) is linted in it: the configuration's file globs, parsers and globals come before the approved
@@ -31,7 +29,7 @@ import {
 } from "./eslint-upstream.ts";
 
 const request = JSON.parse(readFileSync(0, "utf8"));
-const { plugin, configs: approvedNames, release, fixtureParsers, namedParsers, eslintPackage, environment: environmentSetup, vue: vueSetup, inScope } = request;
+const { plugin, configs: approvedNames, release, fixtureParsers, namedParsers, eslintPackage, environment: environmentSetup, inScope } = request;
 // Node identifies modules by real path, and the cache may be reached through a symlink.
 const runtime = realpathSync(request.runtime);
 const checkout = realpathSync(request.checkout);
@@ -98,9 +96,9 @@ function lintedExtensions() {
   const linted = new Set();
   for (const { configs } of approved) {
     // As Linter reads a plain array: after ESLint's default configuration, with files matched under its cwd.
-    const array = new FlatConfigArray([...environment, ...configs], { basePath: "/corpus" });
+    const array = new FlatConfigArray([...environment, ...configs], { basePath: "/project" });
     array.normalizeSync();
-    for (const extension of CANDIDATE_EXTENSIONS) if (array.getConfig(`/corpus/src/example${extension}`) !== undefined) linted.add(extension);
+    for (const extension of CANDIDATE_EXTENSIONS) if (array.getConfig(`/project/src/example${extension}`) !== undefined) linted.add(extension);
   }
   return CANDIDATE_EXTENSIONS.filter((extension) => linted.has(extension));
 }
@@ -126,10 +124,10 @@ function recordedAsComponent(extension, filename) {
 function parserModules() {
   const files = new Set();
   for (const { configs } of approved) {
-    const array = new FlatConfigArray([...environment, ...configs], { basePath: "/corpus" });
+    const array = new FlatConfigArray([...environment, ...configs], { basePath: "/project" });
     array.normalizeSync();
     for (const extension of CANDIDATE_EXTENSIONS) {
-      const parser = array.getConfig(`/corpus/src/example${extension}`)?.languageOptions?.parser;
+      const parser = array.getConfig(`/project/src/example${extension}`)?.languageOptions?.parser;
       if (parser === undefined || parser === null) continue;
       const holds = (exports) => exports === parser || exports?.default === parser
         || ["parseForESLint", "parse"].some((key) => typeof parser[key] === "function" && exports?.[key] === parser[key]);
@@ -645,42 +643,9 @@ async function tests(globs, names, caseTesters) {
   return { files: loaded, texts: [...texts.keys()].sort().map((key) => texts.get(key)), configurations: [...configurations].sort(), testFiles, cases };
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// Corpus files, linted as upstream recommends.
-
-function lint(files, names) {
-  // A rule that needs type information reports nothing on files that are not a buildable project.
-  const typeChecked = new Set(names.filter((name) => upstreamRules.get(name)?.meta?.docs?.requiresTypeChecking === true));
-  const rules = Object.fromEntries(names.filter((name) => upstreamRules.has(name) && !typeChecked.has(name)).map((name) => [ruleId(name), settingFor(name)]));
-  // Vue components: the rules upstream reads a file with (comment-directive) at their approved setting, and the parser
-  // of each `<script lang>` the manifest names, for every .vue file, as eslint-plugin-vue's user guide sets it.
-  const vueEntries = [];
-  if (vueSetup !== null) {
-    for (const id of vueSetup.directiveRules) {
-      const approvedSetting = firstApprovedIn(approved, id);
-      if (approvedSetting === null) throw new Error(`no approved configuration turns on the directive rule ${id}`);
-      rules[id] = ["error", ...approvedSetting.options];
-    }
-    const parser = Object.fromEntries(Object.entries(vueSetup.scriptParsers).map(([lang, name]) => [lang, interop(runtimeRequire(name))]));
-    vueEntries.push({ files: ["*.vue", "**/*.vue"], languageOptions: { parserOptions: { parser } } });
-  }
-  // The first approved configuration's languages, parsers and file patterns, with only the named rules on.
-  const config = [...environment, ...approved[0].configs.map(({ rules: _rules, ...rest }) => rest), ...vueEntries, { rules }];
-  const linter = new Linter({ configType: "flat", cwd: "/corpus" });
-  return files.map(({ path, source }) => {
-    const messages = linter.verify(source, config, `/corpus/${path}`);
-    const fatal = messages.find((message) => message.fatal);
-    if (fatal !== undefined) return { excluded: `upstream's parser reports ${fatal.message}`, findings: {} };
-    const unmatched = messages.find((message) => message.ruleId === null && /^No matching configuration/u.test(message.message));
-    if (unmatched !== undefined) return { excluded: `upstream does not lint it: ${unmatched.message}`, findings: {} };
-    return { excluded: null, findings: Object.fromEntries(names.map((name) => [name, messages.filter((message) => message.ruleId === ruleId(name)).map(position)])) };
-  });
-}
-
 const operations = {
   facts: () => facts(request.names),
   tests: () => tests(request.tests, request.names, request.caseTesters ?? []),
-  lint: () => lint(request.files, request.names),
 };
 if (!(request.op in operations)) throw new Error(`unknown op ${request.op}`);
 writeFileSync(request.out, JSON.stringify(await operations[request.op]()));

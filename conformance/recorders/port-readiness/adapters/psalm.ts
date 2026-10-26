@@ -380,24 +380,6 @@ export async function createPsalmAdapter(pack: PackManifest, names: string[], ca
       return psalmSpan(source, startByte, endByte, PSALM_SPAN_PARTS);
     },
 
-    // Psalm analyses .php files; a Blade template (`.blade.php`) is the blade pack's, as the php pack's match excludes it.
-    inCorpus: (path: string) => path.endsWith(".php") && !path.endsWith(".blade.php"),
-
-    async lintCorpus(files, ruleNames) {
-      if (files.length === 0) return [];
-      const paths = files.map((file) => `${file.task}/${file.path}`);
-      // One project of every file, configured as upstream recommends, for the PHP Psalm runs on (no composer.json names another).
-      const issues = await analyse(facts.recommended, files.map((file, index) => ({ path: paths[index]!, source: file.source })), null);
-      const byFile = new Map<string, Issue[]>();
-      for (const issue of issues) byFile.set(issue.file_name, [...(byFile.get(issue.file_name) ?? []), issue]);
-      return files.map((file, index) => {
-        const found = byFile.get(`src/${paths[index]!}`) ?? [];
-        const unanalysed = found.find((issue) => UNANALYSED.has(issue.type));
-        if (unanalysed !== undefined) return { file, excluded: `upstream could not analyse it: ${unanalysed.type}: ${unanalysed.message}`, findings: new Map() };
-        return { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, findingsOf(found, file.source, name)])) };
-      });
-    },
-
     parserVerdicts: (files) => php.verdicts(files),
   };
 }

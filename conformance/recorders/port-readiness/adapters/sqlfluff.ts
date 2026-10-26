@@ -1,4 +1,4 @@
-import { dirname, join, relative, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
@@ -27,7 +27,6 @@ const SPARSE_PATHS = [`/${PACKAGE}/`, `/${CASES}/`];
 const NOQA_VOCABULARY = ["noqa", "disable", "enable", "all"];
 
 interface Finding { rule: string; line: number; column: number }
-type LintResult = { excluded: string } | { findings: Finding[] };
 interface RuleFact { name: string; module: string; file: string; groups: string[]; aliases: string[]; configKeywords: string[] }
 interface Facts {
   version: string;
@@ -123,7 +122,6 @@ export async function createSqlfluffAdapter(pack: PackManifest, names: string[],
   // SQL keywords are case-insensitive: SQLFluff's sets are upper case, and a rule spells them in either case.
   const keywords = new Set(facts.keywords.flatMap((keyword) => [keyword, keyword.toLowerCase()]));
   const defaultSelected = new Set(facts.defaultSelected);
-  const nameSet = new Set(codes);
 
   const rule = (name: string): UpstreamRule | undefined => {
     const code = name.toUpperCase();
@@ -220,23 +218,6 @@ export async function createSqlfluffAdapter(pack: PackManifest, names: string[],
 
     toSpan(_name: string, source: string, startByte: number, endByte: number): Span {
       return sqlfluffSpan(source, startByte, endByte, SQLFLUFF_SPAN_PARTS);
-    },
-
-    // SQLFluff's default sql_file_exts also take .sql.j2, .dml and .ddl; the engine reads .sql alone.
-    inCorpus: (path: string) => path.endsWith(".sql"),
-
-    async lintCorpus(files, ruleNames) {
-      const results = await ask<LintResult[]>({ op: "lint", texts: files.map((file) => file.source), codes });
-      return files.map((file, index) => {
-        const result = results[index]!;
-        if ("excluded" in result) return { file, excluded: result.excluded, findings: new Map() };
-        const found = result.findings.filter((finding) => nameSet.has(finding.rule));
-        return {
-          file,
-          excluded: null,
-          findings: new Map(ruleNames.map((name) => [name, found.filter((finding) => finding.rule === name.toUpperCase()).map((finding) => violationSpan(finding.line, finding.column))])),
-        };
-      });
     },
 
     parserVerdicts: (files) => ask({ op: "verdicts", texts: files.map((file) => file.source) }),
