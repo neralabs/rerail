@@ -271,3 +271,19 @@ Measured with the anchor lab (`lab.rs`, `cargo test --profile lab`). It lowers a
 | backend_type_strings | 0.054G | 0.054G |
 
 internal_dead_code no longer has a dominant stage: the largest is 1.2 s of 9.3 s of traced stage CPU.
+
+Full-corpus confirmation at `1e707281`. Execution CPU, anchor selection in seconds, against `be03e110`:
+
+| Check | Before | After |
+|---|---:|---:|
+| target_architecture | 11.6 | 11.2 |
+| backend_type_strings | 1.3 | 1.2 |
+| type_safety_patterns | 6.7 | 5.6 |
+| legacy_execution_surfaces | 14.2 | 4.3 |
+| serverplan_state_tripwires | 38.7 | 29.5 |
+| serverplan_quality | 82.3 | 58.7 |
+| internal_dead_code | 83.8 | 68.7 |
+| public_api_triples | 41.0 | 41.3 |
+
+Findings: internal_dead_code is 4,931/4,931 exact, and all60 is unchanged (1,653 actual, 1,052 false positives). Tripwires has the same 24 source-incomplete failures as before.
+
