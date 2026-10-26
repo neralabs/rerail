@@ -142,6 +142,16 @@ describe("#3 fixture data location", () => {
     expect(result.findings[0].message).toContain(message);
   });
 
+  it("passes a tool directory with no samples.lock or a well-formed one, and flags a malformed one with parseLock's message", () => {
+    const samplesPath = "packs/php/upstream/phpcs/samples.lock";
+    const pinned = { [lockPath]: `${lock()}\n` };
+    expect(fixtureDataLocation(memoryRepo(pinned)).findings).toEqual([]);
+    expect(fixtureDataLocation(memoryRepo({ ...pinned, [samplesPath]: `${lock()}\n` })).findings).toEqual([]);
+    const result = fixtureDataLocation(memoryRepo({ ...pinned, [samplesPath]: lock({ format: 2 }) }));
+    expect(paths(result)).toEqual([samplesPath]);
+    expect(result.findings[0].message).toContain(`${samplesPath} is malformed: its format is 2, not 1`);
+  });
+
   it("sorts findings by path across kinds", () => {
     const result = fixtureDataLocation(
       memoryRepo({

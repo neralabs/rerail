@@ -12,10 +12,11 @@
 // may be pack test data: a pull request that adds or changes it tracks it with `git add -f` for review, and before
 // merge a maintainer runs `npm run fixtures:push -- --pack P --tool T`, which archives and uploads it and rewrites the
 // lock, then untracks it (CONTRIBUTING.md, "Pack test data"). Every tool directory (`packs/<id>/upstream/<tool>/`
-// with a tracked file) has a tracked `test-data.lock` that `parseLock` (scripts/s3/test-data-archive.mjs) accepts.
-// No exemptions.
+// with a tracked file) has a tracked `test-data.lock` that `parseLock` (scripts/s3/test-data-archive.mjs) accepts, and
+// its `samples.lock`, which pins its real-code samples archive the same way and is optional, must be one parseLock
+// accepts too. No exemptions.
 
-import { isPackFixture } from "../../../s3/pack-fixtures.mjs";
+import { isPackFixture, SAMPLES_LOCK } from "../../../s3/pack-fixtures.mjs";
 import { parseLock, TEST_DATA_LOCK } from "../../../s3/test-data-archive.mjs";
 import { fixtureLayout } from "../fixtures.mjs";
 import { finding, sortFindings } from "../lib.mjs";
@@ -39,16 +40,24 @@ function toolDirectories(repo) {
   return directories;
 }
 
-/** A tool directory's `test-data.lock` finding when it is untracked or parseLock rejects it. */
-function lockFindings(repo, directory, { pack, tool }) {
-  const path = `${directory}${TEST_DATA_LOCK}`;
-  if (!repo.has(path)) return [finding(path, `the tool-pack's test data archive is unpinned: \`${push(pack, tool)}\` writes it`)];
+/** A lock's finding when parseLock rejects it. */
+function malformedLock(repo, path) {
   try {
     parseLock(repo.text(path), path);
     return [];
   } catch (error) {
     return [finding(path, error instanceof Error ? error.message : String(error))];
   }
+}
+
+/** A tool directory's `test-data.lock` finding when it is untracked or malformed, and its `samples.lock`'s when malformed. */
+function lockFindings(repo, directory, { pack, tool }) {
+  const path = `${directory}${TEST_DATA_LOCK}`;
+  const samples = `${directory}${SAMPLES_LOCK}`;
+  return [
+    ...(repo.has(path) ? malformedLock(repo, path) : [finding(path, `the tool-pack's test data archive is unpinned: \`${push(pack, tool)}\` writes it`)]),
+    ...(repo.has(samples) ? malformedLock(repo, samples) : []),
+  ];
 }
 
 function packFixtureFinding(path) {

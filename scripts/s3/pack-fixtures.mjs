@@ -35,6 +35,12 @@
 //   node scripts/s3/pack-fixtures.mjs recordings push [--pack <id> [--tool <tool>]]
 //       maintainer: put the recording archive each recording.lock names from RECORDING_CACHE into S3 unless it holds
 //       it, read it back, and print the `git add` for the locks
+//   node scripts/s3/pack-fixtures.mjs samples [--pack <id> [--tool <tool>]] [--dry-run]
+//       put the samples archive each samples.lock names into ARCHIVE_CACHE from S3, verified, and extract it into
+//       .rerail/pack-data/samples/<pack>/<tool>/<sha256>/ (a pull does this too)
+//   node scripts/s3/pack-fixtures.mjs samples push [--pack <id> [--tool <tool>]]
+//       maintainer: put the samples archive each samples.lock names from ARCHIVE_CACHE into S3 unless it holds it, read
+//       it back, and print the `git add` for the locks
 //   node scripts/s3/pack-fixtures.mjs check [--pack <id> [--tool <tool>]]
 //       fail, listing each with its remedy, unless S3 holds every archive the locks name (head-object only)
 //
@@ -50,10 +56,16 @@
 // <sha256>.zip. A pull of any tool-pack of those packs fetches it into ARCHIVE_CACHE beside their archives, verified;
 // the conformance runner extracts it (eslintTestSet).
 //
+// A tool-pack's real-code samples (scripts/samples/format.ts), which its samples.lock names in test-data.lock's format,
+// are one canonical archive at s3://nera-test-fixtures/rerail/archives/samples/<pack>/<tool>/<sha256>.tar.zst, written
+// once, never overwritten. Nothing derives or records them, so a pull fetches the archive into ARCHIVE_CACHE (and CI's
+// cache carries it) and extracts it outside the tool directory, as a recording tree is extracted; the conformance
+// runner reads the tree through samplesTree.
+//
 // The consumers (the conformance runner, pack validation, the recorders and generators, the Rust tests) report a
 // missing file with missingPackFixture, so a checkout without the data says to pull instead of failing on ENOENT.
 // packs/<id>/upstream/<tool>/ keeps the rest in git: gates.yaml, recorders, UPSTREAM.md, goldens.tsv, recording.lock,
-// test-data.lock.
+// samples.lock, test-data.lock.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -104,6 +116,24 @@ export const ESLINT_TEST_SET = Object.freeze({
 });
 /** Where the conformance runner extracts the ESLint test set: `<sha256>/` under it, holding the zip's tree. */
 export const ESLINT_TEST_SET_TREES = ".rerail/pack-data/eslint-test-set";
+
+/**
+ * A tool-pack's real-code samples (scripts/samples/format.ts): real files, each labelled with the lines its pack rules
+ * should report or as clean for them, in one canonical archive (test-data-archive.mjs) that the tool directory's tracked
+ * samples.lock names in test-data.lock's format. Nothing derives them, so they live outside the tool directory.
+ */
+export const SAMPLES_LOCK = "samples.lock";
+/** Every samples archive's key is this prefix plus `<pack>/<tool>/<sha256>.tar.zst`, by its tar's sha256. */
+export const SAMPLES_PREFIX = `${ARCHIVE_PREFIX}samples/`;
+/** Where a samples archive is extracted: `<pack>/<tool>/<sha256>/` under it, the tree the conformance runner reads. */
+const SAMPLES_TREES = ".rerail/pack-data/samples";
+/** The samples archive's one file outside a sample (LICENSES_FILE in scripts/samples/format.ts). */
+const SAMPLES_LICENSES = "LICENSES.md";
+/**
+ * Every other path is a sample's file, `<sample-id>/<path>`, with a sample id as SAMPLE_ID in scripts/samples/format.ts
+ * has it (this script imports no TypeScript, so the pattern is repeated here).
+ */
+const SAMPLE_PATH = /^[a-z0-9][a-z0-9._-]*-[0-9a-f]{12}\/[^/]/u;
 
 /**
  * Where a contributor's code corpus and its ground truth go when the corpus is no public repository a pin can name:
@@ -796,6 +826,165 @@ export function eslintTestSet({ root = ROOT, set = ESLINT_TEST_SET, aws = runAws
 }
 
 /**
+ * The once-only sign-in of a command that may fetch: requireAws on the first call. CI restores archives from its cache
+ * with no credentials, so when a cached copy that is not the locked one was deleted (`discarded`, filled as the command
+ * goes), a failed sign-in says the cache entry is corrupt or poisoned, which the next run would restore again. `what`
+ * names the kind of archive.
+ */
+function signer(aws, discarded, what) {
+  let signedIn = false;
+  return () => {
+    if (signedIn) return;
+    try {
+      requireAws(aws);
+    } catch (error) {
+      if (discarded.length === 0) throw error;
+      throw new Error(`${discarded.join(", ")} was not the ${what} its lock names (a corrupt or poisoned cache entry) and was deleted, and S3 cannot be read here: ${error instanceof Error ? error.message : String(error)}. In CI, delete the Actions cache entry that restored it (gh cache delete <key>) and run the job again.`);
+    }
+    signedIn = true;
+  };
+}
+
+/** A tool-pack's samples archive's S3 key, for its tar's sha256 `digest`. */
+export function samplesKey({ pack, tool }, digest) {
+  return `${SAMPLES_PREFIX}${pack}/${tool}/${digest}.tar.zst`;
+}
+
+/** Where the checkout at `root` keeps that archive (ARCHIVE_CACHE plus the key's own `samples/<pack>/<tool>/<sha256>.tar.zst`). */
+export function samplesArchiveCachePath(root, toolPack, digest) {
+  return join(root, ARCHIVE_CACHE, samplesKey(toolPack, digest).slice(ARCHIVE_PREFIX.length));
+}
+
+/** Where the checkout at `root` keeps that archive extracted, the tree the conformance runner reads (`<pack>/<tool>/<sha256>/` under SAMPLES_TREES). */
+export function samplesTreeDirectory(root, { pack, tool }, digest) {
+  return join(root, SAMPLES_TREES, pack, tool, digest);
+}
+
+/** `{ pack, tool, directory }` for a caller's pack and tool; throws on one that is no single path segment, which would name a lock elsewhere. */
+function namedToolPack(pack, tool) {
+  for (const [option, value] of [["pack", pack], ["tool", tool]]) {
+    if (typeof value !== "string" || value === "" || value === "." || value === ".." || /[/\\]/u.test(value)) throw new Error(`${option} ${JSON.stringify(value)} is not a ${option} id`);
+  }
+  return { pack, tool, directory: `packs/${pack}/upstream/${tool}` };
+}
+
+/** A tool-pack's samples.lock in the checkout at `root`, as `{ label, sha256, files, bytes }`; undefined when it has none, and throws when it is malformed. */
+export function readSamplesLock(root, { pack, tool }) {
+  const label = `${namedToolPack(pack, tool).directory}/${SAMPLES_LOCK}`;
+  if (!existsSync(join(root, label))) return undefined;
+  return { label, ...parseLock(readFileSync(join(root, label), "utf8"), label) };
+}
+
+/**
+ * verifiedArchive for the samples archive `lock` names: every entry must be the set's LICENSES.md or a sample's file
+ * (`<sample-id>/<path>`), so an archive can put nothing beside the samples, not even the tree's marker.
+ */
+export function verifiedSamples(compressed, lock, key) {
+  return verifiedArchive(compressed, lock, key, (path) => path === SAMPLES_LICENSES || SAMPLE_PATH.test(path), `real-code samples (${SAMPLES_LICENSES} or <sample-id>/<path>)`);
+}
+
+/** The maintainer command that puts a tool-pack's built samples archive into S3. */
+const samplesPushCommand = ({ pack, tool }) => `node scripts/s3/pack-fixtures.mjs samples push --pack ${pack} --tool ${tool}`;
+
+/**
+ * The verified entries of the samples archive `lock` names, as `{ entries, source }`: a cached copy in ARCHIVE_CACHE
+ * whose tar is the locked one decides ("cache"); one that is not is deleted and named in `discarded` (left in place on
+ * a dry run); otherwise it is fetched from S3 ("S3") through this process's partial file, which must verify before it
+ * is kept. A dry run that would fetch logs so and returns no entries. An archive S3 does not hold fails: nothing in CI
+ * makes samples.
+ */
+function samplesArchive(root, toolPack, lock, { dryRun, aws, signIn, discarded, log }) {
+  const key = samplesKey(toolPack, lock.sha256);
+  const cached = samplesArchiveCachePath(root, toolPack, lock.sha256);
+  const fromCache = cachedEntries(root, cached, lock, (compressed) => verifiedSamples(compressed, lock, key), dryRun);
+  if (fromCache.discarded !== undefined) discarded.push(fromCache.discarded);
+  if (fromCache.entries !== undefined) return { entries: fromCache.entries, source: "cache" };
+  if (dryRun) {
+    log(`${fromCache.discarded === undefined ? "" : `would delete ${fromCache.discarded}, which is not the archive ${lock.label} names, and `}would fetch s3://${BUCKET}/${key} (${lock.label})`);
+    return { entries: undefined, source: "S3" };
+  }
+  signIn();
+  mkdirSync(dirname(cached), { recursive: true });
+  const partial = `${cached}.${process.pid}.partial`;
+  rmSync(partial, { force: true });
+  try {
+    if (!download(aws, key, partial)) {
+      throw new Error(`${lock.label} names s3://${BUCKET}/${key}, which S3 does not hold: a maintainer puts the built samples archive there with \`${samplesPushCommand(toolPack)}\``);
+    }
+    const entries = verifiedSamples(readFileSync(partial), lock, key);
+    renameSync(partial, cached);
+    return { entries, source: "S3" };
+  } finally {
+    rmSync(partial, { force: true });
+  }
+}
+
+/** samplesArchive for each of `selected` (tool-packs) that has a samples.lock, as `{ toolPack, lock, entries, source }`. */
+function fetchSamples(root, selected, options) {
+  return selected.flatMap((toolPack) => {
+    const lock = readSamplesLock(root, toolPack);
+    return lock === undefined ? [] : [{ toolPack, lock, ...samplesArchive(root, toolPack, lock, options) }];
+  });
+}
+
+/**
+ * Extracts each of `fetched` (fetchSamples's, verified) into its tree (samplesTreeDirectory) as a recording tree is
+ * extracted, unless the tree there is already that archive's (recordingTreeReady); the trees it wrote, as repository
+ * paths. A dry run writes nothing.
+ */
+function extractSamples(root, fetched, { dryRun, log }) {
+  const extracted = [];
+  for (const { toolPack, lock, entries, source } of fetched) {
+    const tree = samplesTreeDirectory(root, toolPack, lock.sha256);
+    const shown = relative(root, tree).split(sep).join("/");
+    if (recordingTreeReady(tree, lock)) {
+      log(`${toolPack.directory}: samples archive ${lock.sha256.slice(0, 12)} (${source}) is extracted in ${shown}`);
+      continue;
+    }
+    if (dryRun) {
+      log(`would extract samples archive ${lock.sha256.slice(0, 12)} (${lock.label}) into ${shown}`);
+      continue;
+    }
+    extractRecordingTree(tree, entries, lock);
+    extracted.push(shown);
+    log(`${toolPack.directory}: samples archive ${lock.sha256.slice(0, 12)} (${source}) extracted into ${shown}`);
+  }
+  return extracted.sort(byBytes);
+}
+
+/**
+ * The extracted samples tree of the tool-pack `pack`/`tool` (samplesTreeDirectory), or undefined when it has no
+ * samples.lock. A tree whose files are still the locked archive's (recordingTreeReady) is used as it is; otherwise the
+ * archive is taken from ARCHIVE_CACHE, or fetched from S3, verified, and only then extracted.
+ */
+export function samplesTree({ root = ROOT, pack, tool, aws = runAws } = {}) {
+  const toolPack = namedToolPack(pack, tool);
+  const lock = readSamplesLock(root, toolPack);
+  if (lock === undefined) return undefined;
+  const tree = samplesTreeDirectory(root, toolPack, lock.sha256);
+  if (recordingTreeReady(tree, lock)) return tree;
+  const discarded = [];
+  const { entries } = samplesArchive(root, toolPack, lock, { dryRun: false, aws, signIn: signer(aws, discarded, "samples archive"), discarded, log: () => {} });
+  extractRecordingTree(tree, entries, lock);
+  return tree;
+}
+
+/**
+ * Puts the samples archive each selected tool-pack's samples.lock names into ARCHIVE_CACHE (a verified cached copy is
+ * kept, anything else is fetched from S3 and verified), every one before any is extracted, then extracts each into its
+ * tree (extractSamples). Tool-packs with no samples.lock are skipped. A dry run deletes, fetches and writes nothing.
+ */
+export function samples({ root = ROOT, pack: packId, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+  const discarded = [];
+  const fetched = fetchSamples(root, selectToolPacks(root, packId, tool), { dryRun, aws, signIn: signer(aws, discarded, "samples archive"), discarded, log });
+  const extracted = extractSamples(root, fetched.filter(({ entries }) => entries !== undefined), { dryRun, log });
+  const keys = (source) => fetched.filter((entry) => entry.source === source).map(({ toolPack, lock }) => samplesKey(toolPack, lock.sha256)).sort(byBytes);
+  const result = { kept: keys("cache"), downloaded: dryRun ? [] : keys("S3"), extracted };
+  log(`${dryRun ? "dry run: " : ""}${fetched.length} samples archive(s): ${result.kept.length} kept in ${ARCHIVE_CACHE}, ${result.downloaded.length} fetched from S3; ${extracted.length} tree(s) extracted`);
+  return result;
+}
+
+/**
  * Fetches the archive each selected tool-pack's test-data.lock names (from ARCHIVE_CACHE when a verified copy is there,
  * otherwise from S3 into it), verifies it against the lock, and extracts it into the tool directory. Every archive is
  * verified before anything is extracted, and every tool directory and directory an entry goes in, from the checkout
@@ -803,13 +992,15 @@ export function eslintTestSet({ root = ROOT, set = ESLINT_TEST_SET, aws = runAws
  * archive lacks are deleted (a stale derivation); untracked authored ones are kept and reported. Then each tracked file
  * gets its own content back (its index copy, or the working-tree edit of one being edited), so a pull request's files
  * win over the archive's. When a selected tool-pack's pack is one the ESLint test set (`testSet`) scores, its zip is
- * put into ARCHIVE_CACHE too, verified (eslintTestSetZip); the conformance runner extracts it.
+ * put into ARCHIVE_CACHE too, verified (eslintTestSetZip); the conformance runner extracts it. The samples archive each
+ * selected tool-pack's samples.lock names is put into ARCHIVE_CACHE and verified with the test data archives, before
+ * anything is extracted, then extracted into its tree outside the tool directory (samples).
  */
 export function pull({ root = ROOT, pack, tool, dryRun = false, testSet = ESLINT_TEST_SET, aws = runAws, log = console.log } = {}) {
   const selected = selectToolPacks(root, pack, tool);
   const locked = selected.map((toolPack) => ({ toolPack, lock: readLock(root, toolPack) }));
-  let signedIn = false;
   const discarded = [];
+  const signIn = signer(aws, discarded, "archive");
   const fetched = [];
   for (const { toolPack, lock } of locked) {
     const fromCache = cachedArchive(root, toolPack, lock, dryRun);
@@ -822,26 +1013,17 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, testSet = ESLINT
         log(`${fromCache.discarded === undefined ? "" : `would delete ${fromCache.discarded}, which is not the archive ${lock.label} names, and `}would fetch s3://${BUCKET}/${archiveKey(toolPack, lock.sha256)} (${lock.label})`);
         continue;
       }
-      if (!signedIn) {
-        try {
-          requireAws(aws);
-        } catch (error) {
-          // CI restores the archives from its cache with no credentials: a cached archive that is not the locked one is
-          // a poisoned or corrupt cache entry, which the next run would restore again.
-          if (discarded.length === 0) throw error;
-          throw new Error(`${discarded.join(", ")} was not the archive its lock names (a corrupt or poisoned cache entry) and was deleted, and S3 cannot be read here: ${error instanceof Error ? error.message : String(error)}. In CI, delete the Actions cache entry that restored it (gh cache delete <key>) and run the job again.`);
-        }
-      }
-      signedIn = true;
+      signIn();
       entries = downloadArchive(root, aws, toolPack, lock);
     }
     fetched.push({ toolPack, lock, entries, source });
   }
+  const fetchedSamples = fetchSamples(root, selected, { dryRun, aws, signIn, discarded, log });
   const testSetZip = scoresEslintTestSet(selected, testSet) ? eslintTestSetZip({ root, set: testSet, dryRun, aws, log }) : undefined;
   if (testSetZip?.path !== undefined) log(`the ESLint test set: ${relative(root, testSetZip.path).split(sep).join("/")} (${testSetZip.source})`);
   if (dryRun) {
-    log(`dry run: ${fetched.length} of ${locked.length} archive(s) are in ${ARCHIVE_CACHE}; nothing was extracted`);
-    return { toolPacks: [], restored: 0, kept: 0 };
+    log(`dry run: ${fetched.length} of ${locked.length} archive(s) and ${fetchedSamples.filter(({ entries }) => entries !== undefined).length} of ${fetchedSamples.length} samples archive(s) are in ${ARCHIVE_CACHE}; nothing was extracted`);
+    return { toolPacks: [], restored: 0, kept: 0, samples: [] };
   }
 
   // No write may go through a symlink: every check runs before the first write.
@@ -877,7 +1059,13 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, testSet = ESLINT
   }
   const result = snapshot.restore();
   if (snapshot.tracked.length > 0) log(`${result.restored} tracked file(s) keep their committed content and ${result.kept} their working-tree edit`);
-  return { toolPacks: fetched.map(({ toolPack, source }) => ({ ...toolPack, source })), ...result, ...(testSetZip === undefined ? {} : { eslintTestSet: testSetZip.source }) };
+  extractSamples(root, fetchedSamples, { dryRun, log });
+  return {
+    toolPacks: fetched.map(({ toolPack, source }) => ({ ...toolPack, source })),
+    ...result,
+    samples: fetchedSamples.map(({ toolPack, source }) => ({ ...toolPack, source })),
+    ...(testSetZip === undefined ? {} : { eslintTestSet: testSetZip.source }),
+  };
 }
 
 /**
@@ -897,19 +1085,7 @@ export function recordings({ root = ROOT, pack: packId, tool, cache = join(root,
   const missing = [];
   const extracted = [];
   const discarded = [];
-  let signedIn = false;
-  const signIn = () => {
-    if (signedIn) return;
-    try {
-      requireAws(aws);
-    } catch (error) {
-      // As in pull: CI restores the archives from its cache with no credentials, so a cached copy that is not the
-      // locked one is a poisoned or corrupt cache entry, which the next run would restore again.
-      if (discarded.length === 0) throw error;
-      throw new Error(`${discarded.join(", ")} was not the recording archive its lock names (a corrupt or poisoned cache entry) and was deleted, and S3 cannot be read here: ${error instanceof Error ? error.message : String(error)}. In CI, delete the Actions cache entry that restored it (gh cache delete <key>) and run the job again.`);
-    }
-    signedIn = true;
-  };
+  const signIn = signer(aws, discarded, "recording archive");
   /** Downloads `key` into `file` through this process's partial file `check` must accept first; false, logging `absent`, when S3 does not hold it. */
   const fetch = (key, file, check, absent) => {
     signIn();
@@ -1122,8 +1298,52 @@ export function recordingsPush({ root = ROOT, pack: packId, tool, dryRun = false
   return { uploaded, locks };
 }
 
+/**
+ * What uploading the samples archive a samples.lock (`lock`, readSamplesLock's) names asks of the checkout at `root`: one
+ * plan for uploadObjects, with its local copy in ARCHIVE_CACHE when there is one. A local copy that is not what the
+ * lock names is refused, so nothing else is ever put under its key.
+ */
+function samplesPlan(root, toolPack, lock) {
+  const key = samplesKey(toolPack, lock.sha256);
+  const path = samplesArchiveCachePath(root, toolPack, lock.sha256);
+  const shown = relative(root, path).split(sep).join("/");
+  const local = existsSync(path);
+  const check = (bytes) => {
+    verifiedSamples(bytes, lock, key);
+  };
+  if (local) {
+    try {
+      check(readFileSync(path));
+    } catch (error) {
+      throw new Error(`${shown} is not the samples archive ${lock.label} names (${error instanceof Error ? error.message : String(error)}); delete it and build the samples again (scripts/samples/). Nothing was uploaded`);
+    }
+  }
+  const absent = `${lock.label} names samples archive ${lock.sha256}, which is in neither ${shown} nor s3://${BUCKET}/${key}: build the tool-pack's samples (scripts/samples/), which writes the archive there`;
+  return { directory: toolPack.directory, label: lock.label, what: "samples archive", key, path, local, check, absent };
+}
+
+/**
+ * Maintainer: puts the samples archive each selected tool-pack's samples.lock names from ARCHIVE_CACHE into S3 unless S3
+ * holds it already (a conditional put, so an object is never overwritten), reads each back and verifies it against the
+ * lock, then prints the `git add` that commits the locks. Run again, it puts nothing ("S3 already holds"). A cached
+ * archive that is not the locked one, or one in neither ARCHIVE_CACHE nor S3, fails it before anything is put.
+ */
+export function samplesPush({ root = ROOT, pack: packId, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+  if (dryRun) throw new Error("samples push has no --dry-run");
+  const locked = selectToolPacks(root, packId, tool).flatMap((toolPack) => {
+    const lock = readSamplesLock(root, toolPack);
+    return lock === undefined ? [] : [samplesPlan(root, toolPack, lock)];
+  });
+  if (locked.length === 0) throw new Error(`no selected tool-pack has a ${SAMPLES_LOCK}: build one with the samples builder (scripts/samples/)`);
+  requireAws(aws);
+  const uploaded = uploadObjects(aws, locked, log);
+  const locks = locked.map(({ label }) => label);
+  log(`S3 holds the samples archive(s) the lock(s) name; commit them:\n  git add -- ${locks.map(shellQuoted).join(" ")}`);
+  return { uploaded, locks };
+}
+
 /** A tool directory's file whose change selects its tool-pack for push --from: a lock, or the UPSTREAM.md listing its authored files. */
-const SELECTING_FILE = /^packs\/[^/]+\/upstream\/[^/]+\/(?:test-data\.lock|recording\.lock|UPSTREAM\.md)$/u;
+const SELECTING_FILE = /^packs\/[^/]+\/upstream\/[^/]+\/(?:test-data\.lock|recording\.lock|samples\.lock|UPSTREAM\.md)$/u;
 const TOOL_DIRECTORY = /^packs\/([^/]+)\/upstream\/([^/]+)\//u;
 
 /** Every entry under packs/ of `commit`'s tree in the repository at `root`, as path → `{ mode, oid }`. */
@@ -1170,14 +1390,14 @@ function intoFile(into, path) {
 
 /**
  * push --from: archives a pull request's tracked pack test data from the commit `from` names, reading nothing of it but
- * the blobs of its pack test data, UPSTREAM.md, test-data.lock and recording.lock files (git plumbing in the trusted
- * checkout at `root`; the commit is never checked out and none of its code runs). Per selected tool-pack, the archive is
- * the one the commit's test-data.lock names, less the files the merge base's UPSTREAM.md listed as Rerail's and the
- * commit's no longer lists, overlaid with the commit's tracked pack test data; with `replace`, it is the commit's
- * tracked pack test data of the tool directory alone. Each archive's log names the files it drops from the one the lock
- * named. It is uploaded with the recordings the commit's recording.lock names. Then come the git commands that finish
- * the pull request in a checkout of it: write the new locks (or, with `into`, a checkout of that commit, they are
- * written there), `git add` them, and untrack the data.
+ * the blobs of its pack test data, UPSTREAM.md, test-data.lock, recording.lock and samples.lock files (git plumbing in
+ * the trusted checkout at `root`; the commit is never checked out and none of its code runs). Per selected tool-pack,
+ * the archive is the one the commit's test-data.lock names, less the files the merge base's UPSTREAM.md listed as
+ * Rerail's and the commit's no longer lists, overlaid with the commit's tracked pack test data; with `replace`, it is
+ * the commit's tracked pack test data of the tool directory alone. Each archive's log names the files it drops from the
+ * one the lock named. It is uploaded with the recordings the commit's recording.lock names and the samples archive its
+ * samples.lock names. Then come the git commands that finish the pull request in a checkout of it: write the new locks
+ * (or, with `into`, a checkout of that commit, they are written there), `git add` them, and untrack the data.
  */
 function pushFrom({ root, from, pack: packId, tool, into, replace, aws, log }) {
   if (tool !== undefined && packId === undefined) throw new Error("--tool needs --pack");
@@ -1235,11 +1455,11 @@ function pushFrom({ root, from, pack: packId, tool, into, replace, aws, log }) {
   const owns = (toolPack) => (path) => path.startsWith(`${toolPack.directory}/`);
   const candidates = [...found.values()].sort((a, b) => byBytes(a.directory, b.directory));
   const selected = packId === undefined
-    ? candidates.filter((toolPack) => tracked.some(owns(toolPack)) || [TEST_DATA_LOCK, RECORDING_LOCK, "UPSTREAM.md"].some((name) => changed.has(`${toolPack.directory}/${name}`)))
+    ? candidates.filter((toolPack) => tracked.some(owns(toolPack)) || [TEST_DATA_LOCK, RECORDING_LOCK, SAMPLES_LOCK, "UPSTREAM.md"].some((name) => changed.has(`${toolPack.directory}/${name}`)))
     : candidates.filter((toolPack) => toolPack.pack === packId && (tool === undefined || toolPack.tool === tool));
   if (selected.length === 0) {
     if (packId !== undefined) throw new Error(`no tool-pack packs/${packId}/upstream/${tool ?? "*"}/ at ${at}`);
-    log(`${at} tracks no pack test data and changes no ${TEST_DATA_LOCK}, ${RECORDING_LOCK} or UPSTREAM.md against its merge base with HEAD: nothing to push`);
+    log(`${at} tracks no pack test data and changes no ${TEST_DATA_LOCK}, ${RECORDING_LOCK}, ${SAMPLES_LOCK} or UPSTREAM.md against its merge base with HEAD: nothing to push`);
     return { changedLocks: [], uploaded: [], tracked: [], dropped: [], script: "" };
   }
   const intoRoot = into === undefined ? undefined : resolve(into);
@@ -1283,6 +1503,10 @@ function pushFrom({ root, from, pack: packId, tool, into, replace, aws, log }) {
     const recordingAt = tree.has(recordingLabel)
       ? [recordingPlan(root, toolPack, { label: `${recordingLabel} at ${from}`, archive: lockedRecording(blob(recordingLabel).toString("utf8"), `${recordingLabel} at ${from}`) })]
       : [];
+    const samplesLabel = `${toolPack.directory}/${SAMPLES_LOCK}`;
+    const samplesAt = tree.has(samplesLabel)
+      ? [samplesPlan(root, toolPack, { label: `${samplesLabel} at ${from}`, ...parseLock(blob(samplesLabel).toString("utf8"), `${samplesLabel} at ${from}`) })]
+      : [];
     const text = lockText(archive);
     if (intoRoot !== undefined) {
       // A checkout of the commit holds its lock and its tracked pack test data as committed.
@@ -1298,7 +1522,7 @@ function pushFrom({ root, from, pack: packId, tool, into, replace, aws, log }) {
       text,
       changed: text !== before,
       tracked: own.map(({ path }) => path),
-      plans: [...archivePlans(root, [{ toolPack, lock }]), ...recordingAt],
+      plans: [...archivePlans(root, [{ toolPack, lock }]), ...recordingAt, ...samplesAt],
       target: intoRoot !== undefined && text !== before ? intoFile(intoRoot, label).target : undefined,
     });
     const made = replace ? `${own.length} tracked file(s) at ${from} alone (--replace)` : `${start} plus ${own.length} tracked file(s) at ${from}`;
@@ -1352,27 +1576,38 @@ export function push({ root = ROOT, pack: packId, tool, dryRun = false, from, in
 }
 
 /**
- * CI's cache entry for the selected tool-packs' archives, and the ESLint test set's zip when pull fetches it with them:
- * its key (from the locked and pinned sha256s alone) and its paths.
+ * CI's cache entry for the selected tool-packs' archives, their samples archives, and the ESLint test set's zip when
+ * pull fetches it with them: its key (from the locked and pinned sha256s alone) and its paths.
  */
 export function archiveCache({ root = ROOT, pack: packId, tool, testSet = ESLINT_TEST_SET } = {}) {
   const selected = selectToolPacks(root, packId, tool);
-  const locked = selected.map((toolPack) => ({ toolPack, lock: readLock(root, toolPack) }));
+  const locked = selected.map((toolPack) => ({ toolPack, lock: readLock(root, toolPack), samplesLock: readSamplesLock(root, toolPack) }));
   const withTestSet = scoresEslintTestSet(selected, testSet);
+  const [only] = locked;
   const key = locked.length === 1
-    ? `pack-test-data-${locked[0].toolPack.pack}-${locked[0].toolPack.tool}-${locked[0].lock.sha256}${withTestSet ? `-eslint-test-set-${testSet.sha256}` : ""}`
-    : `pack-test-data-${sha256(Buffer.from([...locked.map(({ toolPack, lock }) => `${toolPack.directory} ${lock.sha256}\n`), ...(withTestSet ? [`eslint-test-set ${testSet.sha256}\n`] : [])].join("")))}`;
+    ? `pack-test-data-${only.toolPack.pack}-${only.toolPack.tool}-${only.lock.sha256}${only.samplesLock === undefined ? "" : `-samples-${only.samplesLock.sha256}`}${withTestSet ? `-eslint-test-set-${testSet.sha256}` : ""}`
+    : `pack-test-data-${sha256(Buffer.from([
+      ...locked.flatMap(({ toolPack, lock, samplesLock }) => [
+        `${toolPack.directory} ${lock.sha256}\n`,
+        ...(samplesLock === undefined ? [] : [`${samplesLock.label} ${samplesLock.sha256}\n`]),
+      ]),
+      ...(withTestSet ? [`eslint-test-set ${testSet.sha256}\n`] : []),
+    ].join("")))}`;
   const paths = [
-    ...locked.map(({ toolPack, lock }) => archiveCachePath(root, toolPack, lock.sha256)),
+    ...locked.flatMap(({ toolPack, lock, samplesLock }) => [
+      archiveCachePath(root, toolPack, lock.sha256),
+      ...(samplesLock === undefined ? [] : [samplesArchiveCachePath(root, toolPack, samplesLock.sha256)]),
+    ]),
     ...(withTestSet ? [eslintTestSetCachePath(root, testSet.sha256)] : []),
   ];
   return { key, paths: paths.map((path) => relative(root, path).split(sep).join("/")) };
 }
 
 /**
- * Whether S3 holds every archive the selected tool-packs' test-data.lock files name and every recording archive their
- * recording.lock files name, asked with head-object alone (nothing is downloaded). Throws, listing each missing key with
- * its lock and the remedy, sorted by key, when S3 lacks any.
+ * Whether S3 holds every archive the selected tool-packs' test-data.lock files name, every recording archive their
+ * recording.lock files name and every samples archive their samples.lock files name, asked with head-object alone
+ * (nothing is downloaded). Throws, listing each missing key with its lock and the remedy, sorted by key, when S3 lacks
+ * any.
  */
 export function check({ root = ROOT, pack: packId, tool, testSet = ESLINT_TEST_SET, aws = runAws, log = console.log } = {}) {
   const selected = selectToolPacks(root, packId, tool);
@@ -1381,6 +1616,7 @@ export function check({ root = ROOT, pack: packId, tool, testSet = ESLINT_TEST_S
     const lock = readLock(root, toolPack);
     const archive = archiveKey(toolPack, lock.sha256);
     const recorded = readRecordingLock(root, toolPack);
+    const samplesLock = readSamplesLock(root, toolPack);
     return [
       {
         key: archive,
@@ -1389,6 +1625,10 @@ export function check({ root = ROOT, pack: packId, tool, testSet = ESLINT_TEST_S
       ...(recorded === undefined ? [] : [{
         key: recordingKey(toolPack, recorded.archive.sha256),
         missing: `${recorded.label} names ${recorded.archive.name} at s3://${BUCKET}/${recordingKey(toolPack, recorded.archive.sha256)}, which S3 does not hold: a maintainer downloads the pull request's CI recording with \`gh run download <run> -n recordings-${toolPack.pack}--${toolPack.tool} -D ${RECORDING_CACHE}\`, then puts it in S3 with \`${push}\``,
+      }]),
+      ...(samplesLock === undefined ? [] : [{
+        key: samplesKey(toolPack, samplesLock.sha256),
+        missing: `${samplesLock.label} names s3://${BUCKET}/${samplesKey(toolPack, samplesLock.sha256)}, which S3 does not hold: a maintainer builds the tool-pack's samples (scripts/samples/) and puts the archive there with \`${samplesPushCommand(toolPack)}\``,
       }]),
     ];
   });
@@ -1402,13 +1642,15 @@ export function check({ root = ROOT, pack: packId, tool, testSet = ESLINT_TEST_S
     throw new Error(`S3 lacks ${missing.length} of the ${wanted.length} object(s) the locks name (CONTRIBUTING.md, "Pack test data"):\n${missing.map(({ missing: line }) => `  ${line}`).join("\n")}`);
   }
   const recordingCount = wanted.filter(({ key }) => key.startsWith(RECORDING_PREFIX)).length;
-  log(`S3 holds every object the locks name: ${wanted.length - recordingCount} archive(s) and ${recordingCount} recording archive(s)`);
+  const samplesCount = wanted.filter(({ key }) => key.startsWith(SAMPLES_PREFIX)).length;
+  log(`S3 holds every object the locks name: ${wanted.length - recordingCount - samplesCount} archive(s), ${recordingCount} recording archive(s) and ${samplesCount} samples archive(s)`);
   return { checked: wanted.map(({ key }) => key).sort(byBytes) };
 }
 
 const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [--tool <tool>]] [--dry-run]
-  pull        fetch, verify and extract the archives the selected tool-packs' test-data.lock files name, and for the
-              javascript and typescript packs the pinned ESLint test set's zip into ${ARCHIVE_CACHE}, verified
+  pull        fetch, verify and extract the archives the selected tool-packs' test-data.lock files name, and their
+              samples (as samples does), and for the javascript and typescript packs the pinned ESLint test set's zip
+              into ${ARCHIVE_CACHE}, verified
   push        maintainer: pack, then upload
               push --from <ref> [--replace] [--into <dir>]: archive a pull request's tracked pack test data from its
               commit (never checked out or run) over the archive its lock names, less the files its UPSTREAM.md no
@@ -1421,14 +1663,18 @@ const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [
               verified, and extract each into ${RECORDING_CACHE}/tree/<sha256>/
               recordings push: maintainer: put those archives from ${RECORDING_CACHE} into S3 unless it holds them,
               read them back, and print the git add for the locks (no --dry-run)
+  samples     fetch the samples archive the selected tool-packs' samples.lock files name into ${ARCHIVE_CACHE}/samples/,
+              verified, and extract each into ${SAMPLES_TREES}/<pack>/<tool>/<sha256>/
+              samples push: maintainer: put those archives from ${ARCHIVE_CACHE}/samples/ into S3 unless it holds
+              them, read them back, and print the git add for the locks (no --dry-run)
   check       fail, listing each with its remedy, unless S3 holds every archive the selected tool-packs' locks name
               and, for the packs it scores, the pinned ESLint test set (head-object only; nothing is downloaded)
-  cache       CI: the Actions cache key and paths for the selected tool-packs' archives (and the ESLint test set's zip
-              when pull fetches it), as JSON`;
+  cache       CI: the Actions cache key and paths for the selected tool-packs' archives and samples archives (and the
+              ESLint test set's zip when pull fetches it), as JSON`;
 
-const COMMANDS = { pull, push, pack, upload, recordings, check, cache: (options) => console.log(JSON.stringify(archiveCache(options))) };
+const COMMANDS = { pull, push, pack, upload, recordings, samples, check, cache: (options) => console.log(JSON.stringify(archiveCache(options))) };
 /** Commands with a subcommand, as `<command> <subcommand>`. */
-const SUBCOMMANDS = { "recordings push": recordingsPush };
+const SUBCOMMANDS = { "recordings push": recordingsPush, "samples push": samplesPush };
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   let parsed;

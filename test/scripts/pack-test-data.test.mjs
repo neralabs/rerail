@@ -32,9 +32,18 @@ import {
   recordings,
   recordingsPush,
   readLock,
+  readSamplesLock,
   requireAws,
+  SAMPLES_LOCK,
+  samples,
+  samplesArchiveCachePath,
+  samplesKey,
+  samplesPush,
+  samplesTree,
+  samplesTreeDirectory,
   upload,
 } from "../../scripts/s3/pack-fixtures.mjs";
+import { SAMPLE_ID } from "../../scripts/samples/format.ts";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, readArchive, sha256 } from "../../scripts/s3/test-data-archive.mjs";
 
 /** A tool's UPSTREAM.md listing `files` (pack-relative) as Rerail's. */
@@ -970,6 +979,255 @@ describe("upload with recordings", () => {
   });
 });
 
+const SAMPLE = "demo-src-a-js-0123456789ab";
+/** A samples tree, as archive path → content, in the samples archive's layout (scripts/samples/format.ts). */
+const SAMPLES = {
+  "LICENSES.md": "# Licences\n\n- example/demo: MIT\n",
+  [`${SAMPLE}/src/a.js`]: "var a = null;\n",
+  [`${SAMPLE}/src/a.js.expected.json`]: '{\n  "expected": {\n    "p-no-null": [{ "line": 1 }]\n  }\n}\n',
+};
+const archiveOf = (content) => buildArchive(Object.entries(content).map(([path, text]) => ({ path, bytes: Buffer.from(text) })));
+
+/**
+ * Writes, with `write`, a samples.lock into `toolPack`'s directory naming `archive` (by default the canonical archive of
+ * `content`) truthfully; returns it as `{ bytes, sha256, key, local(root), tree(root) }`, `bytes` compressed as stored.
+ */
+function lockSamples(write, toolPack = T, content = SAMPLES, archive = archiveOf(content)) {
+  write(`${toolPack.directory}/${SAMPLES_LOCK}`, lockText(archive));
+  return {
+    bytes: compressArchive(archive.tar),
+    sha256: archive.sha256,
+    key: samplesKey(toolPack, archive.sha256),
+    local: (root) => samplesArchiveCachePath(root, toolPack, archive.sha256),
+    tree: (root) => samplesTreeDirectory(root, toolPack, archive.sha256),
+  };
+}
+
+/** What a samples tree holds besides its marker, as path → content. */
+const samplesIn = (directory) => Object.fromEntries(files(directory).filter((path) => path !== RECORDING_TREE_MARKER).map((path) => [path, readFileSync(join(directory, path), "utf8")]));
+const shown = (root, path) => relative(root, path).split("\\").join("/");
+
+describe("samples", () => {
+  const quiet = () => {};
+  /** withData, with a samples.lock for packs/p/upstream/t naming the archive of `content`. */
+  function locked(content = SAMPLES) {
+    const context = withData();
+    return { ...context, sample: lockSamples(context.write, T, content) };
+  }
+
+  it("names the key, cache file and tree by pack, tool and the tar's sha256", () => {
+    const { root, sample } = locked();
+    expect(sample.key).toBe(`rerail/archives/samples/p/t/${sample.sha256}.tar.zst`);
+    expect(shown(root, sample.local(root))).toBe(`.rerail/pack-data/archives/samples/p/t/${sample.sha256}.tar.zst`);
+    expect(shown(root, sample.tree(root))).toBe(`.rerail/pack-data/samples/p/t/${sample.sha256}`);
+    expect(readSamplesLock(root, T)).toEqual({ label: "packs/p/upstream/t/samples.lock", sha256: sample.sha256, files: 3, bytes: Object.values(SAMPLES).join("").length });
+  });
+
+  it("samplesTree fetches the archive from S3, verifies it, and extracts its tree with the marker", () => {
+    const { root, aws, object, called, sample } = locked();
+    putFile(object(sample.key), sample.bytes);
+    expect(samplesTree({ root, pack: "p", tool: "t", aws })).toBe(sample.tree(root));
+    expect(samplesIn(sample.tree(root))).toEqual(SAMPLES);
+    expect(readFileSync(join(sample.tree(root), RECORDING_TREE_MARKER), "utf8")).toBe(`${sample.sha256}\n`);
+    expect(readFileSync(sample.local(root))).toEqual(sample.bytes);
+    expect(called("cp")).toHaveLength(1);
+    // No partial file or directory is left behind.
+    expect(files(join(root, ".rerail")).filter((path) => path.includes(".partial"))).toEqual([]);
+  });
+
+  it("samplesTree reuses a cached archive, then a complete tree with no archive, calling no aws", () => {
+    const { root, aws, calls, sample } = locked();
+    putFile(sample.local(root), sample.bytes);
+    expect(samplesTree({ root, pack: "p", tool: "t", aws })).toBe(sample.tree(root));
+    rmSync(sample.local(root));
+    expect(samplesTree({ root, pack: "p", tool: "t", aws })).toBe(sample.tree(root));
+    expect(samplesIn(sample.tree(root))).toEqual(SAMPLES);
+    expect(calls).toEqual([]);
+  });
+
+  it("samplesTree extracts again a tree whose file was edited, its size kept", () => {
+    const { root, aws, calls, sample } = locked();
+    putFile(sample.local(root), sample.bytes);
+    samplesTree({ root, pack: "p", tool: "t", aws });
+    writeFileSync(join(sample.tree(root), SAMPLE, "src/a.js"), "var b = null;\n");
+    samplesTree({ root, pack: "p", tool: "t", aws });
+    expect(samplesIn(sample.tree(root))).toEqual(SAMPLES);
+    expect(calls).toEqual([]);
+  });
+
+  it("samplesTree is undefined for a tool-pack with no samples.lock, calling no aws", () => {
+    const { root, aws, calls } = withData();
+    expect(samplesTree({ root, pack: "p", tool: "t", aws })).toBeUndefined();
+    expect(samplesTree({ root, pack: "p", tool: "absent", aws })).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  it("samplesTree refuses a pack or tool that is not one path segment", () => {
+    const { root, aws } = withData();
+    expect(() => samplesTree({ root, pack: "..", tool: "t", aws })).toThrow('pack ".." is not a pack id');
+    expect(() => samplesTree({ root, pack: "p", tool: "t/../../x", aws })).toThrow("is not a tool id");
+  });
+
+  const other = { "LICENSES.md": "other\n" };
+  /** Each case: the archive the lock names, the bytes S3 holds under the lock's key, and the reason the refusal gives. */
+  const corrupt = [
+    ["is not zstd", () => archiveOf(SAMPLES), () => Buffer.from("not zstd"), /is not a zstd archive/u],
+    ["holds another tar than the lock names", () => archiveOf(SAMPLES), () => compressArchive(archiveOf(other).tar), /holds a tar whose sha256 is [0-9a-f]{64}, not the locked/u],
+    ["holds more files than a lock edited by hand says", () => ({ ...archiveOf(SAMPLES), files: 2 }), () => compressArchive(archiveOf(SAMPLES).tar), /the lock says 2 of/u],
+    ["holds a file outside LICENSES.md and <sample-id>/", () => archiveOf({ ...SAMPLES, "notes.txt": "x\n" }), (archive) => compressArchive(archive.tar), /holds 1 file\(s\) that are not real-code samples [^]*notes\.txt/u],
+    ["holds the tree's marker", () => archiveOf({ ...SAMPLES, [RECORDING_TREE_MARKER]: "x\n" }), (archive) => compressArchive(archive.tar), /that are not real-code samples [^]*\.tar-sha256/u],
+    ["holds a sample whose id is not a sample id", () => archiveOf({ ...SAMPLES, "Demo-a-0123456789ab/a.js": "x\n" }), (archive) => compressArchive(archive.tar), /that are not real-code samples [^]*Demo-a-0123456789ab\/a\.js/u],
+  ];
+  it.each(corrupt)("refuses an archive that %s, naming the lock and key, and extracts and keeps nothing", (_, lockFor, stored, reason) => {
+    const { root, aws, object, write } = withData();
+    const archive = lockFor();
+    const sample = lockSamples(write, T, undefined, archive);
+    putFile(object(sample.key), stored(archive));
+    const message = failure(() => samplesTree({ root, pack: "p", tool: "t", aws }));
+    expect(message).toMatch(reason);
+    expect(message).toContain(`packs/p/upstream/t/samples.lock: s3://${BUCKET}/${sample.key}`);
+    expect(message).toContain("nothing was extracted");
+    expect(files(join(root, ".rerail"))).toEqual([]);
+  });
+
+  it("checks sample ids as scripts/samples/format.ts's SAMPLE_ID does", () => {
+    expect(SAMPLE_ID.test(SAMPLE)).toBe(true);
+    expect(SAMPLE_ID.test("Demo-a-0123456789ab")).toBe(false);
+    expect(SAMPLE_ID.test(RECORDING_TREE_MARKER)).toBe(false);
+  });
+
+  it("deletes a cached archive that is not the locked one and fetches the locked one from S3", () => {
+    const { root, aws, object, called, sample } = locked();
+    putFile(sample.local(root), "not zstd");
+    putFile(object(sample.key), sample.bytes);
+    samplesTree({ root, pack: "p", tool: "t", aws });
+    expect(readFileSync(sample.local(root))).toEqual(sample.bytes);
+    expect(called("cp")).toHaveLength(1);
+  });
+
+  it("fails naming the key and the push command when S3 does not hold the archive", () => {
+    const { root, aws, sample } = locked();
+    const message = failure(() => samplesTree({ root, pack: "p", tool: "t", aws }));
+    expect(message).toBe(`packs/p/upstream/t/samples.lock names s3://${BUCKET}/${sample.key}, which S3 does not hold: a maintainer puts the built samples archive there with \`node scripts/s3/pack-fixtures.mjs samples push --pack p --tool t\``);
+    expect(existsSync(sample.tree(root))).toBe(false);
+  });
+
+  it("the samples command fetches and extracts every selected lock, skipping tool-packs without one", () => {
+    const { root, aws, object, write } = withData();
+    const t = lockSamples(write, T);
+    const u = lockSamples(write, U, { ...SAMPLES, "LICENSES.md": "u\n" });
+    putFile(t.local(root), t.bytes);
+    putFile(object(u.key), u.bytes);
+    expect(samples({ root, aws, log: quiet })).toEqual({ kept: [t.key], downloaded: [u.key], extracted: [shown(root, t.tree(root)), shown(root, u.tree(root))] });
+    expect(samplesIn(u.tree(root))).toEqual({ ...SAMPLES, "LICENSES.md": "u\n" });
+    // A second run keeps both archives and trees.
+    expect(samples({ root, aws, log: quiet })).toEqual({ kept: [t.key, u.key], downloaded: [], extracted: [] });
+    expect(samples({ root, pack: "q", aws, log: quiet })).toEqual({ kept: [u.key], downloaded: [], extracted: [] });
+  });
+
+  it("the samples command's --dry-run names what it would fetch, and fetches, extracts and deletes nothing", () => {
+    const { root, aws, calls, sample } = locked();
+    putFile(sample.local(root), "not zstd");
+    const printed = [];
+    expect(samples({ root, aws, dryRun: true, log: (line) => printed.push(line) })).toEqual({ kept: [], downloaded: [], extracted: [] });
+    expect(printed.join("\n")).toContain(`would delete ${shown(root, sample.local(root))}, which is not the archive packs/p/upstream/t/samples.lock names, and would fetch s3://${BUCKET}/${sample.key}`);
+    expect(readFileSync(sample.local(root), "utf8")).toBe("not zstd");
+    expect(existsSync(sample.tree(root))).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it("pull brings each selected tool-pack's samples with its test data", () => {
+    const { root, aws, object, write, data } = published();
+    const sample = lockSamples(write, T);
+    putFile(object(sample.key), sample.bytes);
+    fresh(root);
+    const result = pull({ root, aws, log: quiet });
+    expect(tree(root, true)).toEqual(data);
+    expect(result.samples).toEqual([{ ...T, source: "S3" }]);
+    expect(samplesIn(sample.tree(root))).toEqual(SAMPLES);
+    expect(readFileSync(sample.local(root))).toEqual(sample.bytes);
+    expect(pull({ root, aws, pack: "p", tool: "t", log: quiet }).samples).toEqual([{ ...T, source: "cache" }]);
+  });
+
+  it("pull refuses a corrupt samples archive before extracting any test data", () => {
+    const { root, aws, object, write } = published();
+    const sample = lockSamples(write, T);
+    putFile(object(sample.key), "not zstd");
+    fresh(root);
+    expect(failure(() => pull({ root, aws, log: quiet }))).toMatch(/samples\.lock: [^]*is not a zstd archive/u);
+    expect(tree(root, true)).toEqual({});
+    expect(existsSync(sample.tree(root))).toBe(false);
+  });
+});
+
+describe("samples push", () => {
+  const quiet = () => {};
+
+  it("puts the cached archive, reads it back, prints the git add, and puts nothing when run again", () => {
+    const { root, aws, object, called, write } = withData();
+    const sample = lockSamples(write, T);
+    putFile(sample.local(root), sample.bytes);
+    const printed = [];
+    expect(samplesPush({ root, aws, log: (line) => printed.push(line) })).toEqual({ uploaded: [sample.key], locks: ["packs/p/upstream/t/samples.lock"] });
+    expect(readFileSync(object(sample.key))).toEqual(sample.bytes);
+    expect(printed.at(-1)).toBe("S3 holds the samples archive(s) the lock(s) name; commit them:\n  git add -- packs/p/upstream/t/samples.lock");
+    expect(called("put-object")).toHaveLength(1);
+    expect(samplesPush({ root, aws, log: quiet })).toEqual({ uploaded: [], locks: ["packs/p/upstream/t/samples.lock"] });
+    expect(called("put-object")).toHaveLength(1);
+    expect(called("cp")).toHaveLength(2);
+  });
+
+  it("refuses a cached archive that is not the locked one, calling no aws", () => {
+    const { root, aws, bucket, calls, write } = withData();
+    const sample = lockSamples(write, T);
+    putFile(sample.local(root), compressArchive(archiveOf({ "LICENSES.md": "other\n" }).tar));
+    const message = failure(() => samplesPush({ root, aws, log: quiet }));
+    expect(message).toContain(`${shown(root, sample.local(root))} is not the samples archive packs/p/upstream/t/samples.lock names`);
+    expect(message).toContain("Nothing was uploaded");
+    expect(calls).toEqual([]);
+    expect(files(bucket)).toEqual([]);
+  });
+
+  it("refuses an archive in neither the cache nor S3, before putting anything", () => {
+    const { root, aws, called, write } = withData();
+    const sample = lockSamples(write, T);
+    const message = failure(() => samplesPush({ root, aws, log: quiet }));
+    expect(message).toContain(`names samples archive ${sample.sha256}, which is in neither`);
+    expect(message).toContain(`s3://${BUCKET}/${sample.key}`);
+    expect(called("put-object")).toEqual([]);
+  });
+
+  it("refuses a selection with no samples.lock, and --dry-run", () => {
+    const { root, aws } = withData();
+    expect(() => samplesPush({ root, aws, log: quiet })).toThrow("no selected tool-pack has a samples.lock");
+    expect(() => samplesPush({ root, aws, dryRun: true, log: quiet })).toThrow("samples push has no --dry-run");
+  });
+});
+
+describe("archiveCache with samples", () => {
+  it("keys one tool-pack's entry by its test data and samples sha256s, and lists both archives", () => {
+    const { root, write } = published();
+    const sample = lockSamples(write, T);
+    const { sha256: digest } = readLock(root, T);
+    expect(archiveCache({ root, pack: "p", tool: "t" })).toEqual({
+      key: `pack-test-data-p-t-${digest}-samples-${sample.sha256}`,
+      paths: [`${ARCHIVE_CACHE}/p/t/${digest}.tar.zst`, `${ARCHIVE_CACHE}/samples/p/t/${sample.sha256}.tar.zst`],
+    });
+  });
+
+  it("changes the key for several tool-packs when a samples.lock is added or changes, and lists its archive", () => {
+    const { root, write } = published();
+    const before = archiveCache({ root });
+    const first = lockSamples(write, U);
+    const added = archiveCache({ root });
+    const second = lockSamples(write, U, { ...SAMPLES, "LICENSES.md": "changed\n" });
+    const changed = archiveCache({ root });
+    expect(new Set([before.key, added.key, changed.key]).size).toBe(3);
+    expect(added.paths).toEqual([...before.paths, `${ARCHIVE_CACHE}/samples/q/u/${first.sha256}.tar.zst`]);
+    expect(changed.paths).toContain(`${ARCHIVE_CACHE}/samples/q/u/${second.sha256}.tar.zst`);
+  });
+});
+
 const SCRIPTS = fileURLToPath(new URL("../../scripts/s3/", import.meta.url));
 
 /** setUp's fake `aws` as an executable, serving the bucket directory FAKE_BUCKET names. */
@@ -1175,34 +1433,49 @@ describe("push --from", () => {
     expect(message).toContain("--replace: packs/p/upstream/t tracks no pack test data");
     expect(context.called("put-object")).toEqual([]);
   });
+
+  it("selects a tool-pack whose only change is its samples.lock and uploads the samples archive it names", () => {
+    const context = published();
+    const archive = archiveOf(SAMPLES);
+    branch(context.root, "samples", { [`packs/p/upstream/t/${SAMPLES_LOCK}`]: lockText(archive) });
+    putFile(samplesArchiveCachePath(context.root, T, archive.sha256), compressArchive(archive.tar));
+    const result = push({ root: context.root, aws: context.aws, from: "samples", log: () => {} });
+    expect(result.uploaded).toEqual([samplesKey(T, archive.sha256)]);
+    expect(result.changedLocks).toEqual([]);
+    expect(readFileSync(context.object(samplesKey(T, archive.sha256)))).toEqual(compressArchive(archive.tar));
+  });
 });
 
 describe("check", () => {
-  /** published, with a recording.lock for packs/p/upstream/t whose recording archive S3 holds. */
+  /** published, with a recording.lock for packs/p/upstream/t and a samples.lock for packs/q/upstream/u whose archives S3 holds. */
   function locked() {
     const context = published();
     const { named } = lockRecordings(context.write);
     for (const recording of named) putFile(context.object(recording.key), recording.bytes);
-    return { ...context, named };
+    const sample = lockSamples(context.write, U);
+    putFile(context.object(sample.key), sample.bytes);
+    return { ...context, named, sample };
   }
   const archiveKeys = (root) => [T, { pack: "p", tool: "w", directory: "packs/p/upstream/w" }, U].map((toolPack) => archiveKey(toolPack, readLock(root, toolPack).sha256));
 
-  it("passes when S3 holds every archive and recording the locks name, asking head-object alone", () => {
-    const { root, aws, calls, named } = locked();
-    expect(check({ root, aws, log: () => {} }).checked).toEqual([...archiveKeys(root), ...keys(named)].sort());
+  it("passes when S3 holds every archive, recording and samples archive the locks name, asking head-object alone", () => {
+    const { root, aws, calls, named, sample } = locked();
+    expect(check({ root, aws, log: () => {} }).checked).toEqual([...archiveKeys(root), ...keys(named), sample.key].sort());
     expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);
   });
 
   it("fails listing each missing archive with its lock and remedy, downloading nothing", () => {
-    const { root, aws, object, calls, named } = locked();
+    const { root, aws, object, calls, named, sample } = locked();
     const [recording] = named;
     const archive = archiveKey(U, readLock(root, U).sha256);
     rmSync(object(archive));
     rmSync(object(recording.key));
+    rmSync(object(sample.key));
     const message = failure(() => check({ root, aws, log: () => {} }));
     expect(message.split("\n")).toEqual([
-      'S3 lacks 2 of the 4 object(s) the locks name (CONTRIBUTING.md, "Pack test data"):',
+      'S3 lacks 3 of the 5 object(s) the locks name (CONTRIBUTING.md, "Pack test data"):',
       `  packs/q/upstream/u/test-data.lock names s3://${BUCKET}/${archive}, which S3 does not hold: a maintainer archives the pull request's pack test data with \`npm run fixtures:push -- --from <ref> --pack q --tool u\``,
+      `  packs/q/upstream/u/samples.lock names s3://${BUCKET}/${sample.key}, which S3 does not hold: a maintainer builds the tool-pack's samples (scripts/samples/) and puts the archive there with \`node scripts/s3/pack-fixtures.mjs samples push --pack q --tool u\``,
       `  packs/p/upstream/t/recording.lock names recording.tar.zst at s3://${BUCKET}/${recording.key}, which S3 does not hold: a maintainer downloads the pull request's CI recording with \`gh run download <run> -n recordings-p--t -D .rerail/port-readiness/recordings\`, then puts it in S3 with \`npm run fixtures:push -- --from <ref> --pack p --tool t\``,
     ]);
     expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);
@@ -1221,12 +1494,12 @@ describe("check", () => {
     });
     const passed = run();
     expect(passed.stderr).toBe("");
-    expect(passed.stdout).toBe("S3 holds every object the locks name: 3 archive(s) and 1 recording archive(s)\n");
+    expect(passed.stdout).toBe("S3 holds every object the locks name: 3 archive(s), 1 recording archive(s) and 1 samples archive(s)\n");
     expect(passed.status).toBe(0);
     rmSync(object(named[0].key));
     const failed = run();
     expect(failed.status).toBe(1);
-    expect(failed.stderr).toContain(`fixtures:check: S3 lacks 1 of the 4 object(s)`);
+    expect(failed.stderr).toContain(`fixtures:check: S3 lacks 1 of the 5 object(s)`);
     expect(failed.stderr).toContain(`s3://${BUCKET}/${named[0].key}`);
   });
 });

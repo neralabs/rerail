@@ -3,9 +3,10 @@ description: >-
   Puts the packs' test data (every file PACK_FIXTURE_PATTERNS in scripts/s3/pack-fixtures.mjs matches under
   packs/<pack>/upstream/<tool>/) into the checkout: for each selected tool-pack, the archive its test-data.lock names by
   sha256 (CONTRIBUTING.md, "Pack test data"), verified against the lock and extracted, with a pull request's tracked
-  copies winning (`fixtures:pull`). The archives come from the Actions cache, keyed by the locks, and reach it from
-  s3://nera-test-fixtures/rerail/archives/ under the repository's OIDC read role. Nothing is derived here: a pin change
-  reaches CI only as the archives and locks the nightly producer's pull request commits. Use it right after
+  copies winning (`fixtures:pull`), and the real-code samples archive its samples.lock names, when it has one, verified
+  and extracted under .rerail/pack-data/samples/. The archives come from the Actions cache, keyed by the locks, and
+  reach it from s3://nera-test-fixtures/rerail/archives/ under the repository's OIDC read role. Nothing is derived here:
+  a pin change reaches CI only as the archives and locks the nightly producer's pull request commits. Use it right after
   `actions/checkout`, once per tool-pack or once for all of them, in one of two kinds of job. The fetching job
   (`fetch: "true"`) only fills the cache: it looks the key up without restoring it and, on a miss, pulls the archives
   from S3 and saves them; it needs `id-token: write` and `contents: read` (a reusable workflow's caller must grant

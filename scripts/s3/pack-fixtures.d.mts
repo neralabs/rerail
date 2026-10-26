@@ -105,12 +105,27 @@ export function pull(options?: CommandOptions & { testSet?: EslintTestSetPin }):
   toolPacks: (ToolPack & { source: "cache" | "S3" })[];
   restored: number;
   kept: number;
+  /** The selected tool-packs with a samples.lock, and where each one's samples archive came from. */
+  samples: (ToolPack & { source: "cache" | "S3" })[];
   /** Where the ESLint test set's zip came from, when a selected tool-pack's pack is one it scores. */
   eslintTestSet?: "cache" | "S3";
 };
 /** `cache`: the recording cache directory to fill (RECORDING_CACHE under `root` by default; the recorder's `<--cache>/recordings`). */
 export function recordings(options?: CommandOptions & { cache?: string }): { kept: string[]; downloaded: string[]; missing: string[]; extracted: string[] };
 export function recordingsPush(options?: Omit<CommandOptions, "dryRun">): { uploaded: string[]; locks: string[] };
+/** A tool-pack's real-code samples manifest, beside test-data.lock and in its format. */
+export const SAMPLES_LOCK: "samples.lock";
+export const SAMPLES_PREFIX: string;
+export function samplesKey(toolPack: Pick<ToolPack, "pack" | "tool">, digest: string): string;
+export function samplesArchiveCachePath(root: string, toolPack: Pick<ToolPack, "pack" | "tool">, digest: string): string;
+export function samplesTreeDirectory(root: string, toolPack: Pick<ToolPack, "pack" | "tool">, digest: string): string;
+/** The tool-pack's samples.lock, or undefined when it has none; throws on a malformed one. */
+export function readSamplesLock(root: string, toolPack: Pick<ToolPack, "pack" | "tool">): Lock | undefined;
+export function verifiedSamples(compressed: Buffer, lock: Lock, key: string): { path: string; bytes: Buffer }[];
+/** The tool-pack's extracted samples tree, verified and extracted on demand; undefined when it has no samples.lock. */
+export function samplesTree(options: { root?: string; pack: string; tool: string; aws?: Aws }): string | undefined;
+export function samples(options?: CommandOptions): { kept: string[]; downloaded: string[]; extracted: string[] };
+export function samplesPush(options?: Omit<CommandOptions, "dryRun">): { uploaded: string[]; locks: string[] };
 export function pack(options?: Omit<CommandOptions, "aws">): { changedLocks: string[] };
 export function upload(options?: Omit<CommandOptions, "dryRun">): { uploaded: string[] };
 export function push(options?: PushOptions): {
