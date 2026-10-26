@@ -1623,10 +1623,7 @@ impl TapeDoc {
 #[derive(Clone, Copy)]
 pub(super) struct TapeNode<'a> {
     nodes: &'a [Rec],
-    grammar: &'a Grammar,
-    points: &'a Points,
-    kind_aliases: &'a [(String, bool)],
-    kind_overrides: &'a [(u32, u16)],
+    doc: &'a TapeDoc,
     index: u32,
 }
 
@@ -1638,10 +1635,7 @@ impl<'a> TapeNode<'a> {
         Self { index, ..*self }
     }
     fn kind_alias(&self) -> Option<&'a (String, bool)> {
-        self.kind_overrides
-            .binary_search_by_key(&self.index, |&(index, _)| index)
-            .ok()
-            .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
+        self.doc.kind_alias(self.index)
     }
     /// The structurally adjacent sibling, for traversal; `SgNode::next` follows Tree-sitter.
     pub(super) fn next_sibling(&self) -> Option<Self> {
@@ -1661,7 +1655,7 @@ impl<'a> TapeNode<'a> {
     /// parent's first child. A Blade tape's siblings may overlap (its embedded program sits among
     /// the template's nodes), so its walk scans the parent's children from the first.
     fn walk_anchor(&self) -> Option<Self> {
-        if self.grammar.kinds.has_embedded() {
+        if self.doc.grammar.kinds.has_embedded() {
             let container = self.parent().unwrap_or(*self);
             let start = self.rec().start;
             return container.children().find(|child| child.rec().end > start);
@@ -1771,7 +1765,8 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn kind(&self) -> Cow<'_, str> {
         Cow::Borrowed(self.kind_alias().map_or_else(
             || {
-                self.grammar
+                self.doc
+                    .grammar
                     .kind_name(self.rec().kind)
                     .expect("validated grammar symbol")
             },
@@ -1788,14 +1783,14 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.rec().start as usize..self.rec().end as usize
     }
     fn start_pos(&self) -> Position {
-        self.points.point(self.rec().start)
+        self.doc.points.point(self.rec().start)
     }
     fn end_pos(&self) -> Position {
-        self.points.point(self.rec().end)
+        self.doc.points.point(self.rec().end)
     }
     fn is_named(&self) -> bool {
         self.kind_alias().map_or_else(
-            || self.grammar.kind_is_named(self.rec().kind),
+            || self.doc.grammar.kind_is_named(self.rec().kind),
             |alias| alias.1,
         )
     }
@@ -1812,7 +1807,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.rec().missing
     }
     fn field(&self, name: &str) -> Option<Self> {
-        let field = self.grammar.kinds.field_id(name)?;
+        let field = self.doc.grammar.kinds.field_id(name)?;
         self.child_by_field_id(field)
     }
     fn field_children(&self, field_id: Option<u16>) -> impl Iterator<Item = Self> {
@@ -1845,16 +1840,19 @@ impl Doc for TapeDoc {
     fn root_node(&self) -> Self::Node<'_> {
         TapeNode {
             nodes: &self.data,
-            grammar: &self.grammar,
-            points: &self.points,
-            kind_aliases: &self.kind_aliases,
-            kind_overrides: &self.kind_overrides,
+            doc: self,
             index: 0,
         }
     }
     fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str> {
         Cow::Borrowed(&self.source[node.range()])
     }
+}
+
+#[cfg(test)]
+#[test]
+fn tape_node_handle_stays_within_four_pointer_words() {
+    assert!(std::mem::size_of::<TapeNode<'_>>() <= 4 * std::mem::size_of::<usize>());
 }
 
 #[cfg(test)]

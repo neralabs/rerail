@@ -721,3 +721,443 @@ The [implementation document](sql-matcher-batch-implementation.md) describes the
 The checker now requires wave evidence, cross-document and cross-program submissions, and more than four operation lanes per kernel dispatch.
 It also ratchets scalar native root calls at 53,109,000 for this fixed workload.
 Removing batching or restoring the old scalar call count therefore fails qualification, even if SQL execution counts remain low.
+
+### Complete native cohort conversion — implementation in progress
+
+The published wave path still called the scalar matcher for 53,109,000 residual roots.
+This phase removes that boundary. Capture frames, utility calls, and ordered structural operations now belong to a native cohort scheduler.
+Patterns use batched node operations. Semantic leaves project facts and submit child demands to that scheduler.
+Parse, binding, and enumeration must not hide scalar child matching behind their batch interfaces.
+
+The implementation keeps the existing admission wave as an early rejection stage.
+The residual stage must mix documents and programs, retain per-clause resource limits, and discard provisional rows after resource failure.
+A runtime audit will count scalar matcher calls inside semantic projections.
+Qualification requires zero such calls and zero scalar residual roots, plus catalog parity and the existing whole-job ceilings.
+These are completion gates, not results claimed for the unfinished integration.
+
+The SQL adapter now routes grouped bindings and standalone fragments through the same capture cohort executor.
+Enumeration runs as rematch waves from immutable input captures.
+The adapter holds provisional rows per file and clause. A resource failure discards that owner's rows.
+Document tiles retain sixteen files' request rows and semantic memos at a time.
+This bound avoids retaining capture-bearing demands for the entire workspace.
+
+Review found two integration defects before qualification.
+The cancellation callback consumed the shared file allowance on every operation.
+A separate cancellation probe now checks closure and deadlines without charging shared work.
+The generic scheduler also assumed that every source was `String`.
+Parsed literal documents use `SubSource`; the scheduler now accepts any byte-backed document source.
+
+The first focused scheduler tests exposed disabled parser features in their fixtures.
+The fixtures now use the repository's `GrammarDialect` parsers.
+A capture-threading defect in conjunctions was also corrected before the integrated qualification run.
+The tests compare successful capture environments, including native capture propagation through a failed `nthChild` relation candidate.
+The qualification checker now rejects any scalar residual roots or scalar matcher calls from semantic projections.
+
+### First complete-conversion measurement — rejected
+
+All fourteen active compiler checks pass. The catalog preserves all 87,162 raw match/capture comparisons and 2,477 matches.
+There are no unknown catalog outcomes or scalar matcher calls inside semantic projections.
+The focused pattern, utility, capture, Parse, Host, FormatArgs, memo ownership, and cancellation tests also pass.
+
+Performance fails. Catalog SQL CPU rises from the published 1.156 seconds to 5.941 seconds; native remains at 1.084 seconds.
+The first full SQL run exceeds the CPU ceiling before completion.
+This conversion is not qualified by parity alone.
+
+A five-second process sample identifies scheduler overhead.
+Collapsed self samples include 3,091 in the cohort driver, 646 in structural advancement, and 385 in limit-tree lookup.
+Binding and parsed-literal reducers are small contributors in that sample.
+The driver repeatedly scans completed lanes while a deeper lane continues.
+It also moves full capture frames through dispatch buffers and resolves owner budgets for every operation.
+
+The next implementation removes completed lanes from the active frontier and puts only lane IDs in dispatch buffers.
+It checks failure once per context per round and stores dense owner budgets in an indexed vector.
+Atomic semantic predicates retain the input capture frame when they make no capture changes.
+These changes address measured costs. Their parity and performance checks are pending.
+
+The first full run finishes with exact parity: 97,798 findings, no failures, and matching edit results.
+It makes no scalar matcher calls from semantic projections.
+Cold SQL CPU is 615.603 seconds; wall time is 528.631 seconds; peak RSS is 928,169,984 bytes.
+The executor dispatches 2,061,689,692 outer operation lanes for 53,109,122 root and enumeration requests.
+These results fail the performance gate despite preserving findings and memory bounds.
+
+The active-frontier change reduces catalog SQL CPU to 3.658 seconds, with full parity.
+Atomic-child fusion reduces it to 3.533 seconds. That small second improvement does not close the structural gap.
+A focused generic-document test exposes native `nthChild` indexing through `binary_search` on node IDs.
+The cohort used source-order lookup; tree-sitter pointer IDs reveal the difference even though tape ordinals do not.
+The implementation must preserve that native indexing behavior while the contract remains unchanged.
+
+Further comparison finds native physical plans missing from the conversion:
+
+- Two-valued relation walks skip impossible kinds and use bounded kind/text postings for descendants.
+- Sibling walks can select candidates by the outside capture's equality class, including unknown classes.
+- Node-local relation walks retain completed, zero-work suffix and subtree answers.
+- Utility memo keys include referenced captures; successful cache entries replay added bindings into the caller's frame.
+
+The new executor initially walked every candidate and keyed utility results on the complete capture frame.
+Its full run records 56,983,552 evicted utility entries and 1,711,437 hits.
+The published native residual path recorded 4,989,311 hits and 46,505,686 misses.
+The next implementation restores candidate-index projections and scoped capture deltas.
+Relation closure sharing remains a separate required check against the native physical plan.
+
+### Native physical plans restored in the conversion
+
+The indexed-navigation and scoped-capture build preserves all catalog comparisons.
+Catalog SQL CPU falls to 3.317 seconds, versus 1.185 seconds for native in that run.
+This remains above the ceiling. It does not qualify the conversion.
+
+The next build adds lazy relation closure sharing and native sibling-list caching.
+Closure entries contain completed zero-work answers. Candidate evaluation remains ordered and batched.
+A failed or charged walk cannot publish a clean answer for its affected prefix.
+The host verifies document identity and excludes parsed documents and hosted parent searches where required.
+
+Review also found a resource-accounting defect in sibling counting.
+Cached sibling-list construction must charge actual work once, then exclude that fill from utility replay charges.
+The selected node still runs its own predicate and pays its normal replay cost.
+A focused test covers nested utility probes, cold and warm file queries, and uncached parsed-document queries.
+
+Utility keys now use the native utility identity, including the existing digest for equivalent scoped definitions.
+Entries that read clause-local state retain their owner. Other entries can share across equivalent references.
+Atomic projections report clause-state reads explicitly through the cohort results.
+These changes are awaiting integrated qualification; the published baseline artifacts remain unchanged.
+
+The first closure build preserves all catalog matches but measures 3.432 seconds of SQL CPU.
+Review then finds concurrent duplicate fills: same-owner roots start overlapping walks before any can publish cached answers.
+The executor now admits roots in owner order while batching independent document and program owners.
+A single-submission complexity test covers 256 overlapping roots across two owners.
+It requires linear predicate visits and more than one active lane.
+
+Linear closure navigation now advances a cursor instead of copying whole suffixes.
+Review catches a zero-width-node distinction: native sibling iterators use a byte-positioned initial anchor and structural continuation.
+The cursor retains that distinction with a shared parent index. Python and TypeScript zero-width fixtures compare both directions with native.
+Sibling tables now share their counted vectors and have bounded retention.
+
+### Ordered admission measurement and correction
+
+A 500-file development slice preserves findings and all three edits.
+Native cold CPU is 8.772 seconds; cohort SQL CPU is 28.668 seconds.
+This slice diagnoses changes; it cannot replace the full-workload qualification.
+
+The trace records 89,262,865 control-operation lanes and 37,688,464 dispatches.
+Average width is only 2.37, below the batching gate.
+All 4,669,373 semantic projections run in single-lane owner groups.
+Blanket root ordering therefore removes useful batching and is rejected.
+Ordering now applies only to program graphs that reach shared closure or sibling-table fills.
+Other roots retain full-width admission.
+
+A process sample attributes the largest active self counts to the cohort driver (1,044), structural advancement (610), frontier maintenance (325), and memory moves (275).
+Frames now remain in their lane stacks during advancement. Actions carry only new children or completed answers.
+Pattern context constraints compile once. Pattern results retain shared capture environments instead of cloning them into new frames.
+The next development measurement will test this combined scheduler change.
+
+The in-place frame build lowers the 500-file slice to 19.963 CPU seconds, with identical findings and edits.
+It records 89.4 million operation lanes and 20.5 million dispatches.
+Semantic projections now average 5.85 lanes per owner group.
+
+The first persistent-refill build preserves parity but regresses CPU to 22.077 seconds.
+Dispatches fall to 14.8 million, while semantic owner groups rise from 798,545 to 1,343,918.
+Immediate one-slot arrivals reduce phase alignment. Lower dispatch count alone does not qualify this change.
+The driver will refill in bursts and advance structural continuations directly until the next primitive operation or indexed-navigation boundary.
+A separate counter will retain the number of fused control steps.
+
+Review also finds retained historical enumeration sets in utility memo keys.
+Memo keys now hold weak snapshot identities, which keep addresses unique without retaining old range sets.
+Completion transfers the exclusion set into the next round when it is uniquely owned.
+A focused retention test checks that memo entries do not keep an old range set alive.
+
+Burst refill and control chaining preserve parity and reduce slice dispatches to 3,585,846.
+The trace records 55,170,746 additional fused control steps.
+SQL CPU is still 20.441 seconds. Moving control work between counters does not close the runtime gap.
+A fresh sample still places structural advancement and control chaining first.
+
+The compiler review identifies a missing rejection proof: pattern kind guards.
+There are 40 pattern-first grammar-root declarations in the catalog trace; 35 have no explicit kind term.
+The guard now uses the pattern's necessary kind set, without treating a passing guard as a match.
+Template mode, unconstrained root metavariables, and ERROR kinds receive no guard.
+Conjunction admission still stops at the opaque pattern. Disjunction rejection requires every branch's proof.
+This change targets roots that previously entered the full capture executor only to fail immediately.
+
+The next build also groups semantic context installation by file.
+Each rule retains its own clause identity and allowance; file scopes and parked facts are installed once for the operation group.
+The budget-isolation integration check now exercises both a closed utility and a capture-bearing utility.
+
+### Closed subprogram dispatch inside capture execution
+
+The pattern guard and file context grouping preserve raw catalog parity.
+On the 500-file slice, SQL CPU is 20.847 seconds, versus the prior native measurement of 8.772 seconds.
+The extra pattern guards reject approximately 92,000 roots. This does not close the performance gap.
+File grouping reduces 800,954 clause projections to 625,725 file context installations.
+The trace still records 41.6 million operation lanes and 55.4 million additional control steps.
+
+The next structural change reuses the numeric wave executor inside mixed programs.
+A closed subprogram needs no capture frames, but the capture scheduler currently expands all its structural operations.
+The compiler will mark these closed regions and submit them as numeric lanes across documents and programs.
+The surrounding capture program retains its environment and ordered continuations.
+
+The initial dispatch requires a file document and no active enumeration exclusion.
+Parsed documents retain the generic operation kernels.
+A completed closed answer can publish only when its work and depth fit the current allowance.
+Otherwise, the existing operation scheduler retains responsibility for the precise resource failure.
+The trace will report closed region requests and numeric kernel work separately.
+This is an implementation experiment. Qualification remains pending, and the published baseline evidence remains unchanged.
+
+Closed region facts now persist across arrivals within a streaming submission.
+Documents register once, and each submission borrows its cancellation callback temporarily.
+This avoids rebuilding whole-file kind postings for every operation cohort.
+A focused test requires one posting build across repeated roots and checks cancellation after cached execution.
+
+The same review identifies repeated capture-pattern producers.
+Nineteen policies use `$F($$$ARGS)`, with 1,032,324 candidate roots on the 500-file slice.
+The trace records 3,464,342 pattern requests and 13,455,621 pattern operations across all clauses.
+Compiled plans now share a complete structural key, strictness mode, and contextual root constraint.
+A bounded cache shares results only for the same document, node, and immutable input environment.
+Different input environments execute independently. Constraints and resource checks remain specific to each owner.
+Counters distinguish cache hits, misses, duplicate requests within a batch, and physical pattern executions.
+Performance remains unqualified until the integrated measurement completes.
+
+The combined closed-region and pattern-sharing build passes 24 cohort, 6 wave, and 4 pattern tests.
+The 500-file slice retains finding parity but measures 21.242 CPU seconds, still above the ceiling.
+Pattern operations fall from 13,455,621 to 4,428,212.
+There are 1,402,493 unique pattern executions, 1,148,518 cache hits, and 912,949 duplicates shared within batches.
+Closed regions accept 3,306,591 demands with no resource fallback and build only 102 posting lists.
+
+The remaining cost is still structural control: 28,546,474 operation lanes plus 44,563,343 control steps.
+The sample attributes its largest active self counts to advancement (752), control chaining (493), and the driver (424).
+Numeric wave evaluation accounts for 90 self samples.
+
+Two further changes follow from this evidence.
+First, root ordering can skip closed regions when the numeric kernel is eligible.
+Generic documents, enumeration, and cached sibling counts retain their required ordering.
+Second, a constrained pattern can use a compact pipeline for its pattern and direct atomic constraints.
+The current trace contains 1,605,950 constrained starts, each creating general child frames for these simple stages.
+The pipeline must preserve constraint order, missing-capture skips, capture rollback, unknown results, and resource charges.
+These changes remain subject to the unchanged parity and performance gates.
+
+### Full conversion measurement after shared kernels
+
+A fresh paired run covers all 5,725 files and all 146 clauses.
+Native cold execution uses 111.246 CPU seconds and 45.632 wall seconds.
+SQL cold execution uses 270.058 CPU seconds and 122.716 wall seconds: 2.428 times native CPU.
+Both engines produce the same 97,798 findings and the same findings after all three edits.
+SQL uses 23 matching statements, reports no incomplete files, and peaks at 1,332,985,856 bytes of resident memory.
+The median edit CPU ratio is 1.176. The cold CPU gate fails.
+Raw reports are in `/tmp/rerail-cohort-full-17`; these results do not replace the published qualification.
+
+The trace contains 384,278,733 operation lanes and 609,406,882 additional control steps.
+Closed regions accept 45,217,499 demands with no resource fallback.
+Shared patterns execute 19,496,600 unique requests, with 13,916,588 cache hits and 11,992,590 duplicates shared within batches.
+The full-run sample again places advancement, control chaining, and the driver ahead of the primitive kernels.
+
+The next build compiles constrained patterns into batches of pattern and constraint stages.
+It also removes singleton conjunction wrappers only when the enclosed constrained pattern has this proven pipeline form.
+Program identities and capture analysis remain intact. Other conjunctions retain their existing semantics.
+An independent review finds no concrete rollback, context, or resource-accounting defect in this lowering.
+Focused tests and workload measurements remain necessary before acceptance.
+
+The constrained pipeline passes 27 focused tests and preserves all findings on the 500-file slice.
+It executes 909,440 pipeline rows and removes 1,816,336 child frames.
+SQL CPU falls to 20.121 seconds, which remains far above native.
+The broader catalog comparison preserves all 87,162 raw rule/file comparisons, including captures and unknown results.
+
+An integration sharing assertion still fails: equivalent composite admission guards receive different numeric program IDs.
+Interning their leaf kinds was insufficient because their conjunction wrappers remained distinct.
+Composite partial proofs now share an ordered child-ID key, with separate conjunction and disjunction tags.
+The caller still controls whether a result is an exact match or only admission evidence.
+The candidate-domain test remains unchanged. The next build must pass it.
+
+The next larger control change batches contiguous atomic and constrained stages inside conjunctions.
+Opaque operations remain barriers. Unknown-capture withholding and transactional capture state remain specific to each conjunction.
+New counters will classify every control step, including fused steps, and report frame sizes.
+
+The conjunction-run experiment passes 29 focused tests and all 14 engine integration tests.
+The composite admission-sharing assertion now passes. All 87,162 catalog comparisons retain raw parity.
+However, the 500-file CPU measurement regresses from 20.121 to 22.785 seconds.
+Operation lanes fall to 19.04 million and additional control steps fall to 29.82 million.
+This is another direct counterexample to treating fewer dispatches or control steps as a runtime improvement.
+
+The experiment enters 14.49 million conjunction rows but executes only 11.51 million simple stages, with 5.22 million opaque yields.
+Most runs are too small to justify their table setup and separate primitive dispatch.
+The conjunction-run implementation and its tests are removed. The proven constrained pipeline remains.
+The new control-family counters remain because they identify the actual hot operations.
+
+The counters attribute 10.58 million advances to alternatives, 6.74 million to utility entry/return, and approximately 9 million to relation startup/search.
+A capture frame occupies 256 bytes; its continuation enum occupies 104 bytes.
+The next layout experiment reduces copied node metadata and isolates the uncommon sibling-count continuation.
+Both native and SQL use the node representation, so its performance comparison must measure both engines with the same build.
+
+The compact layout passes 28 focused matcher tests and 36 tape tests, including existing navigation and embedded-language cases.
+Node handles retain direct record access while reading cold metadata through the document.
+The uncommon sibling-count continuation has one boxed allocation that survives all its probes.
+Frame size falls from 256 to 160 bytes; common continuation state falls from 104 to 48 bytes.
+
+A fresh paired 500-file run preserves findings and edits.
+Native CPU is 8.746 seconds; SQL CPU is 18.822 seconds, a ratio of 2.152.
+This improves the conversion but does not meet the ceiling. The compact layout remains in the working tree.
+
+The next compiler change removes singleton conjunction wrappers while retaining their capture transaction.
+A compiled rollback bit preserves false and unknown results without another conjunction frame.
+Relation searches need a separate original-input snapshot because a failed sibling-count predicate can modify their working captures.
+Bare sibling searches retain that native behavior. A surrounding conjunction must still roll those captures back.
+The next profile also records hot program shapes, so remaining control work can be tied to concrete compiled structures.
+
+The singleton transaction lowering passes 33 focused tests and preserves the 500-file findings and edits.
+SQL CPU is 18.806 seconds, approximately unchanged from the compact-layout build.
+It completes 557,139 normalized singleton conjunctions. The remaining conjunctions therefore require a different transformation.
+
+The new exact control inventory identifies the largest shapes: `Util[Any]`, `All[Kind,Has]`, `All[Kind,All]`, `Inside[All]`, and `Has[All]`.
+The next lowering extracts leading, exact kind predicates into entry guards and removes their interpreted stages.
+Known-false alternatives can then skip child frames without changing branch order or work charges.
+Guards cannot move across utilities, semantic operations, or other potentially charged work.
+Pure kind disjunctions also require the native exclusion check when enumeration is active.
+
+The original temporary corpus loses its Git metadata before the next measurement.
+A new locked checkout at `/tmp/rerail-capture-corpus-fce4dc72` uses the same pinned commit.
+All 5,725 Python files, their 95,697,853 bytes, and the complete content inventory match the published baseline.
+The inventory digest remains `4525032ac7cf058a9134aad9250fd3a400eb4df78c69bfdd89d608057e1b9773`.
+
+Profiler review finds 53,990 small nested submissions on the 500-file slice, performing only 208,503 operations.
+They must not initialize and scan a counter array for the complete compiled catalog each time.
+Small submissions now use exact sparse counters. Streaming submissions retain dense counters and visit only touched entries.
+This changes instrumentation storage, not matcher execution or acceptance gates.
+
+The leading-kind lowering passes all 14 engine integration tests and all 87,162 raw catalog comparisons.
+The 500-file run preserves findings and reduces SQL CPU from 18.806 to 16.795 seconds.
+Native CPU remains 8.746 seconds, so the ratio is 1.920 and qualification still fails.
+Runtime counters record 3,405,201 guard rejections and 2,177,212 skipped alternative entries.
+Operation lanes fall to 19,384,347; additional control steps fall to 30,151,871.
+
+One scheduler test fails because its long fixture repeats an identical kind predicate 128 times.
+The compiler now correctly reduces that fixture to one guard, so it no longer exercises incremental refill.
+The fixture will use matching regular expressions as distinct execution barriers; its scheduling assertions remain unchanged.
+
+The next bounded lowering moves kind membership across direct pattern or regex stages only.
+These stages spend no logical work and cannot produce unknown. A failed conjunction restores its input captures.
+Pure-kind alternatives also check enumeration exclusions. That check must stay after any preceding pattern that can change captures.
+The implementation will preserve that check as a separate atomic predicate at its original position.
+Utilities, semantic operations, and opaque operators remain barriers to this transformation.
+
+The full leading-kind run preserves 97,798 findings and all three edit results across 5,725 files.
+Native uses 107.112 CPU seconds; SQL uses 208.301 CPU seconds, a ratio of 1.945.
+SQL wall time is 61.524 seconds, versus 28.765 seconds for native. SQL peak RSS is 1,408,745,472 bytes.
+This improves the previous full conversion run at 270.058 SQL CPU seconds, but still fails the unchanged CPU gate.
+The profile remains dominated by native continuation handling, frame copies, and allocation.
+Generic relation searches eagerly collect complete ancestor or sibling sequences before testing their first candidate.
+A lazy cursor can remove unused tail traversal while retaining candidate order, work charges, and capture transactions.
+Review also identifies a neighbor-search discrepancy around zero-width nodes: native `next` differs from the first `next_all` candidate.
+The cursor conversion must use the correct native initialization for each stop mode.
+
+The pattern-prefix guard lowering passes 43 focused tests and preserves findings on the 500-file slice.
+SQL CPU falls from 16.795 to 15.906 seconds; native remains 8.746 seconds.
+This is still 1.819 times native CPU. The next changes target traversal allocation and utility rejection overhead.
+
+The full trace records 37,322,752 utility memo evictions but only 665,004 hits.
+A utility whose target entry guard rejects can return without a memo key or child frame.
+It must first check the native depth limit and spend the one-unit utility entry charge.
+The compiler can also give an alternative a negative membership guard when every branch has an enforced zero-work entry guard.
+An opaque or charged branch blocks that proof. Positive admission retains ordered alternative execution and exclusion checks.
+
+The next build also reduces the control-action payload.
+A child action carries its request and depth instead of a fully initialized 160-byte continuation frame.
+The stack constructs the continuation at its destination. Utility entry still increments depth exactly once.
+This removes repeated copies of unused continuation state and accounting fields from the hot control path.
+The profile records the resulting action size alongside frame and state sizes.
+
+The lazy-walk, utility-rejection, and compact-action build passes all 49 focused tests.
+The action payload is 88 bytes. Continuation frames remain 160 bytes.
+The 500-file run preserves findings and reduces SQL CPU from 15.906 to 14.249 seconds, a ratio of 1.629 to native.
+It performs 142,580 direct utility kind rejections from 955,157 eligible checks.
+This is useful but does not explain the remaining gap: 27,839,897 additional control steps still execute.
+The next full run will check whether these reductions hold across the whole workload.
+
+The full compact-action run passes every qualification gate except cold CPU.
+It preserves 97,798 findings and all edits, with 23 SQL executions and zero scalar matcher calls.
+Native CPU is 116.546 seconds; SQL CPU is 212.614 seconds, a ratio of 1.824.
+The median edit CPU ratio is 1.146. SQL peak RSS is 1,450,491,904 bytes.
+Absolute SQL CPU does not improve over the previous full run; native CPU also rises on this host.
+The paired ratio improves, but the slice result overstates that improvement. The accepted baseline remains unchanged.
+
+The next scheduling experiment groups each logical member across the existing sixteen-file tile.
+It preserves member order within each file, per-owner root order, enumeration priority, and the existing resident limit.
+Compiled program IDs cannot define this order because residuals are compiled after all original programs.
+Only production batch construction changes; the generic transport contract remains unchanged.
+This may improve operation occupancy, but it may also increase file-context switches and cache reuse distances.
+The experiment must measure CPU, context installations, kernel width, and cache reuse before acceptance.
+
+Review finds that the scheduling experiment lacks a general resource-order proof.
+The SQL compiler cache can reuse a template owner across clauses, retaining the same utility-table identity.
+Sibling-count terms inside that table can therefore share file-local fill costs across clause owners.
+Stable member order does not itself preserve execution interleaving or fill ownership.
+The unbounded experiment can measure performance, but it cannot be accepted on finding parity alone.
+A retained scheduler must prove independence or preserve the current order for affected work.
+
+The member-major admission experiment is rejected and removed.
+On the 500-file slice, SQL CPU rises from 14.249 to 15.457 seconds despite fewer dispatches.
+Dispatches fall from 886,730 to 683,814, but file-context installations rise from 310,608 to 344,530.
+Utility hits improve from 38,579 to 71,824 without improving total runtime.
+Findings still match, which does not resolve the resource-order concern.
+Review also finds charged semantic-text sibling classification outside the existing ordering predicate.
+The original admission order remains; no scheduling switch or unproven ordering exemption is retained.
+
+The next ownership change targets atomic reference counting in capture requests.
+Each capture executor and semantic host remains inside one worker; the host already uses `Rc` for its mutable context.
+Only plain output rows and metrics leave that executor. Compiled programs and immutable document objects retain shared ownership across workers.
+Capture environments, enumeration snapshots, following-state vectors, and scoped capture fingerprints can therefore use local reference counts.
+The conversion must preserve copy-on-write behavior, weak cache identities, pointer validation, and capture rollback.
+Compiled patterns, utility tables, semantic plans, and parsed document objects remain `Arc` values.
+
+The local-reference-count experiment passes 49 cohort tests and four pattern tests but regresses performance.
+A fresh paired 500-file run uses 8.442 native CPU seconds and 15.570 SQL CPU seconds, a ratio of 1.844.
+The SQL-only repeat uses 15.764 seconds. The earlier compact-action build uses 14.249 seconds on this slice.
+Worker-local ownership is valid, but that proof does not establish a runtime benefit. The Rc conversion is removed.
+
+The next build batches contiguous identical exclusion snapshots inside each semantic context group.
+It retains per-lane depth, allowance, unknown state, cache-fill accounting, and scalar-call auditing.
+The current implementation reinstalls exclusions for every semantic row, even when all rows have no exclusion.
+No requests change order, and distinct snapshots still receive separate installations.
+
+The compiler also stores compact operation classes beside its program table.
+The executor can reuse its known dispatch class instead of decoding the same opcode again for instrumentation.
+Conjunctions allocate their withheld-capture set only after an unknown result actually withholds captures.
+Normal continuations no longer carry an empty tree-set header through every control step.
+
+The compiled-class and exclusion-run build passes 50 focused tests.
+Common continuation state falls from 48 to 32 bytes; the frame falls from 160 to 144 bytes.
+On the 500-file slice, 4,670,316 semantic rows need 408,801 exclusion installations.
+The fresh paired run uses 8.252 native CPU seconds and 14.629 SQL CPU seconds, a ratio of 1.773.
+This remains above the gate; reduced state setup alone does not close the execution gap.
+
+The next sharing experiment separates fixed pattern structure from caller capture unification.
+It admits only internal patterns with no multi metavariables and no repeated capture names.
+Such a pattern can produce candidate capture facts independently of the caller's environment.
+Native insertion then unifies those facts with each input and preserves unrelated bindings.
+Review rejects final-environment replay for repeated captures: native node comparison can accept equal node IDs across documents.
+An ordered capture-write log would be required to extend the proof to those patterns.
+Ellipsis patterns also retain exact-input execution because prebound captures can change backtracking.
+
+The full compiled-class and exclusion-run run preserves 97,798 findings and all edits.
+SQL CPU is 198.093 seconds; native CPU is 110.819 seconds, a ratio of 1.788.
+SQL wall time is 56.954 seconds and peak RSS is 1,455,046,656 bytes.
+The catalog also preserves all 87,162 raw comparisons. The CPU gate still fails.
+
+The latest full profile still attributes most capture-executor CPU to control advancement and continuation handling.
+A remaining structural candidate is the unparameterized utility wrapper.
+Each cache miss currently creates a full target frame and later advances a separate utility-return continuation.
+The proposed spike reuses that frame for the utility body and stores only its caller metadata in a lane-local resume stack.
+
+The resume records the original program, depth, input environment, memo key, and owning frame index.
+Utility entry must still check depth and spend one unit before reuse. Parameterized calls retain their existing frame mapping.
+Body completion must first apply the body's transaction, then restore each utility's charges, memo result, and outer transaction.
+Every completion path must use that operation, including cancellation and navigation failure.
+This is not implemented yet. The spike must preserve cache-fill versus replay costs, failure captures, depth peaks, and clause-state isolation.
+
+The fixed-pattern fact spike passes eight focused tests and preserves the paired slice findings.
+Its CPU ratio is 1.773, effectively unchanged from the preceding build.
+Only 303,358 pattern requests qualify. Compared with the existing exact-input cache, it saves eleven unique pattern executions out of 1,387,324.
+Most reported fact hits and within-batch reuse already occurred in the existing cache.
+The proof is useful, but this workload provides no meaningful additional reuse. The production change and its added cache path are removed.
+The spike source remains in `/tmp/rerail-pattern-fact-spike-28.rs`; the original pattern executor is restored from its verified build-27 snapshot.
+
+The published conversion checkpoint is explicitly unqualified.
+The default-feature library check passes. Focused capture tests, the catalog, and full-workload finding/edit parity pass.
+The unchanged qualification checker rejects only the cold CPU ratio: 1.788 exceeds 1.30.
+The separate `sql-native-capture-cohort-rejected` report and compressed inputs retain that evidence.
+The accepted `sql-native-wave` baseline is unchanged. Further work targets utility activation frames.

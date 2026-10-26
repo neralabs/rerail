@@ -23,6 +23,11 @@ mod memo;
 mod nth_child;
 mod parse;
 mod relation;
+pub(in crate::code_rule_dsl) mod cohort;
+pub(in crate::code_rule_dsl) mod cohort_host;
+mod cohort_memo;
+mod pattern_batch;
+mod semantic_batch;
 pub(in crate::code_rule_dsl) mod wave;
 #[cfg(test)]
 pub(crate) use relation::{candidates_tested, walk_candidate_filter};
@@ -75,7 +80,7 @@ pub(crate) use exported::{
 pub(crate) use format_args::{FormatArgs, Prepared, Style, missing_fields};
 pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
 pub(super) use memo::metrics as memo_metrics;
-pub(super) use memo::reuse_file as reuse_file_memo;
+pub(in crate::code_rule_dsl) use memo::Bank as MemoBank;
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
@@ -94,7 +99,7 @@ pub(crate) use resolve::{
     file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs, file_phpstan,
     file_psalm, file_rerail_ignores, file_sqlfluff, file_vue_directives, table_reading,
 };
-pub(super) use run::{Stopped, enumerate, enumerate_bound, node_at, run_clause};
+pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]
 pub(crate) use run::{reset_roots_matched, roots_matched};
 pub(super) use semantic::Semantic;
@@ -257,6 +262,7 @@ impl Matcher for AstMatcher {
         node: Node<'tree, D>,
         env: &mut Cow<MetaVarEnv<'tree, D>>,
     ) -> Option<Node<'tree, D>> {
+        cohort_host::scalar_call();
         if budget::matcher_call_budget_exhausted() {
             return None;
         }

@@ -48,6 +48,65 @@ enum Bound {
 /// Bindings sorted by name, then kind.
 type Bindings = Vec<(Arc<str>, Bound)>;
 
+/// Complete capture bindings, scoped by capture name, for memo keys within one document.
+#[derive(Clone, Eq, Hash, PartialEq)]
+pub(super) struct CaptureFingerprint(Vec<(Arc<str>, CaptureBound)>);
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+enum CaptureBound {
+    Single(usize, usize),
+    Multi(Box<[(usize, usize)]>),
+    Text(Box<[u8]>),
+}
+
+/// Snapshots bindings, including reserved transformed data belonging to each selected capture.
+/// `None` selects every name; an explicit scope need not be sorted.
+pub(super) fn capture_fingerprint<
+    D: Doc<Source: ast_grep_core::source::Content<Underlying = u8>>,
+>(
+    env: &MetaVarEnv<'_, D>,
+    scope: Option<&[Arc<str>]>,
+) -> CaptureFingerprint {
+    let keep = |name: &str| {
+        let name = name.strip_prefix('\0').unwrap_or(name);
+        scope.is_none_or(|scope| scope.iter().any(|selected| selected.as_ref() == name))
+    };
+    let identity = |node: &Node<'_, D>| (std::ptr::from_ref(node.root()) as usize, node.node_id());
+    let mut captured = Vec::new();
+    for variable in env.get_matched_variables() {
+        match variable {
+            MetaVariable::Capture(name, _) if keep(&name) => {
+                if let Some(node) = env.get_match(&name) {
+                    let (root, id) = identity(node);
+                    captured.push((Arc::from(name.clone()), CaptureBound::Single(root, id)));
+                }
+                if let Some(bytes) = env.get_transformed(&name) {
+                    captured.push((Arc::from(name), CaptureBound::Text(bytes.clone().into())));
+                }
+            }
+            MetaVariable::MultiCapture(name) if keep(&name) => {
+                let nodes = env
+                    .get_multiple_matches(&name)
+                    .iter()
+                    .map(identity)
+                    .collect();
+                captured.push((Arc::from(name), CaptureBound::Multi(nodes)));
+            }
+            _ => {}
+        }
+    }
+    let order = |bound: &CaptureBound| match bound {
+        CaptureBound::Single(..) => 0,
+        CaptureBound::Multi(..) => 1,
+        CaptureBound::Text(..) => 2,
+    };
+    captured.sort_by(|(left, a): &(Arc<str>, CaptureBound), (right, b)| {
+        left.cmp(right).then_with(|| order(a).cmp(&order(b)))
+    });
+    captured.dedup();
+    CaptureFingerprint(captured)
+}
+
 #[derive(Eq, Hash, PartialEq)]
 struct Key {
     /// A utility's `UtilRef::memo_term`, or a call's address and `usize::MAX`.
@@ -181,6 +240,65 @@ impl Drop for Scoped {
     fn drop(&mut self) {
         if let Some(saved) = self.0.take() {
             MEMO.set(saved);
+        }
+    }
+}
+
+/// File memos parked between operation cohorts. Roots and compiled rules must remain alive and
+/// at stable addresses until their document is released (or the bank is dropped).
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct Bank {
+    files: rustc_hash::FxHashMap<u32, FileMemo>,
+}
+
+impl Bank {
+    /// Installs this document's memo for one cohort and restores the enclosing memo on unwind.
+    pub(in crate::code_rule_dsl) fn with_file<T>(
+        &mut self,
+        document: u32,
+        root: &Root<TapeDoc>,
+        run: impl FnOnce() -> T,
+    ) -> T {
+        let address = std::ptr::from_ref(root) as usize;
+        let file = match self.files.remove(&document) {
+            Some(file) if file.root == address => file,
+            _ => {
+                #[cfg(any(test, feature = "code-rule-profile"))]
+                METRICS.set({
+                    let mut metrics = METRICS.get();
+                    metrics.files += 1;
+                    metrics
+                });
+                FileMemo {
+                    root: address,
+                    ..FileMemo::default()
+                }
+            }
+        };
+        let _parked = Parked {
+            bank: self,
+            document,
+            enclosing: Some(MEMO.replace(file)),
+        };
+        run()
+    }
+
+    pub(in crate::code_rule_dsl) fn release(&mut self, document: u32) {
+        self.files.remove(&document);
+    }
+}
+
+struct Parked<'a> {
+    bank: &'a mut Bank,
+    document: u32,
+    enclosing: Option<FileMemo>,
+}
+
+impl Drop for Parked<'_> {
+    fn drop(&mut self) {
+        if let Some(enclosing) = self.enclosing.take() {
+            let file = MEMO.replace(enclosing);
+            self.bank.files.insert(self.document, file);
         }
     }
 }
@@ -785,7 +903,10 @@ pub(super) fn same_key_siblings<'t, D: Doc>(
 }
 
 /// `env`'s bindings of the names `keep` holds.
-fn bindings(env: &MetaVarEnv<'_, TapeDoc>, keep: &impl Fn(&str) -> bool) -> Bindings {
+fn bindings<D: Doc<Source = String>>(
+    env: &MetaVarEnv<'_, D>,
+    keep: &impl Fn(&str) -> bool,
+) -> Bindings {
     let mut bindings = Vec::new();
     for variable in env.get_matched_variables() {
         match variable {
@@ -866,6 +987,117 @@ mod tests {
         AstGrep::doc(
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
         )
+    }
+
+    #[test]
+    fn bank_parks_utility_verdicts_and_invalidates_replaced_or_released_documents() {
+        // Utilities are supplied through the AST clause, so the same compiled utility identity
+        // is used in every cohort and every document.
+        let compiled = compile_document_with(
+            clause_document(json!({ "id": "c", "violation": violation(), "forbid": {
+                "ast": { "language": "typescript", "rule": { "matches": "name" },
+                    "utils": { "name": { "kind": "identifier", "pattern": "$X" } } }
+            } })),
+            &serde_json::from_str::<Value>(CAPABILITIES).unwrap(),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let grammar = &grammar_matchers(&compiled)[0];
+        let first = tape_file("a;", GrammarDialect::TypeScript);
+        let second = tape_file("b;", GrammarDialect::TypeScript);
+        let replacement = tape_file("c;", GrammarDialect::TypeScript);
+        let check = |file: &AstGrep<TapeDoc>| {
+            let node = file
+                .root()
+                .dfs()
+                .find(|node| node.kind() == "identifier")
+                .unwrap();
+            let before = super::metrics();
+            let mut work = 1_000;
+            assert!(grammar.match_root(node, &mut work).unwrap().is_some());
+            let after = super::metrics();
+            (after.hits - before.hits, after.misses - before.misses)
+        };
+        let mut bank = super::Bank::default();
+        assert_eq!(bank.with_file(1, &first, || check(&first)), (0, 1));
+        assert_eq!(bank.with_file(2, &second, || check(&second)), (0, 1));
+        assert_eq!(bank.with_file(1, &first, || check(&first)), (1, 0));
+        assert_eq!(bank.with_file(2, &second, || check(&second)), (1, 0));
+        assert_eq!(
+            bank.with_file(1, &replacement, || check(&replacement)),
+            (0, 1)
+        );
+        bank.release(2);
+        assert_eq!(bank.with_file(2, &second, || check(&second)), (0, 1));
+
+        with_file(&first, || {
+            assert_eq!(check(&first), (0, 1));
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                bank.with_file(2, &second, || {
+                    assert_eq!(check(&second), (1, 0));
+                    panic!("cohort interrupted");
+                });
+            }));
+            assert!(panic.is_err());
+            assert_eq!(check(&first), (1, 0), "enclosing memo survived unwind");
+            assert_eq!(bank.with_file(2, &second, || check(&second)), (1, 0));
+            assert_eq!(check(&first), (1, 0), "enclosing memo survived return");
+        });
+    }
+
+    #[test]
+    fn capture_fingerprints_keep_scoped_nodes_and_reserved_transformed_bytes() {
+        let file = tape_file("a; b;", GrammarDialect::TypeScript);
+        let nodes = file
+            .root()
+            .dfs()
+            .filter(|node| node.kind() == "identifier")
+            .collect::<Vec<_>>();
+        let mut env = ast_grep_core::meta_var::MetaVarEnv::new();
+        env.insert("X", nodes[0].clone()).unwrap();
+        env.insert("Y", nodes[1].clone()).unwrap();
+        let scope = [Arc::<str>::from("X")];
+        let original = super::capture_fingerprint(&env, Some(&scope));
+        let mut changed = env.clone();
+        changed.insert_transformation(
+            &ast_grep_core::meta_var::MetaVariable::Multiple,
+            "\0X",
+            b"range-a".to_vec(),
+        );
+        let reserved = super::capture_fingerprint(&changed, Some(&scope));
+        assert!(original != reserved);
+        changed.insert_transformation(
+            &ast_grep_core::meta_var::MetaVariable::Multiple,
+            "\0X",
+            b"range-b".to_vec(),
+        );
+        assert!(reserved != super::capture_fingerprint(&changed, Some(&scope)));
+        assert!(original == super::capture_fingerprint(&env.clone(), Some(&scope)));
+        assert!(original != super::capture_fingerprint(&env, None));
+    }
+
+    #[test]
+    fn capture_fingerprints_distinguish_equal_ordinals_from_different_documents() {
+        let first = tape_file("a;", GrammarDialect::TypeScript);
+        let second = tape_file("a;", GrammarDialect::TypeScript);
+        let first_node = first
+            .root()
+            .dfs()
+            .find(|node| node.kind() == "identifier")
+            .unwrap();
+        let second_node = second
+            .root()
+            .dfs()
+            .find(|node| node.kind() == "identifier")
+            .unwrap();
+        assert_eq!(first_node.node_id(), second_node.node_id());
+        let mut first_env = ast_grep_core::meta_var::MetaVarEnv::new();
+        let mut second_env = ast_grep_core::meta_var::MetaVarEnv::new();
+        first_env.insert("X", first_node).unwrap();
+        second_env.insert("X", second_node).unwrap();
+        assert!(
+            super::capture_fingerprint(&first_env, None)
+                != super::capture_fingerprint(&second_env, None)
+        );
     }
 
     #[test]

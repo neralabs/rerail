@@ -332,6 +332,25 @@ impl MatchBudget {
 pub(super) struct SuspendedBudget(MatchDeadline);
 
 impl SuspendedBudget {
+    /// Checks shared exhaustion, closing and wall-clock expiry without spending work.
+    /// Operation schedulers may call this for every frame without draining the file's shared
+    /// allowance. Work exhaustion becomes visible only after a spending poll observes it.
+    pub(super) fn cancelled(&self) -> bool {
+        if self.0.observed() {
+            return true;
+        }
+        let interrupted = self.0.closed.load(Ordering::Relaxed)
+            || matches!(self.0.limit, Limit::Until(deadline) if Instant::now() >= deadline);
+        if !interrupted {
+            return false;
+        }
+        self.0.interrupted_seen.store(true, Ordering::Relaxed);
+        self.0.spent.store(true, Ordering::Relaxed);
+        #[cfg(test)]
+        self.0.spent_stores.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
     /// Wave executors poll explicit document contexts without installing thread-local state.
     pub(super) fn poll(&self) -> bool {
         self.0.exhausted()
@@ -351,6 +370,59 @@ impl Drop for MatchBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suspended_cancellation_checks_do_not_spend_work_or_require_tls() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let budget = SuspendedBudget(MatchDeadline::new(&closed, Limit::Work(2)));
+        let worker = budget.clone();
+        for _ in 0..10_000 {
+            assert!(!budget.cancelled());
+            assert!(!worker.cancelled());
+        }
+        assert_eq!(budget.0.work.load(Ordering::Relaxed), 0);
+        assert!(!budget.poll());
+        assert!(!worker.poll());
+        assert!(
+            !budget.cancelled(),
+            "using the last unit is not observed exhaustion"
+        );
+        assert!(worker.poll());
+        let spent = budget.0.work.load(Ordering::Relaxed);
+        for _ in 0..3 {
+            assert!(budget.cancelled());
+        }
+        assert_eq!(budget.0.work.load(Ordering::Relaxed), spent);
+        assert!(!budget.0.interrupted_seen.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn suspended_cancellation_checks_record_close_and_deadline_without_work() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let budget = SuspendedBudget(MatchDeadline::new(&closed, Limit::Work(2)));
+        closed.store(true, Ordering::Relaxed);
+        for _ in 0..3 {
+            assert!(budget.cancelled());
+        }
+        assert!(budget.0.interrupted_seen.load(Ordering::Relaxed));
+        assert_eq!(budget.0.work.load(Ordering::Relaxed), 0);
+        assert_eq!(budget.0.spent_stores.load(Ordering::Relaxed), 1);
+
+        let open = Arc::new(AtomicBool::new(false));
+        let future = SuspendedBudget(MatchDeadline::new(
+            &open,
+            Limit::Until(Instant::now() + Duration::from_secs(3_600)),
+        ));
+        assert!(!future.cancelled());
+        assert!(!future.0.interrupted_seen.load(Ordering::Relaxed));
+        let expired = SuspendedBudget(MatchDeadline::new(&open, Limit::Until(Instant::now())));
+        for _ in 0..3 {
+            assert!(expired.cancelled());
+        }
+        assert!(expired.0.interrupted_seen.load(Ordering::Relaxed));
+        assert_eq!(expired.0.work.load(Ordering::Relaxed), 0);
+        assert_eq!(expired.0.spent_stores.load(Ordering::Relaxed), 1);
+    }
 
     #[test]
     fn a_deadline_records_spent_only_when_it_becomes_exhausted() {

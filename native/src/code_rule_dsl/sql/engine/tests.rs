@@ -160,50 +160,53 @@ fn fragment_integration_statistics_flip_shape_not_findings() {
 
 #[test]
 fn fragment_integration_isolates_budget_failures_and_recovers() {
-    let mut p:serde_json::Value=serde_json::from_str(&json!({"format":"rerail.policy/v1","id":"limits","revision":1,"mode":"steer","clauses":[{"id":"c","forbid":{"ast":{"language":"typescript","rule":{"kind":"number","matches":"u"},"utils":{"u":{"kind":"number"}}}},"violation":{"code":"L","message":"found","anchor":"witness.span"}}]}).to_string()).unwrap();
-    let p = CodeRuleDslRuntime::compile(p.take().to_string(), "json".into(), CAPABILITIES.into())
-        .unwrap();
-    let g = &grammar_matchers(&p)[0];
-    let mut builder = ProgramCompiler::default();
-    builder.clause(g, None).unwrap();
-    builder.clauses[0].allowance = Some((1, 0));
-    let compiled = builder.finish().0;
-    let mut session = compiled.session().unwrap();
-    let found = session
-        .run(
-            ["1;2;", "1;"]
-                .iter()
-                .map(|s| {
-                    (
-                        crate::code_rule_dsl::sql::tests::differential::tape(g.language, s),
-                        Default::default(),
-                    )
-                })
-                .collect(),
-            &[ClauseRun {
-                statement: 0,
-                files: vec![(0, None), (1, None)],
-            }],
-        )
-        .unwrap();
-    assert!(found[0][0].unknown.is_some());
-    assert!(found[0][0].is_empty());
-    assert_eq!(found[0][1].len(), 1);
-    assert!(found[0][1].unknown.is_none());
-    let again = session
-        .run(
-            vec![(
-                crate::code_rule_dsl::sql::tests::differential::tape(g.language, "1;"),
-                Default::default(),
-            )],
-            &[ClauseRun {
-                statement: 0,
-                files: vec![(0, None)],
-            }],
-        )
-        .unwrap();
-    assert!(again[0][0].unknown.is_none());
-    assert_eq!(again[0][0].len(), 1);
+    for utility in [json!({"kind":"number"}), json!({"pattern":"$N"})] {
+        let mut p:serde_json::Value=serde_json::from_str(&json!({"format":"rerail.policy/v1","id":"limits","revision":1,"mode":"steer","clauses":[{"id":"c","forbid":{"ast":{"language":"typescript","rule":{"kind":"number","matches":"u"},"utils":{"u":utility}}},"violation":{"code":"L","message":"found","anchor":"witness.span"}}]}).to_string()).unwrap();
+        let p =
+            CodeRuleDslRuntime::compile(p.take().to_string(), "json".into(), CAPABILITIES.into())
+                .unwrap();
+        let g = &grammar_matchers(&p)[0];
+        let mut builder = ProgramCompiler::default();
+        builder.clause(g, None).unwrap();
+        builder.clauses[0].allowance = Some((1, 0));
+        let compiled = builder.finish().0;
+        let mut session = compiled.session().unwrap();
+        let found = session
+            .run(
+                ["1;2;", "1;"]
+                    .iter()
+                    .map(|s| {
+                        (
+                            crate::code_rule_dsl::sql::tests::differential::tape(g.language, s),
+                            Default::default(),
+                        )
+                    })
+                    .collect(),
+                &[ClauseRun {
+                    statement: 0,
+                    files: vec![(0, None), (1, None)],
+                }],
+            )
+            .unwrap();
+        assert!(found[0][0].unknown.is_some());
+        assert!(found[0][0].is_empty());
+        assert_eq!(found[0][1].len(), 1);
+        assert!(found[0][1].unknown.is_none());
+        let again = session
+            .run(
+                vec![(
+                    crate::code_rule_dsl::sql::tests::differential::tape(g.language, "1;"),
+                    Default::default(),
+                )],
+                &[ClauseRun {
+                    statement: 0,
+                    files: vec![(0, None)],
+                }],
+            )
+            .unwrap();
+        assert!(again[0][0].unknown.is_none());
+        assert_eq!(again[0][0].len(), 1);
+    }
 }
 
 #[path = "batch_tests.rs"]

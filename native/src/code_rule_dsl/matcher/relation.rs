@@ -638,6 +638,17 @@ impl Related {
         })
     }
 
+    /// Whether closure answers depend only on the candidate's tree and values.
+    /// Callers must separately exclude capture enumeration and parse hosts.
+    pub(super) fn closure_eligible(&self) -> bool {
+        self.chains()
+    }
+
+    /// Whether this rule has a same-key sibling projection plan, without consulting match TLS.
+    pub(super) fn has_same_key_plan(&self) -> bool {
+        self.same_key.get_or_init(|| SameKey::of(&self.rule)).is_some()
+    }
+
     /// Whether the rule's answers are remembered for the file in this walk: it is node-local
     /// (`chains`), and neither `violation.each` nor a `parse`'s host is being matched.
     fn remembers(&self) -> bool {

@@ -25,6 +25,9 @@ pub(in crate::code_rule_dsl::sql) struct Metrics {
     pub wave_emitted_rows: usize,
     pub wave_guard_roots: usize,
     pub wave_guard_rejections: usize,
+    pub cohorts: Vec<serde_json::Value>,
+    pub cohort_compile_cpu_ns: u64,
+    pub cohort_compile_wall_ns: u64,
 }
 #[derive(Clone)]
 pub(in crate::code_rule_dsl::sql) struct Member {
@@ -260,11 +263,30 @@ fn execute(
         })
         .collect::<Vec<_>>();
     let (mut admitted, wave_metrics) = prepare_waves(aux, &batch, &members, &by_file, &supplied)?;
+    let compile_started = Started::now();
+    let mut programs = matcher::cohort::Programs::default();
+    for (_, fragment) in &members {
+        programs.lower(&fragment.grammar.matcher);
+    }
+    for fragment in &residuals {
+        programs.lower(&fragment.grammar.matcher);
+    }
+    let compile_time = compile_started.elapsed();
+    {
+        let mut metrics = aux.metrics.lock().unwrap();
+        metrics.cohort_compile_cpu_ns += compile_time.cpu;
+        metrics.cohort_compile_wall_ns += compile_time.wall;
+    }
     let mut output = vec![];
-    for (file, scopes) in by_file {
-        let entry = &batch.files[file];
-        matcher::with_file_memo(&entry.root, || -> Result<()> {
+    let file_groups = by_file.iter().collect::<Vec<_>>();
+    // Retain source memos and input capture rows only for this document tile.
+    for files in file_groups.chunks(16) {
+        let mut tasks = vec![];
+        let mut task_members = vec![];
+        for &(file, scopes) in files {
+            let file = *file;
             for (index, selected) in scopes {
+                let index = *index;
                 let (member, f) = &members[index];
                 let gate = admitted.remove(&(member.id, file as u32));
                 let had_admission = gate.is_some();
@@ -308,7 +330,7 @@ fn execute(
                 } else {
                     let requests = match supplied.remove(&(member.id, file as u32)) {
                         Some(r) => r,
-                        None => f.requests_for(&batch, &[(file, selected)])?,
+                        None => f.requests_for(&batch, &[(file, selected.clone())])?,
                     };
                     if !had_admission {
                         aux.metrics.lock().unwrap().candidate_roots += requests.len();
@@ -318,22 +340,27 @@ fn execute(
                 let mut requests = requests;
                 requests.sort_by_key(|r| r.node);
                 let runner = fragment.unwrap_or(f);
-                output.extend(
-                    runner
-                        .evaluate_file(
-                            &batch,
-                            &requests,
-                            file as u32,
-                            0..requests.len(),
-                            remaining,
-                        )?
-                        .into_iter()
-                        .map(|r| (member.id, r)),
-                );
+                task_members.push(member.id);
+                tasks.push(super::cohorts::Task {
+                    fragment: runner,
+                    file: file as u32,
+                    requests,
+                    remaining,
+                });
             }
-            Ok(())
-        })?;
-        crate::code_rule_dsl::sql::terminals::BatchScopes::release(file);
+        }
+        let (rows, cohort_metrics) = super::cohorts::execute_compiled(&batch, &tasks, &programs)?;
+        for (member, rows) in task_members.into_iter().zip(rows) {
+            output.extend(rows.into_iter().map(|row| (member, row)));
+        }
+        aux.metrics
+            .lock()
+            .unwrap()
+            .cohorts
+            .push(serde_json::to_value(cohort_metrics).unwrap());
+        for &(file, _) in files {
+            crate::code_rule_dsl::sql::terminals::BatchScopes::release(*file);
+        }
     }
     let memo_after = matcher::memo_metrics();
     let mut m = aux.metrics.lock().unwrap();
@@ -392,7 +419,7 @@ fn prepare_waves(
             .context
             .budget
             .as_ref()
-            .is_some_and(|b| b.poll())
+            .is_some_and(|b| b.cancelled())
     };
     let mut executor = wave::Executor::new(&aux.programs, docs);
     executor.cancellation(&cancel);

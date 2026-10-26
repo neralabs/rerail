@@ -148,6 +148,7 @@ pub(crate) struct Programs {
     ops: Vec<Op>,
     keys: BTreeMap<Key, u32>,
     guards: BTreeMap<Arc<[u8]>, u32>,
+    guard_lists: BTreeMap<(bool, Vec<u32>), u32>,
 }
 impl Programs {
     pub fn lower(&mut self, matcher: &AstMatcher) -> Option<u32> {
@@ -201,6 +202,27 @@ impl Programs {
             return Some(program);
         }
         let op = match matcher {
+            AstMatcher::Pattern(pattern) => {
+                use ast_grep_core::matcher::{Matcher, kind_utils};
+                // A kind mismatch is a capture-free, known false result. A
+                // kind match merely admits the original pattern for replay.
+                // Template/unconstrained metavariables expose no kind bound.
+                let kinds = pattern.potential_kinds()?;
+                let kinds: Vec<_> = kinds.iter().map(|kind| kind as u16).collect();
+                // ERROR goals can match other kinds, including terminal goals
+                // whose potential_kinds currently reports ERROR itself.
+                if kinds.iter().any(|kind| kind_utils::is_error_kind(*kind)) {
+                    return None;
+                }
+                let key = Key::Kinds(kinds.clone());
+                if let Some(&program) = self.keys.get(&key) {
+                    return Some(program);
+                }
+                let program = self.ops.len() as u32;
+                self.keys.insert(key, program);
+                self.ops.push(Op::Kind(kinds));
+                return Some(program);
+            }
             AstMatcher::All(terms) => {
                 let mut children = vec![];
                 for term in terms {
@@ -248,7 +270,18 @@ impl Programs {
             AstMatcher::Constrained(c) => return self.admission_at(&c.rule, depth + 1),
             _ => return None,
         };
+        // Partial proofs with the same ordered children are the same physical
+        // producer. Exactness belongs to the caller, not to this numeric ID.
+        let list = match &op {
+            Op::All(children) => (false, children.clone()),
+            Op::Any(children) => (true, children.clone()),
+            _ => unreachable!("partial composite proof"),
+        };
+        if let Some(&id) = self.guard_lists.get(&list) {
+            return Some(id);
+        }
         let id = self.ops.len() as u32;
+        self.guard_lists.insert(list, id);
         self.ops.push(op);
         Some(id)
     }
@@ -332,6 +365,13 @@ impl<'a> Executor<'a> {
             metrics: Metrics::default(),
         }
     }
+    /// Register an immutable document revision without invalidating earlier facts.
+    pub fn register_document(&mut self, document: &'a TapeDoc) -> u32 {
+        let id = self.documents.len() as u32;
+        self.documents.push(document);
+        self.document_poll.push((0, false));
+        id
+    }
     pub fn cancellation(&mut self, poll: &'a dyn Fn(u32) -> bool) {
         self.cancelled = Some(poll);
     }
@@ -339,7 +379,12 @@ impl<'a> Executor<'a> {
     pub fn kind_index(&mut self, index: &'a dyn Fn(u32, &[u16]) -> Vec<u32>) {
         self.kind_index = Some(index);
     }
-    fn postings(&mut self, lane: Lane, walk: &Walk) -> Result<Arc<[u32]>, ()> {
+    fn postings(
+        &mut self,
+        lane: Lane,
+        walk: &Walk,
+        cancelled: &dyn Fn(u32) -> bool,
+    ) -> Result<Arc<[u32]>, ()> {
         let key = (lane.document, lane.program);
         if let Some(found) = self.postings.get(&key) {
             return Ok(found.clone());
@@ -351,7 +396,7 @@ impl<'a> Executor<'a> {
             None => {
                 let mut found = vec![];
                 for node in 0..doc.transducer_len() as u32 {
-                    if node % 1024 == 0 && self.cancelled.is_some_and(|f| f(lane.document)) {
+                    if node % 1024 == 0 && cancelled(lane.document) {
                         return Err(());
                     }
                     if filter
@@ -365,12 +410,12 @@ impl<'a> Executor<'a> {
                 found
             }
         };
-        if self.cancelled.is_some_and(|f| f(lane.document)) {
+        if cancelled(lane.document) {
             return Err(());
         }
         let mut selected = vec![];
         for (i, node) in nodes.into_iter().enumerate() {
-            if i % 1024 == 0 && self.cancelled.is_some_and(|f| f(lane.document)) {
+            if i % 1024 == 0 && cancelled(lane.document) {
                 return Err(());
             }
             if filter
@@ -396,6 +441,14 @@ impl<'a> Executor<'a> {
     }
     /// One bounded submission can mix both programs and documents. Results retain lane order.
     pub fn execute(&mut self, lanes: &[Lane]) -> Vec<Answer> {
+        self.execute_cancellable(lanes, self.cancelled.unwrap_or(&|_| false))
+    }
+    /// Borrow cancellation only for this submission; document facts survive the callback.
+    pub fn execute_cancellable(
+        &mut self,
+        lanes: &[Lane],
+        cancelled: &dyn Fn(u32) -> bool,
+    ) -> Vec<Answer> {
         assert!(lanes.len() <= TILE);
         self.metrics.submissions += 1;
         self.metrics.lanes += lanes.len() as u64;
@@ -434,19 +487,19 @@ impl<'a> Executor<'a> {
             slots.push(id);
         }
         self.metrics.unique_lanes += unique.len() as u64;
-        let results = self.eval(&unique, 0);
+        let results = self.eval(&unique, 0, cancelled);
         self.metrics.max_memo_entries = self.metrics.max_memo_entries.max(self.memo.len());
         self.metrics.max_text_entries = self.metrics.max_text_entries.max(self.text.len());
         slots.into_iter().map(|i| results[i]).collect()
     }
-    fn poll_document(&mut self, document: u32) -> bool {
+    fn poll_document(&mut self, document: u32, cancelled: &dyn Fn(u32) -> bool) -> bool {
         let poll = &mut self.document_poll[document as usize];
         if poll.0 != self.poll_epoch {
-            *poll = (self.poll_epoch, self.cancelled.is_some_and(|f| f(document)));
+            *poll = (self.poll_epoch, cancelled(document));
         }
         poll.1
     }
-    fn eval(&mut self, lanes: &[Lane], depth: u32) -> Vec<Answer> {
+    fn eval(&mut self, lanes: &[Lane], depth: u32, cancelled: &dyn Fn(u32) -> bool) -> Vec<Answer> {
         if lanes.is_empty() {
             return vec![];
         }
@@ -463,7 +516,7 @@ impl<'a> Executor<'a> {
         self.poll_epoch += 1;
         let mut cohorts: [Vec<usize>; 8] = std::array::from_fn(|_| vec![]);
         for (i, l) in lanes.iter().enumerate() {
-            if self.poll_document(l.document) {
+            if self.poll_document(l.document, cancelled) {
                 out[i].incomplete = true
             } else {
                 cohorts[self.programs.ops[l.program as usize].family()].push(i)
@@ -548,7 +601,7 @@ impl<'a> Executor<'a> {
                         if pending.is_empty() {
                             break;
                         }
-                        let results = self.eval(&pending, depth + 1);
+                        let results = self.eval(&pending, depth + 1, cancelled);
                         active = vec![];
                         for (i, r) in next.into_iter().zip(results) {
                             out[i].add(r);
@@ -594,7 +647,7 @@ impl<'a> Executor<'a> {
                         };
                         next.push((i, owner));
                     }
-                    let results = self.eval(&pending, depth + 1);
+                    let results = self.eval(&pending, depth + 1, cancelled);
                     for (i, owner) in next {
                         let mut r = results[owner];
                         if call {
@@ -615,8 +668,8 @@ impl<'a> Executor<'a> {
                     let (chains, walks): (Vec<_>, Vec<_>) = ids.into_iter().partition(|&i| {
                         matches!(&self.programs.ops[lanes[i].program as usize], Op::Walk(w) if w.axis != 0 && matches!(w.stop, Stop::End) && w.count.is_none())
                     });
-                    self.chains(lanes, &chains, &mut out, depth);
-                    self.walks(lanes, &walks, &mut out, depth);
+                    self.chains(lanes, &chains, &mut out, depth, cancelled);
+                    self.walks(lanes, &walks, &mut out, depth, cancelled);
                 }
                 _ => unreachable!(),
             }
@@ -625,7 +678,14 @@ impl<'a> Executor<'a> {
     }
     /// Build the demanded suffix DAG once, rather than walking one chain per root.
     /// Each edge carries its child's logical cost; cache hits replay that cost, not its CPU work.
-    fn chains(&mut self, lanes: &[Lane], ids: &[usize], out: &mut [Answer], depth: u32) {
+    fn chains(
+        &mut self,
+        lanes: &[Lane],
+        ids: &[usize],
+        out: &mut [Answer],
+        depth: u32,
+        cancelled: &dyn Fn(u32) -> bool,
+    ) {
         if ids.is_empty() {
             return;
         }
@@ -692,7 +752,7 @@ impl<'a> Executor<'a> {
                 let key = states[at].key;
                 self.metrics.closure_nodes += 1;
                 self.metrics.walk_advances += 1;
-                if self.poll_document(key.document) {
+                if self.poll_document(key.document, cancelled) {
                     states[at].value.incomplete = true;
                     states[at].done = true;
                     continue;
@@ -734,7 +794,11 @@ impl<'a> Executor<'a> {
                     destinations.push(at);
                 }
             }
-            for (at, value) in destinations.into_iter().zip(self.eval(&pending, depth + 1)) {
+            for (at, value) in
+                destinations
+                    .into_iter()
+                    .zip(self.eval(&pending, depth + 1, cancelled))
+            {
                 states[at].value = value;
                 states[at].done |= value.matched || value.incomplete;
             }
@@ -800,6 +864,7 @@ impl<'a> Executor<'a> {
         active: &[usize],
         out: &mut [Answer],
         depth: u32,
+        cancelled: &dyn Fn(u32) -> bool,
     ) -> Vec<bool> {
         let mut groups = BTreeMap::<(u32, u32), Vec<usize>>::new();
         for &j in active {
@@ -816,7 +881,7 @@ impl<'a> Executor<'a> {
         }
         let mut done = vec![false; ids.len()];
         for (key, group) in groups {
-            if self.cancelled.is_some_and(|f| f(key.0)) {
+            if cancelled(key.0) {
                 for j in group {
                     out[ids[j]].incomplete = true;
                     done[j] = true;
@@ -878,7 +943,11 @@ impl<'a> Executor<'a> {
                         flags: 0,
                     });
                     if pending.len() == TILE {
-                        for (lane, answer) in pending.iter().zip(self.eval(&pending, depth + 1)) {
+                        for (lane, answer) in
+                            pending
+                                .iter()
+                                .zip(self.eval(&pending, depth + 1, cancelled))
+                        {
                             incomplete |= answer.incomplete;
                             if answer.matched {
                                 facts.hits.push(lane.node);
@@ -897,7 +966,10 @@ impl<'a> Executor<'a> {
                 }
             }
             if !incomplete {
-                for (lane, answer) in pending.iter().zip(self.eval(&pending, depth + 1)) {
+                for (lane, answer) in pending
+                    .iter()
+                    .zip(self.eval(&pending, depth + 1, cancelled))
+                {
                     incomplete |= answer.incomplete;
                     if answer.matched {
                         facts.hits.push(lane.node);
@@ -925,7 +997,14 @@ impl<'a> Executor<'a> {
         }
         done
     }
-    fn walks(&mut self, lanes: &[Lane], ids: &[usize], out: &mut [Answer], depth: u32) {
+    fn walks(
+        &mut self,
+        lanes: &[Lane],
+        ids: &[usize],
+        out: &mut [Answer],
+        depth: u32,
+        cancelled: &dyn Fn(u32) -> bool,
+    ) {
         if ids.is_empty() {
             return;
         }
@@ -973,7 +1052,7 @@ impl<'a> Executor<'a> {
                 let posting = if let Some(found) = local_postings.get(&key) {
                     found.clone()
                 } else {
-                    let found = self.postings(lane, w);
+                    let found = self.postings(lane, w, cancelled);
                     local_postings.insert(key, found.clone());
                     found
                 };
@@ -1002,12 +1081,13 @@ impl<'a> Executor<'a> {
         while !active.is_empty() {
             rounds += 1;
             if rounds == 8 {
-                let done = self.subtree_batch(lanes, ids, &walks, &cursor, &active, out, depth);
+                let done =
+                    self.subtree_batch(lanes, ids, &walks, &cursor, &active, out, depth, cancelled);
                 active.retain(|&j| !done[j]);
             }
             self.poll_epoch += 1;
             active.retain(|&j| {
-                if self.poll_document(lanes[ids[j]].document) {
+                if self.poll_document(lanes[ids[j]].document, cancelled) {
                     out[ids[j]].incomplete = true;
                     false
                 } else {
@@ -1027,6 +1107,7 @@ impl<'a> Executor<'a> {
                 out,
                 depth,
                 false,
+                cancelled,
             );
             let mut pending = vec![];
             let mut destinations = vec![];
@@ -1055,7 +1136,7 @@ impl<'a> Executor<'a> {
                     destinations.push(j);
                 }
             }
-            let results = self.eval(&pending, depth + 1);
+            let results = self.eval(&pending, depth + 1, cancelled);
             for (j, mut r) in destinations.into_iter().zip(results) {
                 let i = ids[j];
                 let w = &walks[j];
@@ -1088,6 +1169,7 @@ impl<'a> Executor<'a> {
                 out,
                 depth,
                 true,
+                cancelled,
             );
             for &j in &active {
                 let l = lanes[ids[j]];
@@ -1143,6 +1225,7 @@ impl<'a> Executor<'a> {
         out: &mut [Answer],
         depth: u32,
         down: bool,
+        cancelled: &dyn Fn(u32) -> bool,
     ) {
         let mut pending = vec![];
         let mut destinations = vec![];
@@ -1159,7 +1242,10 @@ impl<'a> Executor<'a> {
                 destinations.push(j)
             }
         }
-        for (j, r) in destinations.into_iter().zip(self.eval(&pending, depth + 1)) {
+        for (j, r) in destinations
+            .into_iter()
+            .zip(self.eval(&pending, depth + 1, cancelled))
+        {
             stopped[j] = r.matched;
             out[ids[j]].add(r);
         }
@@ -1178,7 +1264,7 @@ mod tests {
     };
     use ast_grep_core::meta_var::MetaVarEnv;
     use serde_json::json;
-    use std::borrow::Cow;
+    use std::{borrow::Cow, collections::HashMap};
     fn grammar(rule: serde_json::Value, utils: serde_json::Value) -> matcher::GrammarMatcher {
         let p=CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"waves","revision":1,"mode":"steer","clauses":[{"id":"c","forbid":{"ast":{"language":"javascript","rule":rule,"utils":utils}},"violation":{"code":"W","message":"wave","anchor":"witness.span"}}]}).to_string(),"json".into(),CAPABILITIES.into()).unwrap();
         grammar_matchers(&p)[0].clone()
@@ -1232,6 +1318,194 @@ mod tests {
         assert!(executor.metrics.subtree_nodes <= 2 * nodes as u64);
         assert_eq!(executor.metrics.posting_builds, 1);
         assert_eq!(executor.metrics.posting_seeks, nodes as u64);
+
+        // A streaming cohort retains its facts while the cancellation callback
+        // and document set change between submissions.
+        let mut streaming = Executor::new(&programs, vec![]);
+        assert_eq!(streaming.register_document(&doc), 0);
+        let lane = Lane {
+            program: entries[1],
+            document: 0,
+            node: 0,
+            flags: 0,
+        };
+        let first = streaming.execute_cancellable(&[lane], &|_| false);
+        assert!(!first[0].incomplete);
+        assert!(streaming.execute_cancellable(&[lane], &|_| true)[0].incomplete);
+        assert_eq!(streaming.execute_cancellable(&[lane], &|_| false), first);
+        assert_eq!(streaming.metrics.posting_builds, 1);
+        let second = streaming.register_document(&doc);
+        assert_eq!(second, 1);
+        assert_eq!(
+            streaming.execute_cancellable(
+                &[Lane {
+                    document: second,
+                    ..lane
+                }],
+                &|_| false
+            ),
+            first
+        );
+    }
+    #[test]
+    fn pattern_guards_share_kind_producers_without_becoming_exact() {
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use ast_grep_core::matcher::{KindMatcher, Matcher, Pattern};
+        let first = Arc::new(Pattern::new("f($X)", GrammarDialect::JavaScript));
+        let kind = first.potential_kinds().unwrap().iter().next().unwrap() as u16;
+        let first = AstMatcher::Pattern(first);
+        let second =
+            AstMatcher::Pattern(Arc::new(Pattern::new("g($Y)", GrammarDialect::JavaScript)));
+        let exact = AstMatcher::Kind(KindMatcher::from_id(kind));
+        for exact_first in [true, false] {
+            let mut programs = Programs::default();
+            let before = exact_first.then(|| programs.lower(&exact).unwrap());
+            let first_guard = programs.admission(&first).unwrap();
+            let second_guard = programs.admission(&second).unwrap();
+            let exact_program = before.unwrap_or_else(|| programs.lower(&exact).unwrap());
+            assert_eq!(first_guard, second_guard);
+            assert_eq!(first_guard, exact_program);
+            assert_eq!(programs.ops.len(), 1);
+            assert!(programs.lower(&first).is_none());
+            assert!(programs.lower(&second).is_none());
+
+            let all_a = AstMatcher::All(vec![exact.clone(), first.clone()]);
+            let all_b = AstMatcher::All(vec![exact.clone(), second.clone()]);
+            let any_a = AstMatcher::Any(vec![exact.clone(), first.clone()]);
+            let any_b = AstMatcher::Any(vec![exact.clone(), second.clone()]);
+            let all = programs.admission(&all_a).unwrap();
+            let any = programs.admission(&any_a).unwrap();
+            assert_eq!(Some(all), programs.admission(&all_b));
+            assert_eq!(Some(any), programs.admission(&any_b));
+            assert_ne!(all, any);
+            assert!(programs.lower(&all_a).is_none());
+            assert!(programs.lower(&any_a).is_none());
+        }
+    }
+    #[test]
+    fn pattern_admission_is_partial_for_every_strictness_and_preserves_captures() {
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use ast_grep_core::{
+            MatchStrictness as S, Matcher,
+            matcher::{Pattern, PatternNode},
+        };
+        let dialect = GrammarDialect::JavaScript;
+        let source = "f(x); g(y); x;";
+        let grammar = Grammar::new(dialect).unwrap();
+        let image = TapeImage::parse(&grammar, source, &|| false)
+            .unwrap()
+            .unwrap();
+        let doc = TapeDoc::restore_with_lines(
+            Arc::new(source.to_owned()),
+            grammar,
+            &image,
+            Arc::new(LineTable::new(source, Terminators::of(dialect))),
+            &|| false,
+        )
+        .unwrap();
+        let root = ast_grep_core::AstGrep::doc(doc);
+        for strictness in [
+            S::Cst,
+            S::Smart,
+            S::Ast,
+            S::Relaxed,
+            S::Signature,
+            S::Template,
+        ] {
+            let rule = AstMatcher::Pattern(Arc::new(
+                Pattern::new("f($X)", dialect).with_strictness(strictness.clone()),
+            ));
+            let mut programs = Programs::default();
+            assert!(programs.lower(&rule).is_none());
+            assert!(super::super::factor::key(&rule).is_none());
+            let Some(program) = programs.admission(&rule) else {
+                assert!(matches!(strictness, S::Template));
+                continue;
+            };
+            let lanes: Vec<_> = (0..root.root().get_doc().transducer_len() as u32)
+                .map(|node| Lane {
+                    program,
+                    document: 0,
+                    node,
+                    flags: 0,
+                })
+                .collect();
+            let answers = Executor::new(&programs, vec![root.root().get_doc()]).execute(&lanes);
+            let mut rejected = 0;
+            for (lane, answer) in lanes.iter().zip(answers) {
+                let node = matcher::node_at(&root, lane.node);
+                let mut native_env = Cow::Owned(MetaVarEnv::new());
+                let expected = rule
+                    .match_node_with_env(node.clone(), &mut native_env)
+                    .is_some();
+                let mut replay_env = Cow::Owned(MetaVarEnv::new());
+                let replay =
+                    answer.matched && rule.match_node_with_env(node, &mut replay_env).is_some();
+                assert_eq!(replay, expected);
+                if !answer.matched {
+                    rejected += 1;
+                    assert!(!expected);
+                    assert_eq!(answer.steps, 0);
+                }
+                if replay {
+                    assert_eq!(
+                        HashMap::<String, String>::from(replay_env.into_owned()),
+                        HashMap::<String, String>::from(native_env.into_owned())
+                    );
+                }
+            }
+            assert!(rejected > 0);
+        }
+        // A successful kind guard must not inspect terms after its opaque
+        // pattern. In particular, the later Never must not reject call nodes.
+        let mut programs = Programs::default();
+        let partial = AstMatcher::All(vec![
+            AstMatcher::Pattern(Arc::new(Pattern::new("f($X)", dialect))),
+            AstMatcher::Never,
+        ]);
+        let guard = programs.admission(&partial).unwrap();
+        assert!(matches!(programs.ops[guard as usize], Op::Kind(_)));
+        let alternatives = AstMatcher::Any(vec![
+            partial,
+            AstMatcher::Pattern(Arc::new(Pattern::new("x", dialect))),
+        ]);
+        assert!(programs.admission(&alternatives).is_some());
+        let opaque_branch = AstMatcher::Any(vec![
+            alternatives,
+            AstMatcher::Pattern(Arc::new(Pattern::new("$X", dialect))),
+        ]);
+        assert!(programs.admission(&opaque_branch).is_none());
+        let mut programs = Programs::default();
+        assert!(
+            programs
+                .admission(&AstMatcher::Pattern(Arc::new(Pattern::new("$X", dialect))))
+                .is_none()
+        );
+        let contextual = Pattern::contextual("f($X)", "call_expression", dialect).unwrap();
+        assert!(
+            programs
+                .admission(&AstMatcher::Pattern(Arc::new(contextual)))
+                .is_some()
+        );
+        for node in [
+            PatternNode::Terminal {
+                text: "x".into(),
+                is_named: true,
+                kind_id: u16::MAX,
+            },
+            PatternNode::Internal {
+                kind_id: u16::MAX,
+                children: Vec::new(),
+            },
+        ] {
+            let mut pattern = Pattern::new("x", dialect);
+            pattern.node = node;
+            assert!(
+                programs
+                    .admission(&AstMatcher::Pattern(Arc::new(pattern)))
+                    .is_none()
+            );
+        }
     }
     #[test]
     fn mixed_alternative_guards_only_reject_exact_negative_paths() {

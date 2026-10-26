@@ -88,13 +88,41 @@ def main():
     residual_cpu = sum(v["cpuNs"] for v in by_clause.values())
     batches = [b for p in profiles for b in p.get("nativeBatches", [])]
     prefix_cpu = sum(b["prefix_cpu_ns"] for b in batches)
+    cohort_cpu = sum(c.get("cpu_ns", 0) for b in batches for c in b.get("cohorts", []))
+    residual_cpu += cohort_cpu
     boundary_cpu = residual_cpu + prefix_cpu
 
     waves = [b["wave"] for b in batches if "wave" in b]
     wave_metrics = {}
     require(bool(waves), "native operation-wave evidence is missing")
     scalar_roots = sum(b["roots"] for p in profiles for b in p["boundaries"])
-    require(scalar_roots <= 53_109_000, "scalar native root calls exceed the qualified ceiling")
+    require(scalar_roots == 0, "scalar residual matcher calls remain")
+    cohorts = [c for b in batches for c in b.get("cohorts", [])]
+    require(bool(cohorts), "capture cohort evidence is missing")
+    def merged(records):
+        result = {}
+        for record in records:
+            for key, value in record.items():
+                if isinstance(value, dict):
+                    continue
+                if isinstance(value, list):
+                    result[key] = [a+b for a,b in zip(result.get(key, [0]*len(value)), value)]
+                    continue
+                result[key] = max(result.get(key, 0), value) if key.startswith(("max_", "peak_")) else result.get(key, 0) + value
+        return result
+    cohort_records = [c["operations"] for c in cohorts] + [c["semantic"]["nested"] for c in cohorts]
+    cohort_metrics = merged(cohort_records)
+    pattern_metrics = merged([c.get("pattern", {}) for c in cohort_records])
+    region_metrics = merged([c.get("region_kernel", {}) for c in cohort_records])
+    control_shapes = {}
+    for record in cohort_records:
+        for shape, count in record.get("control_programs", {}).items():
+            control_shapes[shape] = control_shapes.get(shape, 0) + count
+    semantic_metrics = merged([c["semantic"] for c in cohorts])
+    require(semantic_metrics.get("scalar_matcher_calls", -1) == 0, "semantic projections call the scalar matcher")
+    require(cohort_metrics.get("multi_document_submissions", 0) > 0, "capture cohorts do not mix documents")
+    require(cohort_metrics.get("multi_program_submissions", 0) > 0, "capture cohorts do not mix programs")
+    require(cohort_metrics.get("operation_lanes", 0) > 4 * cohort_metrics.get("operation_dispatches", 0), "capture operations remain scalar")
     if waves:
         maximums = {"max_kernel_width", "max_documents", "max_programs", "max_memo_entries", "max_text_entries"}
         for key in waves[0]:
@@ -117,7 +145,7 @@ def main():
 
     result = {
         "accepted": not failures, "failures": failures,
-        "ceilings": {"matchingExecutions": 100, "coldCpuRatio": 1.30, "medianEditCpuRatio": 1.50, "coldSqlPeakRssBytes": 1_610_612_736, "scalarNativeRoots": 53_109_000, "minimumMeanKernelWidth": 4},
+        "ceilings": {"matchingExecutions": 100, "coldCpuRatio": 1.30, "medianEditCpuRatio": 1.50, "coldSqlPeakRssBytes": 1_610_612_736, "scalarNativeRoots": 0, "semanticScalarMatcherCalls": 0, "minimumMeanKernelWidth": 4},
         "configuration": {"profile": "loop", "optLevel": 1, "allocator": "real jemalloc", "localTestLto": False, "features": ["unbounded-work"], "rustc": subprocess.check_output(["rustc", "--version"]).decode().strip()},
         "provenance": {"baseCommit": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(), "corpusCommit": subprocess.check_output(["git", "-C", str(args.corpus), "rev-parse", "HEAD"]).decode().strip(), "corpusInventorySha256": digest(json.dumps(corpus_inventory, separators=(",", ":")).encode()), "changedRustSources": source_inventory, "binarySha256": digest(args.binary.read_bytes()), "rawReportsSha256": {n: digest(p.read_bytes()) for n, p in (("catalog", args.catalog), ("native", args.native), ("sql", args.sql))}},
         "workload": {"files": sql["files"], "sourceBytes": sql["sourceBytes"], "policies": sql["policies"], "policySource": "shipped Python catalog, not the unavailable original twelve policies"},
@@ -135,8 +163,13 @@ def main():
         "sqlAndBoundaryOverheadCpuNs": matching_cpu - boundary_cpu,
         "largestNativeFragments": sorted(by_clause.values(), key=lambda v: v["cpuNs"], reverse=True)[:10],
         "nativeFilters": sum(b["filters"] for p in profiles for b in p["boundaries"]) + sum(b["filters"] for b in batches),
-        "nativeRoots": sum(b["roots"] for p in profiles for b in p["boundaries"]) + sum(b["prefix_roots"] for b in batches),
+        "nativeRoots": sum(b["roots"] + b.get("cohort_requests", 0) for p in profiles for b in p["boundaries"]) + sum(b["prefix_roots"] for b in batches),
         "nativeWave": wave_metrics,
+        "captureCohorts": cohort_metrics,
+        "capturePatterns": pattern_metrics,
+        "captureClosedRegions": region_metrics,
+        "captureControlShapes": dict(sorted(control_shapes.items(), key=lambda pair: (-pair[1], pair[0]))),
+        "semanticProjections": semantic_metrics,
         "kernelFamilies": kernel_families,
         "scalarNativeRoots": scalar_roots,
         "waveEmittedRows": sum(b.get("wave_emitted_rows", 0) for b in batches),

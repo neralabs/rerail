@@ -3,7 +3,8 @@
 The engine batches native operations across programs and documents.
 A lane identifies a program, document, and preorder node. SQL transports demands and completed typed results.
 The CPU executor groups lanes by operation, advances active lanes, and scatters results into the original request order.
-Its kernels do not call `AstMatcher` or install thread-local matcher state.
+Its structural and pattern kernels do not call `AstMatcher` or install thread-local matcher state.
+Semantic fact projections install native file and clause state for each operation group.
 
 The [journal](sql-matcher-fragment-transition.md) records measurements, rejected assumptions, review findings, and corrections.
 The [preceding qualification](../benchmark/sql-matcher-batch-integration.json) measures the earlier file-first implementation at commit `92b1978e`.
@@ -17,6 +18,8 @@ Its SQL submission count did not measure native execution granularity.
 | Generic prefix planning | `producers/prefix.rs` | Ordered semantic keys and reusable producer stages |
 | Predicate identity | `matcher/factor.rs` | Closed predicate proof, complete utility definitions, residual construction |
 | Operation lowering and execution | `matcher/wave.rs` | Program interning, numeric lanes, operation cohorts, shared navigation, bounded caches |
+| Capture-bearing execution | `matcher/cohort.rs`, `matcher/pattern_batch.rs` | Capture frames, utility calls, ordered continuations, pattern operations |
+| Semantic projections | `matcher/cohort_host.rs` | Typed facts, child demands, parsed-document contexts |
 | Typed transport | `sql/fragments/batch.rs` | Consumer domains, two-axis tiles, file allowances, residual execution, result publication |
 | SQL generation | `sql/engine/planning.rs` | Candidate access paths, demand aggregation, final projection |
 | Tape navigation | `tape.rs` | Native node links and sibling starting-position semantics |
@@ -36,6 +39,8 @@ An index-provider function supplies existing kind postings without coupling the 
 Each submission contains at most 2,048 lanes. The driver tiles both the file and program axes.
 Operation cohorts can contain several programs and documents.
 Active masks preserve ordered short-circuit behavior while removing completed lanes.
+Programs with shared closure or sibling-table fills admit roots in file-clause order.
+Other programs retain full-width root admission. Independent owners remain active together.
 The result records truth, logical utility work, maximum utility depth, and incomplete execution.
 
 The supported exact operations are kinds, regexes, booleans, tree relations, stop predicates, counts without exports, and closed recursive utilities.
@@ -69,11 +74,24 @@ Conjunction proofs stop at the first opaque term. Every disjunction branch must 
 Partial proofs cannot pass through negation or move across capture and semantic operations.
 Rejected paths charge their proven utility work. Admitted paths retain the original program's work charges.
 
-Capture-dependent matching, semantic predicates, and enumeration retain their native implementation.
-Their scalar root calls remain visible in the report.
-This is a CPU operation executor, not a complete GPU backend or a GPU implementation of those residual operations.
+Capture-dependent matching now runs through a second native operation stage.
+It handles ordered alternatives, capture frames, utility calls, constraints, counts, and enumeration.
+Pattern matching dispatches kind, text, capture, and navigation operations across ready lanes.
+Binding and parsed-literal predicates project facts, then submit child demands to the same scheduler.
+Atomic semantic predicates read existing native facts. A runtime audit detects scalar matcher calls inside these projections.
+
+Closed subprograms inside capture graphs use the numeric executor and retain navigation facts across streaming arrivals.
+Equivalent pattern plans share results for identical immutable input environments, documents, and nodes.
+Constrained patterns execute pattern and constraint stages in batches without general child frames.
+Conjunctions retain their capture transactions and unknown-capture dependencies in the general operation scheduler.
+
+Enumeration carries explicit exclusion sets and rematches from the original input environment.
+Parsed documents carry explicit parent bridges and coordinate maps.
+No semantic callback runs an entire child matcher.
+
+This remains a CPU executor. It does not implement a GPU backend.
 A device backend still needs packed operation tables, device text predicates, capture storage, and queue execution.
-The current host executor uses recursive cohort calls where a device backend would use explicit queues.
+Semantic child submissions currently use recursive cohort calls on the host.
 
 ## Scope, resources, and cache lifetime
 
@@ -88,7 +106,8 @@ Subtree facts record their completed intervals and have bounded retained entries
 All caches belong to immutable document revisions held by one executor. Disposal invalidates those revisions.
 
 Incomplete computation never becomes a negative fact.
-Resource exhaustion causes native replay for the affected file and clause.
+An incomplete admission proof sends the original file-clause demand to the capture cohort stage.
+A failure in that stage discards its provisional rows and publishes the existing failure outcome.
 Cancellation is checked during navigation even when every candidate fails its kind filter.
 Demand nodes are checked before tape access.
 
@@ -111,7 +130,7 @@ Qualification checks native verdicts, work charges, captures, catalog coverage, 
 A deep-tree test bounds navigation operations for suffix closure and both descendant shapes.
 Whole-job gates retain 100 matching statements, a 1.30 CPU ratio, a 1.50 edit CPU ratio, and 1.5 GiB peak RSS.
 
-## Qualified result
+## Published baseline before the complete conversion
 
 The [qualification report](../benchmark/sql-native-wave-integration.json) passes all existing ceilings and the new native-batching checks.
 The workload contains 5,725 Python files, 95.7 MB of source, 138 policies, and 146 AST clauses.
@@ -139,9 +158,15 @@ Residual CPU falls from 73.24 to 64.49 seconds. Wave preparation and execution r
 Total matching CPU remains approximately unchanged: 82.24 versus 82.64 seconds.
 The batch execution model is real, but these numbers do not demonstrate a whole-job speedup.
 
-The remaining scalar work is substantial. Binding, scope, capture, and mixed semantic rules account for most residual CPU.
+At that baseline, scalar work remained substantial. Binding, scope, capture, and mixed semantic rules accounted for most residual CPU.
 The largest residuals include B023, F405, B007, and B615.
-Replacing those residuals with batches of typed semantic facts and capture operations remains necessary for broader device execution.
+The current conversion replaces those residuals with typed semantic facts and capture operations.
+It remains unqualified: the latest full paired run uses 198.09 SQL CPU seconds versus 110.82 native CPU seconds.
+Findings and edits match, but the 1.30 CPU ceiling fails. The journal records subsequent changes and measurements.
+The [rejected qualification](../benchmark/sql-native-capture-cohort-rejected.json) records that failure and the passing gates.
+Its raw [catalog](../benchmark/sql-native-capture-cohort-rejected-catalog.json.gz),
+[native](../benchmark/sql-native-capture-cohort-rejected-native.json.gz), and
+[SQL](../benchmark/sql-native-capture-cohort-rejected-sql.json.gz) reports remain separate from the accepted baseline.
 The zero-cost subtree materialization does not activate on this full workload; its benefit is established by the amplification gate only.
 
 Raw evidence is retained as compressed [catalog](../benchmark/sql-native-wave-catalog.json.gz),
@@ -149,5 +174,6 @@ Raw evidence is retained as compressed [catalog](../benchmark/sql-native-wave-ca
 The summary records source hashes, executable identity, corpus identity, query plans, and acceptance ceilings.
 
 The checker requires wave evidence and both batching axes.
-It ratchets scalar root calls at 53,109,000 and rejects a mean kernel width of four lanes or less.
+The new conversion gate requires zero scalar residual calls and zero scalar callbacks from semantic projections.
+It also rejects a mean kernel width of four lanes or less.
 These are regression ceilings for this workload, not claims that the remaining scalar work is acceptable as the final architecture.

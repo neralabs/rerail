@@ -83,6 +83,38 @@ pub(super) fn active() -> bool {
     ACTIVE.get()
 }
 
+/// Runs a cohort with explicit exclusion state and host coordinates. `None` suspends exclusion;
+/// `hosts` replaces the full host stack, outermost first. Every enclosing value is restored on
+/// return or unwind. Generations advance at both boundaries so different installed range sets
+/// can never reuse a utility verdict, even when the enclosing exclusion is restored.
+pub(super) fn with_exclusion<T>(
+    name: Option<&str>,
+    ranges: &HashSet<(usize, usize)>,
+    hosts: &[HostMap],
+    run: impl FnOnce() -> T,
+) -> T {
+    struct Restore {
+        active: bool,
+        excluded: (String, HashSet<(usize, usize)>),
+        hosts: Vec<HostMap>,
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ACTIVE.set(self.active);
+            EXCLUDED.set(std::mem::take(&mut self.excluded));
+            HOSTS.set(std::mem::take(&mut self.hosts));
+            GENERATION.set(GENERATION.get() + 1);
+        }
+    }
+    let _restore = Restore {
+        active: ACTIVE.replace(name.is_some()),
+        excluded: EXCLUDED.replace((name.unwrap_or_default().to_owned(), ranges.clone())),
+        hosts: HOSTS.replace(hosts.to_vec()),
+    };
+    GENERATION.set(GENERATION.get() + 1);
+    run()
+}
+
 /// A capture's binding as a range of the host file: a node capture's range, mapped out of the
 /// sub-trees being matched, or an exported capture's host range.
 pub(crate) fn binding_range<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Option<Range<usize>> {
@@ -386,6 +418,41 @@ mod tests {
         assert_eq!(binding_range(&exported, "E"), Some(5..7));
         let _host = HostRanges::enter(shift(20));
         assert_eq!(binding_range(&exported, "E"), Some(25..27));
+    }
+
+    #[test]
+    fn explicit_cohort_exclusion_restores_ranges_and_hosts_after_unwind() {
+        let root = GrammarDialect::TypeScript.ast_grep("abc;");
+        let node = root.root().find("abc").unwrap().get_node().clone();
+        let mut env = MetaVarEnv::new();
+        env.insert("X", node);
+        let outer = super::Enumeration::start("X");
+        assert!(outer.record(Some(0..3)));
+        let original_generation = super::exclusion_key().0;
+        let map = HostMap {
+            node: Arc::new(|_| Some(10..13)),
+            span: Arc::new(Some),
+        };
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::with_exclusion(Some("X"), &[(10, 13)].into(), &[map], || {
+                assert!(super::active());
+                assert!(super::excluded(&env));
+                assert_eq!(binding_range(&env, "X"), Some(10..13));
+                super::with_exclusion(None, &Default::default(), &[], || {
+                    assert!(!super::active());
+                    assert_eq!(binding_range(&env, "X"), Some(0..3));
+                });
+                assert!(super::excluded(&env));
+                panic!("cohort interrupted");
+            });
+        }));
+        assert!(failure.is_err());
+        assert!(super::active());
+        assert!(super::excludes("X"));
+        assert!(super::excluded(&env));
+        assert_eq!(binding_range(&env, "X"), Some(0..3));
+        assert!(super::exclusion_key().0 > original_generation);
+        drop(outer);
     }
 
     /// `each` naming a named group of a regex that tests the witness itself: one violation per

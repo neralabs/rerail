@@ -4,6 +4,7 @@ pub(in crate::code_rule_dsl::sql) mod batch;
 pub(in crate::code_rule_dsl::sql) mod candidates;
 pub(in crate::code_rule_dsl::sql) mod capture_cell;
 pub(in crate::code_rule_dsl::sql) mod capture_env;
+mod cohorts;
 mod demand;
 pub(in crate::code_rule_dsl::sql) mod failure;
 pub(in crate::code_rule_dsl::sql) mod span_capture;
@@ -34,6 +35,7 @@ pub(in crate::code_rule_dsl::sql) use std::{
 pub(in crate::code_rule_dsl::sql) struct Metrics {
     pub filters: usize,
     pub roots: usize,
+    pub cohort_requests: usize,
     pub peak_request_rows: usize,
     pub rows: usize,
     pub completed_roots: usize,
@@ -195,166 +197,39 @@ impl Fragment {
         keys: impl Iterator<Item = usize>,
         remaining: Option<usize>,
     ) -> Result<Vec<Row>> {
-        let mut keys = keys.peekable();
-        if keys.peek().is_none() {
-            return Ok(vec![]);
-        }
         let started = Started::now();
-        let mut output = vec![];
-        let mut metrics = self.metrics.lock().unwrap();
-        metrics.peak_request_rows = metrics.peak_request_rows.max(requests.len());
-        let entry = batch
-            .files
-            .get(file as usize)
-            .ok_or_else(|| invalid("invalid document"))?;
-        let mut provisional = vec![];
-        let mut stopped = None;
-        let mut left = remaining.unwrap_or_else(|| {
-            self.allowance.map_or(self.work, |(base, per_node)| {
-                base.max(per_node.saturating_mul(entry.facts.len() as usize))
+        let keys = keys.collect::<Vec<_>>();
+        let selected = keys
+            .iter()
+            .map(|&key| {
+                requests
+                    .get(key)
+                    .cloned()
+                    .ok_or_else(|| invalid("invalid request key"))
             })
-        });
-        let _budget = entry.context.budget.as_ref().map(|b| b.clone().resume());
-        let (result, _) = crate::code_rule_dsl::budget::with_allowance(u64::MAX, || {
-            with_scopes(file as usize, entry, || {
-                matcher::reuse_file_memo(&entry.root, || -> Result<()> {
-                    matcher::begin_clause(&self.grammar, left);
-                    // Always close clause state, including a transport error.
-                    let result = (|| -> Result<()> {
-                        for key in keys {
-                            let r = &requests[key];
-                            if r.node >= entry.facts.len() {
-                                return Err(invalid("root outside document"));
-                            }
-                            let bindings = r
-                                .inputs
-                                .iter()
-                                .map(|(n, k, _)| (n.clone(), *k))
-                                .collect::<Vec<_>>();
-                            let values = r
-                                .inputs
-                                .iter()
-                                .map(|(_, _, v)| v.clone())
-                                .collect::<Vec<_>>();
-                            let env = if r.inputs.is_empty() {
-                                MetaVarEnv::new()
-                            } else {
-                                capture_env::environment(
-                                    file,
-                                    &entry.facts,
-                                    |id| matcher::node_at(&entry.root, id),
-                                    &bindings,
-                                    &values,
-                                )?
-                            };
-                            let inputs = env;
-                            let mut env = Cow::Borrowed(&inputs);
-                            metrics.roots += 1;
-                            match matcher::fragment_at(
-                                &self.grammar,
-                                matcher::node_at(&entry.root, r.node),
-                                &mut env,
-                            ) {
-                                Ok(1) if self.each.is_some() => {
-                                    left = matcher::end_clause().0;
-                                    let mut transport = None;
-                                    let mut ordinal = 0;
-                                    let result = matcher::enumerate_bound(
-                                        &entry.root,
-                                        &self.grammar,
-                                        r.node,
-                                        env.into_owned(),
-                                        &inputs,
-                                        &mut left,
-                                        self.each.as_ref().unwrap(),
-                                        |env, _| match capture_values(file, &env, &self.names) {
-                                            Ok(values) => {
-                                                provisional.push(Row {
-                                                    request: key as i64,
-                                                    file,
-                                                    node: r.node,
-                                                    truth: 1,
-                                                    ordinal,
-                                                    values,
-                                                });
-                                                ordinal += 1;
-                                                Ok(true)
-                                            }
-                                            Err(error) => {
-                                                transport = Some(error);
-                                                Ok(false)
-                                            }
-                                        },
-                                    );
-                                    matcher::begin_clause(&self.grammar, left);
-                                    if let Some(error) = transport {
-                                        return Err(error);
-                                    }
-                                    if let Err(reason) = result {
-                                        stopped = Some(reason);
-                                        break;
-                                    }
-                                    metrics.completed_roots += 1;
-                                }
-                                Ok(0) => {
-                                    metrics.completed_roots += 1;
-                                }
-                                Ok(truth) => {
-                                    metrics.completed_roots += 1;
-                                    metrics.logical_unknown_roots += usize::from(truth == 2);
-                                    provisional.push(Row {
-                                        request: key as i64,
-                                        file,
-                                        node: r.node,
-                                        truth,
-                                        ordinal: 0,
-                                        values: if truth == 1 {
-                                            capture_values(file, &env, &self.names)?
-                                        } else {
-                                            vec![Cell::Null; self.names.len()]
-                                        },
-                                    });
-                                }
-                                Err(reason) => {
-                                    stopped = Some(reason);
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(())
-                    })();
-                    left = matcher::end_clause().0;
-                    result
-                })
-            })
-        });
-        result?;
-        metrics.remaining_work.insert(file, left);
-        match stopped {
-            None => output.extend(provisional),
-            Some(Stopped::Limit(limit)) => output.push(Row {
-                request: -1,
+            .collect::<Result<Vec<_>>>()?;
+        let (mut output, _) = cohorts::execute(
+            batch,
+            &[cohorts::Task {
+                fragment: self,
                 file,
-                node: 0,
-                ordinal: 0,
-                truth: failure::encode(&format!("{limit:?}"))
-                    .ok_or_else(|| invalid("unknown native failure"))?,
-                values: vec![Cell::Null; self.names.len()],
-            }),
-            Some(Stopped::Deadline) => output.push(Row {
-                request: -1,
-                file,
-                node: 0,
-                truth: -5,
-                ordinal: 0,
-                values: vec![Cell::Null; self.names.len()],
-            }),
+                requests: selected,
+                remaining,
+            }],
+        )?;
+        let mut rows = output.pop().unwrap();
+        for row in &mut rows {
+            if row.request >= 0 {
+                row.request = keys[row.request as usize] as i64;
+            }
         }
         let elapsed = started.elapsed();
-        metrics.rows += output.len();
-        metrics.native_cpu_ns += elapsed.cpu;
-        metrics.native_wall_ns += elapsed.wall;
-        Ok(output)
+        {
+            let mut metrics = self.metrics.lock().unwrap();
+            metrics.native_cpu_ns += elapsed.cpu;
+            metrics.native_wall_ns += elapsed.wall;
+        }
+        Ok(rows)
     }
 }
 
