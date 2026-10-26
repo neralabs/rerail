@@ -95,21 +95,21 @@ test("a tool-pack this run recorded gets its per-rule summary in the comment, co
     "",
     "### `python/ruff`",
     "",
-    "| Upstream rule | | Expected findings | Corpus files | Facts |",
-    "| --- | --- | --- | --- | --- |",
-    "| `E501` | changed | +2 / −0 | — | — |",
+    "| Upstream rule | | Expected findings | Facts |",
+    "| --- | --- | --- | --- |",
+    "| `E501` | changed | +2 / −0 | — |",
     "",
   ].join("\n");
   const text = renderComment(summary(10, 0), { recordings: [{ toolPack: "python/ruff", markdown }] });
   const section = text.slice(text.indexOf("### Recorded by this run"), text.indexOf("### Ready to promote"));
   assert.match(section, /<summary>python\/ruff: 1 tool-pack moved<\/summary>/u);
-  assert.match(section, /^\| `E501` \| changed \| \+2 \/ −0 \| — \| — \|$/mu);
+  assert.match(section, /^\| `E501` \| changed \| \+2 \/ −0 \| — \|$/mu);
   assert.doesNotMatch(section, /^## Port readiness recordings/mu);
   assert.doesNotMatch(renderComment(summary(10, 0)), /Recorded by this run/u);
 });
 
 test("recording summaries are cut to fit, and the tool-packs past the budget are named", () => {
-  const long = `## Port readiness recordings: 1 tool-pack moved\n\n${"| `X` | changed | +1 / −0 | — | — |\n".repeat(1000)}`;
+  const long = `## Port readiness recordings: 1 tool-pack moved\n\n${"| `X` | changed | +1 / −0 | — |\n".repeat(1000)}`;
   const recordings = ["a/one", "b/two", "c/three", "d/four"].map((toolPack) => ({ toolPack, markdown: long }));
   const text = renderComment(summary(10, 0), { recordings });
   assert.ok(text.length <= COMMENT_LIMIT, `${text.length} characters`);

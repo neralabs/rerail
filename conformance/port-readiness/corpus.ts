@@ -1,3 +1,8 @@
+/**
+ * Pinned upstream checkouts and the gates' cache root. The file keeps the name of the corpus tier it once served
+ * (replaced by the real-code samples) because recorded-adapter.ts imports it, and that file is part of the bandit
+ * recording's config id (ADAPTER_SOURCES): renaming the import would re-key the recordings.
+ */
 import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -24,7 +29,7 @@ async function isPristine(directory: string, commit: string, runner: CommandRunn
 export async function checkoutPinned(repository: string, commit: string, directory: string, paths: string[], runner: CommandRunner, options: { blobless?: boolean } = {}): Promise<string> {
   if (await isPristine(directory, commit, runner)) {
     // A checkout cached with fewer paths only needs its sparse set widened: the shallow fetch holds every file of the
-    // commit. Widened, never narrowed, so tool-packs that share a corpus keep each other's files.
+    // commit. Widened, never narrowed, so tool-packs that share an upstream checkout keep each other's files.
     const sparse = (await runChecked(runner, ["git", "-C", directory, "sparse-checkout", "list"]).catch(() => "")).trim().split("\n");
     if (paths.every((path) => sparse.includes(path))) return directory;
     await runChecked(runner, ["git", "-C", directory, "sparse-checkout", "add", ...paths.filter((path) => !sparse.includes(path))]);

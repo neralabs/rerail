@@ -240,7 +240,7 @@ Port of ESLint no-iterator. Member accesses whose static property name (getStati
 
 ### `eslint-no-labels`
 
-Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. A candidate: on the ESLint test set (`conformance/README.md`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. A candidate: on the real-code samples (`docs/port-readiness.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-lonely-if`
 
@@ -248,7 +248,7 @@ Port of ESLint no-lonely-if. Only when the else block's braces are not necessary
 
 ### `eslint-no-loss-of-precision`
 
-Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's (String(v) through `transform` with `value: true`, overflow to Infinity and underflow to zero included); hex and octal literals checked like binary by significant-bit span. A candidate: on the ESLint test set (`conformance/README.md`) it reports 28 decimal literals of 2^63 (`9223372036854775808`), which a double stores exactly and ESLint does not report, because their digits differ from `String(v)`'s.
+Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's (String(v) through `transform` with `value: true`, overflow to Infinity and underflow to zero included); hex and octal literals checked like binary by significant-bit span. A candidate: on the real-code samples (`docs/port-readiness.md#samples`) it reports 28 decimal literals of 2^63 (`9223372036854775808`), which a double stores exactly and ESLint does not report, because their digits differ from `String(v)`'s.
 
 ### `eslint-no-magic-numbers`
 
@@ -296,7 +296,7 @@ Matches member accesses whose static property name (ESLint getStaticPropertyName
 
 ### `eslint-no-prototype-builtins`
 
-Port of ESLint no-prototype-builtins. A candidate: on the ESLint test set (`conformance/README.md`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+Port of ESLint no-prototype-builtins. A candidate: on the real-code samples (`docs/port-readiness.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-redeclare`
 
@@ -312,7 +312,7 @@ Matches string literals and untagged, substitution-free template literals whose 
 
 ### `eslint-no-self-assign`
 
-Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. A candidate: on the ESLint test set (`conformance/README.md`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. A candidate: on the real-code samples (`docs/port-readiness.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-self-compare`
 

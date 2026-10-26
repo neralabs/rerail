@@ -20,8 +20,8 @@ const pointSchema = z.object({ path: z.string(), line: z.number().int().positive
  * Files a clause unsound under syntax errors skipped (`source-incomplete`, "file has syntax errors") where the grammar
  * reports a syntax error, and files no AST clause read because their error regions cover half of them or more
  * (`source-incomplete`, "file did not parse: …"), each at its first error (the engine's line and column). Attributed to
- * T1, not counted as engine failures; upstream findings in them stay FNs. On a real-code sample, which is judged as a
- * file the engine must read, a file here fails a shipped rule.
+ * T1, not counted as engine failures; upstream findings in them stay FNs. A real-code sample here (only judged ones are
+ * listed) stays judged and fails nothing by itself: it fails a shipped rule only through a label the partial read hides.
  */
 const syntaxErrorFilesSchema = z.object({
   count: z.number().int().nonnegative(),
@@ -55,14 +55,24 @@ export const ruleRowSchema = z.object({
   /** The first 50 `reviewed` reports. */
   reviewedFindings: z.array(pointSchema),
   /**
-   * Samples only: the clean samples judged for the rule, and of those, the ones it reports nothing on and reads without
-   * a syntax error (stays-silent evidence; 0 on the fixtures).
+   * Samples only: the clean samples judged for the rule, and of those, the ones it reports nothing on, reads in full
+   * (no syntax error, `source-partial` or parse-induced `source-incomplete`) and finishes without an engine failure, with
+   * no failure naming no file (stays-silent evidence; 0 on the fixtures).
    */
   cleanSamples: z.number().int().nonnegative(),
   silentCleanSamples: z.number().int().nonnegative(),
-  /** Failures other than `source-partial` and `syntaxErrorFiles` this rule's code rule reported. */
+  /**
+   * Failures other than `source-partial` and `syntaxErrorFiles` this rule's code rule reported; each fails a shipped
+   * rule. On samples, only those on judged files and those naming no file, and never a parse-induced
+   * `source-incomplete` (counted in `partialFiles`).
+   */
   engineFailures: z.number().int().nonnegative(),
-  /** Files with syntax errors the code rule's AST clauses ran around (`source-partial`). */
+  /** Samples only: engine failures on a sample's context files, which no label judges; listed, never failing (0 on the fixtures). */
+  contextFailures: z.number().int().nonnegative(),
+  /**
+   * Files with syntax errors the code rule's AST clauses ran around (`source-partial`). On samples, the judged ones,
+   * with those a parse-induced `source-incomplete` names, plus one per such failure naming no file; never failing.
+   */
   partialFiles: z.number().int().nonnegative(),
   /** The first 50 files are listed; the count is exact. */
   syntaxErrorFiles: syntaxErrorFilesSchema,
@@ -115,7 +125,10 @@ export const t4ReportSchema = headerSchema.extend({
   staleDivergences: z.array(z.object({ rule: z.string(), source: z.string().optional(), path: z.string(), line: z.number(), kind: z.string() })),
   /** Configuration errors (missing or mismatched recordings, code rules that do not compile, …); each fails the run. */
   errors: z.array(z.string()),
-  /** No unexplained FP, no unexplained FN, no engine failure (on samples, no unparsable judged sample), no stale divergence, no error. */
+  /**
+   * No unexplained FP, no unexplained FN, no engine failure, no stale divergence, no error. On samples, a file read in
+   * part and a context file's engine failure fail nothing by themselves.
+   */
   pass: z.boolean(),
 });
 export type T4Report = z.infer<typeof t4ReportSchema>;

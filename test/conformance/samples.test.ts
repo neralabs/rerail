@@ -73,6 +73,20 @@ const addPassStatement = (tool: string): void =>
     rules: [...(pack.rules as unknown[]), { id: "pass-statement", upstream: { tool, rule: "PASS" }, policy: "rules/pass-statement.json", capabilities: ["syntax"], match: "line" }],
   }));
 
+/**
+ * Gives assert-used a second clause: every pass statement of an app.py needs one in a ctx.py beside it
+ * (`require_each` over evidence). A ctx.py the grammar cannot read leaves app.py's pass statements unknown, a
+ * parse-induced `source-incomplete` ("evidence is incomplete in …") on app.py.
+ */
+const addEvidenceClause = (): void =>
+  editJson(join(directory, "rules", "assert-used.json"), rule => {
+    const relation = (as: string, file: string) => ({
+      evidence: { as, paths: { include: [`**/${file}`] }, query: { ast: { language: "python", rule: { kind: "pass_statement" } } }, project: { name: "file.name" } },
+    });
+    const evidence = { id: "pass-has-evidence", require_each: { subject: relation("subject", "app.py"), evidence: relation("evidence", "ctx.py") }, violation: { anchor: "witness.span", code: "EX101", message: "examplelint EX101" } };
+    return { ...rule, clauses: [...(rule.clauses as unknown[]), evidence] };
+  });
+
 describe("a shipped rule on its samples", () => {
   it("catches a labelled violation the rule reports on that line", async () => {
     const { report } = await score([{ name: "caught", path: "app.py", text: "ready = True\nassert ready, 'not ready'\n", expected: { "assert-used": [2] } }]);
@@ -111,6 +125,24 @@ describe("a shipped rule on its samples", () => {
     const missed = await score([{ name: "unread", path: "app.py", text: UNREADABLE, expected: { "assert-used": [1] } }], { fixtures: true });
     expect(samplesRow(missed.report)).toMatchObject({ fn: 1, engineFailures: 0, syntaxErrorFiles: { count: 1 } });
     expect(failingChecks(missed.report)).toEqual(["samples-catch-labelled"]);
+  });
+
+  it("does not fail on an engine failure in a context file, which no label judges", async () => {
+    // More asserts than the engine's witness limit (10,000) in a context file: the rule fails there, not on app.py.
+    const context = { "ctx.py": "assert ready\n".repeat(10_001) };
+    const { report } = await score([{ name: "context", path: "app.py", text: "assert ready\n", expected: { "assert-used": [1] }, context }], { fixtures: true });
+    expect(samplesRow(report)).toMatchObject({ tp: 1, fn: 0, engineFailures: 0, contextFailures: 1 });
+    expect(reportFailures(report)).toEqual([]);
+    expect(failingChecks(report)).toEqual([]);
+  });
+
+  it("judges a sample a parse-induced source-incomplete reads in part, passing when every label is caught", async () => {
+    addEvidenceClause();
+    const context = { "ctx.py": UNREADABLE };
+    const { report } = await score([{ name: "evidence", path: "app.py", text: "assert ready\npass\n", expected: { "assert-used": [1] }, context }], { fixtures: true });
+    expect(samplesRow(report)).toMatchObject({ tp: 1, fn: 0, engineFailures: 0, partialFiles: 1 });
+    expect(reportFailures(report)).toEqual([]);
+    expect(failingChecks(report)).toEqual([]);
   });
 
   it("does not judge a sample for a rule it has no key for", async () => {
@@ -210,6 +242,17 @@ describe("stays-silent", () => {
   it("is not met by a clean sample the engine cannot read", async () => {
     const { report } = await score([{ ...clean, text: UNREADABLE }], { fixtures: true });
     expect(staysSilent(report, 0).ok).toBe(false);
+  });
+
+  it("is not met by a clean sample read in part, nor by one a parse-induced source-incomplete leaves unknown", async () => {
+    const partial = await score([{ ...clean, text: "ready = True\nx = (\n" }], { fixtures: true });
+    expect(samplesRow(partial.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0, partialFiles: 1 });
+    expect(staysSilent(partial.report, 0).ok).toBe(false);
+    rmSync(tree, { recursive: true, force: true });
+    addEvidenceClause();
+    const incomplete = await score([{ ...clean, text: "ready = True\npass\n", context: { "ctx.py": UNREADABLE } }], { fixtures: true });
+    expect(samplesRow(incomplete.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0, engineFailures: 0, partialFiles: 1 });
+    expect(staysSilent(incomplete.report, 0).ok).toBe(false);
   });
 });
 

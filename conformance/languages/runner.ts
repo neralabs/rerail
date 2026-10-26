@@ -16,6 +16,7 @@ import {
   codeRuleLanguageEmbedVias,
   compareDeterministicStrings,
   isUnreadFailure,
+  UNREAD_FAILURE_HEAD,
 } from "../../src/engine/index.js";
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import {
@@ -128,6 +129,37 @@ function unreadLocation(failure: Page["failures"][number]): SyntaxErrorLocation 
 }
 
 /**
+ * Whether `failure` is a `source-incomplete` the engine reports because a file was read with syntax errors, in this or
+ * another file, rather than because a file could not be read at all. The code alone cannot tell them apart: the engine
+ * also reports unreadable, binary and released sources (`cannot read workspace source: …`, `Binary source cannot be
+ * evaluated`, `source released while the content store was busy …`) as `source-incomplete`, and those stay engine
+ * failures. So the message decides, one entry per engine source of a parse-induced message (native/src/code_rule_dsl/):
+ * - "file has syntax errors": a clause unsound under errors skipped the file (workspace/evaluate.rs), here without the
+ *   probe's confirmation (`SYNTAX_ERROR_FAILURE` otherwise);
+ * - "file did not parse: …" (`UNREAD_FAILURE_HEAD`): the parser did not read the file (soundness.rs `UNREAD`), here
+ *   without the first error's location (`unreadLocation` otherwise);
+ * - "query source is incomplete": a `select_when` row in a file read around errors (eval/mod.rs);
+ * - "A cross-file query source is incomplete": a cross-file query's row is unknown (workspace/global.rs);
+ * - "subject evidence in this file is incomplete", "evidence is incomplete in …" and "count N of `key` is a lower
+ *   bound: evidence is incomplete in …": a `require_each` or `budget` over evidence some file did not yield in full
+ *   (eval/evidence.rs).
+ * Only the samples treat these as reading in part; on the fixtures they stay engine failures.
+ */
+function isParseIncomplete(failure: Page["failures"][number]): boolean {
+  if (failure.code !== "source-incomplete") return false;
+  const { message } = failure;
+  return (
+    message === SYNTAX_ERROR_FAILURE.message ||
+    message.startsWith(`${UNREAD_FAILURE_HEAD}: `) ||
+    message === "query source is incomplete" ||
+    message === "A cross-file query source is incomplete" ||
+    message === "subject evidence in this file is incomplete" ||
+    message.startsWith("evidence is incomplete in ") ||
+    /^count \d+ of `.*` is a lower bound: evidence is incomplete in /su.test(message)
+  );
+}
+
+/**
  * The first syntax error the grammar reports in each of `files` that skipped a clause with `SYNTAX_ERROR_FAILURE`.
  * A probe clause sound under errors (it matches `ERROR` nodes, which are never witnesses, so it reports nothing) is
  * evaluated over those files through the same workspace path; its `source-partial` failure confirms the syntax error
@@ -223,14 +255,30 @@ export function pointOf(violation: Page["violations"][number], sources: Readonly
 /** What Rerail reported for one pack rule over one source. */
 interface RuleActual {
   points: Point[];
-  /** Failures other than `source-partial` and the syntax-error skips below. */
-  engineFailures: number;
+  /** Engine failures, other than `source-partial`, the syntax-error skips below and `isParseIncomplete`, per path. */
+  engineFailurePaths: Map<string, number>;
+  /** Of those, the ones naming no file: rule-level, so they count wherever the rule is scored. */
+  pathlessEngineFailures: number;
   partialPaths: Set<string>;
+  /** `isParseIncomplete` failures other than the syntax-error skips below, per path, and those naming no file. */
+  incompletePaths: Map<string, number>;
+  pathlessIncomplete: number;
   /** Files this rule's clauses skipped with `SYNTAX_ERROR_FAILURE` or as unread (`isUnreadFailure`), at the first syntax error. */
   syntaxErrorFiles: Map<string, SyntaxErrorLocation>;
 }
 
-const noActual = (): RuleActual => ({ points: [], engineFailures: 0, partialPaths: new Set(), syntaxErrorFiles: new Map() });
+const noActual = (): RuleActual => ({
+  points: [],
+  engineFailurePaths: new Map(),
+  pathlessEngineFailures: 0,
+  partialPaths: new Set(),
+  incompletePaths: new Map(),
+  pathlessIncomplete: 0,
+  syntaxErrorFiles: new Map(),
+});
+
+const total = (counts: ReadonlyMap<string, number>, paths: (path: string) => boolean = () => true): number =>
+  [...counts].reduce((sum, [path, count]) => (paths(path) ? sum + count : sum), 0);
 
 interface FixturesRun {
   /** Per pack rule id. */
@@ -285,7 +333,15 @@ function collectActual(
       slot(rule).syntaxErrorFiles.set(unread.path, unread);
     } else if (located !== undefined && failure.code === SYNTAX_ERROR_FAILURE.code && failure.message === SYNTAX_ERROR_FAILURE.message) {
       slot(rule).syntaxErrorFiles.set(located.path, located);
-    } else slot(rule).engineFailures += 1;
+    } else if (isParseIncomplete(failure)) {
+      const entry = slot(rule);
+      if (failure.path === undefined) entry.pathlessIncomplete += 1;
+      else entry.incompletePaths.set(failure.path, (entry.incompletePaths.get(failure.path) ?? 0) + 1);
+    } else {
+      const entry = slot(rule);
+      if (failure.path === undefined) entry.pathlessEngineFailures += 1;
+      else entry.engineFailurePaths.set(failure.path, (entry.engineFailurePaths.get(failure.path) ?? 0) + 1);
+    }
   }
 }
 
@@ -568,6 +624,7 @@ interface Scored {
   cleanSamples: number;
   silentCleanSamples: number;
   engineFailures: number;
+  contextFailures: number;
   partialFiles: number;
   syntaxErrorFiles: readonly SyntaxErrorLocation[];
 }
@@ -591,6 +648,7 @@ function rowOf({ rule }: CompiledRule, loaded: LoadedPack, source: string, score
     cleanSamples: scored.cleanSamples,
     silentCleanSamples: scored.silentCleanSamples,
     engineFailures: scored.engineFailures,
+    contextFailures: scored.contextFailures,
     partialFiles: scored.partialFiles,
     syntaxErrorFiles: {
       count: scored.syntaxErrorFiles.length,
@@ -637,13 +695,21 @@ function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, 
     reviewed: [],
     cleanSamples: 0,
     silentCleanSamples: 0,
-    engineFailures: rerail.engineFailures,
+    // On the fixtures, which the port must read as upstream does, every failure but `source-partial` and the T1
+    // syntax-error skips is an engine failure, parse-induced `source-incomplete` included.
+    engineFailures: total(rerail.engineFailurePaths) + rerail.pathlessEngineFailures + total(rerail.incompletePaths) + rerail.pathlessIncomplete,
+    contextFailures: 0,
     partialFiles: rerail.partialPaths.size,
     syntaxErrorFiles: [...rerail.syntaxErrorFiles.values()],
   }, used);
 }
 
-/** Scores a rule on the samples judged for it (`scoreSamples`); only the judged files' findings and failures count. */
+/**
+ * Scores a rule on the samples judged for it (`scoreSamples`). Only the judged files' findings and failures count, and
+ * failures naming no file, which are the rule's; a context file is never judged, so its engine failures are listed
+ * (`contextFailures`) and fail nothing. A file read in part (a T1 syntax error, `source-partial`, a parse-induced
+ * `source-incomplete`) is no engine failure: the sample stays judged, and its labels decide.
+ */
 function samplesRow(entry: CompiledRule, run: SamplesRun, loaded: LoadedPack, used: Set<Divergence>): RuleRow | undefined {
   const { rule } = entry;
   const samples = run.judged.get(rule.id);
@@ -655,13 +721,21 @@ function samplesRow(entry: CompiledRule, run: SamplesRun, loaded: LoadedPack, us
   const clean = samples.filter(sample => sample.lines.length === 0);
   const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === SAMPLES_SOURCE));
   const score = scoreSamples(samples, actual, applicable);
+  const readInPart = new Set([...rerail.partialPaths, ...rerail.incompletePaths.keys()].filter(path => judged.has(path)));
+  // A clean sample is stays-silent evidence only where the rule read it in full and finished: no report, no read in
+  // part, no engine failure there, and no failure naming no file, which leaves every file's answer in doubt.
+  const finished = rerail.pathlessEngineFailures + rerail.pathlessIncomplete === 0;
+  const silent = clean.filter(
+    ({ path }) => finished && !reported.has(path) && !rerail.syntaxErrorFiles.has(path) && !readInPart.has(path) && !rerail.engineFailurePaths.has(path),
+  );
   return rowOf(entry, loaded, SAMPLES_SOURCE, {
     score,
     reviewed: score.reviewed,
     cleanSamples: clean.length,
-    silentCleanSamples: clean.filter(sample => !reported.has(sample.path) && !rerail.syntaxErrorFiles.has(sample.path)).length,
-    engineFailures: rerail.engineFailures,
-    partialFiles: [...rerail.partialPaths].filter(path => judged.has(path)).length,
+    silentCleanSamples: silent.length,
+    engineFailures: total(rerail.engineFailurePaths, path => judged.has(path)) + rerail.pathlessEngineFailures,
+    contextFailures: total(rerail.engineFailurePaths, path => !judged.has(path)),
+    partialFiles: readInPart.size + rerail.pathlessIncomplete,
     syntaxErrorFiles: [...rerail.syntaxErrorFiles.values()].filter(file => judged.has(file.path)),
   }, used);
 }
@@ -738,8 +812,10 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
  * divergences can excuse every finding of its fixtures, and a port that matches nothing must still show it catches
  * something. On the samples, which show a rule works on real code as intended, a missed label fails, as does a finding
  * on a clean sample; a report on a labelled sample's unlabelled line is only reviewed. A sample the grammar reads only
- * in part (a T1 syntax error, `source-partial`, `source-incomplete`) is still judged but fails nothing by itself: a
- * sample judges the rule, and a label the partial read hides is a missed label. Other engine failures fail on both. A candidate's row (a port under `candidates/`) is reported but fails
+ * in part (a T1 syntax error, `source-partial`, a parse-induced `source-incomplete`: `isParseIncomplete`) is still
+ * judged but fails nothing by itself: a sample judges the rule, and a label the partial read hides is a missed label.
+ * A sample's context files are never judged, so their engine failures fail nothing either. Other engine failures fail
+ * on both. A candidate's row (a port under `candidates/`) is reported but fails
  * nothing; its errors and stale divergences still do.
  */
 export function reportFailures(report: T4Report): string[] {

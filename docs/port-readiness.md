@@ -64,8 +64,12 @@ A tool-pack's samples are one canonical archive in S3,
 format. `SAMPLES.md` beside it lists the repositories, licences, commits and file counts. `npm run fixtures:pull`
 fetches and extracts them with the test data (`node scripts/s3/pack-fixtures.mjs samples` alone), into
 `.rerail/pack-data/samples/<pack>/<tool>/<sha256>/`, and CI's pack-test-data action carries them in the same cache
-entry. Nothing derives or records them; a maintainer re-packs a set with `scripts/samples/pack.ts` and puts it in S3
-with `node scripts/s3/pack-fixtures.mjs samples push --pack <id> --tool <tool>`.
+entry. Nothing derives or records them, and no command edits a set yet. To add, relabel or drop samples, or to rename
+or drop a rule key (a label naming no rule of the tool-pack fails its whole pack's conformance check, which catches
+typos), a maintainer's script loads the samples tree, changes it, and re-packs it with `packSamples` and
+`writeSampleSet` (`scripts/samples/pack.ts`), which write the archive into `.rerail/pack-data/archives/samples/` and
+the tool-pack's `samples.lock` and `SAMPLES.md`. `node scripts/s3/pack-fixtures.mjs samples push --pack <id> --tool
+<tool>` then puts the archive in S3.
 
 The conformance runner judges each rule by intent, on the samples labelled for it:
 
@@ -76,13 +80,18 @@ The conformance runner judges each rule by intent, on the samples labelled for i
 
 `passes-conformance` reads four checks from it. `samples-catch-labelled` fails a shipped rule on an unexplained miss,
 `samples-silent-on-clean` on an unexplained false positive, and `engine-reads-samples` on an engine failure on a
-judged sample (a rule runtime error, a crash, a timeout, an unreadable file). A parse failure on a sample (a syntax
-error, a partial or incomplete source) is report-only: `engine-reads-samples` lists it ("N engine failure(s); M file(s)
-read in part") without failing, and the sample stays judged, so a label the partial parse makes the rule miss still
-fails as a miss. `stays-silent` needs relevant evidence that the rule is silent where it should be:
+judged sample (a rule runtime error, a crash, a timeout, a work budget, an unreadable file) or one naming no file.
+A sample's context files (the files beside it that give it manifest facts, configuration and imports) are never
+judged: an engine failure there is listed in the report (`contextFailures`, the CLI's `ctx` column) and fails nothing.
+A parse failure on a judged sample (a syntax error, `source-partial`, or a `source-incomplete` the engine reports
+because this or another file was read with errors, which the runner tells from a read failure by its message:
+`isParseIncomplete` in `conformance/languages/runner.ts`) is report-only: `engine-reads-samples` lists it ("N engine
+failure(s); M file(s) read in part") without failing, and the sample stays judged, so a label the partial parse makes
+the rule miss still fails as a miss. `stays-silent` needs relevant evidence that the rule is silent where it should be:
 one of the rule's own upstream test cases where upstream reports nothing and the rule agrees, or one clean sample the
-rule is silent on. Other rules' fixture units and Rerail's probes do not count. Its detail reads "N own upstream
-case(s), M clean sample(s)". Candidates are scored and reported but fail nothing.
+rule is silent on, read in full and finished: no parse failure and no engine failure on it, and none naming no file.
+Other rules' fixture units and Rerail's probes do not count. Its detail reads "N own upstream case(s), M clean
+sample(s)". Candidates are scored and reported but fail nothing.
 
 ### The recording
 

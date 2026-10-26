@@ -10,7 +10,7 @@ type Counts = Partial<Pick<RuleRow, "tp" | "fp" | "fn" | "engineFailures" | "exa
 function row(rule: string, counts: Counts = {}, source = "fixtures"): RuleRow {
   return {
     rule, candidate: true, examples: false, upstream: { tool: "ruff", rule: "X1" }, capabilities: [], source, tp: 2, fp: 0, fn: 0,
-    precision: 1, recall: 1, reviewed: 0, reviewedFindings: [], cleanSamples: 0, silentCleanSamples: 0, engineFailures: 0, partialFiles: 0,
+    precision: 1, recall: 1, reviewed: 0, reviewedFindings: [], cleanSamples: 0, silentCleanSamples: 0, engineFailures: 0, contextFailures: 0, partialFiles: 0,
     syntaxErrorFiles: { count: 0, files: [] }, divergences: [], falsePositives: [], falseNegatives: [], ...counts,
   };
 }

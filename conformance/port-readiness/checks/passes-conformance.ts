@@ -77,8 +77,11 @@ export function passesConformanceChecks(conformance: PackConformance, id: string
   );
   const samples = conformance.sampleRows.get(id);
   if (samples !== undefined) {
-    // A sample the grammar reads in part (T1) fails nothing by itself; a label the partial read hides is a missed label.
+    // A sample the grammar reads in part (T1, `source-partial`, a parse-induced `source-incomplete`) fails nothing by
+    // itself; a label the partial read hides is a missed label. A context file is never judged: its engine failures are
+    // only listed.
     const readInPart = samples.syntaxErrorFiles.count + samples.partialFiles;
+    const context = samples.contextFailures > 0 ? `; ${samples.contextFailures} on context files, not judged` : "";
     checks.push(
       { id: "samples-catch-labelled", ok: samples.fn === 0, detail: samples.fn === 0 ? `catches every labelled violation of its real-code samples (${samples.tp})` : `${samples.fn} labelled violation(s) of its real-code samples missed${point(samples.falseNegatives[0])}: ${fix}` },
       { id: "samples-silent-on-clean", ok: samples.fp === 0, detail: samples.fp === 0 ? `reports nothing on its ${samples.cleanSamples} clean sample(s)${samples.reviewed > 0 ? `; ${samples.reviewed} report(s) on labelled samples' unlabelled lines to review` : ""}` : `${samples.fp} finding(s) on clean samples${point(samples.falsePositives[0])}: ${fix}` },
@@ -86,8 +89,8 @@ export function passesConformanceChecks(conformance: PackConformance, id: string
         id: "engine-reads-samples",
         ok: samples.engineFailures === 0,
         detail: samples.engineFailures + readInPart === 0
-          ? "the engine evaluates it on every sample judged for it"
-          : `${samples.engineFailures} engine failure(s); ${readInPart} file(s) read in part${point(samples.syntaxErrorFiles.files[0])}`,
+          ? `the engine evaluates it on every sample judged for it${context}`
+          : `${samples.engineFailures} engine failure(s); ${readInPart} file(s) read in part${point(samples.syntaxErrorFiles.files[0])}${context}`,
       },
     );
   }

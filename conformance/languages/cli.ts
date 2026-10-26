@@ -34,10 +34,11 @@ function print(report: T4Report, detail: boolean): void {
     if (detail) for (const file of source.syntaxErrorFiles.files) console.log(`      SYNTAX ${file.path}:${file.line}:${file.column}`);
   }
   const width = Math.max(4, ...report.rules.map(row => row.rule.length));
-  if (report.rules.length > 0) console.log(`  ${"rule".padEnd(width)}  source            tp     fp     fn   prec  recall  div  fail  syn  reviewed  silent/clean`);
+  // `ctx`: engine failures on samples' context files, which no label judges; shown, never failing.
+  if (report.rules.length > 0) console.log(`  ${"rule".padEnd(width)}  source            tp     fp     fn   prec  recall  div  fail  ctx  syn  reviewed  silent/clean`);
   for (const row of report.rules) {
     console.log(
-      `  ${row.rule.padEnd(width)}  ${row.source.padEnd(16)} ${String(row.tp).padStart(4)} ${String(row.fp).padStart(6)} ${String(row.fn).padStart(6)}  ${formatRatio(row.precision)}  ${formatRatio(row.recall)}  ${String(row.divergences.length).padStart(3)}  ${String(row.engineFailures).padStart(4)}  ${String(row.syntaxErrorFiles.count).padStart(3)}  ${String(row.reviewed).padStart(8)}  ${`${row.silentCleanSamples}/${row.cleanSamples}`.padStart(12)}`,
+      `  ${row.rule.padEnd(width)}  ${row.source.padEnd(16)} ${String(row.tp).padStart(4)} ${String(row.fp).padStart(6)} ${String(row.fn).padStart(6)}  ${formatRatio(row.precision)}  ${formatRatio(row.recall)}  ${String(row.divergences.length).padStart(3)}  ${String(row.engineFailures).padStart(4)}  ${String(row.contextFailures).padStart(3)}  ${String(row.syntaxErrorFiles.count).padStart(3)}  ${String(row.reviewed).padStart(8)}  ${`${row.silentCleanSamples}/${row.cleanSamples}`.padStart(12)}`,
     );
     if (!detail) continue;
     for (const point of row.falsePositives) console.log(`      FP ${point.path}:${point.line}${point.column === undefined ? "" : `:${point.column}`}`);

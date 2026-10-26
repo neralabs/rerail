@@ -11,12 +11,14 @@ export default defineConfig({
     // workers prevent that environment from racing with concurrently executing test files.
     pool: "forks",
     setupFiles: ["./test/support/setup-rerail-home.ts"],
-    // Not vitest suites: upstream tools' copied tests are fixture data for conformance recordings, and
-    // ensure-sqlite's test runs under `node --test` (`npm run test:scripts`).
+    // Not vitest suites: upstream tools' copied tests are fixture data for conformance recordings, real-code samples
+    // extracted under .rerail/ include upstream projects' test files, and ensure-sqlite's test runs under `node --test`
+    // (`npm run test:scripts`).
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
       "fixtures/**",
+      ".rerail/**",
       "packs/*/upstream/**",
       "packs/*/candidates/**",
       "**/scripts/ensure-sqlite.test.mjs",

@@ -232,7 +232,8 @@ jobs:
           tool: eslint-plugin-vue
           fetch: "true"
 
-  # S3 holds every archive each test-data.lock names and every recording each recording.lock names
+  # S3 holds every archive each test-data.lock names, every recording each recording.lock names and every samples
+  # archive each samples.lock names
   # (scripts/s3/pack-fixtures.mjs `check`, head-object only, downloading nothing). A pull request that changes a lock
   # fails here until a maintainer has pushed what it names (the error says how), so it cannot merge with data that only
   # its own cache scope holds: main's runs read S3 and never record. Nothing needs this job, so the others still report.

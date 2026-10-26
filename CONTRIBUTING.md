@@ -370,9 +370,11 @@ judge the rules on ([docs/port-readiness.md](docs/port-readiness.md#samples)). T
 (`s3://nera-test-fixtures/rerail/archives/samples/<pack>/<tool>/<sha256>.tar.zst`), which `samples.lock` names in
 `test-data.lock`'s format and `SAMPLES.md` describes (sources, licences, commits). `fixtures:pull` fetches and
 verifies it with the test data and extracts it under `.rerail/pack-data/samples/`, never into the tool directory
-(`node scripts/s3/pack-fixtures.mjs samples` fetches the samples alone). Nothing derives them: a maintainer re-packs a
-set with `scripts/samples/pack.ts`, which writes the archive into `.rerail/pack-data/archives/samples/` and the lock
-and `SAMPLES.md`, and uploads it with `node scripts/s3/pack-fixtures.mjs samples push --pack <id> --tool <tool>`.
+(`node scripts/s3/pack-fixtures.mjs samples` fetches the samples alone). Nothing derives them, and no command edits a
+set yet: to change one (samples, labels, or a renamed or dropped rule's key), a maintainer's script loads the samples
+tree, changes it and re-packs it with `packSamples` and `writeSampleSet` (`scripts/samples/pack.ts`), which write the
+archive into `.rerail/pack-data/archives/samples/` and the lock and `SAMPLES.md`; `node scripts/s3/pack-fixtures.mjs
+samples push --pack <id> --tool <tool>` uploads it.
 
 CI pulls the same way, in two kinds of job (`.github/actions/pack-test-data`). A fetching job (`fetch: "true"`) only
 warms the Actions cache: it looks up the entry keyed by its tool-packs' locks (`node scripts/s3/pack-fixtures.mjs

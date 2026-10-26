@@ -1474,7 +1474,7 @@ describe("check", () => {
     expect(message.split("\n")).toEqual([
       'S3 lacks 3 of the 5 object(s) the locks name (CONTRIBUTING.md, "Pack test data"):',
       `  packs/q/upstream/u/test-data.lock names s3://${BUCKET}/${archive}, which S3 does not hold: a maintainer archives the pull request's pack test data with \`npm run fixtures:push -- --from <ref> --pack q --tool u\``,
-      `  packs/q/upstream/u/samples.lock names s3://${BUCKET}/${sample.key}, which S3 does not hold: a maintainer re-packs the tool-pack's samples with scripts/samples/pack.ts (packSamples, into .rerail/pack-data/archives/samples/) and puts the archive there with \`node scripts/s3/pack-fixtures.mjs samples push --pack q --tool u\``,
+      `  packs/q/upstream/u/samples.lock names s3://${BUCKET}/${sample.key}, which S3 does not hold: a maintainer must re-pack the set from a script with packSamples and writeSampleSet (scripts/samples/pack.ts), which write the archive into .rerail/pack-data/archives/samples/ and the lock and SAMPLES.md, then put the archive there with \`node scripts/s3/pack-fixtures.mjs samples push --pack q --tool u\``,
       `  packs/p/upstream/t/recording.lock names recording.tar.zst at s3://${BUCKET}/${recording.key}, which S3 does not hold: a maintainer downloads the pull request's CI recording with \`gh run download <run> -n recordings-p--t -D .rerail/port-readiness/recordings\`, then puts it in S3 with \`npm run fixtures:push -- --from <ref> --pack p --tool t\``,
     ]);
     expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);

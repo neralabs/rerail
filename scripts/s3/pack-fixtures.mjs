@@ -792,6 +792,13 @@ export function verifiedSamples(compressed, lock, key) {
 const samplesPushCommand = ({ pack, tool }) => `node scripts/s3/pack-fixtures.mjs samples push --pack ${pack} --tool ${tool}`;
 
 /**
+ * How a sample set is made or edited today: no command does it, so a maintainer's script loads the samples, changes
+ * them (labels, rule keys, files) and re-packs them with scripts/samples/pack.ts, which writes the archive into
+ * ARCHIVE_CACHE and the tool-pack's samples.lock and SAMPLES.md; `samples push` then puts the archive in S3.
+ */
+const REPACK_SAMPLES = `re-pack the set from a script with packSamples and writeSampleSet (scripts/samples/pack.ts), which write the archive into ${ARCHIVE_CACHE}/samples/ and the lock and SAMPLES.md`;
+
+/**
  * The verified entries of the samples archive `lock` names, as `{ entries, source }`: a cached copy in ARCHIVE_CACHE
  * whose tar is the locked one decides ("cache"); one that is not is deleted and named in `discarded` (left in place on
  * a dry run); otherwise it is fetched from S3 ("S3") through this process's partial file, which must verify before it
@@ -1216,10 +1223,10 @@ function samplesPlan(root, toolPack, lock) {
     try {
       check(readFileSync(path));
     } catch (error) {
-      throw new Error(`${shown} is not the samples archive ${lock.label} names (${error instanceof Error ? error.message : String(error)}); delete it and build the samples again (scripts/samples/). Nothing was uploaded`);
+      throw new Error(`${shown} is not the samples archive ${lock.label} names (${error instanceof Error ? error.message : String(error)}); delete it and ${REPACK_SAMPLES}. Nothing was uploaded`);
     }
   }
-  const absent = `${lock.label} names samples archive ${lock.sha256}, which is in neither ${shown} nor s3://${BUCKET}/${key}: build the tool-pack's samples (scripts/samples/), which writes the archive there`;
+  const absent = `${lock.label} names samples archive ${lock.sha256}, which is in neither ${shown} nor s3://${BUCKET}/${key}: ${REPACK_SAMPLES}`;
   return { directory: toolPack.directory, label: lock.label, what: "samples archive", key, path, local, check, absent };
 }
 
@@ -1235,7 +1242,7 @@ export function samplesPush({ root = ROOT, pack: packId, tool, dryRun = false, a
     const lock = readSamplesLock(root, toolPack);
     return lock === undefined ? [] : [samplesPlan(root, toolPack, lock)];
   });
-  if (locked.length === 0) throw new Error(`no selected tool-pack has a ${SAMPLES_LOCK}: build one with the samples builder (scripts/samples/)`);
+  if (locked.length === 0) throw new Error(`no selected tool-pack has a ${SAMPLES_LOCK}: to make one, ${REPACK_SAMPLES}`);
   requireAws(aws);
   const uploaded = uploadObjects(aws, locked, log);
   const locks = locked.map(({ label }) => label);
@@ -1524,7 +1531,7 @@ export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = con
       }]),
       ...(samplesLock === undefined ? [] : [{
         key: samplesKey(toolPack, samplesLock.sha256),
-        missing: `${samplesLock.label} names s3://${BUCKET}/${samplesKey(toolPack, samplesLock.sha256)}, which S3 does not hold: a maintainer re-packs the tool-pack's samples with scripts/samples/pack.ts (packSamples, into ${ARCHIVE_CACHE}/samples/) and puts the archive there with \`${samplesPushCommand(toolPack)}\``,
+        missing: `${samplesLock.label} names s3://${BUCKET}/${samplesKey(toolPack, samplesLock.sha256)}, which S3 does not hold: a maintainer must ${REPACK_SAMPLES}, then put the archive there with \`${samplesPushCommand(toolPack)}\``,
       }]),
     ];
   });
