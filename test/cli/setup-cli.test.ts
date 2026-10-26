@@ -174,7 +174,7 @@ describe("rerail install --root", () => {
     const text = output.mock.calls.join("");
     expect(text).toContain(`Removed ${dirname(updater.launcherPath)} (the rerail command).`);
     expect(text).toContain(`Removed ${join(hostConfigHome, ".cache", "rerail")} (the cache).`);
-    expect(text).toContain(`Kept ${context.home}: consent.json`);
+    expect(text).toContain(`Kept ${context.home}: coding-agents.json, consent.json`);
   });
 
   it("keeps rules and history when another checkout registered with --root is removed", async () => {
