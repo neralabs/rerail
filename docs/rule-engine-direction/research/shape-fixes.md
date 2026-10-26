@@ -287,3 +287,28 @@ Full-corpus confirmation at `1e707281`. Execution CPU, anchor selection in secon
 
 Findings: internal_dead_code is 4,931/4,931 exact, and all60 is unchanged (1,653 actual, 1,052 false positives). Tripwires has the same 24 source-incomplete failures as before.
 
+
+## 16. Set algebra: disjunctions, containment and kind restrictions
+
+Most of serverplan_quality's and internal_dead_code's anchor selection was set algebra the lowering repeated, not tree work. The lab dumps each policy's lowered stages (`RERAIL_LAB_DUMP`) and can run each plan alone (`RERAIL_LAB_PER_PLAN`). It showed four shapes:
+
+- **Disjunctions were left-deep chains of binary UNIONs.** They started from an empty seed, and each prefix was materialized and deduplicated. An `any` is now one compound UNION over its distinct, non-empty branches (`union`). Kind-only branches share one posting scan with one IN list.
+- **A union of a scope's own subsets was intersected with the scope again.** `X ∩ a ∪ X ∩ b`, then `∩ X`. Sets now record what contains them (`within`): a union is within what contains every branch. Text predicates and subtree relations record their scope (`narrowed`). An intersection with a known superset is a no-op.
+- **A union that contains one of its branches' supersets is that superset.** `r5 ∪ (r5 within ranges) ∪ (r5 within other ranges)` is `r5`, and the two range joins are never built.
+- **A union of one set's kind restrictions is one restriction.** `(r20 ∩ kinds{1}) ∪ (r20 ∩ kinds{5,6,7})` is `r20 ∩ kinds{1,5,6,7}`, and that is `r20` when `r20` holds no other kind. Kinds 0 and MAX (the error-node conventions) are excluded from these containment rules.
+
+Lab, 12 batches (1,984 Python files), `b327af45` against `88a48c18`:
+
+| Policy | VM steps before | after | execution CPU before | after |
+|---|---:|---:|---:|---:|
+| internal_dead_code | 0.833G | 0.265G (−68%) | 13.3 s | 3.2 s |
+| public_api_triples | 0.541G | 0.343G (−37%) | 9.5 s | 5.5 s |
+| legacy_execution_surfaces | 0.338G | 0.233G (−31%) | 6.9 s | 3.3 s |
+| serverplan_quality | 1.612G | 1.176G (−27%) | 33.4 s | 23.3 s |
+| serverplan_state_tripwires | 0.727G | 0.544G (−25%) | 13.2 s | 6.9 s |
+| serverplan_target_architecture | 0.396G | 0.318G (−20%) | 9.2 s | 5.0 s |
+| type_safety_patterns | 0.107G | 0.104G | 2.1 s | 1.8 s |
+
+Rows are identical for every plan except tripwires plans 27 and 31. Both needed more than the 256-relation admission allowance and were broadened to every node of their root kind (43,731 and 1,984 rows). They now fit, in 193 relations for plan 31, and select 0 and 79 rows. The lab now lists broadened plans. Fourteen policies still broaden some: transaction_patterns broadens all 58 plans, and serverplan_quality 7. A broadened plan is sound but costs the matcher every root.
+
+What remains in serverplan_quality: about 430 stage statements per batch, with the top 5 holding 54% of their steps. The vocabulary fill (regex predicates against new terms) is next, but the lab overstates it: each capture starts with an empty vocabulary, while a corpus store fills it once per term.
