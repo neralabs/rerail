@@ -1,0 +1,208 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-unpublished-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "In a file npm publishes, do not import files npm leaves out of the package or packages listed only in devDependencies; the published package cannot load them.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "private-file",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
+          "file": {
+            "package": {
+              "published": true,
+              "private": false
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "string",
+                "inside": {
+                  "field": "source",
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "export_statement"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "null"
+                  },
+                  {
+                    "kind": "regex"
+                  }
+                ],
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "field": "arguments",
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "kind": "import"
+                    }
+                  }
+                }
+              }
+            ],
+            "importTarget": {
+              "via": "import",
+              "builtin": false,
+              "published": false
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-unpublished-import",
+        "message": "npm does not publish this file, so the published package cannot load it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-unpublished-import"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "dev-package",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
+          "file": {
+            "package": {
+              "published": true,
+              "private": false
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "string",
+                "inside": {
+                  "field": "source",
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "export_statement"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "null"
+                  },
+                  {
+                    "kind": "regex"
+                  }
+                ],
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "field": "arguments",
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "kind": "import"
+                    }
+                  }
+                }
+              }
+            ],
+            "importTarget": {
+              "via": "import",
+              "builtin": false,
+              "devDependency": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-unpublished-import",
+        "message": "This package is only a devDependency, so the published package cannot load it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-unpublished-import"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

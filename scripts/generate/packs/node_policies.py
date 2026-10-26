@@ -245,6 +245,13 @@ DESCRIPTIONS = {
     "n-no-sync": "Avoid calling methods whose name ends in Sync, such as readFileSync; they block the Node.js event loop.",
     "n-no-top-level-await": "Avoid top-level await in modules npm publishes; require() cannot load an ES module that uses it, so move the await into an async function the module exports or calls.",
     "n-no-unpublished-bin": "Publish every file package.json lists as a bin executable: keep it in package.json's files field and out of .npmignore, or npm leaves the command out of the package.",
+    "n-file-extension-in-import": "Spell out the file extension in relative and absolute import specifiers, such as ./util.js; Node.js ES modules add none, so ./util fails to load.",
+    "n-no-extraneous-import": "Import only packages package.json lists in its dependency fields (or the workspace root's package.json does); an unlisted package loads only while something else happens to install it.",
+    "n-no-extraneous-require": "Require only packages package.json lists in its dependency fields (or the workspace root's package.json does); an unlisted package loads only while something else happens to install it.",
+    "n-no-missing-import": "Import only modules that exist: each import source must resolve, as Node.js resolves it, to an installed package or a file in the repository.",
+    "n-no-missing-require": "Require only modules that exist: each require() target must resolve, as Node.js resolves it, to an installed package or a file in the repository.",
+    "n-no-unpublished-import": "In a file npm publishes, do not import files npm leaves out of the package or packages listed only in devDependencies; the published package cannot load them.",
+    "n-no-unpublished-require": "In a file npm publishes, do not require files npm leaves out of the package or packages listed only in devDependencies; the published package cannot load them.",
     "n-prefer-global-buffer": "Use the global Buffer instead of importing or requiring it from the buffer module; it is always available in Node.js.",
     "n-no-restricted-import": "Do not import the modules this repository restricts (the restricted option).",
     "n-no-restricted-require": "Do not require the modules this repository restricts (the restricted option).",
@@ -534,10 +541,12 @@ def prefer_node_protocol_doc(builtins):
     return policy("n-prefer-node-protocol", "n/prefer-node-protocol", DESCRIPTIONS["n-prefer-node-protocol"], checks)
 
 
-# visitImport's targets: the string source of an import or export declaration, or of an import() (a string literal).
-IMPORT_SOURCE = {"kind": "string", "any": [
-    {"inside": {"field": "source", "any": [{"kind": "import_statement"}, {"kind": "export_statement"}]}},
-    {"nthChild": FIRST, "inside": {"kind": "arguments", "inside": {"field": "arguments", "kind": "call_expression", "has": {"field": "function", "kind": "import"}}}}]}
+# visitImport's targets: the string source of an import or export declaration, or the literal of an import() (ESTree's
+# Literal: a string, number, boolean, null or regular expression, whose String() is the name).
+IMPORT_SOURCE = {"any": [
+    {"kind": "string", "inside": {"field": "source", "any": [{"kind": "import_statement"}, {"kind": "export_statement"}]}},
+    {"any": [{"kind": kind} for kind in ("string", "number", "true", "false", "null", "regex")],
+     "nthChild": FIRST, "inside": {"kind": "arguments", "inside": {"field": "arguments", "kind": "call_expression", "has": {"field": "function", "kind": "import"}}}}]}
 # visitRequire's targets: the first argument of a call of the global require or require.resolve (ReferenceTracker),
 # whatever constant it folds to.
 REQUIRE_ARGUMENT = {"nthChild": FIRST, "inside": {"kind": "arguments", "inside": {"field": "arguments", "kind": "call_expression", **NOT_TAGGED, "has": {"field": "function", "any": [
@@ -565,6 +574,48 @@ def no_restricted_docs():
              "message": f"This module is restricted in this repository; do not {kind} it."}])
         doc["clauses"] = [options] + doc["clauses"]
         docs.append(doc)
+    return docs
+
+
+def resolution_docs():
+    """The rules that read where an import or require target resolves (`importTarget`), at their default options:
+    visitImport's and visitRequire's targets, built-in modules left out (includeCore false), each resolved by
+    enhanced-resolve as ImportTarget resolves it, over the files the workspace holds and disk below its root.
+
+    - n/no-missing-import, n/no-missing-require (checkExistence): a target whose resolution fails (no allowModules).
+    - n/file-extension-in-import (`always`, no overrides): a relative or absolute target that resolved to a file whose
+      expected extension (a TypeScript file's mapped to JavaScript; a folder's index file's) the specifier does not end
+      with.
+    - n/no-unpublished-import, n/no-unpublished-require (checkPublish, ignorePrivate true): in a file npm publishes of
+      a package that is not private, a path target npm does not publish, or a package only devDependencies lists.
+    - n/no-extraneous-import, n/no-extraneous-require (checkExtraneous): a resolved package target that neither the
+      importing file's package.json nor the workspace root claiming it lists (a type import also by its @types
+      package), and that no tsconfig paths alias names."""
+    published = {"package": {"published": True, "private": False}}
+    specs = [
+        ("no-missing", None, [("upstream", {"failed": True}, "This module cannot be resolved: no installed package or file in the repository provides it.")]),
+        ("file-extension-in", None, [("upstream", {"moduleType": ["relative", "absolute"], "extensionSpelled": False},
+                                      "Spell out the file extension of the file this specifier resolves to.")]),
+        ("no-unpublished", published, [
+            ("private-file", {"published": False}, "npm does not publish this file, so the published package cannot load it."),
+            ("dev-package", {"devDependency": True}, "This package is only a devDependency, so the published package cannot load it.")]),
+        ("no-extraneous", None, [("upstream", {"resolved": True, "declared": False, "aliased": False},
+                                  "package.json does not list this package in its dependencies.")]),
+    ]
+    docs = []
+    for name, file, checks in specs:
+        for kind in ("import", "require"):
+            if name == "file-extension-in" and kind == "require":
+                continue
+            rid = f"{name}-{kind}"
+            source = IMPORT_SOURCE if kind == "import" else REQUIRE_ARGUMENT
+            clauses = []
+            for cid, facts, message in checks:
+                ast = {"languageOptions": FILE_LO, **({"utils": REQUIRE_CALLEE_UTILS} if kind == "require" else {}),
+                       **({"file": file} if file else {}),
+                       "rule": {**source, "importTarget": {"via": kind, "builtin": False, **facts}}}
+                clauses.append({"id": cid, "ast": ast, "message": message})
+            docs.append(hoist(policy(f"n-{rid}", f"n/{rid}", DESCRIPTIONS[f"n-{rid}"], clauses)))
     return docs
 
 
@@ -1241,7 +1292,7 @@ def main():
             json.dump(es_syntax_doc(es_syntax), out)
         return
     for doc in syntax_docs() + prefer_global_docs() + prefer_promises_docs() + [no_path_concat_doc(), prefer_node_protocol_doc(builtins),
-                                                                            prefer_import_assert_strict_doc(), prefer_process_get_builtin_module_doc(builtins, node_builtins)] + no_restricted_docs():
+                                                                            prefer_import_assert_strict_doc(), prefer_process_get_builtin_module_doc(builtins, node_builtins)] + no_restricted_docs() + resolution_docs():
         write_port(args.root, doc)
     write_port(args.root, no_deprecated_api_doc(trace), compact=True)
     write_port(args.root, unsupported_builtins_doc(node_builtin_maps["node"], globals_node, "node-builtins"), compact=True)

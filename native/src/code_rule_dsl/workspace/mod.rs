@@ -311,8 +311,10 @@ struct FileState {
     failures: BTreeMap<ClauseId, LocalFailure>,
     /// `source-partial` message when the last parse had syntax errors and AST clauses ran around them.
     syntax: Option<String>,
-    /// Adapter-owned per-file cross-file state, retained with the file across persistence.
     crossfile: crossfile::CrossFileFileState,
+    /// The `import_generation` of the workspace its last evaluation read import targets at: a file
+    /// whose clauses read them is evaluated again once the held files change (`stale_imports`).
+    import_generation: u64,
 }
 
 impl FileState {
@@ -464,6 +466,12 @@ struct WorkspaceState {
     /// The folder on disk the workspace's paths are relative to (`setRoot`): resolution reads
     /// the files below it the workspace does not hold.
     import_root: Option<std::path::PathBuf>,
+    /// Counts the changes of what import target resolution reads that disk does not already
+    /// show: held files that differ from disk below the root, and the root itself.
+    import_generation: u64,
+    /// The file-local clauses (synthetic ones included) whose rules read `importTarget`: their
+    /// results depend on more than the file, so they are never stored (`FileState::unstored`).
+    import_clauses: HashSet<ClauseId>,
 }
 
 fn check_closed(closed: &AtomicBool) -> Result<()> {

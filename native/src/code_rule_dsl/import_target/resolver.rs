@@ -8,8 +8,8 @@
 
 use super::entrypoints;
 use super::fs::View;
-use super::path;
 use super::json::Json;
+use super::path;
 use std::sync::{Arc, LazyLock};
 
 /// `doResolve` steps one resolution may take; past them it fails.
@@ -364,7 +364,10 @@ impl Resolver<'_> {
         if hook == Hook::ImportsResolve {
             parsed.internal = false;
         }
-        let has_request = parsed.request.as_deref().is_some_and(|request| !request.is_empty());
+        let has_request = parsed
+            .request
+            .as_deref()
+            .is_some_and(|request| !request.is_empty());
         if has_request && parsed.query.is_empty() && !parsed.fragment.is_empty() {
             let directory = parsed.fragment.ends_with('/');
             let fragment = if directory {
@@ -431,7 +434,10 @@ impl Resolver<'_> {
         let Some(description) = self.description(&directory)? else {
             return Ok(Tap::Next);
         };
-        let relative = format!(".{}", &request.path[description.root.len().min(request.path.len())..]);
+        let relative = format!(
+            ".{}",
+            &request.path[description.root.len().min(request.path.len())..]
+        );
         let target = match hook {
             Hook::ParsedResolve => Hook::DescribedResolve,
             Hook::UndescribedResolveInPackage => Hook::ResolveInPackage,
@@ -465,9 +471,15 @@ impl Resolver<'_> {
         if inner.is_empty() {
             return Ok(Tap::Next);
         }
-        let has_request = request.request.as_deref().is_some_and(|inner| !inner.is_empty());
+        let has_request = request
+            .request
+            .as_deref()
+            .is_some_and(|inner| !inner.is_empty());
         for item in aliases {
-            let star = item.name.find('*').filter(|&at| !item.name[at + 1..].contains('*'));
+            let star = item
+                .name
+                .find('*')
+                .filter(|&at| !item.name[at + 1..].contains('*'));
             let wildcard = star.map(|at| (&item.name[..at], &item.name[at + 1..]));
             let first = match wildcard {
                 Some(("", _)) => None,
@@ -646,7 +658,11 @@ impl Resolver<'_> {
             return Ok(Tap::Next);
         };
         let remaining = format!("{inner}{}{}", request.query, request.fragment);
-        let Some(field) = description.data.get("imports").filter(|field| field.truthy()) else {
+        let Some(field) = description
+            .data
+            .get("imports")
+            .filter(|field| field.truthy())
+        else {
             return Ok(Tap::Next);
         };
         if request.directory {
@@ -670,7 +686,12 @@ impl Resolver<'_> {
                 let without = path_part.get(2..).unwrap_or("");
                 if INVALID_OR_EMPTY_SEGMENT.is_match(without) {
                     if last {
-                        return Err(invalid_target("imports", target, used.as_deref(), &description.path));
+                        return Err(invalid_target(
+                            "imports",
+                            target,
+                            used.as_deref(),
+                            &description.path,
+                        ));
                     }
                     continue;
                 }
@@ -760,7 +781,10 @@ impl Resolver<'_> {
     /// `JoinRequestPartPlugin`: the module's folder, and the request within it.
     fn join_request_part(&mut self, _hook: Hook, request: &Request) -> Step {
         let inner = request.request.as_deref().unwrap_or("");
-        let mut split = inner.get(3..).and_then(|rest| rest.find('/')).map(|at| at + 3);
+        let mut split = inner
+            .get(3..)
+            .and_then(|rest| rest.find('/'))
+            .map(|at| at + 3);
         if let Some(at) = split
             && inner.as_bytes().get(2) == Some(&b'@')
         {
@@ -768,7 +792,11 @@ impl Resolver<'_> {
         }
         let (module, remaining, fully_specified) = match split {
             None => (inner, ".".to_owned(), false),
-            Some(at) => (&inner[..at], format!(".{}", &inner[at..]), request.fully_specified),
+            Some(at) => (
+                &inner[..at],
+                format!(".{}", &inner[at..]),
+                request.fully_specified,
+            ),
         };
         let joined = Request {
             path: join(&request.path, module),
@@ -824,7 +852,11 @@ impl Resolver<'_> {
                 request.fragment
             )
         };
-        let Some(field) = description.data.get("exports").filter(|field| field.truthy()) else {
+        let Some(field) = description
+            .data
+            .get("exports")
+            .filter(|field| field.truthy())
+        else {
             return Ok(Tap::Next);
         };
         if request.directory {
@@ -858,7 +890,12 @@ impl Resolver<'_> {
                     && INVALID_SEGMENT.is_match(&path_part[2..]));
             if !valid {
                 if last {
-                    return Err(invalid_target("exports", target, used.as_deref(), &description.path));
+                    return Err(invalid_target(
+                        "exports",
+                        target,
+                        used.as_deref(),
+                        &description.path,
+                    ));
                 }
                 continue;
             }
@@ -914,7 +951,7 @@ impl Resolver<'_> {
             return Ok(Tap::Next);
         }
         for field in &self.options.main_fields {
-            let Some(raw) = description.data.get(*field).and_then(Json::as_str) else {
+            let Some(raw) = description.data.get(field).and_then(Json::as_str) else {
                 continue;
             };
             if raw.is_empty() || raw == "." || raw == "./" {

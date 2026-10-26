@@ -140,7 +140,10 @@ pub(super) fn collect_mentions(
         }
         Semantic::Calls(test) => names.extend(test.chain.iter().cloned()),
         Semantic::Layout(layout) => names.extend(layout.reads().map(str::to_owned)),
-        Semantic::Resolves(_) | Semantic::Value(_) | Semantic::Host(_) | Semantic::ImportTarget(_) => {}
+        Semantic::Resolves(_)
+        | Semantic::Value(_)
+        | Semantic::Host(_)
+        | Semantic::ImportTarget(_) => {}
     }
 }
 

@@ -553,6 +553,53 @@ SOFTWARE.
 
 ----------------------------------------------------------------------
 
+Ported code: enhanced-resolve 5.26.0, get-tsconfig 4.14.3, eslint-plugin-n 18.4.1 ImportTarget
+Files: native/src/code_rule_dsl/import_target/resolver.rs and entrypoints.rs (a Rust port
+  of enhanced-resolve's synchronous resolver, its hooks and plugins, and
+  lib/util/entrypoints.js), tsconfig.rs (a Rust port of get-tsconfig's getTsconfig and
+  its extends resolution), mod.rs (a Rust port of eslint-plugin-n's lib/util/import-target.js
+  and the helpers it and check-publish.js, check-extraneous.js and
+  file-extension-in-import.js read), term.rs (its getModuleStyle and getStringIfConstant
+  read of a target's style and name), and builtins.rs (the keys of eslint-plugin-n's
+  NodeBuiltinModules table); provenance in native/src/code_rule_dsl/import_target/UPSTREAM.md
+Revisions: enhanced-resolve v5.26.0, commit c65e40ac1b77a58d1bcbc883953974236991a833;
+  get-tsconfig v4.14.3, commit b4e7751e408eeaf014974a7cb1ec2634914a4d6c;
+  eslint-plugin-n v18.4.1, commit f1d47aff402b9e009578f4b3155b84f7d8beef9b
+Sources: https://github.com/webpack/enhanced-resolve,
+  https://github.com/privatenumber/get-tsconfig,
+  https://github.com/eslint-community/eslint-plugin-n
+License: MIT
+
+Modified by the Rerail authors: the JavaScript and TypeScript are translated to Rust
+for the resolver options eslint-plugin-n's ImportTarget sets at its default options,
+over the files a workspace or snapshot holds and the files on disk below its root;
+get-tsconfig's port reads only the nearest tsconfig.json's compilerOptions and those
+of the configurations it extends.
+
+Copyright JS Foundation and other contributors
+Copyright (c) Hiroki Osame <hiroki.osame@gmail.com>
+Copyright (c) 2015 Toru Nagashima
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------
+
 Bundled grammar: tree-sitter/tree-sitter-typescript 0.23.2, patched
 Files: native/grammars/tree-sitter-typescript/ (LICENSE and {typescript,tsx}/src/scanner.c
   byte-identical to upstream; common/scanner.h patched; {typescript,tsx}/src/grammar.json

@@ -13,7 +13,6 @@ mod each;
 mod embedded;
 mod exported;
 mod format_args;
-mod import_target;
 mod layout;
 mod memo;
 mod nth_child;
@@ -31,7 +30,7 @@ mod value;
 use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 pub(super) use analysis::RequiredText;
-pub(crate) use analysis::calls_positive_only;
+pub(crate) use analysis::{calls_positive_only, reads_import_targets};
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 pub(super) use arguments::{Arguments, Passed, SlotKind};
 pub(super) use arguments_sql::SQL_CALL_KINDS;
@@ -67,7 +66,7 @@ pub(crate) use resolve::{
     file_phpstan, file_psalm, file_rerail_ignores, file_source_type_for, file_sqlfluff,
     file_vue_directives, table_reading,
 };
-pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
+pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved, matched_file_path};
 #[cfg(test)]
 pub(super) use resolve::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS, TABLE_BUILDS};
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};
@@ -94,7 +93,7 @@ use util::{
 use util::{THREE_VALUED, UNKNOWN};
 pub(super) use value::{Bound, Reading, ValueTest};
 
-pub(super) use import_target::ImportTargetTest;
+pub(super) use crate::code_rule_dsl::import_target::term::ImportTargetTest;
 #[derive(Clone)]
 pub(super) struct GrammarMatcher {
     /// The dialect of the document the matcher reads: the file's own, or for an embedded clause

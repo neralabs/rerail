@@ -949,6 +949,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     let storage: Promise<boolean>;
     try {
       for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable, JSON.stringify(codeRule.placement));
+      // Import targets resolve against the files below the workspace root that the workspace does not hold.
+      workspace.setRoot(this.#workspaceRoot);
       const attachStartedAt = performance.now();
       storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
         this.#timingLog?.(

@@ -56,10 +56,24 @@ package.json: `bin` (its `bin` targets, as the plugin's `isBinFile` resolves the
 range), `private` (its `private` is `true`) and `published` (npm publishes the file, as the plugin's `getNpmignore`
 reads the manifest's `files` and `main` and the `.npmignore`, else, without `files`, the `.gitignore` in its folder;
 [docs/code-rule-dsl-reference.html](../../docs/code-rule-dsl-reference.html)). Without a package.json none of them
-holds, `published: false` included, as the plugin checks nothing there. The recorder copies each upstream fixture
-folder's package.json, `.npmignore` and `.gitignore`, and they ride along with each case written there; a case
-upstream runs as a module at a `.js`/`.ts` fixture path beside a package.json without `"type": "module"` is written
-as `.mjs`/`.mts` in the same folder, so its package and module system both hold.
+holds, `published: false` included, as the plugin checks nothing there.
+
+The rules that read where an import or `require()` target resolves (`n-no-missing-*`, `n-file-extension-in-import`,
+`n-no-unpublished-import`/`-require`, `n-no-extraneous-*`) do it through `importTarget` conditions on the specifier:
+the engine resolves it as the plugin's `ImportTarget` does (enhanced-resolve with the plugin's options: `exports`
+and `imports` conditions, `node_modules`, main fields and files, the tried extensions, a TypeScript file's tsconfig
+`paths` and extension mapping), over the files the workspace holds and, below the workspace root, the files on disk,
+so a bare specifier resolves only where its package is installed in the repository. It then reads the facts the
+plugin's checks read: `failed` (no file found), `extensionSpelled`, `published` (npm publishes the target file, read
+as `file.package.published` is), `devDependency`, `declared` (a dependency field of the importing file's package.json,
+or of the workspace root that claims it) and `aliased` (a tsconfig `paths` key). The plugin finds packages in any
+`node_modules` up to `/`; the engine looks no higher than the workspace root, and reads letter case as the disk does.
+
+The recorder writes each case into a copy of the whole upstream fixture folder it runs in (its package.json,
+`.npmignore`, `.gitignore`, `node_modules` and sibling files), lints that copy in a temporary folder so nothing of this
+repository is found, and the scoring workspace's root is the fixtures folder, so resolution reads the same tree. A
+case upstream runs as a module at a `.js`/`.ts` fixture path beside a package.json without `"type": "module"` is
+written as `.mjs`/`.mts` in the same folder, so its package and module system both hold.
 
 Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
 ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
@@ -186,6 +200,22 @@ eslint-plugin-n 18.4.1 n/no-unsupported-features/es-syntax (default options: no 
 ### `n-no-restricted-import` / `n-no-restricted-require`
 
 eslint-plugin-n 18.4.1 n/no-restricted-import and no-restricted-require, whose default restricts nothing. The targets are the plugin's: an import or export declaration's source, an `import()` string, and the first argument of the global `require` or `require.resolve` (any constant it folds to). The restrictions are the port's `restricted` option, regular expressions each matching a whole module name (the specifier up to its first `!`), where eslint-plugin-n takes globs and a message per entry; without any, nothing is reported.
+
+### `n-no-missing-import` / `n-no-missing-require`
+
+eslint-plugin-n 18.4.1 n/no-missing-import and n/no-missing-require (default options). Reports each target of the plugin's visitImport (an import or export declaration's source, the literal argument of `import()`: a string, number, boolean, null or regular expression, read as its `String()`) or visitRequire (the first argument of a call of the global `require` or `require.resolve`, whatever constant it folds to) that is no Node.js built-in module and whose resolution fails (`importTarget: { failed: true }`). The message cannot repeat the resolver's error, which upstream's does. Not ported: the `allowModules`, `resolvePaths`, `resolverConfig`, `tryExtensions`, `tsconfigPath`, `typescriptExtensionMap` and `ignoreTypeImport` options and their settings.
+
+### `n-file-extension-in-import`
+
+eslint-plugin-n 18.4.1 n/file-extension-in-import (default style `always`, no overrides). Reports a relative or absolute import target that resolves to a file whose expected extension the specifier does not end with: the file's own, a TypeScript file's JavaScript one (`.ts` → `.js`, `.mts` → `.mjs`, …), or, for a folder, its `index` file's (`./dir` expects `./dir/index.js`). A target that resolves to nothing is the other rules' business. No fix is offered. Not ported: the `never` style, per-extension overrides, `tryExtensions` and the `typescriptExtensionMap` option and setting.
+
+### `n-no-unpublished-import` / `n-no-unpublished-require`
+
+eslint-plugin-n 18.4.1 n/no-unpublished-import and n/no-unpublished-require (default options: `ignorePrivate` true). In a file npm publishes (`file.package.published: true`) of a package that is not private (`private: false`), reports a path target npm does not publish (`importTarget: { published: false }`: outside the package, or left out by its `files`, `.npmignore` or `.gitignore`) and a package target only `devDependencies` lists (`devDependency: true`). A target that resolves to no file is read at the workspace root, which stands for the plugin's working directory. Not ported: the `allowModules`, `convertPath`, `resolvePaths`, `resolverConfig`, `tryExtensions` and `ignoreTypeImport` options and their settings.
+
+### `n-no-extraneous-import` / `n-no-extraneous-require`
+
+eslint-plugin-n 18.4.1 n/no-extraneous-import and n/no-extraneous-require (default options). Reports a package target that resolves (`resolved: true`) but that neither the importing file's package.json (its own name and its `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies`) nor the workspace root that claims it (`workspaces`, or `pnpm-workspace.yaml`) lists (`declared: false`; a type import also counts its `@types` package), and that no tsconfig `paths` key names (`aliased: false`). Without a package.json nothing is checked. Not ported: the `allowModules`, `convertPath`, `resolvePaths`, `resolverConfig` and `tryExtensions` options and their settings.
 
 ## Not ported
 

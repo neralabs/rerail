@@ -239,6 +239,7 @@ pub(super) fn make_file(
         failures: BTreeMap::new(),
         syntax: None,
         crossfile: CrossFileFileState::default(),
+        import_generation: 0,
     }
 }
 
@@ -345,6 +346,52 @@ impl WorkspaceState {
         }
         self.evicted_inputs.remove(path);
         self.files.remove(path)
+    }
+
+    /// Holds `path`'s `source` for import target resolution (`import_target::fs::HeldFiles`): a
+    /// change disk below the root does not already show moves `import_generation`. A workspace
+    /// whose clauses read no import targets (they are fixed before its first apply) holds none.
+    pub(super) fn hold_import_file(&mut self, path: &str, source: &Arc<String>) {
+        if self.import_clauses.is_empty() {
+            return;
+        }
+        let root = self.import_root.as_deref();
+        if Arc::make_mut(&mut self.import_files).hold(path, source, root) {
+            self.import_generation += 1;
+        }
+    }
+
+    /// Stops holding `path` for import target resolution, as `hold_import_file` holds it.
+    fn release_import_file(&mut self, path: &str) {
+        let root = self.import_root.as_deref();
+        if Arc::make_mut(&mut self.import_files).release(path, root) {
+            self.import_generation += 1;
+        }
+    }
+
+    /// Marks dirty every file whose clauses read import targets and whose last evaluation read
+    /// them before the held files (or the root) last changed. A file whose source a busy store
+    /// freed keeps its results: nothing can supply its source again (`results_only`).
+    pub(super) fn stale_imports(&mut self) {
+        if self.import_clauses.is_empty() {
+            return;
+        }
+        let generation = self.import_generation;
+        let stale = self
+            .files
+            .iter()
+            .filter(|(_, file)| {
+                file.import_generation != generation
+                    && !file.results_only
+                    && file
+                        .candidates
+                        .ast
+                        .iter()
+                        .any(|id| self.import_clauses.contains(id))
+            })
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        self.dirty_files.extend(stale);
     }
 }
 
@@ -980,10 +1027,12 @@ pub(super) fn apply_request(
                 .ignore_files
                 .insert(input.path.clone(), Arc::clone(&input.source));
         }
+        state.hold_import_file(&input.path, &input.source);
     }
     for path in &request.removed {
         state.module_configs.remove(path);
         state.ignore_files.remove(path);
+        state.release_import_file(path);
     }
     context_changes.apply(state);
     for path in request.removed {
@@ -1018,6 +1067,11 @@ pub(super) fn apply_request(
         }
         state.dirty_files.insert(path.clone());
         CrossFileScheduler::forget(state, &path);
+    }
+    // A deferred request (a batch of a scan) leaves the files whose import targets it changed to
+    // the closing one, which reads every file the scan sent.
+    if !request.defer_global {
+        state.stale_imports();
     }
     state.result_page_index = None;
     state.revision = request.revision;

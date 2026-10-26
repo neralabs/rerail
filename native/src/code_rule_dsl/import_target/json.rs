@@ -71,13 +71,6 @@ impl Json {
         }
     }
 
-    /// An object's keys, in order.
-    pub(crate) fn keys(&self) -> impl Iterator<Item = &str> {
-        self.entries()
-            .into_iter()
-            .flat_map(|entries| entries.iter().map(|(key, _)| key.as_str()))
-    }
-
     /// JavaScript's `String(value)` of a pattern list's item.
     pub(crate) fn to_js_string(&self) -> String {
         match self {
@@ -168,7 +161,12 @@ mod tests {
     #[test]
     fn objects_keep_their_keys_in_text_order() {
         let parsed = Json::parse(r#"{ "types": null, "default": "./a.js", "types": 1 }"#).unwrap();
-        assert_eq!(parsed.keys().collect::<Vec<_>>(), ["types", "default"]);
+        let keys = parsed
+            .entries()
+            .unwrap()
+            .iter()
+            .map(|(key, _)| key.as_str());
+        assert_eq!(keys.collect::<Vec<_>>(), ["types", "default"]);
         assert_eq!(parsed.get("types"), Some(&Json::Number(1.0)));
         assert!(Json::parse("{").is_err());
         assert_eq!(

@@ -157,6 +157,21 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2015 Toru Nagashima", "2013 Kael Zhang <i@kael.me>, contributors", "2018 Terkel Gjervig Nielsen", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# enhanced-resolve 5.26.0's resolver, get-tsconfig 4.14.3's getTsconfig and eslint-plugin-n 18.4.1's ImportTarget, ported
+# to Rust (import_target/{resolver,entrypoints,tsconfig,mod,term,builtins}.rs, provenance in import_target/UPSTREAM.md).
+[[annotations]]
+path = [
+  "native/src/code_rule_dsl/import_target/resolver.rs",
+  "native/src/code_rule_dsl/import_target/entrypoints.rs",
+  "native/src/code_rule_dsl/import_target/tsconfig.rs",
+  "native/src/code_rule_dsl/import_target/mod.rs",
+  "native/src/code_rule_dsl/import_target/term.rs",
+  "native/src/code_rule_dsl/import_target/builtins.rs",
+]
+precedence = "override"
+SPDX-FileCopyrightText = ["JS Foundation and other contributors", "Hiroki Osame <hiroki.osame@gmail.com>", "2015 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with

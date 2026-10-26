@@ -1,8 +1,8 @@
-//! `importTarget`: a specifier node's import or require target, as eslint-plugin-n reads it
-//! (`import_target`).
+//! `importTarget`: the matcher term reading a specifier node's import or require target, as
+//! eslint-plugin-n reads it.
 
-use super::Reading;
 use crate::code_rule_dsl::import_target::{self, ModuleType, Style, Target, fs::View};
+use crate::code_rule_dsl::matcher::{Reading, matched_file_path};
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::{Doc, Node};
 use std::sync::Arc;
@@ -42,7 +42,9 @@ fn style<D: Doc>(node: &Node<'_, D>, via: Style) -> Style {
                 {
                     callee = Some(inner);
                 }
-                if callee.is_some_and(|callee| callee.kind() == "identifier" && callee.text() == "require") {
+                if callee.is_some_and(|callee| {
+                    callee.kind() == "identifier" && callee.text() == "require"
+                }) {
                     return Style::Require;
                 }
             }
@@ -72,7 +74,7 @@ fn constant_string(value: &Value) -> Option<String> {
 impl ImportTargetTest {
     /// Whether the node is a target whose facts meet every condition: a node with no constant
     /// value names no target.
-    pub(super) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+    pub(crate) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         if !self.reading.has_value(node) {
             return false;
         }
@@ -87,7 +89,7 @@ impl ImportTargetTest {
             return false;
         }
         let view = import_target::current_view().unwrap_or_else(empty_view);
-        let Some(importer) = super::resolve::matched_file_path() else {
+        let Some(importer) = matched_file_path() else {
             return false;
         };
         let target = import_target::target(&view, &importer, &specifier, style(node, self.via));

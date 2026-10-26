@@ -3,8 +3,8 @@
 //! `extends` beneath its own.
 
 use super::fs::View;
-use super::path;
 use super::json::Json;
+use super::path;
 
 /// An object's entries, in order.
 type Entries = Vec<(String, Json)>;
@@ -93,8 +93,8 @@ fn read(view: &View, file: &str, depth: usize) -> Option<Entries> {
     };
     let directory = path::dirname(file);
     for base in extends.into_iter().rev() {
-        let Some(base) = extends_path(view, base, directory)
-            .and_then(|base| read(view, &base, depth + 1))
+        let Some(base) =
+            extends_path(view, base, directory).and_then(|base| read(view, &base, depth + 1))
         else {
             continue;
         };
@@ -130,7 +130,10 @@ fn extends_path(view: &View, extends: &str, directory: &str) -> Option<String> {
     let (package, subpath) = if first.starts_with('@') {
         let mut scoped = rest.splitn(2, '/');
         let name = scoped.next().unwrap_or("");
-        (format!("{first}/{name}"), scoped.next().unwrap_or("").to_owned())
+        (
+            format!("{first}/{name}"),
+            scoped.next().unwrap_or("").to_owned(),
+        )
     } else {
         (first.to_owned(), rest.to_owned())
     };
@@ -155,7 +158,14 @@ fn extends_path(view: &View, extends: &str, directory: &str) -> Option<String> {
             return Some(named);
         }
     }
-    let named = path::join(&folder, if subpath.is_empty() { "tsconfig.json" } else { &subpath });
+    let named = path::join(
+        &folder,
+        if subpath.is_empty() {
+            "tsconfig.json"
+        } else {
+            &subpath
+        },
+    );
     if !named.ends_with(".json") && view.is_file(&format!("{named}.json")) {
         return Some(format!("{named}.json"));
     }

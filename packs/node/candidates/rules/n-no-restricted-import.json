@@ -40,9 +40,9 @@
             "moduleSystem": "package-type"
           },
           "rule": {
-            "kind": "string",
             "any": [
               {
+                "kind": "string",
                 "inside": {
                   "field": "source",
                   "any": [
@@ -56,6 +56,26 @@
                 }
               },
               {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "null"
+                  },
+                  {
+                    "kind": "regex"
+                  }
+                ],
                 "nthChild": {
                   "position": 1,
                   "ofRule": {

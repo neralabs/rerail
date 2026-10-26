@@ -155,6 +155,12 @@ export interface NativeCodeRuleDslWorkspace {
   /** The referenced node as JSON; throws when the reference's file version is no longer current. */
   resolveNodeReference(reference: string): string;
   setDocumentResidencyLimit(bytes: number): void;
+  /**
+   * The absolute folder on disk the workspace's paths are relative to: `importTarget` resolution reads the files below
+   * it the workspace does not hold (installed packages, files outside every scope), and nothing above it. Without one,
+   * targets resolve among the files the workspace holds.
+   */
+  setRoot(root: string): void;
   close(): void;
 }
 

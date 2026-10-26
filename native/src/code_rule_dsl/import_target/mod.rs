@@ -12,16 +12,17 @@
 mod builtins;
 mod entrypoints;
 pub(crate) mod fs;
+mod json;
 mod path;
 mod resolver;
-mod json;
+pub(crate) mod term;
 mod tsconfig;
 
 pub(crate) use builtins::is_builtin;
 use fs::View;
+use json::Json;
 use parking_lot::Mutex;
 use resolver::{Alias, Options, Resolved};
-use json::Json;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -40,8 +41,9 @@ pub(crate) enum ModuleType {
 }
 
 impl ModuleType {
-    pub(crate) const NAMES: [&'static str; 7] =
-        ["unknown", "relative", "absolute", "node", "npm", "http", "data"];
+    pub(crate) const NAMES: [&'static str; 7] = [
+        "unknown", "relative", "absolute", "node", "npm", "http", "data",
+    ];
 
     pub(crate) fn parse(name: &str) -> Option<Self> {
         Some(match name {
@@ -148,12 +150,33 @@ struct ExtensionMap {
 }
 
 const DEFAULT_MAP: ExtensionMap = ExtensionMap {
-    forward: &[("", ".js"), (".ts", ".js"), (".cts", ".cjs"), (".mts", ".mjs"), (".tsx", ".js")],
-    backward: &[(".js", &[".ts", ".tsx"]), (".cjs", &[".cts"]), (".mjs", &[".mts"])],
+    forward: &[
+        ("", ".js"),
+        (".ts", ".js"),
+        (".cts", ".cjs"),
+        (".mts", ".mjs"),
+        (".tsx", ".js"),
+    ],
+    backward: &[
+        (".js", &[".ts", ".tsx"]),
+        (".cjs", &[".cts"]),
+        (".mjs", &[".mts"]),
+    ],
 };
 const PRESERVE_MAP: ExtensionMap = ExtensionMap {
-    forward: &[("", ".js"), (".ts", ".js"), (".cts", ".cjs"), (".mts", ".mjs"), (".tsx", ".jsx")],
-    backward: &[(".js", &[".ts"]), (".cjs", &[".cts"]), (".mjs", &[".mts"]), (".jsx", &[".tsx"])],
+    forward: &[
+        ("", ".js"),
+        (".ts", ".js"),
+        (".cts", ".cjs"),
+        (".mts", ".mjs"),
+        (".tsx", ".jsx"),
+    ],
+    backward: &[
+        (".js", &[".ts"]),
+        (".cjs", &[".cts"]),
+        (".mjs", &[".mts"]),
+        (".jsx", &[".tsx"]),
+    ],
 };
 const EXPLICIT_MAP: ExtensionMap = ExtensionMap {
     forward: &[],
@@ -179,7 +202,9 @@ fn extension_map(tsconfig: Option<&Tsconfig>) -> &'static ExtensionMap {
 }
 
 const JS_EXTENSIONS: &[&str] = &[".js", ".json", ".node", ".mjs", ".cjs"];
-const TS_EXTENSIONS: &[&str] = &[".js", ".ts", ".mjs", ".mts", ".cjs", ".cts", ".json", ".node"];
+const TS_EXTENSIONS: &[&str] = &[
+    ".js", ".ts", ".mjs", ".mts", ".cjs", ".cts", ".json", ".node",
+];
 
 /// `getTryExtensions` at default options.
 fn try_extensions(importer: &str, tsconfig: Option<&Tsconfig>) -> &'static [&'static str] {
@@ -302,7 +327,10 @@ impl View {
         }
         let found = resolver::package_json(self, folder).map(|data| {
             let manifest = self.relative(folder).map(|relative| {
-                let file = |name: &str| self.text(&path::join(folder, name)).map(|text| (*text).clone());
+                let file = |name: &str| {
+                    self.text(&path::join(folder, name))
+                        .map(|text| (*text).clone())
+                };
                 let bytes = self
                     .text(&path::join(folder, "package.json"))
                     .map(|text| text.as_bytes().to_vec())
@@ -341,7 +369,8 @@ impl View {
 
 /// `ImportTarget#getModuleName`.
 fn module_name(name: &str, module_type: ModuleType) -> Option<String> {
-    let first = |text: &str, count: usize| text.split('/').take(count).collect::<Vec<_>>().join("/");
+    let first =
+        |text: &str, count: usize| text.split('/').take(count).collect::<Vec<_>>().join("/");
     match module_type {
         ModuleType::Npm => Some(if name.starts_with('@') {
             first(name, 2)
@@ -396,7 +425,8 @@ fn resolve_target(
         Style::Type => conditions.extend(["import", "types"]),
         Style::Require => {}
     }
-    let mains = style == Style::Require || matches!(module_type, ModuleType::Npm | ModuleType::Node);
+    let mains =
+        style == Style::Require || matches!(module_type, ModuleType::Npm | ModuleType::Node);
     let mut options = Options {
         conditions,
         main_fields: if mains { vec!["main"] } else { Vec::new() },
@@ -438,7 +468,10 @@ impl Target {
     /// ends with the extension the rule expects for the file it names. `None` for a target that
     /// is not a relative or absolute path.
     pub(crate) fn extension_spelled(&self, view: &View) -> Option<bool> {
-        if !matches!(self.module_type, ModuleType::Relative | ModuleType::Absolute) {
+        if !matches!(
+            self.module_type,
+            ModuleType::Relative | ModuleType::Absolute
+        ) {
             return None;
         }
         let file_path = self.file_path.as_deref()?;
@@ -471,8 +504,10 @@ impl Target {
         let forward = |file: &str, fallback: &str| -> String {
             let extension = path::extname(file);
             if importer.typescript
-                && let Some((_, javascript)) =
-                    map.forward.iter().find(|(typescript, _)| *typescript == extension)
+                && let Some((_, javascript)) = map
+                    .forward
+                    .iter()
+                    .find(|(typescript, _)| *typescript == extension)
             {
                 return (*javascript).to_owned();
             }

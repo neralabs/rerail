@@ -527,7 +527,7 @@ pub(crate) fn strip_jsonc(text: &str) -> String {
         ),
         _ => None,
     });
-    let without_trailing_commas = strip_outside_strings(&without_comments, |bytes, at| {
+    strip_outside_strings(&without_comments, |bytes, at| {
         (bytes[at] == b','
             && matches!(
                 bytes[at + 1..]
@@ -536,8 +536,7 @@ pub(crate) fn strip_jsonc(text: &str) -> String {
                 Some(b'}' | b']')
             ))
         .then_some(at + 1)
-    });
-    without_trailing_commas
+    })
 }
 
 /// `text` without the spans `skip` names outside string literals: given the bytes and an offset,

@@ -512,6 +512,107 @@
         "suppression"
       ],
       "match": "line+column"
+    },
+    {
+      "id": "n-no-missing-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-missing-import"
+      },
+      "policy": "candidates/rules/n-no-missing-import.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-missing-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-missing-require"
+      },
+      "policy": "candidates/rules/n-no-missing-require.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-file-extension-in-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/file-extension-in-import"
+      },
+      "policy": "candidates/rules/n-file-extension-in-import.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-unpublished-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unpublished-import"
+      },
+      "policy": "candidates/rules/n-no-unpublished-import.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-unpublished-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unpublished-require"
+      },
+      "policy": "candidates/rules/n-no-unpublished-require.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-extraneous-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-extraneous-import"
+      },
+      "policy": "candidates/rules/n-no-extraneous-import.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-extraneous-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-extraneous-require"
+      },
+      "policy": "candidates/rules/n-no-extraneous-require.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
     }
   ]
 }

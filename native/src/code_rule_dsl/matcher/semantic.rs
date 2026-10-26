@@ -38,7 +38,7 @@ pub(in crate::code_rule_dsl) enum Semantic {
     Calls(Box<crate::code_rule_dsl::calls::CallsTest>),
     /// `importTarget`: the import or require target the node's constant value names, and what
     /// eslint-plugin-n reads of it.
-    ImportTarget(Box<super::import_target::ImportTargetTest>),
+    ImportTarget(Box<crate::code_rule_dsl::import_target::term::ImportTargetTest>),
 }
 
 impl Semantic {

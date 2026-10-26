@@ -121,15 +121,6 @@ pub(crate) fn relative(from: &str, to: &str) -> String {
         .join("/")
 }
 
-/// Whether `path` is `directory` or below it (both absolute and normalized).
-pub(crate) fn is_within(path: &str, directory: &str) -> bool {
-    directory == "/"
-        || path == directory
-        || path
-            .strip_prefix(directory)
-            .is_some_and(|rest| rest.starts_with('/'))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,7 +145,9 @@ mod tests {
                 extname("a.."),
                 extname(".a."),
             ],
-            [".a", ".", "", ".js", "", "", "", "foo", "", ".", "/", "/", ".", "."]
+            [
+                ".a", ".", "", ".js", "", "", "", "foo", "", ".", "/", "/", ".", "."
+            ]
         );
         assert_eq!(resolve("/a/b", "./c/"), "/a/b/c");
         assert_eq!(resolve("/a/b", "/x/../y"), "/y");

@@ -2,9 +2,9 @@
 //! below the workspace's root on disk, the ones there. Paths are absolute: the root's own path
 //! (`View::base`), or `/` for a file set without a root on disk.
 
+use super::json::Json as Parsed;
 use super::path;
 use parking_lot::Mutex;
-use super::json::Json as Parsed;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,6 +32,22 @@ fn keeps_text(path: &str, bytes: usize) -> bool {
         || (name.ends_with(".json") && bytes <= MAX_HELD_JSON_BYTES)
 }
 
+/// What a resolution reads of the file at `path` (workspace-relative) on disk below `root`, as
+/// `HeldFiles` would hold it: `None` where there is no regular file, else its text where kept
+/// (`keeps_text`).
+fn on_disk(path: &str, root: Option<&Path>) -> Option<Option<Arc<String>>> {
+    let absolute = root?.join(path);
+    let metadata = std::fs::metadata(&absolute)
+        .ok()
+        .filter(std::fs::Metadata::is_file)?;
+    let bytes = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+    Some(keeps_text(path, bytes).then(|| {
+        std::fs::read_to_string(&absolute)
+            .map(Arc::new)
+            .unwrap_or_default()
+    }))
+}
+
 /// The files a workspace or snapshot holds, by workspace-relative path, each with its text where
 /// a resolution reads it (`keeps_text`).
 #[derive(Clone, Default)]
@@ -40,21 +56,20 @@ pub(crate) struct HeldFiles {
 }
 
 impl HeldFiles {
-    /// Holds the file at `path` with `source`; whether that changes what a resolution reads.
-    pub(crate) fn insert(&mut self, path: &str, source: &Arc<String>) -> bool {
+    /// Holds the file at `path` with `source`; whether that changes what a resolution reads,
+    /// where disk below `root` stands for a path not held before (`on_disk`).
+    pub(crate) fn hold(&mut self, path: &str, source: &Arc<String>, root: Option<&Path>) -> bool {
         let text = keeps_text(path, source.len()).then(|| Arc::clone(source));
-        match self.files.get(path) {
-            Some(held) if held.as_deref() == text.as_deref() => false,
-            _ => {
-                self.files.insert(path.to_owned(), text);
-                true
-            }
-        }
+        let before = self.files.insert(path.to_owned(), text.clone());
+        before.or_else(|| on_disk(path, root)) != Some(text)
     }
 
-    /// Stops holding the file at `path`; whether it was held.
-    pub(crate) fn remove(&mut self, path: &str) -> bool {
-        self.files.remove(path).is_some()
+    /// Stops holding the file at `path`; whether that changes what a resolution reads, where
+    /// disk below `root` now stands for it (`on_disk`).
+    pub(crate) fn release(&mut self, path: &str, root: Option<&Path>) -> bool {
+        self.files
+            .remove(path)
+            .is_some_and(|before| on_disk(path, root) != Some(before))
     }
 
     /// Whether the file at `path` is held, and its text where kept.
@@ -143,9 +158,10 @@ pub(crate) struct View {
 
 impl View {
     pub(crate) fn new(held: Arc<HeldFiles>, root: Option<&Path>) -> Self {
-        let root = root
-            .map(Path::to_path_buf)
-            .filter(|root| root.to_str().is_some_and(|root| path::normalize(root) != "/"));
+        let root = root.map(Path::to_path_buf).filter(|root| {
+            root.to_str()
+                .is_some_and(|root| path::normalize(root) != "/")
+        });
         let base = root
             .as_ref()
             .and_then(|root| root.to_str())

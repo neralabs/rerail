@@ -315,8 +315,14 @@ mod tests {
         let run = |request: &str, conditions: &[&str]| {
             exports(&field, request, conditions).map(|(paths, _)| paths)
         };
-        assert_eq!(run(".", &["node", "import"]), Ok(vec!["./main.mjs".to_owned()]));
-        assert_eq!(run(".", &["node", "require"]), Ok(vec!["./main.cjs".to_owned()]));
+        assert_eq!(
+            run(".", &["node", "import"]),
+            Ok(vec!["./main.mjs".to_owned()])
+        );
+        assert_eq!(
+            run(".", &["node", "require"]),
+            Ok(vec!["./main.cjs".to_owned()])
+        );
         assert_eq!(run("./sub", &["node"]), Ok(vec!["./sub.js".to_owned()]));
         assert_eq!(run("./sub.mjs", &["node"]), Ok(Vec::new()));
         assert_eq!(
@@ -324,15 +330,22 @@ mod tests {
             Ok(vec!["./features/a.js".to_owned()])
         );
         assert_eq!(run("./features/a.js", &["types"]), Ok(Vec::new()));
-        assert_eq!(run("./dir/x.js", &["node"]), Ok(vec!["./lib/x.js".to_owned()]));
+        assert_eq!(
+            run("./dir/x.js", &["node"]),
+            Ok(vec!["./lib/x.js".to_owned()])
+        );
         assert!(exports(&json(r#"{ "a": 1, "./b": 2 }"#), ".", &[]).is_err());
         assert_eq!(
             exports(&json(r#""./index.js""#), ".", &[]).map(|(paths, _)| paths),
             Ok(vec!["./index.js".to_owned()])
         );
         assert_eq!(
-            imports(&json(r##"{ "#a": { "node": "./a.js" } }"##), "#a", &["node"])
-                .map(|(paths, _)| paths),
+            imports(
+                &json(r##"{ "#a": { "node": "./a.js" } }"##),
+                "#a",
+                &["node"]
+            )
+            .map(|(paths, _)| paths),
             Ok(vec!["./a.js".to_owned()])
         );
     }

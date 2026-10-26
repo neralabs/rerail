@@ -678,6 +678,70 @@ export interface CodeRuleDslLayout {
   after?: CodeRuleDslLayoutGap;
 }
 
+/** `importTarget`'s module types, eslint-plugin-n's `ImportTarget#moduleType`. */
+export type CodeRuleDslImportTargetModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "data";
+
+/**
+ * The import or require target a specifier node names, as eslint-plugin-n 18.4.1's `ImportTarget` reads it at default
+ * options (JavaScript and TypeScript only; a Rerail extension). The node's value must be known without scope (as
+ * `getStringIfConstant` reads it, converted as `String()` converts it); the specifier is that value up to its first
+ * `!`. Each key listed must hold. A fact that does not apply to the target (`extensionSpelled` of a package,
+ * `published` of a module with a name, `devDependency` or `declared` of a path, any of the last three where the
+ * importing file has no `package.json`) holds for neither `true` nor `false`.
+ *
+ * Resolution is enhanced-resolve 5.26's, with the options the plugin gives it: conditions `node` and `require`, with
+ * `import` for the `import` style and `import` and `types` for the `type` style; `main` and `index` only for the
+ * `require` style or a package or built-in; the plugin's try extensions; its Node built-in table as a `false` fallback;
+ * for a TypeScript file, its nearest `tsconfig.json`'s `paths` (through `extends`) as aliases and its extension map.
+ * It reads the files the evaluation holds over the files on disk below the workspace root (`setRoot`), nothing above
+ * it; a snapshot resolves among its own files.
+ */
+export interface CodeRuleDslImportTarget {
+  /**
+   * The target's style where no ancestor decides it: `import` for an import or export source or an `import()`
+   * argument, `require` for a `require()` or `require.resolve()` argument. An ancestor call of `require` makes it
+   * `require`, an `import` declaration `import` (`type` for `import type`), an `export type … from` `type`, as the
+   * plugin's `getModuleStyle` reads them.
+   */
+  via: "import" | "require";
+  /** The specifier's module type is this one, or one listed. */
+  moduleType?: CodeRuleDslImportTargetModuleType | CodeRuleDslImportTargetModuleType[];
+  /** The specifier names a Node built-in module (`module.isBuiltin`, Node 26.5.0's names). */
+  builtin?: boolean;
+  /**
+   * The target has a file path (`filePath`): the file it resolves to, a relative or absolute path's own path where it
+   * does not resolve, or the specifier of an `import` of a `data:` or `http(s):` URL.
+   */
+  resolved?: boolean;
+  /** Resolution failed (`resolveError`); a module an alias or the built-in fallback ignores did not. */
+  failed?: boolean;
+  /**
+   * A relative or absolute specifier ends with the extension `file-extension-in-import` expects at its `always`
+   * default: the file's (a folder's `index` file's, or, where nothing is at the path, that of a file of its name with a
+   * try extension), mapped for a TypeScript file to the JavaScript extension it compiles to.
+   */
+  extensionSpelled?: boolean;
+  /**
+   * npm publishes the file a target with no module name names, as the importing file's package decides
+   * (`check-publish`'s `isPrivateFile`, negated: its `files`, `main`, `.npmignore` and `.gitignore`, read as
+   * `file.package.published` reads them); a file outside that package is not published.
+   */
+  published?: boolean;
+  /**
+   * The module is in the importing file's package's `devDependencies` and not its `dependencies`,
+   * `peerDependencies` or `optionalDependencies` (`check-publish`'s `isDevPackage`).
+   */
+  devDependency?: boolean;
+  /**
+   * The module is the importing file's package's own name or one any of its four dependency fields lists, or one the
+   * workspace root claiming the package (its `workspaces`, or `pnpm-workspace.yaml`) lists; a `type` import also
+   * counts its `@types` package (`check-extraneous`).
+   */
+  declared?: boolean;
+  /** In a TypeScript file, the specifier starts with a `paths` key of its `tsconfig.json`, wildcard trimmed (`hasTSAlias`). */
+  aliased?: boolean;
+}
+
 /**
  * The arguments of a format call and the fields of its template, as Ruff 0.16.9's Pyflakes rules read them (F504,
  * F505, F507, F522, F523, F524). It reads two captures the rule bound before it: `string`, the template's string literal
