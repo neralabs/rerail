@@ -154,9 +154,19 @@ describe("T2b may Rerail read sessions", () => {
     expect(text).toContain("  ✓ Stays on this computer. Nothing is sent anywhere.");
     expect(text).toContain("  ✓ You’re asked once, for every repo you start Rerail in.");
     expect(text).toContain("1. Yes, allow\n");
-    expect(text).toMatch(/2\. No, cancel set-up +nothing changes/);
+    expect(text).toMatch(/2\. No, cancel set-up +nothing is connected or started/);
     expect(text).toContain("1. rerail setup --answer allow --repo /Users/me/code/acme-web");
     expect(text).toContain("2. rerail setup --answer decline");
+  });
+
+  // Set-up installed Rerail before asking, so "No" does not leave the machine as it was: the screen says so.
+  it("after no, says Rerail stays installed and off, and how to remove it", () => {
+    expect(renderSessionsDeclined("agent")).toBe([
+      "● Set-up stopped. Nothing new was connected or started.",
+      "  Rerail needs your sessions to check rules. Run set-up again whenever you want to allow it.",
+      "  Rerail stays installed, and off; rerail install --remove takes it off this computer.",
+      "",
+    ].join("\n"));
   });
 });
 

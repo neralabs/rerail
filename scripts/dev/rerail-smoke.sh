@@ -8,8 +8,9 @@
 # sandbox HOME that carries fake coding-agent directories, first logged out (it must stop
 # with a request to npm login) and then logged in, exercises the installed rerail launcher
 # (status, daemon stop/start, update check, update to a newer published version, a
-# just nuke-rerail -> just rerail --restore round trip, install --remove and its database
-# backup), and tears everything down. The real ~/.rerail, ~/.npmrc, and coding-agent
+# just nuke-rerail -> just rerail --restore round trip, install --remove deleting the
+# installation and backing up the database, and a --restore of that backup), and tears
+# everything down. The real ~/.rerail, ~/.npmrc, and coding-agent
 # configs are never read or written; the package's own dependencies still come from
 # npmjs. KEEP=1 leaves the sandbox for inspection.
 set -euo pipefail
@@ -341,12 +342,26 @@ case "$status_output" in *"running at http://127.0.0.1:$DAEMON_PORT"*) ;; *) fai
 
 info "rerail install --remove"
 backups_before=$(compgen -G "$SANDBOX_HOME/.rerail-clean-*" | wc -l)
-sandbox "$LAUNCHER" install --remove
+sandbox "$LAUNCHER" install --remove | tee "$SMOKE/remove.log"
 if [ -f "$CLAUDE_COMMAND" ]; then fail "install --remove left $CLAUDE_COMMAND behind"; fi
 sandbox "$NODE" -e 'const fs=require("node:fs"), assert=require("node:assert/strict"); assert.deepEqual(JSON.parse(fs.readFileSync(process.env.HOME+"/.claude/settings.json","utf8")).statusLine,{type:"command",command:"printf user-status",padding:3});'
 [ ! -e "$DATABASE" ] || fail "install --remove left $DATABASE in place"
 backups_after=$(compgen -G "$SANDBOX_HOME/.rerail-clean-*" | wc -l)
 [ "$backups_after" -gt "$backups_before" ] || fail "install --remove did not back up the database into a new .rerail-clean-* directory"
 compgen -G "$SANDBOX_HOME/.rerail-clean-*/rerail-home/rerail.sqlite" >/dev/null || fail "install --remove backed up no rerail.sqlite"
+# The uninstall deletes the installation itself and says so; only the backup keeps rules and history.
+for removed in "$RERAIL_DIR/current" "$RERAIL_DIR/bin" "$RERAIL_DIR/versions" "$RERAIL_DIR/update-state.json" "$SANDBOX_HOME/.cache/rerail"; do
+  [ ! -e "$removed" ] && [ ! -L "$removed" ] || fail "install --remove left $removed behind"
+  grep -qF "Removed $removed (" "$SMOKE/remove.log" || fail "install --remove did not say it removed $removed"
+done
+grep -qF "Backup: " "$SMOKE/remove.log" || fail "install --remove did not name the backup"
+
+info "just rerail --restore after install --remove (reinstalls, and restores the backup it took)"
+sandbox env RERAIL_REGISTRY="$REGISTRY/" \
+  "$NODE" "$REPO_ROOT/scripts/dev/rerail-setup.mjs" --restore --repo "$PROJECT" --answer start --port "$DAEMON_PORT" </dev/null \
+  | tee "$SMOKE/restore-after-remove.log"
+grep -qF "Daemon healthy at http://127.0.0.1:$DAEMON_PORT" "$SMOKE/restore-after-remove.log" || fail "the daemon restored after install --remove is not healthy"
+read -r _ MOCK_RESTORED <<<"$(rule_count)"
+[ "$MOCK_RESTORED" -gt 0 ] || fail "$MOCK_RULE did not survive install --remove -> rerail --restore"
 
 info "rerail-smoke: PASS"

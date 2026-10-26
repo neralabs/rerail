@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { mkdir, readdir, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -14,7 +14,10 @@ import {
   seenCodingAgents,
 } from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
-import { daemonUsesPackageRoot, lookupDaemon, openDashboard, startDaemon, stopDaemon, type DaemonState } from "../runtime/daemon-control.js";
+import { installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
+import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
+import { daemonUsesPackageRoot, lookupDaemon, openDashboard, processAlive, startDaemon, stopDaemon, type DaemonState } from "../runtime/daemon-control.js";
 import { DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
 import {
   detectHarnesses,
@@ -180,6 +183,77 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
 }
 
+/** What the uninstall deletes from the installation, each with what it is, in the order it goes. */
+function installedFiles(context: SetupContext): Array<{ path: string; what: string }> {
+  const { updater } = context;
+  return [
+    { path: updater.currentLink, what: "the active version's link" },
+    { path: dirname(updater.launcherPath), what: "the rerail command" },
+    { path: updater.versionsRoot, what: "the installed versions" },
+    { path: updater.statePath, what: "the record of them" },
+    { path: installedPacksPrefix(context.home), what: "the installed rule packs" },
+    { path: mainContentStoreDirectory(), what: "the cache" },
+  ];
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Another Rerail daemon (another `RERAIL_HOME`'s) that still holds the machine-wide cache, by pid. */
+function cacheHolder(cache: string): number | undefined {
+  try {
+    const { pid } = JSON.parse(readFileSync(join(cache, MAIN_INSTANCE_HOLDER_FILE), "utf8")) as { pid?: unknown };
+    return typeof pid === "number" && Number.isInteger(pid) && pid !== process.pid && processAlive(pid) ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The uninstall's last step, once the coding agents are disconnected, the daemon has stopped and the database is in
+ * the backup: delete the installation itself (the versions, the launcher, `current`, the rule packs and the cache), so
+ * "removed from this computer" holds. `current` is unlinked, never followed: `install --root` points it at a checkout.
+ * A file Windows keeps locked (a session still running Rerail, an antivirus scan) is named with the command that
+ * finishes the job; the uninstall itself has happened, so it still exits 0. What stays in the Rerail home is named too.
+ */
+async function removeInstallation(context: SetupContext, dryRun: boolean): Promise<void> {
+  const present = installedFiles(context).filter(({ path }) => pathExists(path));
+  if (dryRun) {
+    for (const { path, what } of present) process.stdout.write(`Would remove ${path} (${what}).\n`);
+    return;
+  }
+  const failed: Array<{ path: string; reason: string }> = [];
+  for (const { path, what } of present) {
+    const holder = path === mainContentStoreDirectory() ? cacheHolder(path) : undefined;
+    if (holder !== undefined) {
+      process.stdout.write(`Kept ${path} (${what}): another Rerail daemon, pid ${holder}, still uses it.\n`);
+      continue;
+    }
+    try {
+      if (path === context.updater.currentLink) await unlink(path);
+      // rm retries Windows' transient EBUSY and EPERM itself (as the updater's staging cleanup does).
+      else await rm(path, { recursive: true, force: true, maxRetries: 10 });
+      process.stdout.write(`Removed ${path} (${what}).\n`);
+    } catch (error) {
+      failed.push({ path, reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  for (const { path, reason } of failed) {
+    const command = process.platform === "win32" ? `Remove-Item -Recurse -Force ${shellQuote(path)}` : `rm -rf ${shellQuote(path)}`;
+    process.stdout.write(`Could not remove ${path} (${reason}). Close every coding agent and terminal still running Rerail, then run: ${command}\n`);
+  }
+  const kept = await readdir(context.home).catch(() => []);
+  if (kept.length > 0) {
+    process.stdout.write(`Kept ${context.home}: ${kept.sort().join(", ")} (Rerail's settings, logs and records; delete it if you will not install Rerail again).\n`);
+  }
+}
+
 /**
  * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
  * install, so commands it added arrive and ones it retired go, and write the launcher again; `rerail update` runs it
@@ -266,6 +340,7 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
     const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
     if (removed !== undefined) process.stdout.write(`${removed}\n`);
     if (!parsed.dryRun) await rm(launcherPathMarker(context.home), { force: true });
+    await removeInstallation(context, parsed.dryRun);
   }
   if (explicitRoot !== undefined && !remove) {
     const binDir = dirname(context.updater.launcherPath);
