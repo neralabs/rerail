@@ -112,6 +112,8 @@ struct Lower {
 struct Reuse {
     bodies: HashMap<String, String>,
     factors: HashMap<String, BTreeSet<String>>,
+    /// Sets known to contain a set that is not their intersection: a union of their subsets.
+    within: HashMap<String, BTreeSet<String>>,
     intersections: std::collections::BTreeMap<BTreeSet<String>, String>,
     strings: HashMap<String, usize>,
     integers: HashMap<i64, usize>,
@@ -235,6 +237,20 @@ impl Lower {
                 exact,
             });
         }
+        if operator == "INTERSECT" {
+            if self.inside(&left.name, &right.name) {
+                return Ok(Set {
+                    name: left.name.clone(),
+                    exact,
+                });
+            }
+            if self.inside(&right.name, &left.name) {
+                return Ok(Set {
+                    name: right.name.clone(),
+                    exact,
+                });
+            }
+        }
         let factors = if operator == "INTERSECT" {
             let terms = |set: &Set| {
                 self.reuse
@@ -276,12 +292,92 @@ impl Lower {
             exact,
         )?;
         if let Some(factors) = factors {
+            let within = self
+                .containing(&left.name)
+                .union(&self.containing(&right.name))
+                .cloned()
+                .collect();
+            self.reuse.within.insert(selected.name.clone(), within);
             self.reuse
                 .factors
                 .insert(selected.name.clone(), factors.clone());
             self.reuse
                 .intersections
                 .insert(factors, selected.name.clone());
+        }
+        Ok(selected)
+    }
+    /// The sets known to contain `name`, itself included.
+    fn containing(&self, name: &str) -> BTreeSet<String> {
+        let mut sets = BTreeSet::from([name.to_owned()]);
+        sets.extend(self.reuse.factors.get(name).into_iter().flatten().cloned());
+        sets.extend(self.reuse.within.get(name).into_iter().flatten().cloned());
+        sets
+    }
+    /// Whether `set` is known to be a subset of `outer`, or of every factor of an intersection.
+    fn inside(&self, set: &str, outer: &str) -> bool {
+        let containing = self.containing(set);
+        containing.contains(outer)
+            || self
+                .reuse
+                .factors
+                .get(outer)
+                .is_some_and(|factors| factors.is_subset(&containing))
+    }
+    /// One compound UNION: a chain of binary unions materializes and deduplicates every prefix.
+    fn union(&mut self, branches: Vec<Set>) -> Result<Set, ()> {
+        let empty = self.reuse.bodies.get("SELECT 0,0 WHERE 0").cloned();
+        let exact = branches.iter().all(|set| set.exact);
+        if branches.iter().any(|set| set.name == "all_nodes") {
+            return Ok(Set {
+                exact,
+                ..self.all()
+            });
+        }
+        let mut names: Vec<String> = Vec::new();
+        for set in branches {
+            if Some(&set.name) != empty.as_ref() && !names.contains(&set.name) {
+                names.push(set.name);
+            }
+        }
+        let kinds = names
+            .iter()
+            .map(|name| self.reuse.kinds.get(name))
+            .collect::<Option<Vec<_>>>()
+            .map(|kinds| {
+                kinds
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .collect::<BTreeSet<_>>()
+            });
+        let within = names
+            .iter()
+            .map(|name| self.containing(name))
+            .reduce(|a, b| a.intersection(&b).cloned().collect());
+        let selected = match names.as_slice() {
+            [] => return self.relation("SELECT 0,0 WHERE 0".into(), exact),
+            [name] => {
+                return Ok(Set {
+                    name: name.clone(),
+                    exact,
+                });
+            }
+            _ => {
+                names.sort();
+                let body = names
+                    .iter()
+                    .map(|name| format!("SELECT fid,pre FROM {name}"))
+                    .collect::<Vec<_>>()
+                    .join(" UNION ");
+                self.relation(body, exact)?
+            }
+        };
+        if let Some(within) = within {
+            self.reuse.within.insert(selected.name.clone(), within);
+        }
+        if let Some(kinds) = kinds {
+            self.reuse.kinds.insert(selected.name.clone(), kinds);
         }
         Ok(selected)
     }
@@ -332,19 +428,36 @@ impl Lower {
             Condition::All(plans) => {
                 // A conjunction commutes. Postings first, so no member reads a wider scope.
                 let mut selected = scope;
-                for plan in plans.iter().filter(|p| anchored(p)).chain(plans.iter().filter(|p| !anchored(p))) {
+                for plan in plans
+                    .iter()
+                    .filter(|p| anchored(p))
+                    .chain(plans.iter().filter(|p| !anchored(p)))
+                {
                     selected = self.plan(plan, selected)?;
                 }
                 Ok(selected)
             }
             Condition::Any(plans) => {
-                let mut selected = self.relation("SELECT 0,0 WHERE 0".into(), true)?;
-                for plan in plans {
-                    let branch = self.plan(plan, scope.clone())?;
-                    selected =
-                        self.combine(&selected, &branch, "UNION", selected.exact && branch.exact)?;
+                // Kind-only branches read one posting list, intersected with the scope once.
+                let (only, rest): (Vec<_>, Vec<_>) = plans.iter().partition(|plan| {
+                    plan.root_kinds.is_some() && matches!(plan.condition, Condition::Always)
+                });
+                let mut branches = rest
+                    .into_iter()
+                    .map(|plan| self.plan(plan, scope.clone()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if let [plan] = only.as_slice() {
+                    branches.push(self.plan(plan, scope.clone())?);
+                } else if !only.is_empty() {
+                    let kinds = only
+                        .iter()
+                        .flat_map(|plan| plan.root_kinds.iter().flatten().copied())
+                        .collect();
+                    let kinds = self.kinds(&kinds)?;
+                    let exact = scope.exact && only.iter().all(|plan| plan.exact);
+                    branches.push(self.combine(&scope, &kinds, "INTERSECT", exact)?);
                 }
-                Ok(selected)
+                self.union(branches)
             }
             Condition::Not(inner) => {
                 let inner = self.plan(inner, scope.clone())?;
@@ -406,7 +519,11 @@ impl Lower {
             // inner postings are read from the tape.
             let inner = self.plan(inner, scope)?;
             let children = self.relation(
-                format!("SELECT DISTINCT s.fid,t.pre FROM {} s CROSS JOIN nera_tree(s.fid,s.pre,{}) t", inner.name, super::tree::CHILDREN),
+                format!(
+                    "SELECT DISTINCT s.fid,t.pre FROM {} s CROSS JOIN nera_tree(s.fid,s.pre,{}) t",
+                    inner.name,
+                    super::tree::CHILDREN
+                ),
                 inner.exact,
             )?;
             let Some(field) = field else {
@@ -448,7 +565,9 @@ impl Lower {
                     scope.exact,
                 )?
             }
-            (Direction::Has, false, None) => self.neighbours(&scope, inner, super::tree::CHILDREN)?,
+            (Direction::Has, false, None) => {
+                self.neighbours(&scope, inner, super::tree::CHILDREN)?
+            }
             _ => self.all(),
         };
         let inner = self.plan(inner, inner_scope)?;
@@ -524,7 +643,10 @@ impl Lower {
             return Ok(self.all());
         }
         self.relation(
-            format!("SELECT DISTINCT s.fid,t.pre FROM {} s CROSS JOIN nera_tree(s.fid,s.pre,{axis}) t", scope.name),
+            format!(
+                "SELECT DISTINCT s.fid,t.pre FROM {} s CROSS JOIN nera_tree(s.fid,s.pre,{axis}) t",
+                scope.name
+            ),
             scope.exact,
         )
     }

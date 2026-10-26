@@ -391,3 +391,35 @@ fn shared_candidate_owner_cleans_up_after_a_query_error_and_retries_with_fresh_c
         );
     }
 }
+
+#[test]
+fn a_union_of_restrictions_is_one_compound_set_within_their_scope() {
+    let mut lower = compiler();
+    let scope = lower
+        .relation("SELECT 1,1 UNION SELECT 1,2".into(), true)
+        .unwrap();
+    let a = lower.relation("SELECT 1,1".into(), true).unwrap();
+    let b = lower.relation("SELECT 1,2".into(), true).unwrap();
+    let a = lower.combine(&scope, &a, "INTERSECT", true).unwrap();
+    let b = lower.combine(&scope, &b, "INTERSECT", true).unwrap();
+    let empty = lower.relation("SELECT 0,0 WHERE 0".into(), true).unwrap();
+    let before = lower.ctes.len();
+    let union = lower.union(vec![a.clone(), empty, b.clone(), a]).unwrap();
+    assert_eq!(
+        lower.ctes.len(),
+        before + 1,
+        "one compound UNION, without the empty seed"
+    );
+    let again = lower.combine(&union, &scope, "INTERSECT", true).unwrap();
+    assert_eq!(
+        again.name, union.name,
+        "a union of subsets is within their scope"
+    );
+    assert_eq!(lower.ctes.len(), before + 1);
+    let other = lower.relation("SELECT 2,2".into(), true).unwrap();
+    let narrowed = lower.combine(&union, &other, "INTERSECT", true).unwrap();
+    assert_ne!(
+        narrowed.name, union.name,
+        "containment is not membership in every set"
+    );
+}

@@ -3,6 +3,7 @@
 //! corpus parse. Reports SQLite VM steps (load-independent) and rows per plan (for parity).
 //!
 //! RERAIL_LAB_POLICY=<policy.json>[:<policy.json>...] RERAIL_LAB_CAPTURES=<dir> [RERAIL_LAB_LIMIT=n]
+//!   [RERAIL_LAB_DUMP=<dir>] (writes each policy's lowered stages per language)
 //!   cargo test --release --lib -- --ignored anchor_lab --nocapture
 use super::{execute, lower, store::Store};
 use std::sync::{
@@ -79,6 +80,20 @@ fn run(policy: &str) {
             let started = cpu_ns();
             let statement = lower::batch_files(&refs, lang, &[]);
             compile += cpu_ns() - started;
+            if let Ok(dump) = std::env::var("RERAIL_LAB_DUMP") {
+                let mut text = String::new();
+                for stage in &statement.stages {
+                    text += &format!("-- {}\n{};\n", stage.name, stage.sql);
+                }
+                for query in &statement.queries {
+                    text += &format!("-- results\n{query};\n");
+                }
+                let stem = std::path::Path::new(policy)
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy();
+                std::fs::write(format!("{dump}/{stem}.{lang}.sql"), text).unwrap();
+            }
             let started = cpu_ns();
             if statement.universal {
                 execute::prepare_structural(&store, &fids).unwrap();
@@ -93,7 +108,10 @@ fn run(policy: &str) {
     }
     println!(
         "LAB {} databases={} files={files} vmSteps={:.3}G executeCpu={:.2}s lowerCpu={:.2}s",
-        std::path::Path::new(policy).file_stem().unwrap().to_string_lossy(),
+        std::path::Path::new(policy)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy(),
         databases.len(),
         steps as f64 / 1e9,
         cpu as f64 / 1e9,
@@ -101,7 +119,10 @@ fn run(policy: &str) {
     );
     println!(
         "LAB rows {} {}",
-        std::path::Path::new(policy).file_stem().unwrap().to_string_lossy(),
+        std::path::Path::new(policy)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy(),
         rows.iter()
             .map(|((lang, qid), n)| format!("{lang}:{qid}={n}"))
             .collect::<Vec<_>>()
@@ -110,7 +131,10 @@ fn run(policy: &str) {
 }
 
 fn cpu_ns() -> u64 {
-    let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: `now` is a valid timespec for the call to fill.
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) };
     now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
