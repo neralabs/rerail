@@ -32,6 +32,21 @@ Same replay for every row: 40 worktrees from `~/tempo-qe/workspaces47`, S3's 1,1
 
 **Reading.** Together they replace 30–70 GB of arrangements with ≈ 0.9 GB today, of which the graph's own state (base + overlays + deltas) is ≈ 300 MB and the rest is strings and per-file input rows that the content store should serve; latency is milliseconds. Dead code's global reachability is the one property that needs maintained state, and it costs 24 MB across 41 worktrees when kept as a levelled reached set over the graph rather than as a dataflow fixpoint. Rule-shape item confirmed for Jeremy: 85% of the reached states are per-method dispatch searches; keyed by class they would drop to 135K states.
 
+## Y3: the wired path (ship candidate)
+
+One path, no differential dataflow: per-content exports → Y1 graph apply → maintained symbol table (same keyed-table design, replaces the nine `proj_*` inputs) → Y2 scoped updates → findings delta; the three light plans on M2 with the D1 skip. Exact over the full replay: 1,151 from-scratch checks, 0 differences; symbol table = dataflow on 1,098,978 rows. Perf run `20261025-210541-full-perf`.
+
+| | Value |
+|---|---|
+| Heap, 40 worktrees | **1.94 GB at load, 2.09 GB at edit 1,000**: maintained state ≈ 950 MB (graph 72 + 193 + 32→54 MB; symbol tables 60 + 139 + 32→54; Y2 input indexes 47 + 167 + 92→143; reached sets 3 + 92 + 16→27), per-file inputs 253 MB and strings 285 MB (store-servable), ≈ 390 MB unattributed |
+| Single-file edit p50 / p95 / p99 | **0.53 / 3.76 / 8.62 ms** (Y1 0.18/1.07, symbol table 0.11/0.67, Y2 0.10/2.19, M2 0.02/1.08) |
+| 200-file bulk / real commit | 387 / 550 ms; 63 / 470 / 760 ms |
+| New worktree | 11–13 ms (M2's three plans from scratch); ≈ 2.9 ms and 156 KB per diverging path |
+| Floor | identical content 0.008 ms; content changed, nothing downstream 0.26 / 1.94 ms |
+| Memory levers not taken | overlays re-add 2.29M reached states (62 MB) the base holds as 95K; Y2 keyed by position instead of DefId; three interners; frozen-layer arenas |
+
+Against the targets: latency met by two orders of magnitude; memory 2.1 GB against 250 MB, with ≈ 540 MB store-servable and the levers above unapplied; against today's 42 GB, 20×.
+
 ## Conclusion for the decision
 
 The target (250 MB for 40 worktrees, hundreds of rules, ≤ 500 ms) is unreachable by any engine design over these rules as authored. What it takes is a change on the rule side and a different maintenance granularity on the engine side, together:

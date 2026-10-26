@@ -108,6 +108,8 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 
 ## Log
 
+- Y3Wire (53 min): the wired path, exact over the full replay, 0.5 ms p50 / 3.8 ms p95 per edit, 2.1 GB for 40 worktrees. Merged `Moti-Velz/facts-engine` (pushed). Ship candidate; verification pass next (I8 hand-written query bodies, gate checks `symcheck`/`replay --check-every 1`, refusal withholding, the linker deviations' counters).
+
 - Y1 (1 h 41 min) and Y2 (1 h 16 min) reported: maintained compact graph 72 MB base, ms per edit, exact against native; dead code and exported-families as local queries, scoped ms per edit, exact, with a 24 MB levelled reached set as the only maintained property. Rows added to DECISION-CROSSFILE.md. This is the ship-candidate shape: next is to wire Y2 onto Y1, cost the symbol-table inputs, and verify once against the invariants.
 
 - Y1Graph (maintained compact reference graph, X5's update rule, base + delta) and Y2Local (dead code and exported-families as local queries over the graph, with scoping proofs) launched in parallel on a shared `Graph`/`GraphView` API; the nine finished exploration worktrees removed (branches kept).
