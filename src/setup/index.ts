@@ -8,6 +8,7 @@ export { type ClaudeStatusLine } from "./claude-status-store.js";
 export { ManagedUpdater, type UpdateResult, type UpdateStatus } from "./updater.js";
 export { codingAgentHome, codingAgentStates, registrationRoot } from "./coding-agents.js";
 export { registerHarnesses } from "./harness-registration.js";
+export { launcherPathMarker } from "./shell-path.js";
 export { type Harness } from "./harness-registration.js";
 export {
   addPackSpecs,

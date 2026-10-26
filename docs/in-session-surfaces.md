@@ -52,6 +52,8 @@ Commands
 /rerail-manage       open the dashboard
 …
 Or just ask me, in plain words.
+
+In a terminal: rerail status · rerail version · rerail update · rerail daemon stop
 ```
 
 ### Steer
