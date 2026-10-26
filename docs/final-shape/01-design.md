@@ -1,4 +1,6 @@
-# The final engine shape
+# The final engine shape (WITHDRAWN DRAFT)
+
+> **Withdrawn 2026-10-26.** Written from under a quarter of the PIAT design: it never read spec-transducer.md, spec-indexes.md, spec §20 residency, tempo-residency.md, the fact-storage or invalidation design, or most of the research. Do not build from it. The design will be regenerated from `notes/` once the research in `RESEARCH.md` is complete.
 
 Date: 2026-10-26. Supersedes §3–§4 of `00-review.md`.
 
