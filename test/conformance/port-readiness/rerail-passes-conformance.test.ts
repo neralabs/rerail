@@ -46,14 +46,14 @@ test("a stale divergence, an error naming the rule or a missing row fails it", (
   assert.deepEqual(failing(conformance([]), "missing"), ["fixtures-row"]);
 });
 
-test("a missed label, a finding on a clean sample or an unread sample fails it; a reviewed report does not; a rule no sample judges is not judged there", () => {
+test("a missed label, a finding on a clean sample or an engine failure fails it; a reviewed report or a sample read in part does not; a rule no sample judges is not judged there", () => {
   const judged = (counts: Counts) => failing(conformance([row("a")], { sampleRows: new Map([["a", row("a", counts, "samples")]]) }), "a");
   assert.deepEqual(judged({}), []);
   assert.deepEqual(judged({ reviewed: 3 }), []);
   assert.deepEqual(judged({ fn: 1 }), ["samples-catch-labelled"]);
   assert.deepEqual(judged({ fp: 1 }), ["samples-silent-on-clean"]);
   assert.deepEqual(judged({ engineFailures: 1 }), ["engine-reads-samples"]);
-  assert.deepEqual(judged({ syntaxErrorFiles: { count: 1, files: [{ path: "s/a.py", line: 2, column: 1 }] } }), ["engine-reads-samples"]);
+  assert.deepEqual(judged({ syntaxErrorFiles: { count: 1, files: [{ path: "s/a.py", line: 2, column: 1 }] } }), []);
   const ids = passesConformanceChecks(conformance([row("a")]), "a", 1).map((check) => check.id);
   assert.ok(!ids.some((id) => id.startsWith("samples-") || id === "engine-reads-samples"));
 });

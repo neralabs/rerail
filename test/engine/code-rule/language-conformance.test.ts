@@ -58,22 +58,19 @@ describe("language conformance runner", () => {
     expect(reportFailures(undocumented)).toEqual(['forbidden-functions-resolved (fixtures): 1 unexplained FN, first {"path":"broken.php","line":3,"column":6}']);
   });
 
-  it("fails a judged sample the grammar did not read, with no finding from it", async () => {
+  it("judges a sample the grammar did not read: the unread file fails nothing, the label it hides does", async () => {
     // Prose after the first statement: error regions cover 92% of the file, so no AST clause reads it, and the `sizeof`
-    // call on line 2 is not reported. A sample is real code the rule must read, so that fails the shipped ports.
+    // call on line 2 is not reported. The unread file is T1's and reported; the label on line 2 it hides is a missed label.
     const garbage = `<?php\n$a = sizeof($b);\n${"This is not PHP: it is prose, ) and ( brackets ] everywhere.\n".repeat(6)}`;
-    const report = await withSamples([{ name: "garbage", path: "src/Garbage.php", text: garbage, expected: { "forbidden-functions": [], "forbidden-functions-resolved": [] } }], false);
+    const report = await withSamples([{ name: "garbage", path: "src/Garbage.php", text: garbage, expected: { "forbidden-functions": [2], "forbidden-functions-resolved": [] } }], false);
     const [path] = report.rules.flatMap(row => row.syntaxErrorFiles.files.map(file => file.path));
     const unread = { count: 1, files: [{ path, line: 3, column: 6 }] };
-    expect(report.rules.map(({ rule, tp, fp, engineFailures, partialFiles, syntaxErrorFiles }) => ({ rule, tp, fp, engineFailures, partialFiles, syntaxErrorFiles }))).toEqual([
-      { rule: "forbidden-functions", tp: 0, fp: 0, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
-      { rule: "forbidden-functions-resolved", tp: 0, fp: 0, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
+    expect(report.rules.map(({ rule, tp, fp, fn, engineFailures, partialFiles, syntaxErrorFiles }) => ({ rule, tp, fp, fn, engineFailures, partialFiles, syntaxErrorFiles }))).toEqual([
+      { rule: "forbidden-functions", tp: 0, fp: 0, fn: 1, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
+      { rule: "forbidden-functions-resolved", tp: 0, fp: 0, fn: 0, engineFailures: 0, partialFiles: 0, syntaxErrorFiles: unread },
     ]);
     expect(path).toMatch(/\/src\/Garbage\.php$/u);
-    expect(reportFailures(report)).toEqual([
-      `forbidden-functions (samples): 1 judged sample(s) the engine could not read, first ${JSON.stringify(unread.files[0])}`,
-      `forbidden-functions-resolved (samples): 1 judged sample(s) the engine could not read, first ${JSON.stringify(unread.files[0])}`,
-    ]);
+    expect(reportFailures(report)).toEqual([`forbidden-functions (samples): 1 missed label(s), first ${JSON.stringify({ path, line: 2 })}`]);
   });
 
   it("fails on a divergence that no longer explains anything", async () => {

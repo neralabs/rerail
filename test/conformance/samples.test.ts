@@ -103,11 +103,14 @@ describe("a shipped rule on its samples", () => {
     expect(failingChecks(report)).toEqual([]);
   });
 
-  it("fails on a judged sample the engine cannot read", async () => {
-    const { report } = await score([{ name: "unread", path: "app.py", text: UNREADABLE, expected: { "assert-used": [] } }], { fixtures: true });
-    expect(samplesRow(report)).toMatchObject({ fp: 0, engineFailures: 0, cleanSamples: 1, silentCleanSamples: 0, syntaxErrorFiles: { count: 1 } });
-    expect(reportFailures(report)).toEqual([expect.stringMatching(/^assert-used \(samples\): 1 judged sample\(s\) the engine could not read, first /u)]);
-    expect(failingChecks(report)).toEqual(["engine-reads-samples"]);
+  it("judges a sample the grammar reads in part: it fails the rule only through a label the partial read hides", async () => {
+    const caught = await score([{ name: "unread", path: "app.py", text: UNREADABLE, expected: { "assert-used": [] } }], { fixtures: true });
+    expect(samplesRow(caught.report)).toMatchObject({ fp: 0, fn: 0, engineFailures: 0, syntaxErrorFiles: { count: 1 } });
+    expect(reportFailures(caught.report)).toEqual([]);
+    expect(failingChecks(caught.report)).toEqual([]);
+    const missed = await score([{ name: "unread", path: "app.py", text: UNREADABLE, expected: { "assert-used": [1] } }], { fixtures: true });
+    expect(samplesRow(missed.report)).toMatchObject({ fn: 1, engineFailures: 0, syntaxErrorFiles: { count: 1 } });
+    expect(failingChecks(missed.report)).toEqual(["samples-catch-labelled"]);
   });
 
   it("does not judge a sample for a rule it has no key for", async () => {
@@ -242,7 +245,6 @@ describe("a sample's context files", () => {
       pack: "valid",
       family: "ecma",
       capabilities: ["syntax"],
-      corpora: [],
       tools: [{ name: "examplelint", version: "1.0.0" }],
       rules: [{ id: "next-file", upstream: { tool: "examplelint", rule: "EX200" }, policy: "rules/next-file.json", capabilities: ["syntax"], match: "line+column" }],
     }));

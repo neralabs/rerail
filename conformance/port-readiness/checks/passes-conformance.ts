@@ -77,16 +77,17 @@ export function passesConformanceChecks(conformance: PackConformance, id: string
   );
   const samples = conformance.sampleRows.get(id);
   if (samples !== undefined) {
-    const unread = samples.engineFailures + samples.syntaxErrorFiles.count;
+    // A sample the grammar reads in part (T1) fails nothing by itself; a label the partial read hides is a missed label.
+    const readInPart = samples.syntaxErrorFiles.count + samples.partialFiles;
     checks.push(
       { id: "samples-catch-labelled", ok: samples.fn === 0, detail: samples.fn === 0 ? `catches every labelled violation of its real-code samples (${samples.tp})` : `${samples.fn} labelled violation(s) of its real-code samples missed${point(samples.falseNegatives[0])}: ${fix}` },
       { id: "samples-silent-on-clean", ok: samples.fp === 0, detail: samples.fp === 0 ? `reports nothing on its ${samples.cleanSamples} clean sample(s)${samples.reviewed > 0 ? `; ${samples.reviewed} report(s) on labelled samples' unlabelled lines to review` : ""}` : `${samples.fp} finding(s) on clean samples${point(samples.falsePositives[0])}: ${fix}` },
       {
         id: "engine-reads-samples",
-        ok: unread === 0,
-        detail: unread === 0
+        ok: samples.engineFailures === 0,
+        detail: samples.engineFailures + readInPart === 0
           ? "the engine evaluates it on every sample judged for it"
-          : `${samples.engineFailures} engine failure(s) and ${samples.syntaxErrorFiles.count} judged sample(s) the engine could not read${point(samples.syntaxErrorFiles.files[0])}`,
+          : `${samples.engineFailures} engine failure(s); ${readInPart} file(s) read in part${point(samples.syntaxErrorFiles.files[0])}`,
       },
     );
   }

@@ -687,8 +687,8 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
     ...(fixtures === undefined ? [] : compiled.flatMap(entry => fixturesRow(entry, fixtures, loaded, used, errors) ?? [])),
     ...(samples === undefined ? [] : compiled.flatMap(entry => samplesRow(entry, samples, loaded, used) ?? [])),
   ];
-  // A source scored a rule when it ran and had the rule's data. A divergence naming any other source (a corpus's, no
-  // longer scored) applies to nothing and is never stale.
+  // A source scored a rule when it ran and had the rule's data. A divergence naming any other source applies to nothing
+  // and is never stale.
   const scored = (source: string, rule: string): boolean =>
     source === "fixtures" ? fixtures !== undefined : source === SAMPLES_SOURCE && samples !== undefined && !samples.unscored.has(rule);
   const selectedIds = new Set(selected.map(rule => rule.id));
@@ -737,8 +737,9 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
  * unexplained FP or FN fails, and so does a shipped port with no fixture TP unless pack.json gives its rule examples:
  * divergences can excuse every finding of its fixtures, and a port that matches nothing must still show it catches
  * something. On the samples, which show a rule works on real code as intended, a missed label fails, as does a finding
- * on a clean sample or a judged sample the engine cannot read; a report on a labelled sample's unlabelled line is only
- * reviewed. Engine failures fail on both. A candidate's row (a port under `candidates/`) is reported but fails
+ * on a clean sample; a report on a labelled sample's unlabelled line is only reviewed. A sample the grammar reads only
+ * in part (a T1 syntax error, `source-partial`, `source-incomplete`) is still judged but fails nothing by itself: a
+ * sample judges the rule, and a label the partial read hides is a missed label. Other engine failures fail on both. A candidate's row (a port under `candidates/`) is reported but fails
  * nothing; its errors and stale divergences still do.
  */
 export function reportFailures(report: T4Report): string[] {
@@ -751,7 +752,6 @@ export function reportFailures(report: T4Report): string[] {
       if (row.source === SAMPLES_SOURCE) {
         if (row.fn > 0) problems.push(`${where}: ${row.fn} missed label(s), first ${JSON.stringify(row.falseNegatives[0])}`);
         if (row.fp > 0) problems.push(`${where}: ${row.fp} finding(s) on clean samples, first ${JSON.stringify(row.falsePositives[0])}`);
-        if (row.syntaxErrorFiles.count > 0) problems.push(`${where}: ${row.syntaxErrorFiles.count} judged sample(s) the engine could not read, first ${JSON.stringify(row.syntaxErrorFiles.files[0])}`);
       } else {
         if (row.fp > 0) problems.push(`${where}: ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
         if (row.fn > 0) problems.push(`${where}: ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
