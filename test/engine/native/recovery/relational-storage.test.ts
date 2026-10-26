@@ -103,3 +103,18 @@ it.skipIf(!required)("keeps one indexed owner for a stage read repeatedly inside
   expect(indexes,'one authored lookup index must serve every reader of this producer').toBe(1);
  }finally{rmSync(directory,{recursive:true,force:true});}
 },35_000);
+
+it.skipIf(!required)("does not hydrate repository source for a complete empty admission gate", () => {
+ const program=`
+  import {readFileSync} from 'node:fs';import {loadNativeBinding} from ${JSON.stringify(engine)};
+  const n=loadNativeBinding(),cap=JSON.parse(readFileSync(new URL(${JSON.stringify(caps)}),'utf8'));
+  cap.limits.maxSourceBytes=32;
+  const policy={format:'rerail.policy/v1',id:'empty-source-gate',revision:1,mode:'log',clauses:[{id:'gate',relational:{requireNonemptyInput:'gate',inputs:{gate:{evidence:{as:'e',query:{ast:{language:'python',rule:{all:[{kind:'module'},{regex:'\\\\b\\\\B'}]}}},project:{path:'file.path'}}}},query:'SELECT __path path,__start start_byte,__end end_byte FROM gate WHERE source_text(__path,__start,__end) IS NOT NULL'},violation:{code:'ROW',message:'Row',anchor:'witness.span'}}]};
+  const w=new n.CodeRuleDslWorkspace();w.addCodeRule(n.CodeRuleDslRuntime.compile(JSON.stringify(policy),'json',JSON.stringify(cap)));
+  try {console.log(await w.applyAsync(JSON.stringify({revision:1,files:Array.from({length:3},(_,i)=>({path:i+'.py',language:'python',source:'name = 1\\n'.repeat(3)})),removed:[]})));}finally{w.close();}
+ `;
+ const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30_000});
+ expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
+ const result=JSON.parse(child.stdout.trim()).evaluation;
+ expect(result.failures).toEqual([]);expect(result.violations).toEqual([]);
+});
