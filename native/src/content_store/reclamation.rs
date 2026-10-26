@@ -318,9 +318,6 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.repository_string_id=s.string_id OR w.owner_string_id=s.string_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.owner_string_id=s.string_id) \
              AND NOT EXISTS (SELECT 1 FROM candidate_checks c WHERE c.check_string_id=s.string_id) \
-             AND NOT EXISTS (SELECT 1 FROM name_bindings b WHERE b.name_string_id=s.string_id) \
-             AND NOT EXISTS (SELECT 1 FROM derivations d WHERE d.output_string_id=s.string_id) \
-             AND NOT EXISTS (SELECT 1 FROM derivation_inputs i WHERE i.name_string_id=s.string_id) \
              ORDER BY s.string_id LIMIT ?1)",
             [limit],
         )?;

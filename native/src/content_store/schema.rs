@@ -292,28 +292,35 @@ CREATE TABLE IF NOT EXISTS facts_completions (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
--- The derivation graph (derivation.rs): fact names bound to digests, and each derivation's inputs
--- with the digest it read. A derivation's output is a name too, so an unchanged output rebinds
--- nothing (early cutoff). Additive: older binaries never read these tables.
+-- The single interner (atoms.rs): dense, append-only; atom 0 is the empty string.
+CREATE TABLE IF NOT EXISTS atoms (
+    atom INTEGER PRIMARY KEY CHECK(atom >= 0),
+    value TEXT NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO atoms(atom,value) VALUES (0,'');
+
+-- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
+-- derivation's inputs with the digest it read. A derivation's output is a name too, so an
+-- unchanged output rebinds nothing (early cutoff). Additive: older binaries never read these tables.
 CREATE TABLE IF NOT EXISTS name_bindings (
-    name_string_id INTEGER PRIMARY KEY REFERENCES strings(string_id),
+    name_atom INTEGER PRIMARY KEY REFERENCES atoms(atom),
     digest BLOB NOT NULL CHECK(length(digest) = 32),
     revision INTEGER NOT NULL CHECK(revision >= 0)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS derivations (
-    output_string_id INTEGER PRIMARY KEY REFERENCES strings(string_id),
+    output_atom INTEGER PRIMARY KEY REFERENCES atoms(atom),
     producer BLOB NOT NULL CHECK(length(producer) = 32),
     status INTEGER NOT NULL,
     cost INTEGER NOT NULL CHECK(cost >= 0)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS derivation_inputs (
-    output_string_id INTEGER NOT NULL REFERENCES derivations(output_string_id) ON DELETE CASCADE,
+    output_atom INTEGER NOT NULL REFERENCES derivations(output_atom) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
-    name_string_id INTEGER REFERENCES strings(string_id),
+    name_atom INTEGER REFERENCES atoms(atom),
     digest BLOB NOT NULL CHECK(length(digest) = 32),
-    PRIMARY KEY (output_string_id, ordinal)
+    PRIMARY KEY (output_atom, ordinal)
 ) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS derivation_inputs_by_name ON derivation_inputs(name_string_id);
+CREATE INDEX IF NOT EXISTS derivation_inputs_by_name ON derivation_inputs(name_atom);
 "#;
 
 impl ContentStore {

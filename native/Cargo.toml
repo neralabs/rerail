@@ -24,6 +24,7 @@ cranelift-jit = "=0.125.4"
 cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
+hashbrown = { version = "=0.16.1", default-features = false }
 gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
 globset = "=0.4.20"
 model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }

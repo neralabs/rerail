@@ -3,6 +3,7 @@
 //! JavaScript does not receive connections, SQL, row identifiers, or hash lanes.
 //! The code-rule runtime will call this module through coarse Rust operations.
 
+mod atoms;
 mod compression;
 mod connection;
 mod derivation;
@@ -25,6 +26,7 @@ mod workspaces;
 pub(crate) use compression::compress;
 pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
+pub use atoms::Sym;
 pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord};
 pub use facts_memo::{FactsCompletion, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
@@ -64,7 +66,6 @@ const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
 const STRING_CLAUSE_KEY: i64 = 5;
 /// Fact names (`derivation.rs`): bound names and derivation outputs.
-const STRING_FACT_NAME: i64 = 6;
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
@@ -543,6 +544,8 @@ pub struct ContentStore {
     local_result_cache: Mutex<LocalResultCache>,
     /// Facts plan sets by digest (immutable once written: `facts_memo`).
     facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
+    /// The mirror of the `atoms` table (atoms.rs).
+    atoms: parking_lot::Mutex<atoms::Interner>,
     #[cfg(test)]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(test)]
@@ -576,6 +579,7 @@ impl ContentStore {
             )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
+            atoms: parking_lot::Mutex::new(atoms::Interner::default()),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
             #[cfg(test)]
