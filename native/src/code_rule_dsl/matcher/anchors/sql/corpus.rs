@@ -182,7 +182,8 @@ impl Corpus {
         Ok(())
     }
 
-    /// Batch only admitted plan/file pairs. Equal frontiers share one SQL request.
+    /// Batch only admitted plan/file pairs. Plans demanded by the same files share one SQL
+    /// request: those groups follow rule scopes, so they are few and their templates stay cached.
     pub(in crate::code_rule_dsl) fn prepare_files(
         &self,
         demands: &BTreeMap<String, Vec<Arc<AnchorPlan>>>,
@@ -196,28 +197,30 @@ impl Corpus {
         let Some(state) = guard.as_mut() else {
             return Ok(());
         };
-        type Domain = (Vec<Arc<AnchorPlan>>, HashSet<String>);
-        let mut groups = BTreeMap::<(u32, Vec<usize>), Domain>::new();
+        // Addresses deduplicate live handles and key the template cache only. The compiler
+        // independently admits fragments and canonically composes physical work.
+        let mut demanded = BTreeMap::<(u32, usize), (Arc<AnchorPlan>, Vec<&String>)>::new();
         for (path, plans) in demands {
             let Some(file) = state.files.get(path) else {
                 continue;
             };
-            if plans.is_empty() {
-                continue;
+            for plan in plans {
+                let paths = &mut demanded
+                    .entry((file.lang, Arc::as_ptr(plan) as usize))
+                    .or_insert_with(|| (Arc::clone(plan), Vec::new()))
+                    .1;
+                // `demands` is ordered by path, so a repeated plan repeats the last path.
+                if paths.last() != Some(&path) {
+                    paths.push(path);
+                }
             }
-            let mut plans = plans.clone();
-            // Addresses deduplicate live handles and key this cache only. The compiler
-            // independently admits fragments and canonically composes physical work.
-            plans.sort_unstable_by_key(|p| Arc::as_ptr(p) as usize);
-            plans.dedup_by_key(|p| Arc::as_ptr(p) as usize);
-            let ids = plans.iter().map(|p| Arc::as_ptr(p) as usize).collect();
-            groups
-                .entry((file.lang, ids))
-                .or_insert_with(|| (plans, HashSet::new()))
-                .1
-                .insert(path.clone());
         }
-        for ((lang, _), (plans, paths)) in groups {
+        let mut groups = BTreeMap::<(u32, Vec<&String>), Vec<Arc<AnchorPlan>>>::new();
+        for ((lang, _), (plan, paths)) in demanded {
+            groups.entry((lang, paths)).or_default().push(plan);
+        }
+        for ((lang, paths), plans) in groups {
+            let paths = paths.into_iter().cloned().collect();
             Self::prepare_group(state, lang, &plans, Some(&paths))?;
         }
         Ok(())
@@ -240,12 +243,9 @@ impl Corpus {
         let mut covering = std::collections::BTreeSet::new();
         for group in std::iter::once(plans) {
             let ids: Vec<_> = group.iter().map(|p| Arc::as_ptr(p) as usize).collect();
-            let missing: Vec<_> = state
-                .files
-                .iter()
-                .filter(|(path, f)| {
-                    paths.is_none_or(|paths| paths.contains(*path))
-                        && f.lang == lang
+            let missing: Vec<_> = Self::domain(state, paths)
+                .filter(|(_, f)| {
+                    f.lang == lang
                         && !f.structural
                         && ids.iter().any(|id| !f.roots.contains_key(id))
                 })
@@ -281,6 +281,17 @@ impl Corpus {
         Ok(())
     }
 
+    /// The requested files, looked up by path: a group never scans the whole corpus.
+    fn domain<'s>(
+        state: &'s State,
+        paths: Option<&'s HashSet<String>>,
+    ) -> Box<dyn Iterator<Item = (&'s String, &'s Arc<File>)> + 's> {
+        match paths {
+            Some(paths) => Box::new(paths.iter().filter_map(|path| state.files.get_key_value(path))),
+            None => Box::new(state.files.iter()),
+        }
+    }
+
     fn template(
         state: &mut State,
         lang: u32,
@@ -291,6 +302,8 @@ impl Corpus {
         if let Some(template) = state.templates.get(&key) {
             return Arc::clone(template);
         }
+        use crate::code_rule_dsl::phase_clock;
+        let _compile = phase_clock::Span::start(&phase_clock::ANCHOR_COMPILE);
         #[cfg(feature = "code-rule-profile")]
         let mut lower =
             crate::code_rule_dsl::profile::trace::Span::start("anchor-lower", "template");
@@ -311,13 +324,9 @@ impl Corpus {
         covered: bool,
         paths: Option<&HashSet<String>>,
     ) -> Result<()> {
-        let files: Vec<_> = state
-            .files
-            .iter()
-            .filter(|(path, file)| {
-                paths.is_none_or(|paths| paths.contains(*path))
-                    && file.lang == lang
-                    && ids.iter().any(|id| !file.roots.contains_key(id))
+        let files: Vec<_> = Self::domain(state, paths)
+            .filter(|(_, file)| {
+                file.lang == lang && ids.iter().any(|id| !file.roots.contains_key(id))
             })
             .map(|(path, file)| (path.clone(), Arc::clone(file)))
             .collect();

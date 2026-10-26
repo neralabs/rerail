@@ -8,6 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub(super) static INDEX_PUBLISH: AtomicU64 = AtomicU64::new(0);
 /// Execution: candidate roots selected from the anchor index (`Corpus::prepare*`).
 pub(super) static ANCHOR_SELECT: AtomicU64 = AtomicU64::new(0);
+/// Construction, nested in `ANCHOR_SELECT` and reported apart from it: anchor plans lowered to SQL
+/// and the SQL prepared.
+pub(super) static ANCHOR_COMPILE: AtomicU64 = AtomicU64::new(0);
 /// Execution: relational sessions, from input rows to their findings (`relational::evaluate_batch`, `relational::evaluate_prepared`).
 pub(super) static RELATIONAL: AtomicU64 = AtomicU64::new(0);
 
@@ -17,6 +20,25 @@ pub(super) fn timed<T>(clock: &AtomicU64, run: impl FnOnce() -> T) -> T {
     let result = run();
     clock.fetch_add(thread_cpu_nanoseconds().saturating_sub(started), Ordering::Relaxed);
     result
+}
+
+/// Adds the CPU time this thread spends until the span drops to `clock`.
+pub(super) struct Span<'c> {
+    clock: &'c AtomicU64,
+    started: u64,
+}
+
+impl<'c> Span<'c> {
+    pub(super) fn start(clock: &'c AtomicU64) -> Self {
+        Self { clock, started: thread_cpu_nanoseconds() }
+    }
+}
+
+impl Drop for Span<'_> {
+    fn drop(&mut self) {
+        self.clock
+            .fetch_add(thread_cpu_nanoseconds().saturating_sub(self.started), Ordering::Relaxed);
+    }
 }
 
 fn thread_cpu_nanoseconds() -> u64 {
@@ -32,7 +54,10 @@ fn thread_cpu_nanoseconds() -> u64 {
 pub(super) fn snapshot() -> serde_json::Value {
     serde_json::json!({
         "indexPublishNanoseconds": INDEX_PUBLISH.load(Ordering::Relaxed),
-        "anchorSelectNanoseconds": ANCHOR_SELECT.load(Ordering::Relaxed),
+        "anchorCompileNanoseconds": ANCHOR_COMPILE.load(Ordering::Relaxed),
+        "anchorSelectNanoseconds": ANCHOR_SELECT
+            .load(Ordering::Relaxed)
+            .saturating_sub(ANCHOR_COMPILE.load(Ordering::Relaxed)),
         "relationalNanoseconds": RELATIONAL.load(Ordering::Relaxed),
     })
 }

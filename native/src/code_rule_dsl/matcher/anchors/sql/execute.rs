@@ -73,6 +73,11 @@ pub(super) fn prepare_structural(store: &Store, files: &[i64]) -> Result<()> {
     result
 }
 
+fn compile<T>(prepare: impl FnOnce() -> T) -> T {
+    use crate::code_rule_dsl::phase_clock;
+    phase_clock::timed(&phase_clock::ANCHOR_COMPILE, prepare)
+}
+
 pub(super) fn rows_for(
     store: &Store,
     statement: &Statement,
@@ -147,7 +152,7 @@ pub(super) fn rows_for(
                     store.readers.clear();
                     #[cfg(feature = "code-rule-profile")]
                     let mut prepare = Span::start("anchor-prepare", &stage.name);
-                    let mut create = store.db.prepare(&stage.sql)?;
+                    let mut create = compile(|| store.db.prepare(&stage.sql))?;
                     #[cfg(feature = "code-rule-profile")]
                     {
                         prepare.detail(|| serde_json::json!({"sqlBytes":stage.sql.len()}));
@@ -205,7 +210,7 @@ pub(super) fn rows_for(
                     let before_query_rows = emitted;
                     #[cfg(feature = "code-rule-profile")]
                     let mut prepare = Span::start("anchor-prepare", "results");
-                    let mut query = store.db.prepare(sql)?;
+                    let mut query = compile(|| store.db.prepare(sql))?;
                     if !query.readonly() {
                         return Err(rusqlite::Error::InvalidQuery);
                     }

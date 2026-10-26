@@ -118,7 +118,7 @@ try {
   const coldMs = performance.now() - started;
   finishCpu("cold", coldCpu);
   const coldProfile = engineProfile.clock === undefined ? null : {
-    constructionMs: { parse: engineProfile.parseMs, indexPublish: engineProfile.clock.indexPublishNanoseconds! / 1e6 },
+    constructionMs: { parse: engineProfile.parseMs, indexPublish: engineProfile.clock.indexPublishNanoseconds! / 1e6, anchorCompile: (engineProfile.clock.anchorCompileNanoseconds ?? 0) / 1e6 },
     executionMs: { match: engineProfile.matchMs, anchorSelect: engineProfile.clock.anchorSelectNanoseconds! / 1e6, relational: engineProfile.clock.relationalNanoseconds! / 1e6 },
   };
   const file = files.find(file => file.path === "impl/common/l2200_sql_dialect/sql_connection.py") ?? files[0]!;
