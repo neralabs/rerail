@@ -20,7 +20,9 @@ const QUOTED_NOTES = 12_000;
 /** How many of the core paths that changed the description lists. */
 const LISTED_CHANGES = 20;
 
-const run = (command, args) => execFileSync(command, args, { cwd: ROOT, encoding: "utf8" });
+// A large buffer: the paths changed since the last core tag can run past Node's 1 MiB default (21,265 of them once the
+// pack test data left git), which failed the run with ENOBUFS.
+const run = (command, args) => execFileSync(command, args, { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28 });
 const git = (args) => run("git", args).trim();
 const readText = (path) => readFileSync(join(ROOT, path), "utf8");
 
