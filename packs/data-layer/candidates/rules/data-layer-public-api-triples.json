@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "data-layer-public-api-triples",
-  "revision": 1,
+  "revision": 2,
   "mode": "log",
   "description": "Candidate port of nera-data-layer public_api_triples at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
@@ -1254,7 +1254,7 @@
           },
           {
             "name": "decorators",
-            "query": "SELECT * FROM raw_decorators",
+            "query": "SELECT __path,__start,__end,name,CAST(owner AS INTEGER) AS owner FROM raw_decorators",
             "indexes": [
               [
                 "__path",
@@ -1315,8 +1315,18 @@
             ]
           },
           {
+            "name": "bases",
+            "query": "SELECT __path,__start,__end,name,CAST(owner AS INTEGER) AS owner FROM raw_bases",
+            "indexes": [
+              [
+                "__path",
+                "owner"
+              ]
+            ]
+          },
+          {
             "name": "base_edges",
-            "query": "SELECT d.id AS owner,b.id AS base,r.__start AS ordinal FROM raw_bases r JOIN declarations d ON d.__path=r.__path AND d.__start=r.owner\n JOIN declarations b ON b.kind='class' AND b.id=coalesce(\n (SELECT c.id FROM imports i JOIN declarations c ON c.fqname=i.target AND c.kind='class'\n WHERE i.kind='symbol' AND i.module=d.module AND i.name=trim(rx_replace(rx_replace(r.name,'(?s)\\[.*$',''),'^.*\\.','')) LIMIT 1),\n (SELECT c.id FROM declarations c WHERE c.module=d.module AND c.kind='class' AND c.name=trim(rx_replace(rx_replace(r.name,'(?s)\\[.*$',''),'^.*\\.','')) LIMIT 1),\n (SELECT min(c.id) FROM declarations c WHERE c.kind='class' AND c.name=trim(rx_replace(rx_replace(r.name,'(?s)\\[.*$',''),'^.*\\.','')) HAVING count(*)=1))",
+            "query": "SELECT d.id AS owner,b.id AS base,r.__start AS ordinal FROM bases r JOIN declarations d ON d.__path=r.__path AND d.__start=r.owner\n JOIN declarations b ON b.kind='class' AND b.id=coalesce(\n (SELECT c.id FROM imports i JOIN declarations c ON c.fqname=i.target AND c.kind='class'\n WHERE i.kind='symbol' AND i.module=d.module AND i.name=trim(rx_replace(rx_replace(r.name,'(?s)\\[.*$',''),'^.*\\.','')) LIMIT 1),\n (SELECT c.id FROM declarations c WHERE c.module=d.module AND c.kind='class' AND c.name=trim(rx_replace(rx_replace(r.name,'(?s)\\[.*$',''),'^.*\\.','')) LIMIT 1),\n (SELECT min(c.id) FROM declarations c WHERE c.kind='class' AND c.name=trim(rx_replace(rx_replace(r.name,'(?s)\\[.*$',''),'^.*\\.','')) HAVING count(*)=1))",
             "indexes": [
               [
                 "owner"
@@ -1339,20 +1349,8 @@
             ]
           },
           {
-            "name": "public_methods",
-            "query": "SELECT owner,name,symbol FROM (\n SELECT h.owner,d.name,d.id AS symbol,row_number() OVER (PARTITION BY h.owner,d.name ORDER BY h.depth,h.route) AS selected\n FROM hierarchy h JOIN declarations c ON c.id=h.base JOIN declarations d ON d.module=c.module AND d.class_name=c.name\n WHERE d.kind='method' AND substr(d.name,1,1)<>'_' AND d.name NOT IN ('__aenter__','__aexit__','__enter__','__exit__','__init__','__repr__','__str__','authorize_internal_access','disable_thread_affinity_checks','get_thread_checks_disabled','set_disable_thread_checks','validate_legacy_delegates','versioned_read','versioned_write')\n AND NOT EXISTS(SELECT 1 FROM decorators x WHERE x.__path=d.__path AND x.owner=d.__start AND rx_matches(x.name,'property$|\\.setter$|\\.deleter$'))) WHERE selected=1",
-            "indexes": [
-              [
-                "owner"
-              ],
-              [
-                "symbol"
-              ]
-            ]
-          },
-          {
             "name": "all_names",
-            "query": "SELECT * FROM raw_all_names",
+            "query": "SELECT __path,__start,__end,name,CAST(owner AS INTEGER) AS owner FROM raw_all_names",
             "indexes": [
               [
                 "__path",
@@ -1390,8 +1388,20 @@
             ]
           },
           {
+            "name": "public_methods",
+            "query": "SELECT owner,name,symbol FROM (\n SELECT h.owner,d.name,d.id AS symbol,row_number() OVER (PARTITION BY h.owner,d.name ORDER BY h.depth,h.route) AS selected\n FROM hierarchy h JOIN declarations c ON c.id=h.base JOIN declarations d ON d.module=c.module AND d.class_name=c.name\n WHERE h.owner IN (SELECT symbol FROM exported_roots) AND d.kind='method' AND substr(d.name,1,1)<>'_' AND d.name NOT IN ('__aenter__','__aexit__','__enter__','__exit__','__init__','__repr__','__str__','authorize_internal_access','disable_thread_affinity_checks','get_thread_checks_disabled','set_disable_thread_checks','validate_legacy_delegates','versioned_read','versioned_write')\n AND NOT EXISTS(SELECT 1 FROM decorators x WHERE x.__path=d.__path AND x.owner=d.__start AND rx_matches(x.name,'property$|\\.setter$|\\.deleter$'))) WHERE selected=1",
+            "indexes": [
+              [
+                "owner"
+              ],
+              [
+                "symbol"
+              ]
+            ]
+          },
+          {
             "name": "execution_calls",
-            "query": "SELECT * FROM raw_execution_calls",
+            "query": "SELECT __path,__start,__end,name,CAST(owner AS INTEGER) AS owner FROM raw_execution_calls",
             "indexes": [
               [
                 "__path",
@@ -1410,7 +1420,7 @@
           },
           {
             "name": "surfaces",
-            "query": "SELECT *,CASE WHEN mixed THEN name ELSE rx_replace(name,'_(?:lazy|async|sync)$','') END AS base_name,\n CASE WHEN mixed AND scope='method' THEN '__invalid_mixed_name__' WHEN rx_matches(name,'_lazy$') THEN 'lazy' WHEN rx_matches(name,'_async$') THEN 'async'\n WHEN legacy_async THEN 'async' ELSE 'sync' END AS slot FROM (\n SELECT d.id AS symbol,d.name,d.legacy_async,d.execution_surface,'function' AS scope,r.export_module AS owner,r.export_module || char(0) || r.export_name AS ordinal,\n rx_matches(lower(d.name),'lazy') AND rx_matches(lower(d.name),'async|sync') AS mixed\n FROM exported_roots r JOIN traits d ON d.id=r.symbol WHERE d.kind='function' AND substr(d.name,1,1)<>'_' AND instr(d.__path,'_internal/')<>1\n UNION ALL\n SELECT d.id,d.name,d.legacy_async,d.execution_surface,'method',c.name,d.name,\n rx_matches(lower(d.name),'lazy') AND rx_matches(lower(d.name),'async|sync')\n FROM (SELECT DISTINCT symbol FROM exported_roots) r JOIN traits c ON c.id=r.symbol AND c.kind='class'\n JOIN public_methods p ON p.owner=c.id JOIN traits d ON d.id=p.symbol\n WHERE NOT c.private_api AND NOT d.private_api AND NOT rx_matches(c.name,'Protocol$|^Async')\n AND NOT EXISTS(SELECT 1 FROM raw_bases b WHERE b.__path=c.__path AND b.owner=c.__start AND instr(b.name,'Protocol')>0))",
+            "query": "SELECT *,CASE WHEN mixed THEN name ELSE rx_replace(name,'_(?:lazy|async|sync)$','') END AS base_name,\n CASE WHEN mixed AND scope='method' THEN '__invalid_mixed_name__' WHEN rx_matches(name,'_lazy$') THEN 'lazy' WHEN rx_matches(name,'_async$') THEN 'async'\n WHEN legacy_async THEN 'async' ELSE 'sync' END AS slot FROM (\n SELECT d.id AS symbol,d.name,d.legacy_async,d.execution_surface,'function' AS scope,r.export_module AS owner,r.export_module || char(0) || r.export_name AS ordinal,\n rx_matches(lower(d.name),'lazy') AND rx_matches(lower(d.name),'async|sync') AS mixed\n FROM exported_roots r JOIN traits d ON d.id=r.symbol WHERE d.kind='function' AND substr(d.name,1,1)<>'_' AND instr(d.__path,'_internal/')<>1\n UNION ALL\n SELECT d.id,d.name,d.legacy_async,d.execution_surface,'method',c.name,d.name,\n rx_matches(lower(d.name),'lazy') AND rx_matches(lower(d.name),'async|sync')\n FROM (SELECT DISTINCT symbol FROM exported_roots) r CROSS JOIN traits c ON c.id=r.symbol AND c.kind='class'\n CROSS JOIN public_methods p ON p.owner=c.id CROSS JOIN traits d ON d.id=p.symbol\n WHERE NOT c.private_api AND NOT d.private_api AND NOT rx_matches(c.name,'Protocol$|^Async')\n AND NOT EXISTS(SELECT 1 FROM bases b WHERE b.__path=c.__path AND b.owner=c.__start AND instr(b.name,'Protocol')>0))",
             "indexes": [
               [
                 "scope",

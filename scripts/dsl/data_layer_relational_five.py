@@ -130,7 +130,18 @@ def public_api_clause(module, graph):
  inputs['raw_execution_calls']=E(A(K('call'),F('function',O(A(K('identifier'),call_name),A(K('attribute'),F('attribute',call_name)))),
      I(A(K('block'),I(outer,'neighbor')))),{'owner':'capture.OWNER.startByte','name':'capture.CALLEE'})
  stages=symbol_stages(graph)
- stages.append(S('execution_calls','SELECT * FROM raw_execution_calls',('__path','owner')))
+ # Owner projections are nullable byte offsets. Preserve numeric affinity for index seeks.
+ for stage in stages:
+  if stage['name'] in ('decorators','all_names'):
+   raw={'decorators':'raw_decorators','all_names':'raw_all_names'}[stage['name']]
+   stage['query']=f'SELECT __path,__start,__end,name,CAST(owner AS INTEGER) AS owner FROM {raw}'
+  if stage['name']=='base_edges':stage['query']=stage['query'].replace('FROM raw_bases r','FROM bases r')
+ stages.insert(next(i for i,stage in enumerate(stages) if stage['name']=='base_edges'),
+     S('bases','SELECT __path,__start,__end,name,CAST(owner AS INTEGER) AS owner FROM raw_bases',('__path','owner')))
+ methods=stages.pop(next(i for i,stage in enumerate(stages) if stage['name']=='public_methods'))
+ methods['query']=methods['query'].replace("WHERE d.kind='method'", "WHERE h.owner IN (SELECT symbol FROM exported_roots) AND d.kind='method'")
+ stages.insert(next(i for i,stage in enumerate(stages) if stage['name']=='exported_roots')+1,methods)
+ stages.append(S('execution_calls','SELECT __path,__start,__end,name,CAST(owner AS INTEGER) AS owner FROM raw_execution_calls',('__path','owner')))
  own="x.__path=d.__path AND x.owner=d.__start"
  inherited="x.__path=d.__path AND x.owner=d.class_start"
  def dec(pattern,include_class=False):
@@ -165,10 +176,10 @@ def public_api_clause(module, graph):
  UNION ALL
  SELECT d.id,d.name,d.legacy_async,d.execution_surface,'method',c.name,d.name,
  rx_matches(lower(d.name),'lazy') AND rx_matches(lower(d.name),'async|sync')
- FROM (SELECT DISTINCT symbol FROM exported_roots) r JOIN traits c ON c.id=r.symbol AND c.kind='class'
- JOIN public_methods p ON p.owner=c.id JOIN traits d ON d.id=p.symbol
+ FROM (SELECT DISTINCT symbol FROM exported_roots) r CROSS JOIN traits c ON c.id=r.symbol AND c.kind='class'
+ CROSS JOIN public_methods p ON p.owner=c.id CROSS JOIN traits d ON d.id=p.symbol
  WHERE NOT c.private_api AND NOT d.private_api AND NOT rx_matches(c.name,'Protocol$|^Async')
- AND NOT EXISTS(SELECT 1 FROM raw_bases b WHERE b.__path=c.__path AND b.owner=c.__start AND instr(b.name,'Protocol')>0))""",('scope','owner','base_name')))
+ AND NOT EXISTS(SELECT 1 FROM bases b WHERE b.__path=c.__path AND b.owner=c.__start AND instr(b.name,'Protocol')>0))""",('scope','owner','base_name')))
  stages.append(S('slots',"""SELECT * FROM (
  SELECT *,min(ordinal) OVER (PARTITION BY scope,owner,base_name,slot) AS first_ordinal,
  row_number() OVER (PARTITION BY scope,owner,base_name,slot ORDER BY ordinal DESC) AS selected
