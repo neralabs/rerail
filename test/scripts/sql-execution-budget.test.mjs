@@ -153,7 +153,7 @@ test("the CI workload refuses an existing output directory without rewriting its
 
 test("the CI launcher independently rejects a missing or bypassed execution gate", () => {
   const launcher = resolve("scripts/profiling/sql-budget.mjs");
-  const fixture = "fixtures/host/data-layer-port/batch-06-recording.json";
+  const fixture = "fixtures/host/data-layer-port/sql-budget-recording.json";
   const original = JSON.parse(readFileSync(fixture));
   const ledger = readFileSync("fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json");
   original.events = original.events.filter(e => [
@@ -164,7 +164,7 @@ test("the CI launcher independently rejects a missing or bypassed execution gate
     const sandbox = mkdtempSync(join(tmpdir(), "rerail-budget-bypass-"));
     try {
       const source = join(sandbox, dirname(fixture)); mkdirSync(source, { recursive: true });
-      writeFileSync(join(source, "batch-06-recording.json"), JSON.stringify(original));
+      writeFileSync(join(source, "sql-budget-recording.json"), JSON.stringify(original));
       mkdirSync(join(source, "profiling"));
       writeFileSync(join(source, "profiling", "sql-execution-opportunities-20261024.json"), ledger);
       const tools = join(sandbox, "scripts", "profiling"); mkdirSync(tools, { recursive: true });

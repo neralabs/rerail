@@ -167,6 +167,7 @@ jobs:
               - 'test/scripts/test_native_sql_plan.py'
               - 'scripts/profiling/producer-shape.mjs'
               - 'scripts/profiling/sql-budget.mjs'
+              - 'fixtures/host/data-layer-port/sql-budget-recording.json'
               - 'fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json'
               - 'scripts/profiling/sql-report.mjs'
               - 'benchmark/sql-profile/**'

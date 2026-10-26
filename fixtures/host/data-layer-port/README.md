@@ -40,6 +40,8 @@ The 114 synthetic graph observations remain separate from native source passes.
 See [the fifth-batch report](../../../docs/data-layer-batch-five.md) and `batch-05-evidence.json`.
 
 `batch-06-recording.json` records 1,234 source observations from 933 original tests.
+It is 30 MB of captured source, so it is not in git: `data_layer_record.py --batch 6` writes it, and the tests that replay it skip without it.
+`sql-budget-recording.json` keeps the two observations the SQL execution budget replays, cut from it unchanged.
 `batch-06-probes.json` adds twenty-five original-analyzer probes for callbacks, assignments, strategy line limits, executor annotations, and production scope.
 The native gate compares 1,259 calls, with 417 positive and 842 clean observations.
 Seven I/O or behavioral observations and 324 tests without captured analyzer boundaries remain separate.

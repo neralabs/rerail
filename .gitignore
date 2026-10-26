@@ -31,6 +31,10 @@ conformance/recorders/port-readiness/runtimes/*/composer.lock
 packs/*/upstream/*/recording.json
 packs/*/upstream/*/corpus.json
 
+# The data-layer port's sixth-batch recording is 30 MB of captured source; `data_layer_record.py --batch 6` regenerates it,
+# and the tests that replay it skip without it.
+fixtures/host/data-layer-port/batch-06-recording.json
+
 # Pack test data (PACK_FIXTURE_PATTERNS, scripts/s3/pack-fixtures.mjs), each tool's test cases and its recorded answers
 # on them, is never in git. Each tool-pack's data is one archive in S3, which its tracked test-data.lock names by sha256;
 # `npm run fixtures:pull` fetches and extracts it. A pull request adds new or changed files with `git add -f`, and a

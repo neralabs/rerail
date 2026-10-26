@@ -12,7 +12,8 @@ const directory = resolve(process.argv[2]);
 mkdirSync(dirname(directory), { recursive: true });
 mkdirSync(directory);
 const capture = join(directory, "capture"); // run.py refuses an existing capture directory.
-const source = "fixtures/host/data-layer-port/batch-06-recording.json";
+// The two observations below, cut unchanged from the sixth batch's recording (30 MB, not in git).
+const source = "fixtures/host/data-layer-port/sql-budget-recording.json";
 const bytes = readFileSync(source), original = JSON.parse(bytes);
 const tests = [
   "scripts/tests/test_lint_serverplan_state_tripwires.py::test_rejects_lazy_result_private_step_ref_access",
