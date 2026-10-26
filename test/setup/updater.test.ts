@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import {
   ManagedUpdater,
   compareSemver,
+  gitBashShim,
   launcherShim,
   validateManagedInstallation,
   type Installation,
@@ -73,6 +74,22 @@ describe("managed launcher shims", () => {
     expect(shim).toContain('set "RERAIL_NODE=C:\\Program Files\\nodejs\\node.exe"');
     expect(shim).toContain(String.raw`"C:\Users\100%% User\.rerail\current\dist\cli\cli.js" %*`);
     expect(shim.endsWith("\r\n")).toBe(true);
+  });
+
+  it("spells a non-ASCII path in the batch launcher through folders cmd expands, since cmd misreads UTF-8", () => {
+    const profile = String.raw`C:\Users\José García`;
+    const env = { USERPROFILE: profile, LOCALAPPDATA: String.raw`${profile}\AppData\Local` };
+    const shim = launcherShim(String.raw`${profile}\.rerail\current`, String.raw`${profile}\AppData\Local\Volta\100%\node.exe`, "win32", env);
+    expect(shim).toContain(String.raw`set "RERAIL_NODE=%LOCALAPPDATA%\Volta\100%%\node.exe"`);
+    expect(shim).toContain(String.raw`"%RERAIL_NODE%" "%~dp0..\current\dist\cli\cli.js" %*`);
+    expect(/^[\x20-\x7e\r\n]*$/u.test(shim)).toBe(true);
+  });
+
+  it("gives Git Bash an sh launcher with the Windows paths, beside the batch one", () => {
+    const shim = gitBashShim(String.raw`C:\Users\O'Neil\.rerail\current`, String.raw`C:\Program Files\nodejs\node.exe`);
+    expect(shim).toContain(String.raw`NODE='C:\Program Files\nodejs\node.exe'`);
+    expect(shim).toContain(String.raw`exec "$NODE" 'C:\Users\O'\''Neil\.rerail\current\dist\cli\cli.js' "$@"`);
+    expect(shim.includes("\r")).toBe(false);
   });
 });
 
@@ -455,6 +472,9 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
 
     expect(await readlink(updater.currentLink)).toBe(installed.current.packageRoot);
     expect((await lstat(updater.currentLink)).isSymbolicLink()).toBe(true);
+    // Git Bash runs `rerail` through the extensionless sh launcher; it never finds `rerail.cmd` without the extension.
+    expect(await readFile(join(home, "bin", "rerail"), "utf8")).toBe(gitBashShim(updater.currentLink, process.execPath));
+    expect(existsSync(updater.launcherPath)).toBe(true);
   });
 
   it("keeps a managed previous version for rollback and re-points current on update", async () => {
