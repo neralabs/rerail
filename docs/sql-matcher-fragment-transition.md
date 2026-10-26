@@ -1405,3 +1405,35 @@ The next ownership review targets immutable semantic and comparison descriptors 
 Each lane currently clones an Arc to its compiled descriptor, although execution retains the program for the whole batch.
 Borrowing those descriptors could remove reference-count traffic without changing captures, scheduling, or cache semantics.
 Any effect from contention across the four workspace workers remains a hypothesis until measured.
+
+The descriptor-borrowing spike (build 41) changes five matcher files.
+Semantic and comparison requests borrow their immutable compiled descriptors through a lifetime separate from the document lifetime.
+Nested binding and parsed-tree stages retain those borrows only during synchronous execution; outputs contain no descriptor references.
+Comparison and navigation adapters also borrow one local projection descriptor per batch.
+The full baseline contains 58,586,188 semantic lanes and 277,693 comparison lanes, plus descriptor reuse in nested stages.
+The change removes per-lane descriptor reference-count updates. Owned request captures, scheduling, resource charges, and program storage remain unchanged.
+Two reviews checked all constructors, consumers, nested stages, and local descriptor lifetimes before the build.
+
+Build 41 passes all 55 focused tests and preserves all 97,798 full-workload findings, three edits, operation counts, and memo counts.
+Its full cold job retires 1,569,043,947,807 instructions and consumes 566,412,930,718 cycles, with 188.500 CPU seconds.
+An adjacent unchanged build-36 SQL control retires 1,566,729,129,390 instructions and consumes 578,609,539,121 cycles, with 175.695 CPU seconds.
+The candidate has 0.15% more instructions and 2.11% fewer cycles, but 7.29% more CPU time.
+These mixed measurements do not establish an improvement. Descriptor borrowing is not retained.
+The candidate's own paired native run uses 107.624 CPU seconds; its CPU ratio is 1.751 and still fails qualification.
+All five modified matcher files are restored to the published checkpoint. No extra implementation path remains.
+
+This round rejects five candidate changes after measurements:
+
+| Candidate | Instruction change | Comparison |
+| --- | ---: | --- |
+| Shared frame arena | +3.45% | 500-file phase baseline |
+| Deferred static-kind rejection | +1.53% | 500-file phase baseline |
+| Single-family dispatch | +0.88% | 500-file phase baseline |
+| Prehashed capture fingerprint | +0.68% | Adjacent unchanged 500-file control |
+| Borrowed semantic/comparison descriptors | +0.15% | Adjacent unchanged full-job control |
+
+The retained source and published evidence remain build 36, committed as `72e4be09`.
+The cold CPU ceiling is still unmet; this round does not complete performance qualification.
+The failed experiments argue against further changes justified only by fewer frame copies or simpler dispatch source.
+The next investigation should measure duplicate matcher demands: descriptor, node, document, and the semantic inputs that affect each result.
+It must distinguish repeated requests from reusable results before adding more caches or changing execution order.
