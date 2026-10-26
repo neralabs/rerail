@@ -3,7 +3,6 @@
 PHP 8.5.11:
 
     python3 generate.py fixtures <phpstan-src checkout at tag 2.2.16> <composer project with phpstan/phpstan 2.2.16>
-    python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]
 
 A finding belongs to a ported rule class by its identifier and, where another class reports the same identifier
 (`argument.type`, `missingType.return`, `variable.undefined`), by the message the ported class writes. Only the
@@ -19,10 +18,8 @@ Each analysis unit (a method's files, analysed together) is recorded as:
   - for the other ported identifiers, PHPStan's output at level max over the unit.
 Methods read_tests.php cannot read statically (data providers, helpers, skipped on this PHP) are left out.
 
-`corpus` runs PHPStan once over a corpus's pack paths at level max (files `php -l` rejects, Blade templates, and
-files PHPStan cannot reflect excluded and listed as skipped). Each finding is the identifier, path and line (PHPStan
-reports no columns). PHPStan is run with the agent environment variables unset: it prints a banner before its JSON
-when it detects an agent."""
+Each finding is the identifier, path and line (PHPStan reports no columns). PHPStan is run with the agent environment
+variables unset: it prints a banner before its JSON when it detects an agent."""
 
 from __future__ import annotations
 
@@ -215,28 +212,6 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path, dump: pathlib.Path |
                  [{key: finding[key] for key in ("rule", "path", "line")} for finding in findings])
 
 
-def corpus(project: pathlib.Path, name: str, root: pathlib.Path, dump: pathlib.Path | None) -> None:
-    files = common.corpus_files(root, name)
-    skipped = common.unparsable(root, files)
-    paths = [root / path for path in common.corpus(name)["paths"]]
-    while True:
-        report = phpstan(project, paths, [str(root / path) for path in skipped])
-        # A file PHPStan cannot reflect stops its analysis; exclude it and run again.
-        severe = [pathlib.Path(path).resolve().relative_to(root.resolve()).as_posix()
-                  for path, file in report["files"].items()
-                  if any(message.get("identifier", "").startswith("phpstan.")
-                         or message["message"].startswith("Reflection error") for message in file["messages"])]
-        if not severe:
-            break
-        skipped += severe
-    found = messages(report, root)
-    if dump is not None:
-        dump.write_text(json.dumps(found, indent=1) + "\n")
-    common.write(HERE / f"corpus-{name}.expected.json", "phpstan", version(project),
-                 common.corpus_source(name, list(IDENTIFIERS), skipped),
-                 [{key: finding[key] for key in ("rule", "path", "line")} for finding in found])
-
-
 def main() -> None:
     # --messages <directory>: also write each run's findings with PHPStan's messages there (for divergence review).
     arguments = sys.argv[1:]
@@ -249,11 +224,7 @@ def main() -> None:
         fixtures(pathlib.Path(arguments[1]).resolve(), pathlib.Path(arguments[2]).resolve(),
                  dump_directory / "phpstan-fixtures.json" if dump_directory else None)
     else:
-        project = pathlib.Path(arguments[1]).resolve()
-        for argument in arguments[2:]:
-            name, _, path = argument.partition("=")
-            corpus(project, name, pathlib.Path(path).resolve(),
-                   dump_directory / f"phpstan-corpus-{name}.json" if dump_directory else None)
+        raise SystemExit(__doc__)
 
 
 if __name__ == "__main__":

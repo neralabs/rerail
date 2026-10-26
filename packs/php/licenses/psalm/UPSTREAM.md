@@ -6,8 +6,8 @@ The files listed below contain material copied from vimeo/psalm and remain under
 this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of PHP_CodeSniffer's, PHPStan's
 and Psalm's rules, published under the pack's licence expression, `Apache-2.0 AND BSD-3-Clause AND MIT`, as
 `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders
-`upstream/common.py` and `upstream/psalm/generate.py`, `upstream/psalm/read_tests.php`, the Composer lockfiles
-`upstream/psalm/composer-<corpus>.lock` and the recordings they make by running Psalm 6.19.1.
+`upstream/common.py` and `upstream/psalm/generate.py`, `upstream/psalm/read_tests.php` and the recordings they
+make by running Psalm 6.19.1.
 
 Paths are relative to the pack directory, `packs/php/`. Each fixture is the `code` string of one case of a test's
 `providerValidCodeParse()` or `providerInvalidCodeParse()`, copied verbatim (`upstream/psalm/generate.py fixtures`).

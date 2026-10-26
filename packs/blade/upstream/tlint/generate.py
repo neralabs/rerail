@@ -3,7 +3,6 @@
 PHP 8.5.11:
 
     python3 generate.py fixtures <tighten/tlint checkout at tag v9.7.0> <composer project with tightenco/tlint 9.7.0>
-    python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]
 
 `fixtures` runs each ported lint's own test (tests/Linting/Linters/<Lint>Test.php) with read_tests.php: every
 template the test hands `new <Lint>(...)` is captured, and every assertion the test makes is checked against tlint's
@@ -12,9 +11,9 @@ method order; the pack's licenses/tlint/UPSTREAM.md lists them, and LICENSE.md i
 ported lint over every copy, as `tlint lint` runs a file, and the recording on a lint's own copy is required to be
 exactly the lines its test asserts, in order (`$lints[0]->getNode()->getLine()`, `$lints[1]`, ...; none where it
 asserts `assertEmpty($lints)`): so the recording is the upstream test's expectation, and on the other lints' copies
-the tool's output. `corpus` runs the same lints over a corpus's pack paths. Each finding is the lint's class name, the
-path and its node's line (the `line` of `tlint lint --json`). None of the lints takes configuration; tlint's `tighten`
-preset enables all six, its `laravel` preset the last three."""
+the tool's output. Each finding is the lint's class name, the path and its node's line (the `line` of
+`tlint lint --json`). None of the lints takes configuration; tlint's `tighten` preset enables all six, its `laravel`
+preset the last three."""
 
 from __future__ import annotations
 
@@ -110,20 +109,9 @@ Paths are relative to the pack directory, `packs/blade/`. Each fixture is writte
 {rows}""")
 
 
-def corpus(project: pathlib.Path, name: str, root: pathlib.Path) -> None:
-    findings, skipped = run(project, root, common.corpus_files(root, name))
-    common.write(HERE / f"corpus-{name}.expected.json", "tlint", VERSION,
-                 common.corpus_source(name, LINTS, skipped), findings)
-
-
 def main() -> None:
     if sys.argv[1] == "fixtures":
         fixtures(pathlib.Path(sys.argv[2]).resolve(), pathlib.Path(sys.argv[3]).resolve())
-    elif sys.argv[1] == "corpus":
-        project = pathlib.Path(sys.argv[2]).resolve()
-        for argument in sys.argv[3:]:
-            name, _, path = argument.partition("=")
-            corpus(project, name, pathlib.Path(path).resolve())
     else:
         raise SystemExit(__doc__)
 

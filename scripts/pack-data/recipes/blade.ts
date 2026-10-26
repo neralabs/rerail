@@ -2,8 +2,8 @@
  * The blade pack's derivation recipes: each tool's generate.py (packs/blade/upstream/<tool>/, beside common.py) run on
  * upstream's repository at the gates manifest's commit and the Composer project the port readiness recorder installs
  * from the tool's runtime (runtimes/<gates.yaml upstream.runtime>/: the same packages at the same exact versions), in
- * `fixtures` mode and then `corpus` mode over every corpus the pack pins. The generators run `php` from PATH, which must
- * be the pinned PHP build (runtimes/php/build.sh) the recorder refuses any other than.
+ * `fixtures` mode. The generators run `php` from PATH, which must be the pinned PHP build (runtimes/php/build.sh) the
+ * recorder refuses any other than.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -12,21 +12,14 @@ import { join } from "node:path";
 
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { composerRuntime, PHP_INI, pinnedPhp, RUNTIMES_DIRECTORY } from "../../../conformance/recorders/port-readiness/runtimes.js";
-import { derivationEnvironment, type DeriveContext, type DeriveRecipe } from "../context.js";
+import { derivationEnvironment, type DeriveRecipe } from "../context.js";
 
 /** The generators use Python's standard library alone, on the interpreter the recorder's Python runtime pins. */
 const PYTHON = readFileSync(join(RUNTIMES_DIRECTORY, "python", ".python-version"), "utf8").trim();
 
-/** `name=<checkout>` for every corpus the pack pins, in conformance.json's order (generate.py's `corpus` arguments). */
-async function corpusArguments(context: DeriveContext): Promise<string[]> {
-  const directory = await context.corpora();
-  const manifest = JSON.parse(readFileSync(join(context.root, "packs", context.pack, "conformance.json"), "utf8")) as { corpora: { name: string }[] };
-  return manifest.corpora.map(({ name }) => `${name}=${join(directory, name)}`);
-}
-
 /**
- * tlint and stillat/blade-parser: `generate.py fixtures <checkout> <project>`, then `generate.py corpus <project>
- * <name>=<corpus>...`, the project the recorder's Composer runtime for the tool.
+ * tlint and stillat/blade-parser: `generate.py fixtures <checkout> <project>`, the project the recorder's Composer
+ * runtime for the tool.
  */
 function projectRecipe(tool: string): DeriveRecipe {
   return {
@@ -39,7 +32,6 @@ function projectRecipe(tool: string): DeriveRecipe {
       const interpreter = await context.python(PYTHON);
       const generator = join(context.toolDirectory, "generate.py");
       await context.exec([interpreter, generator, "fixtures", checkout, project.directory]);
-      await context.exec([interpreter, generator, "corpus", project.directory, ...(await corpusArguments(context))]);
     },
   };
 }
@@ -87,7 +79,6 @@ const bladestan: DeriveRecipe = {
 
     const interpreter = await context.python(PYTHON);
     await context.exec([interpreter, generator, "fixtures", project]);
-    await context.exec([interpreter, generator, "corpus", project, ...(await corpusArguments(context))]);
   },
 };
 

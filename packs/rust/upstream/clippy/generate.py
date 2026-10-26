@@ -4,7 +4,6 @@ bump workflow for an upstream release; never pull request CI), with the pinned t
 and refuses any other; Python 3.9 standard library only):
 
     python3 generate.py fixtures <rust-clippy checkout at tag rust-1.99.0> <scratch directory>
-    python3 generate.py corpus <cargo target root> <name>=<corpus checkout> [...]
 
 `fixtures` writes Rerail's own cases (`PROBES`, listed in UPSTREAM.md) to fixtures/rerail/ and
 copies each lint's own UI tests (rust-clippy `tests/ui/**`, `tests/ui-toml/**`, commit
@@ -23,14 +22,7 @@ line:column) and the `//~` annotations (lint and line); every difference is writ
 The recording, fixtures.expected.json, is a second run with `-W clippy::<lint>` for every ported lint added, so each
 lint is recorded over every test (in-source `allow`/`expect` still apply): each finding is the lint, test path, and
 the primary span's 1-based line and column (code points), one per distinct primary span (start and end): two
-diagnostics that start at one point, like precedence_bits' outer and nested `^`, are two findings.
-
-`corpus` runs `cargo +1.99.0 clippy --keep-going --locked --workspace --all-targets --all-features
---message-format=json -- -W clippy::<lint>...` with CARGO_TARGET_DIR=<cargo target root>/clippy-<name> (RUSTFLAGS
-untouched, so tokio_unstable and other `--cfg`s are off) and records the ported lints' findings whose primary span is
-in the corpus. `skipped` is every corpus `.rs` file no compiled unit read (the units' dep-info). It prints the units
-that failed to compile, the dropped out-of-corpus findings, and how many findings sit inside a bang-macro
-invocation's token tree."""
+diagnostics that start at one point, like precedence_bits' outer and nested `^`, are two findings."""
 
 from __future__ import annotations
 
@@ -683,28 +675,9 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
             print(f"  {test}: {difference}")
 
 
-def corpus(target_root: pathlib.Path, name: str, root: pathlib.Path) -> None:
-    common.check_toolchain()
-    result = common.run_corpus(root, name, target_root / f"clippy-{name}", "-W")
-    common.write(HERE / f"corpus-{name}.expected.json", common.corpus_source(name, common.lints(), result["skipped"]),
-                 result["findings"])
-    print(f"{name}: {len(result['files'])} .rs files, {len(result['skipped'])} skipped, "
-          f"{len(result['findings'])} findings")
-    for failure in result["failures"]:
-        print(f"  failed to compile: {failure}")
-    for outside in result["outside"]:
-        print(f"  dropped (outside the corpus): {outside}")
-    print(json.dumps(common.classify_macro_positions(root, result["findings"]), indent=1, sort_keys=True))
-
-
 def main() -> None:
     if sys.argv[1] == "fixtures":
         fixtures(pathlib.Path(sys.argv[2]).resolve(), pathlib.Path(sys.argv[3]).resolve())
-    elif sys.argv[1] == "corpus":
-        target_root = pathlib.Path(sys.argv[2]).resolve()
-        for argument in sys.argv[3:]:
-            name, _, path = argument.partition("=")
-            corpus(target_root, name, pathlib.Path(path).resolve())
     else:
         raise SystemExit(__doc__)
 

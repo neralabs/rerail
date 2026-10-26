@@ -18,16 +18,6 @@ export const MINIMUM_RULES = 12;
 
 const nonEmpty = z.string().min(1);
 
-const corpusSchema = z.strictObject({
-  name: nonEmpty,
-  repository: nonEmpty,
-  commit: nonEmpty,
-  /** Directories (or files) under the corpus checkout that are scored; posix, relative. */
-  paths: z.array(nonEmpty).min(1),
-  /** `path.matchesGlob` patterns over the corpus-relative path; a match is never evaluated nor scored. */
-  exclude: z.array(nonEmpty).default([]),
-});
-
 const toolSchema = z.strictObject({ name: nonEmpty, version: nonEmpty });
 
 const ruleSchema = z.strictObject({
@@ -90,7 +80,6 @@ export const packSchema = z
     exemptCapabilities: z.array(exemptionSchema).default([]),
     /** Ports exempt from carrying their upstream tool's suppression comment, each with its reason. */
     suppressionExemptions: z.array(suppressionExemptionSchema).default([]),
-    corpora: z.array(corpusSchema),
     tools: z.array(toolSchema),
     rules: z.array(ruleSchema),
     /** Recordings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
@@ -100,7 +89,6 @@ export const packSchema = z
     const issue = (message: string): void => context.addIssue({ code: "custom", message });
     const duplicates = (values: readonly string[]): string[] => values.filter((value, index) => values.indexOf(value) !== index);
     for (const id of duplicates(pack.rules.map(rule => rule.id))) issue(`duplicate rule id ${id}`);
-    for (const name of duplicates(pack.corpora.map(corpus => corpus.name))) issue(`duplicate corpus ${name}`);
     for (const name of duplicates(pack.tools.map(tool => tool.name))) issue(`duplicate tool ${name}`);
     for (const capability of duplicates(pack.capabilities)) issue(`duplicate capability ${capability}`);
     for (const capability of duplicates(pack.exemptCapabilities.map(exemption => exemption.capability))) issue(`duplicate exemption for ${capability}`);
@@ -121,7 +109,7 @@ export type Pack = z.infer<typeof packSchema>;
 
 const findingSchema = z.strictObject({
   rule: nonEmpty,
-  /** Posix path relative to the fixtures directory or the corpus checkout. */
+  /** Posix path relative to the fixtures directory. */
   path: nonEmpty,
   /** 1-based. */
   line: z.number().int().positive(),
@@ -146,27 +134,10 @@ const fixtureSourceSchema = z.strictObject({
   files: z.array(unitSchema).min(1),
 });
 
-const corpusSourceSchema = z.strictObject({
-  kind: z.literal("corpus"),
-  name: nonEmpty,
-  repository: nonEmpty,
-  commit: nonEmpty,
-  rules: z.array(nonEmpty).min(1),
-  /** Corpus-relative files the tool could not analyse (`php -l` rejects them, …); never scored. */
-  skipped: z.array(nonEmpty).default([]),
-  /**
-   * Lines of scored files the tool did not analyse, read from its own reports (a function Psalm stops analysing at an
-   * undefined closure `use` variable, …): no finding on them, the tool's or Rerail's, is scored for the tool's rules.
-   */
-  unanalysed: z
-    .array(z.strictObject({ path: nonEmpty, startLine: z.number().int().positive(), endLine: z.number().int().positive() }))
-    .default([]),
-});
-
 export const recordingSchema = z.strictObject({
   tool: nonEmpty,
   version: nonEmpty,
-  source: z.discriminatedUnion("kind", [fixtureSourceSchema, corpusSourceSchema]),
+  source: fixtureSourceSchema,
   findings: z.array(findingSchema),
 });
 export type Recording = z.infer<typeof recordingSchema>;

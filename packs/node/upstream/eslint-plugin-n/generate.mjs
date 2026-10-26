@@ -1,18 +1,17 @@
 // Records eslint-plugin-n 18.4.1 for the Node pack (rerail/packs/node/conformance.json).
 //
 // Pins: eslint 10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0;
-// upstream eslint-plugin-n v18.4.1 = f1d47aff402b9e009578f4b3155b84f7d8beef9b; corpora fastify @
-// 0d945819bebc08f4ca666d8283c03a26ed9706a0, prettier @ 5927216227411bc2cdaf30d50559e0a475ab4832. Refuses any other.
+// upstream eslint-plugin-n v18.4.1 = f1d47aff402b9e009578f4b3155b84f7d8beef9b. Refuses any other.
 //
 // Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request
 // CI). Usage: node packs/node/upstream/eslint-plugin-n/generate.mjs
-//   [--tools <dir>] (default: the nearest .rerail/tools/node) [--corpora <dir>] (default: the nearest .rerail/corpora/node)
-//   [--fixtures-only] [--summary <file>] (writes the run summary, incl. per-case count mismatches, as JSON)
+//   [--tools <dir>] (default: the nearest .rerail/tools/node)
+//   [--summary <file>] (writes the run summary, incl. per-case count mismatches, as JSON)
 //
 // 1. Copies the chosen rules' upstream tests verbatim to tests/lib/rules/ and runs them with stub-test-helpers.js
 //    (ours), which captures every RuleTester case; each case's `code` becomes one file under fixtures/<rule>/.
 // 2. Runs the pinned plugin (ESLint Node API, one config, default rule options, every chosen rule on) over every
-//    fixture file and every pinned corpus file, and writes fixtures.expected.json and corpus-<name>.expected.json.
+//    fixture file, and writes fixtures.expected.json.
 // 3. Writes ../../licenses/eslint-plugin-n/{LICENSE,UPSTREAM.md}.
 //
 // Source type is what Node itself uses for the file: `.mjs`/`.mts` module, `.cjs`/`.cts` commonjs, otherwise the
@@ -33,7 +32,7 @@ import { registerHooks } from "node:module";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, lint, pinnedRequire, REPOSITORY, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL = "eslint-plugin-n";
@@ -41,7 +40,6 @@ const VERSION = "18.4.1";
 const PINS = { eslint: "10.11.0", "eslint-plugin-n": VERSION, "@typescript-eslint/parser": "8.70.1", typescript: "5.9.3", globals: "17.13.0" };
 const UPSTREAM_REPOSITORY = "https://github.com/eslint-community/eslint-plugin-n";
 const UPSTREAM_COMMIT = "f1d47aff402b9e009578f4b3155b84f7d8beef9b";
-const CORPORA = { fastify: "0d945819bebc08f4ca666d8283c03a26ed9706a0", prettier: "5927216227411bc2cdaf30d50559e0a475ab4832" };
 
 /** The chosen eslint-plugin-n rules (ids without the `n/` prefix); each test file is tests/lib/rules/<rule>.js. */
 export const RULES = [
@@ -339,11 +337,8 @@ async function loadTools(toolsDirectory) {
 }
 
 async function main() {
-  const { values } = parseArgs({ options: { tools: { type: "string" }, corpora: { type: "string" }, "fixtures-only": { type: "boolean" }, summary: { type: "string" } } });
-  const report = { fixtures: undefined, corpora: [] };
-  const writeSummary = () => values.summary !== undefined && writeFileSync(resolve(values.summary), `${JSON.stringify(report, null, 1)}\n`);
+  const { values } = parseArgs({ options: { tools: { type: "string" }, summary: { type: "string" } } });
   const toolsDirectory = resolve(values.tools ?? defaultDirectory("tools"));
-  const corporaDirectory = resolve(values.corpora ?? defaultDirectory("corpora"));
   const upstream = join(toolsDirectory, "upstream-eslint-plugin-n");
   assertCommit(upstream, UPSTREAM_COMMIT);
   const tools = await loadTools(toolsDirectory);
@@ -373,23 +368,8 @@ async function main() {
     perRule: Object.fromEntries(RULES.map(rule => [rule, kept.filter(entry => entry.rule === rule).length])),
     mismatches,
   };
-  report.fixtures = summary;
   console.log(JSON.stringify({ ...summary, mismatches: summary.mismatches.length }, null, 1));
-  writeSummary();
-  if (values["fixtures-only"]) return;
-
-  for (const corpus of pack("node").corpora) {
-    if (CORPORA[corpus.name] !== corpus.commit) throw new Error(`pack.json pins ${corpus.name} @ ${corpus.commit}; this recorder pins ${CORPORA[corpus.name]}`);
-    const root = join(corporaDirectory, corpus.name);
-    const files = corpusFiles(root, corpus);
-    const run = await record(tools, root, files);
-    writeRecording(join(HERE, `corpus-${corpus.name}.expected.json`), TOOL, VERSION, { kind: "corpus", name: corpus.name, repository: corpus.repository, commit: corpus.commit, rules: RULE_IDS, skipped: run.skipped.map(entry => entry.path).sort() }, run.findings);
-    const perRule = Object.fromEntries(RULE_IDS.map(rule => [rule, run.findings.filter(finding => finding.rule === rule).length]));
-    const corpusSummary = { corpus: corpus.name, files: files.length, skipped: run.skipped, findings: run.findings.length, perRule };
-    report.corpora.push(corpusSummary);
-    console.log(JSON.stringify(corpusSummary, null, 1));
-    writeSummary();
-  }
+  if (values.summary !== undefined) writeFileSync(resolve(values.summary), `${JSON.stringify({ fixtures: summary }, null, 1)}\n`);
 }
 
 await main();

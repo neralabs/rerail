@@ -113,9 +113,6 @@ export async function deriveToolPack(recipe: DeriveRecipe, options: DeriveOption
   const problems: string[] = [];
   const notes: string[] = [];
   const packDirectory = `packs/${recipe.pack}`;
-  if (recipe.platforms !== undefined && !recipe.platforms.only.includes(process.platform)) {
-    notes.push(`derived on ${process.platform}, not ${recipe.platforms.only.join(" or ")}, so these are not the bytes the nightly producer archives: ${recipe.platforms.reason}`);
-  }
 
   // Authored data is an input: it must be here (pulled, or the pull request's), and it must come out unchanged.
   const listing = authoredListing(ROOT);

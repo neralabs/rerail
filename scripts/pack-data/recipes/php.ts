@@ -2,8 +2,7 @@
  * The php pack's derivation recipes: PHP_CodeSniffer's, PHPStan's and Psalm's generate.py (with
  * packs/php/upstream/common.py), each run with the Composer project of the recorder's runtimes/<tool>-<version> (the
  * runtime gates.yaml names) on the PHP that runtime pins (runtimes/php's build, which composerRuntime refuses any other
- * than, put first on PATH for the generator), over upstream's checkout at the generator's ORIGIN and the pack's pinned
- * corpora.
+ * than, put first on PATH for the generator), over upstream's checkout at the generator's ORIGIN.
  */
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -22,27 +21,20 @@ function generatorOrigin(generator: string): { repository: string; commit: strin
 }
 
 const composerManifest = z.object({ require: z.record(z.string(), z.string()) });
-const conformanceManifest = z.object({ corpora: z.array(z.object({ name: z.string(), repository: z.string(), commit: z.string(), paths: z.array(z.string()) })) });
 
 interface PhpDerivation {
   /** Upstream's paths (sparse) the `fixtures` mode reads. */
   sparse: readonly string[];
   /** Recorder runtimes whose requirements the generator's Composer project needs beside the tool's own (the recorder keeps them apart). */
   alongside?: readonly string[];
-  /** Sparse patterns the `corpus` mode reads beyond the pack's corpus paths; the corpus is context.corpus()'s checkout when absent. */
-  corpusFiles?: readonly string[];
 }
 
 /**
- * Runs the tool's generate.py in its `fixtures` mode, then its `corpus` mode on every corpus packs/php/conformance.json
- * pins (common.py's corpus()). The generator's one Composer project is the runtime gates.yaml names.
- *
- * The `corpus` mode runs in a directory of the cache beside corpora/: PHPStan names a trait's error inside an anonymous
- * class by the class's file (`… (in context of class@anonymous/<file>:<line>)`) relative to the directory its working
- * directory and analysed paths share, which is then the cache root (`corpora/php/symfony/src/…`), wherever the cache is.
+ * Runs the tool's generate.py in its `fixtures` mode. The generator's one Composer project is the runtime gates.yaml
+ * names.
  */
-async function derivePhp(context: DeriveContext, { sparse, alongside = [], corpusFiles }: PhpDerivation): Promise<void> {
-  const { root, pack, tool, toolDirectory, cacheRoot, recorderCache, runner } = context;
+async function derivePhp(context: DeriveContext, { sparse, alongside = [] }: PhpDerivation): Promise<void> {
+  const { root, pack, tool, toolDirectory, recorderCache, runner } = context;
   const generator = join(toolDirectory, "generate.py");
   const origin = generatorOrigin(generator);
   const { upstream } = readGatesManifest(root, pack, tool);
@@ -56,10 +48,10 @@ async function derivePhp(context: DeriveContext, { sparse, alongside = [], corpu
       // The exact requirements of the recorder's runtimes/<name>/composer.json, together.
       require: Object.fromEntries([runtime, ...alongside].flatMap((name) => Object.entries(composerManifest.parse(JSON.parse(readFileSync(join(RUNTIMES_DIRECTORY, name, "composer.json"), "utf8"))).require))),
     });
-  // The generators run `php` (php -l, their readers) and vendor/bin scripts (`#!/usr/bin/env php`) from PATH: the
-  // pinned interpreter the runtime checked, with the settings every PHP process of the gates runs with (PHP_INI) as its
+  // The generators run `php` (their readers) and vendor/bin scripts (`#!/usr/bin/env php`) from PATH: the pinned
+  // interpreter the runtime checked, with the settings every PHP process of the gates runs with (PHP_INI) as its
   // php.ini, so the build's own built-in defaults (short_open_tag on: PHP_CodeSniffer reports no Internal.NoCodeFound
-  // for a file with no open tag) answer nothing. A generator's `php -n` reads none, as before.
+  // for a file with no open tag) answer nothing.
   const ini = await context.scratch("php-ini");
   const settings = PHP_INI.flatMap((argument, index) => (PHP_INI[index - 1] === "-d" ? [`${argument}\n`] : []));
   await writeFile(join(ini, "php.ini"), settings.join(""));
@@ -68,15 +60,6 @@ async function derivePhp(context: DeriveContext, { sparse, alongside = [], corpu
   const python = (await uvRuntime("python", recorderCache, runner)).python;
   const checkout = await context.checkout(origin.repository, origin.commit, { sparse });
   await context.exec([python, generator, "fixtures", checkout, project], { env });
-  const { corpora } = conformanceManifest.parse(JSON.parse(readFileSync(join(root, "packs", pack, "conformance.json"), "utf8")));
-  const roots: string[] = [];
-  for (const corpus of corpora) {
-    const directory = corpusFiles === undefined
-      ? await context.corpus(corpus.name)
-      : await context.checkout(corpus.repository, corpus.commit, { directory: join(cacheRoot, "corpora", `${pack}-${tool}`, corpus.name), sparse: [...corpus.paths.map((path) => `/${path}/`), ...corpusFiles] });
-    roots.push(`${corpus.name}=${directory}`);
-  }
-  await context.exec([python, generator, "corpus", project, ...roots], { env, cwd: await context.scratch("corpus") });
 }
 
 export const recipes: DeriveRecipe[] = [
@@ -94,9 +77,6 @@ export const recipes: DeriveRecipe[] = [
   {
     pack: "php",
     tool: "psalm",
-    // The `corpus` mode reads the corpus's composer.json files (its dependencies, and the packages the checkout holds
-    // itself), outside the corpus's paths. Psalm stops analysing code that uses a class of an extension the interpreter
-    // lacks (symfony's BcMath\Number, GMP, FFI), so runtimes/php/extensions.txt decides corpus-symfony's `unanalysed`.
-    derive: (context) => derivePhp(context, { sparse: ["/tests/"], corpusFiles: ["composer.json"] }),
+    derive: (context) => derivePhp(context, { sparse: ["/tests/"] }),
   },
 ];

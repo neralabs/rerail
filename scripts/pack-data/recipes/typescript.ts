@@ -1,6 +1,6 @@
 /**
  * The typescript pack's derivation recipes: typescript-eslint's and @vitest/eslint-plugin's own RuleTester cases and
- * their recorded findings, and typescript-eslint's findings on the pinned vscode corpus, each recorded by its generator.
+ * their recorded findings, each recorded by its generator.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,7 +26,7 @@ export const recipes: DeriveRecipe[] = [
   {
     pack: "typescript",
     tool: "typescript-eslint",
-    async derive({ root, exec, checkout, corpus, npmTools }) {
+    async derive({ root, exec, checkout, npmTools }) {
       // packs/typescript/upstream/generate.mjs records every typescript-eslint tool of the pack; it pins eslint,
       // @typescript-eslint/parser and eslint-plugin, and typescript (VERSIONS), and the checkout (CHECKOUTS). It needs
       // tsx beside them at no version of its own: the recorder's typescript-eslint 8.70.1 runtime's tsx loads the same
@@ -38,8 +38,7 @@ export const recipes: DeriveRecipe[] = [
       const upstream = checkoutPin(source, '"typescript-eslint"');
       // The rules' test files, and the rule sources they import (stubbed or swapped for the published build's).
       const typescriptEslint = await checkout(upstream.repository, upstream.commit, { sparse: ["/packages/eslint-plugin/"] });
-      const vscode = await corpus("vscode");
-      await exec(["node", generator, "--tools", tools, "--typescript-eslint", typescriptEslint, "--fixtures", "--corpus", `vscode=${vscode}`]);
+      await exec(["node", generator, "--tools", tools, "--typescript-eslint", typescriptEslint]);
     },
   },
   {

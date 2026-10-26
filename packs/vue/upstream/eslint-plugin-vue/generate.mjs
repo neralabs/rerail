@@ -3,7 +3,6 @@
 // the tools of ../../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
 //
 //   node generate.mjs fixtures <eslint-plugin-vue checkout at tag v10.11.1 (ec9c53a6fbed637d7b0fbcd6893b0206ae32839f)>
-//   node generate.mjs corpus [<name>...]            # corpora of ../../../../fixtures/vue/corpora.json, under .rerail/corpora/vue
 //
 // Pins (refused when different): eslint 10.11.0, eslint-plugin-vue 10.11.1, vue-eslint-parser 10.4.1,
 // @typescript-eslint/parser 8.70.1, typescript 6.0.3.
@@ -26,18 +25,15 @@
 // `fixtures/<rule>/rerail-<name>.vue` and listed in `UPSTREAM.md` beside this file. Then every fixture is linted by every
 // rule, and `fixtures.expected.json` records all findings (a fixture of one rule may also be reported by another).
 //
-// `corpus` lints every `.vue` file of each corpus (the files T1 enumerates) and writes `corpus-<name>.expected.json`;
-// a file ESLint cannot parse (a fatal message) is `skipped`.
-//
 // Findings are `{ rule, path, line, column }`: ESLint's line, and its 1-based column converted from UTF-16 code
 // units to code points, as the conformance standard counts them.
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packFixturesWritten, recordingWritten } from "../../../../scripts/s3/pack-fixtures.mjs";
-import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
+import { load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
 import { AUTHORED } from "./authored.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -273,49 +269,6 @@ ${rows.join("\n")}
 `);
 }
 
-// --- corpora -----------------------------------------------------------------------------------------------------
-
-function vueFiles(root, paths) {
-  const out = [];
-  const walk = dir => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git") continue;
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) walk(path);
-      else if (entry.isFile() && entry.name.endsWith(".vue")) out.push(relative(root, path));
-    }
-  };
-  for (const path of paths) {
-    const full = join(root, path);
-    if (statSync(full, { throwIfNoEntry: false })?.isDirectory()) walk(full);
-  }
-  return out.sort();
-}
-
-function corpus(names) {
-  const corpora = JSON.parse(readFileSync(join(HERE, "../../../../fixtures/vue/corpora.json"), "utf8"));
-  const base = corporaDirectory(HERE);
-  for (const corpus of corpora) {
-    if (names.length > 0 && !names.includes(corpus.name)) continue;
-    const root = join(base, corpus.name);
-    const head = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    if (head !== corpus.commit) throw new Error(`${root} is at ${head}; corpora.json pins ${corpus.commit}`);
-    const files = vueFiles(root, corpus.paths);
-    const findings = [];
-    const skipped = [];
-    for (const path of files) {
-      const result = lint(readFileSync(join(root, path), "utf8"), path);
-      if (result.fatal !== undefined) skipped.push(path);
-      else findings.push(...result.findings);
-    }
-    write(`corpus-${corpus.name}.expected.json`, {
-      kind: "corpus", name: corpus.name, repository: corpus.repository, commit: corpus.commit, rules: ruleIds, skipped,
-    }, findings);
-  }
-}
-
-const [mode, ...rest] = process.argv.slice(2).filter((arg, index, all) => arg !== "--tools" && all[index - 1] !== "--tools"
-  && arg !== "--corpora" && all[index - 1] !== "--corpora");
+const [mode, ...rest] = process.argv.slice(2).filter((arg, index, all) => arg !== "--tools" && all[index - 1] !== "--tools");
 if (mode === "fixtures") fixtures(resolve(rest[0]));
-else if (mode === "corpus") corpus(rest);
-else throw new Error("usage: node generate.mjs fixtures <eslint-plugin-vue checkout> | corpus [<name>...]");
+else throw new Error("usage: node generate.mjs fixtures <eslint-plugin-vue checkout>");

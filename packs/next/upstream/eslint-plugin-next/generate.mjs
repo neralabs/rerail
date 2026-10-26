@@ -3,14 +3,12 @@
 // Pins: eslint 10.11.0, @next/eslint-plugin-next 16.3.8, @typescript-eslint/parser 8.70.1, typescript 5.9.3,
 // globals 17.13.0 (installed under `.rerail/tools/next`); upstream vercel/next.js v16.3.8 =
 // b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6 (`.rerail/tools/next/upstream-next`, sparse packages/eslint-plugin-next +
-// test/unit/eslint-plugin-next); corpora shadcn-ui @ 0e3abd65a97707f4a9cc3ed07bf5006e1cb67b13, next-examples @
-// 6194d642b6fd743437da21dac3c720a587e6b9b2, commerce @ 3761e52e60df9c6a316e067dbfd7032e494d3634
-// (`.rerail/corpora/next/<name>`). Any other version or commit is refused.
+// test/unit/eslint-plugin-next). Any other version or commit is refused.
 //
 // Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request
 // CI). Usage (Node >= 23.6 for type stripping and module.registerHooks):
-//   node packs/next/upstream/eslint-plugin-next/generate.mjs [--tools <dir>] [--corpora <dir>] [--upstream <dir>]
-//                                                            [--only fixtures|corpora|tests|licenses]
+//   node packs/next/upstream/eslint-plugin-next/generate.mjs [--tools <dir>] [--upstream <dir>]
+//                                                            [--only fixtures|tests|licenses]
 //
 // 1. tests: copies the chosen rules' upstream test files verbatim into tests/.
 // 2. fixtures: executes each copied test with a stub `RuleTester` (ours, below) that captures run(name, rule,
@@ -19,15 +17,13 @@
 //    `C:\` turned into `C/`, backslashes into `/`). Writes Rerail's own cases (AUTHORED, below) as
 //    fixtures/<rule>/rerail-<name>.tsx and lists them in UPSTREAM.md. Then runs the pinned plugin (PACK_CONFIG, default
 //    options, every chosen rule) over every fixture file: fixtures.expected.json.
-// 3. corpora: the same config over each pinned corpus's files (conformance.json paths and excludes):
-//    corpus-<name>.expected.json.
-// 4. licenses: packs/next/licenses/next.js/{LICENSE,UPSTREAM.md}.
+// 3. licenses: packs/next/licenses/next.js/{LICENSE,UPSTREAM.md}.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, assertPortableCase, corpusFiles, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, assertPortableCase, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
 import { packFixturesWritten, requirePackFixture } from "../../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -56,13 +52,8 @@ const PINS = {
 const UPSTREAM_REPOSITORY = "https://github.com/vercel/next.js";
 const UPSTREAM_COMMIT = "b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6";
 const UPSTREAM_TESTS = "test/unit/eslint-plugin-next";
-const CORPUS_COMMITS = {
-  "shadcn-ui": "0e3abd65a97707f4a9cc3ed07bf5006e1cb67b13",
-  "next-examples": "6194d642b6fd743437da21dac3c720a587e6b9b2",
-  commerce: "3761e52e60df9c6a316e067dbfd7032e494d3634",
-};
 
-/** The chosen rules (plugin rule names); every one is recorded on every fixture and corpus file. */
+/** The chosen rules (plugin rule names); every one is recorded on every fixture file. */
 export const RULES = [
   "google-font-display",
   "google-font-preconnect",
@@ -111,7 +102,6 @@ const AUTHORED = [
 const { values: options } = parseArgs({
   options: {
     tools: { type: "string" },
-    corpora: { type: "string" },
     upstream: { type: "string" },
     only: { type: "string" },
   },
@@ -265,25 +255,6 @@ async function recordFixtures() {
   for (const mismatch of mismatches) console.log(`  mismatch ${mismatch.path}: test expects ${mismatch.expected}, plugin reports ${mismatch.recorded}`);
 }
 
-async function recordCorpora() {
-  const manifest = JSON.parse(readFileSync(join(PACK, "conformance.json"), "utf8"));
-  for (const corpus of manifest.corpora) {
-    if (CORPUS_COMMITS[corpus.name] !== corpus.commit) throw new Error(`conformance.json pins ${corpus.name} at ${corpus.commit}; this recorder pins ${CORPUS_COMMITS[corpus.name]}`);
-    const root = join(options.corpora ?? rerailDirectory("corpora"), corpus.name);
-    const files = corpusFiles(root, corpus);
-    const { findings, skipped } = await lint(ESLint, root, packConfig(), files, RULE_IDS);
-    writeRecording(
-      join(HERE, `corpus-${corpus.name}.expected.json`),
-      TOOL,
-      PLUGIN_VERSION,
-      { kind: "corpus", name: corpus.name, repository: corpus.repository, commit: corpus.commit, rules: RULE_IDS, skipped: skipped.map(entry => entry.path).sort() },
-      findings,
-    );
-    console.log(`corpus ${corpus.name}: ${files.length} files, ${skipped.length} skipped, ${findings.length} findings`);
-    for (const entry of skipped) console.log(`  skipped ${entry.path}: ${entry.reason}`);
-  }
-}
-
 function writeLicenses() {
   assertCommit(upstream, UPSTREAM_COMMIT);
   const directory = join(PACK, "licenses", "next.js");
@@ -316,4 +287,3 @@ const only = options.only;
 if (only === undefined || only === "tests") copyTests();
 if (only === undefined || only === "fixtures") await recordFixtures();
 if (only === undefined || only === "licenses") writeLicenses();
-if (only === undefined || only === "corpora") await recordCorpora();

@@ -6,7 +6,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertCommit, assertPortableCase, corpusFiles, lint, pack, pinnedRequire, REPOSITORY, writeRecording } from "../../../conformance/recorders/eslint-record.mjs";
+import { assertPortableCase, lint, pinnedRequire, REPOSITORY, writeRecording } from "../../../conformance/recorders/eslint-record.mjs";
 
 export const UPSTREAM_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
@@ -147,13 +147,13 @@ function checkoutDirectory(kind) {
   }
 }
 
-/** `--tools <dir>` / `--corpora <dir>` override the checkout's `.rerail/tools/react` / `.rerail/corpora/react`. */
+/** `--tools <dir>` overrides the checkout's `.rerail/tools/react`. */
 export function options(argv) {
   const value = flag => {
     const index = argv.indexOf(flag);
     return index === -1 ? undefined : resolve(argv[index + 1]);
   };
-  return { tools: value("--tools") ?? checkoutDirectory("tools"), corpora: value("--corpora") ?? checkoutDirectory("corpora") };
+  return { tools: value("--tools") ?? checkoutDirectory("tools") };
 }
 
 export const JS_FILES = ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"];
@@ -313,25 +313,4 @@ Paths are relative to the pack directory, \`packs/react/\`. \`<file> valid[i]\` 
 ${rows.join("\n")}
 `;
   writeFileSync(join(directory, "UPSTREAM.md"), text);
-}
-
-/** Records the pack configuration over each pinned corpus (`corpus-<name>.expected.json`). */
-export async function recordCorpora(require, tool, directory, corpora) {
-  const { ESLint } = require("eslint");
-  const summary = [];
-  for (const corpus of pack("react").corpora) {
-    const root = join(corpora, corpus.name);
-    assertCommit(root, corpus.commit);
-    const files = corpusFiles(root, corpus);
-    const { findings, skipped } = await lint(ESLint, root, config(require), files, RULES[tool]);
-    writeRecording(
-      join(directory, `corpus-${corpus.name}.expected.json`),
-      tool,
-      PINS[tool],
-      { kind: "corpus", name: corpus.name, repository: corpus.repository, commit: corpus.commit, rules: RULES[tool], skipped: skipped.map(entry => entry.path).sort() },
-      findings,
-    );
-    summary.push({ corpus: corpus.name, files: files.length, skipped: skipped.length, findings: findings.length, skippedFiles: skipped });
-  }
-  return summary;
 }

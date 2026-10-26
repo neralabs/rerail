@@ -2,22 +2,6 @@
   "pack": "php",
   "family": "php",
   "capabilities": ["syntax", "value", "compare", "arguments", "scope", "calls", "formatArgs", "phpDoc", "suppression"],
-  "corpora": [
-    {
-      "name": "laravel",
-      "repository": "https://github.com/laravel/framework",
-      "commit": "e5f3d6265f4b9d3d9efc466de83f79c54e14dd5d",
-      "paths": ["src", "tests"],
-      "exclude": ["**/*.blade.php"]
-    },
-    {
-      "name": "symfony",
-      "repository": "https://github.com/symfony/symfony",
-      "commit": "2c4011aa7edf6000d3d3ff98b2749c3dbf5e52b9",
-      "paths": ["src"],
-      "exclude": ["**/*.blade.php"]
-    }
-  ],
   "tools": [
     { "name": "phpstan", "version": "2.2.16" },
     { "name": "psalm", "version": "6.19.1" },

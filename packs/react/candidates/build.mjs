@@ -1,7 +1,7 @@
 // Writes the React pack from specs.mjs: each spec's policy, packs/react/rules/<id>.json (ported) or
 // packs/react/candidates/rules/<id>.json (`candidate: true`), and packs/react/conformance.json, the manifest that lists
 // every port: the specs and the hand-written HAND_WRITTEN ports. The conformance runner gates the ports under rules/
-// and scores and reports the candidates without gating them; the recorders read its corpora.
+// and scores and reports the candidates without gating them.
 // Score: node --import tsx conformance/languages/cli.ts --pack react [--fixtures]
 // Usage: node packs/react/candidates/build.mjs
 // Run offline by a maintainer, never in CI.
@@ -70,15 +70,6 @@ for (const spec of SPECS) {
 
 /** Every capability the pack's ports exercise, in the manifest's order. */
 const CAPABILITIES = ["syntax", "scope", "value", "compare", "arguments", "suppression"];
-const CORPORA = [
-  {
-    name: "excalidraw",
-    repository: "https://github.com/excalidraw/excalidraw",
-    commit: "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
-    paths: ["packages/excalidraw", "excalidraw-app"],
-    exclude: [],
-  },
-];
 const TOOLS = ["eslint-plugin-react", "eslint-plugin-react-hooks"];
 
 const port = spec => ({
@@ -97,7 +88,6 @@ const manifest = {
   pack: "react",
   family: "ecma",
   capabilities: CAPABILITIES,
-  corpora: CORPORA,
   tools: TOOLS.map(name => ({ name, version: PINS[name] })),
   rules: ports,
 };

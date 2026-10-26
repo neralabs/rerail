@@ -3,15 +3,13 @@ Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upst
 with PHP 8.5.11:
 
     python3 generate.py fixtures <PHP_CodeSniffer checkout at tag 4.0.4> <composer project with squizlabs/php_codesniffer 4.0.4>
-    python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]
 
 `fixtures` copies each sniff's own test files (`src/Standards/<Standard>/Tests/<Category>/<Sniff>UnitTest*.inc`) to
 fixtures/<Standard>/<Category>/<file>.php (the runner reads `.php`; the pack's licenses/php_codesniffer/UPSTREAM.md lists them),
 runs PHP_CodeSniffer with every ported sniff (ruleset.xml: the sniffs alone, with their default properties) over every
 copy, and requires its reports on a sniff's own files to be,
 line by line, the counts its test's getErrorList() and getWarningList() expect: so the recording on a sniff's own
-files is the upstream test's expectation, and on the other sniffs' files the tool's output. `corpus` runs the same
-sniffs over a corpus's pack paths (Blade templates and files `php -l` rejects excluded). Each finding is the
+files is the upstream test's expectation, and on the other sniffs' files the tool's output. Each finding is the
 sniff (`Standard.Category.Sniff`), path, line and column (PHP_CodeSniffer's, in characters, tab width 0)."""
 
 from __future__ import annotations
@@ -40,13 +38,13 @@ SNIFFS = [
 ORIGIN = "https://github.com/PHPCSStandards/PHP_CodeSniffer@bbdc3d0532623e21838b7041a4364383a8126f96"
 
 
-def phpcs(project: pathlib.Path, paths: list[str], cwd: pathlib.Path, *flags: str) -> tuple[list[dict], set[str]]:
+def phpcs(project: pathlib.Path, paths: list[str], cwd: pathlib.Path) -> tuple[list[dict], set[str]]:
     """The ported sniffs' findings, and the files PHP_CodeSniffer could not analyse (an `Internal.*` message, such as
     `Internal.NoCodeFound` for a file without a PHP open tag the install accepts)."""
     run = subprocess.run(
         [str(project / "vendor/bin/phpcs"), "--report=json", "--no-cache", "-q", f"--standard={HERE / 'ruleset.xml'}",
          "--tab-width=0", "--extensions=php", "--runtime-set", "ignore_warnings_on_exit",
-         "1", "-d", "memory_limit=-1", *flags, *paths],
+         "1", "-d", "memory_limit=-1", *paths],
         capture_output=True, text=True, cwd=cwd,
     )
     report = json.loads(run.stdout)
@@ -99,27 +97,11 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
                  {"kind": "fixtures", "origin": ORIGIN, "rules": SNIFFS, "files": files}, findings)
 
 
-def corpus(project: pathlib.Path, name: str, root: pathlib.Path) -> None:
-    files = common.corpus_files(root, name)
-    skipped = set(common.unparsable(root, files))
-    analysed = sorted(set(files) - skipped)
-    findings = []
-    for start in range(0, len(analysed), 2000):
-        batch, unanalysed = phpcs(project, analysed[start:start + 2000], root, "--parallel=8")
-        findings += [finding for finding in batch if finding["path"] not in unanalysed]
-        skipped |= unanalysed
-    common.write(HERE / f"corpus-{name}.expected.json", "phpcs", version(project),
-                 common.corpus_source(name, SNIFFS, sorted(skipped)), findings)
-
-
 def main() -> None:
     if sys.argv[1] == "fixtures":
         fixtures(pathlib.Path(sys.argv[2]).resolve(), pathlib.Path(sys.argv[3]).resolve())
     else:
-        project = pathlib.Path(sys.argv[2]).resolve()
-        for argument in sys.argv[3:]:
-            name, _, path = argument.partition("=")
-            corpus(project, name, pathlib.Path(path).resolve())
+        raise SystemExit(__doc__)
 
 
 if __name__ == "__main__":

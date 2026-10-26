@@ -1,27 +1,17 @@
-// Shared by the ESLint-based packs' recorders (packs/<id>/upstream/<tool>/generate.mjs): pins, the corpus file set the
-// conformance runner scores, the guard that keeps the recording machine out of fixtures, and
+// Shared by the ESLint-based packs' recorders (packs/<id>/upstream/<tool>/generate.mjs): pins, the guard that keeps
+// the recording machine out of fixtures, and
 // ESLint's findings in the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
 // Run, through them, by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never
 // pull request CI).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, matchesGlob, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordingWritten } from "../../scripts/s3/pack-fixtures.mjs";
 
 export const REPOSITORY = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-
-/** The host's ignored directories (`IGNORED_DIRECTORIES`, rerail/src/engine/code-rule/code-rule-enforcer.ts). */
-const IGNORED = new Set([".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build", ".next", ".turbo", "coverage", "target", "vendor"]);
-/** The ecma family's extensions (`CODE_RULE_DIALECTS`, rerail/src/engine/code-rule/code-rule-languages.ts). */
-export const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
-
-/** The conformance pack manifest, `packs/<name>/conformance.json`. */
-export function pack(name) {
-  return JSON.parse(readFileSync(join(REPOSITORY, "packs", name, "conformance.json"), "utf8"));
-}
 
 /** The working directory upstream tests see while they declare their cases (`withRecordingCwd`): the same everywhere. */
 export const RECORDING_CWD = "/work/project";
@@ -110,32 +100,6 @@ export function gitHead(directory) {
 export function assertCommit(directory, commit) {
   const head = gitHead(directory);
   if (head !== commit) throw new Error(`${directory} is at ${head}; pinned ${commit}`);
-}
-
-function walk(root, path, files) {
-  if (!existsSync(path)) throw new Error(`${path} does not exist`);
-  if (!statSync(path).isDirectory()) {
-    files.push(relative(root, path).split(sep).join("/"));
-    return;
-  }
-  for (const entry of readdirSync(path, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) continue;
-    const child = join(path, entry.name);
-    if (entry.isDirectory()) {
-      if (!IGNORED.has(entry.name)) walk(root, child, files);
-    } else if (entry.isFile()) files.push(relative(root, child).split(sep).join("/"));
-  }
-}
-
-/** The corpus-relative files the conformance runner scores: the pack's paths, ecma extensions, minus `exclude`. */
-export function corpusFiles(root, corpus) {
-  assertCommit(root, corpus.commit);
-  const files = [];
-  for (const path of corpus.paths) walk(root, join(root, path), files);
-  return [...new Set(files)]
-    .filter(file => ECMA_EXTENSIONS.some(extension => file.endsWith(extension)))
-    .filter(file => !corpus.exclude.some(pattern => matchesGlob(file, pattern)))
-    .sort();
 }
 
 /** ESLint's line terminators; the ecma family's lines are ESLint's. */

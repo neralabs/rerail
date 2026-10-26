@@ -19,7 +19,6 @@
       "reason": "Its only clause is a regex query over file.path, and the engine refuses suppress on a regex query, so /* eslint-disable unicorn/filename-case */ is not honoured."
     }
   ],
-  "corpora": [],
   "tools": [
     {
       "name": "eslint",

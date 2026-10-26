@@ -3,7 +3,6 @@ Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upst
 with PHP 8.5.11 (laravel/framework 13.34.0 installed beside it):
 
     python3 generate.py fixtures <stillat/blade-parser checkout at tag v2.1.0> <composer project with stillat/blade-parser 2.1.0>
-    python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]
 
 `fixtures` runs each ported validator's own test (tests/Validation/<X>Test.php, a Pest file) with the port readiness
 recorder's reader (READ_TESTS, which its blade-parser adapter runs too):
@@ -13,9 +12,9 @@ makes is checked against the validator's output on it. Each distinct template of
 fixtures/<X>Test/<n>.blade.php (n counts them in Pest's order; the pack's licenses/blade-parser/UPSTREAM.md lists them, and
 license.md is copied beside it). run.php then runs every ported validator over every copy, as the tests run one, and
 the recording on a validator's own copy is required to be the test's expectation: exactly the count of errors its
-`toHaveCount()` expects, with every message its `toBe()` expects. `corpus` runs the same validators over a corpus's
-pack paths, in parallel batches. Each finding is the validator's class name, the path and the start line of the node
-the validation error reports (its BladeError position). Validators are constructed as the tests construct them (no
+`toHaveCount()` expects, with every message its `toBe()` expects. Each finding is the validator's class name, the path
+and the start line of the node the validation error reports (its BladeError position). Validators are constructed as
+the tests construct them (no
 custom or ignored directives), and the parser runs on a bare container (no Laravel application booted): it knows
 Blade's core directives and no custom one."""
 
@@ -139,21 +138,9 @@ Paths are relative to the pack directory, `packs/blade/`. Each fixture is writte
 {rows}""")
 
 
-def corpus(project: pathlib.Path, name: str, root: pathlib.Path) -> None:
-    findings, skipped = run(project, root, common.corpus_files(root, name))
-    common.write(HERE / f"corpus-{name}.expected.json", "blade-parser", VERSION,
-                 common.corpus_source(name, list(VALIDATORS), skipped),
-                 [{key: f[key] for key in ("rule", "path", "line")} for f in findings])
-
-
 def main() -> None:
     if sys.argv[1] == "fixtures":
         fixtures(pathlib.Path(sys.argv[2]).resolve(), pathlib.Path(sys.argv[3]).resolve())
-    elif sys.argv[1] == "corpus":
-        project = pathlib.Path(sys.argv[2]).resolve()
-        for argument in sys.argv[3:]:
-            name, _, path = argument.partition("=")
-            corpus(project, name, pathlib.Path(path).resolve())
     else:
         raise SystemExit(__doc__)
 

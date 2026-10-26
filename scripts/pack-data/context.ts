@@ -10,7 +10,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { readRerailCorpora, type RerailCorpus } from "../../conformance/port-readiness/corpus.js";
 import type { CommandRunner } from "../../conformance/port-readiness/process.js";
 
 export interface RunOptions {
@@ -61,10 +60,6 @@ export interface DeriveContext {
   pythonTools(name: string, python: string, requirements: readonly string[]): Promise<string>;
   /** A Composer project from `manifest` (a composer.json object) installed with the `php` and `composer` on PATH; returns its directory. */
   composerTools(name: string, manifest: Record<string, unknown>): Promise<string>;
-  /** The pack's pinned corpus `name` (its conformance manifests' `corpora`), checked out at its commit under corporaDirectory(). */
-  corpus(name: string): Promise<string>;
-  /** Every corpus the pack pins, checked out, in the directory that holds them by name (a generator's `--corpora`). */
-  corpora(): Promise<string>;
   /** A scratch directory of the recipe's own under the cache, emptied first. */
   scratch(name: string): Promise<string>;
   log(message: string): void;
@@ -94,12 +89,6 @@ export function derivationEnvironment(base: NodeJS.ProcessEnv = process.env): No
 export interface DeriveRecipe {
   pack: string;
   tool: string;
-  /**
-   * Why this tool-pack's derived data reproduces byte for byte only on some platforms, which ones (process.platform),
-   * or absent when it reproduces anywhere. derive.ts still derives it elsewhere, and says the result is not the bytes the
-   * nightly producer, which derives on Linux, archives.
-   */
-  platforms?: { only: readonly NodeJS.Platform[]; reason: string };
   derive(context: DeriveContext): Promise<void>;
 }
 
@@ -255,16 +244,6 @@ export function createContext(options: ContextOptions): DeriveContext {
     });
   };
 
-  let pinnedCorpora: Promise<RerailCorpus[]> | undefined;
-  const corporaDirectory = join(cacheRoot, "corpora", pack);
-  const corpus = async (name: string): Promise<string> => {
-    pinnedCorpora ??= readRerailCorpora(root, pack);
-    const pinned = (await pinnedCorpora).find((entry) => entry.name === name);
-    if (pinned === undefined) throw new Error(`packs/${pack}/conformance.json pins no corpus named ${name}`);
-    const sparse = pinned.paths.includes(".") ? [] : pinned.paths.map((path) => `/${path}`);
-    return checkout(pinned.repository, pinned.commit, { directory: join(corporaDirectory, name), sparse });
-  };
-
   return {
     root,
     pack,
@@ -280,12 +259,6 @@ export function createContext(options: ContextOptions): DeriveContext {
     python,
     pythonTools,
     composerTools,
-    corpus,
-    async corpora() {
-      pinnedCorpora ??= readRerailCorpora(root, pack);
-      for (const entry of await pinnedCorpora) await corpus(entry.name);
-      return corporaDirectory;
-    },
     async scratch(name: string) {
       const directory = join(cacheRoot, "scratch", `${pack}--${tool}`, name);
       await rm(directory, { recursive: true, force: true });

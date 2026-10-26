@@ -1,10 +1,9 @@
 // Records where typescript-eslint 8.70.1 (on ESLint 10.11.0) reports the TypeScript pack's T4 rules
 // (rerail/packs/typescript/conformance.json), in the format rerail/conformance/languages/pack.ts reads:
 //   typescript-eslint/fixtures.expected.json    (the rules' own RuleTester cases)
-//   <tool>/corpus-<name>.expected.json          (the pack's pinned corpora)
 // Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
 // test-data.lock reproduces):
-//   node generate.mjs --tools <dir> --typescript-eslint <checkout> [--fixtures] [--corpus <name>=<checkout>]...
+//   node generate.mjs --tools <dir> --typescript-eslint <checkout>
 // <dir> holds node_modules with exactly eslint@10.11.0, @typescript-eslint/parser and
 // @typescript-eslint/eslint-plugin @8.70.1, typescript@5.9.3 and tsx (to load typescript-eslint's .ts tests).
 // The checkout is github.com/typescript-eslint/typescript-eslint at v8.70.1 (23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7).
@@ -21,14 +20,11 @@
 // or the TypeScript-family extension of its filename (.d.ts, .tsx, .mts, .cts). Code the configuration cannot
 // parse is left out. Each kept file is one analysis unit.
 //
-// Corpora: every file the runner scores (TypeScript and JavaScript files under the corpus's paths, outside
-// directories the host ignores and the pack's excludes) is linted once per tool, with every shipped pack rule of the tool
-// on: a corpus recording covers the shipped ports, and the runner scores a candidate on a corpus only where it is
-// covered. Files ESLint cannot parse are `skipped`. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
+// Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
-import { dirname, join, matchesGlob, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { recordingWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
@@ -38,20 +34,14 @@ const VERSIONS = { eslint: "10.11.0", "@typescript-eslint/parser": "8.70.1", "@t
 const CHECKOUTS = {
   "typescript-eslint": { repository: "https://github.com/typescript-eslint/typescript-eslint", commit: "23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7" },
 };
-/** The host's `IGNORED_DIRECTORIES` (rerail/src/code-rule-enforcer.ts), which the runner's walk skips. */
-const IGNORED_DIRECTORIES = new Set([".git", ".hg", ".svn", ".rerail", ".venv", "__pycache__", "node_modules", "dist", "build", ".next", ".turbo", "coverage", "target", "vendor"]);
 const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
 
 function parseArguments(argv) {
-  const options = { corpora: new Map(), fixtures: false };
+  const options = {};
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
-    if (flag === "--fixtures") options.fixtures = true;
-    else if (flag === "--corpus") {
-      const [name, directory] = argv[++index].split("=");
-      options.corpora.set(name, resolve(directory));
-    } else if (["--tools", "--typescript-eslint"].includes(flag)) options[flag.slice(2)] = resolve(argv[++index]);
+    if (["--tools", "--typescript-eslint"].includes(flag)) options[flag.slice(2)] = resolve(argv[++index]);
     else throw new Error(`unknown argument ${flag}`);
   }
   for (const key of ["tools", "typescript-eslint"]) if (options[key] === undefined) throw new Error(`--${key} is required`);
@@ -84,8 +74,6 @@ for (const rule of PACK.rules.filter(entry => entry.upstream.tool === "typescrip
   RULES.get(rule.upstream.tool).push(rule.upstream.rule);
 }
 for (const rules of RULES.values()) rules.sort();
-/** The shipped ports' rules by tool (documents under `rules/`): a corpus recording covers these, not the candidates. */
-const SHIPPED = new Map([...RULES].map(([tool, rules]) => [tool, rules.filter(rule => PACK.rules.some(entry => entry.upstream.rule === rule && entry.policy.startsWith("rules/")))]));
 const versionOf = tool => PACK.tools.find(entry => entry.name === tool).version;
 
 let optionsRuns = 0;
@@ -338,59 +326,7 @@ async function recordFixtures(tool) {
   for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// Corpora.
-
-function corpusFiles(corpus, directory) {
-  const files = [];
-  const walk = path => {
-    const absolute = join(directory, path);
-    if (!statSync(absolute).isDirectory()) {
-      files.push(path);
-      return;
-    }
-    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
-      const child = path === "" ? entry.name : `${path}/${entry.name}`;
-      if (entry.isDirectory()) {
-        if (!IGNORED_DIRECTORIES.has(entry.name)) walk(child);
-      } else if (entry.isFile()) files.push(child);
-    }
-  };
-  for (const path of corpus.paths) walk(path);
-  return [...new Set(files)]
-    .filter(path => {
-      const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
-      return ECMA_EXTENSIONS.some(extension => name.length > extension.length && name.endsWith(extension)) && !corpus.exclude.some(pattern => matchesGlob(path, pattern));
-    })
-    .sort();
-}
-
-async function recordCorpus(name, directory) {
-  const corpus = PACK.corpora.find(entry => entry.name === name);
-  if (corpus === undefined) throw new Error(`corpus ${name} is not in pack.json`);
-  const head = execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  if (head !== corpus.commit) throw new Error(`${directory} is at ${head}; the pack pins ${corpus.commit}`);
-  const files = corpusFiles(corpus, directory);
-  console.log(`corpus ${name}: ${files.length} files`);
-  for (const [tool, rules] of SHIPPED) {
-    if (rules.length === 0) continue;
-    const started = performance.now();
-    const { findings, unparsed } = await lint(directory, files, rules);
-    writeJson(join(HERE, tool, `corpus-${name}.expected.json`), {
-      tool,
-      version: versionOf(tool),
-      source: { kind: "corpus", name, repository: corpus.repository, commit: corpus.commit, rules, skipped: unparsed },
-      findings,
-    });
-    console.log(`  ${tool}: ${findings.length} findings, ${unparsed.length} unparsed, ${Math.round(performance.now() - started)} ms`);
-  }
-}
-
-if (options.fixtures) {
-  installHooks();
-  const { register } = await import(pathToFileURL(toolsRequire.resolve("tsx/cjs/api")).href);
-  register();
-  for (const tool of RULES.keys()) await recordFixtures(tool);
-}
-for (const [name, directory] of options.corpora) await recordCorpus(name, directory);
-if (!options.fixtures && options.corpora.size === 0) console.error("nothing to do: pass --fixtures and/or --corpus <name>=<checkout>");
+installHooks();
+const { register } = await import(pathToFileURL(toolsRequire.resolve("tsx/cjs/api")).href);
+register();
+for (const tool of RULES.keys()) await recordFixtures(tool);

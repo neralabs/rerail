@@ -3,13 +3,11 @@ Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upst
 under CPython 3.14:
 
     python3.14 generate.py fixtures <Ruff checkout at tag 0.16.9> <ruff executable, 0.16.9>
-    python3.14 generate.py corpus <ruff executable, 0.16.9> <name>=<corpus checkout> [...]
 
 `fixtures` copies each rule's own test fixtures (the files its tests lint with default settings, under
 `crates/ruff_linter/resources/test/fixtures/<linter>/`; see RULES) to fixtures/<linter>/<file> (the pack's
 licenses/ruff/UPSTREAM.md lists them), writes Rerail's own cases (NOQA, PROBES) to fixtures/rerail/ (listed in
-upstream/ruff/UPSTREAM.md), and runs Ruff with every ported rule selected over every file. `corpus` runs the
-same rules over a corpus's pack paths, files CPython 3.14 does not parse left out. Both run Ruff isolated from any
+upstream/ruff/UPSTREAM.md), and runs Ruff with every ported rule selected over every file. It runs Ruff isolated from any
 configuration, at target version py310 (Ruff's CLI default and the engine's default `pythonVersion`, which the ports
 keep), with `# noqa` honoured, as Ruff runs by default. Each finding is the rule's code, path, line and column
 (Ruff's, 1-based, in characters)."""
@@ -609,23 +607,12 @@ def fixtures(checkout: pathlib.Path, executable: str) -> None:
                  ruff(executable, files, target))
 
 
-def corpus(executable: str, name: str, root: pathlib.Path) -> None:
-    version = common.tool_version(executable, VERSION)
-    files = common.corpus_files(root, name)
-    skipped = common.unparsable(root, files)
-    analysed = sorted(set(files) - set(skipped))
-    common.write(HERE / f"corpus-{name}.expected.json", "ruff", version,
-                 common.corpus_source(name, sorted(RULES), skipped), ruff(executable, analysed, root))
-
-
 def main() -> None:
     common.require_python()
     if sys.argv[1] == "fixtures":
         fixtures(pathlib.Path(sys.argv[2]).resolve(), sys.argv[3])
     else:
-        for argument in sys.argv[3:]:
-            name, _, path = argument.partition("=")
-            corpus(sys.argv[2], name, pathlib.Path(path).resolve())
+        raise SystemExit(__doc__)
 
 
 if __name__ == "__main__":

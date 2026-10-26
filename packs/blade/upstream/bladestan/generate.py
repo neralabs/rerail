@@ -6,9 +6,8 @@ PHPStan pinned (`composer update && composer require --dev phpstan/phpstan:2.2.1
 larastan 3.12.3, livewire 4.4.7, orchestra/testbench 11.3.0, phpunit 12.5.38):
 
     python3 generate.py fixtures <bladestan checkout>
-    python3 generate.py corpus <bladestan checkout> <name>=<corpus checkout> [...]
 
-Both run Bladestan's own rule test harness (RecordTest.php: PHPStan's RuleTestCase at level 8 with
+It runs Bladestan's own rule test harness (RecordTest.php: PHPStan's RuleTestCase at level 8 with
 tests/Rules/config/configured_extension.neon, as tests/Rules/BladeRuleTest.php runs it). Bladestan analyses a
 template where PHP renders it (`view('name', [...])`) with the data the call passes, and reports each error of the
 compiled template at its template file and line.
@@ -16,22 +15,12 @@ compiled template at its template file and line.
 `fixtures` runs every fixture of BladeRuleTest::provideData() and requires its errors to be the test's expectation
 (message and caller line, every one), so the recording is the upstream test's. It copies the test's templates
 (tests/skeleton/resources) to fixtures/skeleton/resources (the pack's licenses/bladestan/UPSTREAM.md lists them), one analysis
-unit each. `corpus` renders every template of a corpus alone, with no data (`view('<its path, dotted>')`, the corpus
-root a view location, as `view('once')` renders tests/skeleton/resources/views/once.blade.php): a variable no path of
-the template defines is then "might not be defined", which the ported rule does not claim, so Rerail's reading of view
-data as unknown and Bladestan's agree on what is undefined. A template Bladestan does not compile
-(`bladestan.parsing`), whose render throws in Bladestan (printed), or that it cannot address as a view (a path
-holding a dot besides `.blade.php`), is skipped.
+unit each.
 A finding is the identifier, the template and the template line. Where a template is analysed more than once (each
 fixture renders foo.blade.php, some several times; an included template is inlined into its includer), each
 (identifier, line) counts as often as the render reporting it most often reports it, so a line is neither lost nor
-counted once per render. A view the corpus registers under its application's or a package's view paths or
-component namespaces (an `@include`, an `<x-...>` component) is an empty stub (RecordTest.php): Bladestan does not
-compile a template at all when one of its components cannot be located, and each template is analysed where it is
-rendered alone. The corpus's own PHP is not loaded, which the ported rules do not read (they read the template's
-constants, calls of PHP's functions and its variables). Only the ported identifiers are recorded (`IDENTIFIERS`),
-with the message of the rule the pack ports where
-another reports the same identifier."""
+counted once per render. Only the ported identifiers are recorded (`IDENTIFIERS`), with the message of the rule the
+pack ports where another reports the same identifier."""
 
 from __future__ import annotations
 
@@ -137,57 +126,10 @@ def fixtures(checkout: pathlib.Path) -> None:
                  {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(IDENTIFIERS), "files": files}, findings)
 
 
-def corpus(checkout: pathlib.Path, name: str, root: pathlib.Path) -> None:
-    files = common.corpus_files(root, name)
-    skipped = set()
-    with tempfile.TemporaryDirectory() as scratch:
-        callers: dict[str, str] = {}
-        for index, path in enumerate(files):
-            view = path.removesuffix(".blade.php")
-            if "." in view:
-                skipped.add(path)
-                continue
-            caller = pathlib.Path(scratch) / f"c{index}.php"
-            caller.write_text(f"<?php\n\nview('{view.replace('/', '.')}');\n")
-            callers[str(caller)] = path
-        stub = pathlib.Path(scratch) / "stub.blade.php"
-        stub.write_text("")
-        errors = record(checkout, {"mode": "corpus", "root": str(root.resolve()), "stub": str(stub),
-                                   "callers": list(callers)})
-    resolved = root.resolve()
-
-    def relative(path: str) -> str | None:
-        template = pathlib.Path(path).resolve()
-        if not template.is_relative_to(resolved):
-            return None
-        candidate = template.relative_to(resolved).as_posix()
-        return candidate if candidate in scored else None
-
-    scored = set(files)
-    for error in errors:
-        if error["identifier"] == "rerail.crash":
-            print(f"{name}: Bladestan throws rendering {callers[error['caller']]}: {error['message']}", file=sys.stderr)
-            skipped.add(callers[error["caller"]])
-        elif error["identifier"] == "bladestan.parsing":
-            named = re.match(r"^View \[(.+)\] contains syntx errors\.$", error["message"]).group(1)
-            matches = [path for path in files if path == named or (root / path).resolve().as_posix() == named]
-            if len(matches) != 1:
-                raise SystemExit(f"cannot place {error['message']}")
-            skipped.add(matches[0])
-    scored -= skipped
-    findings = merge(errors, relative)
-    common.write(HERE / f"corpus-{name}.expected.json", "bladestan", VERSION,
-                 common.corpus_source(name, list(IDENTIFIERS), sorted(skipped)), findings)
-
-
 def main() -> None:
     checkout = pathlib.Path(sys.argv[2]).resolve()
     if sys.argv[1] == "fixtures":
         fixtures(checkout)
-    elif sys.argv[1] == "corpus":
-        for argument in sys.argv[3:]:
-            name, path = argument.split("=", 1)
-            corpus(checkout, name, pathlib.Path(path).resolve())
     else:
         raise SystemExit(__doc__)
 
