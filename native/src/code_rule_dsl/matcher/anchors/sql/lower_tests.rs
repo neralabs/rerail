@@ -423,3 +423,25 @@ fn a_union_of_restrictions_is_one_compound_set_within_their_scope() {
         "containment is not membership in every set"
     );
 }
+
+#[test]
+fn a_union_with_a_superset_of_every_branch_is_that_superset() {
+    let mut lower = compiler();
+    let scope = lower
+        .relation("SELECT 1,1 UNION SELECT 1,2".into(), true)
+        .unwrap();
+    let filtered = lower
+        .relation(
+            format!("SELECT fid,pre FROM {} WHERE pre=2", scope.name),
+            true,
+        )
+        .unwrap();
+    let filtered = lower.narrowed(filtered, &scope);
+    let before = lower.ctes.len();
+    let union = lower.union(vec![filtered.clone(), scope.clone()]).unwrap();
+    assert_eq!(union.name, scope.name);
+    assert_eq!(lower.ctes.len(), before, "no UNION is materialized");
+    let unrelated = lower.relation("SELECT 2,2".into(), true).unwrap();
+    let union = lower.union(vec![filtered, unrelated]).unwrap();
+    assert_ne!(union.name, scope.name);
+}

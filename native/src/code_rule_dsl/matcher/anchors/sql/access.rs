@@ -63,7 +63,8 @@ impl Lower {
             format!("SELECT s.fid,s.pre FROM {spans} s WHERE {predicate}"),
             scope.exact,
         )?;
-        self.combine(&selected, &confirmed, "UNION", scope.exact)
+        let selected = self.combine(&selected, &confirmed, "UNION", scope.exact)?;
+        Ok(self.narrowed(selected, scope))
     }
     fn value_kind_guard(
         &mut self,

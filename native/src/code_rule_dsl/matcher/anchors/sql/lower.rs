@@ -307,6 +307,18 @@ impl Lower {
         }
         Ok(selected)
     }
+    /// Records that `set` was selected from `scope`'s rows.
+    pub(super) fn narrowed(&mut self, set: Set, scope: &Set) -> Set {
+        if set.name != scope.name && scope.name != "all_nodes" {
+            let containing = self.containing(&scope.name);
+            self.reuse
+                .within
+                .entry(set.name.clone())
+                .or_default()
+                .extend(containing);
+        }
+        set
+    }
     /// The sets known to contain `name`, itself included.
     fn containing(&self, name: &str) -> BTreeSet<String> {
         let mut sets = BTreeSet::from([name.to_owned()]);
@@ -351,6 +363,16 @@ impl Lower {
                     .copied()
                     .collect::<BTreeSet<_>>()
             });
+        // A branch that contains every other branch is the union.
+        if let Some(name) = names
+            .iter()
+            .find(|outer| names.iter().all(|name| self.inside(name, outer)))
+        {
+            return Ok(Set {
+                name: name.clone(),
+                exact,
+            });
+        }
         let within = names
             .iter()
             .map(|name| self.containing(name))
@@ -617,14 +639,16 @@ impl Lower {
             };
             let inner = self.plan(inner, inner_scope)?;
             self.indexed.insert(inner.name.clone());
-            return self.relation(format!("SELECT r.fid,r.pre FROM {ranges} r WHERE r.lo<r.hi AND EXISTS(SELECT 1 FROM {} m WHERE m.fid=r.fid AND m.pre>=r.lo AND m.pre<r.hi)", inner.name), scope.exact && inner.exact);
+            let selected = self.relation(format!("SELECT r.fid,r.pre FROM {ranges} r WHERE r.lo<r.hi AND EXISTS(SELECT 1 FROM {} m WHERE m.fid=r.fid AND m.pre>=r.lo AND m.pre<r.hi)", inner.name), scope.exact && inner.exact)?;
+            return Ok(self.narrowed(selected, &scope));
         }
         let inner_scope = self.neighbours(&scope, inner, super::tree::ANCESTORS)?;
         let inner = self.plan(inner, inner_scope)?;
         let ranges = self.intervals(&inner, field)?;
         self.indexed.insert(scope.name.clone());
         let frontier = self.frontier(&ranges);
-        self.relation(format!("SELECT DISTINCT s.fid,s.pre FROM {frontier} r CROSS JOIN {} s WHERE s.fid=r.fid AND s.pre>=r.lo AND s.pre<r.hi", scope.name), scope.exact && inner.exact)
+        let selected = self.relation(format!("SELECT DISTINCT s.fid,s.pre FROM {frontier} r CROSS JOIN {} s WHERE s.fid=r.fid AND s.pre>=r.lo AND s.pre<r.hi", scope.name), scope.exact && inner.exact)?;
+        Ok(self.narrowed(selected, &scope))
     }
 
     /// Subtree intervals are nested or disjoint. Keep the outer intervals once.
