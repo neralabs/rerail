@@ -15,7 +15,9 @@ $npmBin = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin"
 $npmCli = Join-Path $npmBin "npm-cli.js"
 $npxCli = Join-Path $npmBin "npx-cli.js"
 $base = Join-Path ([IO.Path]::GetTempPath()) ("rerail-windows-smoke-" + [guid]::NewGuid())
-$sandbox = Join-Path $base "home"
+# A profile folder named as people are, with a space and accents: cmd.exe reads the batch launcher in the console's
+# code page, so a path written out in UTF-8 would come back garbled.
+$sandbox = Join-Path $base ("Jos" + [char]0x00E9 + " Garc" + [char]0x00ED + "a")
 $project = Join-Path $sandbox "proj"
 $launcher = Join-Path $sandbox ".rerail\bin\rerail.cmd"
 
@@ -69,8 +71,10 @@ log: { type: stdout, level: warn }
   Step "Running npx @neralabs/rerail setup in a sandbox profile (stdout captured)"
   # os.homedir() reads USERPROFILE on Windows; the rest pins npm and Rerail state, including the one Rerail
   # database under RERAIL_HOME, inside the sandbox. The user config maps only the @neralabs scope to the
-  # local registry, so Rerail's own npm calls (install, update check) resolve it the same way.
-  $env:USERPROFILE = $sandbox; $env:HOME = $sandbox; $env:RERAIL_HOME = "$sandbox\.rerail"
+  # local registry, so Rerail's own npm calls (install, update check) resolve it the same way. HOME names another
+  # folder, as Git Bash's may: coding agents read the profile folder, so set-up must connect them there.
+  New-Item -ItemType Directory -Force "$base\git-bash-home" | Out-Null
+  $env:USERPROFILE = $sandbox; $env:HOME = "$base\git-bash-home"; $env:RERAIL_HOME = "$sandbox\.rerail"
   $env:NPM_CONFIG_USERCONFIG = "$sandbox\.npmrc"; $env:NPM_CONFIG_CACHE = "$base\npm-cache"
   $env:RERAIL_STORAGE_ROOT = "$project\.rerail\sessions"
   # Captured stdout is the coding agent's lane: answer "start" for the project in one run. BROWSER=none
@@ -102,6 +106,17 @@ log: { type: stdout, level: warn }
   Write-Host $status
   if ($status -notmatch [regex]::Escape("running at http://127.0.0.1:$daemonPort")) { throw "rerail status does not show the setup-started daemon" }
   if ($status -notmatch "Engine: ok") { throw "the daemon has no working native engine" }
+
+  Step "Running rerail from Git Bash"
+  # Git Bash runs a command without an extension or with `.exe`, never `rerail.cmd`; a new terminal gets the user Path
+  # set-up wrote, which this one predates.
+  $windowsPath = $env:PATH
+  $env:PATH = "$sandbox\.rerail\bin;$windowsPath"
+  $gitBash = (& (Join-Path $env:ProgramFiles "Git\bin\bash.exe") -c 'command -v rerail && rerail version') -join "`n"
+  $gitBashExit = $LASTEXITCODE
+  $env:PATH = $windowsPath
+  Write-Host $gitBash
+  if ($gitBashExit -ne 0) { throw "bare rerail did not run in Git Bash (exit $gitBashExit)" }
 
   Step "Starting Rerail in the project"
   # Set-up's "start" answer turned Rerail on in the project; starting again says it is already on.
