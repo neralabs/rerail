@@ -191,6 +191,15 @@ printf '@neralabs:registry=%s/\n//127.0.0.1:%s/:_authToken=%s\n' "$REGISTRY" "$P
 # default port belongs to whatever real Rerail is running here. cwd is $PROJECT, inside the sandbox
 # HOME, so its repository identity and session files stay in the sandbox.
 DAEMON_PORT="$(free_port)"
+# Set-up asks once per computer whether Rerail may read coding agent sessions, and stops there until it is
+# answered. The sandbox says yes beforehand (what set-up writes on an `allow` answer), so `--answer skip` reaches
+# its summary and `--answer start` starts the daemon on the sandbox port; a set-up stopped at the question would
+# leave --restore to start one on the default port. The question itself is covered by test/cli/setup-json.test.ts.
+approve_sessions() {
+  mkdir -p "$RERAIL_DIR"
+  printf '%s\n' '{"sessions":{"approvedAt":"2026-10-20T00:00:00.000Z"}}' > "$RERAIL_DIR/consent.json"
+}
+approve_sessions
 info "Running the just rerail installer (--tag next) against the local registry"
 sandbox env RERAIL_REGISTRY="$REGISTRY/" \
   "$NODE" "$REPO_ROOT/scripts/dev/rerail-setup.mjs" --tag next --answer skip </dev/null \
@@ -328,6 +337,8 @@ sandbox "$NODE" -e '
     if (fs.existsSync(path)) assert.ok(!fs.readFileSync(path, "utf8").includes("/.rerail/"), `${file} still names the Rerail home`);
   }'
 
+# nuke-rerail moved the whole Rerail home, the sessions approval with it.
+approve_sessions
 info "just rerail --restore (set-up starts Rerail in the project, which brings its daemon up on the sandbox port)"
 sandbox env RERAIL_REGISTRY="$REGISTRY/" \
   "$NODE" "$REPO_ROOT/scripts/dev/rerail-setup.mjs" --restore --repo "$PROJECT" --answer start --port "$DAEMON_PORT" </dev/null \
@@ -350,12 +361,16 @@ backups_after=$(compgen -G "$SANDBOX_HOME/.rerail-clean-*" | wc -l)
 [ "$backups_after" -gt "$backups_before" ] || fail "install --remove did not back up the database into a new .rerail-clean-* directory"
 compgen -G "$SANDBOX_HOME/.rerail-clean-*/rerail-home/rerail.sqlite" >/dev/null || fail "install --remove backed up no rerail.sqlite"
 # The uninstall deletes the installation itself and says so; only the backup keeps rules and history.
-for removed in "$RERAIL_DIR/current" "$RERAIL_DIR/bin" "$RERAIL_DIR/versions" "$RERAIL_DIR/update-state.json" "$SANDBOX_HOME/.cache/rerail"; do
-  [ ! -e "$removed" ] && [ ! -L "$removed" ] || fail "install --remove left $removed behind"
-  grep -qF "Removed $removed (" "$SMOKE/remove.log" || fail "install --remove did not say it removed $removed"
+for removed in .rerail/current .rerail/bin .rerail/versions .rerail/update-state.json .cache/rerail; do
+  [ ! -e "$SANDBOX_HOME/$removed" ] && [ ! -L "$SANDBOX_HOME/$removed" ] || fail "install --remove left ~/$removed behind"
+  # By the path below HOME: the CLI prints the resolved path, without the `//` a TMPDIR ending in `/` puts in $SMOKE.
+  grep -q "^Removed .*/home/$removed (" "$SMOKE/remove.log" || fail "install --remove did not say it removed ~/$removed"
 done
 grep -qF "Backup: " "$SMOKE/remove.log" || fail "install --remove did not name the backup"
 
+# install --remove keeps the approval in the Rerail home; written again all the same, so set-up never stops at the
+# question and leaves --restore to start a daemon on the default port.
+approve_sessions
 info "just rerail --restore after install --remove (reinstalls, and restores the backup it took)"
 sandbox env RERAIL_REGISTRY="$REGISTRY/" \
   "$NODE" "$REPO_ROOT/scripts/dev/rerail-setup.mjs" --restore --repo "$PROJECT" --answer start --port "$DAEMON_PORT" </dev/null \
