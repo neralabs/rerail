@@ -14,7 +14,28 @@ use std::time::Instant;
 
 /// Spike B's cluster ranges (`replay::CLUSTERS`): the 40 worktrees ordered by commit date, cut
 /// where the divergence table steps.
-const CLUSTERS: [(u32, u32); 8] = [(1, 3), (4, 9), (10, 12), (13, 16), (17, 23), (24, 28), (29, 34), (35, 40)];
+pub const CLUSTERS: [(u32, u32); 8] = [(1, 3), (4, 9), (10, 12), (13, 16), (17, 23), (24, 28), (29, 34), (35, 40)];
+
+/// A cluster's membership: per path held by a majority of the cluster's worktrees, its most
+/// frequent content (ties: the smallest hash) — Spike B's plurality base, so that a path whose
+/// content churns stays in the layer instead of being added by every worktree.
+pub fn plurality(ms: &[Vec<(String, String)>], lo: u32, hi: u32) -> Vec<(String, String)> {
+    let mut count: FxHashMap<&str, FxHashMap<&str, usize>> = FxHashMap::default();
+    for w in lo..=hi {
+        for (p, h) in &ms[w as usize - 1] {
+            *count.entry(p.as_str()).or_default().entry(h.as_str()).or_default() += 1;
+        }
+    }
+    let need = (hi - lo + 1) as usize / 2 + 1;
+    count
+        .into_iter()
+        .filter(|(_, hs)| hs.values().sum::<usize>() >= need)
+        .map(|(p, hs)| {
+            let best = hs.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0))).unwrap();
+            (p.to_owned(), best.0.to_string())
+        })
+        .collect()
+}
 
 pub fn memo_kinds(sh: &Shared, base: &Base) -> serde_json::Value {
     let mut n = [0usize; NK];
@@ -321,24 +342,7 @@ pub fn run(args: &[String]) {
     let mut cluster_info = Vec::new();
     if !flat {
         for &(lo, hi) in &CLUSTERS {
-            // per path held by a majority of the cluster's worktrees, its most frequent content
-            // (ties: the smallest hash) — Spike B's plurality base, so that a path whose content
-            // churns stays in the layer instead of being added by every worktree
-            let mut count: FxHashMap<&str, FxHashMap<&str, usize>> = FxHashMap::default();
-            for w in lo..=hi {
-                for (p, h) in &ms[w as usize - 1] {
-                    *count.entry(p.as_str()).or_default().entry(h.as_str()).or_default() += 1;
-                }
-            }
-            let need = (hi - lo + 1) as usize / 2 + 1;
-            let cm: Vec<(String, String)> = count
-                .into_iter()
-                .filter(|(_, hs)| hs.values().sum::<usize>() >= need)
-                .map(|(p, hs)| {
-                    let best = hs.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0))).unwrap();
-                    (p.to_owned(), best.0.to_string())
-                })
-                .collect();
+            let cm = plurality(&ms, lo, hi);
             let ch = diff(&mut sh, &base_map, &cm);
             let below = Below::new(vec![&base]);
             let mut d = Delta::at(&below);

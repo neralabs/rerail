@@ -11,7 +11,7 @@ pub mod dc;
 pub mod ef;
 pub mod facts;
 
-use facts::{parse_row, Facts, Row, Tab, Val};
+use facts::{parse_row, Counts, Facts, Row, Tab, Val};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::io::BufRead;
@@ -19,29 +19,29 @@ use std::path::Path;
 use std::time::Instant;
 
 #[derive(Default)]
-struct Event {
-    seq: usize,
-    w: u32,
-    group: String,
-    kind: String,
-    paths: Vec<String>,
-    rows: Vec<(usize, i32, Row)>,
-    creates: bool,
+pub(crate) struct Event {
+    pub seq: usize,
+    pub w: u32,
+    pub group: String,
+    pub kind: String,
+    pub paths: Vec<String>,
+    pub rows: Vec<(usize, i32, Row)>,
+    pub creates: bool,
     /// Y1's edge export: (graph ms, pairs added, pairs removed) of the event's step.
     graph: Option<(f64, usize, usize)>,
 }
 
 #[derive(Default)]
-struct Dump {
-    outputs: Vec<String>,
-    tabs: Vec<Option<Tab>>,
-    reference_w: Option<u32>,
-    reference: Vec<(usize, i32, Row)>,
-    init: BTreeMap<u32, Vec<(usize, i32, Row)>>,
-    events: Vec<Event>,
+pub(crate) struct Dump {
+    pub outputs: Vec<String>,
+    pub tabs: Vec<Option<Tab>>,
+    pub reference_w: Option<u32>,
+    pub reference: Vec<(usize, i32, Row)>,
+    pub init: BTreeMap<u32, Vec<(usize, i32, Row)>>,
+    pub events: Vec<Event>,
 }
 
-fn read_dump(p: &Path) -> Dump {
+pub(crate) fn read_dump(p: &Path) -> Dump {
     let f = std::io::BufReader::with_capacity(1 << 22, std::fs::File::open(p).unwrap());
     let mut d = Dump::default();
     for line in f.lines() {
@@ -134,8 +134,18 @@ fn stage(name: &str) -> &str {
 }
 
 struct World {
+    counts: Counts,
     facts: Facts,
     oracle: Oracle,
+}
+
+impl World {
+    /// Load a snapshot (every row with its count).
+    fn load(&mut self, rows: Vec<(Tab, Row, i32)>) {
+        let ch = self.counts.classify(&rows);
+        self.counts.apply(&rows);
+        self.facts.apply(&ch);
+    }
 }
 
 fn split(d: &Dump, rows: &[(usize, i32, Row)], oracle: &mut Oracle) -> Vec<(Tab, Row, i32)> {
@@ -279,8 +289,8 @@ pub fn run(dump: &Path, out: &Path, scratch_every: usize, edges: Option<&Path>) 
                 rows.extend(refs(e.init.get(&wt).map_or(&[][..], Vec::as_slice)));
             }
         }
-        let mut world = World { facts: Facts::default(), oracle };
-        world.facts.load(rows);
+        let mut world = World { counts: Counts::default(), facts: Facts::default(), oracle };
+        world.load(rows);
         let load_ms = t0.elapsed().as_secs_f64() * 1e3;
         let t1 = Instant::now();
         let mut dcs = dc::Dc::scratch(&world.facts);
@@ -319,7 +329,7 @@ pub fn run(dump: &Path, out: &Path, scratch_every: usize, edges: Option<&Path>) 
             }
             Some(b) => (mine.difference(b).count(), b.difference(&mine).count()),
         };
-        loads.push(json!({"worktree": wt, "reached_vs_first": {"only_here": only_w, "only_first": only_base}, "dispatch_by_class": dcs.dispatch_by_class(&world.facts), "load_ms": load_ms, "dc_scratch_ms": dc_ms, "ef_scratch_ms": ef_ms, "exact": ok, "fact_rows": world.facts.rows(), "definitions": world.facts.defs.len(),
+        loads.push(json!({"worktree": wt, "reached_vs_first": {"only_here": only_w, "only_first": only_base}, "dispatch_by_class": dcs.dispatch_by_class(&world.facts), "load_ms": load_ms, "dc_scratch_ms": dc_ms, "ef_scratch_ms": ef_ms, "exact": ok, "fact_rows": world.counts.rows(), "definitions": world.facts.defs.len(),
             "reference_edges": world.facts.refs_from.values().map(Vec::len).sum::<usize>(),
             "dc": {"findings": dcs.finding_rows().len(), "reached_flow": lc.0, "reached_annotated": lc.1, "reached_dispatch": lc.2, "state_words": {"reached": rw, "indexes": iw, "imported_modules": mw, "findings": fw}},
             "ef": {"findings": efs.finding_rows().len(), "surfaces": ec.0, "groups": ec.1, "eligible": ec.2, "state_words": efs.state_words()},
@@ -346,12 +356,13 @@ pub fn run(dump: &Path, out: &Path, scratch_every: usize, edges: Option<&Path>) 
                 rows.extend(ye.rows.iter().map(|(_, c, r)| (Tab::Refs, r.clone(), *c)));
             }
             let ta = Instant::now();
-            let changes = world.facts.classify(&rows);
+            let changes = world.counts.classify(&rows);
             let classify_ms = ta.elapsed().as_secs_f64() * 1e3;
             let pd = dcs.prepare(&world.facts, &changes);
             let pe = efs.prepare(&world.facts, &changes);
             let tb = Instant::now();
-            world.facts.apply(&rows, &changes);
+            world.counts.apply(&rows);
+            world.facts.apply(&changes);
             let apply_ms = tb.elapsed().as_secs_f64() * 1e3;
             let sd = dcs.finish(&world.facts, pd);
             let se = efs.finish(&world.facts, pe);
@@ -434,8 +445,8 @@ pub fn fuzz(dump: &Path, out: &Path, n: usize, seed: u64) {
     let rows = split(&d, &d.reference, &mut oracle);
     let tabs = [Tab::Refs, Tab::Bases, Tab::Roots, Tab::Public, Tab::Imports, Tab::Resolved, Tab::Ann, Tab::Hier, Tab::DeadTraits, Tab::ModuleNames, Tab::Dyn, Tab::Probe, Tab::EfTraits];
     let by_tab: Vec<Vec<(Row, i32)>> = tabs.iter().map(|t| rows.iter().filter(|r| r.0 == *t).map(|r| (r.1.clone(), r.2)).collect()).collect();
-    let mut world = World { facts: Facts::default(), oracle };
-    world.facts.load(rows);
+    let mut world = World { counts: Counts::default(), facts: Facts::default(), oracle };
+    world.load(rows);
     let mut dcs = dc::Dc::scratch(&world.facts);
     let mut efs = ef::Ef::scratch(&world.facts);
     let mut removed: std::collections::BTreeSet<(usize, usize)> = Default::default();
@@ -467,10 +478,11 @@ pub fn fuzz(dump: &Path, out: &Path, n: usize, seed: u64) {
                 delta.push((tabs[t], r.clone(), -*c));
             }
         }
-        let changes = world.facts.classify(&delta);
+        let changes = world.counts.classify(&delta);
         let pd = dcs.prepare(&world.facts, &changes);
         let pe = efs.prepare(&world.facts, &changes);
-        world.facts.apply(&delta, &changes);
+        world.counts.apply(&delta);
+        world.facts.apply(&changes);
         let sd = dcs.finish(&world.facts, pd);
         let se = efs.finish(&world.facts, pe);
         let d2 = dc::Dc::scratch(&world.facts);

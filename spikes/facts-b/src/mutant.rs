@@ -11,6 +11,10 @@
 //! - 28, 30, …, 40, 44: R20–R34 (REWRITES.md, facts-b table), each at its rewrite in `gen/norm.rs`.
 //! - 42: ordered aggregates fold a group's rows in representation order (`gen/lower.rs`).
 //! - 46: a LEFT JOIN on equalities finds its unmatched rows by a semijoin (`gen/norm.rs` join).
+//! - 50, 52, 54: R37 cross-plan sharing: the export map ignored (`gen/norm.rs` `Plans::add`), the
+//!   export digest blind to inputs and scope (`gen/real.rs` `export_digest`), producers' failures
+//!   not compared (`gen/real.rs` `producers_agree`).
+//! - 56: the interner's epoch sweep does not mark the arrangements' rows (`gen/lower.rs` `walk_rows`).
 
 #[cfg(feature = "mutants")]
 pub fn on(n: u32) -> bool {

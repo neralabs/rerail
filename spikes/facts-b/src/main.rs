@@ -7,6 +7,7 @@ mod extract;
 mod facts;
 mod flow;
 mod gen;
+mod lmap;
 mod membership;
 mod mutant;
 mod oracle;
@@ -14,6 +15,7 @@ mod replay;
 mod rules;
 mod store;
 mod y2;
+mod y3;
 mod ygraph;
 
 use std::path::PathBuf;
@@ -66,6 +68,25 @@ fn main() {
                 sweep: arg(&args, "--sweep").map(|x| x.parse().unwrap()),
             },
         ),
+        "hreplay" => gen::hybrid::run(
+            &PathBuf::from(arg(&args, "--run-dir").expect("--run-dir")),
+            gen::hybrid::Opts {
+                events: arg(&args, "--events").map(PathBuf::from),
+                limit: arg(&args, "--limit").map(|x| x.parse().unwrap()),
+                real: PathBuf::from(arg(&args, "--real").expect("--real")),
+                check: match arg(&args, "--check").as_deref() {
+                    None | Some("batch") => gen::hybrid::Check::Batch,
+                    Some("engine") => gen::hybrid::Check::Engine,
+                    Some("none") => gen::hybrid::Check::None,
+                    Some(o) => panic!("--check {o}: none | batch | engine"),
+                },
+                check_every: arg(&args, "--check-every").map_or(1, |x| x.parse().unwrap()),
+                sweep: arg(&args, "--sweep").map(|x| x.parse().unwrap()),
+                skip: !args.iter().any(|a| a == "--no-skip"),
+                worktrees: arg(&args, "--worktrees").map(|x| x.parse().unwrap()),
+                workers: arg(&args, "--workers").map_or(1, |x| x.parse().unwrap()),
+            },
+        ),
         "edits" => edits::run(
             &PathBuf::from(arg(&args, "--out").expect("--out")),
             arg(&args, "--seed").map(|x| x.parse().unwrap()).unwrap_or(0x5EED_B),
@@ -114,6 +135,8 @@ fn main() {
         },
         // `ygraph parity|replay …`: Y1's maintained reference graph (src/ygraph).
         "ygraph" => ygraph::main(args.clone()),
+        // `y3 symcheck|…`: Y1 + Y2 wired, the symbol table maintained (src/y3).
+        "y3" => y3::main(args.clone()),
         _ => {
             eprintln!("usage: facts-b extract --run-dir DIR [--corpus DIR] [--threads N] | dump FILE");
             std::process::exit(2);

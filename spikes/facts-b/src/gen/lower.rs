@@ -37,6 +37,7 @@ use timely::dataflow::operators::core::Filter as TFilter;
 use timely::dataflow::operators::ToStream;
 use timely::dataflow::Scope;
 use timely::order::Product;
+use timely::PartialOrder;
 
 pub type T = u32;
 pub type R = i32;
@@ -81,7 +82,7 @@ pub fn uncounted<X>(f: impl FnOnce() -> X) -> X {
     x
 }
 
-fn refuse(what: &str) {
+pub(super) fn refuse(what: &str) {
     REFUSALS.with(|r| *r.borrow_mut().0.entry(what.to_owned()).or_default() += 1);
     CAPTURE.with(|c| {
         if let Some(v) = c.borrow_mut().as_mut() {
@@ -91,7 +92,7 @@ fn refuse(what: &str) {
 }
 
 /// Runs `f`, returning its result and the distinct refusals it raised.
-fn captured<X>(f: impl FnOnce() -> X) -> (X, Vec<String>) {
+pub(super) fn captured<X>(f: impl FnOnce() -> X) -> (X, Vec<String>) {
     let outer = CAPTURE.with(|c| c.borrow_mut().replace(Vec::new()));
     let x = f();
     let mut got = CAPTURE.with(|c| std::mem::replace(&mut *c.borrow_mut(), outer)).unwrap_or_default();
@@ -100,7 +101,7 @@ fn captured<X>(f: impl FnOnce() -> X) -> (X, Vec<String>) {
     (x, got)
 }
 
-fn refusal_row(at: &str, what: &str) -> Row {
+pub(super) fn refusal_row(at: &str, what: &str) -> Row {
     Row::from([Val::text(val::sym(&format!("{at}: {what}")))])
 }
 
@@ -148,10 +149,73 @@ fn track<'s>(c: C<'s, T>, node: usize) -> C<'s, T> {
     })
 }
 
+// Arrangements of the measured dataflow, walkable (`register_traces`): the interner's epoch sweep
+// marks every symbol their rows hold. Each walker owns a handle on its trace with both
+// compaction frontiers released, so it holds nothing back; it reads the trace's batches as they
+// are (`map_batches`), keys and values.
+thread_local! {
+    static REGISTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    #[allow(clippy::type_complexity)]
+    static WALKERS: RefCell<Vec<Box<dyn Fn(&mut dyn FnMut(&[Val]))>>> = RefCell::new(Vec::new());
+}
+
+/// While on, every arrangement built is registered for `walk_rows` (the main dataflow only: a
+/// check's from-scratch dataflow is dropped, and its rows with it).
+pub fn register_traces(on: bool) {
+    REGISTER.with(|r| r.set(on));
+}
+
+/// Calls `f` on every row (key or value) every registered arrangement holds.
+pub fn walk_rows(f: &mut dyn FnMut(&[Val])) {
+    // Mutant 56: the arrangements' rows are not marked (their symbols may be reclaimed).
+    if crate::mutant::on(56) {
+        return;
+    }
+    WALKERS.with(|w| w.borrow().iter().for_each(|x| x(f)))
+}
+
+trait RowsOf {
+    fn rows(&self, f: &mut dyn FnMut(&[Val]));
+}
+impl RowsOf for () {
+    fn rows(&self, _f: &mut dyn FnMut(&[Val])) {}
+}
+impl RowsOf for Row {
+    fn rows(&self, f: &mut dyn FnMut(&[Val])) {
+        f(self)
+    }
+}
+
+fn register<Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice, V2: RowsOf + Ord + Clone + 'static>(trace: &TraceAgent<ValSpine<Row, (W, V2), Tm, R>>) {
+    use differential_dataflow::trace::cursor::Navigable;
+    use differential_dataflow::trace::{Cursor, TraceReader};
+    if !REGISTER.with(|r| r.get()) {
+        return;
+    }
+    let mut t = trace.clone();
+    t.set_logical_compaction(timely::progress::frontier::AntichainRef::new(&[]));
+    t.set_physical_compaction(timely::progress::frontier::AntichainRef::new(&[]));
+    WALKERS.with(|w| {
+        w.borrow_mut().push(Box::new(move |f: &mut dyn FnMut(&[Val])| {
+            t.map_batches(|b| {
+                let mut c = b.cursor();
+                while let Some(k) = c.get_key(b) {
+                    f(k);
+                    while let Some((_, v)) = c.get_val(b) {
+                        v.rows(f);
+                        c.step_val(b);
+                    }
+                    c.step_key(b);
+                }
+            })
+        }))
+    });
+}
+
 // --------------------------------------------------------------------------------------------
 // Per-record evaluation
 
-fn ev(e: &X, row: &[V]) -> Option<V> {
+pub(super) fn ev(e: &X, row: &[V]) -> Option<V> {
     match super::scalar::eval(e, row, &[]) {
         Ok(v) => Some(v),
         Err(m) => {
@@ -163,7 +227,7 @@ fn ev(e: &X, row: &[V]) -> Option<V> {
 
 /// A map's output row into `out` (false: a scalar refused). Bare columns are copied; the row is
 /// converted to `V` only when an expression needs it.
-fn map_row(exprs: &[X], row: &[Val], out: &mut Vec<Val>) -> bool {
+pub(super) fn map_row(exprs: &[X], row: &[Val], out: &mut Vec<Val>) -> bool {
     out.clear();
     let mut vr: Option<Vec<V>> = None;
     for e in exprs {
@@ -190,7 +254,7 @@ fn canon(v: Val) -> Val {
 }
 
 /// A row's key under `key`; `None` when an equality key is NULL (it matches nothing).
-fn key_of(row: &[Val], key: &Key, vrow: &mut Option<Vec<V>>) -> Option<Row> {
+pub(super) fn key_of(row: &[Val], key: &Key, vrow: &mut Option<Vec<V>>) -> Option<Row> {
     key.iter()
         .map(|(x, mode)| {
             let fast = match x {
@@ -215,11 +279,14 @@ fn key_of(row: &[Val], key: &Key, vrow: &mut Option<Vec<V>>) -> Option<Row> {
 }
 
 fn keyed<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(c: C<'s, Tm>, key: Key, name: &str) -> Arr<'s, Tm, Row> {
-    c.flat_map(move |(w, row)| {
-        let mut vr = None;
-        key_of(&row, &key, &mut vr).map(|k| (k, (w, row)))
-    })
-    .arrange_by_key_named(name)
+    let a = c
+        .flat_map(move |(w, row)| {
+            let mut vr = None;
+            key_of(&row, &key, &mut vr).map(|k| (k, (w, row)))
+        })
+        .arrange_by_key_named(name);
+    register(&a.trace);
+    a
 }
 
 fn flip(before: R, after: R) -> R {
@@ -240,33 +307,306 @@ fn per_tag<V2>(vals: &[(&(W, V2), R)]) -> Vec<(W, R)> {
     per
 }
 
-/// Presence of keys (count-based): `key -> (tag, ())` with ±1 deltas.
-fn presence<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(keys: VecCollection<'s, Tm, (Row, (W, ())), R>, name: &str) -> Arr<'s, Tm, ()> {
-    keys.arrange_by_key_named(&format!("{name}:presence-in")).reduce_abelian::<_, ValBuilder<Row, (W, ()), Tm, R>, ValSpine<Row, (W, ()), Tm, R>, _, _>(
+/// The presence records of one key from its per-tag counts (sorted by tag, zeros allowed): the
+/// base emits [c_0 > 0]; tag t emits [below + c_t > 0] − [below > 0], `below` the count of t's
+/// parent view. Pushed into `out` as (tag, ±1).
+fn presence_of(per: &[(W, R)], out: &mut Vec<(W, R)>) {
+    let at = |t: W| per.iter().find(|(w, _)| *w == t).map(|(_, c)| *c).unwrap_or(0);
+    if at(BASE) > 0 {
+        out.push((BASE, 1));
+    }
+    for &(t, d) in per {
+        if t == BASE {
+            continue;
+        }
+        let ch = tags::chain(t);
+        let below: R = ch[..ch.len() - 1].iter().map(|x| at(*x)).sum();
+        let f = flip(below, below + d);
+        if f != 0 {
+            out.push((t, f));
+        }
+    }
+}
+
+/// The per-key per-tag counts of a presence: `key -> (tag, ())`, one arrangement.
+fn counts<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(keys: VecCollection<'s, Tm, (Row, (W, ())), R>, name: &str) -> Arr<'s, Tm, ()> {
+    let a = keys.arrange_by_key_named(&format!("{name}:presence-in"));
+    register(&a.trace);
+    a
+}
+
+/// The presence output arrangement over a counts arrangement (`reduce_abelian`): for readers that
+/// need presence arranged at partially ordered times (a fixpoint's body).
+fn presence_out<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(cnt: Arr<'s, Tm, ()>, name: &str) -> Arr<'s, Tm, ()> {
+    let a = cnt.reduce_abelian::<_, ValBuilder<Row, (W, ()), Tm, R>, ValSpine<Row, (W, ()), Tm, R>, _, _>(
         &format!("{name}:presence-out"),
         |_k, vals: &[(&(W, ()), R)], out: &mut Vec<((W, ()), R)>| {
-            let per = per_tag(vals);
-            let at = |t: W| per.iter().find(|(w, _)| *w == t).map(|(_, c)| *c).unwrap_or(0);
-            if at(BASE) > 0 {
-                out.push(((BASE, ()), 1));
-            }
-            for &(t, d) in &per {
-                if t == BASE {
-                    continue;
-                }
-                let ch = tags::chain(t);
-                let below: R = ch[..ch.len() - 1].iter().map(|x| at(*x)).sum();
-                let f = flip(below, below + d);
-                if f != 0 {
-                    out.push(((t, ()), f));
-                }
-            }
+            let mut o = Vec::new();
+            presence_of(&per_tag(vals), &mut o);
+            out.extend(o.into_iter().map(|(w, f)| ((w, ()), f)));
         },
         |vec, key, upds| {
             vec.clear();
             vec.extend(upds.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
         },
-    )
+    );
+    register(&a.trace);
+    a
+}
+
+/// Presence of keys (count-based): `key -> (tag, ())` with ±1 deltas; counts and output arranged.
+fn presence<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice::Lattice>(keys: VecCollection<'s, Tm, (Row, (W, ())), R>, name: &str) -> Arr<'s, Tm, ()> {
+    presence_out(counts(keys, name), name)
+}
+
+/// Per-tag counts of one key in a cursor: (tag, Σ diffs) sorted by tag; mutant 5 drops
+/// retractions, as `per_tag` does.
+fn cursor_counts<Cu>(cur: &mut Cu, st: &Cu::Storage, key: &Row, out: &mut Vec<(W, R)>)
+where
+    Cu: for<'a> differential_dataflow::trace::Cursor<Key<'a> = &'a Row, Val<'a> = &'a (W, ()), DiffGat<'a> = &'a R>,
+{
+    cur.seek_key(st, key);
+    if cur.get_key(st) != Some(key) {
+        return;
+    }
+    while let Some((w, ())) = cur.get_val(st) {
+        let mut s: R = 0;
+        cur.map_times(st, |_, d| s += if crate::mutant::on(5) { (*d).max(0) } else { *d });
+        match out.last_mut() {
+            Some((lw, c)) if lw == w => *c += s,
+            _ => out.push((*w, s)),
+        }
+        cur.step_val(st);
+    }
+}
+
+/// The presence differences of one key over the times of `upds` ((time, tag, diff), any order),
+/// starting from per-tag counts `per`: at each time, presence(after) − presence(before).
+fn presence_steps(per: &mut Vec<(W, R)>, upds: &mut [(T, W, R)], out: &mut Vec<(T, W, R)>) {
+    upds.sort_unstable();
+    let (mut before, mut after) = (Vec::new(), Vec::new());
+    let mut i = 0;
+    while i < upds.len() {
+        let t = upds[i].0;
+        before.clear();
+        presence_of(per, &mut before);
+        while i < upds.len() && upds[i].0 == t {
+            let (_, w, d) = upds[i];
+            let d = if crate::mutant::on(5) { d.max(0) } else { d };
+            match per.binary_search_by_key(&w, |x| x.0) {
+                Ok(j) => per[j].1 += d,
+                Err(j) => per.insert(j, (w, d)),
+            }
+            i += 1;
+        }
+        after.clear();
+        presence_of(per, &mut after);
+        for &(w, f) in &after {
+            out.push((t, w, f));
+        }
+        for &(w, f) in &before {
+            out.push((t, w, -f));
+        }
+    }
+    differential_dataflow::consolidation::consolidate_updates(out);
+}
+
+/// Presence as a collection from its counts arrangement alone (delta mode, totally ordered
+/// times): per key, the counts before a batch are read from the trace and the output differences
+/// are presence(after) − presence(before) at each time, `threshold_total`'s scheme; no output
+/// arrangement is kept.
+fn presence_total<'s>(cnt: Arr<'s, T, ()>, name: &str) -> C<'s, T> {
+    use differential_dataflow::trace::{BatchReader, Cursor, TraceReader};
+    use timely::dataflow::channels::pact::Pipeline;
+    use timely::dataflow::operators::generic::Operator;
+    use timely::progress::Antichain;
+    let mut trace = cnt.trace.clone();
+    cnt.stream
+        .unary_frontier::<timely::container::CapacityContainerBuilder<Vec<((W, Row), T, R)>>, _, _, _>(Pipeline, &format!("{name}:presence-total"), move |_, _| {
+            let mut lower = Antichain::from_elem(0 as T);
+            let mut upper = Antichain::from_elem(0 as T);
+            move |(input, _frontier), output| {
+                let mut batches = Vec::new();
+                lower.clone_from(&upper);
+                let mut cap = None;
+                input.for_each(|c, bs| {
+                    if cap.is_none() {
+                        cap = Some(c.retain(0));
+                    }
+                    for b in bs.drain(..) {
+                        upper.clone_from(b.upper());
+                        batches.push(b);
+                    }
+                });
+                if let Some(cap) = cap {
+                    let mut session = output.session(&cap);
+                    let (mut bc, bs) = differential_dataflow::trace::cursor::cursor_list(batches);
+                    let (mut tc, ts) = trace.cursor_through(lower.borrow()).expect("presence: trace through the lower frontier");
+                    let (mut per, mut upds, mut out) = (Vec::new(), Vec::new(), Vec::new());
+                    while let Some(key) = bc.get_key(&bs) {
+                        per.clear();
+                        cursor_counts(&mut tc, &ts, key, &mut per);
+                        upds.clear();
+                        while let Some((w, ())) = bc.get_val(&bs) {
+                            bc.map_times(&bs, |t, d| upds.push((*t, *w, *d)));
+                            bc.step_val(&bs);
+                        }
+                        out.clear();
+                        presence_steps(&mut per, &mut upds, &mut out);
+                        for &(t, w, f) in &out {
+                            session.give(((w, key.clone()), t, f));
+                        }
+                        bc.step_key(&bs);
+                    }
+                }
+                trace.set_logical_compaction(upper.borrow());
+                trace.set_physical_compaction(upper.borrow());
+            }
+        })
+        .as_collection()
+}
+
+/// Semijoin of `left` (key -> (tag, row)) by the presence of the keys counted in `cnt` (delta
+/// mode, totally ordered times), without an arrangement of the presence: the bilinear expansion
+/// of `join_core` (each pair of left and count batches is joined once, by the later of the two,
+/// at the later time), where the presence's differences at the count side's times are derived
+/// from the counts before and after each time (as `presence_total`). Output: (product tag, row).
+fn semi_total<'s>(left: Arr<'s, T, Row>, cnt: Arr<'s, T, ()>, name: &str) -> C<'s, T> {
+    use differential_dataflow::trace::{BatchReader, Cursor, TraceReader};
+    use timely::dataflow::channels::pact::Pipeline;
+    use timely::dataflow::operators::generic::Operator;
+    use timely::progress::Antichain;
+    let (t1, t2) = (left.trace.clone(), cnt.trace.clone());
+    left.stream
+        .binary_frontier::<_, timely::container::CapacityContainerBuilder<Vec<((W, Row), T, R)>>, _, _, _, _>(cnt.stream, Pipeline, Pipeline, &format!("{name}:semi-total"), move |_, _| {
+            // Bounds of the batches accepted from each input (joined against the other's trace).
+            let mut ack1 = Antichain::from_elem(0 as T);
+            let mut ack2 = Antichain::from_elem(0 as T);
+            let (mut t1o, mut t2o) = (Some(t1), Some(t2));
+            move |(in1, f1), (in2, f2), output| {
+                let (mut per, mut upds, mut steps) = (Vec::new(), Vec::new(), Vec::new());
+                let mut lefts: Vec<(T, R)> = Vec::new();
+                // A left batch against the presence history of the accepted counts.
+                in1.for_each(|cap, data| {
+                    let cap = cap.retain(0);
+                    let t2 = t2o.as_mut().expect("semijoin: count trace dropped before the left input ended");
+                    for b1 in data.drain(..) {
+                        let fresh = PartialOrder::less_equal(&ack1, b1.lower());
+                        assert!(fresh || PartialOrder::less_equal(b1.upper(), &ack1), "semijoin: left batch spans the accepted frontier");
+                        if fresh && !b1.is_empty() {
+                            let mut session = output.session(&cap);
+                            let (mut tc, ts) = differential_dataflow::trace::cursor::cursor_list(t2.batches_through(ack2.borrow()).expect("semijoin: counts through the accepted frontier"));
+                            let (mut bc, bs) = differential_dataflow::trace::cursor::cursor_list(vec![b1.clone()]);
+                            while let Some(key) = bc.get_key(&bs) {
+                                // The presence's history at the key: its differences at the times
+                                // of the accepted counts (times before the compaction frontier are
+                                // accumulated into it, which is at or below every left time).
+                                upds.clear();
+                                tc.seek_key(&ts, key);
+                                if tc.get_key(&ts) == Some(key) {
+                                    while let Some((w, ())) = tc.get_val(&ts) {
+                                        tc.map_times(&ts, |t, d| upds.push((*t, *w, *d)));
+                                        tc.step_val(&ts);
+                                    }
+                                }
+                                per.clear();
+                                steps.clear();
+                                presence_steps(&mut per, &mut upds, &mut steps);
+                                if !steps.is_empty() {
+                                    while let Some((w1, a)) = bc.get_val(&bs) {
+                                        bc.map_times(&bs, |t1, d1| {
+                                            for &(t2, w2, f) in &steps {
+                                                if let Some(w) = tags::product(*w1, w2) {
+                                                    session.give(((w, a.clone()), (*t1).max(t2), d1 * f));
+                                                }
+                                            }
+                                        });
+                                        bc.step_val(&bs);
+                                    }
+                                }
+                                bc.step_key(&bs);
+                            }
+                        }
+                        if fresh {
+                            ack1.clone_from(b1.upper());
+                        }
+                    }
+                });
+                // A count batch: the presence's differences at its times, against the accepted left.
+                in2.for_each(|cap, data| {
+                    let cap = cap.retain(0);
+                    let t1 = t1o.as_mut().expect("semijoin: left trace dropped before the count input ended");
+                    let t2 = t2o.as_mut().expect("semijoin: count trace dropped");
+                    for b2 in data.drain(..) {
+                        let fresh = PartialOrder::less_equal(&ack2, b2.lower());
+                        assert!(fresh || PartialOrder::less_equal(b2.upper(), &ack2), "semijoin: count batch spans the accepted frontier");
+                        if fresh && !b2.is_empty() {
+                            let mut session = output.session(&cap);
+                            let (mut lc, ls) = differential_dataflow::trace::cursor::cursor_list(t1.batches_through(ack1.borrow()).expect("semijoin: left through the accepted frontier"));
+                            let (mut pc, ps) = differential_dataflow::trace::cursor::cursor_list(t2.batches_through(b2.lower().borrow()).expect("semijoin: counts before the batch"));
+                            let (mut bc, bs) = differential_dataflow::trace::cursor::cursor_list(vec![b2.clone()]);
+                            while let Some(key) = bc.get_key(&bs) {
+                                per.clear();
+                                cursor_counts(&mut pc, &ps, key, &mut per);
+                                upds.clear();
+                                while let Some((w, ())) = bc.get_val(&bs) {
+                                    bc.map_times(&bs, |t, d| upds.push((*t, *w, *d)));
+                                    bc.step_val(&bs);
+                                }
+                                steps.clear();
+                                presence_steps(&mut per, &mut upds, &mut steps);
+                                if !steps.is_empty() {
+                                    lc.seek_key(&ls, key);
+                                    if lc.get_key(&ls) == Some(key) {
+                                        while let Some((w1, a)) = lc.get_val(&ls) {
+                                            lefts.clear();
+                                            lc.map_times(&ls, |t1, d1| lefts.push((*t1, *d1)));
+                                            for &(t1, d1) in &lefts {
+                                                for &(t2, w2, f) in &steps {
+                                                    if let Some(w) = tags::product(*w1, w2) {
+                                                        session.give(((w, a.clone()), t1.max(t2), d1 * f));
+                                                    }
+                                                }
+                                            }
+                                            lc.step_val(&ls);
+                                        }
+                                    }
+                                }
+                                bc.step_key(&bs);
+                            }
+                        }
+                        if fresh {
+                            ack2.clone_from(b2.upper());
+                        }
+                    }
+                });
+                // Trace maintenance (as `join_core`): the left trace compacts logically to the
+                // count input's frontier; the counts to the left input's frontier, and to their
+                // own (a count batch reads the counts before it); physically, each to the batches
+                // accepted from its own input.
+                if let Some(t1) = t1o.as_mut() {
+                    if f2.is_empty() {
+                        t1o = None;
+                    } else {
+                        t1.set_logical_compaction(f2.frontier());
+                        t1.set_physical_compaction(ack1.borrow());
+                    }
+                }
+                if let Some(t2) = t2o.as_mut() {
+                    if f1.is_empty() && f2.is_empty() {
+                        t2o = None;
+                    } else {
+                        let mut lo = Antichain::new();
+                        for t in f1.frontier().iter().chain(f2.frontier().iter()) {
+                            lo.insert(*t);
+                        }
+                        t2.set_logical_compaction(lo.borrow());
+                        t2.set_physical_compaction(ack2.borrow());
+                    }
+                }
+            }
+        })
+        .as_collection()
 }
 
 /// Group recompute: per key, logic over each tag's view, emitted as differences. Returns the
@@ -336,9 +676,9 @@ fn group<'s>(input: Arr<'s, T, Row>, logic: Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec
                 vec.clear();
                 vec.extend(upds.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
             },
-        )
-        .as_collection(|_k, (w, r)| (*w, r.clone()));
-    split_refusals(all)
+        );
+    register(&all.trace);
+    split_refusals(all.as_collection(|_k, (w, r)| (*w, r.clone())))
 }
 
 /// Splits records tagged `t | REFUSED` (refusals of view t) from the data.
@@ -359,7 +699,7 @@ fn vals_of(members: &[(&Row, R)]) -> Vec<(Vec<V>, R)> {
 /// group's rows in `order` (stable over equal rows) through the reference evaluator's own fold;
 /// a tie between distinct rows on equal order keys is a runtime refusal (the reference raises
 /// `tie:` on the same groups), never broken by representation order.
-fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize, order: Vec<(X, bool)>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+pub(super) fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize, order: Vec<(X, bool)>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
     let key_cols: Vec<usize> = keys.iter().filter_map(|(k, _)| if let rerail_facts::ir::Expr::Col { depth: 0, col } = k { Some(*col as usize) } else { None }).collect();
     let ordered = aggs.iter().any(|a| matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray));
     let desc: Vec<bool> = order.iter().map(|x| x.1).collect();
@@ -519,7 +859,7 @@ fn order_cmp(a: &[V], b: &[V], desc: &[bool]) -> Ordering {
     Ordering::Equal
 }
 
-fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+pub(super) fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
     Rc::new(move |_k, members| {
         let rows = vals_of(members);
         match &kind {
@@ -583,7 +923,7 @@ fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn F
     })
 }
 
-fn distinct_prefix_logic(prefix: usize) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+pub(super) fn distinct_prefix_logic(prefix: usize) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
     Rc::new(move |_k, members| {
         let first = members[0].0;
         if members.iter().any(|(r, _)| r[prefix..] != first[prefix..] || r[..prefix] != first[..prefix]) {
@@ -602,10 +942,16 @@ pub struct Built {
     pub outputs: Vec<(String, Out)>,
     /// Per plan: its live runtime refusals, `(tag, [construct])` differences like the outputs'.
     pub refusals: Vec<(String, Out)>,
+    /// The lowered graphs (one per distinct `Rc<Graph>`) and the plans each serves, in order.
+    pub groups: Vec<(Rc<Graph>, Vec<String>)>,
+    /// Per group: per node, the plans (bit i: the group's i-th plan) whose outputs read it.
+    pub node_plans: Vec<Vec<u64>>,
+    /// Timely operator identifiers built per group: `[lo, hi)` → group index.
+    pub op_groups: Vec<(usize, usize, usize)>,
 }
 
 /// A stage's stored row: each column under its declared affinity (CTAS).
-fn affinity(row: &[Val], affs: &[rerail_facts::ir::Aff]) -> Row {
+pub(super) fn affinity(row: &[Val], affs: &[rerail_facts::ir::Aff]) -> Row {
     row.iter()
         .enumerate()
         .map(|(i, v)| match affs.get(i) {
@@ -628,8 +974,12 @@ struct Lower<'s> {
     /// Arrangements and presences by (node, key), shared by every operator that reads them.
     arrs: FxHashMap<(NodeId, String), Arr<'s, T, Row>>,
     press: FxHashMap<(NodeId, String), Arr<'s, T, ()>>,
-    /// Refusal records raised by the plan's operators (tag, [construct]).
-    refused: Vec<C<'s, T>>,
+    /// Presence output arrangements over `press`, for the fixpoint bodies that join with them.
+    press_out: FxHashMap<(NodeId, String), Arr<'s, T, ()>>,
+    /// Refusal records raised by the plan's operators (tag, [construct]), per node.
+    refused: Vec<(NodeId, C<'s, T>)>,
+    /// Refusals raised while lowering a node (inside a recursion), per node.
+    built: Vec<(NodeId, Vec<String>)>,
 }
 
 /// The nodes of `g` that read the fixpoint variable `var`, directly or below: one pass over the
@@ -641,7 +991,7 @@ struct Lower<'s> {
 /// in `CONSTRUCTION`, read into `greplay`'s results (`construction`). Mutant 51 re-seeds the
 /// historical regression: every node's answer by the former unmemoised `reads_var` walk, its
 /// calls counted (stopped at `WALK_CAP`; the answers are the linear pass's, which they equal).
-fn var_readers(g: &Graph, var: u32) -> Vec<bool> {
+pub(super) fn var_readers(g: &Graph, var: u32) -> Vec<bool> {
     let mut rd = vec![false; g.nodes.len()];
     for (n, op) in g.nodes.iter().enumerate() {
         let ins = op_inputs(op);
@@ -685,7 +1035,7 @@ pub(super) fn construction() -> Vec<(u64, u64)> {
 }
 
 /// An operator's input nodes.
-fn op_inputs(op: &Op) -> Vec<NodeId> {
+pub(super) fn op_inputs(op: &Op) -> Vec<NodeId> {
     match op {
         Op::Var(_) | Op::Exported(_) | Op::Const(_) => Vec::new(),
         Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } | Op::Affinity { input, .. } => vec![*input],
@@ -758,12 +1108,20 @@ impl<'s> Lower<'s> {
         if let Some(c) = &self.done[n] {
             return c.clone();
         }
-        if !super::prof::on() {
-            return self.node_raw(n);
+        // Refusals raised while lowering n itself (nested nodes capture their own): attributed to
+        // n, so every plan whose outputs read n holds them.
+        let (c, built) = captured(|| {
+            if !super::prof::on() {
+                return self.node_raw(n);
+            }
+            let lo = super::prof::begin(self.scope.worker());
+            let c = self.node_raw(n);
+            super::prof::end(self.scope.worker(), lo, &self.name, n, "delta", op_kind(&self.g.nodes[n]), &self.g.labels[n]);
+            c
+        });
+        if !built.is_empty() {
+            self.built.push((n, built));
         }
-        let lo = super::prof::begin(self.scope.worker());
-        let c = self.node_raw(n);
-        super::prof::end(self.scope.worker(), lo, &self.name, n, "delta", op_kind(&self.g.nodes[n]), &self.g.labels[n]);
         c
     }
 
@@ -794,7 +1152,7 @@ impl<'s> Lower<'s> {
                     }
                 });
                 let (data, refused) = split_refusals(all);
-                self.refused.push(refused);
+                self.refused.push((n, refused));
                 data
             }
             Op::Filter { input, pred } => {
@@ -808,7 +1166,7 @@ impl<'s> Lower<'s> {
                     }
                 });
                 let (data, refused) = split_refusals(all);
-                self.refused.push(refused);
+                self.refused.push((n, refused));
                 data
             }
             Op::Affinity { input, affs } => {
@@ -825,13 +1183,13 @@ impl<'s> Lower<'s> {
             Op::Semi { l, r, lk, rk, anti } => {
                 let left = self.node(*l);
                 let la = self.arr(*l, lk);
-                let pres = self.pres(*r, rk);
-                let hit = la.join_core(pres, |_k, (w1, a), (w2, ())| tags::product(*w1, *w2).map(|w| (w, a.clone())));
+                let cnt = self.pres(*r, rk);
+                let hit = semi_total(la, cnt, &format!("n{n}"));
                 if *anti { left.concat(hit.negate()) } else { hit }
             }
             Op::Distinct { input } => {
                 let keys = self.node(*input).map(|(w, row)| (row, (w, ())));
-                presence(keys, &format!("n{n}:distinct")).as_collection(|k, (w, ())| (*w, k.clone()))
+                presence_total(counts(keys, &format!("n{n}:distinct")), &format!("n{n}:distinct"))
             }
             Op::Concat { inputs } => {
                 let mut it = inputs.clone().into_iter();
@@ -855,14 +1213,15 @@ impl<'s> Lower<'s> {
                         key_of(&row, &kk, &mut vr).map(|k| (k, (w, row)))
                     })
                     .arrange_by_key_named(&format!("n{n}:group-in"));
+                register(&arr.trace);
                 let (data, refused) = group(arr, agg_logic(keys.clone(), aggs.clone(), *width, order.clone()), *keyless, &format!("n{n}"));
-                self.refused.push(refused);
+                self.refused.push((n, refused));
                 data
             }
             Op::Window { input, part, order, kind } => {
                 let arr = self.arr(*input, part);
                 let (data, refused) = group(arr, window_logic(order.clone(), kind.clone()), false, &format!("n{n}"));
-                self.refused.push(refused);
+                self.refused.push((n, refused));
                 data
             }
             Op::DistinctPrefix { input, prefix } => {
@@ -870,10 +1229,10 @@ impl<'s> Lower<'s> {
                 let key: Key = (0..p).map(|c| (super::norm::col(c), KeyMode::Group)).collect();
                 let arr = self.arr(*input, &key);
                 let (data, refused) = group(arr, distinct_prefix_logic(p), false, &format!("n{n}"));
-                self.refused.push(refused);
+                self.refused.push((n, refused));
                 data
             }
-            Op::Fix { var, init, step } => self.fix(*var, init.clone(), step.clone()),
+            Op::Fix { var, init, step } => self.fix(n, *var, init.clone(), step.clone()),
         };
         let c = match self.track {
             Some(off) => track(c, off + n),
@@ -895,7 +1254,8 @@ impl<'s> Lower<'s> {
         a
     }
 
-    /// Count-based presence of node `n`'s keys under `key`, one per (node, key).
+    /// Per-tag counts of node `n`'s keys under `key` (the presence's one arrangement), one per
+    /// (node, key).
     fn pres(&mut self, n: NodeId, key: &Key) -> Arr<'s, T, ()> {
         let k = (n, format!("{key:?}"));
         if let Some(a) = self.press.get(&k) {
@@ -906,8 +1266,21 @@ impl<'s> Lower<'s> {
             let mut vr = None;
             key_of(&row, &kk, &mut vr).map(|k| (k, (w, ())))
         });
-        let a = presence(keys, &format!("n{n}:pres{}", self.press.len()));
+        let a = counts(keys, &format!("n{n}:pres{}", self.press.len()));
         self.press.insert(k, a.clone());
+        a
+    }
+
+    /// The presence output arrangement over `pres(n, key)`: only a fixpoint body joins with an
+    /// arranged presence (its times are partially ordered, so `semi_total` does not apply).
+    fn pres_out(&mut self, n: NodeId, key: &Key) -> Arr<'s, T, ()> {
+        let k = (n, format!("{key:?}"));
+        if let Some(a) = self.press_out.get(&k) {
+            return a.clone();
+        }
+        let cnt = self.pres(n, key);
+        let a = presence_out(cnt, &format!("n{n}:pres"));
+        self.press_out.insert(k, a.clone());
         a
     }
 
@@ -940,7 +1313,7 @@ impl<'s> Lower<'s> {
                 if rd[*r] {
                     self.boundary_arrs(rd, *r, arrs, press, seen);
                 } else {
-                    let a = self.pres(*r, rk);
+                    let a = self.pres_out(*r, rk);
                     press.push(((*r, format!("{rk:?}")), a));
                 }
             }
@@ -957,7 +1330,7 @@ impl<'s> Lower<'s> {
     /// is base and presence is a threshold: a plain semi-naive evaluation. A worktree's delta
     /// iterates only its own signed differences against the entered base arrangements, so
     /// per-worktree state is proportional to the divergence of its fixpoint, not to its size.
-    fn fix(&mut self, var: u32, init: Vec<NodeId>, step: Vec<NodeId>) -> C<'s, T> {
+    fn fix(&mut self, n: NodeId, var: u32, init: Vec<NodeId>, step: Vec<NodeId>) -> C<'s, T> {
         let g = self.g.clone();
         let rd = Rc::new(var_readers(&g, var));
         if super::prof::on() {
@@ -1009,7 +1382,7 @@ impl<'s> Lower<'s> {
                 }
                 out = out.concat(d);
             }
-            let out = presence(out.map(|(w, row)| (row, (w, ()))), &format!("fix{var}:iterate-distinct")).as_collection(|row, (w, ())| (*w, row.clone()));
+            let out = presence(out.map(|(w, row)| (row, (w, ()))), &format!("n{n}:iterate-distinct")).as_collection(|row, (w, ())| (*w, row.clone()));
             if super::prof::on() {
                 let fl = fix_label.clone();
                 out.clone().inspect(move |(_, t, r)| super::prof::iter(&fl, "distinct", t.inner, *r as i64));
@@ -1184,30 +1557,69 @@ fn capture<'s>(c: C<'s, T>, probe: &Handle<T>) -> Out {
     out
 }
 
-/// Build one dataflow evaluating every graph's outputs over the tagged `files` input.
+/// The plans (bits) reading each node of `g`: plan i's outputs `outs[i]` and everything below.
+fn reach(g: &Graph, outs: &[Vec<NodeId>]) -> Vec<u64> {
+    assert!(outs.len() <= 64, "more than 64 plans share one graph");
+    let mut bits = vec![0u64; g.nodes.len()];
+    for (i, os) in outs.iter().enumerate() {
+        let mut stack: Vec<NodeId> = os.clone();
+        while let Some(n) = stack.pop() {
+            if bits[n] & (1 << i) == 0 {
+                bits[n] |= 1 << i;
+                stack.extend(op_inputs(&g.nodes[n]));
+            }
+        }
+    }
+    bits
+}
+
+/// Build one dataflow evaluating every plan's outputs over the tagged `files` input. Plans whose
+/// entries hold the same `Rc<Graph>` (normalised through one context, `norm::Plans`) are lowered
+/// together: a node is one collection and an arrangement per key, whichever plans read it. Each
+/// plan's outputs are those `Graph::owners` assigns it (all of them when a graph has no owners).
 pub fn build(worker: &mut timely::worker::Worker, graphs: Vec<(String, Rc<Graph>)>, src: Source, probe: &Handle<T>, track_on: bool) -> Built {
+    let mut groups: Vec<(Rc<Graph>, Vec<String>)> = Vec::new();
+    for (name, g) in graphs {
+        match groups.iter_mut().find(|(h, _)| Rc::ptr_eq(h, &g)) {
+            Some((_, names)) => names.push(name),
+            None => groups.push((g, vec![name])),
+        }
+    }
     worker.dataflow::<T, _, _>(|scope| {
         let (files_in, files) = scope.new_collection::<(W, (Sym, Cid)), R>();
         let mut outputs = Vec::new();
         let mut refusals = Vec::new();
-        for (name, g) in graphs {
+        let (mut node_plans, mut op_groups) = (Vec::new(), Vec::new());
+        for (gi, (g, names)) in groups.iter().enumerate() {
+            let lo = scope.worker().peek_identifier();
             let n = g.nodes.len();
-            let gi = outputs.len();
-            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), name: name.clone(), done: vec![None; n], track: track_on.then_some(gi * 100_000), arrs: FxHashMap::default(), press: FxHashMap::default(), refused: Vec::new() };
-            // A construct refused while lowering (inside a recursion: a non-stratified antijoin,
-            // an aggregate over the recursive relation) leaves part of the plan empty: the plan's
-            // findings are withheld everywhere by a base refusal record, never reported partial.
-            let (_, at_build) = captured(|| {
-                for (clause, node, _) in &g.outputs {
+            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), name: names.join("+"), done: vec![None; n], track: track_on.then_some(gi * 1_000_000), arrs: FxHashMap::default(), press: FxHashMap::default(), press_out: FxHashMap::default(), refused: Vec::new(), built: Vec::new() };
+            let mut outs: Vec<Vec<NodeId>> = Vec::new();
+            for name in names {
+                let mine: Vec<&(String, NodeId, Vec<String>)> = g.outputs.iter().enumerate().filter(|(i, _)| g.owners.is_empty() || g.owners[*i] == *name).map(|(_, o)| o).collect();
+                for (clause, node, _) in &mine {
                     let c = lw.node(*node);
                     outputs.push((format!("{name}:{clause}"), capture(c, probe)));
                 }
-            });
-            let built: Vec<((W, Row), T, R)> = at_build.iter().map(|w| ((BASE, refusal_row(&name, w)), 0, 1)).collect();
-            let refused = lw.refused.drain(..).fold(built.to_stream(scope).as_collection(), |a, c| a.concat(c));
-            refusals.push((name.clone(), capture(refused, probe)));
+                outs.push(mine.iter().map(|o| o.1).collect());
+            }
+            let bits = reach(g, &outs);
+            for (i, name) in names.iter().enumerate() {
+                let on = |n: &NodeId| bits[*n] & (1 << i) != 0;
+                // A construct refused while lowering (inside a recursion: a non-stratified
+                // antijoin, an aggregate over the recursive relation) leaves part of a plan
+                // empty: the plan's findings are withheld everywhere by a base refusal record,
+                // never reported partial.
+                let at_build: std::collections::BTreeSet<&String> = lw.built.iter().filter(|(n, _)| on(n)).flat_map(|(_, w)| w).collect();
+                let base: Vec<((W, Row), T, R)> = at_build.iter().map(|w| ((BASE, refusal_row(name, w)), 0, 1)).collect();
+                let refused = lw.refused.iter().filter(|(n, _)| on(n)).fold(base.to_stream(scope).as_collection(), |a, (_, c)| a.concat(c.clone()));
+                refusals.push((name.clone(), capture(refused, probe)));
+            }
+            drop(lw);
+            node_plans.push(bits);
+            op_groups.push((lo, scope.worker().peek_identifier(), gi));
         }
-        Built { files: files_in, outputs, refusals }
+        Built { files: files_in, outputs, refusals, groups, node_plans, op_groups }
     })
 }
 

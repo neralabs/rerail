@@ -10,9 +10,10 @@
 //! eligibility names the family partitions; and only those partitions' violations are
 //! recomputed. Each step reads only rows at the keys it is given, so the scoping is exact by the
 //! same read-set argument as dead code's (`dc.rs`).
-use super::facts::{at, string, sym, with, Change, Facts, Kind, Tab, Val};
+use super::facts::{at, note, string, sym, with, Change, Facts, Kind, Tab, Val};
+use crate::lmap::{Heap, LMap};
 use regex::Regex;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 enum Src {
@@ -27,7 +28,7 @@ const SLOT_LAZY: u8 = 2;
 const SLOT_SYNC: u8 = 3;
 const SLOT_NAMES: [&str; 4] = ["__invalid_mixed_name__", "async", "lazy", "sync"];
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, PartialOrd, Ord)]
 struct Surface {
     symbol: u32,
     method: bool,
@@ -53,8 +54,15 @@ struct Group {
     slots: Vec<(u8, u32)>,
 }
 
+impl Heap for Group {
+    fn heap(&self) -> usize {
+        self.slots.capacity() * 8
+    }
+}
+
 pub type Finding = (u32, i64, i64, &'static str, u32);
 
+#[derive(Clone)]
 struct Rx {
     lazy: Regex,
     async_sync: Regex,
@@ -75,6 +83,9 @@ pub struct Stats {
     pub findings_changed: usize,
     pub prepare_ms: f64,
     pub finish_ms: f64,
+    /// The findings that left (false) and came (true) in this step.
+    #[serde(skip)]
+    pub delta: Vec<(Finding, bool)>,
 }
 
 pub struct Prep {
@@ -83,15 +94,22 @@ pub struct Prep {
     stats: Stats,
 }
 
+/// The rule's keyed state, every map layered (`lmap`) as `Dc`'s.
 pub struct Ef {
     rx: Rx,
-    surf_by_src: FxHashMap<Src, Vec<Surface>>,
-    surf_by_g: FxHashMap<G, Vec<Surface>>,
-    groups: FxHashMap<G, Group>,
-    groups_of_symbol: FxHashMap<u32, Vec<G>>,
-    eligible_by_f: FxHashMap<F, Vec<G>>,
-    find_by_f: FxHashMap<F, Vec<Finding>>,
-    find_by_src: FxHashMap<u32, Vec<Finding>>,
+    surf_by_src: LMap<Src, Vec<Surface>>,
+    surf_by_g: LMap<G, Vec<Surface>>,
+    groups: LMap<G, Group>,
+    groups_of_symbol: LMap<u32, Vec<G>>,
+    eligible_by_f: LMap<F, Vec<G>>,
+    find_by_f: LMap<F, Vec<Finding>>,
+    find_by_src: LMap<u32, Vec<Finding>>,
+}
+
+macro_rules! ef_maps {
+    ($m:ident) => {
+        $m!(surf_by_src, surf_by_g, groups, groups_of_symbol, eligible_by_f, find_by_f, find_by_src)
+    };
 }
 
 fn sq(s: u32) -> String {
@@ -99,6 +117,31 @@ fn sq(s: u32) -> String {
 }
 
 impl Ef {
+    /// A worktree's state over this (frozen) one.
+    pub fn view(&self) -> Ef {
+        macro_rules! v {
+            ($($f:ident),*) => { Ef { rx: self.rx.clone(), $($f: self.$f.view()),* } };
+        }
+        ef_maps!(v)
+    }
+
+    pub fn freeze(&mut self) {
+        macro_rules! fr {
+            ($($f:ident),*) => { $(self.$f.freeze();)* };
+        }
+        ef_maps!(fr);
+    }
+
+    /// Bytes of the top and of the top-most frozen layer; entries in the top.
+    pub fn bytes(&self) -> (usize, usize, usize) {
+        let (mut t, mut l, mut n) = (0, 0, 0);
+        macro_rules! b {
+            ($($f:ident),*) => { $( t += self.$f.top_bytes(); l += self.$f.layer_bytes(0); n += self.$f.top_len(); )* };
+        }
+        ef_maps!(b);
+        (t, l, n)
+    }
+
     pub fn scratch(f: &Facts) -> Ef {
         let rx = Rx {
             lazy: Regex::new("lazy").unwrap(),
@@ -110,7 +153,7 @@ impl Ef {
             connection: Regex::new("Connection$").unwrap(),
             handle: Regex::new("^(?:Sync|Async|Lazy).*(?:Transaction|SchemaTransaction|SessionHandle|VersionHandle)$").unwrap(),
         };
-        let mut ef = Ef { rx, surf_by_src: FxHashMap::default(), surf_by_g: FxHashMap::default(), groups: FxHashMap::default(), groups_of_symbol: FxHashMap::default(), eligible_by_f: FxHashMap::default(), find_by_f: FxHashMap::default(), find_by_src: FxHashMap::default() };
+        let mut ef = Ef { rx, surf_by_src: LMap::default(), surf_by_g: LMap::default(), groups: LMap::default(), groups_of_symbol: LMap::default(), eligible_by_f: LMap::default(), find_by_f: LMap::default(), find_by_src: LMap::default() };
         let mut sources = FxHashSet::default();
         for &s in f.roots_by_symbol.keys() {
             sources.insert(Src::Function(s));
@@ -236,17 +279,12 @@ impl Ef {
             for x in &old {
                 let g = (x.method, x.owner, x.base_name);
                 groups.insert(g);
-                let v = self.surf_by_g.get_mut(&g).unwrap();
-                let i = v.iter().position(|y| y == x).unwrap();
-                v.swap_remove(i);
-                if v.is_empty() {
-                    self.surf_by_g.remove(&g);
-                }
+                self.surf_by_g.pull(g, x);
             }
             for x in &new {
                 let g = (x.method, x.owner, x.base_name);
                 groups.insert(g);
-                self.surf_by_g.entry(g).or_default().push(x.clone());
+                self.surf_by_g.push(g, x.clone());
             }
             if let Src::Function(r) = s {
                 let fm: Vec<Finding> = new.iter().filter(|x| x.mixed).filter_map(|x| {
@@ -256,6 +294,7 @@ impl Ef {
                 let old = self.find_by_src.remove(&r).unwrap_or_default();
                 if old != fm {
                     stats.findings_changed += 1;
+                    note(&mut stats.delta, &old, &fm);
                 }
                 if !fm.is_empty() {
                     self.find_by_src.insert(r, fm);
@@ -270,31 +309,21 @@ impl Ef {
         for g in groups {
             if let Some(old) = self.groups.remove(&g) {
                 for (_, s) in &old.slots {
-                    let v = self.groups_of_symbol.get_mut(s).unwrap();
-                    let i = v.iter().position(|y| *y == g).unwrap();
-                    v.swap_remove(i);
-                    if v.is_empty() {
-                        self.groups_of_symbol.remove(s);
-                    }
+                    self.groups_of_symbol.pull(*s, &g);
                 }
                 let fk = (g.0, g.2, old.implementations);
-                if let Some(v) = self.eligible_by_f.get_mut(&fk) {
-                    if let Some(i) = v.iter().position(|y| *y == g) {
-                        v.swap_remove(i);
-                        if v.is_empty() {
-                            self.eligible_by_f.remove(&fk);
-                        }
-                    }
+                if self.eligible_by_f.at(&fk).contains(&g) {
+                    self.eligible_by_f.pull(fk, &g);
                 }
                 fams.insert(fk);
             }
             if let Some(new) = self.group(f, g) {
                 for (_, s) in &new.slots {
-                    self.groups_of_symbol.entry(*s).or_default().push(g);
+                    self.groups_of_symbol.push(*s, g);
                 }
                 let fk = (g.0, g.2, new.implementations);
                 if self.eligible(f, g, &new) {
-                    self.eligible_by_f.entry(fk).or_default().push(g);
+                    self.eligible_by_f.push(fk, g);
                 }
                 fams.insert(fk);
                 self.groups.insert(g, new);
@@ -306,6 +335,7 @@ impl Ef {
             let old = self.find_by_f.remove(&fk).unwrap_or_default();
             if old != new {
                 stats.findings_changed += 1;
+                note(&mut stats.delta, &old, &new);
             }
             if !new.is_empty() {
                 self.find_by_f.insert(fk, new);
@@ -464,7 +494,7 @@ impl Ef {
     /// `ef__families.family` of every selected family (checked against the dump's stage).
     pub fn families(&self) -> Vec<String> {
         let mut out = Vec::new();
-        for (fk, gs) in &self.eligible_by_f {
+        for (fk, gs) in self.eligible_by_f.iter() {
             let mut gs: Vec<(String, G)> = gs.iter().map(|g| (sq(g.1), *g)).collect();
             gs.sort();
             for (i, (owner, g)) in gs.iter().enumerate() {

@@ -7,7 +7,8 @@
 //! Every table is a multiset of rows (the dump's counts); indexes hold the rows that are present
 //! (count > 0). `classify` turns a delta into presence changes before it is applied, so a rule can
 //! read the old state for its scoping; `apply` then updates the tables.
-use rustc_hash::{FxHashMap, FxHashSet};
+use crate::lmap::{Heap, LMap};
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 
 // ---- one interner (Graph::sym / Graph::str in the shared contract)
@@ -278,7 +279,7 @@ impl EfDef {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct Import {
     pub module: u32,
     pub name: u32,
@@ -286,7 +287,7 @@ pub struct Import {
     pub symbol_kind: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct Root {
     pub path: u32,
     pub module: u32,
@@ -304,69 +305,37 @@ pub struct Change {
     pub added: bool,
 }
 
-fn push<K: std::hash::Hash + Eq, V>(m: &mut FxHashMap<K, Vec<V>>, k: K, v: V) {
-    m.entry(k).or_default().push(v);
+pub fn at<'a, K: std::hash::Hash + Eq + Copy, V: Ord + Clone>(m: &'a LMap<K, Vec<V>>, k: &K) -> &'a [V] {
+    m.at(k)
 }
 
-fn pull<K: std::hash::Hash + Eq, V: PartialEq>(m: &mut FxHashMap<K, Vec<V>>, k: K, v: &V) {
-    let e = m.get_mut(&k).expect("index key");
-    let i = e.iter().position(|x| x == v).expect("index entry");
-    e.swap_remove(i);
-    if e.is_empty() {
-        m.remove(&k);
-    }
-}
+impl Heap for Def {}
 
-pub fn at<'a, K: std::hash::Hash + Eq, V>(m: &'a FxHashMap<K, Vec<V>>, k: &K) -> &'a [V] {
-    m.get(k).map_or(&[], Vec::as_slice)
+/// The elements of `old` not in `new` (false) and of `new` not in `old` (true).
+pub fn note<T: PartialEq + Clone>(delta: &mut Vec<(T, bool)>, old: &[T], new: &[T]) {
+    delta.extend(old.iter().filter(|x| !new.contains(x)).map(|x| (x.clone(), false)));
+    delta.extend(new.iter().filter(|x| !old.contains(x)).map(|x| (x.clone(), true)));
 }
+impl Heap for EfDef {}
 
+/// The row multisets of a dump (the dataflow's tables), for `classify`: Y3's symbol table emits
+/// presence changes itself; a dump carries counted row deltas.
 #[derive(Default)]
-pub struct Facts {
+pub struct Counts {
     counts: FxHashMap<(Tab, Row), i32>,
-    // definitions
-    pub defs: FxHashMap<u32, Def>,
-    pub by_pos: FxHashMap<Pos, u32>,
-    pub by_module: FxHashMap<u32, Vec<u32>>,
-    pub by_module_name: FxHashMap<(u32, u32), Vec<u32>>,
-    pub by_module_class: FxHashMap<(u32, u32), Vec<u32>>,
-    pub methods_by_class: FxHashMap<u32, Vec<u32>>,
-    pub methods_by_name: FxHashMap<u32, Vec<u32>>,
-    pub functions_by_module_base: FxHashMap<(u32, u32), Vec<u32>>,
-    pub methods_by_class_base: FxHashMap<(u32, u32), Vec<u32>>,
-    pub by_fqname: FxHashMap<u32, Vec<u32>>,
-    pub classes_by_name: FxHashMap<u32, Vec<u32>>,
-    pub ef: FxHashMap<u32, EfDef>,
-    // reference graph (Y1's Graph: edges_from / edges_to)
-    pub refs_from: FxHashMap<Pos, Vec<Pos>>,
-    pub refs_to: FxHashMap<Pos, Vec<Pos>>,
-    // symbol table
-    pub bases_by_owner: FxHashMap<u32, Vec<u32>>,
-    pub bases_by_base: FxHashMap<u32, Vec<u32>>,
-    pub hier_by_owner: FxHashMap<u32, Vec<(u32, i64)>>,
-    pub hier_by_base: FxHashMap<u32, Vec<(u32, i64)>>,
-    pub public_by_owner: FxHashMap<u32, Vec<u32>>,
-    pub public_by_symbol: FxHashMap<u32, Vec<u32>>,
-    pub roots_by_symbol: FxHashMap<u32, Vec<Root>>,
-    pub imports_by_target: FxHashMap<u32, Vec<Import>>,
-    pub imports_by_module_name: FxHashMap<(u32, u32), Vec<Import>>,
-    pub resolved_by_fq: FxHashMap<u32, Vec<u32>>,
-    pub resolved_by_symbol: FxHashMap<u32, Vec<u32>>,
-    pub ann_by_symbol: FxHashMap<u32, Vec<u32>>,
-    pub ann_by_name: FxHashMap<u32, Vec<u32>>,
-    pub module_names: FxHashMap<u32, Vec<u32>>,
-    pub module_name_set: FxHashSet<(u32, u32)>,
-    // per-content probes
-    pub probe: FxHashMap<Pos, (bool, bool)>,
-    pub dyn_fq: FxHashMap<u32, u32>,
 }
 
-impl Facts {
+impl Counts {
     pub fn rows(&self) -> usize {
         self.counts.len()
     }
 
-    /// Presence changes `delta` makes, against the current state (nothing applied).
+    /// Every row present (count > 0).
+    pub fn present(&self) -> impl Iterator<Item = (Tab, &Row)> {
+        self.counts.iter().filter(|(_, c)| **c > 0).map(|((t, r), _)| (*t, r))
+    }
+
+    /// Presence changes `delta` makes, against the current counts (nothing applied).
     pub fn classify(&self, delta: &[(Tab, Row, i32)]) -> Vec<Change> {
         let mut net: FxHashMap<(Tab, &Row), i32> = FxHashMap::default();
         for (t, r, d) in delta {
@@ -383,13 +352,11 @@ impl Facts {
                 out.push(Change { tab: t, row: r.clone(), added: c == 0 });
             }
         }
-        // Removals first: a definition replaced at the same id leaves before it re-enters.
-        out.sort_by_key(|c| c.added);
+        sort_changes(&mut out);
         out
     }
 
-    /// Apply `delta`; its presence changes were `changes` (from `classify` on this state).
-    pub fn apply(&mut self, delta: &[(Tab, Row, i32)], changes: &[Change]) {
+    pub fn apply(&mut self, delta: &[(Tab, Row, i32)]) {
         for (t, r, d) in delta {
             let k = (*t, r.clone());
             let c = self.counts.entry(k.clone()).or_default();
@@ -398,24 +365,115 @@ impl Facts {
                 self.counts.remove(&k);
             }
         }
+    }
+}
+
+/// Removals first: a definition replaced at the same id leaves before it re-enters.
+pub fn sort_changes(ch: &mut [Change]) {
+    ch.sort_by_key(|c| c.added);
+}
+
+/// One worktree's inputs, each index a layered map (`lmap`): the base's, its cluster's overlay,
+/// its own difference.
+#[derive(Default)]
+pub struct Facts {
+    // definitions
+    pub defs: LMap<u32, Def>,
+    pub by_pos: LMap<Pos, u32>,
+    pub by_module: LMap<u32, Vec<u32>>,
+    pub by_module_name: LMap<(u32, u32), Vec<u32>>,
+    pub by_module_class: LMap<(u32, u32), Vec<u32>>,
+    pub methods_by_class: LMap<u32, Vec<u32>>,
+    pub methods_by_name: LMap<u32, Vec<u32>>,
+    pub functions_by_module_base: LMap<(u32, u32), Vec<u32>>,
+    pub methods_by_class_base: LMap<(u32, u32), Vec<u32>>,
+    pub by_fqname: LMap<u32, Vec<u32>>,
+    pub classes_by_name: LMap<u32, Vec<u32>>,
+    pub ef: LMap<u32, EfDef>,
+    // reference graph (from Y1's maintained graph, by position)
+    pub refs_from: LMap<Pos, Vec<Pos>>,
+    pub refs_to: LMap<Pos, Vec<Pos>>,
+    // symbol table
+    pub bases_by_owner: LMap<u32, Vec<u32>>,
+    pub bases_by_base: LMap<u32, Vec<u32>>,
+    pub hier_by_owner: LMap<u32, Vec<(u32, i64)>>,
+    pub hier_by_base: LMap<u32, Vec<(u32, i64)>>,
+    pub public_by_owner: LMap<u32, Vec<u32>>,
+    pub public_by_symbol: LMap<u32, Vec<u32>>,
+    pub roots_by_symbol: LMap<u32, Vec<Root>>,
+    pub imports_by_target: LMap<u32, Vec<Import>>,
+    pub imports_by_module_name: LMap<(u32, u32), Vec<Import>>,
+    pub resolved_by_fq: LMap<u32, Vec<u32>>,
+    pub resolved_by_symbol: LMap<u32, Vec<u32>>,
+    pub ann_by_symbol: LMap<u32, Vec<u32>>,
+    pub ann_by_name: LMap<u32, Vec<u32>>,
+    pub module_names: LMap<u32, Vec<u32>>,
+    // per-content probes
+    pub probe: LMap<Pos, (bool, bool)>,
+    pub dyn_fq: LMap<u32, u32>,
+}
+
+/// Every field of `Facts`, for the layer operations.
+macro_rules! each_index {
+    ($m:ident) => {
+        $m!(defs, by_pos, by_module, by_module_name, by_module_class, methods_by_class, methods_by_name, functions_by_module_base, methods_by_class_base, by_fqname, classes_by_name, ef, refs_from, refs_to, bases_by_owner, bases_by_base, hier_by_owner, hier_by_base, public_by_owner, public_by_symbol, roots_by_symbol, imports_by_target, imports_by_module_name, resolved_by_fq, resolved_by_symbol, ann_by_symbol, ann_by_name, module_names, probe, dyn_fq)
+    };
+}
+
+impl Facts {
+    /// Apply presence changes (removals before additions, as `sort_changes` orders them).
+    pub fn apply(&mut self, changes: &[Change]) {
         for ch in changes {
             self.index(ch.tab, &ch.row, ch.added);
         }
     }
 
-    /// Load a snapshot (every row with its count).
-    pub fn load(&mut self, rows: Vec<(Tab, Row, i32)>) {
-        let ch = self.classify(&rows);
-        self.apply(&rows, &ch);
+    /// A worktree over these (frozen) layers.
+    pub fn view(&self) -> Facts {
+        macro_rules! v {
+            ($($f:ident),*) => { Facts { $($f: self.$f.view()),* } };
+        }
+        each_index!(v)
+    }
+
+    /// The top becomes a frozen layer (the base, or a cluster's overlay).
+    pub fn freeze(&mut self) {
+        macro_rules! fr {
+            ($($f:ident),*) => { $(self.$f.freeze();)* };
+        }
+        each_index!(fr);
+    }
+
+    /// Bytes of the top (the worktree's difference) and of the top-most frozen layer.
+    pub fn bytes(&self) -> (usize, usize) {
+        let (mut t, mut l) = (0, 0);
+        macro_rules! b {
+            ($($f:ident),*) => { $( t += self.$f.top_bytes(); l += self.$f.layer_bytes(0); )* };
+        }
+        each_index!(b);
+        (t, l)
+    }
+
+    /// Per index: (bytes, entries) of the top, or with `layer` of the top-most frozen layer.
+    pub fn by_index(&self, layer: bool) -> serde_json::Value {
+        let mut m = serde_json::Map::new();
+        macro_rules! b {
+            ($($f:ident),*) => { $(
+                let v = if layer { (self.$f.layer_bytes(0), self.$f.layers().first().map_or(0, |l| l.len())) } else { (self.$f.top_bytes(), self.$f.top_len()) };
+                m.insert(stringify!($f).into(), serde_json::json!(v));
+            )* };
+        }
+        each_index!(b);
+        serde_json::Value::Object(m)
     }
 
     fn index(&mut self, t: Tab, r: &[Val], add: bool) {
         macro_rules! ix {
             ($m:expr, $k:expr, $v:expr) => {
                 if add {
-                    push(&mut $m, $k, $v)
+                    $m.push($k, $v)
                 } else {
-                    pull(&mut $m, $k, &$v)
+                    $m.pull($k, &$v)
                 }
             };
         }
@@ -457,11 +515,6 @@ impl Facts {
             Tab::ModuleNames => {
                 let (m, n) = (r[0].s(), r[1].s());
                 ix!(self.module_names, m, n);
-                if add {
-                    self.module_name_set.insert((m, n));
-                } else {
-                    self.module_name_set.remove(&(m, n));
-                }
             }
             Tab::Probe => {
                 let p = (r[0].s(), r[1].i());
@@ -473,14 +526,13 @@ impl Facts {
             }
             Tab::Dyn => {
                 if let Some(fq) = r[3].os() {
-                    let c = self.dyn_fq.entry(fq).or_default();
+                    let c = self.dyn_fq.get(&fq).copied().unwrap_or(0);
                     if add {
-                        *c += 1;
+                        self.dyn_fq.insert(fq, c + 1);
+                    } else if c == 1 {
+                        self.dyn_fq.remove(&fq);
                     } else {
-                        *c -= 1;
-                        if *c == 0 {
-                            self.dyn_fq.remove(&fq);
-                        }
+                        self.dyn_fq.insert(fq, c - 1);
                     }
                 }
             }
