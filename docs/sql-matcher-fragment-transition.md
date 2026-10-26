@@ -1572,3 +1572,12 @@ This round retains immutable Python lookup facts, single-pass import-chain prepa
 It rejects the explicit-global guard and the cache-bypassing utility shortcut.
 The runtime has one implementation path; diagnostic observers and rejected implementations remain only as reproducible benchmark patches.
 The next structural target is the remaining control work, rather than another per-leaf cache or allocation change.
+
+### Proposed replacement plan, 2026-10-26
+
+[The structural execution plan](sql-structural-execution-plan.md) defines the next compiler and execution shape.
+It proposes finding-set semantics, typed fact relations, shared local program groups, and SQL composition.
+Its first complete family contains ASYNC210, ASYNC221, ASYNC222, and ASYNC230, including argument and binding conditions.
+Converted families must execute without the cohort interpreter before they count as complete.
+The plan records concrete schemas, SQL, materialization rules, statement budgets, integration boundaries, and phase gates.
+This is a design change proposal. This entry changes no runtime behavior and claims no new performance result.
