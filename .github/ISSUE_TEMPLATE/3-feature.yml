@@ -1,6 +1,7 @@
 name: Feature request
 description: Something Rerail doesn't do yet.
 labels: [enhancement, needs-triage]
+type: Feature
 body:
   - type: markdown
     attributes:

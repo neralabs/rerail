@@ -1,6 +1,7 @@
 name: Coding agent, language or linter support
 description: Ask for Rerail to support a coding agent, a language, or a linter's rules.
 labels: [enhancement, integration, needs-triage]
+type: Feature
 body:
   - type: markdown
     attributes:
