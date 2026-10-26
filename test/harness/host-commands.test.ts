@@ -240,7 +240,7 @@ describe("/rerail-uninstall", () => {
     const detach = vi.fn();
     const { run, notices, selections } = commandHarness({ detach }, "Cancel");
     await run("rerail-uninstall");
-    expect(selections).toEqual([["Yes, remove Rerail", "Just stop it in this repo (/rerail-stop)", "Cancel"]]);
+    expect(selections).toEqual([["Yes, remove Rerail", "Only stop it in this repo", "Cancel"]]);
     expect(detach).not.toHaveBeenCalled();
     expect(notices).toEqual([]);
   });
