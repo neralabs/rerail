@@ -25,6 +25,7 @@ import { checkRegistry, runNpm } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
+import { pinnedNodePath } from "./node-path.js";
 
 export const DEFAULT_UPDATE_CHANNEL = "latest";
 
@@ -495,10 +496,22 @@ export class ManagedUpdater {
     }
   }
 
+  /**
+   * Write the launcher again for the active install, naming the node this process runs on; true when that changed
+   * it. `install --refresh` runs it with the hooks, so a launcher that recorded a node since upgraded or removed
+   * stops falling back to whichever `node` PATH has. Where no install wrote a launcher there is nothing to refresh.
+   */
+  async refreshLauncher(): Promise<boolean> {
+    const before = await readFile(this.launcherPath, "utf8").catch(() => undefined);
+    if (before === undefined) return false;
+    await this.syncLauncher((await this.readState()).current);
+    return await readFile(this.launcherPath, "utf8") !== before;
+  }
+
   /** Re-point `current` and refresh the platform launcher without changing registrations. */
   private async syncLauncher(installation: Installation): Promise<void> {
     await this.syncCurrentLink(resolve(installation.packageRoot));
-    const shim = launcherShim(this.currentLink, process.execPath, this.platform);
+    const shim = launcherShim(this.currentLink, pinnedNodePath(), this.platform);
     const current = await readFile(this.launcherPath, "utf8").catch(() => undefined);
     if (current === shim) return;
     await mkdir(dirname(this.launcherPath), { recursive: true, mode: 0o700 });
