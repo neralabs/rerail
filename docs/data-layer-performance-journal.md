@@ -4472,3 +4472,19 @@ A closed workspace regression sets a 32-byte source allowance and supplies three
 Its complete empty gate must avoid source hydration; the old executor reports a repository input-budget failure.
 The correction queues source-free metadata and hydrates source only after admission.
 A nonempty clause must still enforce the unchanged cumulative source allowance.
+
+The admission addon passes all 47 production-shape tests and all 194 workspace unit tests.
+The core DSL run passes 1,338 tests, with 23 explicit ignored cases.
+The refreshed original batch 1–5 corpus and supplemental controls pass all 1,236 replays on both paths.
+The admission addon hash is `cbcd50c7616fa3b20458b75f2b0fbe8da830a2a36caeb62b7660f1333ba4372d`.
+
+A separate conditional-rule ingestion sample records 266 active native observations, all inside candidate SQLite execution.
+Record comparison and B-tree seeks dominate that interval. These are sampled observations, not CPU percentages.
+The sample is `quality-ingestion.sample.txt` beneath the recovery-completion evidence directory.
+A statement-only profiler regression reproduces unwanted candidate database copies in an AST-index capture.
+The new diagnostic switch disables replay copies while preserving statement counters and coverage.
+This switch controls instrumentation only; production execution has one algorithm.
+
+The candidate compiler also loses known empty scopes after contradictory kind constraints.
+A new regression requires an impossible structural branch to construct no decoder or source producers.
+This is exact empty-demand propagation, not a broader candidate superset or a changed matching contract.

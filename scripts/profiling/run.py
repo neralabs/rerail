@@ -74,6 +74,9 @@ def execute(args, command, output, deadline):
         env["RERAIL_PROFILE_SQL_WORKING_SET"] = "1"
     env.pop("RERAIL_SQL_QUERY_PLANS", None)
     env.pop("RERAIL_SQL_PROFILE_DIR", None)
+    env.pop("RERAIL_SQL_PROFILE_REPLAY", None)
+    if getattr(args, "sql_trace_only", False):
+        env["RERAIL_SQL_PROFILE_REPLAY"] = "0"
     if args.sql_profile:
         raw = output / "sql" / "raw"
         raw.mkdir(parents=True)
@@ -153,6 +156,7 @@ def main():
     parser.add_argument("--sql-working-set", action="store_true", help="Expensive SQL object/page census at stage boundaries; requires --trace on")
     parser.add_argument("--query-plans", action="store_true", help="Record SQLite EXPLAIN QUERY PLAN for materialized stages (requires tracing)")
     parser.add_argument("--sql-profile", action="store_true", help="Capture every executed relational SQLite statement, plans, bytecode, counters and HTML report (requires code-rule-profile)")
+    parser.add_argument("--sql-trace-only", action="store_true", help="Capture SQL statements without candidate replay database copies; requires --sql-profile")
     parser.add_argument("--sample-every", type=float, default=6)
     parser.add_argument("--sample-count", type=int, default=4)
     parser.add_argument("--sample-seconds", type=int, default=1)
@@ -177,6 +181,8 @@ def main():
         parser.error("--batch-files must be between 1 and 2048")
     if args.memory_tool != "none" and sys.platform != "darwin":
         parser.error("External memory snapshots currently require macOS")
+    if args.sql_trace_only and not args.sql_profile:
+        parser.error("--sql-trace-only requires --sql-profile")
     if args.sql_working_set and args.trace != "on":
         parser.error("--sql-working-set requires --trace on")
     if args.query_plans and args.trace != "on":
@@ -247,7 +253,7 @@ def main():
     report = {"version": 1, "command": command, "elapsedSeconds": time.monotonic() - started,
               "exitCode": code, "timedOut": timed_out, "deadlineSeconds": args.deadline,
               "targetExitCode": code, "targetTimedOut": timed_out,
-              "trace": args.trace, "sqlWorkingSet": args.sql_working_set, "external": args.external, "queryPlans": args.query_plans, "sqlProfile":args.sql_profile,
+              "trace": args.trace, "sqlWorkingSet": args.sql_working_set, "external": args.external, "queryPlans": args.query_plans, "sqlProfile":args.sql_profile, "sqlTraceOnly":args.sql_trace_only,
               "memoryCensus": args.memory_census, "memoryTool": args.memory_tool, "batchFiles": args.batch_files,
               "sampleModules":args.sample_module or ["rerail_engine"],
               "host": {"platform": platform.platform(), "cpu": platform.processor(), "python": platform.python_version(),

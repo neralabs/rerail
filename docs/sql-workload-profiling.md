@@ -73,7 +73,11 @@ Unset this variable for complete captures and for performance measurements.
 
 The candidate index also supports input-complete SQL captures.
 The [preparation design](sql-preparation-architecture.md) and [spikes](sql-preparation-spikes.md) describe their purpose.
-Each SQL-profile capture writes `candidate-*.json` and matching SQLite snapshots beneath `sql/raw/`.
+By default, SQL-profile capture writes `candidate-*.json` and matching SQLite snapshots beneath `sql/raw/`.
+For large workload diagnosis, add `--sql-trace-only` to capture statements without these replay copies.
+This mode retains SQL plans, counters, and statement coverage. It cannot supply standalone candidate replay databases.
+The equivalent direct-run environment setting is `RERAIL_SQL_PROFILE_REPLAY=0`.
+Use separate bounded replay captures when database contents are required.
 Snapshots contain the selected source, packed facts, indexes, and retained property state before candidate execution.
 The JSON files contain generated SQL, typed parameters, logical relation identities, and file identities.
 They do not contain JSON AST rows.

@@ -349,6 +349,17 @@ Total number in stack (recursive counted multiple, when >=5):
             self.assertEqual(result.returncode, 124, result.stderr)
             self.assertTrue(json.loads((output / "profile.json").read_text())["timedOut"])
 
+    def test_statement_only_capture_controls_replay_without_losing_sql_capture(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "run"
+            result = subprocess.run([sys.executable, str(PROFILING / "run.py"), "--output", str(output),
+                "--deadline", "5", "--trace", "off", "--sql-profile", "--sql-trace-only", "--", sys.executable,
+                "-c", "import json,os;print(json.dumps([os.getenv('RERAIL_SQL_PROFILE_REPLAY'), bool(os.getenv('RERAIL_SQL_PROFILE_DIR'))]))"],
+                capture_output=True, timeout=8)
+            self.assertEqual(result.returncode, 1, result.stderr)  # The Python target has no SQL instrumentation.
+            self.assertEqual(json.loads((output / "stdout.log").read_text()), ["0", True])
+            self.assertTrue(json.loads((output / "profile.json").read_text())["sqlTraceOnly"])
+
     def test_sql_capture_requires_instrumented_execution_and_clears_inherited_capture(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
