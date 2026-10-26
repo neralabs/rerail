@@ -45,8 +45,21 @@ FIELD_KEY = {"all": [field_key({"all": [{"not": NOT_PROPERTY_DEFINITION}]})]}
 IN_PARAMETERS = {"regex": "^", "inside": {"kind": "formal_parameters"}}
 FUNCTIONS = ("function_declaration", "function_expression", "arrow_function", "generator_function", "generator_function_declaration")
 ASYNC = {"has": token("^async$")}
-# A method's FunctionExpression: ESTree starts it at the parameters' `(`.
-METHOD_FUNCTION = {"kind": "formal_parameters", "inside": {"kind": "method_definition"}}
+
+
+def method_function(method):
+    """A `method`'s FunctionExpression: ESTree starts it at the parameters' `(`, or at a generic method's type parameters."""
+    return {"any": [{"kind": "formal_parameters", "not": {"follows": {"regex": "^<"}}, "inside": {"kind": "method_definition", **method}},
+                    {"kind": "type_parameters", "inside": {"kind": "method_definition", **method}}]}
+
+
+# TypeScript types holding an `import('m')` (a TSImportType, not an ImportExpression): tree-sitter reads it as a call.
+TYPE_CONTEXT = {"inside": {"stopBy": "end", "any": [
+    *kinds("type_annotation", "type_query", "type_arguments", "type_alias_declaration", "union_type", "intersection_type", "generic_type",
+           "lookup_type", "array_type", "parenthesized_type", "tuple_type", "conditional_type", "index_type_query", "constraint", "default_type",
+           "implements_clause", "extends_type_clause", "type_predicate", "opting_type_annotation", "omitting_type_annotation",
+           "asserts_annotation", "readonly_type", "optional_type", "rest_type", "function_type"),
+    {"follows": token("^(?:as|satisfies)$")}]}}
 KEYWORDS = ("abstract boolean break byte case catch char class const continue debugger default delete do double else enum export "
             "extends false final finally float for function goto if implements import in instanceof int interface long native new "
             "null package private protected public return short static super switch synchronized this throw throws transient true "
@@ -93,11 +106,10 @@ FEATURES = {
         {"kind": "export_specifier", "has": {"field": "name", "kind": "string"}, "not": {"has": {"field": "alias", "regex": "^"}}},
     ]}},
     # Async functions; an async method's FunctionExpression.
-    "no-async-functions": {"rule": {"any": [{"any": kinds(*FUNCTIONS), **ASYNC},
-                                            {**METHOD_FUNCTION, "inside": {"kind": "method_definition", **ASYNC}}]}},
+    "no-async-functions": {"rule": {"any": [{"any": kinds(*FUNCTIONS), **ASYNC}, method_function(ASYNC)]}},
     # Async generators, and for await.
     "no-async-iteration": {"rule": {"any": [{"any": kinds("generator_function", "generator_function_declaration"), **ASYNC},
-                                            {**METHOD_FUNCTION, "inside": {"kind": "method_definition", "all": [ASYNC, {"has": token(r"^\*$")}]}},
+                                            method_function({"all": [ASYNC, {"has": token(r"^\*$")}]}),
                                             {"kind": "for_in_statement", "has": token("^await$")}]}},
     # A number (not a BigInt) written 0b.
     "no-binary-numeric-literals": {"rule": {"kind": "number", "regex": "^0[bB]", "not": {"regex": "n$"}}},
@@ -140,7 +152,8 @@ FEATURES = {
         {"inside": {"kind": "variable_declarator", "field": "name"}},
         {"inside": {"kind": "for_in_statement", "field": "left"}},
     ]}]}},
-    "no-dynamic-import": {"rule": {"kind": "call_expression", "has": {"field": "function", "kind": "import"}}},
+    # An import() call; in TypeScript, not one in a type.
+    "no-dynamic-import": {"rule": {"kind": "call_expression", "has": {"field": "function", "kind": "import"}, "not": TYPE_CONTEXT}},
     "no-exponential-operators": {"rule": {"any": [{"kind": "binary_expression", "has": {"field": "operator", "regex": r"^\*\*$"}},
                                                   {"kind": "augmented_assignment_expression", "has": {"field": "operator", "regex": r"^\*\*=$"}}]}},
     "no-export-ns-from": {"rule": {"kind": "export_statement", "has": {"kind": "namespace_export"}}},
@@ -149,8 +162,9 @@ FEATURES = {
         "any": kinds("function_declaration", "generator_function_declaration"), "inside": {"any": kinds("if_statement", "else_clause")}}},
     # Generators; a generator method's FunctionExpression.
     "no-generators": {"rule": {"any": [{"any": kinds("generator_function", "generator_function_declaration")},
-                                       {**METHOD_FUNCTION, "inside": {"kind": "method_definition", "has": token(r"^\*$")}}]}},
-    "no-hashbang": {"rule": {"kind": "hash_bang_line"}},
+                                       method_function({"has": token(r"^\*$")})]}},
+    # typescript-estree keeps no Shebang comment, so es-x reports a hashbang in JavaScript only.
+    "no-hashbang": {"rule": {"kind": "hash_bang_line"}, "file": {"path": {"notRegex": r"\.[cm]?tsx?$"}}},
     "no-import-meta": {"rule": {"kind": "meta_property", "regex": "^import"}},
     # The initializer of a `for (var x = init in o)` head.
     "no-initializers-in-for-in": {"rule": unparenthesized_in({"kind": "for_in_statement", "field": "value"})},

@@ -11,7 +11,9 @@ it, what iterateGlobalReferences does for globals that the tracker leaves out:
 - values pass through `a || b`, `a && b`, `a ?? b`, a conditional's branches, a sequence's last expression and the
   TypeScript wrappers (isPassThrough), and through every assignment (`a ||= b`) and every reference of a variable
   declared with them, reassigned or not;
-- `{ Map }` in an object literal is a reference.
+- `{ Map }` in an object literal is a reference, and so is a TypeScript type reference (`Promise<void>`, `let m: Map`),
+  as typescript-eslint's scope manager reads it; a member chain in a type query (`typeof Array.from`) or a JSX name is
+  not followed.
 The tracker mode (strict, es-x's default) only decides ES module imports, which a global trace does not read.
 """
 import os
@@ -204,10 +206,12 @@ CAUSE_PROPERTY = {"any": [{"kind": "pair", "has": {"field": "key", **key_named("
                           {"kind": "shorthand_property_identifier", "regex": "^cause$"},
                           {"kind": "method_definition", "has": {"field": "name", **key_named("^cause$")}}]}
 
-# The member chain naming a JSX element: under the `name` field of a node starting with `<` (the opening, closing or
-# self-closing element; JSX kinds are not the TypeScript grammar's, so they are not named). A closing element's name
-# is no reference at all.
-JSX_NAME = {"any": [{"inside": {"field": "name", "regex": "^<"}}, {"inside": {"kind": "member_expression", "field": "object", "matches": "jsx-name"}}]}
+# A member chain the tracker does not follow, being no MemberExpression: one naming a JSX element (under the `name`
+# field of a node starting with `<`: the opening, closing or self-closing element) or a TypeScript type query's
+# (`typeof Array.from` in a type, a TSQualifiedName; a typeof node that is no unary_expression). JSX kinds and type_query
+# are not every grammar's, so they are not named. A closing element's name is no reference at all.
+UNTRACED_CHAIN = {"any": [{"inside": {"field": "name", "regex": "^<"}}, {"inside": {"regex": "^typeof\\b", "not": {"kind": "unary_expression"}}},
+                          {"inside": {"kind": "member_expression", "field": "object", "matches": "untraced-chain"}}]}
 JSX_CLOSING_NAME = {"any": [{"inside": {"field": "name", "regex": "^</"}}, {"inside": {"kind": "member_expression", "field": "object", "matches": "jsx-closing-name"}}]}
 
 def cause_arguments(index):
@@ -257,10 +261,10 @@ def feature(rule_id):
             rule = {"all": [{"any": alts}, {"matches": "heritage"}]}
         else:
             rule = {"any": alts}
-    # A member chain naming a JSX element (`<Array.from />`) is a JSXMemberExpression, which the tracker does not follow.
-    utils["jsx-name"] = JSX_NAME
+    # Member reports in a JSX name (`<Array.from />`) or a type query, which the tracker does not follow.
+    utils["untraced-chain"] = UNTRACED_CHAIN
     utils["jsx-closing-name"] = JSX_CLOSING_NAME
-    rule = {"all": [rule, {"not": {"any": [{"kind": "member_expression"}, {"kind": "subscript_expression"}], "matches": "jsx-name"}},
+    rule = {"all": [rule, {"not": {"any": [{"kind": "member_expression"}, {"kind": "subscript_expression"}], "matches": "untraced-chain"}},
                     {"not": {"matches": "jsx-closing-name"}}]}
     utils, rule = scoped(rule_id.removeprefix("no-"), utils, rule)
     # global is Node's (globals.node); the ECMAScript globals are ecmaVersion latest's.
