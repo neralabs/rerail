@@ -349,6 +349,10 @@ table:
 
 Pack versions are managed with [changesets](https://github.com/changesets/changesets): a pull request that changes a
 pack adds a changeset (`npx changeset`) naming the pack's package and its bump, with a one-line summary for users.
+A change counts when it touches what the pack publishes: its `package.json` or a path its `files` lists (`pack.json`,
+`rules/`, `licenses/`, `LICENSE`, `NOTICE`, `README.md`); recordings, candidates and `CHANGELOG.md` do not. The
+**Changesets** job of `release-packs.yml` fails a pull request that changes what a pack publishes with no changeset
+of its own naming that pack (`missingChangesets` in `scripts/release/packs.mjs`); the Release pull request is exempt.
 `npm test` refuses a pending changeset that gives a pack below 1.0.0 a `minor` or `major` bump
 (`changesetBumpFailures` in `scripts/release/packs.mjs`), which `changeset version` would turn into 0.2.0 or 1.0.0.
 Nobody edits a pack's `version` or `CHANGELOG.md` by hand: `npx changeset version` applies the pending changesets,
