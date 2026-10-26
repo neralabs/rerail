@@ -45,6 +45,11 @@
 // the archive at RECORDING_CACHE/<sha256>.tar.zst and the gates read the tree it extracts. `upload` (and so `push`)
 // puts the selected tool-packs' recording archives there from RECORDING_CACHE too.
 //
+// The ESLint test set (ESLINT_TEST_SET), which the javascript and typescript packs' conformance check scores their
+// rules on, is one zip pinned here by its own sha256, at s3://nera-test-fixtures/rerail/archives/eslint-test-set/
+// <sha256>.zip. A pull of any tool-pack of those packs fetches it into ARCHIVE_CACHE beside their archives, verified;
+// the conformance runner extracts it (eslintTestSet).
+//
 // The consumers (the conformance runner, pack validation, the recorders and generators, the Rust tests) report a
 // missing file with missingPackFixture, so a checkout without the data says to pull instead of failing on ENOENT.
 // packs/<id>/upstream/<tool>/ keeps the rest in git: gates.yaml, recorders, UPSTREAM.md, goldens.tsv, recording.lock,
@@ -86,6 +91,19 @@ export const RECORDING_ARCHIVE = "recording.tar.zst";
 export const RECORDING_ARCHIVE_FORMAT = "rerail.port-readiness-recording-archive/v1";
 /** Every path in a recording archive is under one of these (the tree's layout, conformance/port-readiness/recording/). */
 export const RECORDING_TREE_ROOTS = Object.freeze(["answers/", "config/", "rules/", "texts/", "tool/", "verdicts/"]);
+
+/**
+ * The ESLint test set: real files from open-source history, each at the commit that introduced a violation of one
+ * ESLint rule, beside a copy with every finding of that rule fixed by hand, and ESLint's findings for the rule in each
+ * (built by benchmark-repos' `.lint/build-test-set.mjs`). The packs it scores are `packs`; a new set is a new zip in S3
+ * under its own sha256 and a new pin here, never an overwrite.
+ */
+export const ESLINT_TEST_SET = Object.freeze({
+  sha256: "dc8f2955ffd78ed9853b19a0aa10e976bf711be221195c171fbf62aceff90d41",
+  packs: Object.freeze(["javascript", "typescript"]),
+});
+/** Where the conformance runner extracts the ESLint test set: `<sha256>/` under it, holding the zip's tree. */
+export const ESLINT_TEST_SET_TREES = ".rerail/pack-data/eslint-test-set";
 
 /**
  * Where a contributor's code corpus and its ground truth go when the corpus is no public repository a pin can name:
@@ -700,6 +718,83 @@ function cacheArchive(root, toolPack, archive) {
   renameSync(`${cached}.partial`, cached);
 }
 
+/** The ESLint test set's S3 key, for the zip's sha256 `digest`. */
+export function eslintTestSetKey(digest) {
+  return `${ARCHIVE_PREFIX}eslint-test-set/${digest}.zip`;
+}
+
+/** Where a pull keeps that zip in the checkout at `root` (ARCHIVE_CACHE plus the key's own `eslint-test-set/<sha256>.zip`). */
+export function eslintTestSetCachePath(root, digest) {
+  return join(root, ARCHIVE_CACHE, eslintTestSetKey(digest).slice(ARCHIVE_PREFIX.length));
+}
+
+/** Whether any of the tool-packs `selected` belongs to a pack the ESLint test set `set` scores. */
+const scoresEslintTestSet = (selected, set) => selected.some((toolPack) => set.packs.includes(toolPack.pack));
+
+/**
+ * The pinned ESLint test set's zip in ARCHIVE_CACHE, as `{ path, source }`: a cached copy whose sha256 is the pin's
+ * decides; one that is not is deleted (left in place on a dry run), and the zip is fetched from S3 through a partial
+ * file that must have the pinned sha256 before it is kept. On a dry run that would fetch, `path` is undefined.
+ */
+export function eslintTestSetZip({ root = ROOT, set = ESLINT_TEST_SET, dryRun = false, aws = runAws, log = console.log } = {}) {
+  const key = eslintTestSetKey(set.sha256);
+  const cached = eslintTestSetCachePath(root, set.sha256);
+  let discarded;
+  if (existsSync(cached)) {
+    if (sha256(readFileSync(cached)) === set.sha256) return { path: cached, source: "cache" };
+    discarded = relative(root, cached);
+    if (!dryRun) rmSync(cached, { force: true });
+  }
+  if (dryRun) {
+    log(`${discarded === undefined ? "" : `would delete ${discarded}, which is not the pinned ESLint test set, and `}would fetch s3://${BUCKET}/${key} (the ESLint test set)`);
+    return { path: undefined, source: "S3" };
+  }
+  try {
+    requireAws(aws);
+  } catch (error) {
+    // As in pull: CI restores the zip from its cache with no credentials, so a cached copy that is not the pinned one is
+    // a poisoned or corrupt cache entry, which the next run would restore again.
+    if (discarded === undefined) throw error;
+    throw new Error(`${discarded} was not the pinned ESLint test set (a corrupt or poisoned cache entry) and was deleted, and S3 cannot be read here: ${error instanceof Error ? error.message : String(error)}. In CI, delete the Actions cache entry that restored it (gh cache delete <key>) and run the job again.`);
+  }
+  mkdirSync(dirname(cached), { recursive: true });
+  const partial = `${cached}.partial`;
+  rmSync(partial, { force: true });
+  try {
+    if (!download(aws, key, partial)) throw new Error(`the pinned ESLint test set s3://${BUCKET}/${key} is not in S3 (ESLINT_TEST_SET in scripts/s3/pack-fixtures.mjs)`);
+    const digest = sha256(readFileSync(partial));
+    if (digest !== set.sha256) throw new Error(`s3://${BUCKET}/${key} has sha256 ${digest}, not the pinned ${set.sha256}`);
+    renameSync(partial, cached);
+  } finally {
+    rmSync(partial, { force: true });
+  }
+  return { path: cached, source: "S3" };
+}
+
+/**
+ * The pinned ESLint test set's tree (the zip's `eslint-test-set/` directory, holding manifest.json), extracted into
+ * ESLINT_TEST_SET_TREES/<sha256>/ from the verified zip (eslintTestSetZip) the first time, through a partial directory
+ * renamed into place, so a tree that is there is a whole one.
+ */
+export function eslintTestSet({ root = ROOT, set = ESLINT_TEST_SET, aws = runAws, log = console.log } = {}) {
+  const directory = join(root, ESLINT_TEST_SET_TREES, set.sha256);
+  if (!existsSync(directory)) {
+    const { path } = eslintTestSetZip({ root, set, aws, log });
+    const partial = `${directory}.${process.pid}.partial`;
+    rmSync(partial, { recursive: true, force: true });
+    mkdirSync(partial, { recursive: true });
+    try {
+      const run = spawnSync("unzip", ["-q", path, "-d", partial], { encoding: "utf8", maxBuffer: 1 << 28 });
+      if (run.error !== undefined) throw run.error;
+      if (run.status !== 0) throw new Error(`unzip ${relative(root, path)} failed: ${lastLine(run.stderr) || `exit ${run.status}`}`);
+      renameSync(partial, directory);
+    } finally {
+      rmSync(partial, { recursive: true, force: true });
+    }
+  }
+  return join(directory, "eslint-test-set");
+}
+
 /**
  * Fetches the archive each selected tool-pack's test-data.lock names (from ARCHIVE_CACHE when a verified copy is there,
  * otherwise from S3 into it), verifies it against the lock, and extracts it into the tool directory. Every archive is
@@ -707,9 +802,10 @@ function cacheArchive(root, toolPack, archive) {
  * down, must be no symlink (nor may any pack test data in the tool directory be one). Untracked derived files the
  * archive lacks are deleted (a stale derivation); untracked authored ones are kept and reported. Then each tracked file
  * gets its own content back (its index copy, or the working-tree edit of one being edited), so a pull request's files
- * win over the archive's.
+ * win over the archive's. When a selected tool-pack's pack is one the ESLint test set (`testSet`) scores, its zip is
+ * put into ARCHIVE_CACHE too, verified (eslintTestSetZip); the conformance runner extracts it.
  */
-export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+export function pull({ root = ROOT, pack, tool, dryRun = false, testSet = ESLINT_TEST_SET, aws = runAws, log = console.log } = {}) {
   const selected = selectToolPacks(root, pack, tool);
   const locked = selected.map((toolPack) => ({ toolPack, lock: readLock(root, toolPack) }));
   let signedIn = false;
@@ -741,6 +837,8 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
     }
     fetched.push({ toolPack, lock, entries, source });
   }
+  const testSetZip = scoresEslintTestSet(selected, testSet) ? eslintTestSetZip({ root, set: testSet, dryRun, aws, log }) : undefined;
+  if (testSetZip?.path !== undefined) log(`the ESLint test set: ${relative(root, testSetZip.path).split(sep).join("/")} (${testSetZip.source})`);
   if (dryRun) {
     log(`dry run: ${fetched.length} of ${locked.length} archive(s) are in ${ARCHIVE_CACHE}; nothing was extracted`);
     return { toolPacks: [], restored: 0, kept: 0 };
@@ -779,7 +877,7 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
   }
   const result = snapshot.restore();
   if (snapshot.tracked.length > 0) log(`${result.restored} tracked file(s) keep their committed content and ${result.kept} their working-tree edit`);
-  return { toolPacks: fetched.map(({ toolPack, source }) => ({ ...toolPack, source })), ...result };
+  return { toolPacks: fetched.map(({ toolPack, source }) => ({ ...toolPack, source })), ...result, ...(testSetZip === undefined ? {} : { eslintTestSet: testSetZip.source }) };
 }
 
 /**
@@ -1253,13 +1351,22 @@ export function push({ root = ROOT, pack: packId, tool, dryRun = false, from, in
   return { changedLocks, uploaded, tracked };
 }
 
-/** CI's cache entry for the selected tool-packs' archives: its key (from the locked sha256s alone) and its paths. */
-export function archiveCache({ root = ROOT, pack: packId, tool } = {}) {
-  const locked = selectToolPacks(root, packId, tool).map((toolPack) => ({ toolPack, lock: readLock(root, toolPack) }));
+/**
+ * CI's cache entry for the selected tool-packs' archives, and the ESLint test set's zip when pull fetches it with them:
+ * its key (from the locked and pinned sha256s alone) and its paths.
+ */
+export function archiveCache({ root = ROOT, pack: packId, tool, testSet = ESLINT_TEST_SET } = {}) {
+  const selected = selectToolPacks(root, packId, tool);
+  const locked = selected.map((toolPack) => ({ toolPack, lock: readLock(root, toolPack) }));
+  const withTestSet = scoresEslintTestSet(selected, testSet);
   const key = locked.length === 1
-    ? `pack-test-data-${locked[0].toolPack.pack}-${locked[0].toolPack.tool}-${locked[0].lock.sha256}`
-    : `pack-test-data-${sha256(Buffer.from(locked.map(({ toolPack, lock }) => `${toolPack.directory} ${lock.sha256}\n`).join("")))}`;
-  return { key, paths: locked.map(({ toolPack, lock }) => relative(root, archiveCachePath(root, toolPack, lock.sha256)).split(sep).join("/")) };
+    ? `pack-test-data-${locked[0].toolPack.pack}-${locked[0].toolPack.tool}-${locked[0].lock.sha256}${withTestSet ? `-eslint-test-set-${testSet.sha256}` : ""}`
+    : `pack-test-data-${sha256(Buffer.from([...locked.map(({ toolPack, lock }) => `${toolPack.directory} ${lock.sha256}\n`), ...(withTestSet ? [`eslint-test-set ${testSet.sha256}\n`] : [])].join("")))}`;
+  const paths = [
+    ...locked.map(({ toolPack, lock }) => archiveCachePath(root, toolPack, lock.sha256)),
+    ...(withTestSet ? [eslintTestSetCachePath(root, testSet.sha256)] : []),
+  ];
+  return { key, paths: paths.map((path) => relative(root, path).split(sep).join("/")) };
 }
 
 /**
@@ -1267,8 +1374,9 @@ export function archiveCache({ root = ROOT, pack: packId, tool } = {}) {
  * recording.lock files name, asked with head-object alone (nothing is downloaded). Throws, listing each missing key with
  * its lock and the remedy, sorted by key, when S3 lacks any.
  */
-export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = console.log } = {}) {
-  const wanted = selectToolPacks(root, packId, tool).flatMap((toolPack) => {
+export function check({ root = ROOT, pack: packId, tool, testSet = ESLINT_TEST_SET, aws = runAws, log = console.log } = {}) {
+  const selected = selectToolPacks(root, packId, tool);
+  const wanted = selected.flatMap((toolPack) => {
     const push = `npm run fixtures:push -- --from <ref> --pack ${toolPack.pack} --tool ${toolPack.tool}`;
     const lock = readLock(root, toolPack);
     const archive = archiveKey(toolPack, lock.sha256);
@@ -1284,6 +1392,10 @@ export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = con
       }]),
     ];
   });
+  if (scoresEslintTestSet(selected, testSet)) {
+    const key = eslintTestSetKey(testSet.sha256);
+    wanted.push({ key, missing: `ESLINT_TEST_SET in scripts/s3/pack-fixtures.mjs pins s3://${BUCKET}/${key}, which S3 does not hold: a maintainer uploads the set's zip there with a conditional put (--if-none-match "*")` });
+  }
   requireAws(aws);
   const missing = wanted.filter(({ key }) => !objectExists(aws, key)).sort((a, b) => byBytes(a.key, b.key));
   if (missing.length > 0) {
@@ -1295,7 +1407,8 @@ export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = con
 }
 
 const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [--tool <tool>]] [--dry-run]
-  pull        fetch, verify and extract the archives the selected tool-packs' test-data.lock files name
+  pull        fetch, verify and extract the archives the selected tool-packs' test-data.lock files name, and for the
+              javascript and typescript packs the pinned ESLint test set's zip into ${ARCHIVE_CACHE}, verified
   push        maintainer: pack, then upload
               push --from <ref> [--replace] [--into <dir>]: archive a pull request's tracked pack test data from its
               commit (never checked out or run) over the archive its lock names, less the files its UPSTREAM.md no
@@ -1309,8 +1422,9 @@ const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [
               recordings push: maintainer: put those archives from ${RECORDING_CACHE} into S3 unless it holds them,
               read them back, and print the git add for the locks (no --dry-run)
   check       fail, listing each with its remedy, unless S3 holds every archive the selected tool-packs' locks name
-              (head-object only; nothing is downloaded)
-  cache       CI: the Actions cache key and paths for the selected tool-packs' archives, as JSON`;
+              and, for the packs it scores, the pinned ESLint test set (head-object only; nothing is downloaded)
+  cache       CI: the Actions cache key and paths for the selected tool-packs' archives (and the ESLint test set's zip
+              when pull fetches it), as JSON`;
 
 const COMMANDS = { pull, push, pack, upload, recordings, check, cache: (options) => console.log(JSON.stringify(archiveCache(options))) };
 /** Commands with a subcommand, as `<command> <subcommand>`. */

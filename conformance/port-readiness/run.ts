@@ -309,8 +309,8 @@ function method(manifest: PackManifest): GatesReport["method"] {
     },
     "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files and on each golden is read from the tool-pack's recording archive (each answer filed under this branch's upstream configuration and the rule, a test file's by its case's source and inputs, a golden's by the fetched file's task, path and sha256), recorded by the gates recorder at the pinned upstream" },
     "passes-conformance": {
-      check: "the pack contract's own check (test:conformance, conformance/languages/): the pack's fixtures tier over every rule, shipped or candidate, each in its own workspace as the check runs them",
-      fails: "an unexplained FP or FN on the fixtures (upstream's cases and Rerail's probes, after the pack's divergences.json), no true positive without pack.json examples, an engine failure, a stale divergence, or a pinned corpus whose recording does not cover the rule: what the check fails a shipped rule on",
+      check: "the pack contract's own check (test:conformance, conformance/languages/): the pack's fixtures tier, and for the javascript and typescript packs the ESLint test set, over every rule, shipped or candidate, each in its own workspace as the check runs them",
+      fails: "an unexplained FP or FN on the fixtures (upstream's cases and Rerail's probes) or on the ESLint test set (ESLint's findings on real files, none on their fixed copies), after the pack's divergences.json; no true positive without pack.json examples, an engine failure, a stale divergence, or a pinned corpus whose recording does not cover the rule: what the check fails a shipped rule on",
     },
   };
 }

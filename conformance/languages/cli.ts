@@ -3,7 +3,8 @@ import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { REPORTS_DIRECTORY, listPortedPacks, loadPack, PACKS_ROOT, RERAIL_ROOT } from "./pack.js";
 import { reportJson, type T4Report } from "./report.js";
-import { reportFailures, runPack } from "./runner.js";
+import { ESLINT_TEST_SET } from "../../scripts/s3/pack-fixtures.mjs";
+import { reportFailures, runPack, scoresEslintTestSet } from "./runner.js";
 
 const USAGE = `Language-pack rule conformance (T4).
 
@@ -11,15 +12,16 @@ const USAGE = `Language-pack rule conformance (T4).
   node --import tsx conformance/languages/cli.ts --check [--pack <name>]
 
   --pack <name>         pack under packs/<name>/ (or --pack-dir <dir>)
-  --fixtures            score the upstream rule fixtures only
-  --corpus <name>       score one pinned corpus (repeatable); with neither, fixtures and every corpus
+  --fixtures            score the upstream rule fixtures
+  --eslint-test-set     score the ESLint test set (the javascript and typescript packs; fetched from S3 once, verified)
+  --corpus <name>       score one pinned corpus (repeatable); with no source chosen, every source
   --corpus-root <dir>   corpora checkouts, <dir>/<corpus name>; default the nearest .rerail/corpora/<pack>
   --rule <id>           score one rule (repeatable); prints every FP and FN
   --write               write .rerail/reports/<pack>-t4-rules-<date>.json (gitignored)
   --date <YYYY-MM-DD>   report date (default today, UTC)
-  --check               CI gate: fixtures of every pack (or --pack); exit 1 on any unexplained FP/FN, engine
-                        failure, stale fixture divergence, recording error, or shipped port with no fixture TP
-                        and no pack.json examples`;
+  --check               CI gate: fixtures of every pack (or --pack), and the ESLint test set of the packs it scores;
+                        exit 1 on any unexplained FP/FN, engine failure, stale divergence, recording error, or
+                        shipped port with no fixture TP and no pack.json examples`;
 
 function formatRatio(value: number | null): string {
   return (value === null ? "-" : value.toFixed(3)).padStart(5);
@@ -60,6 +62,7 @@ async function main(): Promise<void> {
       pack: { type: "string" },
       "pack-dir": { type: "string" },
       fixtures: { type: "boolean", default: false },
+      "eslint-test-set": { type: "boolean", default: false },
       corpus: { type: "string", multiple: true, default: [] },
       "corpus-root": { type: "string" },
       rule: { type: "string", multiple: true },
@@ -82,16 +85,19 @@ async function main(): Promise<void> {
           ? listPortedPacks().map(name => join(PACKS_ROOT, name))
           : [];
   if (directories.length === 0) throw new Error(`--pack, --pack-dir or --check is required\n\n${USAGE}`);
-  if (values.check && (values.corpus.length > 0 || values.write)) throw new Error("--check runs the fixture tier only; it takes neither --corpus nor --write");
+  if (values.check && (values.corpus.length > 0 || values.write)) throw new Error("--check runs the fixtures and the ESLint test set only; it takes neither --corpus nor --write");
+  // With no source chosen, every source; --check chooses the fixtures and the ESLint test set.
+  const everySource = !values.check && !values.fixtures && !values["eslint-test-set"] && values.corpus.length === 0;
 
   let failed = false;
   for (const directory of directories) {
     const loaded = loadPack(directory);
-    const fixturesOnly = values.check || (values.fixtures && values.corpus.length === 0);
+    if (values["eslint-test-set"] && !scoresEslintTestSet(loaded)) throw new Error(`--eslint-test-set scores only the ${ESLINT_TEST_SET.packs.join(" and ")} packs, not ${loaded.pack.pack}`);
     const report = await runPack(loaded, {
       ...(values.rule === undefined ? {} : { rules: values.rule }),
-      fixtures: values.check || values.fixtures || values.corpus.length === 0,
-      corpora: fixturesOnly ? [] : values.corpus.length > 0 ? values.corpus : loaded.pack.corpora.map(corpus => corpus.name),
+      fixtures: values.check || values.fixtures || everySource,
+      eslintTestSet: values.check || values["eslint-test-set"] || everySource,
+      corpora: values.corpus.length > 0 ? values.corpus : everySource ? loaded.pack.corpora.map(corpus => corpus.name) : [],
       ...(values["corpus-root"] === undefined ? {} : { corpusRoot: resolve(values["corpus-root"]) }),
       date: values.date,
     });

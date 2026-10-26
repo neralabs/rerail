@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
 import { z } from "zod";
-import { isPackFixture, packFixtureAbsence, requirePackFixture } from "../../scripts/s3/pack-fixtures.mjs";
+import { ESLINT_TEST_SET, eslintTestSet, eslintTestSetKey, isPackFixture, packFixtureAbsence, requirePackFixture } from "../../scripts/s3/pack-fixtures.mjs";
 import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
 import {
   IGNORED_DIRECTORIES,
@@ -504,10 +504,103 @@ function ridesAlong(path: string): boolean {
   return /^(?:package\.json|(?:ts|js)config[^/]*\.json)$/.test(basename(path));
 }
 
+/** The ESLint test set as a source (scripts/s3/pack-fixtures.mjs, ESLINT_TEST_SET), as divergences and report rows name it. */
+export const ESLINT_TEST_SET_SOURCE = "eslint-test-set";
+
+/** Whether the ESLint test set scores the pack's rules. */
+export function scoresEslintTestSet(loaded: LoadedPack): boolean {
+  return ESLINT_TEST_SET.packs.includes(loaded.pack.pack);
+}
+
+const testSetManifestSchema = z.object({
+  schema: z.literal("nera.eslint-test-set/v1"),
+  tools: z.object({ eslint: z.string() }),
+  entries: z.array(z.object({ file: z.string() })),
+});
+const testSetEntrySchema = z.object({
+  file: z.string(),
+  /** The same file with every finding of the rule fixed by hand: ESLint reports nothing for the rule in it. */
+  fixed: z.string().nullable(),
+  rule: z.string(),
+  rerailRule: z.string(),
+  pack: z.string(),
+  eslint: z.object({ findings: z.array(z.object({ line: z.number().int().positive(), column: z.number().int().positive() })) }),
+});
+type TestSetEntry = z.infer<typeof testSetEntrySchema>;
+
+/**
+ * The ESLint test set's files for the pack, each evaluated for its own rule alone: an original, where ESLint's findings
+ * for the rule are expected and any other finding of it is an FP, and its fixed copy, where none is. A rule's files
+ * share one workspace of their own, since a file's AST work budget is shared by the rules beside it. The set's answers
+ * become, per tool, a fixtures-kind recording over the files of the rules it holds, so rows score as the fixtures do.
+ */
+async function runEslintTestSet(loaded: LoadedPack, compiled: readonly CompiledRule[], directory: string, errors: string[]): Promise<SourceRun> {
+  const manifest = testSetManifestSchema.parse(JSON.parse(readFileSync(join(directory, "manifest.json"), "utf8")));
+  const byRule = new Map<string, TestSetEntry[]>();
+  for (const { file } of manifest.entries) {
+    const entry = testSetEntrySchema.parse(JSON.parse(readFileSync(join(directory, `${file}.eslint.json`), "utf8")));
+    if (entry.pack !== loaded.pack.pack) continue;
+    const rule = loaded.pack.rules.find(candidate => candidate.id === entry.rerailRule);
+    if (rule === undefined || rule.upstream.rule !== entry.rule) {
+      errors.push(`${ESLINT_TEST_SET_SOURCE}: ${entry.file} is for ${entry.rerailRule} (${entry.rule}), which is no rule of the ${loaded.pack.pack} pack porting ${entry.rule}`);
+      continue;
+    }
+    byRule.set(rule.id, [...(byRule.get(rule.id) ?? []), entry]);
+  }
+  const languages = familyLanguages(loaded);
+  const actual: SourceRun["actual"] = new Map();
+  const recordings: SourceRun["recordings"] = new Map();
+  const scored = new Set<string>();
+  const summary: SourceSummary = { source: ESLINT_TEST_SET_SOURCE, units: 0, files: 0, bytes: 0, skipped: 0, outsideScope: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
+  for (const entry of compiled) {
+    const entries = byRule.get(entry.rule.id);
+    if (entries === undefined) continue;
+    const { tool, rule: upstreamRule } = entry.rule.upstream;
+    let recording = recordings.get(tool) as FixtureRecording | undefined;
+    if (recording === undefined) {
+      recording = { tool, version: manifest.tools.eslint, source: { kind: "fixtures", origin: `s3://nera-test-fixtures/${eslintTestSetKey(ESLINT_TEST_SET.sha256)}`, rules: [], files: [] }, findings: [] };
+      recordings.set(tool, recording);
+    }
+    recording.source.rules.push(upstreamRule);
+    const files: SourceFile[] = [];
+    for (const testSetEntry of entries) {
+      for (const path of testSetEntry.fixed === null ? [testSetEntry.file] : [testSetEntry.file, testSetEntry.fixed]) {
+        const language = languageFor(path);
+        if (language === undefined || !languages.has(language)) {
+          errors.push(`${ESLINT_TEST_SET_SOURCE}: ${path} is not a ${loaded.pack.family} source by the host's routing`);
+          continue;
+        }
+        files.push({ path, language, source: readFileSync(join(directory, path), "utf8") });
+        recording.source.files.push(path);
+        scored.add(`${tool}\0${path}`);
+      }
+      // ESLint counts columns without a leading byte order mark; the runner's line 1 has it, so a line-1 column moves
+      // by one, as the ESLint recorder moves it (packs/javascript/upstream/generate.mjs).
+      const bom = files.find(file => file.path === testSetEntry.file)?.source.startsWith("\uFEFF") === true ? 1 : 0;
+      for (const finding of testSetEntry.eslint.findings)
+        recording.findings.push({ rule: upstreamRule, path: testSetEntry.file, line: finding.line, column: finding.column + (finding.line === 1 ? bom : 0) });
+    }
+    const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
+    const evaluation = await evaluateWorkspace([entry.compiled], files);
+    collectActual([entry], evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+    summary.evaluationMs += evaluation.ms;
+    summary.units += entries.length;
+    summary.files += files.length;
+    summary.bytes += [...sources.values()].reduce((total, bytes) => total + bytes.length, 0);
+  }
+  summary.evaluationMs = Math.round(summary.evaluationMs);
+  summary.syntaxErrorFiles = syntaxErrorSummary(actual);
+  return { name: ESLINT_TEST_SET_SOURCE, label: ESLINT_TEST_SET_SOURCE, actual, recordings, scored, summary };
+}
+
 export interface RunOptions {
   /** Pack rule ids to score; all when omitted. */
   rules?: readonly string[];
   fixtures: boolean;
+  /** Score the ESLint test set too, for a pack it scores (`scoresEslintTestSet`); a no-op for any other pack. */
+  eslintTestSet?: boolean;
+  /** The ESLint test set's tree (its manifest.json's directory); default the pinned set, fetched and extracted. */
+  eslintTestSetDirectory?: string;
   /** Corpus names to score. */
   corpora: readonly string[];
   corpusRoot?: string;
@@ -534,8 +627,9 @@ function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: S
     return undefined;
   }
   if (!recording.source.rules.includes(rule.upstream.rule)) {
-    // Candidates are scored on the fixtures, and on a corpus only where its recording covers them.
-    if (isCandidate(rule) && recording.source.kind === "corpus") return undefined;
+    // Candidates are scored on the fixtures, and on a corpus only where its recording covers them; the ESLint test set
+    // scores only the rules it holds files for.
+    if (run.name === ESLINT_TEST_SET_SOURCE || (isCandidate(rule) && recording.source.kind === "corpus")) return undefined;
     errors.push(`${rule.id} (${run.label}): the ${rule.upstream.tool} recording does not cover ${rule.upstream.rule}`);
     return undefined;
   }
@@ -594,7 +688,7 @@ function rowFor(entry: CompiledRule, run: SourceRun, loaded: LoadedPack, used: S
   };
 }
 
-/** T4: score the pack's rules over its upstream fixtures and/or pinned corpora. */
+/** T4: score the pack's rules over its upstream fixtures, the ESLint test set and/or pinned corpora. */
 export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<T4Report> {
   const { pack } = loaded;
   const errors: string[] = [];
@@ -607,6 +701,8 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
 
   const runs: SourceRun[] = [];
   if (options.fixtures && compiled.length > 0) runs.push(await runFixtures(loaded, compiled, errors));
+  if (options.eslintTestSet === true && scoresEslintTestSet(loaded) && compiled.length > 0)
+    runs.push(await runEslintTestSet(loaded, compiled, options.eslintTestSetDirectory ?? eslintTestSet(), errors));
   const corpusRoot = options.corpusRoot ?? defaultCorpusRoot(pack.pack);
   for (const name of options.corpora) {
     if (compiled.length === 0) break;
@@ -617,7 +713,7 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
   const used = new Set<Divergence>();
   const rows = runs.flatMap(run => compiled.flatMap(entry => rowFor(entry, run, loaded, used, errors) ?? []));
   const scoredSources = new Set(runs.map(run => run.name));
-  const allSources = ["fixtures", ...pack.corpora.map(corpus => corpus.name)];
+  const allSources = ["fixtures", ...(scoresEslintTestSet(loaded) ? [ESLINT_TEST_SET_SOURCE] : []), ...pack.corpora.map(corpus => corpus.name)];
   const selectedIds = new Set(selected.map(rule => rule.id));
   const stale = loaded.divergences.filter(
     divergence =>
@@ -642,7 +738,7 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
     kernel: engineInfo(),
     corpora: pack.corpora.map(({ name, repository, commit }) => ({ name, repository, commit })),
     tools: pack.tools,
-    scope: { rules: selected.map(rule => rule.id), fixtures: options.fixtures, corpora: [...options.corpora] },
+    scope: { rules: selected.map(rule => rule.id), fixtures: options.fixtures, eslintTestSet: runs.some(run => run.name === ESLINT_TEST_SET_SOURCE), corpora: [...options.corpora] },
     coverage: {
       rules: pack.rules.length,
       minimumRules: MINIMUM_RULES,
@@ -662,7 +758,8 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
 
 /**
  * Why a report fails, one line per problem; empty when it passes. An unexplained FP fails on every source; an
- * unexplained FN only on the fixtures, which the port must reproduce: on a corpus, misses are the rule's recall. A
+ * unexplained FN only on the fixtures, which the port must reproduce, and on the ESLint test set, whose every finding
+ * ESLint's own rule reports on real code: on a corpus, misses are the rule's recall. A
  * shipped port with no fixture TP fails unless pack.json gives its rule examples: divergences can excuse every
  * finding of its fixtures, and a port that matches nothing must still show it catches something. A candidate's row
  * (a port under `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
@@ -674,7 +771,7 @@ export function reportFailures(report: T4Report): string[] {
       const problems: string[] = [];
       if (row.candidate) return problems;
       if (row.fp > 0) problems.push(`${row.rule} (${row.source}): ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
-      if (row.fn > 0 && row.source === "fixtures") problems.push(`${row.rule} (${row.source}): ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
+      if (row.fn > 0 && (row.source === "fixtures" || row.source === ESLINT_TEST_SET_SOURCE)) problems.push(`${row.rule} (${row.source}): ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
       if (row.tp === 0 && row.source === "fixtures" && !row.examples) problems.push(`${row.rule} (${row.source}): 0 TP and no examples in pack.json; nothing shows it catches anything`);
       if (row.engineFailures > 0) problems.push(`${row.rule} (${row.source}): ${row.engineFailures} engine failure(s)`);
       return problems;

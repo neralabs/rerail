@@ -14,7 +14,7 @@ function row(rule: string, counts: Partial<Pick<RuleRow, "tp" | "fp" | "fn" | "e
 }
 
 function conformance(rows: RuleRow[], extra: Partial<PackConformance> = {}): PackConformance {
-  return { rows: new Map(rows.map((entry) => [entry.rule, entry])), pinsCorpora: false, stale: new Map(), uncovered: new Map(), ruleErrors: new Map(), errors: [], ...extra };
+  return { rows: new Map(rows.map((entry) => [entry.rule, entry])), testSetRows: new Map(), pinsCorpora: false, stale: new Map(), uncovered: new Map(), ruleErrors: new Map(), errors: [], ...extra };
 }
 
 const failing = (checks: { id: string; ok: boolean }[]) => checks.filter((check) => !check.ok).map((check) => check.id);
@@ -40,6 +40,17 @@ test("a stale divergence, an uncovered corpus recording or a missing row fails i
   const uncovered = conformance([row("a")], { pinsCorpora: true, uncovered: new Map([["a", ["the ruff recording of corpus django does not cover X1"]]]) });
   assert.deepEqual(failing(passesConformanceChecks(uncovered, "a")), ["corpus-recorded"]);
   assert.deepEqual(failing(passesConformanceChecks(conformance([]), "missing")), ["fixtures-row"]);
+});
+
+test("an unexplained FP or miss on the ESLint test set, or an engine failure there, fails it; a rule the set holds no files for is not judged there", () => {
+  const testSet = (counts: Parameters<typeof row>[1]) => ({ ...row("a", counts), source: "eslint-test-set" }) as RuleRow;
+  const judged = (counts: Parameters<typeof row>[1]) => failing(passesConformanceChecks(conformance([row("a")], { testSetRows: new Map([["a", testSet(counts)]]) }), "a"));
+  assert.deepEqual(judged({}), []);
+  assert.deepEqual(judged({ fp: 1 }), ["eslint-test-set-no-unexplained-false-positives"]);
+  assert.deepEqual(judged({ fn: 1 }), ["eslint-test-set-no-unexplained-misses"]);
+  assert.deepEqual(judged({ engineFailures: 1 }), ["engine-reads-eslint-test-set"]);
+  const ids = passesConformanceChecks(conformance([row("a")]), "a").map((check) => check.id);
+  assert.ok(!ids.some((id) => id.includes("eslint-test-set")));
 });
 
 test("it blocks like any gate, after the V1 gates: a rule that passes them but not the pack's check stops there", () => {

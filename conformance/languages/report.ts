@@ -40,7 +40,7 @@ export const ruleRowSchema = z.object({
   examples: z.boolean(),
   upstream: z.object({ tool: z.string(), rule: z.string() }),
   capabilities: z.array(z.string()),
-  /** `fixtures` or `corpus:<name>`. */
+  /** `fixtures`, `eslint-test-set` or `corpus:<name>`. */
   source: z.string(),
   tp: z.number().int().nonnegative(),
   /** Unexplained only; explained disagreements are in `divergences`. */
@@ -91,7 +91,7 @@ export type SourceSummary = z.infer<typeof sourceSummarySchema>;
 export const t4ReportSchema = headerSchema.extend({
   tier: z.literal("t4-rules"),
   /** What the run covered; a T4 report of record covers every rule, the fixtures and every corpus. */
-  scope: z.object({ rules: z.array(z.string()), fixtures: z.boolean(), corpora: z.array(z.string()) }),
+  scope: z.object({ rules: z.array(z.string()), fixtures: z.boolean(), eslintTestSet: z.boolean(), corpora: z.array(z.string()) }),
   coverage: z.object({
     rules: z.number().int().nonnegative(),
     minimumRules: z.number().int().positive(),
@@ -108,7 +108,7 @@ export const t4ReportSchema = headerSchema.extend({
   staleDivergences: z.array(z.object({ rule: z.string(), source: z.string().optional(), path: z.string(), line: z.number(), kind: z.string() })),
   /** Configuration errors (missing or mismatched recordings, code rules that do not compile, …); each fails the run. */
   errors: z.array(z.string()),
-  /** No unexplained FP, no unexplained fixture FN (corpus misses are recall), no engine failure, no stale divergence, no error. */
+  /** No unexplained FP, no unexplained fixture or ESLint test set FN (corpus misses are recall), no engine failure, no stale divergence, no error. */
   pass: z.boolean(),
 });
 export type T4Report = z.infer<typeof t4ReportSchema>;

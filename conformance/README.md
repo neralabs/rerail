@@ -11,12 +11,15 @@ Test support that scores rule packs against the tools they port. It is never pub
   is `npm run conformance:languages`, with `-- --check` as CI's gate (`npm run test:conformance`).
   `identifier-rename.ts` is the overfitting guard: a port must score the same when the tests' own identifiers are
   renamed.
-- `eslint-test-set/`: checks the javascript and typescript packs catch every ESLint finding in the ESLint test set, 1,400
-  real files from open-source history, each at the commit that introduced a violation of one rule, and report nothing on
-  the 1,384 copies with that rule's findings fixed by hand. It downloads the
-  pinned zip from `s3://nera-test-fixtures/eslint-test-set/` (AWS credentials needed; `--profile <name>` picks a profile)
-  and caches it in `.rerail/cache/`. The CLI is `npm run eslint-test-set`; `-- --rule <id>` checks one rule,
-  `-- --json <file>` writes the report. CI does not run it: it needs AWS credentials, and its misses are not yet triaged.
+  For the javascript and typescript packs it also scores the source `eslint-test-set`: 1,400 real files from
+  open-source history, each at the commit that introduced a violation of one ESLint rule, where ESLint's findings for
+  that rule are expected and any other finding of it is an FP, and the 1,384 copies with that rule's findings fixed by
+  hand, where none is. Each file is evaluated for its own rule alone. `--check` scores it (a shipped rule fails on an
+  unexplained FP or FN there, as on the fixtures), and `-- --eslint-test-set` scores it alone. The zip is pinned by its
+  sha256 (`ESLINT_TEST_SET` in `scripts/s3/pack-fixtures.mjs`) at
+  `s3://nera-test-fixtures/rerail/archives/eslint-test-set/<sha256>.zip`; `npm run fixtures:pull` fetches it with those
+  packs' archives, and the runner fetches it itself when it is not in `.rerail/pack-data/archives/`, verifies it and
+  extracts it into `.rerail/pack-data/eslint-test-set/`.
 - `recorders/`: the shared ESLint recorder the ECMA packs' upstream generators use.
 - `t1/`: the TypeScript grammar census (tier T1 of the language conformance standard).
 - `engine.ts`: what every harness shares about the engine it scores (the capabilities, and which engine failure codes
