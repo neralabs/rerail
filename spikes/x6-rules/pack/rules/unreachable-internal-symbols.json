@@ -1,0 +1,581 @@
+{
+ "id": "unreachable-internal-symbols",
+ "alias": "dc",
+ "violation": {
+  "code": "internal_dead_code",
+  "message": "Unreachable internal symbol",
+  "anchor": "witness.span"
+ },
+ "inputs": {
+  "raw_module_names": {
+   "evidence": {
+    "as": "row",
+    "query": {
+     "ast": {
+      "language": "python",
+      "syntax": "valid",
+      "rule": {
+       "all": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "pattern": "$WORD"
+        },
+        {
+         "not": {
+          "inside": {
+           "any": [
+            {
+             "kind": "import_statement"
+            },
+            {
+             "kind": "import_from_statement"
+            }
+           ],
+           "stopBy": "end"
+          }
+         }
+        },
+        {
+         "not": {
+          "inside": {
+           "kind": "attribute",
+           "field": "attribute",
+           "stopBy": "neighbor"
+          }
+         }
+        },
+        {
+         "not": {
+          "inside": {
+           "kind": "keyword_argument",
+           "field": "name",
+           "stopBy": "neighbor"
+          }
+         }
+        },
+        {
+         "not": {
+          "inside": {
+           "kind": "function_definition",
+           "field": "name",
+           "stopBy": "neighbor"
+          }
+         }
+        },
+        {
+         "not": {
+          "inside": {
+           "kind": "class_definition",
+           "field": "name",
+           "stopBy": "neighbor"
+          }
+         }
+        },
+        {
+         "not": {
+          "binds": {
+           "form": [
+            "parameter"
+           ]
+          }
+         }
+        },
+        {
+         "any": [
+          {
+           "not": {
+            "inside": {
+             "all": [
+              {
+               "kind": "block"
+              },
+              {
+               "inside": {
+                "kind": "function_definition",
+                "stopBy": "neighbor"
+               }
+              }
+             ],
+             "stopBy": "end"
+            }
+           }
+          },
+          {
+           "inside": {
+            "all": [
+             {
+              "kind": "class_definition"
+             },
+             {
+              "inside": {
+               "kind": "class_definition",
+               "stopBy": "end"
+              }
+             },
+             {
+              "not": {
+               "inside": {
+                "kind": "function_definition",
+                "stopBy": "end"
+               }
+              }
+             }
+            ],
+            "stopBy": "end"
+           }
+          },
+          {
+           "inside": {
+            "all": [
+             {
+              "not": {
+               "any": [
+                {
+                 "kind": "class_definition"
+                },
+                {
+                 "kind": "function_definition"
+                },
+                {
+                 "kind": "decorated_definition"
+                }
+               ]
+              }
+             },
+             {
+              "inside": {
+               "kind": "module",
+               "stopBy": "neighbor"
+              }
+             }
+            ],
+            "stopBy": "end"
+           }
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "all": [
+             {
+              "kind": "decorated_definition"
+             },
+             {
+              "has": {
+               "all": [
+                {
+                 "kind": "function_definition"
+                },
+                {
+                 "pattern": "$DEC_FN"
+                }
+               ],
+               "stopBy": "neighbor"
+              }
+             }
+            ],
+            "stopBy": "end"
+           }
+          },
+          {
+           "pattern": "$_"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "all": [
+             {
+              "kind": "decorated_definition"
+             },
+             {
+              "has": {
+               "all": [
+                {
+                 "kind": "class_definition"
+                },
+                {
+                 "pattern": "$DEC_CLASS"
+                }
+               ],
+               "stopBy": "neighbor"
+              }
+             }
+            ],
+            "stopBy": "end"
+           }
+          },
+          {
+           "pattern": "$_"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "all": [
+             {
+              "kind": "function_definition"
+             },
+             {
+              "pattern": "$FUNCTION"
+             }
+            ],
+            "stopBy": {
+             "kind": "function_definition"
+            }
+           }
+          },
+          {
+           "pattern": "$_"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "all": [
+             {
+              "kind": "class_definition"
+             },
+             {
+              "pattern": "$CLASS"
+             }
+            ],
+            "stopBy": "end"
+           }
+          },
+          {
+           "pattern": "$_"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "all": [
+             {
+              "kind": "block"
+             },
+             {
+              "pattern": "$CLASS_BODY"
+             },
+             {
+              "inside": {
+               "kind": "class_definition",
+               "stopBy": "neighbor"
+              }
+             }
+            ],
+            "stopBy": "end"
+           }
+          },
+          {
+           "pattern": "$_"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "all": [
+             {
+              "any": [
+               {
+                "kind": "default_parameter"
+               },
+               {
+                "kind": "typed_default_parameter"
+               }
+              ]
+             },
+             {
+              "pattern": "$DEFAULT"
+             }
+            ],
+            "field": "value",
+            "stopBy": "end"
+           }
+          },
+          {
+           "pattern": "$_"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "all": [
+             {
+              "all": [
+               {
+                "kind": "class_definition"
+               },
+               {
+                "inside": {
+                 "kind": "class_definition",
+                 "stopBy": "end"
+                }
+               },
+               {
+                "not": {
+                 "inside": {
+                  "kind": "function_definition",
+                  "stopBy": "end"
+                 }
+                }
+               }
+              ]
+             },
+             {
+              "pattern": "$NESTED"
+             }
+            ],
+            "stopBy": "end"
+           }
+          },
+          {
+           "pattern": "$_"
+          }
+         ]
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "all": [
+             {
+              "pattern": "$CONTROL"
+             },
+             {
+              "not": {
+               "any": [
+                {
+                 "kind": "class_definition"
+                },
+                {
+                 "kind": "function_definition"
+                },
+                {
+                 "kind": "decorated_definition"
+                }
+               ]
+              }
+             },
+             {
+              "inside": {
+               "kind": "module",
+               "stopBy": "neighbor"
+              }
+             }
+            ],
+            "stopBy": "end"
+           }
+          },
+          {
+           "pattern": "$_"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    "project": {
+     "name": "capture.WORD",
+     "decorated_function": "capture.DEC_FN.startByte",
+     "decorated_class": "capture.DEC_CLASS.startByte",
+     "function": "capture.FUNCTION.startByte",
+     "class": "capture.CLASS.startByte",
+     "class_body": "capture.CLASS_BODY.startByte",
+     "default_value": "capture.DEFAULT.startByte",
+     "nested_class": "capture.NESTED.startByte",
+     "control": "capture.CONTROL.startByte"
+    }
+   }
+  },
+  "raw_dynamic_imports": {
+   "evidence": {
+    "as": "row",
+    "query": {
+     "ast": {
+      "language": "python",
+      "syntax": "valid",
+      "rule": {
+       "all": [
+        {
+         "kind": "module"
+        },
+        {
+         "regex": "(?P<ENTRY>(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\\\"](?P<module>[^'\\\"]+)['\\\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*))"
+        }
+       ]
+      }
+     }
+    },
+    "project": {
+     "entry": "capture.ENTRY"
+    },
+    "each": "ENTRY"
+   }
+  }
+ },
+ "stages": [
+  {
+   "name": "dead_traits",
+   "query": "SELECT d.*,rx_replace(d.name,'_(?:async|lazy)$','') AS base_name,CASE WHEN class_name IS NULL THEN NULL ELSE module || '::' || class_name END AS class_id,\n CASE WHEN kind='class' THEN EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND instr(b.name,'ABC')>0)\n ELSE EXISTS(SELECT 1 FROM py_decorators x WHERE x.__path=d.__path AND x.owner=d.__start AND rx_matches(x.name,'abstractmethod$')) END AS abstract,\n EXISTS(SELECT 1 FROM py_decorators x WHERE x.__path=d.__path AND x.owner=d.__start AND rx_matches(x.name,'property$|\\.setter$|\\.deleter$')) AS property,\n rx_matches(name,'^__.*__$') OR name IN ('main','pytest_configure','pytest_collection_modifyitems') OR\n EXISTS(SELECT 1 FROM py_decorators x WHERE x.__path=d.__path AND x.owner=d.__start AND rx_matches(x.name,'validator$|overload$')) AS implicit,\n rx_matches(name,'Protocol$') OR EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND instr(b.name,'Protocol')>0) AS protocol,\n EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND instr(b.name,'Protocol')>0) AS structural_protocol\n FROM proj_declarations d",
+   "indexes": [
+    [
+     "id"
+    ],
+    [
+     "module",
+     "class_name",
+     "name"
+    ],
+    [
+     "class_id",
+     "name"
+    ],
+    [
+     "kind",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "class_names",
+   "query": "SELECT r.module,r.name,coalesce(\n (SELECT c.id FROM proj_imports i JOIN proj_resolved_names n ON n.fqname=i.target JOIN proj_declarations c ON c.id=n.symbol AND c.kind='class' WHERE i.kind='symbol' AND i.module=r.module AND i.name=r.name ORDER BY c.id LIMIT 1),\n (SELECT c.id FROM proj_declarations c WHERE c.kind='class' AND c.module=r.module AND c.name=r.name ORDER BY c.id LIMIT 1)) AS target\n FROM (SELECT DISTINCT d.module,a.name FROM proj_annotation_names a JOIN proj_declarations d ON d.id=a.symbol) r",
+   "indexes": [
+    [
+     "module",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "module_names",
+   "query": "SELECT DISTINCT replace(rx_replace(__path, '/__init__\\.py$|\\.py$', ''), '/', '.') AS module,n.name FROM raw_module_names n\n WHERE n.control IS NOT NULL OR n.nested_class IS NOT NULL OR (\n (n.decorated_function IS NULL OR EXISTS(SELECT 1 FROM py_functions f WHERE f.__path=n.__path AND f.__start=n.decorated_function AND f.class_name IS NOT NULL))\n AND (n.decorated_class IS NULL OR n.class_body IS NOT NULL)\n AND (n.class IS NULL OR n.class_body IS NOT NULL)\n AND (n.function IS NULL OR (n.default_value IS NOT NULL AND EXISTS(SELECT 1 FROM py_functions f WHERE f.__path=n.__path AND f.__start=n.function AND f.class_name IS NOT NULL))))",
+   "indexes": [
+    [
+     "module",
+     "name"
+    ]
+   ]
+  },
+  {
+   "name": "imported_modules",
+   "query": "WITH RECURSIVE modules(module) AS (\n SELECT CASE WHEN kind='module' THEN target ELSE rx_replace(target,'\\.?[^.]+$','') END FROM proj_imports\n UNION SELECT rx_replace(module,'\\.?[^.]+$','') FROM modules WHERE instr(module,'.')>0)\n SELECT DISTINCT module FROM modules WHERE module<>''",
+   "indexes": [
+    [
+     "module"
+    ]
+   ]
+  },
+  {
+   "name": "dead_roots",
+   "query": {
+    "$option": "oracleAnalyzer",
+    "cases": {
+     "true": "SELECT symbol FROM proj_exported_roots UNION SELECT p.symbol FROM proj_public_methods p JOIN proj_exported_roots r ON r.symbol=p.owner UNION SELECT '@module:' || module FROM imported_modules",
+     "false": "SELECT symbol FROM proj_exported_roots UNION SELECT p.symbol FROM proj_public_methods p JOIN proj_exported_roots r ON r.symbol=p.owner UNION SELECT '@module:' || module FROM imported_modules UNION SELECT n.symbol FROM raw_dynamic_imports d JOIN proj_resolved_names n ON n.fqname=rx_extract(d.entry,'(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*[''\\\"](?P<module>[^''\\\"]+)[''\\\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)',1) || '.' || rx_extract(d.entry,'(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*[''\\\"](?P<module>[^''\\\"]+)[''\\\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)',2)"
+    }
+   },
+   "indexes": [
+    [
+     "symbol"
+    ]
+   ]
+  },
+  {
+   "name": "reach_edges",
+   "query": "SELECT s.id AS source,t.id AS target FROM reference_edges e\n JOIN proj_declarations s ON s.__path=e.__path AND s.__start=e.__start JOIN proj_declarations t ON t.__path=e.target_path AND t.__start=e.target_start\n UNION SELECT owner,symbol FROM proj_public_methods\n UNION SELECT h.owner,m.id FROM proj_hierarchy h JOIN proj_declarations c ON c.id=h.base JOIN proj_declarations m ON m.module=c.module AND m.class_name=c.name\n WHERE m.name IN ('__new__','__init__','__init_subclass__','__post_init__','__set_name__','__class_getitem__')\n UNION SELECT owner,base FROM proj_base_edges UNION SELECT base,owner FROM proj_base_edges\n UNION SELECT d.id,s.id FROM dead_traits d CROSS JOIN proj_declarations s ON s.module=d.module\n AND s.name IN (d.base_name,d.base_name || '_async',d.base_name || '_lazy') AND s.id<>d.id WHERE d.kind='function'\n UNION SELECT d.id,s.id FROM dead_traits d CROSS JOIN proj_declarations s ON s.id IN\n (d.class_id || '.' || d.base_name,d.class_id || '.' || d.base_name || '_async',d.class_id || '.' || d.base_name || '_lazy') AND s.id<>d.id WHERE d.kind='method'\n UNION SELECT a.symbol,c.target FROM proj_annotation_names a JOIN proj_declarations d ON d.id=a.symbol JOIN class_names c ON c.module=d.module AND c.name=a.name WHERE c.target IS NOT NULL\n UNION SELECT d.id,'@module:' || d.module FROM proj_declarations d\n UNION SELECT '@module:' || n.module,d.id FROM module_names n JOIN proj_declarations d ON d.module=n.module AND d.name=n.name\n UNION SELECT '@module:' || n.module,d.id FROM module_names n JOIN proj_imports i ON i.module=n.module AND i.name=n.name AND i.kind='symbol' JOIN proj_declarations d ON d.fqname=i.target\n WHERE NOT EXISTS(SELECT 1 FROM proj_declarations local WHERE local.module=n.module AND local.name=n.name)\n UNION SELECT m.id,other.id FROM dead_traits m JOIN dead_traits c ON c.id=m.class_id AND c.structural_protocol\n JOIN dead_traits other ON other.kind='method' AND other.name=m.name AND other.class_id<>m.class_id",
+   "indexes": [
+    [
+     "source"
+    ],
+    [
+     "target"
+    ]
+   ]
+  },
+  {
+   "name": "reachable",
+   "query": "WITH RECURSIVE flow(node,dispatch) AS (\n SELECT symbol,NULL FROM dead_roots\n UNION SELECT e.target,NULL FROM flow f JOIN reach_edges e ON e.source=f.node WHERE f.dispatch IS NULL\n UNION SELECT b.owner,f.node FROM flow f JOIN dead_traits m ON m.id=f.node JOIN proj_base_edges b ON b.base=m.class_id WHERE f.dispatch IS NULL AND m.kind='method'\n UNION SELECT b.owner,f.dispatch FROM flow f JOIN proj_base_edges b ON b.base=f.node WHERE f.dispatch IS NOT NULL\n UNION SELECT b.base,f.dispatch FROM flow f JOIN proj_base_edges b ON b.owner=f.node JOIN dead_traits original ON original.id=f.dispatch WHERE f.dispatch IS NOT NULL AND b.base<>original.class_id\n UNION SELECT m.id,NULL FROM flow f JOIN dead_traits original ON original.id=f.dispatch JOIN proj_declarations c ON c.id=f.node JOIN dead_traits m ON m.module=c.module AND m.class_name=c.name AND m.name=original.name WHERE f.dispatch IS NOT NULL)\n SELECT DISTINCT node AS symbol FROM flow WHERE dispatch IS NULL",
+   "indexes": [
+    [
+     "symbol"
+    ]
+   ]
+  },
+  {
+   "name": "annotation_reachable",
+   "query": "WITH RECURSIVE unique_classes(name,target) AS (SELECT name,min(id) FROM proj_declarations WHERE kind='class' GROUP BY name HAVING count(*)=1),\n annotated(symbol) AS (SELECT symbol FROM reachable UNION SELECT c.target FROM annotated r JOIN proj_annotation_names a ON a.symbol=r.symbol JOIN unique_classes c ON c.name=a.name)\n SELECT symbol FROM annotated",
+   "indexes": [
+    [
+     "symbol"
+    ]
+   ]
+  },
+  {
+   "name": "high_confidence",
+   "query": "SELECT d.* FROM dead_traits d\n WHERE NOT EXISTS(SELECT 1 FROM annotation_reachable r WHERE r.symbol=d.id)\n AND NOT rx_matches(d.module,'^(?:api|data_layer)\\.') AND NOT d.implicit\n AND NOT EXISTS(SELECT 1 FROM proj_imports i WHERE i.kind='symbol' AND i.target=d.fqname)\n AND NOT (d.kind='class' AND d.protocol)\n AND NOT (d.kind<>'class' AND (d.abstract OR d.property OR instr(d.name,'_lower_')=1 OR instr(lower(d.name),'register')>0\n   OR rx_matches(d.name,'^_create_.*_(?:connection|validator|factory)$')\n   OR EXISTS(SELECT 1 FROM dead_traits c WHERE c.id=d.class_id AND c.protocol)\n   OR EXISTS(SELECT 1 FROM proj_hierarchy h JOIN dead_traits c ON c.id=h.base JOIN dead_traits m ON m.module=c.module AND m.class_name=c.name AND m.name=d.name AND m.abstract WHERE h.owner=d.class_id AND h.depth>0)))\n AND NOT EXISTS(SELECT 1 FROM proj_hierarchy h JOIN dead_traits b ON b.id=h.base JOIN annotation_reachable r ON r.symbol=b.id\n   WHERE h.owner=CASE WHEN d.kind='class' THEN d.id ELSE d.class_id END AND h.depth>0 AND\n   (b.abstract OR (instr(b.name,'ABC')>0 AND EXISTS(SELECT 1 FROM proj_base_edges e WHERE e.owner=h.owner AND e.base=b.id))))",
+   "indexes": [
+    [
+     "id"
+    ]
+   ]
+  }
+ ],
+ "references": {
+  "language": "python",
+  "siblingLinks": [
+   {
+    "decorator": "(?:legacy_sync|legacy_module_sync|direct_legacy_module_sync)$",
+    "name": {
+     "replace": "$",
+     "by": "_lazy"
+    }
+   },
+   {
+    "decorator": "(?:legacy_async|legacy_module_async|direct_legacy_module_async)$",
+    "name": {
+     "replace": "(?:_async)?$",
+     "by": "_lazy"
+    }
+   }
+  ],
+  "constructorFields": {
+   "fieldToParameter": {
+    "replace": "^_+",
+    "by": ""
+   }
+  }
+ },
+ "query": {
+  "$option": "oracleAnalyzer",
+  "cases": {
+   "true": "SELECT __path AS path,__start AS start_byte,__end AS end_byte,id AS symbol,category FROM (SELECT d.*, 'high_confidence_functions' AS category FROM high_confidence d WHERE kind<>'class'\n UNION ALL SELECT d.*,'high_confidence_intents' FROM high_confidence d WHERE kind='class' AND (rx_matches(d.name,'Intent$') OR EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND instr(b.name,'ServerPlanStep')>0))\n UNION ALL SELECT d.*,'high_confidence_grammar_classes' FROM high_confidence d WHERE kind='class' AND (NOT d.protocol AND (instr(d.__path,'/l2100_sql_grammar/')>0 OR rx_matches(d.name,'Grammar$|^Sql') OR EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND rx_matches(b.name,'Sql|Grammar'))))\n UNION ALL SELECT d.*,'high_confidence_other_classes' FROM high_confidence d WHERE kind='class' AND NOT (rx_matches(d.name,'Intent$') OR EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND instr(b.name,'ServerPlanStep')>0)) AND NOT (NOT d.protocol AND (instr(d.__path,'/l2100_sql_grammar/')>0 OR rx_matches(d.name,'Grammar$|^Sql') OR EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND rx_matches(b.name,'Sql|Grammar')))))",
+   "false": "SELECT __path AS path,__start AS start_byte,__end AS end_byte,id AS symbol,category FROM (SELECT d.*, 'high_confidence_functions' AS category FROM high_confidence d WHERE kind<>'class'\n UNION ALL SELECT d.*,'high_confidence_intents' FROM high_confidence d WHERE kind='class' AND (rx_matches(d.name,'Intent$') OR EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND instr(b.name,'ServerPlanStep')>0))\n UNION ALL SELECT d.*,'high_confidence_grammar_classes' FROM high_confidence d WHERE kind='class' AND (NOT d.protocol AND (instr(d.__path,'/l2100_sql_grammar/')>0 OR rx_matches(d.name,'Grammar$|^Sql') OR EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND rx_matches(b.name,'Sql|Grammar'))))\n UNION ALL SELECT d.*,'high_confidence_other_classes' FROM high_confidence d WHERE kind='class' AND NOT (rx_matches(d.name,'Intent$') OR EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND instr(b.name,'ServerPlanStep')>0)) AND NOT (NOT d.protocol AND (instr(d.__path,'/l2100_sql_grammar/')>0 OR rx_matches(d.name,'Grammar$|^Sql') OR EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=d.__path AND b.owner=d.__start AND rx_matches(b.name,'Sql|Grammar'))))) WHERE instr(__path,'impl/browser/')<>1"
+  }
+ },
+ "key": [
+  "symbol",
+  "category"
+ ],
+ "code": "category",
+ "findings": {
+  "detail": "symbol || ':' || category"
+ }
+}

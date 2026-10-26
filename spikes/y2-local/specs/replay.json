@@ -1,0 +1,17 @@
+[
+ {
+  "rule": "/Users/tim/orca/workspaces/rerail/facts-engine/.worktrees/y2-local/spikes/x6-rules/linked/symbols-merged.json",
+  "clauses": [
+   "pack"
+  ],
+  "exports": "/Users/tim/rerail-bench/facts/explore/x6-rules/exports/replay-symbols-merged.jsonl"
+ },
+ {
+  "rule": "/Users/tim/orca/workspaces/rerail/facts-engine/.worktrees/y2-local/spikes/y2-local/y2-probe.json",
+  "clauses": [
+   "y2-probe",
+   "y2-dyn"
+  ],
+  "exports": "/Users/tim/rerail-bench/facts/explore/y2-local/exports/replay-y2-probe.jsonl"
+ }
+]
