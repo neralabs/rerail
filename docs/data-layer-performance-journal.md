@@ -5348,3 +5348,25 @@ Frozen control and current policy identities match exactly.
 A contemporary complete 50-rule control repeat now precedes the complete final 50- and 60-rule candidate runs.
 They execute sequentially, without overlapping worktree builds, tests, detailed tracing, SQL capture, or allocator census.
 Both earlier control results and rejected candidates remain part of the record.
+
+
+### Final 50-rule measurement and unchanged control repeat (2026-10-26)
+
+The unchanged frozen control completes its one declared repeat with exact 24,820-finding parity and zero engine failures.
+It uses 814.560 cold CPU seconds, 1,013.311 cold wall seconds, and 4,861,984,768 peak RSS bytes.
+Its compile CPU is 1.125 seconds, separate from cold execution.
+The earlier identical control uses 743.541 CPU seconds and 4,738,318,336 peak RSS bytes.
+The 9.6 percent CPU difference between unchanged controls establishes substantial measurement variation; it does not identify its cause.
+
+The final `2452e961` candidate also has exact 24,820-finding parity and zero engine failures over all 9,021 files.
+It uses 764.567 cold CPU seconds, 876.763 cold wall seconds, and 4,677,632,000 peak RSS bytes.
+Its compile CPU is 1.064 seconds, separate from cold execution.
+Against the adjacent control repeat, CPU decreases 6.1 percent and peak RSS decreases 3.8 percent.
+Against the earlier control, CPU increases 2.8 percent and peak RSS decreases 1.3 percent.
+A robust first-50 CPU improvement is therefore not established.
+
+Final input processing uses 717.876 CPU seconds and global results use 46.373 seconds.
+The adjacent control uses 763.851 and 50.398 seconds respectively.
+Both phases vary; the complete difference cannot be attributed solely to SQL context reuse or statistics maintenance.
+The first-50 125.804-second recovery target remains unmet.
+The complete final 60-rule measurement now runs with the same frozen artifact and matching policies.
