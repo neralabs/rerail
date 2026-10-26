@@ -40,7 +40,13 @@ export const RERAIL_COMMANDS: readonly RerailCommand[] = [
 /** How a coding agent invokes a command: Codex runs skills as `$name`, every other agent as `/name`. */
 export type CommandSigil = "/" | "$";
 
-/** The `Commands` block `/rerail` ends with: every other command, one per line, with what it does. */
+/** The `rerail` commands a terminal answers, named at the end of `/rerail` so no one goes looking for them. */
+export const TERMINAL_COMMANDS_LINE = "In a terminal: rerail status · rerail version · rerail update · rerail daemon stop";
+
+/**
+ * The `Commands` block `/rerail` ends with: every other command, one per line, with what it does, then the terminal
+ * commands, since the coding agent's list is where people look for a `rerail` command first.
+ */
 export function rerailCommandList(sigil: CommandSigil): string {
   const entries = RERAIL_COMMANDS.filter(command => command.name !== "rerail");
   const width = Math.max(...entries.map(command => command.name.length)) + 1 + 3;
@@ -48,6 +54,8 @@ export function rerailCommandList(sigil: CommandSigil): string {
     "Commands",
     ...entries.map(command => (sigil + command.name).padEnd(width) + command.summary),
     "Or just ask me, in plain words.",
+    "",
+    TERMINAL_COMMANDS_LINE,
   ].join("\n");
 }
 
