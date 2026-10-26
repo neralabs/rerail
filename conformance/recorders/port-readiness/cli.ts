@@ -20,7 +20,6 @@ import { archiveCachePath, cacheArchive, RECORDING_ARCHIVE } from "../../port-re
 import { renderRecordingChanges, type RecordingChanges } from "../../port-readiness/recording/diff.js";
 import { parseRecordingLock, RECORDING_LOCK, recordingLockText } from "../../port-readiness/recording/store.js";
 import { checkRecording, recordToolPack, writeRecording } from "./record.js";
-import { rekeyToolPack } from "./rekey.js";
 
 const USAGE = `usage:
   npm run port-readiness:record -- --pack <id> --tool <tool> [--full] [--prune] [--cache dir] [--changes file]
@@ -48,7 +47,6 @@ async function main(): Promise<number> {
       base: { type: "string" },
       recorded: { type: "string" },
       full: { type: "boolean", default: false },
-      rekey: { type: "string" },
       prune: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
@@ -73,7 +71,7 @@ async function main(): Promise<number> {
   const base = values.base === undefined ? undefined : existsSync(values.base) ? parseRecordingLock(readFileSync(values.base, "utf8"), values.base, record) : null;
   const started = Date.now();
   // --check asks everything again, so the locked answers are compared with a fresh upstream's.
-  const recorded = values.rekey !== undefined ? rekeyToolPack(root, pack, tool, resolve(values.rekey)) : await recordToolPack({
+  const recorded = await recordToolPack({
     root,
     pack,
     tool,
