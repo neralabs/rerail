@@ -1,12 +1,11 @@
 /**
  * One repository Rerail knows (`GET /api/repositories`) as a choice: the top bar's repository menu and the page
- * that asks for a repository both list them this way. Choosing one is the common `pickrepo` action. What a
- * repository holds is its rule count (`repo-rules.js`), not whether it was set up: set-up can record no rules.
+ * that asks for a repository both list them this way. Choosing one is the common `pickrepo` action. Under the name:
+ * whether it was set up, then its rule count (`repo-rules.js`), since set-up can record no rules.
  */
 import { h, icon } from "../dom.js";
-import { fmt, plural } from "../format.js";
 import { data, runningCount } from "../state.js";
-import { repoRuleCounts, repoTag } from "../repo-rules.js";
+import { repoLine, repoRuleCounts } from "../repo-rules.js";
 
 /**
  * `{ total, on }` for repository `repo`: its own rules as last read (`loadRepoRuleCounts`), else for the repository
@@ -19,14 +18,8 @@ export function repoCounts(repo) {
   return shown ? { total: data.rules.size, on: runningCount() } : null;
 }
 
-/** "12 rules on · 2 checkouts", "Off · 12 rules", "No rules added"; without known counts only On or Off. */
-export function repoMeta(repo) {
-  const counts = repoCounts(repo);
-  const checkouts = repo.checkoutCount > 1 ? ` · ${fmt(repo.checkoutCount)} checkouts` : "";
-  if (counts === null) return `${repo.started ? "On" : "Off"}${checkouts}`;
-  if (counts.total > 0 && !repo.started) return `Off · ${fmt(counts.total)} ${plural(counts.total, "rule")}${checkouts}`;
-  return `${repoTag(counts)}${checkouts}`;
-}
+/** The line under the repository's name (`repoLine`), from the counts the page holds for it. */
+export const repoMeta = repo => repoLine(repo, repoCounts(repo));
 
 /** A repository as an option; `selected` marks the one the page shows. */
 export function repoOption(repo, selected) {

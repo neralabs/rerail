@@ -227,15 +227,16 @@ body[data-panel="open"] .panel{display:flex}
 .oc-logged{color:var(--logged)} .oc-steered{color:var(--steered)}
 
 /* ---- banners ---- */
-.welcome{display:flex;align-items:flex-start;gap:12px;margin:16px 0 0;padding:14px 16px;background:var(--info-subtle);border-radius:var(--radius-xl);color:var(--info-foreground)}
-.welcome .ico{margin-top:1px}
+/* A banner's words are the page's; its icon alone carries the state's color. */
+.welcome{display:flex;align-items:flex-start;gap:12px;margin:16px 0 0;padding:14px 16px;background:var(--info-subtle);border-radius:var(--radius-xl);color:var(--foreground)}
+.welcome .ico{margin-top:1px;color:var(--info-foreground)}
 .welcome b{font-size:14px}
-.welcome p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--info-foreground);opacity:.9}
+.welcome p{margin:4px 0 0;font-size:13px;line-height:1.5;opacity:.9}
 .welcome p.acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;opacity:1}
 .welcome .x{margin-left:auto;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--info-foreground);flex:none}
 .welcome .x:hover{background:var(--subtle)}
-.welcome.warn{background:var(--warning-subtle);color:var(--warning-foreground)}
-.welcome.warn p{color:var(--warning-foreground)}
+.welcome.warn{background:var(--warning-subtle)}
+.welcome.warn .ico{color:var(--warning-foreground)}
 
 /* ---- sections and lists ---- */
 section.group{margin-bottom:24px}
