@@ -3,11 +3,11 @@
 mod backup;
 #[path = "../../../../../native/src/code_rule_dsl/profile/clock.rs"]
 mod clock;
-#[path = "../../../../../native/src/code_rule_dsl/relational/functions.rs"]
-mod sql_functions;
 #[cfg(test)]
 #[path = "../../../../../native/src/code_rule_dsl/profile/memory.rs"]
 mod memory;
+#[path = "../../../../../native/src/code_rule_dsl/relational/functions.rs"]
+mod sql_functions;
 use rusqlite::{Connection, OpenFlags, Result, StatementStatus, types::ValueRef};
 use std::{
     collections::hash_map::DefaultHasher,

@@ -145,6 +145,10 @@ Each snapshot has an eight-second limit.
 `--memory-every` and `--memory-count` bound snapshot frequency and count.
 Large virtual mappings do not establish physical memory consumption.
 
+CPU tracing keeps cheap RSS observations at selected span boundaries.
+It does not enumerate allocator zones.
+`--memory-census` also enables allocator statistics at those boundaries; this work can distort CPU profiles.
+
 `--memory-census` records ownership before global evaluation, after evaluation, after paging, and after workspace closure.
 It counts shared projection values once across file results and evidence partitions.
 JSON field counts and string lengths are exact traversal counts.

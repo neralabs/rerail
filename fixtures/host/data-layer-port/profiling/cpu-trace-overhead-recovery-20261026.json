@@ -1,0 +1,51 @@
+{
+  "format": "rerail.cpu-trace-overhead-recovery/v1",
+  "acceptance": false,
+  "oldNativeSha256": "847acda539f9270733d4fef5c04268af121a10a1a3fb5fabce11dcc3b41d0f44",
+  "newNativeSha256": "5e000aa7108a27941db8eab58ae4d6a890d089bf52be51e571755cb32e115c34",
+  "runs": {
+    "deferred-all-ten-128": {
+      "targetExitCode": 1,
+      "targetTimedOut": false,
+      "elapsedSeconds": 13.621738416957669,
+      "memoryBoundaries": 5259,
+      "allocatorBoundaries": 5259,
+      "sampleCount": 3,
+      "deferredCpuMs": 6774.849,
+      "engineFailures": 0,
+      "diagnosticDifferences": 30
+    },
+    "deferred-all-ten-128-cpu-trace": {
+      "targetExitCode": 1,
+      "targetTimedOut": false,
+      "elapsedSeconds": 8.01078749995213,
+      "memoryBoundaries": 5259,
+      "allocatorBoundaries": 0,
+      "sampleCount": 1,
+      "deferredCpuMs": 2174.422,
+      "engineFailures": 0,
+      "diagnosticDifferences": 30
+    },
+    "allocator-census-explicit": {
+      "targetExitCode": 0,
+      "targetTimedOut": false,
+      "elapsedSeconds": 2.9984957920387387,
+      "memoryBoundaries": 266,
+      "allocatorBoundaries": 266,
+      "sampleCount": 0
+    }
+  },
+  "limits": [
+    "The 128-file source slice is not closed for cross-file diagnostics; its differences are not a correctness regression or parity acceptance.",
+    "Traced diagnostic timings are not full-repository engine performance measurements.",
+    "The new 128-file trace overlaps Clippy; the allocator invocation counters and mocked-probe tests establish the removed work independently of timing."
+  ],
+  "checks": {
+    "nativeDslPassed": 1540,
+    "nativeDslIgnored": 23,
+    "productionShapePassed": 51,
+    "pythonProfilerPassed": 28,
+    "nativeClippy": "all targets; warnings denied",
+    "labReplayAndMemoryPassed": 4
+  }
+}

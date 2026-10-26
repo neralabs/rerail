@@ -1,4 +1,7 @@
-//! Process high-water marks and allocator residency at selected diagnostic boundaries.
+//! Cheap RSS boundaries; allocator enumeration requires an explicit memory census.
+use std::sync::LazyLock;
+static ALLOCATOR_CENSUS: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("RERAIL_PROFILE_MEMORY_CENSUS").is_some());
 #[derive(Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Sample {
@@ -34,7 +37,7 @@ pub(crate) fn sample(phase: &str) -> Option<Sample> {
         } else {
             peak.saturating_mul(1024)
         };
-        let (allocated_bytes, in_use_bytes) = allocator_if(false, allocator);
+        let (allocated_bytes, in_use_bytes) = allocator_if(*ALLOCATOR_CENSUS, allocator);
         Some(Sample {
             peak_rss_bytes,
             rss_bytes: resident(),
@@ -48,10 +51,10 @@ pub(crate) fn sample(phase: &str) -> Option<Sample> {
     }
 }
 fn allocator_if(
-    _enabled: bool,
+    enabled: bool,
     probe: impl FnOnce() -> (Option<usize>, Option<usize>),
 ) -> (Option<usize>, Option<usize>) {
-    probe()
+    if enabled { probe() } else { (None, None) }
 }
 #[cfg(target_os = "macos")]
 fn resident() -> Option<u64> {

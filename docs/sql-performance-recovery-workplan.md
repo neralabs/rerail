@@ -2,7 +2,15 @@
 
 ## Active plan — 2026-10-25
 
-Status: A1 and further A2/A3 implementation are committed; aggregate performance acceptance remains open.
+Status: both complete 50/60 repository runs now pass findings parity; aggregate CPU recovery remains open.
+
+The latest frozen runs record 672.782 cold CPU seconds for first 50 and 2,540.634 for all 60.
+They report zero failures and match all 24,820 and 24,993 expected findings.
+OS peak RSS is 4.620 GiB and 6.391 GiB respectively. Compilation remains separate.
+The all-60 deferred apply alone consumes 1,392.224 CPU seconds.
+The corrected CPU tracer avoids allocator enumeration unless a memory census is explicitly requested.
+The next chunk must attribute that complete apply across all ten additional rules before choosing its implementation.
+The [journal](data-layer-performance-journal.md) retains frozen identities, subsequent corrections, and the failed comparison qualifications.
 
 The frozen 50-rule measurement has matching findings and two engine failures. Both failure causes now have passing corrections.
 It takes 899.070 cold CPU seconds. This predates bounded template ownership and reusable plan fragments.

@@ -69,6 +69,9 @@ def instrumentation_env(args, output):
     env.pop("RERAIL_CODE_RULE_ANCHORS", None)
     env.pop("RERAIL_CODE_RULE_RELATIONAL_PROFILE", None)
     env.pop("RERAIL_PROFILE", None)
+    env.pop("RERAIL_PROFILE_MEMORY_CENSUS", None)
+    if getattr(args, "memory_census", False):
+        env["RERAIL_PROFILE_MEMORY_CENSUS"] = "1"
     env.pop("RERAIL_PROFILE_SQL_WORKING_SET", None)
     if getattr(args, "sql_working_set", False):
         env["RERAIL_PROFILE_SQL_WORKING_SET"] = "1"

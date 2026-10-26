@@ -4886,3 +4886,32 @@ External bottom-up samples show allocator enumeration consuming a large part of 
 CPU tracing currently calls `malloc_zone_statistics` at every selected SQL span boundary, even without a requested memory census.
 The next instrumentation correction must make allocator enumeration explicit while retaining cheap RSS observations.
 The accepted full runs use tracing off and are unaffected by this profiling overhead.
+
+
+### CPU tracing must not run an allocator census (2026-10-26)
+
+Red commit `b9117c57` proves that default CPU tracing calls the allocator probe and can inherit a census setting accidentally.
+The profiler now removes inherited census configuration and enables allocator enumeration only for `--memory-census`.
+Native trace spans retain cheap process RSS observations without traversing allocator zones.
+The existing explicit memory request retains allocator values; no production execution alternative is added.
+The same native memory implementation runs in the offline replay laboratory's regression tests.
+
+The 128-file all-ten-rule trace previously enumerates allocator zones at 5,259 boundaries.
+The corrected CPU-only trace records the same 5,259 RSS boundaries with zero allocator enumerations.
+Its deferred CPU changes from 6.775 to 2.174 seconds. The new diagnostic overlaps Clippy and is not a controlled engine-speed comparison.
+The explicit-census check retains allocator statistics at all 266 observed boundaries.
+External samples identify allocator enumeration directly; the mocked-probe regression checks that it is never called in CPU-only mode.
+The [checked receipt](../fixtures/host/data-layer-port/profiling/cpu-trace-overhead-recovery-20261026.json) records identities and qualifications.
+Full repository acceptance timings use tracing off and do not contain this overhead.
+
+The rebuilt DSL suite passes 1,540 tests, with 23 explicit ignores.
+All 51 production-shape tests pass. Native and laboratory Clippy pass with warnings denied.
+All 28 Python profiler tests pass, along with the complete profiling suite and static checks.
+The frozen full 50/60 runs precede the final contract-2 correction and profiling-only change; their artifact identities remain explicit.
+All original quality fixtures pass again after the contract-2 correction.
+
+The next performance chunk must attribute the complete deferred apply with the corrected CPU tracer.
+It must cover all ten additional rules, rather than assuming the quality/state slice represents their total cost.
+The 128-file profile has no engine failures, but its open cross-file scope prevents parity acceptance.
+Do not extrapolate its clause proportions to the 1,392-second full-repository apply.
+Candidate selection remains a separate measured frontier: 347.871 CPU seconds for first 50 and 729.928 for all 60.
