@@ -27,7 +27,9 @@ The structural fix is the spec direction. Local rules execute over resident tape
 |---|---|---|---|---|
 | Before phase A (recorded) | 50.7 s | 1.75 GB | 22 | baseline |
 | Phase A + shape fixes (§3, §5–§8) | 32.9 s | 1.03 GB | 10 | identical set |
-| + engine fixes (§9) | **29.7 s (−41%)** | 1.10 GB | **0** | identical set |
+| + engine fixes (§9) | 29.7 s (−41%) | 1.10 GB | 0 | identical set |
+| + state rewrite, SQL index opt-in (§10–§11) | 9.0 s (−82%) | 0.79 GB | 0 | identical set |
+| + kind postings primed per file (§11) | **7.1 s (−86%)** | 0.91 GB | **0** | identical set |
 
 ## 2. Where the CPU goes: one rule at a time, 300 files
 
@@ -159,3 +161,33 @@ There is no CPU gain, for two reasons:
 - On the sample only 24 files pass the gate. The clause's remaining cost is about 0.4 s of input extraction (an input not headed by one node kind walks the whole tree) and about 0.6 s of per-file SQL compilation and execution over small data.
 
 The win arrives when `state-flow-project` also moves to narrow inputs and the tree copy disappears. An unconfirmed lead: the per-connection regex cache (64 entries, cleared when it fills) may churn on these many distinct patterns.
+
+## 11. The positional SQL index is a net loss: now opt-in
+
+Every file a syntax clause might match was published into a temporary SQLite positional index (`anchors::sql::Corpus::put`), and SQL then preselected candidate roots (§1). A spike switch skipped publication, so matching walked the tape instead. Runs were paired and concurrent on the same addon:
+
+| Case | With index (CPU) | Without index (CPU) | Findings |
+|---|---|---|---|
+| backend-type-strings alone, 1,500 files | 8.15 s | 2.98 s | identical |
+| type-safety-patterns alone, full corpus (9,021 files) | 55.4 s (wall 123 s) | 9.6 s (wall 14 s) | identical, 0 failures |
+| all 60 checks, 300 files | 29.2 s, 976 MB | 22.6 s, 871 MB | identical, 0 failures |
+
+Walking a tape with a kind test per node is cheap, at nanoseconds per node. Publishing every node into SQLite pages and the WAL, then running a SQL query per plan, costs more than it saves, even for the broad rules it was built for.
+
+The index is now opt-in (`RERAIL_AST_SQL_INDEX=1`, `Corpus::enabled`). It is gated at all three publication sites: workspace evaluation, the global relational preparation loop, and single-file evaluation. With all three gated, the 60 checks on the 300-file sample take 9.0 s of CPU (792 MB), against 28.2 s with the index opted in, with identical findings and no failures. The spike gated only the first site, which explains its smaller 23% gain. This matches spec §20: local rules run over resident tapes, and only facts and relational candidates reach SQL. The candidate-selection SQL (`anchors/sql`) remains for comparison until the transducer path replaces it.
+
+Without the index, a clause picks its roots from per-file kind postings (the nodes of each kind, in preorder). These were built lazily by the first clause that asked and charged to that clause's work budget, so a tight clause budget failed the wrong clause and every later clause rebuilt them. The postings now live on the tape document, shared by its clones, and are built once during preparation under the file's budget, which is where index publication was charged before. The 60 checks on the 300-file sample then take 7.1 s of CPU (6.6 s user, 0.5 s sys), with identical findings and no failures.
+
+## 12. Round 2: no data-layer rule shape copies the tree any more
+
+- **serverplan_state_tripwires.** The project-mode builder contracts and the signatures clause now read narrow rows; signatures was the real cost. The call-tail regexes are combined, cutting distinct patterns from 51 to 16. Fixture parity is exact (79 rows); 300-file CPU went from 5.0 s to 4.5 s.
+- **serverplan_quality.** `quality-contracts-1` became about 100 forbid clauses plus six small relational clauses: sync/async pairs, the pre-op fixpoint, module string constants, projection repairs, annotation scope resolution and the ordered-semantic inventory. Fixture parity is exact (200 rows); 300-file CPU went from 8.17 s to 7.31 s.
+- **Cost is per admitted file.** Parsing a file costs the same whatever the rule does, and neither a `filePath` test nor the literal prefilter avoids the parse. `ast.file: {path: …}` does avoid it, so entry-point and production domains belong there. A single clause with an every-file domain sets the floor for the whole rule.
+- **Regex cache.** It is not churning: no clause has more than 64 distinct patterns. Each pattern is recompiled once per file session, because the SQL functions are registered per connection lease. This is a small cost, noted for M3.
+- **Approximations** (fixtures exact; differences from the oracle are possible only in edge cases):
+  - SPQ-006 drops the "later definition" restriction.
+  - SPQ-002/022 read a class's level as 4 when its `level` method returns 4 and no other integer.
+  - String values are matched on quoted source text: SPQ-013/014/032/035/042/047/050, as in §5.
+  - SPQ-035 doesn't check "exactly one `through`".
+  - SPQ-047 skips interpolating f-strings.
+  - SPQ-021's `Sql…` callee test covers only name and attribute callees.

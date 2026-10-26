@@ -37,7 +37,36 @@ struct State {
     writer: Store,
 }
 
+#[cfg(test)]
+static INDEX_FORCED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 impl Corpus {
+    /// Whether files are published into the positional SQL index at all. Publishing costs more
+    /// than walking the tape saves (2.7-5.8x CPU in single-rule runs, 23% across the data-layer
+    /// pack), so it is opt-in: `RERAIL_AST_SQL_INDEX=1`.
+    pub(in crate::code_rule_dsl) fn enabled() -> bool {
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        #[cfg(test)]
+        if INDEX_FORCED.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+            return true;
+        }
+        *ENABLED.get_or_init(|| std::env::var_os("RERAIL_AST_SQL_INDEX").is_some_and(|v| v == "1"))
+    }
+
+    /// Turns the positional index on while the guard lives. Process-wide, since evaluation runs on
+    /// pool threads; rules evaluate to the same results either way, so other tests are unaffected.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn force_enabled() -> impl Drop {
+        struct Forced;
+        impl Drop for Forced {
+            fn drop(&mut self) {
+                INDEX_FORCED.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        INDEX_FORCED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Forced
+    }
+
     #[cfg(feature = "code-rule-profile")]
     pub(in crate::code_rule_dsl) fn record_origins<'a>(
         &self,

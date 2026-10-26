@@ -13,6 +13,7 @@ fn stateless_fact_extraction_uses_selective_anchor_postings() {
     })).unwrap();
     let mut source = "other(value);\n".repeat(500);
     source.push_str("target(value);\nother(target);\n");
+    let _index = crate::code_rule_dsl::matcher::Corpus::force_enabled();
     crate::code_rule_dsl::matcher::reset_roots_matched();
     let result =
         crate::code_rule_dsl::test_support::evaluate_file(&compiled, "typescript", "a.ts", &source);
@@ -39,6 +40,7 @@ fn relational_inputs_share_one_anchor_index_and_keep_distinct_selections() {
     let compiled =
         compile_document_with(document, &serde_json::from_str(CAPABILITIES).unwrap()).unwrap();
     let source = "other(value);\n".repeat(500) + "target(value);\nother(target);\n";
+    let _index = crate::code_rule_dsl::matcher::Corpus::force_enabled();
     reset_walks();
     let result =
         crate::code_rule_dsl::test_support::evaluate_file(&compiled, "typescript", "a.ts", &source);

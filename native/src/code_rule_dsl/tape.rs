@@ -1461,6 +1461,9 @@ pub(super) struct TapeDoc {
     points: Arc<Points>,
     kind_aliases: Arc<Vec<(String, bool)>>,
     kind_overrides: Arc<Vec<(u32, u16)>>,
+    /// The nodes of each kind in preorder, built once per document and shared by its clones, so
+    /// a file pays for its kind index once, under its own budget (`prime_kind_postings`).
+    kinds: Arc<std::sync::OnceLock<Arc<KindPostings>>>,
     /// A host's guests (`embed`); the host a guest reads links to them weakly, as they hold it.
     guests: Guests,
     /// A guest's link to the file it is embedded in.
@@ -1857,6 +1860,7 @@ impl TapeDoc {
             lines,
             kind_aliases: Arc::new(image.kind_aliases.clone()),
             kind_overrides: Arc::new(image.kind_overrides.clone()),
+            kinds: Arc::default(),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
         })
@@ -1972,6 +1976,31 @@ impl TapeDoc {
 
     pub(super) fn transducer_kind(&self, node: u32) -> u16 {
         self.data[node as usize].kind
+    }
+
+    /// The document's kind postings, if `prime_kind_postings` built them.
+    pub(super) fn kind_postings(&self) -> Option<&Arc<KindPostings>> {
+        self.kinds.get()
+    }
+
+    /// Builds the kind postings once for this document and its clones; `false` where
+    /// `interrupted` stopped the build first (nothing is kept, so a later caller tries again).
+    pub(super) fn prime_kind_postings(&self, interrupted: &impl Fn() -> bool) -> bool {
+        if self.kinds.get().is_some() {
+            return true;
+        }
+        let mut kinds = KindPostings::default();
+        for ordinal in 0..self.data.len() as u32 {
+            if (ordinal as usize).is_multiple_of(256) && interrupted() {
+                return false;
+            }
+            kinds
+                .entry(self.data[ordinal as usize].kind)
+                .or_default()
+                .push(ordinal);
+        }
+        let _ = self.kinds.set(Arc::new(kinds));
+        true
     }
 
     fn kind_alias(&self, node: u32) -> Option<&(String, bool)> {

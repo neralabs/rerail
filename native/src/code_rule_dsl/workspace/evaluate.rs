@@ -104,7 +104,15 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
             )
         })?;
         let failures = std::mem::replace(&mut file.failures, old_failures);
+        // Without the positional index, clauses select roots from the document's kind postings:
+        // built here once, under the file's budget, as the index's publication was.
         if let Some(doc) = &doc
+            && !crate::code_rule_dsl::matcher::Corpus::enabled()
+        {
+            work.run(|| doc.prime_kind_postings(&crate::code_rule_dsl::budget::matcher_budget_exhausted));
+        }
+        if let Some(doc) = &doc
+            && crate::code_rule_dsl::matcher::Corpus::enabled()
             && let Err(error) = work.run(|| {
                 context
                     .anchor_corpus
