@@ -45,8 +45,7 @@ known_gaps: []
 #   files type-checked cases compile against (tests/fixture).
 # - File types: recommended sets neither `files` nor a parser, so ESLint lints its defaults .js, .mjs and .cjs; those
 #   are Gate 2's in-scope samples, and the ports, which cover TypeScript test files only, fail Gate 2's in-scope
-#   check. The Gate 6 corpus has no such file, so Gate 6 has no case for any rule here, by construction. The plugin's README
-#   has users spread its rules into a configuration of their own with `files`; no such overlay is approved.
+#   check. The plugin's README has users spread its rules into a configuration of their own with `files`; no such overlay is approved.
 # - Message text: no port copies upstream's documentation or rule messages; every
 #   message and description is the port's own words.
 # - Upstream's tests run in validation/upstream/vitest-eslint-plugin-1.6.27 on the eslint (10.0.0), @typescript-eslint

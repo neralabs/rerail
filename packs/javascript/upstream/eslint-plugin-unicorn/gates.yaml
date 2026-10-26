@@ -57,8 +57,7 @@ known_gaps: []
 #   word the ports' code spells is explained by upstream's code except punycode, which the cases' own code holds, so
 #   reading the snapshots changes no verdict.
 # - File types: recommended sets no `files`, so ESLint lints its defaults .js, .mjs and .cjs; those are Gate 2's
-#   in-scope samples. The Gate 6 corpus has no such file (its ECMAScript files are 11 .jsx, 39 .ts and 57 .tsx), so
-#   Gate 6 has no case for any rule here, by construction.
+#   in-scope samples.
 # - Message text: no port copies upstream's documentation. unicorn:no-null and
 #   unicorn:no-array-for-each paraphrase the messages in the rule code ("Use `undefined` instead of `null`.",
 #   "Use `for…of` instead of `.forEach(…)`."); the other messages and every description are the port's own words.

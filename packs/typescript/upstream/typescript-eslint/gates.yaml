@@ -71,10 +71,7 @@ known_gaps: []
 #   test framework's vocabulary, not upstream's test code.
 # - File types: of the approved configurations' entries only typescript-eslint/eslint-recommended sets `files` (**/*.ts,
 #   **/*.tsx, **/*.mts, **/*.cts); base and recommended set none, so the plugin's rules also run on ESLint's defaults
-#   .js, .mjs and .cjs. All seven are Gate 2's in-scope samples. Gate 6 takes the corpus's 39 .ts and 57 .tsx files, not
-#   its 11 .jsx, which no approved configuration lints.
-# - Type-checked rules report nothing on the corpus (a set of patched files is not a buildable project), as ADR 0006
-#   says.
+#   .js, .mjs and .cjs. All seven are Gate 2's in-scope samples.
 # - Upstream's tests run in validation/upstream/typescript-eslint-8.70.1 on the eslint (10.8.1), typescript (6.0.3) and
 #   tsx versions typescript-eslint's own v8.70.1 pnpm-lock.yaml resolves, not on ESLint 10.11.0.
 eslint:

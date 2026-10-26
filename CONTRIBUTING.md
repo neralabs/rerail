@@ -185,7 +185,7 @@ recording of a gated tool-pack. `fixtures:derive` and `port-readiness:record` ru
 recipes and recorder, and the upstream code they fetch, so a maintainer reviews that code first and then runs it in a
 sandbox: a clone of its own (not a `git worktree` of the trusted one, which shares its `.git` and hooks), in a
 container or VM that can reach no AWS or GitHub credentials (no `AWS_*` variables, no `~/.aws` or `gh` login), on Linux
-for `rust/clippy`, whose tokio corpus has `#[cfg(target_os = "linux")]` code. `fixtures:push --from` takes a commit,
+for `rust/clippy`, whose answers are Linux's (Clippy lints only the code rustc compiles for the host). `fixtures:push --from` takes a commit,
 not a directory, so the sandbox commits the derived data on top of the pull request and hands the commit over as a git
 bundle, which is data; the commit is amended to hold only the locks before anything is pushed:
 

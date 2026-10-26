@@ -60,7 +60,7 @@ known_gaps: []
 #   and the rest under test/unit/eslint-plugin-next/). The code no-html-link-for-pages.test.ts lints inside its it()
 #   bodies is not a RuleTester case and is not read.
 # - File types: eslint-config-next lints **/*.{js,jsx,mjs,ts,tsx,mts,cts}, and ESLint's defaults add .cjs; those are Gate
-#   2's in-scope samples and the files Gate 6 reads, in the catalog's task solutions and the rerail pack's corpora.
+#   2's in-scope samples.
 # - Upstream's tests run in validation/upstream/eslint-plugin-next-16.3.8 on the eslint (9.37.0), tsx (4.19.2),
 #   typescript (6.0.2) and glob (7.1.6, which index.test.ts imports) versions vercel/next.js's root package.json pins at
 #   v16.3.8; eslint 9.37.0 is also the plugin's own devDependency, and tsx loads the TypeScript test files.
@@ -69,7 +69,7 @@ eslint:
   # eslint-config-next, the shareable configuration Next.js tells projects to use. Its file globs
   # (**/*.{js,jsx,mjs,ts,tsx,mts,cts}), its parsers (Next.js's compiled Babel parser with next/babel, and
   # typescript-eslint's for .ts and .tsx) and its browser and Node globals come before the approved configuration, for
-  # upstream's test cases and the corpus; its plugins, rules and settings are not the pack's. A test case's own parser
+  # upstream's test cases; its plugins, rules and settings are not the pack's. A test case's own parser
   # and globals give way to them.
   environment:
     package: eslint-config-next

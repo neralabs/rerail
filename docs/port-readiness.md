@@ -77,8 +77,9 @@ The conformance runner judges each rule by intent, on the samples labelled for i
 `passes-conformance` reads four checks from it. `samples-catch-labelled` fails a shipped rule on an unexplained miss,
 `samples-silent-on-clean` on an unexplained false positive, and `engine-reads-samples` on an engine failure on a
 judged sample (a rule runtime error, a crash, a timeout, an unreadable file). A parse failure on a sample (a syntax
-error, a partial or incomplete source) is report-only: the sample stays judged, so a label the partial parse makes the
-rule miss still fails as a miss. `stays-silent` needs relevant evidence that the rule is silent where it should be:
+error, a partial or incomplete source) is report-only: `engine-reads-samples` lists it ("N engine failure(s); M file(s)
+read in part") without failing, and the sample stays judged, so a label the partial parse makes the rule miss still
+fails as a miss. `stays-silent` needs relevant evidence that the rule is silent where it should be:
 one of the rule's own upstream test cases where upstream reports nothing and the rule agrees, or one clean sample the
 rule is silent on. Other rules' fixture units and Rerail's probes do not count. Its detail reads "N own upstream
 case(s), M clean sample(s)". Candidates are scored and reported but fail nothing.
@@ -395,11 +396,9 @@ conformance/recorders/port-readiness/runtimes/php/build.sh "$PWD/.rerail/php/8.5
 PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run port-readiness:record -- --pack php --tool phpcs
 ```
 
-`rust/clippy`'s answers depend on the host: Clippy lints only the code rustc compiles, and a `#[cfg(target_os =
-"linux")]` item is compiled on Linux alone. Its derived data and recordings are Linux's, made on
-`x86_64-unknown-linux-gnu`; made on macOS, its answers lack the findings in Linux-only code, so derive and record it
-on Linux (the bump workflow does), or take what CI's leg
-records: a leg whose check fails leaves the lock and the archive a record makes in its report artifact
+`rust/clippy`'s derived data and recordings are Linux's, made on `x86_64-unknown-linux-gnu` as CI's legs and the bump
+workflow make them: Clippy lints only the code rustc compiles for the host. Derive and record it on Linux, or take
+what CI's leg records: a leg whose check fails leaves the lock and the archive a record makes in its report artifact
 (`recorded-rust--clippy/`), and once the commit has that lock the leg's `recordings-rust--clippy` artifact holds it
 for the maintainer to push.
 

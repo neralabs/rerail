@@ -32,8 +32,6 @@ upstream:
   # - Gate 5 lints each fixture with the rule alone (`--select <CODE>`) and Ruff's default options and target version,
   #   whatever options, preview mode or target version the test itself sets. The variant column names the tests that
   #   lint the file.
-  # - Gate 6 lints each task's files once with every pack rule selected. On this corpus that gives exactly the per-rule
-  #   output (checked 2026-10-07 on every code here).
   # - A fixture Ruff's parser rejects is still scored with Ruff's own output: Ruff lints it and runs no syntax-tree rule
   #   on it (crates/ruff_linter/src/linter.rs), so its answer is what it reports, often nothing.
   # - Notebook (.ipynb) fixtures are linted as Ruff lints them, with rows relative to the cell as its JSON reports them.

@@ -60,7 +60,7 @@ known_gaps: []
 #   rules, on eslint-v8) import src/shared/ReactCompiler.ts, which needs babel-plugin-react-compiler built from
 #   compiler/ in React's monorepo; they are not loaded, and their words are not test words.
 # - File types: eslint-config-next lints **/*.{js,jsx,mjs,ts,tsx,mts,cts}, and ESLint's defaults add .cjs; those are Gate
-#   2's in-scope samples and the files Gate 6 reads, in the catalog's task solutions and the rerail pack's corpora.
+#   2's in-scope samples.
 # - Upstream's tests run in validation/upstream/eslint-plugin-react-hooks-7.1.1, in the layout of React's own
 #   node_modules at the tag (eslint 7.32.0 at the root, whose CLIEngine @typescript-eslint/parser 3.x's
 #   experimental-utils extends as it loads, and the eslint-v7 and eslint-v9 aliases the tests require), with the
@@ -75,7 +75,7 @@ eslint:
   # eslint-config-next, the shareable configuration Next.js tells projects to use. Its file globs
   # (**/*.{js,jsx,mjs,ts,tsx,mts,cts}), its parsers (Next.js's compiled Babel parser with next/babel, and
   # typescript-eslint's for .ts and .tsx) and its browser and Node globals come before the approved configuration, for
-  # upstream's test cases and the corpus; its plugins, rules and settings are not the pack's. A test case's own parser
+  # upstream's test cases; its plugins, rules and settings are not the pack's. A test case's own parser
   # and globals give way to them.
   environment:
     package: eslint-config-next

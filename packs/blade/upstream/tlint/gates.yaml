@@ -24,7 +24,7 @@ upstream:
   # - Gate 5 runs each lint with that preset as `tlint lint <file>` runs a file (LintCommand::lintFile: every linter of
   #   the preset that applies to the path, in the preset's order). A file one of the preset's PHP linters cannot parse
   #   gets tlint's parse error as its only lint, so tlint gives no answer on it for the ported lints: the case is
-  #   skipped and the corpus file excluded, with tlint's message.
+  #   skipped, with tlint's message.
   # - The cases are the templates the tests of tlint's Blade linters (tests/Linting/Linters/<Lint>Test.php, every
   #   linter that uses LintsBladeTemplates) hand the linter, one per test method, captured as the linter receives them:
   #   tlint's tests are inline Blade strings, so each case is its own source (`<test file>#<test method>`), committed as

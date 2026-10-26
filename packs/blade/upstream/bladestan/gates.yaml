@@ -46,9 +46,6 @@ upstream:
   #   component the application does not have) is skipped with Bladestan's message.
   # - A ported finding is the error of the rule's identifier whose message is the ported rule's (argument.type is
   #   every rule's parameter type error, the port random_int's; variable.undefined is also "might not be defined").
-  # - A corpus template is rendered the same way, alone, its corpus the only view location, and a view or component
-  #   the corpus's application or packages would register is an empty stub: Bladestan does not compile a template one
-  #   of whose components it cannot locate at all.
   # - Positions are the template line Bladestan reports (its template_line metadata), lines split at \n, with no
   #   column and no end (span-units/bladestan.ts).
   recommended_configs:

@@ -57,7 +57,7 @@ known_gaps: []
 # - Gate 3's test words are every case copy's code (with the comment parsers.js appends), outputs, options, settings,
 #   globals and expected reports, over all of tests/lib/rules/*.js.
 # - File types: eslint-config-next lints **/*.{js,jsx,mjs,ts,tsx,mts,cts}, and ESLint's defaults add .cjs; those are Gate
-#   2's in-scope samples and the files Gate 6 reads, in the catalog's task solutions and the rerail pack's corpora.
+#   2's in-scope samples.
 # - Upstream's tests run in validation/upstream/eslint-plugin-react-7.37.5 on eslint 9.39.5, the latest release
 #   upstream's eslint range admits (^9.7; 7.37.5 does not admit ESLint 10), @typescript-eslint/parser 8.17.0 (its CI's
 #   8.17 for ESLint 9) on typescript 5.7.3, typescript-eslint-parser 20.1.1, babel-eslint 10.1.0 and
@@ -73,7 +73,7 @@ eslint:
   # eslint-config-next, the shareable configuration Next.js tells projects to use. Its file globs
   # (**/*.{js,jsx,mjs,ts,tsx,mts,cts}), its parsers (Next.js's compiled Babel parser with next/babel, and
   # typescript-eslint's for .ts and .tsx) and its browser and Node globals come before the approved configuration, for
-  # upstream's test cases and the corpus; its plugins, rules and settings are not the pack's. A test case's own parser
+  # upstream's test cases; its plugins, rules and settings are not the pack's. A test case's own parser
   # and globals give way to them.
   environment:
     package: eslint-config-next
