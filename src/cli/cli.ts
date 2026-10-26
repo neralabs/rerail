@@ -51,7 +51,8 @@ import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runPacksCommand } from "./packs-cli.js";
-import { JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
+import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
+import { checkNodeVersion } from "../setup/node-version.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
@@ -531,6 +532,22 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }
 
+/**
+ * The launcher runs `node` from PATH once the node set-up recorded is gone, and that one can be older than Rerail runs
+ * on. Every command but `setup`, which makes the same check in its own output, refuses there with set-up's message,
+ * as one set-up step under `--json`; undefined where this Node is new enough.
+ */
+function refuseUnsupportedNode(args: readonly string[]): number | undefined {
+  if (takeOption(args, "--profile").args[0] === "setup") return undefined;
+  const json = args.includes(JSON_FLAG);
+  const terminal = !args.includes(SETUP_FLAGS.relay) && process.stdin.isTTY && process.stdout.isTTY;
+  const node = checkNodeVersion(process.versions.node, json ? "json" : terminal ? "terminal" : "agent");
+  if (node.ok) return undefined;
+  if (json) process.stdout.write(`${JSON.stringify(errorStep(node.message.replace(/\n$/u, "")))}\n`);
+  else process.stderr.write(node.message);
+  return 1;
+}
+
 async function main(): Promise<number> {
   const manifest = await packageManifest(packageRoot);
   const home = defaultRerailHome();
@@ -544,6 +561,8 @@ async function main(): Promise<number> {
   const rawArgs = process.argv.slice(2);
   const managedChild = rawArgs[0] === MANAGED_CHILD_ARGUMENT;
   const args = managedChild ? rawArgs.slice(1) : rawArgs;
+  const tooOld = refuseUnsupportedNode(args);
+  if (tooOld !== undefined) return tooOld;
   if (args[0] === "mcp-bridge") {
     if (args.length !== 1) throw new Error("mcp-bridge takes no arguments");
     await runRerailMcpBridge();

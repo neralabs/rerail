@@ -291,8 +291,15 @@ Code, Codex and Cursor relay the questions as text.
 
 ## Prerequisites
 
-- Node.js 24 or newer on `PATH`. The launcher remembers the Node that ran setup
-  and falls back to `PATH`, so version-manager switches do not break hooks.
+- Node.js 24 or newer on `PATH`. Set-up records the Node that ran it for the
+  launcher, the hooks and the Claude Code status line, Homebrew's by the link
+  `brew upgrade` keeps (`/opt/homebrew/bin/node`, not its versioned `Cellar`
+  folder). Each falls back to `node` on `PATH` once the recorded Node is gone
+  (after `nvm uninstall`, say), except the status line on Windows. On a Node
+  older than 24 the CLI and the daemon stop with set-up's message, the hooks do
+  nothing, and the status line says `needs Node 24 or newer`. After moving to
+  another Node, run `rerail install --refresh` with it first on `PATH` to
+  record it for all of them.
 - macOS, Linux glibc, or Windows MSVC on arm64/x64. The package carries
   prebuilt native kernels for those; nothing is compiled on the user's machine.
 - Read access to `@neralabs/rerail` on npmjs (see "Registry access").

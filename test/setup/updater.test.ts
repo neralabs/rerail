@@ -12,6 +12,7 @@ import {
   type PackageRegistry,
 } from "../../src/setup/updater.js";
 import { ENTRY_POINTS } from "../../src/engine/index.js";
+import { pinnedNodePath } from "../../src/setup/node-path.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -427,15 +428,30 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     const shim = await readFile(updater.launcherPath, "utf8");
     expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
     expect(shim).toContain(`'${join(updater.currentLink, "dist", "cli", "cli.js")}'`);
-    expect(shim).toContain(`NODE='${process.execPath}'`);
+    expect(shim).toContain(`NODE='${pinnedNodePath()}'`);
     expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
-    expect(shim).toBe(launcherShim(updater.currentLink, process.execPath));
+    expect(shim).toBe(launcherShim(updater.currentLink, pinnedNodePath()));
 
     // Re-running is a no-op: same root, nothing reinstalled, launcher untouched.
     const again = await updater.install();
     expect(again.changed).toBe(false);
     expect(registry.installedVersions).toEqual(["1.0.0"]);
     expect(await readlink(updater.currentLink)).toBe(installed.current.packageRoot);
+  });
+
+  it("re-pins a launcher that names another node, and writes none where no install did", async () => {
+    const { home, packageRoot } = await fixture();
+    const options = { home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0"), validateInstallation: assertPackageIdentity };
+    const fresh = new ManagedUpdater(options);
+    expect(await fresh.refreshLauncher()).toBe(false);
+    expect(existsSync(fresh.launcherPath)).toBe(false);
+
+    const updater = new ManagedUpdater(options);
+    await updater.install();
+    await writeFile(updater.launcherPath, launcherShim(updater.currentLink, "/gone/node-v24/bin/node"));
+    expect(await updater.refreshLauncher()).toBe(true);
+    expect(await readFile(updater.launcherPath, "utf8")).toBe(launcherShim(updater.currentLink, pinnedNodePath()));
+    expect(await updater.refreshLauncher()).toBe(false);
   });
 
   it("replaces a dangling Windows current junction", async () => {

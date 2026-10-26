@@ -33,6 +33,7 @@ import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-comma
 import { shellQuote } from "../harness/setup-screens.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS } from "../engine/package-root.js";
+import { pinnedNodePath } from "./node-path.js";
 
 export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
 
@@ -532,6 +533,14 @@ function planGroupedHooks(
   return planJsonFile(harness, path, context, detail, value => updateGroupedHooks(value, path, context, events, toolEvents, executable, entry));
 }
 
+/**
+ * The hooks' recorded-first, PATH-fallback order for the status line: without it, once the recorded node is gone the
+ * status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script and, for a
+ * project's settings, the settings path after it. Windows keeps the direct command, quoted for `cmd`: Claude Code
+ * runs it through Git Bash there, and the `sh` form would need the path quoted for that shell instead.
+ */
+const CLAUDE_STATUS_FALLBACK = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `;
+
 function composedClaudeStatus(previous: ClaudeStatusLine | null | undefined, command: string): ClaudeStatusLine {
   return { ...previous, type: "command", command, refreshInterval: previous?.refreshInterval ?? 5 };
 }
@@ -545,7 +554,8 @@ function registerClaudeStatus(
   context: Context, path: string, next: JsonObject, statusLine: ClaudeStatusLine | undefined,
   inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined, replaceable: boolean,
 ): ClaudeStatusRegistration {
-  const command = directCommand(context, ENTRY_POINTS.claudeStatus)
+  const command = (context.platform === "win32" ? "" : CLAUDE_STATUS_FALLBACK)
+    + directCommand(context, ENTRY_POINTS.claudeStatus)
     + (path === join(context.home, ".claude", "settings.json") ? "" : ` ${shellArgument(path, context.platform)}`);
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
   const previous = statusLine ?? inherited;
@@ -630,10 +640,14 @@ async function planClaudeSettings(
   });
 }
 
-/** The script of the generated executable shape, recognized even when its old package/ownership is gone. */
+/**
+ * The script of the generated executable shape, recognized even when its old package/ownership is gone: direct, as
+ * Windows and earlier versions write it, or behind the POSIX fallback.
+ */
 function claudeStatusScript(command: string, platform: NodeJS.Platform): string | undefined {
-  const words = command.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
-  if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== command) return undefined;
+  const direct = command.startsWith(CLAUDE_STATUS_FALLBACK) ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command;
+  const words = direct.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
+  if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== direct) return undefined;
   const windows = platform === "win32";
   const script = unquoteShellWord(words[1]!, windows);
   return isNodeExecutable(unquoteShellWord(words[0]!, windows))
@@ -1007,7 +1021,7 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
     root,
     packageRoots: new Map(),
     home,
-    nodePath: options.nodePath ?? process.execPath,
+    nodePath: options.nodePath ?? pinnedNodePath(),
     dryRun: options.dryRun === true,
     platform: options.platform ?? process.platform,
   };

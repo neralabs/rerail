@@ -152,6 +152,22 @@ describe("hook steers", () => {
     expect(JSON.parse(served.stdout)).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `${sessionStartNote(undefined, "claude-code", "session-1", { setUp: true, ruleCount: null })}\n\nguidance` } });
     expect(served.stderr).toMatch(/^rerail hook: /);
   });
+
+  it("does nothing on a Node older than Rerail runs on, and says so in one line on stderr", async () => {
+    const written = { stdout: "", stderr: "" };
+    let ran = false;
+    await serveHook(async () => {
+      ran = true;
+      return { decision: "block" };
+    }, {
+      stdin: Readable.from([JSON.stringify({ session_id: "session-1", hook_event_name: "SessionStart" })]),
+      stdout: { write: (chunk, callback) => { written.stdout += chunk; callback(); } },
+      stderr: { write: chunk => (written.stderr += chunk) },
+    }, "22.23.4");
+    expect(ran).toBe(false);
+    expect(written.stdout).toBe("{}\n");
+    expect(written.stderr).toMatch(/^rerail hook: Rerail needs Node 24 or newer and this is Node 22\.23\.4[^\n]*\n$/u);
+  });
 });
 
 describe("hook host durable state", () => {
