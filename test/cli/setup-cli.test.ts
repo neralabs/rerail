@@ -156,7 +156,7 @@ describe("rerail install --root", () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     const { updater } = context;
-    const installed = [join(updater.versionsRoot, "1.0.0", "node_modules"), join(context.home, "packs", "node_modules"), join(hostConfigHome, ".cache", "rerail")];
+    const installed = [join(updater.versionsRoot, "1.0.0", "node_modules", "@neralabs", "rerail"), join(context.home, "packs", "node_modules"), join(hostConfigHome, ".cache", "rerail")];
     for (const path of installed) await mkdir(path, { recursive: true });
     await writeFile(join(context.home, "consent.json"), "{}");
     const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
@@ -175,6 +175,42 @@ describe("rerail install --root", () => {
     expect(text).toContain(`Removed ${dirname(updater.launcherPath)} (the rerail command).`);
     expect(text).toContain(`Removed ${join(hostConfigHome, ".cache", "rerail")} (the cache).`);
     expect(text).toContain(`Kept ${context.home}: coding-agents.json, consent.json`);
+  });
+
+  it("deletes only Rerail's own files from a Rerail home shared with other files, and says what it kept", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const { updater } = context;
+    const bin = dirname(updater.launcherPath);
+    // As with RERAIL_HOME=$HOME: the person's own ~/bin script, ~/versions notes and ~/packs file sit beside Rerail's.
+    await writeFile(join(bin, "deploy"), "#!/bin/sh\n");
+    await mkdir(join(updater.versionsRoot, "1.0.0", "node_modules", "@neralabs", "rerail"), { recursive: true });
+    await mkdir(join(updater.versionsRoot, "notes"), { recursive: true });
+    await mkdir(join(context.home, "packs", "node_modules"), { recursive: true });
+    await writeFile(join(context.home, "packs", "list.txt"), "mine");
+    // Another Rerail home's daemon (alive: this test's parent process) holds the cache.
+    const cache = join(hostConfigHome, ".cache", "rerail");
+    await mkdir(cache, { recursive: true });
+    await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: process.ppid }));
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], context)).toBe(0);
+    expect(output.mock.calls.join("")).toContain(`Would keep ${cache} (the cache): another Rerail daemon, pid ${process.ppid}, still uses it.`);
+    expect(output.mock.calls.join("")).not.toContain(`Would remove ${cache}`);
+    output.mockClear();
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+
+    for (const path of [join(bin, "deploy"), join(updater.versionsRoot, "notes"), join(context.home, "packs", "list.txt"), cache]) {
+      expect(existsSync(path), path).toBe(true);
+    }
+    for (const path of [updater.launcherPath, join(updater.versionsRoot, "1.0.0"), join(context.home, "packs", "node_modules")]) {
+      expect(existsSync(path), path).toBe(false);
+    }
+    const text = output.mock.calls.join("");
+    expect(text).toContain(`Removed ${updater.launcherPath} (the rerail command).`);
+    expect(text).toContain(`Kept ${bin} (the rerail command): it holds files that are not Rerail's: deploy.`);
+    expect(text).toContain(`Kept ${updater.versionsRoot} (the installed versions): it holds files that are not Rerail's: notes.`);
   });
 
   it("keeps rules and history when another checkout registered with --root is removed", async () => {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -77,13 +77,22 @@ describe("managed launcher shims", () => {
     expect(shim.endsWith("\r\n")).toBe(true);
   });
 
-  it("spells a non-ASCII path in the batch launcher through folders cmd expands, since cmd misreads UTF-8", () => {
+  it("spells a non-ASCII path in the batch launcher from its own folder, never from the environment, since cmd misreads UTF-8", () => {
     const profile = String.raw`C:\Users\José García`;
-    const env = { USERPROFILE: profile, LOCALAPPDATA: String.raw`${profile}\AppData\Local` };
-    const shim = launcherShim(String.raw`${profile}\.rerail\current`, String.raw`${profile}\AppData\Local\Volta\100%\node.exe`, "win32", env);
-    expect(shim).toContain(String.raw`set "RERAIL_NODE=%LOCALAPPDATA%\Volta\100%%\node.exe"`);
-    expect(shim).toContain(String.raw`"%RERAIL_NODE%" "%~dp0..\current\dist\cli\cli.js" %*`);
-    expect(/^[\x20-\x7e\r\n]*$/u.test(shim)).toBe(true);
+    // A repository's environment can set LOCALAPPDATA; the launcher must not run whichever node.exe it points at.
+    vi.stubEnv("LOCALAPPDATA", String.raw`${profile}\AppData\Local`);
+    try {
+      const shim = launcherShim(String.raw`${profile}\.rerail\current`, String.raw`${profile}\AppData\Local\Volta\100%\node.exe`, "win32");
+      expect(shim).toContain(String.raw`set "RERAIL_NODE=node"`);
+      expect(shim).toContain(String.raw`"%RERAIL_NODE%" "%~dp0..\current\dist\cli\cli.js" %*`);
+      expect(shim).not.toContain("%LOCALAPPDATA%");
+      expect(/^[\x20-\x7e\r\n]*$/u.test(shim)).toBe(true);
+      // A node inside the Rerail home is spelled from the launcher's folder.
+      expect(launcherShim(String.raw`${profile}\.rerail\current`, String.raw`${profile}\.rerail\node\100%\node.exe`, "win32"))
+        .toContain(String.raw`set "RERAIL_NODE=%~dp0..\node\100%%\node.exe"`);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("gives Git Bash an sh launcher with the Windows paths, beside the batch one", () => {

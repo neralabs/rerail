@@ -1,7 +1,7 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
 import {
@@ -39,7 +39,7 @@ import { workspaceStartState, type RepositorySetupIo } from "../runtime/reposito
 import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
-import type { ManagedUpdater } from "../setup/updater.js";
+import { LAUNCHER_HEADER, type ManagedUpdater } from "../setup/updater.js";
 
 export interface SetupContext {
   /** Rerail's own state directory (`~/.rerail` unless `RERAIL_HOME`); versions, launcher, daemon live here. */
@@ -184,17 +184,38 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
 }
 
-/** What the uninstall deletes from the installation, each with what it is, in the order it goes. */
-function installedFiles(context: SetupContext): Array<{ path: string; what: string }> {
+/**
+ * What the uninstall deletes from the installation, each with what it is, in the order it goes. A folder with `ours`
+ * goes whole only when everything in it is Rerail's; otherwise only Rerail's entries go and the folder stays, so a
+ * Rerail home shared with other files (`RERAIL_HOME=$HOME`) keeps its own `bin`, `versions` or `packs`.
+ */
+function installedFiles(context: SetupContext): Array<{ path: string; what: string; ours?: (name: string, path: string) => boolean }> {
   const { updater } = context;
+  // `rerail.cmd` and, on Windows, Git Bash's `rerail` beside it; each carries the header Rerail writes.
+  const launchers = new Set([basename(updater.launcherPath), "rerail"]);
   return [
     { path: updater.currentLink, what: "the active version's link" },
-    { path: dirname(updater.launcherPath), what: "the rerail command" },
-    { path: updater.versionsRoot, what: "the installed versions" },
+    { path: dirname(updater.launcherPath), what: "the rerail command", ours: (name, path) => launchers.has(name) && isRerailLauncher(path) },
+    {
+      path: updater.versionsRoot,
+      what: "the installed versions",
+      ours: (name, path) => /^\..+\.staging$/u.test(name) || existsSync(join(path, "node_modules", "@neralabs", "rerail")),
+    },
     { path: updater.statePath, what: "the record of them" },
-    { path: installedPacksPrefix(context.home), what: "the installed rule packs" },
+    { path: installedPacksPrefix(context.home), what: "the installed rule packs", ours: name => RULE_PACK_PREFIX_ENTRIES.has(name) },
     { path: mainContentStoreDirectory(), what: "the cache" },
   ];
+}
+
+/** What npm and the rule pack store put in the packs prefix. */
+const RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set(["node_modules", "package.json", "package-lock.json", "staging"]);
+
+function isRerailLauncher(path: string): boolean {
+  try {
+    return readFileSync(path, "utf8").includes(LAUNCHER_HEADER);
+  } catch {
+    return false;
+  }
 }
 
 function pathExists(path: string): boolean {
@@ -216,6 +237,39 @@ function cacheHolder(cache: string): number | undefined {
   }
 }
 
+/** What the uninstall removes and keeps, decided before anything goes so `--dry-run` says the same as the real run. */
+function planRemoval(context: SetupContext): { remove: Array<{ path: string; what: string }>; keep: Array<{ path: string; what: string; why: string }> } {
+  const remove: Array<{ path: string; what: string }> = [];
+  const keep: Array<{ path: string; what: string; why: string }> = [];
+  for (const { path, what, ours } of installedFiles(context)) {
+    if (!pathExists(path)) continue;
+    const holder = path === mainContentStoreDirectory() ? cacheHolder(path) : undefined;
+    if (holder !== undefined) {
+      keep.push({ path, what, why: `another Rerail daemon, pid ${holder}, still uses it` });
+      continue;
+    }
+    if (ours === undefined) {
+      remove.push({ path, what });
+      continue;
+    }
+    let entries: string[];
+    try {
+      entries = readdirSync(path);
+    } catch {
+      keep.push({ path, what, why: "it is not a folder Rerail made" });
+      continue;
+    }
+    const foreign = entries.filter(name => !ours(name, join(path, name)));
+    if (foreign.length === 0) {
+      remove.push({ path, what });
+      continue;
+    }
+    for (const name of entries) if (!foreign.includes(name)) remove.push({ path: join(path, name), what });
+    keep.push({ path, what, why: `it holds files that are not Rerail's: ${foreign.sort().join(", ")}` });
+  }
+  return { remove, keep };
+}
+
 /**
  * The uninstall's last step, once the coding agents are disconnected, the daemon has stopped and the database is in
  * the backup: delete the installation itself (the versions, the launcher, `current`, the rule packs and the cache), so
@@ -224,18 +278,14 @@ function cacheHolder(cache: string): number | undefined {
  * finishes the job; the uninstall itself has happened, so it still exits 0. What stays in the Rerail home is named too.
  */
 async function removeInstallation(context: SetupContext, dryRun: boolean): Promise<void> {
-  const present = installedFiles(context).filter(({ path }) => pathExists(path));
+  const { remove, keep } = planRemoval(context);
   if (dryRun) {
-    for (const { path, what } of present) process.stdout.write(`Would remove ${path} (${what}).\n`);
+    for (const { path, what } of remove) process.stdout.write(`Would remove ${path} (${what}).\n`);
+    for (const { path, what, why } of keep) process.stdout.write(`Would keep ${path} (${what}): ${why}.\n`);
     return;
   }
   const failed: Array<{ path: string; reason: string }> = [];
-  for (const { path, what } of present) {
-    const holder = path === mainContentStoreDirectory() ? cacheHolder(path) : undefined;
-    if (holder !== undefined) {
-      process.stdout.write(`Kept ${path} (${what}): another Rerail daemon, pid ${holder}, still uses it.\n`);
-      continue;
-    }
+  for (const { path, what } of remove) {
     try {
       if (path === context.updater.currentLink) await unlink(path);
       // rm retries Windows' transient EBUSY and EPERM itself (as the updater's staging cleanup does).
@@ -245,8 +295,14 @@ async function removeInstallation(context: SetupContext, dryRun: boolean): Promi
       failed.push({ path, reason: error instanceof Error ? error.message : String(error) });
     }
   }
+  for (const { path, what, why } of keep) process.stdout.write(`Kept ${path} (${what}): ${why}.\n`);
   for (const { path, reason } of failed) {
-    const command = process.platform === "win32" ? `Remove-Item -Recurse -Force ${shellQuote(path)}` : `rm -rf ${shellQuote(path)}`;
+    // PowerShell: single quotes expand nothing, and -LiteralPath reads `[` and `]` as themselves. `current` is a
+    // junction, which Remove-Item -Recurse in Windows PowerShell follows; cmd's rmdir removes the link alone.
+    const quoted = `'${path.replaceAll("'", "''")}'`;
+    const command = process.platform !== "win32"
+      ? `rm -rf ${shellQuote(path)}`
+      : path === context.updater.currentLink ? `cmd /c rmdir ${quoted}` : `Remove-Item -LiteralPath ${quoted} -Recurse -Force`;
     process.stdout.write(`Could not remove ${path} (${reason}). Close every coding agent and terminal still running Rerail, then run: ${command}\n`);
   }
   const kept = await readdir(context.home).catch(() => []);

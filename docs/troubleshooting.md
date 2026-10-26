@@ -328,6 +328,9 @@ then deletes the installation: `~/.rerail/current`, `~/.rerail/bin`, `~/.rerail/
 
 - `~/.rerail` itself, with Rerail's settings, logs and records, such as `consent.json` and `daemon.log`
   (`Kept ~/.rerail: … (Rerail's settings, logs and records; delete it if you will not install Rerail again).`);
+- a `bin`, `versions` or `packs` folder that also holds files that are not Rerail's, as when `RERAIL_HOME` is a
+  folder you use for other things: only Rerail's files go
+  (`Kept <path> (<what>): it holds files that are not Rerail's: <names>.`);
 - `~/.rerail-clean-YYYYMMDD/`: your rules and history;
 - `<file>.<timestamp>.bak` copies beside every coding agent config file it changed.
 

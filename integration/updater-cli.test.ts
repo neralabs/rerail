@@ -104,7 +104,8 @@ import { join } from "node:path";
 // Rerail puts npm's own options (fetch retries) ahead of the command, as npm accepts them: the command is the first
 // argument that is not an option.
 const argv = process.argv.slice(2);
-const args = argv.slice(argv.findIndex(argument => !argument.startsWith("-")));
+const command = argv.findIndex(argument => !argument.startsWith("-"));
+const args = command === -1 ? [] : argv.slice(command);
 if (args[0] === "view") {
   process.stdout.write(JSON.stringify(args[1].endsWith("@rejected") ? process.env.RERAIL_REJECTED_VERSION : process.env.RERAIL_ACCEPTED_VERSION) + "\\n");
   process.exit(0);

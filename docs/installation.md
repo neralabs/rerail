@@ -639,13 +639,18 @@ It also takes the `PATH` entry set-up added out of every shell startup file
 `~/.rerail/current`, the launcher's `~/.rerail/bin`, every version under
 `~/.rerail/versions` with `update-state.json`, the rule packs in
 `~/.rerail/packs`, and the cache `~/.cache/rerail` (left alone, and said so,
-while another Rerail home's daemon holds it). It prints each path it removed,
+while another Rerail home's daemon holds it). In `bin`, `versions` and `packs`
+it deletes only what Rerail put there: a folder that also holds other files
+(a Rerail home shared with them, as with `RERAIL_HOME=$HOME`) is kept with
+those files, and named. It prints each path it removed,
 and what it kept in the Rerail home (settings such as `consent.json`, logs,
 records), which you can delete if you will not install Rerail again. A file it
 cannot remove, such as one Windows keeps locked while a session still runs
 Rerail, is named with the command that finishes the job once that session is
-closed (`Remove-Item -Recurse -Force <path>` on Windows, `rm -rf <path>`
-elsewhere); the rest of the uninstall has happened, so it still exits 0.
+closed (`Remove-Item -LiteralPath '<path>' -Recurse -Force` in PowerShell, and
+`cmd /c rmdir '<path>'` for the `current` link, which removes the link and not
+what it points at; `rm -rf <path>` elsewhere); the rest of the uninstall has
+happened, so it still exits 0.
 
 ## Developing from a checkout
 
